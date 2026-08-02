@@ -28,8 +28,9 @@ const rendererHtml = fileURLToPath(
   new URL('../renderer/index.html', import.meta.url),
 );
 
+/** `win`, not `window` — in the main process that name means something else. */
 function createWindow(): BrowserWindow {
-  const window = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1100,
@@ -49,7 +50,7 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  window.once('ready-to-show', () => window.show());
+  win.once('ready-to-show', () => win.show());
 
   /**
    * `electron-vite dev` serves the renderer over HTTP so Vite's HMR client can
@@ -58,13 +59,13 @@ function createWindow(): BrowserWindow {
    */
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
-    void window.loadURL(devUrl);
-    window.webContents.openDevTools({ mode: 'detach' });
+    void win.loadURL(devUrl);
+    win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    void window.loadFile(rendererHtml);
+    void win.loadFile(rendererHtml);
   }
 
-  return window;
+  return win;
 }
 
 /** The one live channel — it proves renderer → preload → main → renderer. */
