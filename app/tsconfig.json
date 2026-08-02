@@ -41,5 +41,5 @@
       "@config/*": ["./src/config/*"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "__mocks__"]
 }

@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 
 import '@xterm/xterm/css/xterm.css';
 
@@ -15,10 +15,17 @@ import '@xterm/xterm/css/xterm.css';
  * `data/`, or `stores/`. The terminal knows only its transport.
  */
 export function TerminalSurface() {
-  const containerRef = useRef<HTMLDivElement>(null);
+  /**
+   * The container is held in state behind a callback ref rather than in a
+   * `useRef`. A ref's `.current` is populated by the time the mount effect
+   * runs, which makes a null-check on it dead code that can never be exercised
+   * — an untestable branch that quietly erodes the coverage gate. With a
+   * callback ref the null case is a genuine state React passes through on the
+   * first render, so the guard below is real and covered.
+   */
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const container = containerRef.current;
     if (!container) return;
 
     const terminal = new Terminal({
@@ -40,7 +47,7 @@ export function TerminalSurface() {
       resizeObserver.disconnect();
       terminal.dispose();
     };
-  }, []);
+  }, [container]);
 
-  return <div ref={containerRef} className="h-full w-full bg-term-bg" />;
+  return <div ref={setContainer} className="h-full w-full bg-term-bg" />;
 }
