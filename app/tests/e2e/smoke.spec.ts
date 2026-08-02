@@ -60,8 +60,19 @@ test('renders the header chrome', async ({ page }) => {
  * missing `min-w-0` letting a long line widen the center column.
  */
 test('lays out at desktop width without overflowing horizontally', async ({ page }) => {
-  await expect(page.getByRole('navigation')).toHaveCSS('width', '268px');
-  await expect(page.getByRole('complementary')).toHaveCSS('width', '316px');
+  /**
+   * Named, not bare `getByRole('navigation')`. Stories 030 and 050 build tab
+   * bars and panels *inside* these rails; a nested `nav` or `aside` would make
+   * a bare role locator match two elements and fail strict mode — breaking this
+   * spec for a reason that has nothing to do with what it asserts.
+   */
+  await expect(
+    page.getByRole('navigation', { name: 'Projects, work, and agents' }),
+  ).toHaveCSS('width', '268px');
+  await expect(page.getByRole('complementary', { name: 'Activity' })).toHaveCSS(
+    'width',
+    '316px',
+  );
 
   const overflows = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
