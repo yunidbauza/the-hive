@@ -1,9 +1,15 @@
-# The Hive — Story Backlog (static React prototype)
+# The Hive — Story Backlog
 
-Stories for the first materialization of the concept in `../concept/`: a **static
-React + TypeScript prototype** with real **xterm.js** terminal surfaces fed by mock
-data. No backend in this phase; the terminal transport is the designed seam for the
-future local-PTY daemon. Context and decisions: [000-overview.md](000-overview.md).
+Stories for the concept in `../concept/`, across two phases:
+
+- **Phase 1 — static React prototype** (000–071). A **React + TypeScript** app with
+  real **xterm.js** surfaces fed by mock data. No backend; the terminal transport is
+  the designed seam for the future local PTY.
+- **Phase 2 — Electron desktop app** (080–099). The same renderer, unmoved, inside an
+  Electron shell, with **real local PTYs running Claude Code**. This is the phase where
+  the seam is cashed in.
+
+Context and decisions: [000-overview.md](000-overview.md).
 
 The backlog is modeled on the architecture of `incorpHQ/incorpx` — feature slices with
 lint-enforced boundaries, Zustand with selector hooks, a `tests/` mirror with an 80%
@@ -51,17 +57,35 @@ for what we deliberately left behind.
 | 061 | [Simulation mode](061-simulation-mode.md) | Cross-cutting | 5 |
 | 070 | [Playwright e2e harness](070-e2e-harness.md) | Cross-cutting | 5 |
 | 071 | [CI workflow](071-ci-workflow.md) | Cross-cutting | 2 |
+| 080 | [Electron scaffold (electron-vite)](080-electron-scaffold.md) | Desktop shell | 5 |
+| 081 | [Main process & window lifecycle](081-main-process-window.md) | Desktop shell | 5 |
+| 082 | [Preload bridge & IPC security](082-preload-ipc-security.md) | Desktop shell | 5 |
+| 083 | [Runtime target detection & transport resolution](083-runtime-target-transport.md) | Desktop shell | 3 |
+| 084 | [Native modules & dev/build workflow](084-native-modules-dev-workflow.md) | Desktop shell | 3 |
+| 085 | [Electron test harness (Playwright `_electron`)](085-electron-test-harness.md) | Desktop shell | 8 |
+| 090 | [Workspace config & real project paths](090-workspace-config.md) | Real terminals | 3 |
+| 091 | [PTY host process (`utilityProcess`)](091-pty-host-process.md) | Real terminals | 8 |
+| 092 | [**PTY session manager (node-pty)** — core](092-pty-session-manager.md) | Real terminals | 8 |
+| 093 | [PTY IPC protocol & flow control](093-pty-ipc-protocol.md) | Real terminals | 5 |
+| 094 | [`PtyTransport` — the seam swap](094-pty-transport.md) | Real terminals | 5 |
+| 095 | [Interactive terminal surface](095-interactive-terminal-surface.md) | Real terminals | 5 |
+| 096 | [Session lifecycle & `claude` bootstrap](096-session-lifecycle-claude.md) | Real terminals | 8 |
+| 097 | [Orchestrator & inbox drive real PTYs](097-orchestrator-drives-ptys.md) | Real terminals | 5 |
+| 098 | [PTY conformance suite](098-pty-conformance-suite.md) | Real terminals | 8 |
+| 099 | [Desktop CI](099-desktop-ci.md) | Real terminals | 3 |
 
-**26 stories · 107 points.**
+**42 stories · 194 points.** Phase 1: 26 stories · 107 pts. Phase 2: 16 stories · 87 pts.
 
-| Epic | Stories | Points |
-|---|---|---|
-| Foundation | 000, 010, 011, 012, 013, 014, 015 | 25 |
-| Shell | 020, 021 | 8 |
-| Left rail | 030, 031, 032, 033 | 11 |
-| Center stage | 040, 041, 042, 043, 044 | 36 |
-| Activity rail | 050, 051, 052, 053 | 10 |
-| Cross-cutting | 060, 061, 070, 071 | 17 |
+| Epic | Phase | Stories | Points |
+|---|---|---|---|
+| Foundation | 1 | 000, 010, 011, 012, 013, 014, 015 | 25 |
+| Shell | 1 | 020, 021 | 8 |
+| Left rail | 1 | 030, 031, 032, 033 | 11 |
+| Center stage | 1 | 040, 041, 042, 043, 044 | 36 |
+| Activity rail | 1 | 050, 051, 052, 053 | 10 |
+| Cross-cutting | 1 | 060, 061, 070, 071 | 17 |
+| **Desktop shell** | 2 | 080, 081, 082, 083, 084, 085 | 29 |
+| **Real terminals** | 2 | 090, 091, 092, 093, 094, 095, 096, 097, 098, 099 | 58 |
 
 ## Jira
 
@@ -85,7 +109,7 @@ below — 45 links in total. The rendered graph is attached to the Foundation ep
 **These markdown files remain the source of truth.** When a story changes here, update
 its Jira issue too; nothing syncs automatically.
 
-## Dependency graph
+## Dependency graph — phase 1 (prototype)
 
 ```mermaid
 graph TD
@@ -136,6 +160,53 @@ graph TD
   S070 --> S071
 ```
 
+## Dependency graph — phase 2 (desktop)
+
+Dashed edges cross the phase boundary: the phase-1 story a desktop story builds on.
+
+```mermaid
+graph TD
+  S010[010 scaffold] -.-> S080[080 electron scaffold]
+  S014[014 boundaries] -.-> S080
+  S080 --> S081[081 main & window]
+  S080 --> S082[082 preload & IPC security]
+  S081 --> S082
+  S082 --> S083[083 target & transport resolution]
+  S042[042 terminal surface] -.-> S083
+  S080 --> S084[084 native modules]
+  S081 --> S085[085 electron test harness]
+  S084 --> S085
+  S070[070 e2e harness] -.-> S085
+
+  S082 --> S090[090 workspace config]
+  S081 --> S091[091 pty host process]
+  S084 --> S091
+  S091 --> S092[092 pty session manager ★]
+  S084 --> S092
+  S090 --> S092
+  S082 --> S093[093 pty IPC & flow control]
+  S092 --> S093
+  S093 --> S094[094 PtyTransport]
+  S083 --> S094
+  S094 --> S095[095 interactive terminal]
+  S042 -.-> S095
+  S092 --> S096[096 session lifecycle & claude]
+  S094 --> S096
+  S095 --> S096
+  S090 --> S096
+  S096 --> S097[097 orchestrator drives PTYs]
+  S041[041 orchestrator console] -.-> S097
+  S043[043 session view] -.-> S097
+  S051[051 inbox] -.-> S097
+  S092 --> S098[098 pty conformance suite]
+  S096 --> S098
+  S085 --> S098
+  S085 --> S099[099 desktop CI]
+  S098 --> S099
+  S084 --> S099
+  S071[071 CI] -.-> S099
+```
+
 ## Suggested sprint slicing
 
 1. **Walking skeleton**: 010 → 011 → 012 → 013 → 014 → 020 — dark shell renders with
@@ -151,13 +222,38 @@ graph TD
 6. **Make it breathe & prove it**: 061, 070, 071 — simulation for demos, e2e specs that
    actually verify the terminal, CI that enforces all of it.
 
-## After this phase (not written as stories yet)
+Phase 2 continues the numbering:
 
-Real transport behind [042](042-terminal-surface.md)'s seam: a local daemon owning
-node-pty processes (one per session), WebSocket/IPC bridge, real `claude` sessions,
-orchestrator logic moving out of the store into the daemon. Desktop wrapper
-(Electron/Tauri) once the web prototype proves the UX.
+7. **It runs on the desktop**: 080 → 081 → 084 → 082 → 083 — the identical UI in an
+   Electron window, still on fixtures, with the security posture and the native-module
+   toolchain settled *before* anything native exists. 085 lands here too: the harness
+   has to precede the thing it tests, or it gets skipped.
+8. **The terminal is real** *(the milestone that matters)*: 090 → 091 → 092 → 093 →
+   094 → 095 — a config file, a supervised pty host, a real pty, and the seam swapped.
+   Ends with typing into a live shell.
+9. **Sessions and proof**: 096 → 097 → 098 → 099 — `claude` bootstraps in the right
+   repo, the coordination layer drives real PTYs, and conformance plus CI make the
+   whole claim testable.
 
-Because the seam is a lint-enforced boundary ([014](014-architecture-boundaries.md))
-rather than a convention, that work should touch `src/lib/terminal/` and nothing else
-in the component tree.
+**084 before 092.** The native-module toolchain is a prerequisite disguised as a
+chore; discovering the Electron ABI problem while debugging a PTY means debugging two
+things at once.
+
+## After phase 2 (not written as stories yet)
+
+- **Detecting `waiting`.** The attention model's central status is not derivable from
+  pty output ([096](096-session-lifecycle-claude.md)) — a TUI thinking and a TUI
+  asking look identical. The real mechanism is a Claude Code hook writing a structured
+  event the app watches. This is the immediate follow-up epic and the largest known gap.
+- **Packaging & distribution.** electron-builder, code signing, notarisation, asar with
+  the native binary unpacked ([084](084-native-modules-dev-workflow.md)), auto-update,
+  crash reporting.
+- **Windows.** ConPTY, the MSVC toolchain, and window chrome. A known gap, deliberately
+  not attempted ([099](099-desktop-ci.md)).
+- **Session persistence.** Resuming a Claude Code conversation, reattaching to a pty
+  that outlived the app, restoring the fleet on launch.
+- **Real project state.** Git branches, dirty state, worktrees, and `spawn` creating a
+  branch — replacing the fixtures that [090](090-workspace-config.md) deliberately left
+  alone.
+- **Background agents as real processes.** Long-lived non-`claude` workers
+  ([033](033-agents-panel.md)) still run on fixture transcripts.

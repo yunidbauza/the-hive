@@ -39,6 +39,43 @@ terminal at the right moment.
   transport is a **static/scripted fake**. Later it becomes IPC→PTY without UI changes.
   See [042-terminal-surface.md](042-terminal-surface.md).
 
+### Decided for phase 2 (the desktop shell)
+
+The "later" above is now specified. Stories 080–099; full rationale in each.
+
+- **Electron, not Tauri, not native.** Electron is chosen for Node in the main process
+  and `node-pty` — the exact stack VS Code's integrated terminal runs on, and the one
+  with the shortest path from the existing React renderer. Tauri's smaller binaries and
+  lower memory are real advantages that do not outweigh reusing this renderer verbatim
+  and keeping a single language across both processes. Native macOS (SwiftTerm /
+  libghostty) is not revisited: it discards the prototype for rendering fidelity that
+  an orchestrator does not trade on.
+- **What makes a terminal feel real is the PTY, not the renderer.** xterm.js with a
+  real pty behind it *is* a real terminal — `TERM=xterm-256color`, signals, job control,
+  `SIGWINCH`, full-screen TUIs. The gap to iTerm2 (inline image protocols, GPU-smooth
+  scrolling under a firehose, IME/ligature edge cases) is not where this product's value
+  is. See [092](092-pty-session-manager.md).
+- **In-place, not a monorepo.** `electron/{main,preload,shared}/` beside an untouched
+  `src/`, built by electron-vite. Every lint zone, alias site and test mirror survives
+  ([080](080-electron-scaffold.md)).
+- **Electron is the primary artifact.** The browser build survives as a fixtures-only
+  demo surface and must **degrade visibly** — it will never have real terminals
+  ([083](083-runtime-target-transport.md)).
+- **A session runs a login shell, then `claude`.** `$SHELL -l` in the project directory,
+  then `claude` written as input — so when Claude Code exits the user still has a live
+  shell in the right repo ([096](096-session-lifecycle-claude.md)).
+- **One write primitive.** The message row, the console's `send`, and the inbox answer
+  action all become `pty.write(sessionId, text + "\r")`
+  ([097](097-orchestrator-drives-ptys.md)).
+- **The orchestrator console stays a command surface**, not a shell. Its verbs drive
+  real PTYs; it does not own one.
+- **PTYs run in a supervised `utilityProcess`**, not in the main process: a native
+  crash must cost one terminal, not the application
+  ([091](091-pty-host-process.md)).
+- **`waiting` is not derivable from pty output** and is not claimed in phase 2. The
+  status the whole attention model rests on needs a Claude Code hook, which is the
+  follow-up epic ([096](096-session-lifecycle-claude.md)).
+
 ## Architecture baseline (modeled on `incorpx`)
 
 The prototype adopts the FE conventions already proven in `incorpHQ/incorpx`, so the
@@ -78,6 +115,29 @@ Reproduce the concept UI in React with **no real backend**:
 Out of scope for this phase: real PTYs, persistence, auth, real Git/Slack/Jira
 integrations, multi-machine support.
 
+## Scope of phase 2: the desktop app
+
+Stories [080](080-electron-scaffold.md)–[099](099-desktop-ci.md). The renderer does not
+move; the backend behind the seam becomes real.
+
+**Becomes real**
+
+- Terminals: real local PTYs, one per session, with correct terminal semantics.
+- Session lifecycle: spawn, attach, restart, kill, and teardown on quit with no orphans.
+- Project directories: a config file maps fixture project ids to real absolute paths
+  ([090](090-workspace-config.md)).
+- Message routing: the console, the message row and the inbox all write into a live pty.
+
+**Stays fixtures**
+
+Branches, dirty state, tickets, PRs, inbox items, the activity feed, background agents,
+and session metadata. The coordination layer keeps reading `src/data`
+([012](012-mock-data-layer.md)) — phase 2 is about the terminal being real, not about
+the whole product being live.
+
+Out of scope for phase 2: packaging and installers, Windows, session persistence across
+restarts, git integration, `waiting` detection, and any multi-machine story.
+
 ## Domain glossary
 
 | Term | Meaning |
@@ -115,7 +175,10 @@ integrations, multi-machine support.
 
 ## Story map & build order
 
-Foundation → shell → panels → center → polish. Each story lists its dependencies.
+Foundation → shell → panels → center → polish, then desktop shell → real terminals.
+Each story lists its dependencies.
+
+### Phase 1 — prototype
 
 1. [010-project-scaffold.md](010-project-scaffold.md)
 2. [011-design-tokens-and-theming.md](011-design-tokens-and-theming.md)
@@ -132,5 +195,24 @@ Foundation → shell → panels → center → polish. Each story lists its depe
 13. [061-simulation-mode.md](061-simulation-mode.md)
 14. [070-e2e-harness.md](070-e2e-harness.md)
 15. [071-ci-workflow.md](071-ci-workflow.md)
+
+### Phase 2 — desktop
+
+16. [080-electron-scaffold.md](080-electron-scaffold.md)
+17. [081-main-process-window.md](081-main-process-window.md)
+18. [084-native-modules-dev-workflow.md](084-native-modules-dev-workflow.md) — before
+    anything native, not after
+19. [082-preload-ipc-security.md](082-preload-ipc-security.md)
+20. [083-runtime-target-transport.md](083-runtime-target-transport.md)
+21. [085-electron-test-harness.md](085-electron-test-harness.md)
+22. [090-workspace-config.md](090-workspace-config.md)
+23. [091-pty-host-process.md](091-pty-host-process.md) →
+    [092](092-pty-session-manager.md) → [093](093-pty-ipc-protocol.md)
+24. [094-pty-transport.md](094-pty-transport.md) →
+    [095](095-interactive-terminal-surface.md)
+25. [096-session-lifecycle-claude.md](096-session-lifecycle-claude.md) →
+    [097](097-orchestrator-drives-ptys.md)
+26. [098-pty-conformance-suite.md](098-pty-conformance-suite.md) →
+    [099](099-desktop-ci.md)
 
 Full index with dependency graph: [README.md](README.md)
