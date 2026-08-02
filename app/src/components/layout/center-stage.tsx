@@ -7,6 +7,7 @@ import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { TerminalHost } from '@components/terminal/terminal-host';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
+import { MessageInput } from '@features/sessions/components/message-input';
 import {
   ORCHESTRATOR_ID,
   createStaticTransport,
@@ -59,6 +60,22 @@ export function CenterStage() {
    */
   const cache = useRef(new Map<string, TerminalTransport>());
 
+  const messageInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Focus the message row when the terminal area is clicked — unless the user
+   * just finished selecting text.
+   *
+   * Moving focus collapses the document selection, so a plain "focus on click"
+   * would delete the selection the drag had only just made: click, drag,
+   * release, and the highlight vanishes before it can be copied.
+   */
+  const focusMessageInput = () => {
+    const selection = window.getSelection()?.toString() ?? '';
+    if (selection !== '') return;
+    messageInputRef.current?.focus();
+  };
+
   const entries = useMemo(
     () =>
       ids.map((id) => {
@@ -94,7 +111,17 @@ export function CenterStage() {
         */}
         {view === 'orchestrator' ? <SessionTable /> : null}
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        {/*
+          Clicking the terminal focuses the message row, as the concept does —
+          the row should feel like part of the terminal, not a form beneath it.
+          Not a button: this is a click *target*, and the keyboard already
+          reaches the input directly.
+        */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          onClick={focusMessageInput}
+        >
           <TerminalHost
             entries={entries}
             /*
@@ -108,6 +135,19 @@ export function CenterStage() {
         </div>
 
         {view === 'orchestrator' ? <ConsoleInput /> : null}
+
+        {isEntityView(view) && entity ? (
+          /*
+           * Keyed by entity: switching sessions remounts the row, which clears
+           * a half-typed message meant for somebody else and re-runs its
+           * autofocus.
+           */
+          <MessageInput
+            key={entity.id}
+            entityId={entity.id}
+            inputRef={messageInputRef}
+          />
+        ) : null}
       </div>
     </main>
   );

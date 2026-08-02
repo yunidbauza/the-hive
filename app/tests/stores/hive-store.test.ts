@@ -143,7 +143,9 @@ describe('hive-store', () => {
       const entity = useHiveStore.getState().entities['lead-form'];
       expect(isSession(entity) && entity.status).toBe('working');
       expect(entity.lines.at(-1)?.text).toBe('✱ Working…');
-      expect(entity.lines.at(-2)?.text).toBe('  acknowledged — y');
+      // One acknowledgement line for both origins (story 043): the message
+      // means the same thing however it arrived.
+      expect(entity.lines.at(-2)?.text).toBe('● Acknowledged — working on it');
     });
 
     it('returns the timer handle so the ack can be cancelled', () => {

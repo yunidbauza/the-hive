@@ -173,8 +173,38 @@ depth exceeded". Flat arrays are compared element by element, which is what make
 them stable. This cost a debugging cycle; it is written down so it costs nobody
 another.
 
+## The session / agent view (043)
+
+Meta bar, terminal, message row. The row is `MessageInput`, mounted by
+`CenterStage` and **keyed by entity id** — switching sessions remounts it, which
+both clears a half-typed message meant for somebody else and re-runs its
+autofocus.
+
+There is no `session-view.tsx` wrapper. The terminal belongs to the shared
+`TerminalHost`, so a component that wrapped meta bar + terminal + input would
+have to reach into it; composition happens in the stage instead, exactly as
+story 040's UPDATED SPECS direct.
+
+### Send is one action with an origin
+
+`sendToEntity(id, msg, origin)` handles both paths. The transcript records who
+spoke, so the echo differs — `❯ [orchestrator] msg` from the console, a blank
+line then `❯ msg` from the session's own row — but the acknowledgement is one
+shared line, because it means the same thing either way.
+
+One timer per message: two rapid sends produce two independent acknowledgements
+rather than one cancelling the other. `appendEntityLines` only applies a status
+to sessions, so agents stay `online` with no branch at the call site.
+
+### Click-to-focus, without eating the selection
+
+Clicking the terminal focuses the message row — but only when
+`window.getSelection()` is empty. Moving focus collapses the document selection,
+so an unconditional focus-on-click would delete the highlight the user's drag had
+only just made.
+
 ## What later stories add here
 
-The session/agent view's input row (043) and the real new-session picker (044) —
-`CenterStage` currently renders a deliberately minimal picker placeholder so that
-state stays exitable. Then the activity rail and its three panels (050–053).
+The real new-session picker (044) — `CenterStage` currently renders a
+deliberately minimal placeholder so that state stays exitable. Then the activity
+rail and its three panels (050–053).

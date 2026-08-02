@@ -24,8 +24,27 @@ import { useUiStore } from '@stores/ui-store';
  * `stories/000-overview.md` → Decision record.
  */
 
-/** Delay before a messaged session acknowledges, in ms. */
+/**
+ * Delay before a messaged session acknowledges, in ms.
+ *
+ * One constant for both paths. Story 041 sketches ~2.2s for a console `send`
+ * and story 043 ~1.8s for a message typed into a session; the difference is
+ * cosmetic and two constants would only invite them to drift.
+ */
 export const ACK_DELAY_MS = 2000;
+
+/**
+ * What a session says when it picks a message up.
+ *
+ * Stories 041 and 043 word this differently ("resuming with your input" vs
+ * "working on it"). One line, used by both: the acknowledgement means the same
+ * thing however the message arrived, and the transcript should not imply
+ * otherwise.
+ */
+const ACK_LINE = '● Acknowledged — working on it';
+
+/** Where a message came from. The transcript records who spoke. */
+export type MessageOrigin = 'orchestrator' | 'session';
 
 interface HiveState {
   entities: Record<string, Entity>;
@@ -44,7 +63,11 @@ interface HiveState {
     model?: Model,
     effort?: Effort,
   ) => string;
-  sendToEntity: (id: string, msg: string) => ReturnType<typeof setTimeout> | null;
+  sendToEntity: (
+    id: string,
+    msg: string,
+    origin?: MessageOrigin,
+  ) => ReturnType<typeof setTimeout> | null;
   runOrchCommand: (command: ParsedCommand) => void;
   markAllRead: () => void;
   markRead: (index: number) => void;
@@ -129,28 +152,38 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    */
   spawnSession: (repo, task, model, effort) => {
     const id = nextSessionId();
+    // Resolved once: the seed transcript quotes them back, so a default applied
+    // in two places could print one model and record another.
+    const resolvedModel = model ?? 'opus';
+    const resolvedEffort = effort ?? 'high';
+
     const session: Session = {
       kind: 'session',
       id,
       project: repo,
       branch: `feat/${id}`,
       status: task ? 'working' : 'idle',
+      /**
+       * Empty, not a placeholder string. Story 044 suggests seeding the *task
+       * field* with "Ready for instructions", but story 043 wants that prompt in
+       * the **transcript** (`· Ready — type below…`) — which is where the user
+       * is actually looking. Putting a fake task on the entity would also make
+       * the meta bar and the rails claim a task that nobody set.
+       */
       task: task ?? '',
       pr: null,
-      cost: '$0.00',
-      model: model ?? 'opus',
-      effort: effort ?? 'high',
+      cost: '$0.02',
+      model: resolvedModel,
+      effort: resolvedEffort,
       lines: [
-        line(`❯ claude --new ${repo}`, 'green'),
         line(
-          task
-            ? `  task: ${task}`
-            : '  no task given — session idle, resume any time',
-          'dim',
+          `❯ claude --model ${resolvedModel} --effort ${resolvedEffort} — new session on ${repo}`,
+          'green',
         ),
+        line('● Reading CLAUDE.md, mapping repo…', 'blue'),
         task
-          ? line('✱ Working…', 'amber')
-          : line('✓ session idle — context saved', 'dim'),
+          ? line(`✱ Working… ${task}`, 'amber')
+          : line('· Ready — type below to give this session its task', 'dim'),
       ],
     };
 
@@ -178,25 +211,45 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * simulation (story 061) can cancel it deterministically rather than racing
    * a real wait.
    */
-  sendToEntity: (id, msg) => {
+  sendToEntity: (id, msg, origin = 'orchestrator') => {
     const entity = get().entities[id];
     if (!entity) return null;
 
-    get().appendEntityLines(id, [line(`❯ [orchestrator] ${msg}`, 'cyan')]);
+    /**
+     * The echo differs by where the message came from, because the transcript
+     * is a record of who said what. A line routed by the console is marked as
+     * such; one typed into the session's own input row is the user speaking
+     * directly, and gets a blank line above it so it reads as a new turn.
+     */
+    const echo =
+      origin === 'orchestrator'
+        ? [line(`❯ [orchestrator] ${msg}`, 'cyan')]
+        : [line(''), line(`❯ ${msg}`, 'cyan')];
+
+    get().appendEntityLines(id, echo);
     get().pushFeed({
       time: nowLabel(),
-      txt: `Routed your reply to ${id}`,
+      txt:
+        origin === 'orchestrator'
+          ? `Routed your reply to ${id}`
+          : `Routed your message to ${id}`,
       tone: 'brand',
       icon: 'ph-paper-plane-tilt',
     });
 
+    /**
+     * One timer per message, deliberately: two rapid sends produce two
+     * independent acknowledgements rather than one that cancels the other.
+     * This mimics the future daemon's round-trip, so the UI is already
+     * event-shaped.
+     *
+     * `appendEntityLines` only applies a status to sessions, so agents stay
+     * `online` without a branch here.
+     */
     return setTimeout(() => {
       get().appendEntityLines(
         id,
-        [
-          line(`  acknowledged — ${msg}`, 'dim'),
-          line('✱ Working…', 'amber'),
-        ],
+        [line(ACK_LINE, 'blue'), line('✱ Working…', 'amber')],
         'working',
       );
     }, ACK_DELAY_MS);
@@ -423,6 +476,9 @@ export const useDoneSessions = () =>
 /** The long-lived background agents, in fixture order (story 033). */
 export const useAgentOrder = () =>
   useHiveStore(useShallow((state) => state.agentOrder));
+
+/** Route a message to a session or agent (stories 041, 043). */
+export const useSendToEntity = () => useHiveStore((state) => state.sendToEntity);
 
 /** Execute a parsed console command (story 041). */
 export const useRunOrchCommand = () =>
