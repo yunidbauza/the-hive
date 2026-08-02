@@ -70,9 +70,10 @@ describe('AppShell', () => {
   it('gives each rail its own scrollbar rather than scrolling the page', () => {
     render(<AppShell />);
 
-    expect(
-      screen.getByRole('navigation', { name: 'Projects, work, and agents' }),
-    ).toHaveClass('overflow-y-auto');
+    // The left rail delegates scrolling to its tab panel (story 030) so its tab
+    // bar stays visible; the activity rail still scrolls as a whole until story
+    // 050 does the same.
+    expect(screen.getByRole('tabpanel')).toHaveClass('overflow-y-auto');
     expect(screen.getByRole('complementary', { name: 'Activity' })).toHaveClass(
       'overflow-y-auto',
     );

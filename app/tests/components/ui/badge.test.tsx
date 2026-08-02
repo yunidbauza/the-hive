@@ -50,7 +50,7 @@ describe('Badge', () => {
     expect(container.firstChild).not.toHaveAttribute('aria-hidden');
   });
 
-  it('defaults to the danger fill and accepts the brand tone', () => {
+  it('defaults to the danger fill and accepts the other tones', () => {
     const { container, rerender } = render(
       <Badge count={1} label="unread notifications" />,
     );
@@ -58,6 +58,9 @@ describe('Badge', () => {
 
     rerender(<Badge count={1} tone="brand" label="open pull requests" />);
     expect(container.firstChild).toHaveClass('bg-brand-fill');
+
+    rerender(<Badge count={1} tone="muted" label="work items" />);
+    expect(container.firstChild).toHaveClass('bg-chip', 'text-muted');
   });
 
   it('keeps a three-digit count from clipping', () => {

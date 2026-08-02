@@ -60,6 +60,31 @@ const featureIsolationZones = FEATURE_SLICES.map((slice) => ({
   message: `features/${slice} may not import another feature slice. Slices talk through the store, or through features/shared.`,
 }));
 
+/**
+ * Component directories that stay domain-agnostic.
+ *
+ * `components/layout/` is deliberately absent: it is THE COMPOSITION ROOT. The
+ * rails and the center stage exist to mount feature panels, so a blanket
+ * `components/ → features/` ban would make story 030's own file layout illegal.
+ * Every alternative is worse — a `features/` slice importing three sibling
+ * slices defeats the per-slice isolation zone, and threading slot props from
+ * `app.tsx` moves the whole app's wiring into one untestable module.
+ *
+ * The exemption cannot be expressed as an `except` on a single wide zone:
+ * `except` filters the *imported* module, never the importing file. Listing the
+ * fenced directories is the only formulation that says what it means — with the
+ * cost that a NEW directory under `src/components/` gets no fence until it is
+ * added here.
+ *
+ * `scripts/verify-boundaries.mjs` proves both halves: `ui/` still blocked,
+ * `layout/` allowed.
+ */
+const FENCED_COMPONENT_DIRS = ['terminal', 'ui'];
+
+const fencedComponentDirs = FENCED_COMPONENT_DIRS.map(
+  (dir) => `./src/components/${dir}/**/*`,
+);
+
 export default tseslint.config(
   {
     ignores: [
@@ -118,12 +143,13 @@ export default tseslint.config(
           zones: [
             ...featureIsolationZones,
 
-            // Chrome and atoms stay domain-agnostic.
+            // Chrome and atoms stay domain-agnostic — everywhere but the
+            // composition root. See FENCED_COMPONENT_DIRS above.
             {
-              target: './src/components/**/*',
+              target: fencedComponentDirs,
               from: './src/features/**/*',
               message:
-                'components/ may not import from features/. Shared chrome stays domain-agnostic.',
+                'Only components/layout/ (the composition root) may import features/. Atoms and the terminal stay domain-agnostic.',
             },
 
             /**

@@ -38,7 +38,7 @@ const CASES = [
     rule: 'import/no-restricted-paths',
     files: {
       'src/features/work/probe-target.ts': 'export const work = 1;\n',
-      'src/components/layout/probe.ts':
+      'src/components/ui/probe.ts':
         "import { work } from '@features/work/probe-target';\nexport const probe = work;\n",
     },
   },
@@ -142,6 +142,15 @@ const CASES = [
       'src/features/shared/probe-target.ts': 'export const shared = 1;\n',
       'src/features/projects/probe.ts':
         "import { shared } from '@features/shared/probe-target';\nexport const probe = shared;\n",
+    },
+  },
+  {
+    name: 'ALLOWED: components/layout/ (the composition root) may import features/',
+    rule: null,
+    files: {
+      'src/features/work/probe-target.ts': 'export const work = 1;\n',
+      'src/components/layout/probe.ts':
+        "import { work } from '@features/work/probe-target';\nexport const probe = work;\n",
     },
   },
   {

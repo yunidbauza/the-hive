@@ -65,9 +65,9 @@ contract for their owning story, not existing code.
 | Atom | File | Owner | Props | State |
 | --- | --- | --- | --- | --- |
 | `Chip` | `ui/chip.tsx` | 021 (also 040) | `children: ReactNode`, `tone?: Tone`, `title?: string`, `className?: string` | **built** |
-| `Badge` | `ui/badge.tsx` | **021** (also 030, 050, 052) | `count: number`, `tone?: 'danger' \| 'brand'`, `label?: string`, `className?: string` | **built** |
-| `TabBar` | `ui/tab-bar.tsx` | 030 (reused by 050) | `tabs: { id: string; label: string; badge?: number }[]`, `active: string`, `onSelect(id: string): void` | planned |
-| `StatusDot` | `ui/status-dot.tsx` | 031 (also 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean` | planned |
+| `Badge` | `ui/badge.tsx` | **021** (also 030, 050, 052) | `count: number`, `tone?: 'danger' \| 'brand' \| 'muted'`, `label?: string`, `className?: string` | **built** |
+| `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | generic over `Id extends string`: `tabs: { id: Id; label: string; badgeCount?: number; badgeLabel?: string }[]`, `active: Id`, `onSelect(id: Id): void`, `label: string`, `className?: string` | **built** |
+| `StatusDot` | `ui/status-dot.tsx` | **030** (used by 031, 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean`, `label?: string`, `className?: string` | **built** |
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
 
 `Badge` moved from story 030 to 021: the header's bell needs an unread count,
@@ -82,7 +82,7 @@ Rules for all of them:
 - Props are the whole API. An atom that reaches into a store is not an atom —
   move it into a feature slice.
 
-Two contracts worth knowing before reusing them:
+Contracts worth knowing before reusing them:
 
 - **`Badge` renders nothing at zero.** Every caller so far means *nothing to see*
   by a count of zero, so the empty badge is never the right answer.
@@ -91,6 +91,26 @@ Two contracts worth knowing before reusing them:
   decoration. Omit it inside an already-labelled control — an ancestor
   `aria-label` replaces its descendants' text outright, so a label there would
   never be announced. The header's bell does exactly this.
+- **`StatusDot` follows the same label contract.** With a `label` it announces
+  `"lead-form status: needs input"`; without one it is `aria-hidden` decoration.
+  Omit it wherever a visible status label already sits beside the dot (031); pass
+  it where none does (032), so status is never carried by colour alone.
+- **`StatusDot` derives its pulse from its status**, so only `working` pulses.
+  `pulse` is an override for the rare caller that needs otherwise.
+- **`STATUS_LABEL` is exported from `ui/status-dot.tsx`** and owns the
+  `waiting → "needs input"` rename. Import it rather than re-deriving it.
+- **`TabBar`'s badge reuses `Badge` at `Badge`'s geometry**, not the concept's
+  15px/9.5px. One badge geometry with three tones beats a second near-identical
+  atom; the 1px difference is deliberate.
+- **`TabBar` is generic over its id type.** Pass `Tab<LeftTab>[]` and `onSelect`
+  hands back a `LeftTab`, not a `string` — no `as` cast at the call site, and an
+  id outside the union stops compiling.
+- **Set `badgeLabel` whenever you set `badgeCount`.** This is the one place the
+  usual "omit the label" advice inverts: a tab is named by its *content*, not by
+  an `aria-label`, so an unlabelled badge is `aria-hidden` and its number reaches
+  nobody using a screen reader. With it, the tab announces `"Work 8 work items"`.
+- **Use the exported `tabId(id)` helper** for a panel's `aria-labelledby` rather
+  than re-spelling the `tab-${id}` convention; the atom owns that format.
 
 ## Layout
 
@@ -150,17 +170,40 @@ The bell marks everything read rather than opening a dropdown — the inbox live
 the activity rail (story 051), and two places to read the same list is one too
 many.
 
+### `<LeftRail />`
+
+`src/components/layout/left-rail.tsx` — story 030, built.
+
+268px fixed. A flex column of two children: a pinned `<TabBar />` and a scrolling
+tab panel that mounts exactly one of `ProjectsPanel` (031), `WorkPanel` (032), or
+`AgentsPanel` (033). Reads `useLeftTab()` / `useSetLeftTab()`, plus
+`useTicketCount()` for the Work tab's badge.
+
+**The tab bar does not scroll — the panel below it does.** Scrolling the rail as a
+whole would push the tabs off-screen as soon as a project tree grew, taking away
+the one control the user needs to get back out of it.
+
+Panel state lives in the stores, never in the panels: `collapsed` in the ui-store
+is why a collapsed project survives a round trip through the Agents tab even
+though the panel unmounts on every switch.
+
+### `components/layout/` is the composition root
+
+It is the one place under `src/components/` allowed to import `src/features/**` —
+the rails and the center stage exist to mount feature panels. `components/ui/` and
+`components/terminal/` stay fully fenced. See AGENTS.md → Import zones;
+`pnpm verify:boundaries` proves both halves.
+
 ### Region placeholders
 
 Still bare panels, owned by the story that fills each in.
 
 | Region | File | Filled in by |
 | --- | --- | --- |
-| `LeftRail` | `layout/left-rail.tsx` | 030 — tab bar, projects/work/agents panels |
 | `CenterStage` | `layout/center-stage.tsx` | 040 — view-state machine, session meta bar |
 | `ActivityRail` | `layout/activity-rail.tsx` | 050 — tab bar, inbox/PRs/feed panels |
 
 `CenterStage` mounts `<TerminalSurface />` on purpose, so the shell's `min-w-0`
 shrink contract is proven against a real xterm instance rather than an empty box.
 
-Still unbuilt: `session-meta-bar` (040).
+Still unbuilt: `session-meta-bar` (040), `KeyHint` (041).

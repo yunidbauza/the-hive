@@ -1,0 +1,71 @@
+import { cn } from '@/lib/utils';
+import type { SessionStatus } from '@/types/entity';
+
+/** Sessions have four states; agents are always `online`. */
+export type DotStatus = SessionStatus | 'online';
+
+const STATUS_FILL: Record<DotStatus, string> = {
+  working: 'bg-green',
+  waiting: 'bg-amber',
+  idle: 'bg-subtle',
+  done: 'bg-brand',
+  online: 'bg-green',
+};
+
+/**
+ * The words that go with the colours.
+ *
+ * Exported because status is never carried by colour alone: the projects panel
+ * (031) and the orchestrator table (041) render these as visible labels, and
+ * re-deriving the `waiting → "needs input"` rename in three places is how the
+ * three drift apart.
+ */
+export const STATUS_LABEL: Record<DotStatus, string> = {
+  working: 'working',
+  waiting: 'needs input',
+  idle: 'idle',
+  done: 'done',
+  online: 'online',
+};
+
+interface StatusDotProps {
+  status: DotStatus;
+  /** Defaults to pulsing only while `working`. Pass `false` to force it off. */
+  pulse?: boolean;
+  /**
+   * What the dot describes — e.g. `'lead-form status'`, which is announced as
+   * `"lead-form status: needs input"`.
+   *
+   * **Omit it when a visible status label sits beside the dot**, which is the
+   * common case; the dot is then decoration and is hidden from the
+   * accessibility tree rather than duplicating the text next to it.
+   */
+  label?: string;
+  className?: string;
+}
+
+/**
+ * A 7px status dot.
+ *
+ * The pulse is `animate-ccpulse` from `global.css` — never a hand-written
+ * keyframe, so one definition drives every pulsing surface in the app.
+ */
+export function StatusDot({ status, pulse, label, className }: StatusDotProps) {
+  const pulsing = pulse ?? status === 'working';
+
+  return (
+    <span
+      aria-hidden={label ? undefined : 'true'}
+      className={cn(
+        'inline-flex size-[7px] shrink-0 rounded-full',
+        STATUS_FILL[status],
+        pulsing && 'animate-ccpulse',
+        className,
+      )}
+    >
+      {label ? (
+        <span className="sr-only">{`${label}: ${STATUS_LABEL[status]}`}</span>
+      ) : null}
+    </span>
+  );
+}
