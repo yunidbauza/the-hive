@@ -86,12 +86,16 @@ test('lays out at desktop width without overflowing horizontally', async ({ page
  * asserts plumbing against a recording fake. Whether a real xterm boots,
  * measures its container and lays out is unfalsifiable outside a browser.
  *
- * Note this repo's docs describe the terminal as a canvas. It is not, yet:
- * xterm 6 core ships the **DOM** renderer by default and neither
- * `@xterm/addon-canvas` nor `@xterm/addon-webgl` is installed, so the live
- * instance renders as `.xterm-dom-renderer-owner-*` with zero canvas elements.
- * Assert what the app actually does; if story 042 adds a renderer addon, this
- * is the spec that should fail and be updated deliberately.
+ * On the renderer: xterm 6 core ships the **DOM** renderer by default and
+ * neither `@xterm/addon-canvas` nor `@xterm/addon-webgl` is installed, so the
+ * live instance renders as `.xterm-dom-renderer-owner-*` with zero canvas
+ * elements. Story 042 has since landed and deliberately kept it that way — a
+ * WebGL renderer is listed out of scope there — and corrected the docs that
+ * called the terminal a canvas. If a renderer addon ever arrives, this is the
+ * spec that should fail and be updated deliberately.
+ *
+ * Depth beyond "it booted" — colours, selection, scrollback, refit, re-theming
+ * — lives in `terminal.spec.ts`.
  */
 test('mounts a live xterm instance that has measured its container', async ({ page }) => {
   const terminal = page.getByRole('main').locator('.xterm');

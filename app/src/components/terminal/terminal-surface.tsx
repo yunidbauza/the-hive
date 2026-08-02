@@ -1,67 +1,183 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useState } from 'react';
 
-import { XTERM_THEME } from '@lib/terminal/ansi';
+import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
+import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
+import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 
 import '@xterm/xterm/css/xterm.css';
 
-/**
- * Minimal xterm.js mount — the scaffold's proof that the terminal stack loads
- * and renders (story 010's definition of done).
- *
- * Story 042 replaces this with the real surface: it will take a
- * `TerminalTransport` and nothing else, and will keep instances alive across
- * tab switches. The invariant that starts here and is lint-enforced by story
- * 014: nothing under `src/components/terminal/` may import from `features/`,
- * `data/`, or `stores/`. The terminal knows only its transport.
- */
-export function TerminalSurface() {
+/** xterm's line-height is a multiple of the font size, not a CSS length. */
+const LINE_HEIGHT = 1.4;
+
+/** Deep enough that no fixture transcript can reach the top of the buffer. */
+const SCROLLBACK = 5000;
+
+const DEFAULT_FONT_SIZE = 12.5;
+
+export interface TerminalSurfaceProps {
+  /** The only channel in or out. See `lib/terminal/terminal-transport.ts`. */
+  transport: TerminalTransport;
   /**
-   * The container is held in state behind a callback ref rather than in a
-   * `useRef`. A ref's `.current` is populated by the time the mount effect
-   * runs, which makes a null-check on it dead code that can never be exercised
-   * — an untestable branch that quietly erodes the coverage gate. With a
-   * callback ref the null case is a genuine state React passes through on the
-   * first render, so the guard below is real and covered.
+   * Opaque label, surfaced as `data-terminal-id`. Carries no meaning here — it
+   * exists so end-to-end specs can assert that a given surface's DOM node
+   * survives a tab switch, which is the mechanism behind kept-alive scrollback.
+   */
+  id?: string;
+  theme: TerminalTheme;
+  fontSize?: number;
+  /** Orchestrator console and every prototype view: input is a separate row. */
+  readOnly?: boolean;
+  /**
+   * Whether this surface is the one on screen. Kept-alive instances are hidden
+   * with CSS rather than unmounted (see `terminal-host.tsx`), and a terminal
+   * fitted while hidden measured a zero-height box — so becoming visible has to
+   * trigger a refit.
+   */
+  visible?: boolean;
+}
+
+/** What the mount effect builds, held together so dependents can re-run. */
+interface Instance {
+  terminal: Terminal;
+  fitAddon: FitAddon;
+}
+
+/**
+ * A real terminal, fed by a transport and nothing else.
+ *
+ * This component is the reason the seam exists: it has no idea what a session
+ * is, cannot reach the store, and would fail `pnpm lint` if it tried. Swapping
+ * `StaticTransport` for a PTY-backed one is invisible from here.
+ */
+export function TerminalSurface({
+  transport,
+  id,
+  theme,
+  fontSize = DEFAULT_FONT_SIZE,
+  readOnly = false,
+  visible = true,
+}: TerminalSurfaceProps) {
+  /**
+   * Container and instance both live in state behind callback refs rather than
+   * in `useRef`. Two reasons, and neither is style: a ref's `.current` is
+   * already populated when the mount effect runs, which makes its null-check
+   * dead code that erodes the coverage gate; and holding the *instance* in
+   * state is what lets the subscription and theme effects below re-run when a
+   * new terminal is constructed, instead of silently writing into a disposed
+   * one.
    */
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  const [instance, setInstance] = useState<Instance | null>(null);
 
   useEffect(() => {
     if (!container) return;
 
     const terminal = new Terminal({
       convertEol: true,
-      cursorBlink: true,
+      cursorBlink: !readOnly,
+      disableStdin: readOnly,
       fontFamily: "ui-monospace, Menlo, 'SF Mono', monospace",
-      fontSize: 12,
-      /**
-       * xterm paints to a canvas, which CSS custom properties cannot reach, so
-       * its colours come from JS. `XTERM_THEME` is the single definition,
-       * shared with the ANSI colorizer and the design-system doc.
-       *
-       * It is intentionally theme-independent: the terminal keeps its dark
-       * background in light mode, like the concept and most real tools. That is
-       * why toggling the app theme does not re-theme mounted instances today —
-       * there is nothing to change. Story 042 owns the kept-alive instance
-       * registry that would make a per-session or theme-following palette
-       * possible.
-       */
-      theme: XTERM_THEME,
+      fontSize,
+      lineHeight: LINE_HEIGHT,
+      scrollback: SCROLLBACK,
+      theme: buildXtermTheme(theme),
     });
+
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    // Makes a URL pasted into a transcript clickable, which is the difference
+    // between "looks like a terminal" and "behaves like one".
+    terminal.loadAddon(new WebLinksAddon());
     terminal.open(container);
-    fitAddon.fit();
+    // The initial fit is deliberately not done here — the visibility effect
+    // below owns every fit, so a surface that mounts hidden is not measured
+    // against a zero-height box and a visible one is not fitted twice.
 
-    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+      transport.resize(terminal.cols, terminal.rows);
+    });
     resizeObserver.observe(container);
+
+    setInstance({ terminal, fitAddon });
 
     return () => {
       resizeObserver.disconnect();
       terminal.dispose();
+      setInstance(null);
     };
-  }, [container]);
+    /**
+     * `theme` and `transport` are deliberately absent: both are handled by
+     * their own effects below, so a theme toggle or a transport swap never
+     * destroys scrollback. `fontSize` and `readOnly` are structural — xterm
+     * cannot change `disableStdin` after construction — so they do rebuild.
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [container, fontSize, readOnly]);
 
-  return <div ref={setContainer} className="h-full w-full bg-term-bg" />;
+  /** Re-theme in place. Assigning `options.theme` preserves buffer content. */
+  useEffect(() => {
+    if (!instance) return;
+    instance.terminal.options.theme = buildXtermTheme(theme);
+  }, [instance, theme]);
+
+  /** Backend output in, keystrokes out. */
+  useEffect(() => {
+    if (!instance) return;
+    const { terminal } = instance;
+
+    const unsubscribe = transport.onData((chunk) => {
+      /**
+       * Measured *before* the write: afterwards `baseY` has already advanced to
+       * include the new lines, so every append would look like "the user is at
+       * the bottom" and reading scrollback would be impossible.
+       */
+      const stick = shouldAutoScroll(
+        terminal.buffer.active.viewportY,
+        terminal.buffer.active.baseY,
+      );
+
+      // xterm parses asynchronously; scrolling from the write callback is what
+      // guarantees the new lines exist by the time the viewport moves.
+      terminal.write(chunk, () => {
+        if (stick) terminal.scrollToBottom();
+      });
+    });
+
+    const typing = readOnly
+      ? null
+      : terminal.onData((data) => transport.write(data));
+
+    return () => {
+      unsubscribe();
+      typing?.dispose();
+    };
+  }, [instance, transport, readOnly]);
+
+  /**
+   * The only place a fit is requested outside the resize observer.
+   *
+   * Covers both the first paint and every later reveal: a hidden surface has no
+   * geometry to measure, so a terminal fitted while hidden would render at the
+   * wrong size for the rest of its life.
+   */
+  useEffect(() => {
+    if (!instance || !visible) return;
+    instance.fitAddon.fit();
+  }, [instance, visible]);
+
+  return (
+    <div
+      className="h-full w-full overflow-hidden bg-term-bg px-[18px] py-4"
+      // Kept alive, not unmounted: hiding preserves scrollback and selection.
+      style={visible ? undefined : { display: 'none' }}
+      data-testid="terminal-surface"
+      data-terminal-id={id}
+    >
+      <div ref={setContainer} className="h-full w-full" />
+    </div>
+  );
 }

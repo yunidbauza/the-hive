@@ -4,8 +4,12 @@ import type { TermColor } from '@/types/terminal';
  * Terminal text palette and the ANSI colorizer.
  *
  * The palette is deliberately NOT in `@theme`: these values never reach CSS.
- * They are consumed as JS by xterm's `theme` option and by the colorizer below,
- * because xterm paints to a canvas that CSS custom properties cannot reach.
+ * xterm resolves colours from its own JS `theme` option and paints them into
+ * markup it owns, so a CSS custom property declared on `:root` has no path to
+ * a terminal cell. (Earlier revisions of this file said "paints to a canvas".
+ * That reason was wrong even though the conclusion holds: xterm 6 core ships
+ * the DOM renderer and this app installs no canvas or WebGL addon. The palette
+ * has to be JS either way.)
  *
  * One definition, three consumers: the transport, the xterm theme, and
  * `.claude/DESIGN-SYSTEM.md` (story 015, whose values are asserted against
@@ -45,10 +49,11 @@ export function colorize(text: string, color: TermColor): string {
 }
 
 /**
- * The xterm `theme` object.
+ * The xterm `theme` object — the dark, default form.
  *
- * Not theme-dependent: the terminal keeps its dark background in light mode,
- * like the concept and most real tools.
+ * The terminal keeps its dark background in light mode, like the concept and
+ * most real tools, so this is what both app themes are built from. Only the
+ * chrome that has to survive a bright surround varies; see `buildXtermTheme`.
  */
 export const XTERM_THEME = {
   background: TERM.bg,
@@ -72,3 +77,36 @@ export const XTERM_THEME = {
   brightCyan: TERM.cyan,
   brightWhite: TERM.ink,
 } as const;
+
+/** App theme. Mirrors `Theme` in `stores/ui-store.ts`, without importing it. */
+export type TerminalTheme = 'dark' | 'light';
+
+/**
+ * Selection and cursor, brightened for light mode.
+ *
+ * Story 011 fixed the terminal as permanently dark, and story 042 narrowed the
+ * theme-toggle requirement to match: "only selection/cursor tint may vary".
+ * This is that variation, and it is not decoration. Against a bright page the
+ * eye arrives at the terminal already adapted to a light surround, and the dark
+ * selection wash (`#222c55`) reads as almost no highlight at all — the one
+ * piece of terminal chrome the user manipulates directly becomes the hardest to
+ * see. Lifting selection and cursor keeps them legible without touching the
+ * background or a single text colour.
+ */
+const LIGHT_CHROME = {
+  selectionBackground: '#33407a',
+  cursor: TERM.green,
+} as const;
+
+/**
+ * The xterm theme for an app theme.
+ *
+ * Returned fresh each call rather than memoised: xterm copies the object into
+ * its own colour manager on assignment, so sharing an instance buys nothing and
+ * an accidentally mutated singleton would corrupt every live terminal at once.
+ */
+export function buildXtermTheme(theme: TerminalTheme) {
+  return theme === 'light'
+    ? { ...XTERM_THEME, ...LIGHT_CHROME }
+    : { ...XTERM_THEME };
+}

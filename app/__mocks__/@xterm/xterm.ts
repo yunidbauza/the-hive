@@ -3,11 +3,11 @@ import { vi } from 'vitest';
 /**
  * Recording fake for xterm's `Terminal`.
  *
- * xterm needs a real canvas and a DOM measurement path that happy-dom does not
- * provide, so unit tests never touch a real instance. The contract (story 013):
- * anything that genuinely requires a rendered terminal — colours on screen,
- * selection, scrollback behaviour — is asserted in Playwright (story 070), not
- * here. Do not chase canvas assertions in unit tests.
+ * xterm needs a DOM measurement path that happy-dom does not provide — it
+ * performs no layout, so a cell can never be measured — and unit tests
+ * therefore never touch a real instance. The contract (story 013): anything
+ * that genuinely requires a rendered terminal — colours on screen, selection,
+ * scrollback behaviour — is asserted in Playwright (story 070), not here.
  *
  * Lives in `__mocks__/` adjacent to `node_modules`, so Vitest substitutes it
  * for the real package automatically.
@@ -48,8 +48,15 @@ export class MockTerminal {
     this.opened = element;
   }
 
-  write(data: string) {
+  /**
+   * The callback is invoked synchronously. Real xterm parses asynchronously and
+   * fires it afterwards, but the ordering guarantee that production code relies
+   * on — "the data is in the buffer by the time this runs" — is preserved, and
+   * a synchronous fake keeps tests free of timer plumbing.
+   */
+  write(data: string, done?: () => void) {
     this.written.push(data);
+    done?.();
   }
 
   writeln(data: string) {

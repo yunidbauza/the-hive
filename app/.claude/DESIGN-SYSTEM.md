@@ -84,9 +84,13 @@ token.
 ## Terminal text palette
 
 Exported from `src/lib/terminal/ansi.ts`. Deliberately **not** in `@theme` — it
-never reaches CSS. xterm paints to a canvas that CSS custom properties cannot
-reach, so this palette is consumed as JS by xterm's `theme` option and by the ANSI
-colorizer.
+never reaches CSS. xterm resolves colours from its own `theme` option and paints
+them into markup it owns, so a CSS custom property has no path to a terminal cell;
+this palette is consumed as JS by xterm and by the ANSI colorizer.
+
+In light mode the terminal stays dark (story 011). `buildXtermTheme(theme)` varies
+only `selectionBackground` (`#33407a`) and `cursor` (`TERM.green`), because the
+dark selection wash is nearly invisible against a bright surround.
 
 | Key | Value | Used for |
 | --- | --- | --- |

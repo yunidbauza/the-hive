@@ -110,9 +110,13 @@ local PTY daemon **with no changes to the component tree**. That is the whole
 reason the seam exists: when real terminals arrive, the work touches
 `src/lib/terminal/` and nothing else.
 
-Corollary: xterm paints to a canvas that CSS custom properties cannot reach. Its
-colours come from JS — `TERM` and `XTERM_THEME` in `src/lib/terminal/ansi.ts` are
-the single definition. Never hand-write a hex into a terminal component.
+Corollary: xterm resolves colours from its own JS `theme` option and paints them
+into markup it owns, so a `--cc-*` custom property has no path to a terminal cell.
+Terminal colour comes from JS — `TERM` and `XTERM_THEME` in
+`src/lib/terminal/ansi.ts` are the single definition. Never hand-write a hex into a
+terminal component. (Older revisions said "xterm paints to a canvas". It does not:
+xterm 6 core ships the DOM renderer and no canvas/WebGL addon is installed. The
+conclusion stands regardless — see `docs/terminal-architecture.md`.)
 
 ## State management
 
@@ -159,7 +163,8 @@ import them; read derived state through a hook.
 - Stores are plain functions and are the highest-value target: every action gets a
   test against a fresh store. See `tests/stores/hive-store.test.ts` for the pattern.
 - Timer-based behaviour uses **fake timers**, never real waits.
-- **xterm is never instantiated for real in unit tests** — happy-dom has no canvas.
+- **xterm is never instantiated for real in unit tests** — happy-dom performs no
+  layout, so xterm can never measure a cell.
   `__mocks__/@xterm/` holds recording fakes; assert plumbing only. Colours,
   selection, and scrollback belong in Playwright.
 - Do not add a coverage-ignore comment to get past the gate. An untestable branch

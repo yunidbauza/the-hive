@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SGR_RESET,
+  buildXtermTheme,
   TERM,
   XTERM_THEME,
   colorize,
@@ -106,5 +107,33 @@ describe('XTERM_THEME', () => {
     // The concept and most real tools keep the terminal dark in light mode, so
     // this object is intentionally theme-independent.
     expect(XTERM_THEME.background).toBe('#0b1023');
+  });
+});
+
+describe('buildXtermTheme', () => {
+  it('returns the palette unchanged for the dark app theme', () => {
+    expect(buildXtermTheme('dark')).toEqual({ ...XTERM_THEME });
+  });
+
+  it('keeps the terminal dark in light mode', () => {
+    // Story 011's decision, restated as a test so a future "make it follow the
+    // app theme" change has to argue with something.
+    expect(buildXtermTheme('light').background).toBe(TERM.bg);
+    expect(buildXtermTheme('light').foreground).toBe(TERM.ink);
+  });
+
+  it('lifts only selection and cursor for light mode', () => {
+    const light = buildXtermTheme('light');
+
+    // Against a bright page the dark selection wash reads as no highlight at
+    // all — the one piece of terminal chrome the user drives directly.
+    expect(light.selectionBackground).not.toBe(XTERM_THEME.selectionBackground);
+    expect(light.cursor).toBe(TERM.green);
+  });
+
+  it('hands out a fresh object each call', () => {
+    // xterm copies the theme into its own colour manager; a shared singleton
+    // that someone mutated would corrupt every live terminal at once.
+    expect(buildXtermTheme('dark')).not.toBe(buildXtermTheme('dark'));
   });
 });

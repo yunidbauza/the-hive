@@ -43,21 +43,52 @@ to be. Two adaptations are in place and should be preserved on regeneration:
 `src/components/terminal/terminal-surface.tsx`
 
 ```ts
-function TerminalSurface(): JSX.Element
+function TerminalSurface(props: {
+  transport: TerminalTransport;
+  theme: 'dark' | 'light';
+  id?: string;        // opaque; surfaced as data-terminal-id for e2e
+  fontSize?: number;  // default 12.5
+  readOnly?: boolean; // true everywhere in the prototype
+  visible?: boolean;  // hidden instances stay alive
+}): JSX.Element
 ```
 
-Mounts an xterm instance, loads the fit addon, refits on container resize, and
-disposes on unmount. Takes no props today.
+One live terminal, fed by a transport and nothing else. It has no idea what a
+session is and cannot reach the store — `pnpm lint` fails if it tries.
 
-Its container is held in **state behind a callback ref**, not a `useRef`. A ref's
-`.current` is already populated when the mount effect runs, which makes a
-null-check on it dead code — an untestable branch that erodes the coverage gate.
-The callback ref makes the null case a genuine state React passes through.
+Container and xterm instance are both held in **state behind callback refs**,
+not `useRef`. Two reasons: a ref's `.current` is already populated when the
+mount effect runs, making its null-check dead code that erodes the coverage
+gate; and holding the *instance* in state is what lets the theme and
+subscription effects re-run when a new terminal is constructed, rather than
+writing into a disposed one.
 
-**Story 042 replaces this** with the real surface: it will take a
-`TerminalTransport` and nothing else, and keep instances alive across tab
-switches. The invariant that starts here is the one that matters most in this
-codebase — see [`../docs/terminal-architecture.md`](../docs/terminal-architecture.md).
+`theme` and `transport` are handled by their own effects, so a theme toggle or a
+transport swap never destroys scrollback. `fontSize` and `readOnly` are
+structural — xterm cannot change `disableStdin` after construction — so they do
+rebuild.
+
+### `<TerminalHost />`
+
+`src/components/terminal/terminal-host.tsx`
+
+```ts
+function TerminalHost(props: {
+  entries: { id: string; transport: TerminalTransport; readOnly?: boolean }[];
+  activeId: string | null;
+  theme: 'dark' | 'light';
+  fontSize?: number;
+}): JSX.Element
+```
+
+The kept-alive registry: **one xterm instance per entity, shown and hidden with
+CSS**, never one shared instance re-fed on tab switch. Re-feeding would lose
+scroll position and selection on every switch. Instances mount lazily on first
+visit; ids are opaque here, and the composition root
+(`layout/center-stage.tsx`) is what reads the stores and builds the transports.
+
+Full rationale — the seam, colour, fitting, and the bottom-stick rule — is in
+[`../docs/terminal-architecture.md`](../docs/terminal-architecture.md).
 
 ## Hive atoms
 
@@ -289,7 +320,8 @@ Still bare panels, owned by the story that fills each in.
 | `CenterStage` | `layout/center-stage.tsx` | 040 — view-state machine, session meta bar |
 | `ActivityRail` | `layout/activity-rail.tsx` | 050 — tab bar, inbox/PRs/feed panels |
 
-`CenterStage` mounts `<TerminalSurface />` on purpose, so the shell's `min-w-0`
-shrink contract is proven against a real xterm instance rather than an empty box.
+`CenterStage` mounts `<TerminalHost />` and builds one `StaticTransport` per
+entity, cached for the life of the app — transport identity matters, because a
+surface resubscribes whenever its transport changes.
 
 Still unbuilt: `session-meta-bar` (040), `KeyHint` (041).
