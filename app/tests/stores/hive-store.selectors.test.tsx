@@ -7,6 +7,7 @@ import {
   useEntity,
   useHiveStore,
   useNavOrder,
+  useProjects,
   useProjectSessions,
   useTicketCount,
   useTicketPrs,
@@ -186,6 +187,26 @@ describe('hive-store selectors', () => {
       });
 
       expect(result.current).toBeNull();
+    });
+  });
+
+  describe('useProjects', () => {
+    it('returns the five fixture projects in fixture order', () => {
+      const { result } = renderHook(() => useProjects());
+
+      expect(result.current.map((project) => project.id)).toEqual([
+        'apfm-web',
+        'referral-api',
+        'advisor-portal',
+        'design-system',
+        'infra-terraform',
+      ]);
+    });
+
+    it('carries each project’s icon name', () => {
+      const { result } = renderHook(() => useProjects());
+
+      expect(result.current[0].icon).toBe('ph-globe-hemisphere-west');
     });
   });
 

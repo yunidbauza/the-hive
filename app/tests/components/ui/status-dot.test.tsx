@@ -1,7 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { STATUS_LABEL, StatusDot } from '@components/ui/status-dot';
+import {
+  STATUS_LABEL,
+  STATUS_TEXT,
+  StatusDot,
+} from '@components/ui/status-dot';
 
 describe('StatusDot', () => {
   it.each([
@@ -77,6 +81,28 @@ describe('StatusDot', () => {
     );
 
     expect(container.firstChild).toHaveClass('mt-0.5');
+  });
+
+  /**
+   * A dot and its label drifting to different colours is the exact bug this
+   * module exists to prevent, so the two maps are asserted against each other
+   * rather than each against a hardcoded list.
+   */
+  it('keeps the text colour matched to the dot colour', () => {
+    for (const status of [
+      'working',
+      'waiting',
+      'idle',
+      'done',
+      'online',
+    ] as const) {
+      const { container } = render(<StatusDot status={status} />);
+      const fill = [...container.firstElementChild!.classList].find((c) =>
+        c.startsWith('bg-'),
+      );
+
+      expect(STATUS_TEXT[status]).toBe(fill?.replace('bg-', 'text-'));
+    }
   });
 
   it('owns the waiting → "needs input" rename', () => {
