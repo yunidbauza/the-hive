@@ -347,4 +347,19 @@ The back pill uses a native `title` rather than the Radix tooltip: the app mount
 no `TooltipProvider`, and adding one to the root for a single affordance buys
 nothing a title does not. The label names the shortcut story 060 will bind.
 
-Still unbuilt: `KeyHint` (041).
+### Feature components (epic HIVE-4)
+
+| Component | File | Story |
+| --- | --- | --- |
+| `SessionTable` | `features/orchestrator/components/session-table.tsx` | 041 |
+| `ConsoleInput` | `features/orchestrator/components/console-input.tsx` | 041 |
+| `MessageInput` | `features/sessions/components/message-input.tsx` | 043 |
+| `NewSessionPicker` | `features/sessions/components/new-session-picker.tsx` | 044 |
+| `OptionStepper` | `features/sessions/components/option-stepper.tsx` | 044 |
+
+`OptionStepper` is bespoke rather than a shadcn primitive — nothing else uses it
+— but exposes `radiogroup`/`radio` roles, because that is what the four options
+*are*. `NewSessionPicker` composes `radix-ui`'s Dialog directly rather than the
+vendored `DialogContent`, which always portals to `document.body`; the picker
+fills the center stage instead. Radix's focus trap, Escape, scroll lock, and
+`aria-modal` are all retained.

@@ -35,17 +35,18 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-term-row-hover` | `#161f45` | *(unchanged)* | session-table row hover |
 | `--cc-term-row-active` | `#1a2450` | *(unchanged)* | session-table selected row |
 | `--cc-term-head` | `#4d5a86` | *(unchanged)* | session-table column headers |
+| `--cc-term-track` | `#3a4674` | *(unchanged)* | picker stepper track and dots |
 | `--cc-brand-fill` | `#5e76d0` | *(unchanged)* | primary button |
 | `--cc-brand-fill-hover` | `#4f6ac5` | *(unchanged)* | primary button hover |
 | `--cc-brand-fill-strong` | `#334fa9` | *(unchanged)* | hive-mark tile (Serenity) |
 | `--cc-on-brand` | `#ffffff` | *(unchanged)* | text/icons on a brand fill |
 | `--cc-danger-solid` | `#d3372f` | *(unchanged)* | notification badge fill |
 
-**The terminal stays dark in light mode.** The five `--cc-term-*` tokens are
+**The terminal stays dark in light mode.** The six `--cc-term-*` tokens are
 deliberately not overridden — this matches the concept and most real terminal
-tools. The three row/header tokens exist because the orchestrator's session table
-(041) is **DOM, not xterm**, so it needs real CSS for surfaces the TERM palette
-does not cover.
+tools. The row, header, and track tokens exist because the orchestrator's session table
+(041) and the new-session picker (044) are **DOM, not xterm**, so they need real
+CSS for surfaces the TERM palette does not cover.
 
 Note what they are *not*: terminal **text** colours. Those live only in
 `src/lib/terminal/ansi.ts` and never appear in this file or in `tokens.css` — a
