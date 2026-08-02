@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { InboxPanel } from '@features/inbox/components/inbox-panel';
 import { useHiveStore } from '@stores/hive-store';
@@ -70,6 +70,37 @@ describe('InboxPanel', () => {
     });
 
     expect(screen.getAllByRole('button')).toHaveLength(8);
+  });
+
+  /**
+   * The simulation stamps everything it pushes as `now`, so two notifications
+   * with the same title in one run are entirely possible — and a content-only
+   * key would make React drop one of them and warn.
+   */
+  it('renders two identical notifications without a key collision', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const twin = {
+      icon: 'ph-git-pull-request',
+      tone: 'amber' as const,
+      title: 'PR #482 has new findings',
+      sub: 'pr-reviewer · apfm-web',
+      time: 'now',
+      unread: true,
+      target: 'hero-refresh',
+    };
+
+    render(<InboxPanel />);
+
+    await act(async () => {
+      useHiveStore.getState().pushNotif(twin);
+      useHiveStore.getState().pushNotif({ ...twin });
+    });
+
+    expect(
+      screen.getAllByText('PR #482 has new findings'),
+    ).toHaveLength(2);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('jumps to the session a card names', async () => {

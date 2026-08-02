@@ -7,6 +7,10 @@ import { ActivityRail } from '@components/layout/activity-rail';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
+/** Panels are identified by `data-panel`, as in the left rail's tests. */
+const panel = (container: HTMLElement, name: string) =>
+  container.querySelector(`[data-panel="${name}"]`);
+
 beforeEach(() => {
   useHiveStore.getState().reset();
   useUiStore.getState().reset();
@@ -14,32 +18,32 @@ beforeEach(() => {
 
 describe('ActivityRail', () => {
   it('opens on the inbox', () => {
-    render(<ActivityRail />);
+    const { container } = render(<ActivityRail />);
 
-    expect(screen.getByTestId('inbox-panel')).toBeInTheDocument();
+    expect(panel(container, 'inbox')).toBeInTheDocument();
   });
 
   it('swaps the panel when a tab is selected', async () => {
     const user = userEvent.setup();
-    render(<ActivityRail />);
+    const { container } = render(<ActivityRail />);
 
     await user.click(screen.getByRole('tab', { name: /PRs/ }));
-    expect(screen.getByTestId('prs-panel')).toBeInTheDocument();
-    expect(screen.queryByTestId('inbox-panel')).not.toBeInTheDocument();
+    expect(panel(container, 'prs')).toBeInTheDocument();
+    expect(panel(container, 'inbox')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: /Activity/ }));
-    expect(screen.getByTestId('activity-panel')).toBeInTheDocument();
-    expect(screen.queryByTestId('prs-panel')).not.toBeInTheDocument();
+    expect(panel(container, 'activity')).toBeInTheDocument();
+    expect(panel(container, 'prs')).not.toBeInTheDocument();
   });
 
   it('follows railTab from the store', async () => {
-    render(<ActivityRail />);
+    const { container } = render(<ActivityRail />);
 
     await act(async () => {
       useUiStore.getState().setRailTab('prs');
     });
 
-    expect(screen.getByTestId('prs-panel')).toBeInTheDocument();
+    expect(panel(container, 'prs')).toBeInTheDocument();
   });
 
   it('labels the panel with its tab, for screen readers', () => {
