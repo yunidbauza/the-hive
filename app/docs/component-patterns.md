@@ -203,8 +203,43 @@ Clicking the terminal focuses the message row — but only when
 so an unconditional focus-on-click would delete the highlight the user's drag had
 only just made.
 
+## The new-session picker (044)
+
+Keyboard-first: New session → type a query → Enter → a live terminal, hands
+never leaving the keyboard. Pinned pills for the first four projects, two
+bespoke steppers for model and effort, and a search box over all projects.
+
+### Why the Radix primitive rather than `components/ui/dialog`
+
+The vendored `DialogContent` always portals to `document.body` and centres a
+fixed-position card. This picker **fills the center stage** — rails and header
+stay visible, as the concept shows — so it composes `Dialog.Root` and
+`Dialog.Content` from `radix-ui` directly and renders in place.
+
+What the story actually asks for is Radix's *behaviour*, and all of it is kept:
+focus trapping, Escape, scroll locking, and `aria-modal` semantics that a
+hand-rolled overlay reliably gets wrong. `onOpenAutoFocus` is intercepted so
+focus lands on the search box rather than the container.
+
+### The steppers
+
+`OptionStepper` is bespoke and lives in this slice because nothing else uses it.
+Its *semantics* are a radio group, though, so that is the role it exposes — a row
+of unrelated buttons would tell a screen-reader user nothing about the fact that
+four options are one choice. The track and fill are `aria-hidden`; the dots carry
+the meaning.
+
+Model and effort live in `ui-store`, not component state, so a deliberate choice
+survives closing and reopening the picker.
+
+### Spawn logging belongs to the store
+
+`spawnSession` writes its own console line (`spawned {id} on {repo}`). The
+`spawn` command used to write one too; that duplicate is gone. Logging at the
+action rather than at each call site is what keeps the transcript complete when a
+third caller — the picker today, a daemon event later — arrives.
+
 ## What later stories add here
 
-The real new-session picker (044) — `CenterStage` currently renders a
-deliberately minimal placeholder so that state stays exitable. Then the activity
-rail and its three panels (050–053).
+The activity rail and its three panels (050–053), keyboard navigation (060), and
+simulation mode (061).

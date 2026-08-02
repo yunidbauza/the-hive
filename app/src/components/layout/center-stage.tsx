@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 
 import { isEntityView, resolveView } from '@/lib/resolve-view';
 import { cn } from '@/lib/utils';
@@ -8,18 +8,14 @@ import { TerminalHost } from '@components/terminal/terminal-host';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
+import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
 import {
   ORCHESTRATOR_ID,
   createStaticTransport,
 } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import { useActiveEntity, useAgentOrder, useNavOrder } from '@stores/hive-store';
-import {
-  useActiveTab,
-  usePickerActions,
-  usePickerState,
-  useTheme,
-} from '@stores/ui-store';
+import { useActiveTab, usePickerState, useTheme } from '@stores/ui-store';
 
 /**
  * Center stage — one focused thing at a time (story 040).
@@ -93,7 +89,7 @@ export function CenterStage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-panel-2">
-      {showingPicker ? <PickerStage /> : null}
+      {showingPicker ? <NewSessionPicker /> : null}
 
       {/*
         Hidden, never unmounted. Tearing the terminal region down for the
@@ -150,56 +146,5 @@ export function CenterStage() {
         ) : null}
       </div>
     </main>
-  );
-}
-
-/**
- * Placeholder for the new-session picker.
- *
- * **Story 044 replaces this** with the real overlay — pinned projects, model
- * and effort steppers, search — built on shadcn's Dialog for focus trapping and
- * scroll locking.
- *
- * It exists now rather than as an empty branch because the header's "New
- * session" button already sets `picker: true` (story 021). Without something
- * here that state renders nothing and the user is stranded on a blank stage
- * with no way back — so the title block and both exits (the button and Escape)
- * are the minimum this state can honestly ship with.
- */
-function PickerStage() {
-  const { closePicker } = usePickerActions();
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closePicker();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [closePicker]);
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-7 bg-term-bg px-6 py-10">
-      <div className="flex flex-col gap-1.5 text-center">
-        {/*
-          The concept sets this in a display serif. No such token exists yet
-          (`tokens.css` defines only `--font-mono`), and introducing one belongs
-          to story 044, which specifies the picker's typography in full.
-        */}
-        <span className="text-[22px] tracking-[-0.02em] text-ink">
-          Start a new session
-        </span>
-        <span className="text-[13px] text-subtle">
-          Pick a project — a Claude Code terminal will open for it
-        </span>
-      </div>
-
-      <button
-        type="button"
-        onClick={closePicker}
-        className="font-mono text-xs text-subtle hover:text-ink"
-      >
-        esc · cancel
-      </button>
-    </div>
   );
 }

@@ -50,6 +50,8 @@
   --cc-term-row-hover: #161f45;
   --cc-term-row-active: #1a2450;
   --cc-term-head: #4d5a86;
+  /* Unselected track and dot outline in the picker's steppers (story 044). */
+  --cc-term-track: #3a4674;
 
   /**
    * Brand fills — deliberately theme-invariant, and not overridden below.
@@ -117,6 +119,7 @@ body[data-theme='light'] {
   --color-term-row-hover: var(--cc-term-row-hover);
   --color-term-row-active: var(--cc-term-row-active);
   --color-term-head: var(--cc-term-head);
+  --color-term-track: var(--cc-term-track);
   --color-brand-fill: var(--cc-brand-fill);
   --color-brand-fill-hover: var(--cc-brand-fill-hover);
   --color-brand-fill-strong: var(--cc-brand-fill-strong);
@@ -124,6 +127,13 @@ body[data-theme='light'] {
   --color-danger-solid: var(--cc-danger-solid);
 
   --font-mono: ui-monospace, Menlo, 'SF Mono', monospace;
+  /**
+   * The one non-mono face in the app: the picker's title (story 044) and
+   * anything else the concept sets in a serif. System stack rather than a
+   * webfont — this is a prototype, and a network round-trip for one heading is
+   * a poor trade.
+   */
+  --font-display: ui-serif, Georgia, 'Times New Roman', serif;
   --animate-ccpulse: ccpulse 1.6s ease-in-out infinite;
   --animate-ccblink: ccblink 1s step-end infinite;
 }

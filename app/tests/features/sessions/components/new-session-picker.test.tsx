@@ -1,0 +1,253 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
+import { useHiveStore } from '@stores/hive-store';
+import { useUiStore } from '@stores/ui-store';
+
+const search = () => screen.getByRole('textbox', { name: 'Search all projects' });
+const rowsFor = (name: RegExp) => screen.getAllByRole('button', { name });
+
+/**
+ * The new-session picker (story 044). Keyboard-first: New session → type →
+ * Enter → a live terminal, hands never leaving the keyboard.
+ */
+describe('NewSessionPicker', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    useUiStore.getState().reset();
+    useUiStore.getState().openPicker();
+  });
+
+  it('names itself and explains what picking does', () => {
+    render(<NewSessionPicker />);
+
+    expect(screen.getByText('Start a new session')).toBeInTheDocument();
+    expect(
+      screen.getByText('Pick a project — a Claude Code terminal will open for it'),
+    ).toBeInTheDocument();
+  });
+
+  it('focuses the search box on open', () => {
+    render(<NewSessionPicker />);
+
+    // The whole point of the picker is that it is keyboard-first.
+    expect(search()).toHaveFocus();
+  });
+
+  it('pins the first four projects', () => {
+    render(<NewSessionPicker />);
+
+    /**
+     * A pill's accessible name is the bare project id; a search row's also
+     * carries its count ("apfm-web 3 active"). Five fixtures, four pinned —
+     * `infra-terraform` is reachable through search only.
+     */
+    for (const id of ['apfm-web', 'referral-api', 'advisor-portal', 'design-system']) {
+      expect(screen.getByRole('button', { name: id })).toBeInTheDocument();
+    }
+    expect(
+      screen.queryByRole('button', { name: 'infra-terraform' }),
+    ).not.toBeInTheDocument();
+  });
+
+  describe('search', () => {
+    it('filters case-insensitively on the project id', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'REFERRAL');
+
+      // The pinned pills are unfiltered, so scope to the result rows — they are
+      // the ones whose name carries a count.
+      expect(rowsFor(/^referral-api \d+ active$/)).toHaveLength(1);
+      expect(
+        screen.queryByRole('button', { name: /^design-system \d+ active$/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('matches a substring, not just a prefix', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'terra');
+
+      expect(
+        screen.getByRole('button', { name: /infra-terraform/ }),
+      ).toBeInTheDocument();
+    });
+
+    it('says so when nothing matches', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'nonsense');
+
+      expect(screen.getByText('no projects match "nonsense"')).toBeInTheDocument();
+    });
+
+    it('shows each project’s active session count', () => {
+      render(<NewSessionPicker />);
+
+      // apfm-web: hero-refresh, lead-form, e2e-quote. `tz-fix` is done and does
+      // not count, which is what makes this a live number rather than a total.
+      expect(
+        screen.getByRole('button', { name: 'apfm-web 3 active' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'advisor-portal 1 active' }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('spawning', () => {
+    it('spawns on Enter, using the first match', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+      const before = useHiveStore.getState().order.length;
+
+      await user.type(search(), 'referral{Enter}');
+
+      const state = useHiveStore.getState();
+      expect(state.order).toHaveLength(before + 1);
+      // The counter makes the id exact rather than a regex match.
+      expect(state.entities['sess-01']).toMatchObject({
+        project: 'referral-api',
+        status: 'idle',
+        task: '',
+        cost: '$0.02',
+      });
+    });
+
+    it('is a no-op on Enter with zero matches', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+      const before = useHiveStore.getState().order.length;
+
+      await user.type(search(), 'nonsense{Enter}');
+
+      expect(useHiveStore.getState().order).toHaveLength(before);
+      expect(useUiStore.getState().picker).toBe(true);
+    });
+
+    it('spawns from a pinned pill', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('button', { name: 'design-system' }));
+
+      expect(useHiveStore.getState().entities['sess-01']).toMatchObject({
+        project: 'design-system',
+      });
+    });
+
+    it('opens the new session and dismisses the picker', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'referral{Enter}');
+
+      expect(useUiStore.getState()).toMatchObject({
+        activeTab: 'sess-01',
+        picker: false,
+      });
+    });
+
+    it('seeds a transcript that invites the first instruction', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'referral{Enter}');
+
+      const lines = useHiveStore
+        .getState()
+        .entities['sess-01'].lines.map((line) => line.text);
+      expect(lines[0]).toBe(
+        '❯ claude --model opus --effort high — new session on referral-api',
+      );
+      expect(lines).toContain('● Reading CLAUDE.md, mapping repo…');
+      expect(lines).toContain(
+        '· Ready — type below to give this session its task',
+      );
+    });
+
+    it('records the spawn in the feed and the console', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'referral{Enter}');
+
+      expect(useHiveStore.getState().feed[0]).toMatchObject({
+        txt: 'Spawned sess-01 on referral-api',
+      });
+      expect(
+        useHiveStore.getState().orchLines.map((line) => line.text),
+      ).toContain('  spawned sess-01 on referral-api');
+    });
+  });
+
+  describe('model and effort', () => {
+    it('defaults to opus and high', () => {
+      render(<NewSessionPicker />);
+
+      expect(screen.getByRole('radio', { name: 'opus' })).toBeChecked();
+      expect(screen.getByRole('radio', { name: 'high' })).toBeChecked();
+    });
+
+    it('records a different choice on the spawned session', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('radio', { name: 'haiku' }));
+      await user.click(screen.getByRole('radio', { name: 'max' }));
+      await user.type(search(), 'referral{Enter}');
+
+      expect(useHiveStore.getState().entities['sess-01']).toMatchObject({
+        model: 'haiku',
+        effort: 'max',
+      });
+    });
+
+    it('persists the choice across open and close', async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('radio', { name: 'sonnet' }));
+      unmount();
+      useUiStore.getState().closePicker();
+      useUiStore.getState().openPicker();
+      render(<NewSessionPicker />);
+
+      // Held in the store, not in component state — reopening must not silently
+      // reset a deliberate choice.
+      expect(screen.getByRole('radio', { name: 'sonnet' })).toBeChecked();
+    });
+  });
+
+  describe('dismissal', () => {
+    it('closes on the cancel button', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('button', { name: 'esc · cancel' }));
+
+      expect(useUiStore.getState().picker).toBe(false);
+    });
+
+    it('closes on Escape and leaves the underlying tab alone', async () => {
+      const user = userEvent.setup();
+      useUiStore.getState().openTab('webhooks');
+      useUiStore.getState().openPicker();
+      render(<NewSessionPicker />);
+
+      await user.keyboard('{Escape}');
+
+      // Restores exactly the previous view rather than defaulting home.
+      expect(useUiStore.getState()).toMatchObject({
+        picker: false,
+        activeTab: 'webhooks',
+      });
+    });
+  });
+});

@@ -199,6 +199,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       icon: 'ph-plus-circle',
     });
 
+    /**
+     * The console records every spawn, whoever asked for it — the `spawn`
+     * command, the picker (044), or a future daemon event. Logging here rather
+     * than at each call site is what keeps the transcript complete.
+     */
+    set((state) => ({
+      orchLines: capLines([
+        ...state.orchLines,
+        line(`  spawned ${id} on ${repo}`, 'dim'),
+      ]),
+    }));
+
     useUiStore.getState().openTab(id);
 
     return id;
@@ -337,8 +349,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           );
           return;
         }
-        const id = get().spawnSession(command.repo, command.task);
-        pushOrch(`  spawned ${id} on ${command.repo}`, 'dim');
+        // No confirmation line here: `spawnSession` writes it, so both this
+        // command and the picker log exactly once.
+        get().spawnSession(command.repo, command.task);
         return;
       }
 
@@ -476,6 +489,9 @@ export const useDoneSessions = () =>
 /** The long-lived background agents, in fixture order (story 033). */
 export const useAgentOrder = () =>
   useHiveStore(useShallow((state) => state.agentOrder));
+
+/** Create a session on a project (stories 041, 044). */
+export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
 
 /** Route a message to a session or agent (stories 041, 043). */
 export const useSendToEntity = () => useHiveStore((state) => state.sendToEntity);
