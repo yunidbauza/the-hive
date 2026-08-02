@@ -1,0 +1,32 @@
+/**
+ * Design tokens.
+ *
+ * Story 010 (scaffold) seeds only the handful of custom properties the blank
+ * shell needs to render dark. Story 011 (design tokens & theming) owns this
+ * file and lands the complete `--cc-*` set, the `body[data-theme="light"]`
+ * overrides, and the Tailwind v4 `@theme inline` mapping.
+ */
+
+@import 'tailwindcss';
+
+:root {
+  --cc-bg: #10152a;
+  --cc-panel: #141a33;
+  --cc-border: #273159;
+  --cc-ink: #e9effc;
+  --cc-muted: #98a3cc;
+  --cc-brand: #8fa7f2;
+  --cc-term-bg: #0b1023;
+}
+
+@theme inline {
+  --color-bg: var(--cc-bg);
+  --color-panel: var(--cc-panel);
+  --color-border: var(--cc-border);
+  --color-ink: var(--cc-ink);
+  --color-muted: var(--cc-muted);
+  --color-brand: var(--cc-brand);
+  --color-term-bg: var(--cc-term-bg);
+
+  --font-mono: ui-monospace, Menlo, 'SF Mono', monospace;
+}

@@ -1,0 +1,39 @@
+/**
+ * Global resets and app-wide base styles.
+ *
+ * Story 010 (scaffold) seeds the reset and the base body styling. Story 011
+ * (design tokens & theming) owns this file and lands the `ccpulse` / `ccblink`
+ * keyframes and the thin custom scrollbars.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--cc-bg);
+  color: var(--cc-ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Interactive controls always show a pointer cursor — Tailwind v4 dropped the
+   base rule that used to provide this. */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+summary,
+label[for] {
+  cursor: pointer;
+}
