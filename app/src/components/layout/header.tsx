@@ -20,9 +20,9 @@ import { usePickerActions, useTheme, useThemeActions } from '@stores/ui-store';
  * The layout is a `1fr minmax(0,auto) 1fr` grid rather than the flex row with a
  * spacer it replaces, because the chip has to sit at the header's *true*
  * midpoint. Flex spacers would centre the gap between two unequal clusters —
- * the brand is ~180px and the controls ~350px, so the chip would land visibly
- * right of centre. Equal `1fr` tracks put it at the real midpoint regardless of
- * what either side grows to.
+ * the brand measures 150px and the controls 517px, which lands the chip about
+ * 198px *left* of centre. Equal `1fr` tracks put it at the real midpoint
+ * regardless of what either side grows to.
  *
  * Equal tracks have a price worth stating, because it is what the measurements
  * say and not what the markup suggests. Both side tracks size to the *wider*

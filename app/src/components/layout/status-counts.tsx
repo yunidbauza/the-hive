@@ -22,15 +22,21 @@ import { useCounts } from '@stores/hive-store';
 export function StatusCounts() {
   const { working, waiting, idle, done } = useCounts();
 
+  // Built once and reused for both the spans and the tooltip: two copies of the
+  // same sentence drift the moment a separator changes on one of them.
+  const workingText = `${working} working`;
+  const waitingText = `${waiting} waiting`;
+  const restText = `${idle} idle · ${done} done`;
+
   return (
     <p
-      title={`${working} working · ${waiting} waiting · ${idle} idle · ${done} done`}
+      title={`${workingText} · ${waitingText} · ${restText}`}
       className="min-w-0 truncate font-mono text-xs text-muted"
     >
-      <span className="text-green">{working} working</span>
+      <span className="text-green">{workingText}</span>
       {' · '}
-      <span className="text-amber">{waiting} waiting</span>
-      {` · ${idle} idle · ${done} done`}
+      <span className="text-amber">{waitingText}</span>
+      {` · ${restText}`}
     </p>
   );
 }

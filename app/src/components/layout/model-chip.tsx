@@ -23,13 +23,13 @@ import { useActiveEntity } from '@stores/hive-store';
  * The chip sits in the header's centre track. It is the *last* zone to give up
  * width, not the first — the counts absorb the header's deficit first (see
  * `header.tsx`) — but it still has to be able to, so the text carries
- * `min-w-0 truncate`: `Chip` is
- * `whitespace-nowrap` by contract and expects callers that can overflow to
- * truncate. The text needs its own element to ellipsise — as a bare child of
- * the chip's flex row it would be an anonymous item next to the icon, and
- * `text-overflow` has nothing to act on. `min-w-0` is what actually permits the
- * shrink; `truncate` alone leaves a flex item at its content width. The full
- * string stays reachable in the `title` tooltip either way.
+ * `min-w-0 truncate`. `Chip` is `whitespace-nowrap` by contract and expects
+ * callers that can overflow to truncate. The text needs its own element to
+ * ellipsise: as a bare child of the chip's flex row it would be an anonymous
+ * item next to the icon, and `text-overflow` would have nothing to act on.
+ * `min-w-0` is what actually permits the shrink — `truncate` alone leaves a
+ * flex item at its content width. The full string stays reachable in the
+ * `title` tooltip either way.
  *
  * All four numbers are mock and derived — see `lib/session-metrics.ts`.
  */
