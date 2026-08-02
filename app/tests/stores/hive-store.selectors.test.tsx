@@ -6,10 +6,14 @@ import {
   useAgentOrder,
   useCounts,
   useEntity,
+  useFeed,
   useHiveStore,
+  useMarkRead,
   useNavOrder,
+  useNotifs,
   useProjects,
   useProjectSessions,
+  usePrs,
   useTicketCount,
   useTicketPrs,
   useTickets,
@@ -320,6 +324,42 @@ describe('hive-store selectors', () => {
       });
 
       expect(result.current).toBe(0);
+    });
+  });
+
+  describe('rail selectors', () => {
+    it('useNotifs returns the inbox in order', () => {
+      const { result } = renderHook(() => useNotifs());
+
+      expect(result.current).toHaveLength(5);
+      expect(result.current[0].title).toBe('lead-form needs approval');
+    });
+
+    it('usePrs returns the four fixture PRs', () => {
+      const { result } = renderHook(() => usePrs());
+
+      expect(result.current.map((pr) => pr.n)).toEqual([482, 219, 495, 77]);
+    });
+
+    it('useFeed returns the seeded feed newest-first', () => {
+      const { result } = renderHook(() => useFeed());
+
+      expect(result.current).toHaveLength(7);
+      expect(result.current[0].time).toBe('14:37');
+    });
+
+    it('useMarkRead marks exactly one notification read', () => {
+      const { result } = renderHook(() => ({
+        markRead: useMarkRead(),
+        notifs: useNotifs(),
+      }));
+
+      act(() => {
+        result.current.markRead(0);
+      });
+
+      expect(result.current.notifs[0].unread).toBe(false);
+      expect(result.current.notifs[1].unread).toBe(true);
     });
   });
 });

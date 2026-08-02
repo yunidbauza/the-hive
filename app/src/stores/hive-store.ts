@@ -8,10 +8,12 @@ import { USAGE } from '@/types/command';
 import type { Effort, Entity, Model, Session, SessionStatus } from '@/types/entity';
 import { isSession } from '@/types/entity';
 import type { FeedItem } from '@/types/feed';
+import type { Notification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
+import { reset as resetClock, stamp } from '@lib/fake-clock';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -71,6 +73,7 @@ interface HiveState {
   runOrchCommand: (command: ParsedCommand) => void;
   markAllRead: () => void;
   markRead: (index: number) => void;
+  pushNotif: (notif: Notification) => void;
   pushFeed: (item: FeedItem) => void;
   appendEntityLines: (
     id: string,
@@ -82,6 +85,12 @@ interface HiveState {
 
 /** Feed is capped so a long-running demo cannot grow without bound. */
 const FEED_CAP = 24;
+
+/**
+ * Inbox cap (story 051). Eight is what fits the rail without scrolling on a
+ * laptop, and an inbox that grows without bound stops being an inbox.
+ */
+const NOTIF_CAP = 8;
 
 /**
  * Console transcript cap (story 041). Oldest lines drop first.
@@ -193,7 +202,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }));
 
     get().pushFeed({
-      time: nowLabel(),
+      time: stamp(),
       txt: `Spawned ${id} on ${repo}`,
       tone: 'brand',
       icon: 'ph-plus-circle',
@@ -240,7 +249,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
     get().appendEntityLines(id, echo);
     get().pushFeed({
-      time: nowLabel(),
+      time: stamp(),
       txt:
         origin === 'orchestrator'
           ? `Routed your reply to ${id}`
@@ -381,6 +390,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ),
     })),
 
+  pushNotif: (notif) =>
+    set((state) => ({ notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) })),
+
   pushFeed: (item) =>
     set((state) => ({ feed: [item, ...state.feed].slice(0, FEED_CAP) })),
 
@@ -402,15 +414,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   reset: () => {
     spawnCounter = 0;
+    resetClock();
     set(createInitialState());
   },
 }));
-
-/** `HH:MM`, matching the concept's feed timestamps. */
-function nowLabel(): string {
-  const now = new Date();
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-}
 
 /**
  * Selector hooks — the incorpx rule.
@@ -606,6 +613,21 @@ export const useUnreadCount = () =>
 
 /** Clear the whole inbox — the header bell (021) and the inbox panel (051). */
 export const useMarkAllRead = () => useHiveStore((state) => state.markAllRead);
+
+/** The inbox, newest first (story 051). */
+export const useNotifs = () => useHiveStore((state) => state.notifs);
+
+/** Every open PR the fleet produced (story 052). */
+export const usePrs = () => useHiveStore((state) => state.prs);
+
+/** The orchestrator's activity feed, newest first (story 053). */
+export const useFeed = () => useHiveStore((state) => state.feed);
+
+/** Mark one notification read, by its index in `notifs` (story 051). */
+export const useMarkRead = () => useHiveStore((state) => state.markRead);
+
+/** Push a notification — the simulation's entry point (stories 051, 061). */
+export const usePushNotif = () => useHiveStore((state) => state.pushNotif);
 
 /** The entity behind `activeTab`, or null for the orchestrator. */
 export const useActiveEntity = () => {
