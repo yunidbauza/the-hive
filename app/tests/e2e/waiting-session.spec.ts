@@ -154,3 +154,70 @@ test('a task-less spawned session invites a first instruction', async ({
 
   await expect(stage(page).getByText('first task', { exact: true })).toBeVisible();
 });
+
+const activityRail = (page: Page) =>
+  page.getByRole('complementary', { name: 'Activity' });
+
+test('the inbox jumps to the session that is blocked', async ({ page }) => {
+  const rail = activityRail(page);
+
+  // The rail opens on the inbox, with the unread count on its tab.
+  await expect(rail.getByRole('tab', { name: /Inbox/ })).toBeVisible();
+
+  await rail.getByText('lead-form needs approval').click();
+
+  // The payoff: one click from "something needs you" to the amber prompt.
+  await expect(terminalFor(page, 'lead-form')).toBeVisible();
+  await expect(terminalFor(page, 'lead-form')).toContainText(
+    'Permission needed: yarn prisma migrate dev',
+  );
+});
+
+test('reading a notification decrements both badges', async ({ page }) => {
+  const rail = activityRail(page);
+  const inboxTab = rail.getByRole('tab', { name: /Inbox/ });
+
+  await expect(inboxTab).toContainText('3');
+
+  await rail.getByText('lead-form needs approval').click();
+
+  await expect(inboxTab).toContainText('2');
+  // The header bell reads the same count.
+  await expect(
+    page.getByRole('button', { name: /Mark 2 unread notifications as read/ }),
+  ).toBeVisible();
+});
+
+test('the PRs tab lists what is shippable with its badges', async ({ page }) => {
+  const rail = activityRail(page);
+  await rail.getByRole('tab', { name: /PRs/ }).click();
+
+  await expect(rail.getByText('2 open findings')).toBeVisible();
+  await expect(rail.getByText('approved')).toBeVisible();
+  await expect(rail.getByText('checks running')).toBeVisible();
+  await expect(rail.getByText('merged')).toBeVisible();
+
+  // A PR opens the session that owns it, not a browser tab.
+  await rail.getByText('Hero: semantic token refactor').click();
+  await expect(terminalFor(page, 'hero-refresh')).toBeVisible();
+});
+
+test('the activity tab logs a routed message', async ({ page }) => {
+  await openSession(page, 'lead-form');
+  await messageInput(page, 'lead-form').fill('y');
+  await messageInput(page, 'lead-form').press('Enter');
+
+  const rail = activityRail(page);
+  await rail.getByRole('tab', { name: /Activity/ }).click();
+
+  await expect(rail.getByText('Routed your message to lead-form')).toBeVisible();
+});
+
+/**
+ * Story 050's third criterion — rail hidden, terminal refits — has no E2E here
+ * because **no control toggles the rail yet**: `toggleActivityRail` exists in
+ * the ui-store and nothing in the UI calls it. The unmount half is asserted in
+ * `tests/components/layout/app-shell.test.tsx`, and the refit half is 042's
+ * ResizeObserver, covered in the terminal specs. When a story adds the toggle,
+ * the browser-level assertion belongs here.
+ */
