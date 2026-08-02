@@ -129,6 +129,63 @@ describe('StaticTransport', () => {
     expect(chunk).toContain('claude --resume feat/hero-refresh');
   });
 
+  it('keeps emitting once a capped transcript stops growing', () => {
+    /**
+     * The regression this file exists to prevent.
+     *
+     * The orchestrator console is capped (story 041): once full, every push
+     * drops the oldest line and appends a new one, so the array length never
+     * changes again. A transport that tracked progress by *count* would see no
+     * change, emit nothing, and freeze the console on screen while the store
+     * kept updating perfectly — silent, with no error to follow.
+     */
+    const transport = createStaticTransport(ORCHESTRATOR_ID);
+    const received = vi.fn();
+    transport.onData(received);
+
+    // Simulate a capped window: same length every time, oldest dropped.
+    const CAP = 4;
+    useHiveStore.setState({
+      orchLines: Array.from({ length: CAP }, (_, i) => ({
+        text: `seed ${i}`,
+        color: 'dim' as const,
+      })),
+    });
+    received.mockClear();
+
+    for (let i = 0; i < 3; i += 1) {
+      useHiveStore.setState((state) => ({
+        orchLines: [
+          ...state.orchLines.slice(1),
+          { text: `line ${i}`, color: 'dim' as const },
+        ],
+      }));
+    }
+
+    expect(received).toHaveBeenCalledTimes(3);
+    expect(received.mock.calls.map(([chunk]) => chunk as string)).toEqual([
+      `${colorize('line 0', 'dim')}\n`,
+      `${colorize('line 1', 'dim')}\n`,
+      `${colorize('line 2', 'dim')}\n`,
+    ]);
+  });
+
+  it('replays from scratch when the window slides past everything it saw', () => {
+    const transport = createStaticTransport(ORCHESTRATOR_ID);
+    const received = vi.fn();
+    transport.onData(received);
+    received.mockClear();
+
+    // Nothing the subscriber has seen survives, so a diff is meaningless.
+    useHiveStore.setState({
+      orchLines: [{ text: 'wholly new', color: 'green' }],
+    });
+
+    const chunk = received.mock.calls[0][0] as string;
+    expect(chunk.startsWith('\u001b[2J\u001b[H')).toBe(true);
+    expect(chunk).toContain('wholly new');
+  });
+
   it('is inert in the write and resize directions', () => {
     const transport = createStaticTransport('hero-refresh');
 

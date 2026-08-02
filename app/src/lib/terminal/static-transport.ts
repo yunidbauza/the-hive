@@ -55,37 +55,59 @@ export function createStaticTransport(entityId: string): TerminalTransport {
 
     onData(cb) {
       /**
+       * Progress is tracked by the identity of the last line emitted, not by a
+       * count.
+       *
+       * A counter is the obvious implementation and it is wrong for any
+       * transcript with a cap. The orchestrator console is capped (story 041):
+       * once it is full, every push drops the oldest line and appends a new
+       * one, so the array *length never changes again*. A length diff sees no
+       * change, emits nothing, and the console freezes on screen while the
+       * store keeps updating perfectly — a silent failure with no error to
+       * follow.
+       *
+       * Line objects are created fresh on every push and never reused, so
+       * `indexOf` is an exact "where did I get to" probe that survives the
+       * window sliding underneath it.
+       *
        * Per-subscription, not per-transport: two surfaces bound to the same
-       * entity must each receive the full replay, and a shared counter would
-       * let the first subscriber starve the second.
+       * entity must each receive the full replay, and shared progress would let
+       * the first subscriber starve the second.
        */
-      let emitted = 0;
+      let last: TermLine | undefined;
 
       const initial = selectLines(useHiveStore.getState(), entityId);
-      emitted = initial.length;
+      last = initial.at(-1);
       if (initial.length > 0) cb(render(initial));
 
       return useHiveStore.subscribe((state) => {
         const lines = selectLines(state, entityId);
+        if (lines.at(-1) === last) return;
 
-        if (lines.length > emitted) {
-          // The common case: `appendEntityLines` added output. Emit only what
-          // is new, so the terminal never re-renders scrollback it already has.
-          const fresh = lines.slice(emitted);
-          emitted = lines.length;
-          cb(render(fresh));
+        const seen = last === undefined ? -1 : lines.indexOf(last);
+
+        if (seen === -1) {
+          /**
+           * The last line emitted is gone from the transcript entirely. Either
+           * `reset()` replaced it, or so much arrived at once that the cap slid
+           * past everything this subscriber had seen. A diff is meaningless
+           * either way, so wipe and replay.
+           *
+           * Nothing to wipe if nothing was ever emitted — an entity that starts
+           * empty gets its first lines written plainly, not preceded by a
+           * pointless clear-screen.
+           */
+          const wipe = last === undefined ? '' : CLEAR;
+          last = lines.at(-1);
+          cb(wipe + render(lines));
           return;
         }
 
-        if (lines.length < emitted) {
-          /**
-           * The transcript shrank, which only `reset()` does. Emitting a diff
-           * is meaningless here, so wipe and replay — otherwise the surface
-           * keeps stale lines from the previous fixture set forever.
-           */
-          emitted = lines.length;
-          cb(CLEAR + render(lines));
-        }
+        // The common case: emit only what is new, so the terminal never
+        // re-renders scrollback it already has.
+        const fresh = lines.slice(seen + 1);
+        last = lines.at(-1);
+        cb(render(fresh));
       });
     },
   };
