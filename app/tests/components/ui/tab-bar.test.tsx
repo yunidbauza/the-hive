@@ -11,7 +11,7 @@ import { TabBar } from '@components/ui/tab-bar';
  */
 const TABS = [
   { id: 'alpha', label: 'Alpha' },
-  { id: 'beta', label: 'Beta', badgeCount: 4 },
+  { id: 'beta', label: 'Beta', badgeCount: 4, badgeLabel: 'widgets' },
   { id: 'gamma', label: 'Gamma', badgeCount: 0 },
 ];
 
@@ -21,11 +21,9 @@ describe('TabBar', () => {
       <TabBar tabs={TABS} active="alpha" onSelect={vi.fn()} label="Sections" />,
     );
 
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Alpha',
-      'Beta4',
-      'Gamma',
-    ]);
+    expect(
+      screen.getAllByRole('tab').map((tab) => tab.getAttribute('id')),
+    ).toEqual(['tab-alpha', 'tab-beta', 'tab-gamma']);
   });
 
   it('marks exactly the active tab as selected', () => {
@@ -68,6 +66,21 @@ describe('TabBar', () => {
     expect(screen.getByRole('tab', { name: 'Alpha' })).toHaveTextContent(
       /^Alpha$/,
     );
+  });
+
+  /**
+   * A tab's accessible name comes from its content, not from an `aria-label`,
+   * so an unlabelled badge would be `aria-hidden` and the count would reach
+   * nobody using a screen reader — the number is visible but unannounced.
+   */
+  it('folds the badge count into the tab’s accessible name', () => {
+    render(
+      <TabBar tabs={TABS} active="alpha" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(
+      screen.getByRole('tab', { name: 'Beta 4 widgets' }),
+    ).toBeInTheDocument();
   });
 
   it('names the tablist for screen readers', () => {

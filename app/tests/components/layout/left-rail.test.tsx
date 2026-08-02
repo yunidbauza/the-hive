@@ -29,11 +29,16 @@ describe('LeftRail', () => {
   it('renders the three tabs with the ticket count on Work', () => {
     render(<LeftRail />);
 
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Projects',
-      'Work8',
-      'Agents',
-    ]);
+    // The count is part of the tab's accessible name, not just visible text —
+    // a tab is named by its content, so an unannounced badge would be lost.
+    expect(
+      screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label')),
+    ).toEqual([null, null, null]);
+    expect(screen.getByRole('tab', { name: 'Projects' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('tab', { name: 'Work 8 work items' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Agents' })).toBeInTheDocument();
   });
 
   it('swaps the panel when a tab is clicked', async () => {

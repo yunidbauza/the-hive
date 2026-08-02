@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 
-import { TabBar, type Tab } from '@components/ui/tab-bar';
+import { TabBar, tabId, type Tab } from '@components/ui/tab-bar';
 import { AgentsPanel } from '@features/agents/components/agents-panel';
 import { ProjectsPanel } from '@features/projects/components/projects-panel';
 import { WorkPanel } from '@features/work/components/work-panel';
@@ -34,9 +34,14 @@ export function LeftRail() {
   const setLeftTab = useSetLeftTab();
   const ticketCount = useTicketCount();
 
-  const tabs: Tab[] = [
+  const tabs: Tab<LeftTab>[] = [
     { id: 'projects', label: 'Projects' },
-    { id: 'work', label: 'Work', badgeCount: ticketCount },
+    {
+      id: 'work',
+      label: 'Work',
+      badgeCount: ticketCount,
+      badgeLabel: 'work items',
+    },
     { id: 'agents', label: 'Agents' },
   ];
 
@@ -50,14 +55,14 @@ export function LeftRail() {
       <TabBar
         tabs={tabs}
         active={leftTab}
-        onSelect={(id) => setLeftTab(id as LeftTab)}
+        onSelect={setLeftTab}
         label="Rail sections"
         className="shrink-0"
       />
 
       <div
         role="tabpanel"
-        aria-labelledby={`tab-${leftTab}`}
+        aria-labelledby={tabId(leftTab)}
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <Panel />

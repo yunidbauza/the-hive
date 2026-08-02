@@ -66,7 +66,7 @@ contract for their owning story, not existing code.
 | --- | --- | --- | --- | --- |
 | `Chip` | `ui/chip.tsx` | 021 (also 040) | `children: ReactNode`, `tone?: Tone`, `title?: string`, `className?: string` | **built** |
 | `Badge` | `ui/badge.tsx` | **021** (also 030, 050, 052) | `count: number`, `tone?: 'danger' \| 'brand' \| 'muted'`, `label?: string`, `className?: string` | **built** |
-| `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | `tabs: { id: string; label: string; badgeCount?: number }[]`, `active: string`, `onSelect(id: string): void`, `label: string`, `className?: string` | **built** |
+| `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | generic over `Id extends string`: `tabs: { id: Id; label: string; badgeCount?: number; badgeLabel?: string }[]`, `active: Id`, `onSelect(id: Id): void`, `label: string`, `className?: string` | **built** |
 | `StatusDot` | `ui/status-dot.tsx` | **030** (used by 031, 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean`, `label?: string`, `className?: string` | **built** |
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
 
@@ -102,6 +102,15 @@ Contracts worth knowing before reusing them:
 - **`TabBar`'s badge reuses `Badge` at `Badge`'s geometry**, not the concept's
   15px/9.5px. One badge geometry with three tones beats a second near-identical
   atom; the 1px difference is deliberate.
+- **`TabBar` is generic over its id type.** Pass `Tab<LeftTab>[]` and `onSelect`
+  hands back a `LeftTab`, not a `string` — no `as` cast at the call site, and an
+  id outside the union stops compiling.
+- **Set `badgeLabel` whenever you set `badgeCount`.** This is the one place the
+  usual "omit the label" advice inverts: a tab is named by its *content*, not by
+  an `aria-label`, so an unlabelled badge is `aria-hidden` and its number reaches
+  nobody using a screen reader. With it, the tab announces `"Work 8 work items"`.
+- **Use the exported `tabId(id)` helper** for a panel's `aria-labelledby` rather
+  than re-spelling the `tab-${id}` convention; the atom owns that format.
 
 ## Layout
 

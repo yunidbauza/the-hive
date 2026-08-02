@@ -2,17 +2,30 @@ import { cn } from '@/lib/utils';
 
 import { Badge } from '@components/ui/badge';
 
-export interface Tab {
-  id: string;
+export interface Tab<Id extends string = string> {
+  id: Id;
   label: string;
   /** Rendered as a muted chip. Omitted or zero renders no badge at all. */
   badgeCount?: number;
+  /**
+   * What the count means, for screen readers — e.g. `'work items'`, announced
+   * as `"Work 8 work items"`.
+   *
+   * Unlike a badge inside an `aria-label`led control, this one **is** announced:
+   * a tab's accessible name comes from its content, so an unlabelled count would
+   * be dropped from the name entirely and the number would reach nobody using a
+   * screen reader. Pass it whenever `badgeCount` is set.
+   */
+  badgeLabel?: string;
 }
 
-interface TabBarProps {
-  tabs: Tab[];
-  active: string;
-  onSelect: (id: string) => void;
+/** The DOM id `TabBar` gives a tab, for a panel's `aria-labelledby`. */
+export const tabId = (id: string) => `tab-${id}`;
+
+interface TabBarProps<Id extends string> {
+  tabs: Tab<Id>[];
+  active: Id;
+  onSelect: (id: Id) => void;
   /** Names the tablist for screen readers — e.g. `'Rail sections'`. */
   label: string;
   className?: string;
@@ -25,16 +38,20 @@ interface TabBarProps {
  * back an id. It knows nothing about projects, tickets, or notifications, which
  * is exactly what lets both rails share one implementation.
  *
+ * Generic over the id type so a caller with a union (`LeftTab`, `RailTab`) gets
+ * that union back in `onSelect` — the alternative is an `as` cast at every call
+ * site, which would silently accept an id the union never had.
+ *
  * `-mb-px` pulls each tab's 2px underline over the container's 1px bottom
  * border, so the active indicator sits *on* the rule rather than below it.
  */
-export function TabBar({
+export function TabBar<Id extends string>({
   tabs,
   active,
   onSelect,
   label,
   className,
-}: TabBarProps) {
+}: TabBarProps<Id>) {
   return (
     <div
       role="tablist"
@@ -49,7 +66,7 @@ export function TabBar({
             key={tab.id}
             type="button"
             role="tab"
-            id={`tab-${tab.id}`}
+            id={tabId(tab.id)}
             aria-selected={selected}
             onClick={() => onSelect(tab.id)}
             className={cn(
@@ -60,11 +77,11 @@ export function TabBar({
             )}
           >
             {tab.label}
-            {/*
-              No `label` prop: the count sits inside an already-named control,
-              whose `aria-selected` tab name would replace it anyway.
-            */}
-            <Badge count={tab.badgeCount ?? 0} tone="muted" />
+            <Badge
+              count={tab.badgeCount ?? 0}
+              tone="muted"
+              label={tab.badgeLabel}
+            />
           </button>
         );
       })}
