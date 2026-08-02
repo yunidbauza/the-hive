@@ -45,6 +45,19 @@ describe('SessionTable', () => {
     expect(within(row).getByText('#482')).toBeInTheDocument();
   });
 
+  it('names the PR state rather than carrying it in colour alone', () => {
+    render(<SessionTable />);
+    const row = rows()[0];
+
+    // 34px leaves no room for the state as visible text, but a hue is no
+    // signal to a colour-blind user and none at all to a screen reader.
+    expect(within(row).getByText('#482')).toHaveAttribute(
+      'title',
+      '#482 · open',
+    );
+    expect(row).toHaveAccessibleName(/open/);
+  });
+
   it('renders an em dash for a session with no PR', () => {
     render(<SessionTable />);
     const leadForm = rows().find((row) => row.textContent?.includes('lead-form'));
