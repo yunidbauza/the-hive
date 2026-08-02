@@ -13,6 +13,8 @@ Full backlog: [`../stories/`](../stories/). The visual source of truth is
 
 - **Node** — the major pinned in [`.nvmrc`](.nvmrc) (22)
 - **pnpm** — the package manager, pinned via `packageManager` in `package.json`
+- **Chromium** — for `pnpm test:e2e` only. `pnpm install` does not fetch browser
+  binaries, so run `pnpm exec playwright install chromium` once per machine.
 
 ## Commands
 
@@ -31,9 +33,14 @@ Full backlog: [`../stories/`](../stories/). The visual source of truth is
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered done.**
 
-The test scripts are wired up by story 013 (testing infrastructure) and `test:e2e` by
-story 070 (Playwright harness); the script names exist from the scaffold so the
-vocabulary never changes underneath anyone.
+The test scripts are wired up by story 013 (testing infrastructure); the script names
+exist from the scaffold so the vocabulary never changes underneath anyone.
+
+`pnpm test:e2e` runs Playwright against a **production build** — the config starts
+`pnpm build && pnpm preview` itself, so no server needs to be running first. It
+currently covers the shell smoke spec; the full suite (terminal, keyboard,
+waiting-session, picker, simulation) lands with story 070 as the surfaces it drives
+are built.
 
 ## Stack
 
