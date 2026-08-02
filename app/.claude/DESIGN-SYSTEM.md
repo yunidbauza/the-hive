@@ -32,10 +32,27 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-chip` | `#1c2648` | `#edf2f4` | chips, pills |
 | `--cc-term-bg` | `#0b1023` | *(unchanged)* | terminal background |
 | `--cc-term-input` | `#0e1430` | *(unchanged)* | terminal input bar |
+| `--cc-brand-fill` | `#5e76d0` | *(unchanged)* | primary button |
+| `--cc-brand-fill-hover` | `#4f6ac5` | *(unchanged)* | primary button hover |
+| `--cc-brand-fill-strong` | `#334fa9` | *(unchanged)* | hive-mark tile (Serenity) |
+| `--cc-on-brand` | `#ffffff` | *(unchanged)* | text/icons on a brand fill |
+| `--cc-danger-solid` | `#d3372f` | *(unchanged)* | notification badge fill |
 
 **The terminal stays dark in light mode.** `--cc-term-bg` and `--cc-term-input`
 are deliberately not overridden — this matches the concept and most real terminal
 tools.
+
+**Brand fills are surfaces, and do not flip with the theme.** `--cc-brand` is a
+*text* colour and changes between themes so it stays legible on a panel. The
+five tokens above paint filled shapes — the hive mark's tile, the primary
+button, the unread badge — and keep the same value in both themes, exactly as
+the concept does (`--blue-600/700/800` and `--color-error`, none of which its
+light theme overrides). Painting the logo tile with `bg-brand` would turn it
+pale blue in dark mode and read as a different logo.
+
+`--cc-danger-solid` is darker than `--cc-red` on purpose: white badge text on
+`#d3372f` clears WCAG AA at 4.87:1, where `--cc-red`'s dark-mode `#ff8d85` would
+not.
 
 ### Tailwind mapping
 
@@ -52,6 +69,9 @@ working through the same variables:
 --cc-brand → text-brand    --cc-green → text-green
 --cc-amber → text-amber    --cc-red → text-red
 --cc-chip → bg-chip        --cc-term-bg → bg-term-bg
+--cc-brand-fill → bg-brand-fill    --cc-brand-fill-hover → bg-brand-fill-hover
+--cc-brand-fill-strong → bg-brand-fill-strong
+--cc-on-brand → text-on-brand      --cc-danger-solid → bg-danger-solid
 ```
 
 `inline` matters: it makes utilities emit `var(--cc-*)` rather than resolving the

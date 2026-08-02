@@ -59,16 +59,19 @@ codebase — see [`../docs/terminal-architecture.md`](../docs/terminal-architect
 
 ## Hive atoms
 
-Not yet built. Each is owned by the story that first needs it; the signatures
-below are the contract those stories should implement, not existing code.
+Each is owned by the story that first needs it. Two are built; the rest are a
+contract for their owning story, not existing code.
 
-| Atom | File | Owner | Intended props |
-| --- | --- | --- | --- |
-| `TabBar` | `ui/tab-bar.tsx` | 030 (reused by 050) | `tabs: { id: string; label: string; badge?: number }[]`, `active: string`, `onSelect(id: string): void` |
-| `StatusDot` | `ui/status-dot.tsx` | 031 (also 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean` |
-| `Chip` | `ui/chip.tsx` | 021 (also 040) | `children: ReactNode`, `tone?: Tone`, `title?: string` |
-| `Badge` | `ui/badge.tsx` | 030 (also 050, 052) | `count: number`, `tone?: Tone` |
-| `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` |
+| Atom | File | Owner | Props | State |
+| --- | --- | --- | --- | --- |
+| `Chip` | `ui/chip.tsx` | 021 (also 040) | `children: ReactNode`, `tone?: Tone`, `title?: string`, `className?: string` | **built** |
+| `Badge` | `ui/badge.tsx` | **021** (also 030, 050, 052) | `count: number`, `tone?: 'danger' \| 'brand'`, `label?: string`, `className?: string` | **built** |
+| `TabBar` | `ui/tab-bar.tsx` | 030 (reused by 050) | `tabs: { id: string; label: string; badge?: number }[]`, `active: string`, `onSelect(id: string): void` | planned |
+| `StatusDot` | `ui/status-dot.tsx` | 031 (also 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean` | planned |
+| `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
+
+`Badge` moved from story 030 to 021: the header's bell needs an unread count,
+and 021 lands first. 030's tab-bar badges reuse it rather than building a second.
 
 Rules for all of them:
 
@@ -78,6 +81,16 @@ Rules for all of them:
 - Status is never carried by colour alone; pair the dot with its label.
 - Props are the whole API. An atom that reaches into a store is not an atom —
   move it into a feature slice.
+
+Two contracts worth knowing before reusing them:
+
+- **`Badge` renders nothing at zero.** Every caller so far means *nothing to see*
+  by a count of zero, so the empty badge is never the right answer.
+- **`Badge`'s `label` is optional, and its absence is meaningful.** With a label
+  it announces `"3 unread notifications"`; without one it is `aria-hidden`
+  decoration. Omit it inside an already-labelled control — an ancestor
+  `aria-label` replaces its descendants' text outright, so a label there would
+  never be announced. The header's bell does exactly this.
 
 ## Layout
 
@@ -101,24 +114,53 @@ layout together is documented in
 [`../docs/component-patterns.md`](../docs/component-patterns.md); do not touch
 the `min-h-0` / `min-w-0` / `shrink-0` classes without reading it.
 
+### `<Header />`
+
+`src/components/layout/header.tsx` — story 021, built.
+
+Seven zones, left to right: brand block, model chip (sessions only), spacer,
+fleet status counts, theme toggle, inbox bell, New session. 56px tall, `gap-14px`,
+`px-4`.
+
+**The header composes and nothing else.** Every zone that reads domain state owns
+its own subscription, so a session changing status repaints one span rather than
+the whole bar. Its three sub-components are tested independently; the header's own
+tests cover only the wiring.
+
+| Sub-component | File | Reads | Notes |
+| --- | --- | --- | --- |
+| `BrandBlock` | `layout/brand-block.tsx` | — | pure; 30px tile + `/hive-mark.png` |
+| `ModelChip` | `layout/model-chip.tsx` | `useActiveEntity()` | renders `null` unless the active tab is a **session** |
+| `StatusCounts` | `layout/status-counts.tsx` | `useCounts()` | derived in the selector, never stored |
+
+Two things here are easy to get wrong:
+
+- **The brand tile uses `bg-brand-fill-strong`, not `bg-brand`.** `--cc-brand` is
+  a text colour that flips per theme; using it would repaint the logo tile pale
+  blue in dark mode. See the brand-fill note in
+  [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md).
+- **The model chip's numbers are mock and *derived*, not stored** — see
+  `src/lib/session-metrics.ts`. A stored percentage would need a fake clock to
+  move it; a random one would jitter on every render. Deriving from the session's
+  own id keeps a chip stable for the session's life while differing between
+  sessions. When real metering arrives, `ctx`/`util` become `Session` fields and
+  only those functions change.
+
+The bell marks everything read rather than opening a dropdown — the inbox lives in
+the activity rail (story 051), and two places to read the same list is one too
+many.
+
 ### Region placeholders
 
-Each is a bare panel today, owned by the story that fills it in. Story 020 built
-the boxes; nothing else about them is settled.
+Still bare panels, owned by the story that fills each in.
 
 | Region | File | Filled in by |
 | --- | --- | --- |
-| `Header` | `layout/header.tsx` | 021 — brand, model chip, counts, bell, New session |
 | `LeftRail` | `layout/left-rail.tsx` | 030 — tab bar, projects/work/agents panels |
 | `CenterStage` | `layout/center-stage.tsx` | 040 — view-state machine, session meta bar |
 | `ActivityRail` | `layout/activity-rail.tsx` | 050 — tab bar, inbox/PRs/feed panels |
 
-Two placeholders carry real behaviour on purpose, so the shell is exercised
-rather than merely rendered:
+`CenterStage` mounts `<TerminalSurface />` on purpose, so the shell's `min-w-0`
+shrink contract is proven against a real xterm instance rather than an empty box.
 
-- `Header` holds the theme toggle, moved out of `src/app.tsx` when the shell
-  landed. Story 021 absorbs it into the real seven-zone header.
-- `CenterStage` mounts `<TerminalSurface />`, so the `min-w-0` shrink contract is
-  proven against a real xterm instance instead of an empty box.
-
-Still unbuilt: `model-chip`, `status-counts` (021), `session-meta-bar` (040).
+Still unbuilt: `session-meta-bar` (040).

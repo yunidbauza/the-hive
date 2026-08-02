@@ -61,9 +61,25 @@ Each region is a landmark element, so tests address them by role
 Desktop-width only, by design: no responsive or mobile layout, and the rails are
 not draggable. Both are explicit non-goals of story 020.
 
+## The header
+
+`src/components/layout/header.tsx` (story 021) fills the shell's top region.
+Anatomy, sub-component contracts, and the two easy-to-get-wrong details live in
+[`../.claude/COMPONENTS.md`](../.claude/COMPONENTS.md). The pattern worth
+repeating in every other region:
+
+**Chrome composes; the leaves subscribe.** The header itself reads only what its
+own controls need. `ModelChip` and `StatusCounts` each own their store
+subscription, so a session changing status repaints one span rather than the
+whole bar. Rails and panels should be built the same way — a container that
+subscribes on behalf of its children re-renders all of them.
+
+Its corollary in tests: sub-components are asserted in their own files, and the
+container's tests cover only the wiring.
+
 ## What later stories add here
 
-The header (021), the left rail and its three panels (030–033), the center-stage
-view-state machine and session meta bar (040), the activity rail and its three
-panels (050–053), and the atom inventory those stories introduce. Each fills in
-the placeholder region it owns; the shell itself does not change.
+The left rail and its three panels (030–033), the center-stage view-state machine
+and session meta bar (040), the activity rail and its three panels (050–053), and
+the atom inventory those stories introduce. Each fills in the placeholder region
+it owns; the shell itself does not change.

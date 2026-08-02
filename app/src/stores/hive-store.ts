@@ -308,6 +308,9 @@ export const useTicketPrs = (ticketKey: string) =>
 export const useUnreadCount = () =>
   useHiveStore((state) => state.notifs.filter((notif) => notif.unread).length);
 
+/** Clear the whole inbox — the header bell (021) and the inbox panel (051). */
+export const useMarkAllRead = () => useHiveStore((state) => state.markAllRead);
+
 /** The entity behind `activeTab`, or null for the orchestrator. */
 export const useActiveEntity = () => {
   const activeTab = useUiStore((state) => state.activeTab);

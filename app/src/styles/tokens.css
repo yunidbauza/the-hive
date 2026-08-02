@@ -34,6 +34,24 @@
   --cc-chip: #1c2648;
   --cc-term-bg: #0b1023;
   --cc-term-input: #0e1430;
+
+  /**
+   * Brand fills — deliberately theme-invariant, and not overridden below.
+   *
+   * `--cc-brand` is a *text* colour and flips between themes for legibility on
+   * a panel. These are *surfaces*: the hive mark's tile and the primary action
+   * keep the same APFM blue in light and dark, exactly as the concept does
+   * (`var(--blue-600/700/800)`, which its light theme leaves alone). Reusing
+   * `--cc-brand` here would repaint the logo tile pale blue in dark mode.
+   */
+  --cc-brand-fill: #5e76d0;
+  --cc-brand-fill-hover: #4f6ac5;
+  --cc-brand-fill-strong: #334fa9; /* Serenity — the signature brand blue */
+  --cc-on-brand: #ffffff;
+
+  /* Notification badge fill. Theme-invariant for the same reason, and darker
+     than `--cc-red` so white badge text clears AA (4.87:1). */
+  --cc-danger-solid: #d3372f;
 }
 
 body[data-theme='light'] {
@@ -80,6 +98,11 @@ body[data-theme='light'] {
   --color-chip: var(--cc-chip);
   --color-term-bg: var(--cc-term-bg);
   --color-term-input: var(--cc-term-input);
+  --color-brand-fill: var(--cc-brand-fill);
+  --color-brand-fill-hover: var(--cc-brand-fill-hover);
+  --color-brand-fill-strong: var(--cc-brand-fill-strong);
+  --color-on-brand: var(--cc-on-brand);
+  --color-danger-solid: var(--cc-danger-solid);
 
   --font-mono: ui-monospace, Menlo, 'SF Mono', monospace;
   --animate-ccpulse: ccpulse 1.6s ease-in-out infinite;
