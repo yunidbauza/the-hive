@@ -1,4 +1,5 @@
 import {
+  ArrowsClockwise,
   CalendarCheck,
   CaretDown,
   CaretRight,
@@ -12,6 +13,7 @@ import {
   PaperPlaneTilt,
   PlusCircle,
   Question,
+  Robot,
   SlackLogo,
   Stack,
   Swatches,
@@ -57,6 +59,8 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-plus-circle': PlusCircle,
   'ph-paper-plane-tilt': PaperPlaneTilt,
   'ph-lightning': Lightning,
+  'ph-arrows-clockwise': ArrowsClockwise,
+  'ph-robot': Robot,
 };
 
 interface IconProps {

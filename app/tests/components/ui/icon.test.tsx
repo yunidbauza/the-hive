@@ -67,6 +67,10 @@ describe('Icon', () => {
     'ph-plus-circle',
     'ph-paper-plane-tilt',
     'ph-lightning',
+    // Two feed fixtures (the PR poll and the pr-reviewer line) named glyphs the
+    // map did not carry, so they rendered as the unknown-name question mark.
+    'ph-arrows-clockwise',
+    'ph-robot',
   ])('maps the fixture icon %s to its own glyph', (name) => {
     const { container: named } = render(<Icon name={name} />);
     const { container: fallback } = render(<Icon name="ph-unmapped" />);
