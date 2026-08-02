@@ -66,12 +66,20 @@ one still fires.
 | Target | May **not** import from |
 | --- | --- |
 | `src/features/<slice>/**` | any other slice (except `src/features/shared/**`) |
-| `src/components/**` | `src/features/**` |
+| `src/components/**` (except `layout/`) | `src/features/**` |
 | **`src/components/terminal/**`** | `src/features/**`, `src/data/**`, `src/stores/**` |
 | `src/lib/**` | `src/features/**`, `src/components/**` |
 | `src/hooks/**` | `src/features/**` |
 | `src/stores/**` | `src/features/**`, `src/components/**` |
 | everything except `src/stores/**` | `src/data/**` |
+
+`src/components/layout/` is the **composition root** and is exempt from the
+`features/` ban: the rails and the center stage exist to mount feature panels. The
+exemption stops there — `components/ui/` and `components/terminal/` stay fully
+fenced. It is expressed by listing the fenced directories in
+`FENCED_COMPONENT_DIRS`, because `except` filters the *imported* module and can
+never exempt the importing file; a **new** directory under `src/components/` gets
+no fence until it is added to that list.
 
 Feature isolation is generated as **one zone per slice**, each exempting itself and
 `features/shared`. Adding a slice means adding it to `FEATURE_SLICES` in
