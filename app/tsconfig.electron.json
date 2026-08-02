@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    /* No DOM, deliberately (story 080). The main process has no window and no
+       document; without this, a stray `document.querySelector` in main-process
+       code type-checks cleanly and throws at runtime. The preload script does
+       run in a renderer, but under `sandbox: true` its job is to call
+       `contextBridge` and nothing else — it does not need DOM either. */
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    /* Bundler mode — electron-vite bundles both targets. */
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "isolatedModules": true,
+
+    /* Strictness — non-negotiable (story 010) */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "erasableSyntaxOnly": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["./electron/shared/*"]
+    }
+  },
+  "include": ["electron"]
+}

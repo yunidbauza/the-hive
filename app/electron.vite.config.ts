@@ -1,0 +1,60 @@
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+
+import { aliases } from './vite.aliases.mjs';
+
+/**
+ * The DESKTOP target (story 080) — three builds from one config.
+ *
+ * `src/` is not touched by any of this. The renderer target points at the same
+ * `index.html` the browser build uses, which is the entire point: the app we
+ * already shipped becomes the desktop app's UI rather than a thing we port.
+ *
+ * Output lands in `out/{main,preload,renderer}/`; `package.json`'s `main` field
+ * points at `out/main/index.js`.
+ */
+export default defineConfig({
+  main: {
+    /**
+     * Load-bearing on main and preload: it leaves `dependencies` unbundled.
+     * Bundling a native module is not a thing that works, and `node-pty`
+     * arrives in story 092.
+     */
+    plugins: [externalizeDepsPlugin()],
+    build: { rollupOptions: { input: 'electron/main/index.ts' } },
+    resolve: { alias: aliases },
+  },
+  preload: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: 'electron/preload/index.ts',
+        /**
+         * CJS, explicitly, and with a `.cjs` extension.
+         *
+         * This package is `"type": "module"`, so a `.js` emit here would be
+         * ESM — and a **sandboxed preload script cannot be ESM**. Electron
+         * loads it with a CommonJS loader, so an `import` statement fails at
+         * load time with an error that names neither `sandbox` nor ESM. The
+         * security posture (story 082) is non-negotiable, so the module format
+         * is what gives way.
+         *
+         * `electron/main/index.ts` points at `../preload/index.cjs` to match.
+         */
+        output: { format: 'cjs', entryFileNames: '[name].cjs' },
+      },
+    },
+    resolve: { alias: aliases },
+  },
+  renderer: {
+    root: '.',
+    /**
+     * Tailwind stays scoped to the renderer. Running the PostCSS pipeline over
+     * the main or preload target would be meaningless work at best.
+     */
+    plugins: [react(), tailwindcss()],
+    resolve: { alias: aliases },
+    build: { rollupOptions: { input: 'index.html' } },
+  },
+});

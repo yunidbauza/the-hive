@@ -8,6 +8,11 @@
     /* Bundler mode */
     "module": "ESNext",
     "moduleResolution": "bundler",
+    /* The configs in `include` import `vite.aliases.mjs` (story 080). Reading
+       the module directly gives them its real inferred type; a hand-written
+       `.d.mts` would be a third copy of the thing that file exists to
+       de-duplicate. */
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
@@ -20,5 +25,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "electron.vite.config.ts"
+  ]
 }

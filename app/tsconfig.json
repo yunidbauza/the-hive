@@ -25,8 +25,10 @@
     "noUncheckedSideEffectImports": true,
     "erasableSyntaxOnly": true,
 
-    /* Path aliases. Mirrored in vite.config.ts `resolve.alias` — Vite does not
-       read these, so the two lists must be kept in sync (story 010).
+    /* Path aliases. Mirrored in `vite.aliases.mjs`, which every bundler config
+       imports — TypeScript cannot import a JS module to build its config, so
+       these two lists are the only copies and `pnpm verify:boundaries` asserts
+       they agree (story 080).
        Rule inherited from incorpx: always absolute `@/` imports, never
        relative parent imports (`../`). */
     "baseUrl": ".",
@@ -39,7 +41,10 @@
       "@hooks/*": ["./src/hooks/*"],
       "@utils/*": ["./src/utils/*"],
       "@types/*": ["./src/types/*"],
-      "@config/*": ["./src/config/*"]
+      "@config/*": ["./src/config/*"],
+      /* Types only. A value import from here would pull main-process code into
+         the renderer bundle and trip the ESLint zone (story 083). */
+      "@shared/*": ["./electron/shared/*"]
     }
   },
   "include": ["src", "tests", "__mocks__"]

@@ -1,34 +1,24 @@
-import { fileURLToPath, URL } from 'node:url';
-
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
-const srcPath = (segment = '') =>
-  fileURLToPath(new URL(`./src/${segment}`, import.meta.url));
+import { aliases } from './vite.aliases.mjs';
 
 /**
  * Vitest configuration.
  *
- * The alias list is duplicated from vite.config.ts rather than imported: this
- * config is loaded by Vitest, not by the app build, and keeping it standalone
- * means a broken app config cannot take the test suite down with it. If you add
- * an alias, add it in all three places (tsconfig.json, vite.config.ts, here).
+ * The alias list used to be duplicated here rather than imported, so that a
+ * broken app config could not take the test suite down with it. Story 080 made
+ * that trade a losing one: Electron adds a third bundler config, and four
+ * hand-synced copies of one map is a worse failure mode than the one this
+ * duplication was guarding against.
+ *
+ * `vite.aliases.mjs` is the compromise — a dependency-free data module, not the
+ * app config. It is the only thing imported here, so a broken `vite.config.ts`
+ * still cannot reach the test suite.
  */
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: {
-      '@components': srcPath('components'),
-      '@features': srcPath('features'),
-      '@stores': srcPath('stores'),
-      '@config': srcPath('config'),
-      '@hooks': srcPath('hooks'),
-      '@utils': srcPath('utils'),
-      '@types': srcPath('types'),
-      '@lib': srcPath('lib'),
-      '@': srcPath(),
-    },
-  },
+  resolve: { alias: aliases },
   test: {
     globals: true,
     environment: 'happy-dom',

@@ -15,11 +15,69 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import ts from 'typescript';
+
+import { aliases } from '../vite.aliases.mjs';
+
 const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Story 080 cut the alias map from four hand-synced copies to two:
+ * `vite.aliases.mjs` (imported by every bundler config) and `tsconfig.json`'s
+ * `paths` (TypeScript cannot import a JS module to build its config).
+ *
+ * Two copies is one more than zero, so it gets a check rather than a promise.
+ * The failure this catches is the quiet one: an alias that resolves in the
+ * editor and fails at runtime, or vice versa.
+ */
+function verifyAliasesAgree() {
+  /**
+   * Parsed with TypeScript's own JSONC reader rather than a regex.
+   * `tsconfig.json` carries both comments and alias keys like `"@/*"`. A naive
+   * comment stripper treats the slash-star inside that string as the start of a
+   * block comment and silently swallows the file up to the next real comment
+   * terminator, which yields a parse error a hundred lines from the cause.
+   */
+  const configPath = join(appRoot, 'tsconfig.json');
+  const { config, error } = ts.parseConfigFileTextToJson(
+    configPath,
+    readFileSync(configPath, 'utf8'),
+  );
+  if (error) throw new Error(`could not parse tsconfig.json: ${error.messageText}`);
+  const { paths } = config.compilerOptions;
+
+  /** `"@components/*": ["./src/components/*"]` → `@components` → absolute dir. */
+  const fromTsconfig = Object.fromEntries(
+    Object.entries(paths).map(([key, [target]]) => [
+      key.replace(/\/\*$/, ''),
+      resolve(appRoot, target.replace(/\/\*$/, '')),
+    ]),
+  );
+  const fromVite = Object.fromEntries(
+    Object.entries(aliases).map(([key, target]) => [
+      key,
+      resolve(target.replace(/\/$/, '')),
+    ]),
+  );
+
+  const problems = [];
+  for (const key of new Set([
+    ...Object.keys(fromTsconfig),
+    ...Object.keys(fromVite),
+  ])) {
+    const ts = fromTsconfig[key];
+    const vite = fromVite[key];
+    if (!ts) problems.push(`${key}: in vite.aliases.mjs, missing from tsconfig.json`);
+    else if (!vite)
+      problems.push(`${key}: in tsconfig.json, missing from vite.aliases.mjs`);
+    else if (ts !== vite) problems.push(`${key}: tsconfig ${ts} !== vite ${vite}`);
+  }
+  return problems;
+}
 
 /** @type {{name: string, files: Record<string,string>, rule: string|null}[]} */
 const CASES = [
@@ -97,6 +155,56 @@ const CASES = [
     },
   },
   {
+    name: 'zone: electron/main/ may not import src/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/utils/probe-target.ts': 'export const renderer = 1;\n',
+      'electron/main/probe.ts':
+        "import { renderer } from '@/utils/probe-target';\nexport const probe = renderer;\n",
+    },
+  },
+  {
+    name: 'zone: electron/preload/ may not import electron/main/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/main/probe-target.ts': 'export const main = 1;\n',
+      'electron/preload/probe.ts':
+        "import { main } from '../main/probe-target';\nexport const probe = main;\n",
+    },
+  },
+  {
+    name: 'zone: electron/preload/ may not import src/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/utils/probe-target.ts': 'export const renderer = 1;\n',
+      'electron/preload/probe.ts':
+        "import { renderer } from '@/utils/probe-target';\nexport const probe = renderer;\n",
+    },
+  },
+  {
+    name: 'zone: src/ may not import electron/main/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/main/probe-target.ts': 'export const main = 1;\n',
+      'src/utils/probe.ts':
+        "import { main } from '../../electron/main/probe-target';\nexport const probe = main;\n",
+    },
+  },
+  {
+    name: 'zone: src/ may not import electron/preload/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/preload/probe-target.ts': 'export const preload = 1;\n',
+      'src/utils/probe.ts':
+        "import { preload } from '../../electron/preload/probe-target';\nexport const probe = preload;\n",
+    },
+  },
+  {
+    name: 'PascalCase folder name is rejected under electron/ too',
+    rule: 'check-file/folder-naming-convention',
+    files: { 'electron/main/ProbeFolder/probe.ts': 'export const probe = 1;\n' },
+  },
+  {
     name: 'no circular dependencies',
     rule: 'import/no-cycle',
     files: {
@@ -162,6 +270,24 @@ const CASES = [
         "import { fixture } from '@/data/probe-target';\nexport const probe = fixture;\n",
     },
   },
+  {
+    name: 'ALLOWED: electron/main/ may import electron/shared/',
+    rule: null,
+    files: {
+      'electron/shared/probe-target.ts': 'export const contract = 1;\n',
+      'electron/main/probe.ts':
+        "import { contract } from '@shared/probe-target';\nexport const probe = contract;\n",
+    },
+  },
+  {
+    name: 'ALLOWED: src/ may import electron/shared/ (the contract types)',
+    rule: null,
+    files: {
+      'electron/shared/probe-target.ts': 'export const contract = 1;\n',
+      'src/utils/probe.ts':
+        "import { contract } from '@shared/probe-target';\nexport const probe = contract;\n",
+    },
+  },
 ];
 
 /** Run ESLint over the given paths and return its JSON report. */
@@ -200,10 +326,9 @@ for (const testCase of CASES) {
       .filter(Boolean);
   } finally {
     for (const { absolutePath } of written) rmSync(absolutePath, { force: true });
-    rmSync(join(appRoot, 'src/utils/ProbeFolder'), {
-      recursive: true,
-      force: true,
-    });
+    for (const dir of ['src/utils/ProbeFolder', 'electron/main/ProbeFolder']) {
+      rmSync(join(appRoot, dir), { recursive: true, force: true });
+    }
   }
 
   const unique = [...new Set(firedRules)];
@@ -217,6 +342,15 @@ for (const testCase of CASES) {
     fired: unique.length ? unique.join(', ') : '(none)',
   });
 }
+
+const aliasProblems = verifyAliasesAgree();
+results.push({
+  ok: aliasProblems.length === 0,
+  name: 'aliases: vite.aliases.mjs and tsconfig.json paths agree',
+  expected: '(identical alias maps)',
+  fired: aliasProblems.length ? aliasProblems.join('; ') : '(none)',
+});
+if (aliasProblems.length) failures += 1;
 
 for (const result of results) {
   console.log(

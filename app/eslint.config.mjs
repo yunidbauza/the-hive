@@ -89,6 +89,10 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
+      // electron-vite's build output (story 080). Flat config does not read
+      // .gitignore, so a built bundle is lintable unless it is named here.
+      'out/**',
+      '.tmp/**',
       'coverage/**',
       'node_modules/**',
       'playwright-report/**',
@@ -203,6 +207,36 @@ export default tseslint.config(
               message:
                 'Only stores/ may import data/. Read fixture-derived state through a selector hook.',
             },
+
+            /**
+             * THE PROCESS BOUNDARY (story 080).
+             *
+             * Three zones, one idea: `electron/shared/` is the only module the
+             * two processes share, and it carries types and constants only.
+             * Everything else stays on its own side of the bridge.
+             *
+             * `electron/shared/**` is importable from all three and imports
+             * from none of them — it has no zone of its own because it has no
+             * imports to restrict.
+             */
+            {
+              target: './electron/main/**/*',
+              from: './src/**/*',
+              message:
+                'The main process has no renderer, no DOM and no store. It may import electron/shared/ only.',
+            },
+            {
+              target: './electron/preload/**/*',
+              from: ['./src/**/*', './electron/main/**/*'],
+              message:
+                'preload is a bridge, not a participant. It may import electron/shared/ only.',
+            },
+            {
+              target: './src/**/*',
+              from: ['./electron/main/**/*', './electron/preload/**/*'],
+              message:
+                'The renderer may only see @shared. Reaching into electron/main/ or electron/preload/ would bundle main-process code into the renderer.',
+            },
           ],
         },
       ],
@@ -224,7 +258,11 @@ export default tseslint.config(
         { '**/*.{ts,tsx}': 'KEBAB_CASE' },
         { ignoreMiddleExtensions: true },
       ],
-      'check-file/folder-naming-convention': ['error', { 'src/**/': 'KEBAB_CASE' }],
+      // `electron/**` earns the same naming discipline as `src/**` (story 080).
+      'check-file/folder-naming-convention': [
+        'error',
+        { 'src/**/': 'KEBAB_CASE', 'electron/**/': 'KEBAB_CASE' },
+      ],
 
       '@typescript-eslint/consistent-type-imports': [
         'error',
@@ -246,7 +284,19 @@ export default tseslint.config(
   },
   {
     // Config and tooling run on Node, not in the browser.
-    files: ['*.config.{ts,mjs}', 'scripts/**/*.mjs'],
+    files: ['*.config.{ts,mjs}', 'scripts/**/*.mjs', '*.aliases.mjs'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    /**
+     * The main process runs on Node — `globals.browser` would declare `window`
+     * and `document` as legal there, which is exactly the mistake the zones
+     * above and `tsconfig.electron.json`'s DOM-free `lib` exist to catch.
+     *
+     * `electron/preload/` is deliberately absent: it runs inside a renderer and
+     * legitimately touches browser globals, so it keeps the default.
+     */
+    files: ['electron/main/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
 );

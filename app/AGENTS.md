@@ -28,10 +28,13 @@ shadcn/ui · pnpm.
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Vite dev server |
-| `pnpm build` | Type-check, then production build |
-| `pnpm lint` | ESLint across `src/` and config |
-| `pnpm type-check` | `tsc --noEmit` for the app and the Node-side configs |
+| `pnpm dev` | Vite dev server — the **browser** target (a fixtures-only demo) |
+| `pnpm build` | Type-check, then production build of the browser target |
+| `pnpm desktop:dev` | electron-vite: the Electron app, renderer HMR included |
+| `pnpm desktop:build` | Type-check, then build `out/{main,preload,renderer}/` |
+| `pnpm desktop:preview` | Run the built Electron app |
+| `pnpm lint` | ESLint across `src/`, `electron/` and config |
+| `pnpm type-check` | `tsc --noEmit` for the app, the Node-side configs, and `electron/` |
 | `pnpm test` | Vitest, single run |
 | `pnpm test:coverage` | Vitest with the 80% coverage gate |
 | `pnpm test:e2e` | Playwright specs |
@@ -72,6 +75,16 @@ one still fires.
 | `src/hooks/**` | `src/features/**` |
 | `src/stores/**` | `src/features/**`, `src/components/**` |
 | everything except `src/stores/**` | `src/data/**` |
+| `electron/main/**` | `src/**` |
+| `electron/preload/**` | `src/**`, `electron/main/**` |
+| `src/**` | `electron/main/**`, `electron/preload/**` |
+
+`electron/shared/**` is the **only** module both processes may import, and it is
+types and constants only — no runtime imports, no Node APIs, no DOM APIs. The
+renderer reaches it through the `@shared` alias and must import from it
+**type-only**; a value import would pull main-process code into the renderer
+bundle. That is what makes the IPC contract a compile-time artifact rather than a
+convention.
 
 `src/components/layout/` is the **composition root** and is exempt from the
 `features/` ban: the rails and the center stage exist to mount feature panels. The
@@ -88,14 +101,17 @@ silently becomes importable from everywhere.
 
 ### Naming and imports
 
-- **kebab-case** for every file and folder under `src/`.
+- **kebab-case** for every file and folder under `src/` and `electron/`.
 - **Absolute `@/` imports**, never relative parent imports (`../`).
 - Import order: builtin → external → internal → parent → sibling → index, with
   `@/**` pinned before internal, blank lines between groups, alphabetised.
 - **No circular dependencies.** Barrel files that create cycles are a bug.
-- Path aliases live in **three** places — `tsconfig.json`, `vite.config.ts`, and
-  `vitest.config.ts`. Vite does not read TypeScript's `paths`. Add an alias to all
-  three or it will resolve in the editor and fail at runtime.
+- Path aliases live in **two** places — `vite.aliases.mjs` and `tsconfig.json`.
+  Every bundler config (`vite.config.ts`, `vitest.config.ts`,
+  `electron.vite.config.ts`) imports the first; TypeScript cannot import a JS
+  module to build its config, so `paths` is the second copy. Add an alias to
+  both or it will resolve in the editor and fail at runtime —
+  `pnpm verify:boundaries` fails if the two disagree.
 
 ## The terminal seam
 

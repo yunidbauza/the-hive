@@ -8,6 +8,8 @@ node_modules/
 # build output
 dist/
 build/
+# electron-vite's three-target output (story 080)
+out/
 *.tsbuildinfo
 
 # test output
