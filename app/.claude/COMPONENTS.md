@@ -98,8 +98,9 @@ contract for their owning story, not existing code.
 | Atom | File | Owner | Props | State |
 | --- | --- | --- | --- | --- |
 | `Chip` | `ui/chip.tsx` | 021 (also 040) | `children: ReactNode`, `tone?: Tone`, `title?: string`, `className?: string` | **built** |
-| `Badge` | `ui/badge.tsx` | **021** (also 030, 050, 052) | `count: number`, `tone?: 'danger' \| 'brand' \| 'muted'`, `label?: string`, `className?: string` | **built** |
-| `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | generic over `Id extends string`: `tabs: { id: Id; label: string; badgeCount?: number; badgeLabel?: string }[]`, `active: Id`, `onSelect(id: Id): void`, `label: string`, `className?: string` | **built** |
+| `Badge` | `ui/badge.tsx` | **021** (also 030, 050) | `count: number`, `tone?: BadgeTone`, `label?: string`, `className?: string` | **built** |
+| `Tag` | `ui/tag.tsx` | **052** | `children: ReactNode`, `tone: 'brand' \| 'green' \| 'amber' \| 'red' \| 'subtle'`, `className?: string` | **built** |
+| `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | generic over `Id extends string`: `tabs: { id: Id; label: string; badgeCount?: number; badgeLabel?: string; badgeTone?: BadgeTone }[]`, `active: Id`, `onSelect(id: Id): void`, `label: string`, `className?: string` | **built** |
 | `StatusDot` | `ui/status-dot.tsx` | **030** (used by 031, 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean`, `label?: string`, `className?: string` | **built** |
 | `Icon` | `ui/icon.tsx` | **031** (also 033, 051, 053) | `name: string`, `size?: number`, `weight?: IconWeight`, `className?: string` | **built** |
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
@@ -136,6 +137,20 @@ Contracts worth knowing before reusing them:
 - **`TabBar`'s badge reuses `Badge` at `Badge`'s geometry**, not the concept's
   15px/9.5px. One badge geometry with three tones beats a second near-identical
   atom; the 1px difference is deliberate.
+- **`Tag` is the third pill, and the three do not overlap.** `Badge` takes a
+  `count` and renders nothing at zero, so it cannot carry a word. `Chip` is a
+  larger mono pill for dense status text (the header's model chip, the meta
+  bar's branch) and has no `subtle` tone. `Tag` is proportional text at badge
+  scale, used for the PRs panel's `merged` / `2 open findings` / `checks
+  running` row. Reach for a fourth only when none of those three fits — and say
+  why here.
+- **`Tag`'s fill never changes, only its ink.** Every tone sits on `bg-chip`,
+  which is what lets four of them wrap in one row without competing.
+- **`TabBar`'s `badgeTone` defaults to `muted`.** The left rail's work count is
+  an inventory and stays quiet; the activity rail passes `danger` because its
+  unread count means the user is what an agent is blocked on (050).
+- **`BadgeTone` is exported from `ui/badge.tsx`** and reused by `TabBar`, so the
+  two atoms cannot drift to different tone vocabularies.
 - **`TabBar` is generic over its id type.** Pass `Tab<LeftTab>[]` and `onSelect`
   hands back a `LeftTab`, not a `string` — no `as` cast at the call site, and an
   id outside the union stops compiling.
@@ -233,6 +248,24 @@ Panel state lives in the stores, never in the panels: `collapsed` in the ui-stor
 is why a collapsed project survives a round trip through the Agents tab even
 though the panel unmounts on every switch.
 
+### `<ActivityRail />`
+
+`src/components/layout/activity-rail.tsx` — story 050, built.
+
+316px fixed, and the only region the shell can hide (`showActivityRail`, 020).
+Structurally a twin of `<LeftRail />`: a pinned `<TabBar />` over a scrolling tab
+panel that mounts exactly one of `InboxPanel` (051), `PrsPanel` (052), or
+`ActivityFeedPanel` (053). Reads `useRailState()` / `useSetRailTab()`, plus
+`useUnreadCount()` for the Inbox badge.
+
+- **The Inbox badge is `danger`, not `muted`.** It is the one count in the app
+  that means *you are the blocker*; the left rail's work count is an inventory.
+- **Scroll position resets on tab switch.** Story 050 asks for an explicit
+  choice. Preserving it per panel means keeping all three mounted or mirroring
+  `scrollTop` into the ui-store, and for three short lists neither earns the
+  complexity — a stale offset into a list the simulation just prepended to is
+  worse than starting at the top.
+
 ### `components/layout/` is the composition root
 
 It is the one place under `src/components/` allowed to import `src/features/**` —
@@ -311,6 +344,55 @@ online in this phase, but the state still may not ride on the green alone.
 
 Creating and pausing agents is out of scope here — they are fixture-defined.
 
+### `<InboxPanel />` and `<NotificationCard />`
+
+`src/features/inbox/components/` — story 051, built.
+
+A stack of notification cards, newest first, from `useNotifs()`.
+
+- **Clicking a card does two things**: `openTab(notif.target)` and
+  `markRead(index)`. Navigating without marking read would leave both badges
+  lying about what is still waiting; marking read without navigating would lose
+  the thread. This is the entry point of the payoff loop (043) — one click from
+  "something needs you" to the terminal showing the amber prompt.
+- **`markRead` addresses a notification by index**, so the panel passes the array
+  position down even though the card renders from the object.
+- **Cards are keyed by content, not index.** The simulation prepends; an index
+  key would make React reuse the top card's DOM for a different notification.
+- **Unread is carried by fill *and* a visually hidden "unread"**, because the
+  count that fill implies is the whole point of the red tab badge, and colour
+  alone puts it out of reach of a screen reader.
+- The store caps the list at 8 (`NOTIF_CAP`); the panel renders what it is given.
+
+### `<PrsPanel />` and `<PrCard />`
+
+`src/features/pull-requests/components/` — story 052, built.
+
+One card per PR from `usePrs()`, with a wrapping badge row.
+
+- **Badges come from `composeBadges()` in `features/shared/pr-presentation.ts`**,
+  never from local `if`s — see the note in that file for why the rules live
+  outside this slice.
+- **The badge row is unguarded** because every `PrListState` yields at least one
+  badge; an `if (badges.length)` would be an unreachable branch.
+- **Clicking opens the owning *session*, not GitHub.** A PR has no tab of its
+  own; the agent that produced it does, and that is where a human can act on the
+  findings.
+
+### `<ActivityFeedPanel />` and `<FeedRow />`
+
+`src/features/activity-feed/components/` — story 053, built.
+
+The orchestrator's log, newest first, from `useFeed()`.
+
+- **Rows are deliberately not buttons.** Every other card in this rail
+  navigates; a feed entry is a record of something that already happened, and
+  half of them (a PR poll, a Slack answer) have nowhere to go. A row that
+  navigates only sometimes is worse than one that never does.
+- **Timestamps come from `src/lib/fake-clock.ts`**, not the wall clock — see
+  [`../docs/state-and-data.md`](../docs/state-and-data.md).
+- The store caps the feed at 24 (`FEED_CAP`); the panel adds no cap of its own.
+
 ### Region placeholders
 
 Still bare panels, owned by the story that fills each in.
@@ -318,7 +400,8 @@ Still bare panels, owned by the story that fills each in.
 | Region | File | Filled in by |
 | --- | --- | --- |
 | `CenterStage` | `layout/center-stage.tsx` | 040 — view-state machine, session meta bar |
-| `ActivityRail` | `layout/activity-rail.tsx` | 050 — tab bar, inbox/PRs/feed panels |
+
+`ActivityRail` is no longer a placeholder — story 050 filled it in; see below.
 
 `CenterStage` mounts `<TerminalHost />` and builds one `StaticTransport` per
 entity, cached for the life of the app — transport identity matters, because a

@@ -17,8 +17,16 @@ placeholder until that story lands; it exists now so the routing table in
 - `appendEntityLines(id, lines, status?)` is the intended write path for replayed
   events — it appends transcript and optionally moves a session's status in one
   step.
+- **The fake clock already exists**: `src/lib/fake-clock.ts`, built by story 053.
+  It starts at 14:38, advances a minute per `stamp()`, and `reset()` rewinds it.
+  Simulation should stamp its events through it rather than introducing a second
+  clock. See [`state-and-data.md`](state-and-data.md) → The fake clock.
+- **`pushNotif(notif)` is the inbox's write path**, capped at 8. Simulation
+  prepending a notification is what drives the rail's red badge and the header
+  bell (051).
 
 ## What story 061 adds here
 
-The event script format, the fake clock, the driver that feeds events into the
-stores, and the rule for what simulation may and may not mutate.
+The event script format, the driver that feeds events into the stores, and the
+rule for what simulation may and may not mutate. (The fake clock landed early,
+with story 053 — see above.)
