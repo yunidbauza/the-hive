@@ -45,6 +45,43 @@ describe('Header', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * happy-dom performs no layout, so "is it centred?" is unanswerable here —
+   * `smoke.spec.ts` measures the boxes in a real browser. What unit tests can
+   * pin is the structure that produces the centring: three tracks, equal `1fr`
+   * on both sides, and the chip in the middle one.
+   */
+  describe('centred model chip', () => {
+    it('lays out as three tracks with the chip in the middle one', () => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
+
+      render(<Header />);
+
+      const banner = screen.getByRole('banner');
+      expect(banner).toHaveClass('grid', 'grid-cols-[1fr_minmax(0,auto)_1fr]');
+
+      const [brand, centre, controls] = Array.from(banner.children);
+      expect(brand).toHaveTextContent('The Hive');
+      expect(centre).toHaveTextContent(/Opus 4.5 \(1M\)/);
+      expect(controls).toHaveTextContent('4 working');
+    });
+
+    /**
+     * The regression this guards: if the middle wrapper rendered only when the
+     * chip did, grid auto-placement would drop the controls into the centre
+     * track on the orchestrator and agent tabs and the header would reflow on
+     * every tab switch.
+     */
+    it('keeps the middle track when the chip is absent, so the sides never move', () => {
+      render(<Header />);
+
+      const banner = screen.getByRole('banner');
+      expect(banner.children).toHaveLength(3);
+      expect(banner.children[1]).toBeEmptyDOMElement();
+      expect(banner.children[2]).toHaveTextContent('4 working');
+    });
+  });
+
   it('drops the model chip on the orchestrator tab but keeps everything else', () => {
     render(<Header />);
 

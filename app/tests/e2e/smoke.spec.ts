@@ -54,6 +54,141 @@ test('renders the header chrome', async ({ page }) => {
 });
 
 /**
+ * The model chip sits at the header's true midpoint (story 021).
+ *
+ * This is the assertion the unit suite structurally cannot make: happy-dom
+ * performs no layout, so `header.test.tsx` can only prove the grid *markup*
+ * exists. Whether the chip actually lands in the middle is a measurement, and
+ * measurement needs a browser.
+ *
+ * The failure it exists to catch is the plausible-looking one — centring the
+ * chip with flex spacers instead of equal `1fr` tracks. That centres the gap
+ * between two unequal clusters (brand ~180px, controls ~350px) and leaves the
+ * chip roughly 85px right of centre, which looks almost right and is wrong.
+ */
+test('centres the model chip on the header itself', async ({ page }) => {
+  // The chip is conditional on a *session* being active; the orchestrator the
+  // app boots into deliberately has no model of its own.
+  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
+
+  const header = page.getByRole('banner');
+
+  /**
+   * By title, not by text: the title is on the pill, while the text lives in an
+   * inner truncating span that is inset by the pill's padding and its brain
+   * icon. Measuring the span would measure the wrong box — off-centre by design
+   * — so the pill is what has to be asserted on.
+   */
+  const chip = header.getByTitle(/Opus 4\.5 \(1M\)/);
+  await expect(chip).toBeVisible();
+
+  const headerBox = await header.boundingBox();
+  const chipBox = await chip.boundingBox();
+  expect(headerBox).not.toBeNull();
+  expect(chipBox).not.toBeNull();
+
+  const headerMid = headerBox!.x + headerBox!.width / 2;
+  const chipMid = chipBox!.x + chipBox!.width / 2;
+
+  // 2px, not 0: sub-pixel track sizing rounds, and an exact equality here would
+  // be flaky for a reason that has nothing to do with the layout being right.
+  expect(Math.abs(chipMid - headerMid)).toBeLessThanOrEqual(2);
+});
+
+/**
+ * Centring is only correct if it does not cost anything invisible — the chip
+ * must clear both side zones rather than sit on top of them, must show its full
+ * string, and must not push the header off one line. A chip that centred by
+ * overlapping the wordmark, or by reflowing the fleet counts onto a second row
+ * inside a 56px bar, would pass the midpoint assertion above and still be
+ * plainly broken. That second failure is not hypothetical: the counts wrap by
+ * default, and letting them was how the layout first paid for its own centring.
+ */
+test('centres the chip without overlapping or reflowing the side zones', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
+
+  const header = page.getByRole('banner');
+  const chip = header.getByTitle(/Opus 4\.5 \(1M\)/);
+  const brand = header.getByText('The Hive');
+  const newSession = header.getByRole('button', { name: 'New session' });
+  const counts = header.getByTitle(/working · .* waiting/);
+
+  const [chipBox, brandBox, buttonBox, countsBox] = await Promise.all([
+    chip.boundingBox(),
+    brand.boundingBox(),
+    newSession.boundingBox(),
+    counts.boundingBox(),
+  ]);
+
+  expect(chipBox!.x).toBeGreaterThan(brandBox!.x + brandBox!.width);
+  expect(chipBox!.x + chipBox!.width).toBeLessThan(buttonBox!.x);
+
+  /**
+   * One line of 12px mono is 16px tall; two are 32. Asserting under 20 catches
+   * the wrap without pinning the exact line-height.
+   */
+  expect(countsBox!.height).toBeLessThan(20);
+
+  /**
+   * The chip is the zone centring exists to serve, so it keeps its full string
+   * even at the width where the header is over budget. Equal scrollWidth and
+   * clientWidth is the observable proof nothing is clipped.
+   */
+  const chipClipped = await chip.evaluate((el) => {
+    const span = el.querySelector('span')!;
+    return span.scrollWidth > span.clientWidth;
+  });
+  expect(chipClipped).toBe(false);
+
+  const overflows = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflows).toBe(false);
+});
+
+/**
+ * The trade-off, pinned so it cannot drift silently.
+ *
+ * At 1440 a truly centred chip costs 113px the bar does not have — equal side
+ * tracks both size to the wider side, so the layout needs `2 × controls + chip`
+ * (2×517 + 459 = 1493) against 1380px of track. The counts pay it, ellipsising
+ * from the tail. Give the header ~1553px and the deficit is gone entirely.
+ *
+ * Both halves are asserted here rather than only the happy one: a regression
+ * that stopped truncating at 1440 would mean the chip started paying instead,
+ * and a regression that kept truncating at 1600 would mean the counts never
+ * recover on the monitors this app is actually run on.
+ */
+test('spends the header deficit on the counts, and stops once it is gone', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
+
+  const counts = page.getByRole('banner').getByTitle(/working · .* waiting/);
+  const truncated = () =>
+    counts.evaluate((el) => el.scrollWidth > el.clientWidth);
+
+  expect(await truncated()).toBe(true);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  expect(await truncated()).toBe(false);
+
+  // …and the chip is still centred at the wider width, not merely at 1440.
+  const header = page.getByRole('banner');
+  const chip = header.getByTitle(/Opus 4\.5 \(1M\)/);
+  const [headerBox, chipBox] = await Promise.all([
+    header.boundingBox(),
+    chip.boundingBox(),
+  ]);
+  const offset = Math.abs(
+    chipBox!.x + chipBox!.width / 2 - (headerBox!.x + headerBox!.width / 2),
+  );
+  expect(offset).toBeLessThanOrEqual(2);
+});
+
+/**
  * The rails are fixed-width and the center column absorbs every resize (story
  * 020), which is what keeps the terminal the only thing that changes size. A
  * document-level horizontal scrollbar means that contract broke — usually a

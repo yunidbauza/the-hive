@@ -103,7 +103,7 @@ integrations, multi-machine support.
 
 ```
 ┌────────────────────────── Header (56px) ──────────────────────────┐
-│ brand · model-chip · [spacer] · status-counts · theme · bell · New │
+│ brand                 model-chip (centred)   counts·theme·bell·New│
 ├───────────┬────────────────────────────────────┬──────────────────┤
 │ Left rail │        CENTER STAGE                │  Activity rail   │
 │  (268px)  │  - Orchestrator console (default)  │    (316px)       │
