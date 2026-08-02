@@ -1,0 +1,130 @@
+# Design system
+
+Read this before any UI task. The visual source of truth is
+[`../../concept/`](../../concept/) — when a story is silent on a colour, size, or
+string, the concept file decides.
+
+The values below are asserted against `src/styles/tokens.css` and
+`src/lib/terminal/ansi.ts` by `tests/design-system.test.ts`. Edit them together or
+the test fails.
+
+## Colour tokens
+
+Defined on `:root` (dark, the default) with a `body[data-theme="light"]` override,
+and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
+
+| Token | Dark | Light | Used for |
+| --- | --- | --- | --- |
+| `--cc-bg` | `#10152a` | `#fdfdfb` | app background |
+| `--cc-panel` | `#141a33` | `#ffffff` | rails, cards, panels |
+| `--cc-panel-2` | `#121731` | `#f7fafb` | nested/recessed panels |
+| `--cc-hover` | `#1b2344` | `#f4f9ff` | hover state |
+| `--cc-active` | `#222c55` | `#e9f3fc` | active/selected row |
+| `--cc-border` | `#273159` | `#d4dee3` | dividers, outlines |
+| `--cc-border-soft` | `#1e2747` | `#edf2f4` | quieter dividers |
+| `--cc-ink` | `#e9effc` | `#2c2f34` | primary text |
+| `--cc-muted` | `#98a3cc` | `#73767c` | secondary text |
+| `--cc-subtle` | `#6b779f` | `#8e949c` | tertiary text, idle status |
+| `--cc-brand` | `#8fa7f2` | `#334fa9` | brand, done status |
+| `--cc-green` | `#74b79c` | `#2e6b52` | working / online status |
+| `--cc-amber` | `#ffac47` | `#c77414` | needs-input status |
+| `--cc-red` | `#ff8d85` | `#d3372f` | errors, failing checks |
+| `--cc-chip` | `#1c2648` | `#edf2f4` | chips, pills |
+| `--cc-term-bg` | `#0b1023` | *(unchanged)* | terminal background |
+| `--cc-term-input` | `#0e1430` | *(unchanged)* | terminal input bar |
+
+**The terminal stays dark in light mode.** `--cc-term-bg` and `--cc-term-input`
+are deliberately not overridden — this matches the concept and most real terminal
+tools.
+
+### Tailwind mapping
+
+`@theme inline` binds each token to a Tailwind colour without copying its value,
+so `tokens.css` stays the single source of truth and the light override keeps
+working through the same variables:
+
+```
+--cc-bg → bg-bg / text-bg / border-bg
+--cc-panel → bg-panel      --cc-panel-2 → bg-panel-2
+--cc-hover → bg-hover      --cc-active → bg-active
+--cc-border → border-border  --cc-border-soft → border-border-soft
+--cc-ink → text-ink        --cc-muted → text-muted   --cc-subtle → text-subtle
+--cc-brand → text-brand    --cc-green → text-green
+--cc-amber → text-amber    --cc-red → text-red
+--cc-chip → bg-chip        --cc-term-bg → bg-term-bg
+```
+
+`inline` matters: it makes utilities emit `var(--cc-*)` rather than resolving the
+value at build time, which is what lets a single `data-theme` flip recolour the
+whole app.
+
+**Raw hex literals in component code are banned.** If a colour is missing, add a
+token.
+
+## Terminal text palette
+
+Exported from `src/lib/terminal/ansi.ts`. Deliberately **not** in `@theme` — it
+never reaches CSS. xterm paints to a canvas that CSS custom properties cannot
+reach, so this palette is consumed as JS by xterm's `theme` option and by the ANSI
+colorizer.
+
+| Key | Value | Used for |
+| --- | --- | --- |
+| `ink` | `#dbe4ff` | default foreground |
+| `dim` | `#7c88b8` | secondary / meta |
+| `green` | `#7ee2b8` | success, prompts |
+| `blue` | `#8fb5ff` | tool calls (Read/Edit/Bash lines) |
+| `amber` | `#ffc06e` | working spinner, questions |
+| `red` | `#ff8d85` | errors |
+| `cyan` | `#7edce2` | orchestrator-injected lines, PR refs |
+| `bg` | `#0b1023` | terminal background |
+| `selection` | `#222c55` | selection highlight |
+
+The text colours are intentionally distinct from the UI palette — `TERM.green` is
+not `--cc-green` — because text on a dark canvas needs more lift than the same
+semantic colour does in chrome. Three surface values legitimately coincide with UI
+tokens: `bg` is `--cc-term-bg`, `selection` is `--cc-active`, and `red` is shared
+with `--cc-red`.
+
+## Status → colour
+
+| Status | Label | Token | Notes |
+| --- | --- | --- | --- |
+| `working` | working | `--cc-green` | dot pulses (`ccpulse`) |
+| `waiting` | needs input | `--cc-amber` | blocked on user answer/permission |
+| `idle` | idle | `--cc-subtle` | context saved, resumable |
+| `done` | done | `--cc-brand` | listed under COMPLETED |
+| `online` | online | `--cc-green` | agents only |
+
+Status is never carried by colour alone — every status also has a label, so the
+model survives colour-blindness and reduced-motion.
+
+## Type
+
+- **Family:** `ui-mono` stack — `ui-monospace, Menlo, 'SF Mono', monospace`,
+  registered as `--font-mono` and available as `font-mono`. All terminal and UI
+  text is monospace; the command center is a terminal tool and reads as one.
+- **Base size:** 13px / 1.5 on `body`.
+- **Terminal:** 12px inside xterm.
+
+## Motion
+
+| Animation | Utility | Definition |
+| --- | --- | --- |
+| `ccpulse` | `animate-ccpulse` | opacity 1 → .3 → 1, 1.6s ease-in-out infinite |
+| `ccblink` | `animate-ccblink` | opacity 1 → 0 → 1, 1s step-end infinite |
+
+Both are registered in `tokens.css` as `--animate-*`, so components use the
+utility rather than hand-written CSS.
+
+`prefers-reduced-motion: reduce` collapses all animation and transition durations
+to ~0. Safe because animation here is always decoration — the pulsing dot repeats
+information the label already carries.
+
+## Chrome
+
+- Header height **56px**; left rail **268px**; activity rail **316px**.
+- Scrollbars are thin (10px), thumb `--cc-border`, transparent track, rounded.
+- Interactive controls show a pointer cursor — a base rule in `global.css`, since
+  Tailwind v4 dropped the one that used to provide this. Do not add
+  `cursor-pointer` per component.
