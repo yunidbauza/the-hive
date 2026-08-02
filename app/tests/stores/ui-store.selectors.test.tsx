@@ -12,6 +12,7 @@ import {
   useSelIdx,
   useSetLeftTab,
   useSetSelIdx,
+  useShowActivityRail,
   useTheme,
   useThemeActions,
   useToggleProject,
@@ -90,6 +91,22 @@ describe('ui-store selectors', () => {
     });
 
     expect(result.current).toEqual({ railTab: 'prs', showActivityRail: false });
+  });
+
+  it('useShowActivityRail narrows to visibility alone', () => {
+    const { result } = renderHook(() => useShowActivityRail());
+    expect(result.current).toBe(true);
+
+    // Switching rail tabs must not disturb the shell's subscription.
+    act(() => {
+      useUiStore.getState().setRailTab('prs');
+    });
+    expect(result.current).toBe(true);
+
+    act(() => {
+      useUiStore.getState().toggleActivityRail();
+    });
+    expect(result.current).toBe(false);
   });
 
   it('useProjectCollapsed defaults to expanded and follows the toggle', () => {

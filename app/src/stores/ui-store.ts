@@ -167,6 +167,16 @@ export const useSetLeftTab = () => useUiStore((state) => state.setLeftTab);
 /** Activity rail state. */
 export const useRailState = () => useUiStore(useShallow(railStateSelector));
 
+/**
+ * Whether the activity rail is mounted (story 020).
+ *
+ * Deliberately narrower than `useRailState()`: the shell only cares about
+ * visibility, and subscribing it to `railTab` too would re-render all three
+ * regions — terminal included — every time the user switches rail tabs.
+ */
+export const useShowActivityRail = () =>
+  useUiStore((state) => state.showActivityRail);
+
 /** Whether a project is collapsed in the projects panel. */
 export const useProjectCollapsed = (id: string) =>
   useUiStore((state) => Boolean(state.collapsed[id]));

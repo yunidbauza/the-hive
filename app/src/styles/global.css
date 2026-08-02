@@ -19,6 +19,11 @@ body,
 
 body {
   margin: 0;
+  /* The shell fills the viewport and never scrolls as a page — the left rail,
+     center stage, and activity rail each own their own scrollbar (story 020).
+     Without this, a tall rail would scroll the whole document and drag the
+     terminal out of view. */
+  overflow: hidden;
   background: var(--cc-bg);
   color: var(--cc-ink);
   font-family: var(--font-mono);

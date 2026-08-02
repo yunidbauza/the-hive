@@ -81,10 +81,44 @@ Rules for all of them:
 
 ## Layout
 
-Owned by stories 020–050 and not yet built: `app-shell`, `header`, `model-chip`,
-`status-counts`, `left-rail`, `activity-rail`, `center-stage`,
-`session-meta-bar`. See [`../docs/component-patterns.md`](../docs/component-patterns.md).
+### `<AppShell />`
 
-`src/app.tsx` currently renders a placeholder shell plus the terminal smoke mount
-and the theme toggle. Story 020 replaces its body with `<AppShell />`, and story
-021 moves the toggle into the real header.
+`src/components/layout/app-shell.tsx` — story 020, built.
+
+```ts
+function AppShell(): JSX.Element
+```
+
+The fixed three-column chrome: `<Header />` on top, then a row of `<LeftRail />`,
+`<CenterStage />`, and `<ActivityRail />`. Takes no props; reads
+`useShowActivityRail()` to decide whether the activity rail is mounted at all.
+
+`src/app.tsx` renders `<AppShell />` and nothing else.
+
+The four regions are landmark elements — `<header>`, `<nav>`, `<main>`,
+`<aside>` — so tests address them by role. The flexbox contract that holds the
+layout together is documented in
+[`../docs/component-patterns.md`](../docs/component-patterns.md); do not touch
+the `min-h-0` / `min-w-0` / `shrink-0` classes without reading it.
+
+### Region placeholders
+
+Each is a bare panel today, owned by the story that fills it in. Story 020 built
+the boxes; nothing else about them is settled.
+
+| Region | File | Filled in by |
+| --- | --- | --- |
+| `Header` | `layout/header.tsx` | 021 — brand, model chip, counts, bell, New session |
+| `LeftRail` | `layout/left-rail.tsx` | 030 — tab bar, projects/work/agents panels |
+| `CenterStage` | `layout/center-stage.tsx` | 040 — view-state machine, session meta bar |
+| `ActivityRail` | `layout/activity-rail.tsx` | 050 — tab bar, inbox/PRs/feed panels |
+
+Two placeholders carry real behaviour on purpose, so the shell is exercised
+rather than merely rendered:
+
+- `Header` holds the theme toggle, moved out of `src/app.tsx` when the shell
+  landed. Story 021 absorbs it into the real seven-zone header.
+- `CenterStage` mounts `<TerminalSurface />`, so the `min-w-0` shrink contract is
+  proven against a real xterm instance instead of an empty box.
+
+Still unbuilt: `model-chip`, `status-counts` (021), `session-meta-bar` (040).

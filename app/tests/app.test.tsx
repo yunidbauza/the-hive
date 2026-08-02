@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '@/app';
@@ -8,47 +7,24 @@ import { useUiStore } from '@stores/ui-store';
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
 
+/**
+ * The composition root is a one-liner since story 020 — it mounts the shell and
+ * nothing else. The regions themselves are pinned in
+ * `tests/components/layout/app-shell.test.tsx`.
+ */
 describe('App', () => {
   beforeEach(() => {
     document.body.removeAttribute('data-theme');
-    useUiStore.setState({ theme: 'dark' });
+    useUiStore.getState().reset();
   });
 
-  it('renders the shell with the terminal surface mounted', () => {
-    const { container } = render(<App />);
-
-    expect(screen.getByText('the hive')).toBeInTheDocument();
-    expect(container.querySelector('header')).toBeInTheDocument();
-    expect(container.querySelector('main')).toBeInTheDocument();
-  });
-
-  it('offers to switch to light while dark is active', () => {
+  it('mounts the app shell', () => {
     render(<App />);
 
+    expect(screen.getByRole('banner')).toBeInTheDocument();
+    expect(screen.getByRole('main')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Switch to light theme' }),
-    ).toBeInTheDocument();
-  });
-
-  it('offers to switch back to dark once light is active', () => {
-    useUiStore.setState({ theme: 'light' });
-    render(<App />);
-
-    expect(
-      screen.getByRole('button', { name: 'Switch to dark theme' }),
-    ).toBeInTheDocument();
-  });
-
-  it('toggles the theme when the control is clicked', async () => {
-    const user = userEvent.setup();
-    render(<App />);
-
-    await user.click(screen.getByRole('button', { name: 'Switch to light theme' }));
-
-    expect(useUiStore.getState().theme).toBe('light');
-    expect(document.body.getAttribute('data-theme')).toBe('light');
-    expect(
-      screen.getByRole('button', { name: 'Switch to dark theme' }),
+      screen.getByRole('complementary', { name: 'Activity' }),
     ).toBeInTheDocument();
   });
 });

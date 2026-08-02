@@ -2,9 +2,7 @@
 
 **Scope:** panels, atoms, the rails, and the center-stage view-state machine.
 
-**Owned by stories 020–053.** This file is a placeholder until the shell and
-panel stories land; it exists now so the routing table in `../AGENTS.md` never
-points at a missing file.
+**Owned by stories 020–053.** The shell (020) has landed; the panels have not.
 
 ## What already holds today
 
@@ -22,9 +20,50 @@ points at a missing file.
 - Only the shadcn primitives actually needed are installed: `dialog`, `tooltip`,
   `dropdown-menu`.
 
+## The shell
+
+`src/components/layout/app-shell.tsx` is the whole chrome. `src/app.tsx` renders
+it and nothing else.
+
+```
+<body>                      100vh, overflow hidden, --cc-bg / --cc-ink
+└── AppShell                flex column, h-full
+    ├── Header              <header>  56px fixed, --cc-panel, border-bottom soft
+    └── Row                 flex-1, min-h-0, flex
+        ├── LeftRail        <nav>     268px fixed, --cc-panel, border-right soft,
+        │                             own vertical scroll
+        ├── CenterStage     <main>    flex-1, min-w-0, --cc-panel-2, flex column
+        └── ActivityRail    <aside>   316px fixed, --cc-panel, border-left soft,
+                                      own vertical scroll, unmounted when hidden
+```
+
+Each region is a landmark element, so tests address them by role
+(`banner` / `navigation` / `main` / `complementary`) rather than by class.
+
+### The rules the layout depends on
+
+- **`min-h-0` on the row and `min-w-0` on the center stage.** A flex item
+  defaults to `min-*: auto` and refuses to shrink below its content. Without
+  `min-h-0` a tall rail pushes the shell past the viewport instead of scrolling
+  inside itself; without `min-w-0` a long terminal line widens the center column,
+  which xterm's fit addon then measures and grows into. Both are load-bearing,
+  not defensive.
+- **The rails never flex** (`w-[268px]` / `w-[316px]` + `shrink-0`), so the
+  center column absorbs every width change and the document never gains a
+  horizontal scrollbar.
+- **The page never scrolls.** `body { overflow: hidden }` plus `overflow-y-auto`
+  on each rail — three independent scrollbars, and the terminal keeps a stable
+  size regardless of what lands in the rails.
+- **The activity rail unmounts rather than hides.** `showActivityRail` in the
+  ui-store is read through `useShowActivityRail()` — deliberately narrower than
+  `useRailState()`, so switching rail tabs does not re-render the terminal.
+
+Desktop-width only, by design: no responsive or mobile layout, and the rails are
+not draggable. Both are explicit non-goals of story 020.
+
 ## What later stories add here
 
-The three-column shell and its breakpoints (020), the header (021), the left rail
-and its three panels (030–033), the center-stage view-state machine and session
-meta bar (040), the activity rail and its three panels (050–053), and the atom
-inventory those stories introduce.
+The header (021), the left rail and its three panels (030–033), the center-stage
+view-state machine and session meta bar (040), the activity rail and its three
+panels (050–053), and the atom inventory those stories introduce. Each fills in
+the placeholder region it owns; the shell itself does not change.
