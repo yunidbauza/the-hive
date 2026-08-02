@@ -122,9 +122,59 @@ would silently show the middle of it. `TerminalSurface` therefore applies the
 bottom-stick rule to fits as well as to writes — see
 [`terminal-architecture.md`](terminal-architecture.md).
 
+## The orchestrator console (041)
+
+Three surfaces stacked inside the orchestrator view, in this order:
+
+1. **`SessionTable`** — the fleet, as **DOM, not xterm**. Rows have to stay
+   clickable and focusable, which terminal text cannot be. Eight active
+   sessions, a `COMPLETED` divider, then the done ones.
+2. **The transcript** — an ordinary `TerminalSurface` bound to the `'orch'`
+   pseudo-entity, so the console gets real ANSI colour and selection for free.
+3. **`ConsoleInput`** — the command row and the hint bar beneath it.
+
+The concept scrolls the table and transcript as one region. They cannot be: the
+transcript is a real xterm with its own viewport, and a DOM table cannot share
+it. The table keeps its own scroll and the terminal fills what is left.
+
+### Parse, then execute — two halves that fail differently
+
+```
+parseCommand(raw) → ParsedCommand → runOrchCommand(parsed)
+```
+
+- `features/orchestrator/utils/parse-command.ts` is **pure**. It catches *shape*
+  errors — `send` with no message, an unknown verb — and never touches the store.
+- `hive-store.runOrchCommand` takes an already-parsed command and catches
+  *existence* errors — no such session, unknown repo.
+
+The type lives in `types/command.ts` rather than beside the parser because
+`stores/` may not import `features/`. That constraint produced a better shape
+than it interrupted: the union is the closest thing the prototype has to the
+future daemon's API surface, and both halves are exhaustively testable alone.
+
+`status` colours each row by session status rather than colouring the status
+column alone — `TermLine` carries one colour per line, and a wall of amber still
+reads as "these need you".
+
+The transcript is capped at 200 lines. Unlike the feed's cap, this one has a
+second job: the transcript is replayed into an xterm on every subscribe, so an
+unbounded array would make opening the orchestrator slower over time.
+
+### Selectors and the re-render trap
+
+The table's two groups come from `useActiveSessions()` and `useDoneSessions()` —
+two flat selectors, deliberately **not** one returning `{ active, done }`.
+
+`useShallow` compares the returned value's own properties. An object holding two
+freshly-built arrays is never shallow-equal to the previous one, so the component
+re-renders, rebuilds the arrays, and loops until React throws "Maximum update
+depth exceeded". Flat arrays are compared element by element, which is what makes
+them stable. This cost a debugging cycle; it is written down so it costs nobody
+another.
+
 ## What later stories add here
 
-The orchestrator console (041), the session/agent view's input row (043), and the
-real new-session picker (044) — `CenterStage` currently renders a deliberately
-minimal picker placeholder so that state stays exitable. Then the activity rail
-and its three panels (050–053).
+The session/agent view's input row (043) and the real new-session picker (044) —
+`CenterStage` currently renders a deliberately minimal picker placeholder so that
+state stays exitable. Then the activity rail and its three panels (050–053).

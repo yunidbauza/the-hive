@@ -49,7 +49,23 @@ from a clean copy and one test's mutation cannot leak into the next.
 **Fixtures are store-only consumers.** Nothing that renders may import them —
 enforced by an import zone, not by review.
 
-## Deferred
+## The console grammar
 
-`runOrchCommand` currently handles `help`, `send`, and the error paths. Story 041
-owns the full console grammar.
+`runOrchCommand` takes an **already-parsed** `ParsedCommand`, not a string. The
+parser is pure and lives in `features/orchestrator/utils/parse-command.ts`;
+`stores/` may not import `features/`, so the shared type sits in
+`types/command.ts`.
+
+The split is worth keeping for its own sake: the parser catches *shape* errors
+(`send` with no message, an unknown verb) and the store catches *existence*
+errors (no such session, unknown repo). Neither needs the other to be tested.
+
+All six commands are implemented — `help`, `status`, `open`, `send`, `spawn`,
+`clear` — with `usage` and `command not found` for everything else. The
+transcript is capped at 200 lines, oldest dropped first, because it is replayed
+into an xterm on every subscribe.
+
+`useActiveSessions()` / `useDoneSessions()` are two flat selectors rather than
+one returning `{ active, done }`: `useShallow` compares the returned value's own
+properties, so an object of two freshly-built arrays never compares equal and the
+component re-renders forever.

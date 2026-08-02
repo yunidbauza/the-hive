@@ -42,7 +42,7 @@ describe('DESIGN-SYSTEM.md — colour tokens', () => {
   it('parses a complete dark token set from tokens.css', () => {
     // Guards the parser itself: a regex that silently matched nothing would
     // make every assertion below vacuously true.
-    expect(Object.keys(darkTokens)).toHaveLength(22);
+    expect(Object.keys(darkTokens)).toHaveLength(25);
   });
 
   it('documents every dark token with the value tokens.css defines', () => {

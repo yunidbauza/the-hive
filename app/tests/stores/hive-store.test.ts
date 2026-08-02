@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isSession } from '@/types/entity';
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
+import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -171,57 +172,206 @@ describe('hive-store', () => {
   });
 
   describe('runOrchCommand', () => {
-    it('ignores blank input', () => {
-      const before = useHiveStore.getState().orchLines.length;
-      useHiveStore.getState().runOrchCommand('   ');
-      expect(useHiveStore.getState().orchLines).toHaveLength(before);
-    });
+    /**
+     * The executor half of the grammar (story 041). The parser is tested on its
+     * own; these run parsed commands against a fresh store and assert what the
+     * transcript and the rest of the state look like afterwards.
+     */
+    const run = (input: string) =>
+      useHiveStore.getState().runOrchCommand(parseCommand(input));
 
-    it('echoes the command', () => {
-      useHiveStore.getState().runOrchCommand('help');
-      expect(useHiveStore.getState().orchLines[3].text).toBe('❯ help');
-    });
-
-    it('lists commands for help', () => {
-      useHiveStore.getState().runOrchCommand('help');
-      const text = useHiveStore
+    const transcript = () =>
+      useHiveStore
         .getState()
         .orchLines.map((l) => l.text)
         .join('\n');
-      expect(text).toContain('send <session> <message>');
+
+    const lastLine = () => useHiveStore.getState().orchLines.at(-1);
+
+    it('ignores blank input', () => {
+      const before = useHiveStore.getState().orchLines.length;
+      run('   ');
+      expect(useHiveStore.getState().orchLines).toHaveLength(before);
     });
 
-    it('routes a send to the target session', () => {
-      vi.useFakeTimers();
-      useHiveStore.getState().runOrchCommand('send lead-form y please');
-
-      const entity = useHiveStore.getState().entities['lead-form'];
-      expect(entity.lines.at(-1)?.text).toBe('❯ [orchestrator] y please');
-      vi.useRealTimers();
+    it('echoes the command in green before anything else', () => {
+      run('help');
+      expect(useHiveStore.getState().orchLines[3]).toMatchObject({
+        text: '❯ help',
+        color: 'green',
+      });
     });
 
-    it('rejects send with no message', () => {
-      useHiveStore.getState().runOrchCommand('send lead-form');
-      expect(useHiveStore.getState().orchLines.at(-1)).toMatchObject({
-        text: '  usage: send <session> <message>',
+    describe('help', () => {
+      it('lists every command in the grammar', () => {
+        run('help');
+        const text = transcript();
+
+        for (const command of ['help', 'status', 'open', 'send', 'spawn', 'clear']) {
+          expect(text).toContain(command);
+        }
+      });
+    });
+
+    describe('status', () => {
+      it('prints one aligned row per session, and none for agents', () => {
+        run('status');
+        const rows = useHiveStore
+          .getState()
+          .orchLines.slice(4)
+          .map((l) => l.text);
+
+        expect(rows).toHaveLength(10);
+        expect(rows[0]).toContain('hero-refresh');
+        expect(rows[0]).toContain('apfm-web · feat/hero-refresh');
+        // Agents have no branch and are not part of the fleet table.
+        expect(transcript()).not.toContain('slack-agent');
+      });
+
+      it('colours each row by status and renames waiting', () => {
+        run('status');
+        const rows = useHiveStore.getState().orchLines.slice(4);
+
+        const leadForm = rows.find((l) => l.text.includes('lead-form'));
+        expect(leadForm).toMatchObject({ color: 'amber' });
+        expect(leadForm?.text).toContain('needs input');
+      });
+    });
+
+    describe('open', () => {
+      it('opens the session and confirms', () => {
+        run('open webhooks');
+
+        expect(useUiStore.getState().activeTab).toBe('webhooks');
+        expect(lastLine()).toMatchObject({ text: '  opened webhooks', color: 'dim' });
+      });
+
+      it('rejects a session that does not exist', () => {
+        run('open nope');
+
+        expect(useUiStore.getState().activeTab).toBe('orch');
+        expect(lastLine()).toMatchObject({
+          text: '  no such session: nope',
+          color: 'red',
+        });
+      });
+
+      it('rejects a missing argument as a usage error', () => {
+        run('open');
+        expect(lastLine()).toMatchObject({
+          text: '  usage: open <session>',
+          color: 'red',
+        });
+      });
+    });
+
+    describe('send', () => {
+      it('routes the message to the target session', () => {
+        vi.useFakeTimers();
+        run('send lead-form y please');
+
+        const entity = useHiveStore.getState().entities['lead-form'];
+        expect(entity.lines.at(-1)?.text).toBe('❯ [orchestrator] y please');
+        expect(lastLine()).toMatchObject({ text: '  routed → lead-form', color: 'dim' });
+        vi.useRealTimers();
+      });
+
+      it('flips the target to working after the acknowledgement delay', () => {
+        vi.useFakeTimers();
+        run('send lead-form y');
+
+        expect(useHiveStore.getState().entities['lead-form']).toMatchObject({
+          status: 'waiting',
+        });
+        vi.advanceTimersByTime(ACK_DELAY_MS);
+
+        // The demo's payoff: a blocked session resumes once answered.
+        expect(useHiveStore.getState().entities['lead-form']).toMatchObject({
+          status: 'working',
+        });
+        vi.useRealTimers();
+      });
+
+      it('rejects send with no message', () => {
+        run('send lead-form');
+        expect(lastLine()).toMatchObject({
+          text: '  usage: send <session> <message>',
+          color: 'red',
+        });
+      });
+
+      it('reports an unknown session', () => {
+        run('send nope hello');
+        expect(lastLine()).toMatchObject({
+          text: '  no such session: nope',
+          color: 'red',
+        });
+      });
+    });
+
+    describe('spawn', () => {
+      it('creates a session on a known project and opens it', () => {
+        const before = useHiveStore.getState().order.length;
+        run('spawn apfm-web tidy the footer');
+
+        const state = useHiveStore.getState();
+        expect(state.order).toHaveLength(before + 1);
+        const id = state.order.at(-1)!;
+        expect(state.entities[id]).toMatchObject({
+          project: 'apfm-web',
+          task: 'tidy the footer',
+        });
+        // Newly spawned sessions are open and in nav order immediately.
+        expect(useUiStore.getState().activeTab).toBe(id);
+      });
+
+      it('rejects a repo that is not a project', () => {
+        const before = useHiveStore.getState().order.length;
+        run('spawn not-a-repo do things');
+
+        expect(useHiveStore.getState().order).toHaveLength(before);
+        expect(lastLine()).toMatchObject({
+          text: '  unknown repo: not-a-repo — try one from the Projects panel',
+          color: 'red',
+        });
+      });
+
+      it('rejects a missing task as a usage error', () => {
+        run('spawn apfm-web');
+        expect(lastLine()).toMatchObject({
+          text: '  usage: spawn <repo> <task>',
+          color: 'red',
+        });
+      });
+    });
+
+    describe('clear', () => {
+      it('replaces the transcript with a single notice', () => {
+        run('help');
+        run('clear');
+
+        expect(useHiveStore.getState().orchLines).toEqual([
+          { text: 'console cleared — help for commands', color: 'dim' },
+        ]);
+      });
+    });
+
+    it('reports an unknown command and points at help', () => {
+      run('frobnicate');
+      expect(lastLine()).toMatchObject({
+        text: '  command not found: frobnicate — try `help`',
         color: 'red',
       });
     });
 
-    it('reports an unknown session', () => {
-      useHiveStore.getState().runOrchCommand('send nope hello');
-      expect(useHiveStore.getState().orchLines.at(-1)).toMatchObject({
-        text: '  no such session: nope',
-        color: 'red',
-      });
-    });
+    it('caps the transcript, dropping the oldest lines', () => {
+      // The transcript is replayed into an xterm on every subscribe, so an
+      // unbounded array would make opening the orchestrator slower over time.
+      for (let i = 0; i < 120; i += 1) run('help');
 
-    it('reports an unknown command', () => {
-      useHiveStore.getState().runOrchCommand('frobnicate');
-      expect(useHiveStore.getState().orchLines.at(-1)).toMatchObject({
-        text: '  unknown command: frobnicate',
-        color: 'red',
-      });
+      const lines = useHiveStore.getState().orchLines;
+      expect(lines).toHaveLength(200);
+      expect(lines.map((l) => l.text).join('\n')).not.toContain('maestro v0.4.2');
     });
   });
 

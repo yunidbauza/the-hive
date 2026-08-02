@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { createInitialState } from '@/data/fixtures';
+import type { ParsedCommand } from '@/types/command';
+import { USAGE } from '@/types/command';
 import type { Effort, Entity, Model, Session, SessionStatus } from '@/types/entity';
 import { isSession } from '@/types/entity';
 import type { FeedItem } from '@/types/feed';
@@ -43,7 +45,7 @@ interface HiveState {
     effort?: Effort,
   ) => string;
   sendToEntity: (id: string, msg: string) => ReturnType<typeof setTimeout> | null;
-  runOrchCommand: (raw: string) => void;
+  runOrchCommand: (command: ParsedCommand) => void;
   markAllRead: () => void;
   markRead: (index: number) => void;
   pushFeed: (item: FeedItem) => void;
@@ -57,6 +59,50 @@ interface HiveState {
 
 /** Feed is capped so a long-running demo cannot grow without bound. */
 const FEED_CAP = 24;
+
+/**
+ * Console transcript cap (story 041). Oldest lines drop first.
+ *
+ * Unlike the feed, this one has a second job: the transcript is replayed into
+ * an xterm on every subscribe, so an unbounded array would make opening the
+ * orchestrator slower the longer the session had been running.
+ */
+const ORCH_LINE_CAP = 200;
+
+const capLines = (lines: TermLine[]) =>
+  lines.length > ORCH_LINE_CAP ? lines.slice(lines.length - ORCH_LINE_CAP) : lines;
+
+/** The `help` output — one row per command in the grammar. */
+const HELP_LINES = [
+  '  help                       show this list',
+  '  status                     one line per session',
+  '  open <session>             open a session in the center stage',
+  '  send <session> <message>   route a message to a session',
+  '  spawn <repo> <task>        start a new session on a project',
+  '  clear                      empty this transcript',
+];
+
+/**
+ * How `status` spells and colours each state.
+ *
+ * Deliberately a second, terminal-side mapping rather than a reuse of
+ * `STATUS_LABEL`/`STATUS_TEXT` from `components/ui/status-dot.tsx`: those are
+ * CSS classes for DOM, and `stores/` may not import `components/`. The words
+ * match; the colours are `TermColor` names, resolved by the ANSI colorizer.
+ */
+const STATUS_WORD: Record<SessionStatus, string> = {
+  working: 'working',
+  waiting: 'needs input',
+  idle: 'idle',
+  done: 'done',
+};
+
+const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
+  working: 'green',
+  waiting: 'amber',
+  idle: 'dim',
+  done: 'blue',
+};
 
 let spawnCounter = 0;
 
@@ -157,45 +203,104 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   },
 
   /**
-   * Execute an orchestrator console command.
+   * Execute an already-parsed orchestrator console command (story 041).
    *
-   * Story 041 owns the full grammar; this handles the subset the console boots
-   * with and echoes anything else as an error, so 041 extends a working seam
-   * rather than inventing one.
+   * Takes a `ParsedCommand`, not a string. Parsing is pure and lives in
+   * `features/orchestrator/utils/parse-command.ts`; the store may not import
+   * `features/`, and more importantly the two jobs fail differently — the
+   * parser catches shape errors ("send with no message"), this catches
+   * existence errors ("no such session"). Keeping them apart is what makes both
+   * exhaustively testable.
    */
-  runOrchCommand: (raw) => {
-    const input = raw.trim();
-    if (!input) return;
+  runOrchCommand: (command) => {
+    // A blank line is a no-op, not an error: the user pressed Enter on nothing.
+    if (command.kind === 'empty') return;
 
     const pushOrch = (text: string, color: TermLine['color'] = 'ink') =>
-      set((state) => ({ orchLines: [...state.orchLines, line(text, color)] }));
+      set((state) => ({
+        orchLines: capLines([...state.orchLines, line(text, color)]),
+      }));
 
-    pushOrch(`❯ ${input}`, 'green');
+    pushOrch(`❯ ${command.raw}`, 'green');
 
-    const [command, ...rest] = input.split(/\s+/);
-
-    if (command === 'help') {
-      pushOrch('  send <session> <message>   route a message to a session', 'dim');
-      pushOrch('  help                       show this list', 'dim');
-      return;
-    }
-
-    if (command === 'send') {
-      const [target, ...words] = rest;
-      if (!target || words.length === 0) {
-        pushOrch('  usage: send <session> <message>', 'red');
+    switch (command.kind) {
+      case 'help': {
+        for (const entry of HELP_LINES) pushOrch(entry, 'dim');
         return;
       }
-      if (!get().entities[target]) {
-        pushOrch(`  no such session: ${target}`, 'red');
+
+      case 'status': {
+        const state = get();
+        for (const id of state.order) {
+          const entity = state.entities[id];
+          if (!entity || !isSession(entity)) continue;
+          /**
+           * One colour per line, not per column: `TermLine` carries a single
+           * colour and the transcript is rendered through it. Colouring the
+           * whole row by status keeps the signal — a wall of amber is still
+           * "these need you" at a glance.
+           */
+          pushOrch(
+            `  ${entity.id.padEnd(16)}${STATUS_WORD[entity.status].padEnd(13)}${entity.project} · ${entity.branch}`,
+            STATUS_COLOR[entity.status],
+          );
+        }
         return;
       }
-      get().sendToEntity(target, words.join(' '));
-      pushOrch(`  routed to ${target}`, 'dim');
-      return;
-    }
 
-    pushOrch(`  unknown command: ${command}`, 'red');
+      case 'clear': {
+        set({ orchLines: [line('console cleared — help for commands', 'dim')] });
+        return;
+      }
+
+      case 'open': {
+        if (!get().entities[command.target]) {
+          pushOrch(`  no such session: ${command.target}`, 'red');
+          return;
+        }
+        useUiStore.getState().openTab(command.target);
+        pushOrch(`  opened ${command.target}`, 'dim');
+        return;
+      }
+
+      case 'send': {
+        if (!get().entities[command.target]) {
+          pushOrch(`  no such session: ${command.target}`, 'red');
+          return;
+        }
+        get().sendToEntity(command.target, command.message);
+        pushOrch(`  routed → ${command.target}`, 'dim');
+        return;
+      }
+
+      case 'spawn': {
+        const known = get().projects.some(
+          (project) => project.id === command.repo,
+        );
+        if (!known) {
+          pushOrch(
+            `  unknown repo: ${command.repo} — try one from the Projects panel`,
+            'red',
+          );
+          return;
+        }
+        const id = get().spawnSession(command.repo, command.task);
+        pushOrch(`  spawned ${id} on ${command.repo}`, 'dim');
+        return;
+      }
+
+      case 'usage': {
+        pushOrch(`  ${USAGE[command.command]}`, 'red');
+        return;
+      }
+
+      case 'unknown': {
+        pushOrch(
+          `  command not found: ${command.command} — try \`help\``,
+          'red',
+        );
+      }
+    }
   },
 
   markAllRead: () =>
@@ -281,9 +386,47 @@ export const useNavOrder = () =>
     }),
   );
 
+/**
+ * Sessions either side of the orchestrator table's COMPLETED divider (041).
+ *
+ * Two flat selectors rather than one returning `{ active, done }`. `useShallow`
+ * compares the *returned value's* own properties, so an object of two freshly
+ * built arrays is never shallow-equal to the last one — the component
+ * re-renders, rebuilds the arrays, and loops until React gives up. Flat arrays
+ * are compared element by element, which is what makes them stable.
+ *
+ * Derived here rather than in the component so they stay consistent with
+ * `useNavOrder()`, which flattens the same partition into the keyboard order.
+ */
+const isActiveSession = (entity: Entity | undefined) =>
+  entity !== undefined && isSession(entity) && entity.status !== 'done';
+
+export const useActiveSessions = () =>
+  useHiveStore(
+    useShallow((state) =>
+      state.order.filter((id) => isActiveSession(state.entities[id])),
+    ),
+  );
+
+export const useDoneSessions = () =>
+  useHiveStore(
+    useShallow((state) =>
+      state.order.filter((id) => {
+        const entity = state.entities[id];
+        return (
+          entity !== undefined && isSession(entity) && entity.status === 'done'
+        );
+      }),
+    ),
+  );
+
 /** The long-lived background agents, in fixture order (story 033). */
 export const useAgentOrder = () =>
   useHiveStore(useShallow((state) => state.agentOrder));
+
+/** Execute a parsed console command (story 041). */
+export const useRunOrchCommand = () =>
+  useHiveStore((state) => state.runOrchCommand);
 
 /** The project list, in fixture order (story 031). */
 export const useProjects = () =>

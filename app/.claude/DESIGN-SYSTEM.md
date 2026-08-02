@@ -32,15 +32,27 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-chip` | `#1c2648` | `#edf2f4` | chips, pills |
 | `--cc-term-bg` | `#0b1023` | *(unchanged)* | terminal background |
 | `--cc-term-input` | `#0e1430` | *(unchanged)* | terminal input bar |
+| `--cc-term-row-hover` | `#161f45` | *(unchanged)* | session-table row hover |
+| `--cc-term-row-active` | `#1a2450` | *(unchanged)* | session-table selected row |
+| `--cc-term-head` | `#4d5a86` | *(unchanged)* | session-table column headers |
 | `--cc-brand-fill` | `#5e76d0` | *(unchanged)* | primary button |
 | `--cc-brand-fill-hover` | `#4f6ac5` | *(unchanged)* | primary button hover |
 | `--cc-brand-fill-strong` | `#334fa9` | *(unchanged)* | hive-mark tile (Serenity) |
 | `--cc-on-brand` | `#ffffff` | *(unchanged)* | text/icons on a brand fill |
 | `--cc-danger-solid` | `#d3372f` | *(unchanged)* | notification badge fill |
 
-**The terminal stays dark in light mode.** `--cc-term-bg` and `--cc-term-input`
-are deliberately not overridden — this matches the concept and most real terminal
-tools.
+**The terminal stays dark in light mode.** The five `--cc-term-*` tokens are
+deliberately not overridden — this matches the concept and most real terminal
+tools. The three row/header tokens exist because the orchestrator's session table
+(041) is **DOM, not xterm**, so it needs real CSS for surfaces the TERM palette
+does not cover.
+
+Note what they are *not*: terminal **text** colours. Those live only in
+`src/lib/terminal/ansi.ts` and never appear in this file or in `tokens.css` — a
+rule with a test behind it. A DOM element sitting on the terminal background
+takes its text colour from the ordinary UI tokens (`text-green`, `text-amber`,
+`text-subtle`, `text-brand`), which is why the session table's status column
+matches the rails rather than the transcript.
 
 **Brand fills are surfaces, and do not flip with the theme.** `--cc-brand` is a
 *text* colour and changes between themes so it stays legible on a panel. The

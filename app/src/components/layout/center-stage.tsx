@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 
 import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { TerminalHost } from '@components/terminal/terminal-host';
+import { ConsoleInput } from '@features/orchestrator/components/console-input';
+import { SessionTable } from '@features/orchestrator/components/session-table';
 import {
   ORCHESTRATOR_ID,
   createStaticTransport,
@@ -84,6 +86,14 @@ export function CenterStage() {
       <div className={cn('flex min-h-0 flex-1 flex-col', showingPicker && 'hidden')}>
         {isEntityView(view) && entity ? <SessionMetaBar entity={entity} /> : null}
 
+        {/*
+          The fleet table sits above the transcript rather than inside it. The
+          concept scrolls them as one region, but the transcript is a real xterm
+          with its own viewport, and a DOM table cannot share it — so the table
+          keeps its own scroll and the terminal fills what is left.
+        */}
+        {view === 'orchestrator' ? <SessionTable /> : null}
+
         <div className="flex min-h-0 flex-1 flex-col">
           <TerminalHost
             entries={entries}
@@ -96,6 +106,8 @@ export function CenterStage() {
             theme={theme}
           />
         </div>
+
+        {view === 'orchestrator' ? <ConsoleInput /> : null}
       </div>
     </main>
   );

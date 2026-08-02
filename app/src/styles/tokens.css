@@ -36,6 +36,22 @@
   --cc-term-input: #0e1430;
 
   /**
+   * Chrome for DOM surfaces that sit *on* the terminal background — today the
+   * orchestrator's session table (story 041).
+   *
+   * They are surface and label colours, not terminal *text* colours: the TERM
+   * text palette stays out of CSS entirely (see the note at the top of this
+   * file, and the test that enforces it). These three have no TERM equivalent
+   * and would otherwise be raw hexes in a component, which is banned.
+   *
+   * Like `--cc-term-bg`, they are not overridden for light mode: the terminal
+   * surface stays dark in both themes.
+   */
+  --cc-term-row-hover: #161f45;
+  --cc-term-row-active: #1a2450;
+  --cc-term-head: #4d5a86;
+
+  /**
    * Brand fills — deliberately theme-invariant, and not overridden below.
    *
    * `--cc-brand` is a *text* colour and flips between themes for legibility on
@@ -98,6 +114,9 @@ body[data-theme='light'] {
   --color-chip: var(--cc-chip);
   --color-term-bg: var(--cc-term-bg);
   --color-term-input: var(--cc-term-input);
+  --color-term-row-hover: var(--cc-term-row-hover);
+  --color-term-row-active: var(--cc-term-row-active);
+  --color-term-head: var(--cc-term-head);
   --color-brand-fill: var(--cc-brand-fill);
   --color-brand-fill-hover: var(--cc-brand-fill-hover);
   --color-brand-fill-strong: var(--cc-brand-fill-strong);
