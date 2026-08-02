@@ -70,6 +70,28 @@ describe('ui-store — view state', () => {
     expect(useUiStore.getState().picker).toBe(false);
   });
 
+  it('backToOrch returns to the orchestrator from any tab', () => {
+    useUiStore.getState().openTab('webhooks');
+
+    useUiStore.getState().backToOrch();
+
+    expect(useUiStore.getState().activeTab).toBe('orch');
+  });
+
+  it('backToOrch also dismisses the picker', () => {
+    useUiStore.getState().openTab('webhooks');
+    useUiStore.getState().openPicker();
+
+    useUiStore.getState().backToOrch();
+
+    // Going home means going home: leaving the overlay up would cover the
+    // orchestrator the user just asked for.
+    expect(useUiStore.getState()).toMatchObject({
+      activeTab: 'orch',
+      picker: false,
+    });
+  });
+
   it('toggleProject collapses and expands', () => {
     const { toggleProject } = useUiStore.getState();
 

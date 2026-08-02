@@ -30,6 +30,7 @@ interface UiState {
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
   openTab: (id: 'orch' | string) => void;
+  backToOrch: () => void;
   setSelIdx: (index: number) => void;
   setLeftTab: (tab: LeftTab) => void;
   setRailTab: (tab: RailTab) => void;
@@ -88,6 +89,16 @@ export const useUiStore = create<UiState>()((set, get) => ({
 
   // Opening a tab always dismisses the picker: the user has made their choice.
   openTab: (id) => set({ activeTab: id, picker: false }),
+
+  /**
+   * Return to the orchestrator — the ← pill on the session meta bar, and the
+   * ArrowLeft binding story 060 adds.
+   *
+   * A named action rather than `openTab('orch')` at each call site: "go home"
+   * is a distinct intent from "open this thing", and 060 needs something to
+   * bind that reads as the former.
+   */
+  backToOrch: () => set({ activeTab: 'orch', picker: false }),
 
   setSelIdx: (index) => set({ selIdx: index }),
   setLeftTab: (tab) => set({ leftTab: tab }),
@@ -159,6 +170,9 @@ export const useActiveTab = () => useUiStore((state) => state.activeTab);
 
 /** Open a tab (entity id, or `'orch'`). */
 export const useOpenTab = () => useUiStore((state) => state.openTab);
+
+/** Return to the orchestrator view (story 040's ← pill, story 060's ArrowLeft). */
+export const useBackToOrch = () => useUiStore((state) => state.backToOrch);
 
 /** Left rail tab + setter. */
 export const useLeftTab = () => useUiStore((state) => state.leftTab);

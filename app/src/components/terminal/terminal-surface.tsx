@@ -45,6 +45,29 @@ interface Instance {
   fitAddon: FitAddon;
 }
 
+/** Whether the viewport is parked at the end of the transcript. */
+const atBottom = (terminal: Terminal) =>
+  shouldAutoScroll(terminal.buffer.active.viewportY, terminal.buffer.active.baseY);
+
+/**
+ * Refit, keeping a bottom-parked viewport at the bottom.
+ *
+ * Fewer rows means rows come off the bottom of the viewport, so a terminal
+ * showing the end of its transcript silently ends up showing the middle — the
+ * newest line, the one the user is actually waiting on, scrolls out of sight
+ * without anyone touching the wheel. Two things trigger it: the window
+ * resizing, and the session meta bar appearing above a terminal that was
+ * already fitted without one.
+ *
+ * Same rule as new output, for the same reason: follow the end only for a
+ * reader who was already there.
+ */
+function fitPreservingBottom({ terminal, fitAddon }: Instance) {
+  const stick = atBottom(terminal);
+  fitAddon.fit();
+  if (stick) terminal.scrollToBottom();
+}
+
 /**
  * A real terminal, fed by a transport and nothing else.
  *
@@ -110,7 +133,7 @@ export function TerminalSurface({
     // against a zero-height box and a visible one is not fitted twice.
 
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
+      fitPreservingBottom({ terminal, fitAddon });
       transportRef.current.resize(terminal.cols, terminal.rows);
     });
     resizeObserver.observe(container);
@@ -148,10 +171,7 @@ export function TerminalSurface({
        * include the new lines, so every append would look like "the user is at
        * the bottom" and reading scrollback would be impossible.
        */
-      const stick = shouldAutoScroll(
-        terminal.buffer.active.viewportY,
-        terminal.buffer.active.baseY,
-      );
+      const stick = atBottom(terminal);
 
       // xterm parses asynchronously; scrolling from the write callback is what
       // guarantees the new lines exist by the time the viewport moves.
@@ -179,7 +199,7 @@ export function TerminalSurface({
    */
   useEffect(() => {
     if (!instance || !visible) return;
-    instance.fitAddon.fit();
+    fitPreservingBottom(instance);
   }, [instance, visible]);
 
   return (

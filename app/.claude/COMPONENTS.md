@@ -322,6 +322,29 @@ Still bare panels, owned by the story that fills each in.
 
 `CenterStage` mounts `<TerminalHost />` and builds one `StaticTransport` per
 entity, cached for the life of the app — transport identity matters, because a
-surface resubscribes whenever its transport changes.
+surface resubscribes whenever its transport changes. Which of the four states it
+renders comes from `resolveView()` in `src/lib/resolve-view.ts`.
 
-Still unbuilt: `session-meta-bar` (040), `KeyHint` (041).
+### `<SessionMetaBar />`
+
+`src/components/layout/session-meta-bar.tsx`
+
+```ts
+function SessionMetaBar(props: { entity: Entity }): JSX.Element
+```
+
+The bar above the terminal in the session and agent views (040): a back pill,
+the entity id, its one-line task, and status chips. Sessions get branch, status,
+and PR; agents get "dedicated agent" and "online".
+
+Everything is derived from the entity, so a status change reaches this bar the
+same moment it reaches the rails — including the `waiting → "needs input"`
+rename, which comes from `STATUS_LABEL` rather than being spelled again here.
+PR colour comes from `features/shared/pr-presentation`, shared with the work and
+PRs panels.
+
+The back pill uses a native `title` rather than the Radix tooltip: the app mounts
+no `TooltipProvider`, and adding one to the root for a single affordance buys
+nothing a title does not. The label names the shortcut story 060 will bind.
+
+Still unbuilt: `KeyHint` (041).

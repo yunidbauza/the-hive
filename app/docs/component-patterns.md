@@ -77,9 +77,54 @@ subscribes on behalf of its children re-renders all of them.
 Its corollary in tests: sub-components are asserted in their own files, and the
 container's tests cover only the wiring.
 
+## The center-stage view-state machine (040)
+
+The stage shows **exactly one thing at a time**, and which one is decided by a
+pure function rather than by nested JSX conditionals:
+
+```ts
+resolveView({ activeTab, picker, entity }): 'picker' | 'orchestrator' | 'session' | 'agent'
+```
+
+It lives in `src/lib/resolve-view.ts` and is tested exhaustively. A machine
+embedded in JSX is one that grows a fifth state by accident; this one cannot.
+
+Two precedence rules carry the weight:
+
+- **Picker wins over everything**, and deliberately does *not* change
+  `activeTab`. That is what lets closing it return the user to whatever was
+  underneath — the tab was never touched.
+- **The orchestrator is the floor.** An `activeTab` naming no entity resolves
+  there rather than to a blank stage, because a session can be removed while its
+  tab is open.
+
+### What the component does with it
+
+`CenterStage` is the composition root: it reads the stores so
+`components/terminal/` never has to, builds one cached `StaticTransport` per
+entity, and renders `SessionMetaBar` only for the two entity views.
+
+**The picker hides the terminal region; it never unmounts it.** Unmounting would
+dispose every live xterm instance and throw away the scrollback story 042 exists
+to preserve. The region is hidden with a class, and `activeId` is passed as
+`null` so each surface marks itself invisible — which also means closing the
+picker re-reveals the previous surface and refits it through machinery that
+already exists.
+
+`overflow-hidden` on the stage enforces the story's rule that the stage never
+scrolls as a whole; only the terminal region does.
+
+### A consequence worth knowing
+
+The meta bar appearing above a terminal *shrinks* that terminal. Rows come off
+the bottom of the viewport, so a terminal parked at the end of its transcript
+would silently show the middle of it. `TerminalSurface` therefore applies the
+bottom-stick rule to fits as well as to writes — see
+[`terminal-architecture.md`](terminal-architecture.md).
+
 ## What later stories add here
 
-The left rail and its three panels (030–033), the center-stage view-state machine
-and session meta bar (040), the activity rail and its three panels (050–053), and
-the atom inventory those stories introduce. Each fills in the placeholder region
-it owns; the shell itself does not change.
+The orchestrator console (041), the session/agent view's input row (043), and the
+real new-session picker (044) — `CenterStage` currently renders a deliberately
+minimal picker placeholder so that state stays exitable. Then the activity rail
+and its three panels (050–053).

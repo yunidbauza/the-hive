@@ -129,12 +129,18 @@ test('preserves scroll position across a tab switch', async ({ page }) => {
 
   const screen = surfaceFor(page, 'hero-refresh').locator('.xterm-screen');
   const box = await screen.boundingBox();
-  await page.mouse.move(box!.x + 50, box!.y + 40);
+  await page.mouse.move(box!.x + 50, box!.y + 10);
   await page.mouse.wheel(0, -400);
 
+  /**
+   * Assert that the view *moved*, not that it moved to a particular line. How
+   * far a wheel tick scrolls depends on cell height and how many rows fit
+   * beside the meta bar — pinning a specific line makes this spec fail for
+   * layout changes that have nothing to do with the guarantee under test.
+   */
   await expect
     .poll(async () => (await visibleRows(page, 'hero-refresh')).join('\n'))
-    .toContain('Read src/components/Hero.tsx');
+    .not.toBe(atBottom.join('\n'));
   const scrolledBack = await visibleRows(page, 'hero-refresh');
 
   await page.getByRole('button', { name: /webhooks/ }).first().click();

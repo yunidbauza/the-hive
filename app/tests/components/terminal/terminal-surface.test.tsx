@@ -178,6 +178,8 @@ describe('TerminalSurface', () => {
       render(<TerminalSurface transport={transport} theme="dark" />);
       terminal().buffer.active.viewportY = 40;
       terminal().buffer.active.baseY = 40;
+      // The initial fit already stuck to the bottom; count only this write.
+      terminal().scrollToBottom.mockClear();
 
       push('more\n');
 
@@ -189,6 +191,7 @@ describe('TerminalSurface', () => {
       render(<TerminalSurface transport={transport} theme="dark" />);
       terminal().buffer.active.viewportY = 5;
       terminal().buffer.active.baseY = 40;
+      terminal().scrollToBottom.mockClear();
 
       push('more\n');
 
@@ -263,6 +266,67 @@ describe('TerminalSurface', () => {
 
       expect(fitAddon.fit).toHaveBeenCalledTimes(2); // mount + resize
       expect(transport.resize).toHaveBeenCalledWith(80, 24);
+
+      vi.unstubAllGlobals();
+    });
+
+    it('stays at the bottom when the container shrinks', () => {
+      let trigger = () => {};
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: () => void) {
+            trigger = cb;
+          }
+          observe = vi.fn();
+          unobserve = vi.fn();
+          disconnect = vi.fn();
+        },
+      );
+
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" />);
+      terminal().buffer.active.viewportY = 40;
+      terminal().buffer.active.baseY = 40;
+      terminal().scrollToBottom.mockClear();
+
+      trigger();
+
+      /**
+       * Shrinking the box drops rows off the bottom of the viewport, so a
+       * terminal parked at the end of its transcript would silently end up
+       * showing the middle of it — the last line gone without anyone touching
+       * the wheel. This is what the session meta bar appearing above a terminal
+       * does to it.
+       */
+      expect(terminal().scrollToBottom).toHaveBeenCalled();
+
+      vi.unstubAllGlobals();
+    });
+
+    it('does not jump to the bottom on resize while reading scrollback', () => {
+      let trigger = () => {};
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: () => void) {
+            trigger = cb;
+          }
+          observe = vi.fn();
+          unobserve = vi.fn();
+          disconnect = vi.fn();
+        },
+      );
+
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" />);
+      terminal().buffer.active.viewportY = 5;
+      terminal().buffer.active.baseY = 40;
+      terminal().scrollToBottom.mockClear();
+
+      trigger();
+
+      expect(terminal().scrollToBottom).not.toHaveBeenCalled();
 
       vi.unstubAllGlobals();
     });

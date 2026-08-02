@@ -1,0 +1,107 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import type { Entity } from '@/types/entity';
+
+import { SessionMetaBar } from '@components/layout/session-meta-bar';
+import { useHiveStore } from '@stores/hive-store';
+import { useUiStore } from '@stores/ui-store';
+
+const entity = (id: string): Entity => {
+  const found = useHiveStore.getState().entities[id];
+  if (!found) throw new Error(`no fixture entity ${id}`);
+  return found;
+};
+
+/**
+ * The bar above the terminal in the session and agent views (story 040).
+ * Everything it shows is derived from the entity, so these assertions double as
+ * a check that a status or PR change reaches the bar.
+ */
+describe('SessionMetaBar', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    useUiStore.getState().reset();
+  });
+
+  describe('sessions', () => {
+    it('shows the id, task, branch, and status', () => {
+      render(<SessionMetaBar entity={entity('hero-refresh')} />);
+
+      expect(screen.getByText('hero-refresh')).toBeInTheDocument();
+      expect(
+        screen.getByText('Refactor hero to semantic tokens'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('feat/hero-refresh')).toBeInTheDocument();
+      expect(screen.getByText('working')).toBeInTheDocument();
+    });
+
+    it('renders the PR chip with its number and state', () => {
+      render(<SessionMetaBar entity={entity('hero-refresh')} />);
+
+      expect(screen.getByText('#482 · open')).toBeInTheDocument();
+    });
+
+    it('omits the PR chip when the session has no PR', () => {
+      render(<SessionMetaBar entity={entity('lead-form')} />);
+
+      expect(screen.queryByText(/^#\d/)).not.toBeInTheDocument();
+    });
+
+    it('renames a waiting session to "needs input"', () => {
+      render(<SessionMetaBar entity={entity('lead-form')} />);
+
+      // The rename lives in STATUS_LABEL so the rails and this bar cannot
+      // disagree about what `waiting` is called.
+      expect(screen.getByText('needs input')).toBeInTheDocument();
+      expect(screen.queryByText('waiting')).not.toBeInTheDocument();
+    });
+
+    it('follows a status change made after mount', () => {
+      const { rerender } = render(<SessionMetaBar entity={entity('lead-form')} />);
+      expect(screen.getByText('needs input')).toBeInTheDocument();
+
+      useHiveStore
+        .getState()
+        .appendEntityLines('lead-form', [{ text: 'ok', color: 'dim' }], 'working');
+      rerender(<SessionMetaBar entity={entity('lead-form')} />);
+
+      // The payoff moment from story 043: answering a blocked session clears
+      // "needs input" here at the same instant it clears in the rails.
+      expect(screen.getByText('working')).toBeInTheDocument();
+    });
+  });
+
+  describe('agents', () => {
+    it('shows the agent chips rather than branch and PR', () => {
+      render(<SessionMetaBar entity={entity('slack-agent')} />);
+
+      expect(screen.getByText('slack-agent')).toBeInTheDocument();
+      expect(screen.getByText('dedicated agent')).toBeInTheDocument();
+      expect(screen.getByText('online')).toBeInTheDocument();
+    });
+  });
+
+  describe('the back button', () => {
+    it('returns to the orchestrator', async () => {
+      const user = userEvent.setup();
+      useUiStore.getState().openTab('hero-refresh');
+      render(<SessionMetaBar entity={entity('hero-refresh')} />);
+
+      await user.click(screen.getByRole('button', { name: 'Back to orchestrator' }));
+
+      expect(useUiStore.getState().activeTab).toBe('orch');
+    });
+
+    it('names its keyboard shortcut in the tooltip', () => {
+      render(<SessionMetaBar entity={entity('hero-refresh')} />);
+
+      // Story 060 binds ArrowLeft to the same action; the hint is how anyone
+      // discovers it.
+      expect(
+        screen.getByRole('button', { name: 'Back to orchestrator' }),
+      ).toHaveAttribute('title', 'Back to orchestrator (←)');
+    });
+  });
+});
