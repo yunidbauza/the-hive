@@ -304,6 +304,15 @@ export const useTicketPrs = (ticketKey: string) =>
     }),
   );
 
+/**
+ * How many work items exist — the left rail's Work tab badge (story 030).
+ *
+ * Counts every ticket, Done ones included, matching the concept. The badge
+ * answers "how much work is tracked here", not "how much is outstanding".
+ */
+export const useTicketCount = () =>
+  useHiveStore((state) => state.tickets.length);
+
 /** Inbox unread count (stories 050, 021). */
 export const useUnreadCount = () =>
   useHiveStore((state) => state.notifs.filter((notif) => notif.unread).length);

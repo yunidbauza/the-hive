@@ -8,6 +8,7 @@ import {
   useHiveStore,
   useNavOrder,
   useProjectSessions,
+  useTicketCount,
   useTicketPrs,
   useUnreadCount,
 } from '@stores/hive-store';
@@ -185,6 +186,24 @@ describe('hive-store selectors', () => {
       });
 
       expect(result.current).toBeNull();
+    });
+  });
+
+  describe('useTicketCount', () => {
+    it('counts every fixture ticket, Done ones included', () => {
+      const { result } = renderHook(() => useTicketCount());
+
+      expect(result.current).toBe(8);
+    });
+
+    it('follows the store rather than caching a number', () => {
+      const { result } = renderHook(() => useTicketCount());
+
+      act(() => {
+        useHiveStore.setState({ tickets: [] });
+      });
+
+      expect(result.current).toBe(0);
     });
   });
 });
