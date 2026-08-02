@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
@@ -72,6 +72,19 @@ export function TerminalSurface({
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [instance, setInstance] = useState<Instance | null>(null);
 
+  /**
+   * The resize observer is created once, in the mount effect, but must always
+   * report to the *current* transport. Capturing `transport` in that closure
+   * would pin it to whichever transport was current at construction, so after a
+   * swap every resize would be delivered to the old backend — silently, since
+   * both implementations return void. A ref is the narrow fix: the observer
+   * reads it at call time.
+   */
+  const transportRef = useRef(transport);
+  useEffect(() => {
+    transportRef.current = transport;
+  }, [transport]);
+
   useEffect(() => {
     if (!container) return;
 
@@ -98,7 +111,7 @@ export function TerminalSurface({
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
-      transport.resize(terminal.cols, terminal.rows);
+      transportRef.current.resize(terminal.cols, terminal.rows);
     });
     resizeObserver.observe(container);
 

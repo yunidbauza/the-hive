@@ -267,6 +267,40 @@ describe('TerminalSurface', () => {
       vi.unstubAllGlobals();
     });
 
+    it('reports resizes to the current transport, not the one it mounted with', () => {
+      let trigger = () => {};
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: () => void) {
+            trigger = cb;
+          }
+          observe = vi.fn();
+          unobserve = vi.fn();
+          disconnect = vi.fn();
+        },
+      );
+
+      const first = fakeTransport();
+      const second = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={first.transport} theme="dark" />,
+      );
+      rerender(<TerminalSurface transport={second.transport} theme="dark" />);
+
+      trigger();
+
+      /**
+       * The observer is built once, in the mount effect, and would otherwise
+       * pin the transport it captured there. Both implementations return void,
+       * so a stale one fails silently — which is exactly why it is worth a test.
+       */
+      expect(second.transport.resize).toHaveBeenCalledWith(80, 24);
+      expect(first.transport.resize).not.toHaveBeenCalled();
+
+      vi.unstubAllGlobals();
+    });
+
     it('refits when it becomes visible again', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
