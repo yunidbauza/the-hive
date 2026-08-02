@@ -180,10 +180,16 @@ Meta bar, terminal, message row. The row is `MessageInput`, mounted by
 both clears a half-typed message meant for somebody else and re-runs its
 autofocus.
 
-There is no `session-view.tsx` wrapper. The terminal belongs to the shared
-`TerminalHost`, so a component that wrapped meta bar + terminal + input would
-have to reach into it; composition happens in the stage instead, exactly as
-story 040's UPDATED SPECS direct.
+There is no `session-view.tsx` wrapper, though story 043 names one. The terminal
+belongs to the shared `TerminalHost`, so a component wrapping meta bar +
+terminal + input would have to reach into it; composition happens in the stage
+instead.
+
+The authority for that is the **UPDATED SPECS block on Jira ticket HIVE-20**
+("mount feature panels directly from this region's component in
+`src/components/layout/` … no composition module inside a feature slice"). Note
+that block exists only in Jira — `stories/040-center-stage.md` in this repo has
+not been synced with it, so do not go looking for it there.
 
 ### Send is one action with an origin
 
@@ -216,18 +222,26 @@ fixed-position card. This picker **fills the center stage** — rails and header
 stay visible, as the concept shows — so it composes `Dialog.Root` and
 `Dialog.Content` from `radix-ui` directly and renders in place.
 
-What the story actually asks for is Radix's *behaviour*, and all of it is kept:
-focus trapping, Escape, scroll locking, and `aria-modal` semantics that a
-hand-rolled overlay reliably gets wrong. `onOpenAutoFocus` is intercepted so
-focus lands on the search box rather than the container.
+What the story actually asks for is Radix's *behaviour*, and the parts that
+matter are kept: the focus trap, Escape, and `aria-modal` — all of which live in
+`Content`. `onOpenAutoFocus` is intercepted so focus lands on the search box
+rather than the container.
+
+**Scroll locking is not kept**, and that is deliberate: Radix implements it in
+`Dialog.Overlay`, which this picker omits because an overlay would paint a scrim
+across the whole app and destroy the full-stage look. The shell is a
+fixed-height, non-scrolling layout, so there is no page scroll to lock.
 
 ### The steppers
 
 `OptionStepper` is bespoke and lives in this slice because nothing else uses it.
-Its *semantics* are a radio group, though, so that is the role it exposes — a row
-of unrelated buttons would tell a screen-reader user nothing about the fact that
-four options are one choice. The track and fill are `aria-hidden`; the dots carry
-the meaning.
+Its *semantics* are a radio group, so that is the role it exposes — and the
+keyboard contract that role promises is implemented, not merely announced:
+arrow keys step the selection (clamped, not wrapped), focus follows selection,
+and roving `tabIndex` makes the group a single tab stop. Exposing `role="radio"`
+without those is worse than using plain buttons, because it advertises an
+interaction that does not exist. The track and fill are `aria-hidden`; the dots
+carry the meaning.
 
 Model and effort live in `ui-store`, not component state, so a deliberate choice
 survives closing and reopening the picker.

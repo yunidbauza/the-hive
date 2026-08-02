@@ -29,9 +29,16 @@ const PINNED_COUNT = 4;
  * header stay visible, exactly as the concept shows — so it is composed from
  * the primitive directly and rendered in place.
  *
- * What the story actually asks for is Radix's *behaviour*, and that is all
- * kept: focus trapping, Escape, scroll locking, and `aria-modal` semantics that
- * a hand-rolled overlay reliably gets wrong.
+ * What the story actually asks for is Radix's *behaviour*, and the parts that
+ * matter here are kept: the focus trap, Escape, and the `aria-modal` semantics
+ * that hide the rest of the tree from assistive tech — all of which live in
+ * `Content`.
+ *
+ * Not kept: scroll locking. Radix implements that in `Dialog.Overlay`, which
+ * this picker deliberately omits — an overlay would paint a scrim across the
+ * whole app and destroy the full-stage look the concept specifies. Nothing is
+ * lost: the shell is a fixed-height, non-scrolling layout, so there is no page
+ * scroll to lock.
  */
 export function NewSessionPicker() {
   const projects = useProjects();

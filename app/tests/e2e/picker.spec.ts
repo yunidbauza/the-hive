@@ -100,6 +100,32 @@ test('model and effort choices persist across openings', async ({ page }) => {
   await expect(stage(page).getByRole('radio', { name: 'low' })).toBeChecked();
 });
 
+test('the steppers are arrow-key operable and cost one tab stop each', async ({
+  page,
+}) => {
+  await openPicker(page);
+  const radio = (name: string) => stage(page).getByRole('radio', { name });
+
+  await radio('opus').focus();
+  await page.keyboard.press('ArrowRight');
+
+  await expect(radio('fable')).toBeChecked();
+  // Focus follows selection, so the next arrow continues from here.
+  await expect(radio('fable')).toBeFocused();
+
+  // Clamped at the end rather than wrapping round to `haiku`.
+  await page.keyboard.press('ArrowRight');
+  await expect(radio('fable')).toBeChecked();
+
+  /**
+   * Tabbing out of the group lands on the *next* group, not on another model
+   * dot — which is the observable proof of the roving tabindex. Without it a
+   * keyboard user would pay four tab stops per stepper.
+   */
+  await page.keyboard.press('Tab');
+  await expect(radio('high')).toBeFocused();
+});
+
 test('the chosen model reaches the spawned session', async ({ page }) => {
   await openPicker(page);
   await stage(page).getByRole('radio', { name: 'haiku' }).click();
