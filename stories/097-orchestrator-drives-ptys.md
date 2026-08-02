@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | HIVE-097 |
 | **Epic** | Real terminals |
-| **Depends on** | [096-session-lifecycle-claude.md](096-session-lifecycle-claude.md), [041-orchestrator-console.md](041-orchestrator-console.md), [043-session-view.md](043-session-view.md), [051-inbox-panel.md](051-inbox-panel.md) |
+| **Depends on** | [096-session-lifecycle-claude.md](096-session-lifecycle-claude.md), [085-electron-test-harness.md](085-electron-test-harness.md), [041-orchestrator-console.md](041-orchestrator-console.md), [043-session-view.md](043-session-view.md), [051-inbox-panel.md](051-inbox-panel.md) |
 | **Blocks** | — |
 | **Points** | 5 |
 | **Location** | `app/src/features/orchestrator/`, `app/src/features/sessions/`, `app/src/features/inbox/` |

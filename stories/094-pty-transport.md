@@ -141,8 +141,8 @@ one-file change.
       other running.
 - [ ] Switching away for 30 seconds and back shows the output produced while away.
 - [ ] Killing the shell renders the exit line and leaves the transcript readable.
-- [ ] The browser target still resolves to `StaticTransport` and all
-      `tests/e2e/web/` specs pass.
+- [ ] The browser target still resolves to `StaticTransport` and the browser e2e suite
+      passes unmodified.
 - [ ] `pnpm lint`, `pnpm type-check`, `pnpm test` green with coverage ≥ 80%.
 
 ## Out of scope

@@ -4,7 +4,7 @@
 |---|---|
 | **ID** | HIVE-095 |
 | **Epic** | Real terminals |
-| **Depends on** | [094-pty-transport.md](094-pty-transport.md), [042-terminal-surface.md](042-terminal-surface.md) |
+| **Depends on** | [094-pty-transport.md](094-pty-transport.md), [042-terminal-surface.md](042-terminal-surface.md), [085-electron-test-harness.md](085-electron-test-harness.md) |
 | **Blocks** | [096](096-session-lifecycle-claude.md), [097](097-orchestrator-drives-ptys.md) |
 | **Points** | 5 |
 | **Location** | `app/src/components/terminal/terminal-surface.tsx`, `app/src/lib/terminal/` |

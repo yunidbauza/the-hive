@@ -5,7 +5,7 @@
 | **ID** | HIVE-085 |
 | **Epic** | Desktop shell |
 | **Depends on** | [081-main-process-window.md](081-main-process-window.md), [084-native-modules-dev-workflow.md](084-native-modules-dev-workflow.md), [070-e2e-harness.md](070-e2e-harness.md) |
-| **Blocks** | [098](098-pty-conformance-suite.md), [099](099-desktop-ci.md) |
+| **Blocks** | [095](095-interactive-terminal-surface.md), [097](097-orchestrator-drives-ptys.md), [098](098-pty-conformance-suite.md), [099](099-desktop-ci.md) |
 | **Points** | 8 |
 | **Location** | `app/playwright.config.ts`, `app/tests/e2e/`, `app/docs/desktop-architecture.md` |
 
@@ -94,14 +94,15 @@ Everything Electron-specific is confined here.
 // tests/e2e/electron/fixtures/hive-app.ts
 export const test = base.extend<{ hive: ElectronApplication; page: Page }>({
   hive: async ({}, use, testInfo) => {
-    const userDataDir = testInfo.outputPath('user-data');
     const app = await electron.launch({
-      args: [path.join(__dirname, '../../../../out/main/index.js')],
+      args: [
+        path.join(__dirname, '../../../../out/main/index.js'),
+        `--user-data-dir=${testInfo.outputPath('user-data')}`,
+      ],
       env: {
         ...process.env,
         HIVE_E2E: '1',
         HIVE_CONFIG_PATH: testInfo.outputPath('hive-config.json'),
-        ELECTRON_USER_DATA: userDataDir,
       },
     });
     await use(app);
@@ -113,9 +114,11 @@ export const test = base.extend<{ hive: ElectronApplication; page: Page }>({
 
 Three isolation properties, each load-bearing:
 
-- **A per-test `userData` directory.** Window state persists ([081](081-main-process-window.md)).
-  Sharing the real one means test order changes results and a local run pollutes the
-  developer's actual window position.
+- **A per-test `userData` directory**, via Electron's own `--user-data-dir` switch
+  rather than an environment variable the main process would have to be taught to read.
+  Window state persists ([081](081-main-process-window.md)); sharing the real directory
+  means test order changes results and a local run pollutes the developer's actual
+  window position.
 - **A per-test config path.** `HIVE_CONFIG_PATH` overrides `~/.hive/config.json`
   ([090](090-workspace-config.md)) so specs point at a scratch fixture repo and never
   at the developer's real projects. A test suite that can spawn `claude` in a real

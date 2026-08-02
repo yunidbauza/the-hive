@@ -106,7 +106,7 @@ mapping:
 
 Each Jira Story carries its full spec (tables, code blocks, acceptance checkboxes), its
 story-point estimate, and real **Blocks / is blocked by** links mirroring the graphs
-below — 45 links for phase 1, 38 for phase 2 (9 of which cross the phase boundary).
+below — 45 links for phase 1, 40 for phase 2 (9 of which cross the phase boundary).
 The rendered phase-1 graph is attached to the Foundation epic.
 
 **These markdown files remain the source of truth.** When a story changes here, update
@@ -193,11 +193,13 @@ graph TD
   S083 --> S094
   S094 --> S095[095 interactive terminal]
   S042 -.-> S095
+  S085 --> S095
   S092 --> S096[096 session lifecycle & claude]
   S094 --> S096
   S095 --> S096
   S090 --> S096
   S096 --> S097[097 orchestrator drives PTYs]
+  S085 --> S097
   S041[041 orchestrator console] -.-> S097
   S043[043 session view] -.-> S097
   S051[051 inbox] -.-> S097
