@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-import { Badge } from '@components/ui/badge';
+import { Badge, type BadgeTone } from '@components/ui/badge';
 
 export interface Tab<Id extends string = string> {
   id: Id;
@@ -17,6 +17,12 @@ export interface Tab<Id extends string = string> {
    * screen reader. Pass it whenever `badgeCount` is set.
    */
   badgeLabel?: string;
+  /**
+   * How loud the count is. The left rail's work count is an inventory and stays
+   * `muted`; the activity rail's unread count means agents are blocked on the
+   * user, and story 050 asks for red. Defaults to `muted`.
+   */
+  badgeTone?: BadgeTone;
 }
 
 /** The DOM id `TabBar` gives a tab, for a panel's `aria-labelledby`. */
@@ -79,7 +85,7 @@ export function TabBar<Id extends string>({
             {tab.label}
             <Badge
               count={tab.badgeCount ?? 0}
-              tone="muted"
+              tone={tab.badgeTone ?? 'muted'}
               label={tab.badgeLabel}
             />
           </button>

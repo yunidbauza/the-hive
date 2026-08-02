@@ -70,12 +70,13 @@ describe('AppShell', () => {
   it('gives each rail its own scrollbar rather than scrolling the page', () => {
     render(<AppShell />);
 
-    // The left rail delegates scrolling to its tab panel (story 030) so its tab
-    // bar stays visible; the activity rail still scrolls as a whole until story
-    // 050 does the same.
-    expect(screen.getByRole('tabpanel')).toHaveClass('overflow-y-auto');
-    expect(screen.getByRole('complementary', { name: 'Activity' })).toHaveClass(
-      'overflow-y-auto',
-    );
+    // Both rails delegate scrolling to their tab panel — the left rail since
+    // story 030, the activity rail since 050 — so neither tab bar can be
+    // scrolled off-screen by a long list beneath it.
+    const panels = screen.getAllByRole('tabpanel');
+    expect(panels).toHaveLength(2);
+    for (const panel of panels) {
+      expect(panel).toHaveClass('overflow-y-auto');
+    }
   });
 });

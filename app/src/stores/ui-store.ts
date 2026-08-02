@@ -181,6 +181,9 @@ export const useSetLeftTab = () => useUiStore((state) => state.setLeftTab);
 /** Activity rail state. */
 export const useRailState = () => useUiStore(useShallow(railStateSelector));
 
+/** Switch rail panels — the activity rail's tab bar (story 050). */
+export const useSetRailTab = () => useUiStore((state) => state.setRailTab);
+
 /**
  * Whether the activity rail is mounted (story 020).
  *

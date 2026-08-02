@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-type BadgeTone = 'danger' | 'brand' | 'muted';
+export type BadgeTone = 'danger' | 'brand' | 'muted';
 
 const TONE_FILL: Record<BadgeTone, string> = {
   danger: 'bg-danger-solid text-on-brand',

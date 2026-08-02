@@ -253,7 +253,50 @@ survives closing and reopening the picker.
 action rather than at each call site is what keeps the transcript complete when a
 third caller — the picker today, a daemon event later — arrives.
 
+## The activity rail (050–053)
+
+Structurally the left rail's twin, and deliberately so: a `Record<TabId,
+ComponentType>` panel map, a pinned `<TabBar />`, and a `role="tabpanel"`
+wrapper labelled with `tabId(active)` that owns the scrollbar. Two rails, one
+shape — if you are adding a third tabbed region, copy this and not something
+new.
+
+```tsx
+const PANELS: Record<RailTab, ComponentType> = {
+  inbox: InboxPanel,
+  prs: PrsPanel,
+  activity: ActivityFeedPanel,
+};
+
+const Panel = PANELS[railTab];
+```
+
+The map beats a `switch` in the body for one reason worth stating: `Record<RailTab,
+…>` makes a new member of the union a **type error** here rather than a tab that
+silently renders nothing.
+
+### Scroll position resets on switch
+
+Story 050 asks for an explicit choice, so: **reset**. Preserving per-panel
+`scrollTop` means either keeping all three mounted or mirroring offsets into the
+ui-store. Neither earns its complexity for three short lists, and a stale offset
+into a list the simulation just prepended to is worse than starting at the top.
+
+### One badge is loud, the rest are quiet
+
+`TabBar` takes an optional `badgeTone`. Everything defaults to `muted`; the
+Inbox tab passes `danger`, because its count is the one number in the app that
+means *the user is what an agent is blocked on*. See
+[`../.claude/COMPONENTS.md`](../.claude/COMPONENTS.md) for the atom contracts.
+
+### The panels are feature slices, mounted from the composition root
+
+`InboxPanel`, `PrsPanel`, and `ActivityFeedPanel` live in three separate slices
+that cannot import each other. They meet only here, in `components/layout/` —
+which is exactly what the composition-root exemption exists for. Rules the two
+PR-rendering surfaces must agree on live in `features/shared/`, never in one
+slice reaching into another.
+
 ## What later stories add here
 
-The activity rail and its three panels (050–053), keyboard navigation (060), and
-simulation mode (061).
+Keyboard navigation (060) and simulation mode (061).

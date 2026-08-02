@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isSession } from '@/types/entity';
+import { peek } from '@lib/fake-clock';
+
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
@@ -460,6 +462,75 @@ describe('hive-store', () => {
         .appendEntityLines('nope', [{ text: 'x', color: 'ink' }]);
 
       expect(useHiveStore.getState().entities).toEqual(before);
+    });
+  });
+
+  describe('the activity feed clock', () => {
+    it('stamps a spawn with the fake clock, not the wall clock', () => {
+      useHiveStore.getState().spawnSession('apfm-web', 'a task');
+
+      expect(useHiveStore.getState().feed[0].time).toBe('14:38');
+    });
+
+    it('advances one minute per feed event', () => {
+      useHiveStore.getState().spawnSession('apfm-web', 'first');
+      useHiveStore.getState().spawnSession('apfm-web', 'second');
+
+      const [newest, older] = useHiveStore.getState().feed;
+      expect(newest.time).toBe('14:39');
+      expect(older.time).toBe('14:38');
+    });
+
+    /** Otherwise the second test in any file inherits the first one's minutes. */
+    it('rewinds the clock on reset', () => {
+      useHiveStore.getState().spawnSession('apfm-web', 'a task');
+      useHiveStore.getState().reset();
+
+      expect(peek()).toBe('14:38');
+    });
+  });
+
+  describe('pushNotif', () => {
+    const notif = (title: string) => ({
+      icon: 'ph-hand-palm',
+      tone: 'amber' as const,
+      title,
+      sub: 'a subtitle',
+      time: 'now',
+      unread: true,
+      target: 'lead-form',
+    });
+
+    it('prepends, so the newest notification is first', () => {
+      useHiveStore.getState().pushNotif(notif('newest'));
+
+      expect(useHiveStore.getState().notifs[0].title).toBe('newest');
+    });
+
+    it('caps the list at eight, dropping the oldest', () => {
+      const before = useHiveStore.getState().notifs;
+      expect(before).toHaveLength(5);
+      const oldest = before[before.length - 1].title;
+
+      for (let i = 0; i < 4; i += 1) {
+        useHiveStore.getState().pushNotif(notif(`extra ${i}`));
+      }
+
+      const after = useHiveStore.getState().notifs;
+      expect(after).toHaveLength(8);
+      expect(after.map((n) => n.title)).not.toContain(oldest);
+    });
+
+    it('counts as unread the moment it lands', () => {
+      const before = useHiveStore
+        .getState()
+        .notifs.filter((n) => n.unread).length;
+
+      useHiveStore.getState().pushNotif(notif('needs you'));
+
+      expect(useHiveStore.getState().notifs.filter((n) => n.unread).length).toBe(
+        before + 1,
+      );
     });
   });
 });
