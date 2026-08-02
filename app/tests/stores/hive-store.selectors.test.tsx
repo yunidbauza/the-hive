@@ -11,6 +11,7 @@ import {
   useProjectSessions,
   useTicketCount,
   useTicketPrs,
+  useTickets,
   useUnreadCount,
 } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
@@ -130,14 +131,78 @@ describe('hive-store selectors', () => {
     it('returns the PRs reachable from a ticket\'s sessions', () => {
       const { result } = renderHook(() => useTicketPrs('GRAC-3018'));
 
-      expect(result.current).toHaveLength(1);
-      expect(result.current[0].n).toBe(482);
+      expect(result.current).toEqual([
+        {
+          n: 482,
+          repo: 'apfm-web',
+          state: 'open',
+          findings: 2,
+          session: 'hero-refresh',
+        },
+      ]);
     });
 
     it('returns nothing when no session has a PR', () => {
       // GRAC-3010 covers nplusone and e2e-quote, neither of which has a PR.
       const { result } = renderHook(() => useTicketPrs('GRAC-3010'));
       expect(result.current).toEqual([]);
+    });
+
+    /**
+     * The global list is the single source of truth. Fixture #219 is `approved`
+     * there but still `open` on the `webhooks` session — the stale copy must
+     * lose.
+     */
+    it('prefers the global list over the session\'s stale copy', () => {
+      const { result } = renderHook(() => useTicketPrs('GRAC-2991'));
+
+      expect(result.current[0].state).toBe('approved');
+      expect(useHiveStore.getState().entities['webhooks']).toMatchObject({
+        pr: { n: 219, state: 'open' },
+      });
+    });
+
+    /**
+     * The gap this selector was rewritten to close. `ecs-scaling` carries PR
+     * #31, which the global `prs` list has never heard of; filtering that list
+     * dropped GRAC-2954's PR section entirely.
+     */
+    it('falls back to the session\'s own pr when the global list lacks it', () => {
+      expect(
+        useHiveStore.getState().prs.some((pr) => pr.n === 31),
+      ).toBe(false);
+
+      const { result } = renderHook(() => useTicketPrs('GRAC-2954'));
+
+      expect(result.current).toEqual([
+        {
+          n: 31,
+          repo: 'infra-terraform',
+          state: 'merged',
+          findings: 0,
+          session: 'ecs-scaling',
+        },
+      ]);
+    });
+
+    it('skips sessions the store does not know', () => {
+      act(() => {
+        useHiveStore.setState({
+          tickets: [
+            {
+              key: 'GHOST-1',
+              status: 'To Do',
+              title: 'Names a session that never existed',
+              sessions: ['not-a-session', 'hero-refresh'],
+            },
+          ],
+        });
+      });
+
+      const { result } = renderHook(() => useTicketPrs('GHOST-1'));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0].session).toBe('hero-refresh');
     });
 
     it('returns nothing for an unknown ticket', () => {
@@ -207,6 +272,23 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useProjects());
 
       expect(result.current[0].icon).toBe('ph-globe-hemisphere-west');
+    });
+  });
+
+  describe('useTickets', () => {
+    it('returns all eight fixture tickets in fixture order', () => {
+      const { result } = renderHook(() => useTickets());
+
+      expect(result.current.map((ticket) => ticket.key)).toEqual([
+        'GRAC-3018',
+        'GRAC-3022',
+        'GRAC-2991',
+        'GRAC-3010',
+        'GRAC-2977',
+        'GRAC-3005',
+        'GRAC-2810',
+        'GRAC-2954',
+      ]);
     });
   });
 

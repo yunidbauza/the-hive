@@ -235,6 +235,34 @@ Three things here are easy to get wrong:
 `collapsed` lives in the ui-store rather than in `ProjectRow` because the panel
 unmounts on every left-rail tab switch; component state would forget the tree.
 
+### `<WorkPanel />`
+
+`src/features/work/components/work-panel.tsx` — story 032, built.
+
+`WorkPanel` → `TicketCard` → `TicketSessionRow` / `TicketPrRow`. The same fleet the
+projects panel groups by repo, grouped by work item instead.
+
+- **The PR section — divider included — is omitted when no linked session has a
+  PR.** A rule with nothing under it reads as a rendering bug.
+- **`TicketSessionRow` passes `StatusDot` a `label`**, unlike the projects panel:
+  these rows carry no visible status text, so without one the dot would convey
+  status by colour alone.
+- **PR rows open the owning session's terminal**, not a browser. A PR has no tab
+  of its own in this app.
+
+`useTicketPrs()` **walks the ticket's sessions** rather than filtering the global
+`prs` list, and resolves each PR's state from that list with the session's own
+`pr` as fallback. Both halves matter and both have a fixture proving them: #219 is
+`approved` globally but still `open` on its session (the global list wins), and
+#31 exists only on `ecs-scaling` (the fallback fires). It also **cannot use
+`useShallow`** — it builds new objects, and `useShallow` compares an array's
+elements by identity, so every render would produce a new snapshot and React
+would loop. It subscribes to the stable slices and memoises instead; the
+resolution itself is the exported pure function `resolveTicketPrs()`.
+
+Colour and findings wording live in `src/features/shared/pr-presentation.ts`,
+because the PRs panel (052) is a separate slice that must agree with this one.
+
 ### Region placeholders
 
 Still bare panels, owned by the story that fills each in.

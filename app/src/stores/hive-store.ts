@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -5,7 +6,9 @@ import { createInitialState } from '@/data/fixtures';
 import type { Effort, Entity, Model, Session, SessionStatus } from '@/types/entity';
 import { isSession } from '@/types/entity';
 import type { FeedItem } from '@/types/feed';
+import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
+import type { Ticket } from '@/types/ticket';
 
 import { useUiStore } from '@stores/ui-store';
 
@@ -298,15 +301,76 @@ export const useProjectSessions = (projectId: string) =>
     ),
   );
 
-/** PRs reachable from a ticket's sessions (story 032). */
-export const useTicketPrs = (ticketKey: string) =>
-  useHiveStore(
-    useShallow((state) => {
-      const ticket = state.tickets.find((t) => t.key === ticketKey);
-      if (!ticket) return [];
-      return state.prs.filter((pr) => ticket.sessions.includes(pr.session));
-    }),
+/** Every work item, in fixture order (story 032). */
+export const useTickets = () =>
+  useHiveStore(useShallow((state) => state.tickets));
+
+/**
+ * PRs reachable from a ticket's sessions, with their state resolved (story 032).
+ *
+ * Walks the ticket's sessions rather than filtering the global `prs` list,
+ * because a session can carry a PR the global list has never heard of — fixture
+ * `ecs-scaling` holds #31, which is absent from `prs`, and filtering would drop
+ * ticket GRAC-2954's PR section entirely.
+ *
+ * Where the global list *does* know the number it wins outright: it is the
+ * single source of truth for state and findings, and a session's own `pr.state`
+ * is a stale copy. Fixture #219 proves the difference — `approved` globally,
+ * still `open` on the `webhooks` session.
+ */
+export function resolveTicketPrs(
+  ticketKey: string,
+  tickets: Ticket[],
+  entities: Record<string, Entity>,
+  prs: Pr[],
+): TicketPr[] {
+  const ticket = tickets.find((t) => t.key === ticketKey);
+  if (!ticket) return [];
+
+  const resolved: TicketPr[] = [];
+
+  for (const sessionId of ticket.sessions) {
+    const entity = entities[sessionId];
+    if (!entity || !isSession(entity)) continue;
+
+    const sessionPr = entity.pr;
+    if (!sessionPr) continue;
+
+    const known = prs.find((pr) => pr.n === sessionPr.n);
+
+    resolved.push({
+      n: sessionPr.n,
+      repo: entity.project,
+      state: known?.state ?? sessionPr.state,
+      findings: known?.findings ?? 0,
+      session: sessionId,
+    });
+  }
+
+  return resolved;
+}
+
+/**
+ * Subscribes to the three store slices the resolution reads and memoises the
+ * result.
+ *
+ * **Not `useShallow`.** This selector builds new objects rather than handing
+ * back store-owned ones, and `useShallow` compares an array's *elements* by
+ * identity — freshly-built objects never match, so every render would produce a
+ * new snapshot and React would loop until it bails out with "Maximum update
+ * depth exceeded". Subscribing to the stable slices and memoising over them is
+ * what keeps the identity stable between renders.
+ */
+export const useTicketPrs = (ticketKey: string): TicketPr[] => {
+  const tickets = useHiveStore((state) => state.tickets);
+  const entities = useHiveStore((state) => state.entities);
+  const prs = useHiveStore((state) => state.prs);
+
+  return useMemo(
+    () => resolveTicketPrs(ticketKey, tickets, entities, prs),
+    [ticketKey, tickets, entities, prs],
   );
+};
 
 /**
  * How many work items exist — the left rail's Work tab badge (story 030).
