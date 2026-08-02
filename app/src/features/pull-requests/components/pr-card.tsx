@@ -51,15 +51,19 @@ export function PrCard({ pr }: PrCardProps) {
           {pr.repo}
         </span>
 
-        {badges.length > 0 ? (
-          <span className="flex flex-wrap gap-1.5">
-            {badges.map((badge) => (
-              <Tag key={badge.text} tone={badge.tone}>
-                {badge.text}
-              </Tag>
-            ))}
-          </span>
-        ) : null}
+        {/*
+          Unguarded: every `PrListState` produces at least one badge — merged,
+          approved and draft each have their own, and an open PR gets either a
+          findings count or "no findings". An `if (badges.length)` here would be
+          a branch no fixture and no future state could reach.
+        */}
+        <span className="flex flex-wrap gap-1.5">
+          {badges.map((badge) => (
+            <Tag key={badge.text} tone={badge.tone}>
+              {badge.text}
+            </Tag>
+          ))}
+        </span>
       </span>
     </button>
   );
