@@ -263,6 +263,23 @@ resolution itself is the exported pure function `resolveTicketPrs()`.
 Colour and findings wording live in `src/features/shared/pr-presentation.ts`,
 because the PRs panel (052) is a separate slice that must agree with this one.
 
+### `<AgentsPanel />`
+
+`src/features/agents/components/agents-panel.tsx` — story 033, built.
+
+`AgentsPanel` → `AgentRow`, one per id in `agentOrder`. Clicking a row opens the
+agent's terminal — the session view with agent chips (043).
+
+**The online dot is not `StatusDot`.** That atom is a 7px unringed dot; this one
+is 9px with a 2px `--cc-panel` ring so it reads as lifted off the avatar tile.
+Deliberately built inline rather than bending the atom to fit two shapes.
+
+Its `online` text is `sr-only` and sits **last** in the row, so the row announces
+`"slack-agent … online"` rather than leading with its status. Agents are always
+online in this phase, but the state still may not ride on the green alone.
+
+Creating and pausing agents is out of scope here — they are fixture-defined.
+
 ### Region placeholders
 
 Still bare panels, owned by the story that fills each in.

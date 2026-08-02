@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   useActiveEntity,
+  useAgentOrder,
   useCounts,
   useEntity,
   useHiveStore,
@@ -252,6 +253,18 @@ describe('hive-store selectors', () => {
       });
 
       expect(result.current).toBeNull();
+    });
+  });
+
+  describe('useAgentOrder', () => {
+    it('returns the three fixture agents in order', () => {
+      const { result } = renderHook(() => useAgentOrder());
+
+      expect(result.current).toEqual([
+        'slack-agent',
+        'pr-reviewer',
+        'standup-agent',
+      ]);
     });
   });
 

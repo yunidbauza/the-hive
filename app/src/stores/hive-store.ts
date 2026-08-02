@@ -281,6 +281,10 @@ export const useNavOrder = () =>
     }),
   );
 
+/** The long-lived background agents, in fixture order (story 033). */
+export const useAgentOrder = () =>
+  useHiveStore(useShallow((state) => state.agentOrder));
+
 /** The project list, in fixture order (story 031). */
 export const useProjects = () =>
   useHiveStore(useShallow((state) => state.projects));
