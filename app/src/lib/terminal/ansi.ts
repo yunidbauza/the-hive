@@ -1,3 +1,5 @@
+import type { TermColor } from '@/types/terminal';
+
 /**
  * Terminal text palette and the ANSI colorizer.
  *
@@ -21,15 +23,7 @@ export const TERM = {
   selection: '#222c55',
 } as const;
 
-/** Colour names a transcript line may carry. */
-export type TermColor =
-  | 'ink'
-  | 'dim'
-  | 'green'
-  | 'blue'
-  | 'amber'
-  | 'red'
-  | 'cyan';
+export type { TermColor };
 
 const ESC = '\u001b';
 

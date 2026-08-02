@@ -10,7 +10,7 @@ import { useUiStore } from '@stores/ui-store';
 describe('ui-store — theme', () => {
   beforeEach(() => {
     document.body.removeAttribute('data-theme');
-    useUiStore.setState({ theme: 'dark' });
+    useUiStore.getState().reset();
   });
 
   it('defaults to dark', () => {
@@ -44,6 +44,108 @@ describe('ui-store — theme', () => {
 
     expect(useUiStore.getState().theme).toBe('light');
     expect(document.body.getAttribute('data-theme')).toBe('light');
+  });
+});
+
+describe('ui-store — view state', () => {
+  beforeEach(() => {
+    useUiStore.getState().reset();
+  });
+
+  it('starts on the orchestrator with the projects and inbox tabs', () => {
+    const state = useUiStore.getState();
+
+    expect(state.activeTab).toBe('orch');
+    expect(state.leftTab).toBe('projects');
+    expect(state.railTab).toBe('inbox');
+    expect(state.showActivityRail).toBe(true);
+  });
+
+  it('openTab switches the center stage and dismisses the picker', () => {
+    useUiStore.getState().openPicker();
+    useUiStore.getState().openTab('webhooks');
+
+    expect(useUiStore.getState().activeTab).toBe('webhooks');
+    // The user has made their choice; leaving the overlay up would cover it.
+    expect(useUiStore.getState().picker).toBe(false);
+  });
+
+  it('toggleProject collapses and expands', () => {
+    const { toggleProject } = useUiStore.getState();
+
+    toggleProject('apfm-web');
+    expect(useUiStore.getState().collapsed['apfm-web']).toBe(true);
+
+    toggleProject('apfm-web');
+    expect(useUiStore.getState().collapsed['apfm-web']).toBe(false);
+  });
+
+  it('tracks each project independently', () => {
+    useUiStore.getState().toggleProject('apfm-web');
+
+    expect(useUiStore.getState().collapsed['apfm-web']).toBe(true);
+    expect(useUiStore.getState().collapsed['referral-api']).toBeUndefined();
+  });
+
+  it('switches left and rail tabs', () => {
+    useUiStore.getState().setLeftTab('agents');
+    useUiStore.getState().setRailTab('prs');
+
+    expect(useUiStore.getState().leftTab).toBe('agents');
+    expect(useUiStore.getState().railTab).toBe('prs');
+  });
+
+  it('clears a stale query when the picker reopens', () => {
+    const { openPicker, setPickerQuery, closePicker } = useUiStore.getState();
+
+    openPicker();
+    setPickerQuery('apfm');
+    closePicker();
+    expect(useUiStore.getState().pickerQuery).toBe('apfm');
+
+    openPicker();
+    expect(useUiStore.getState().pickerQuery).toBe('');
+  });
+
+  it('defaults new sessions to opus / high and lets both change', () => {
+    expect(useUiStore.getState().newModel).toBe('opus');
+    expect(useUiStore.getState().newEffort).toBe('high');
+
+    useUiStore.getState().setNewModel('haiku');
+    useUiStore.getState().setNewEffort('low');
+
+    expect(useUiStore.getState().newModel).toBe('haiku');
+    expect(useUiStore.getState().newEffort).toBe('low');
+  });
+
+  it('toggles the activity rail', () => {
+    useUiStore.getState().toggleActivityRail();
+    expect(useUiStore.getState().showActivityRail).toBe(false);
+  });
+
+  it('tracks the orchestrator table selection', () => {
+    useUiStore.getState().setSelIdx(4);
+    expect(useUiStore.getState().selIdx).toBe(4);
+  });
+
+  it('reset returns every field to its initial value', () => {
+    const state = useUiStore.getState();
+    state.openTab('webhooks');
+    state.setLeftTab('agents');
+    state.setSelIdx(7);
+    state.toggleProject('apfm-web');
+    state.setTheme('light');
+
+    useUiStore.getState().reset();
+
+    expect(useUiStore.getState()).toMatchObject({
+      theme: 'dark',
+      activeTab: 'orch',
+      leftTab: 'projects',
+      selIdx: 0,
+      collapsed: {},
+    });
+    expect(document.body.hasAttribute('data-theme')).toBe(false);
   });
 });
 
