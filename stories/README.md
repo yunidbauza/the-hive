@@ -101,10 +101,13 @@ mapping:
 | Center stage | `HIVE-4` | 040→`HIVE-20`, 041→`HIVE-21`, 042→`HIVE-22`, 043→`HIVE-23`, 044→`HIVE-24` |
 | Activity rail | `HIVE-5` | 050→`HIVE-25`, 051→`HIVE-26`, 052→`HIVE-27`, 053→`HIVE-28` |
 | Cross-cutting | `HIVE-6` | 060→`HIVE-29`, 061→`HIVE-30`, 070→`HIVE-31`, 071→`HIVE-32` |
+| **Desktop shell** | `HIVE-33` | 080→`HIVE-35`, 081→`HIVE-36`, 082→`HIVE-37`, 083→`HIVE-38`, 084→`HIVE-39`, 085→`HIVE-40` |
+| **Real terminals** | `HIVE-34` | 090→`HIVE-41`, 091→`HIVE-42`, 092→`HIVE-43`, 093→`HIVE-44`, 094→`HIVE-45`, 095→`HIVE-46`, 096→`HIVE-47`, 097→`HIVE-48`, 098→`HIVE-49`, 099→`HIVE-50` |
 
 Each Jira Story carries its full spec (tables, code blocks, acceptance checkboxes), its
-story-point estimate, and real **Blocks / is blocked by** links mirroring the graph
-below — 45 links in total. The rendered graph is attached to the Foundation epic.
+story-point estimate, and real **Blocks / is blocked by** links mirroring the graphs
+below — 45 links for phase 1, 38 for phase 2 (9 of which cross the phase boundary).
+The rendered phase-1 graph is attached to the Foundation epic.
 
 **These markdown files remain the source of truth.** When a story changes here, update
 its Jira issue too; nothing syncs automatically.
