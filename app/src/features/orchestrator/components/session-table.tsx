@@ -108,13 +108,23 @@ function SessionTableRow({ id }: { id: string }) {
       <span className="min-w-0 flex-1 truncate text-subtle">
         {`${entity.project} · ${entity.branch}`}
       </span>
+      {/*
+        The column is 34px wide, so the PR *state* cannot be visible text here
+        the way it is on the meta bar. It still must not be carried by colour
+        alone — a hue is no signal to a colour-blind user, and none at all to a
+        screen reader — so the state rides along as a title and an sr-only word.
+      */}
       <span
+        title={entity.pr ? `#${entity.pr.n} · ${entity.pr.state}` : 'no pull request'}
         className={cn(
           'w-[34px] shrink-0',
           entity.pr ? prStateText(entity.pr.state) : 'text-subtle',
         )}
       >
         {entity.pr ? `#${entity.pr.n}` : '—'}
+        <span className="sr-only">
+          {entity.pr ? ` ${entity.pr.state}` : ' no pull request'}
+        </span>
       </span>
     </button>
   );
