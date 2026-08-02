@@ -13,6 +13,7 @@ import {
 } from '../../../__mocks__/@xterm/xterm';
 
 import { TerminalSurface } from '@components/terminal/terminal-surface';
+import { XTERM_THEME } from '@lib/terminal/ansi';
 
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
@@ -40,14 +41,14 @@ describe('TerminalSurface', () => {
     expect(terminal.opened).toBe(container.firstChild);
   });
 
-  it('applies the dark terminal theme rather than inheriting page colours', () => {
+  it('applies the shared xterm theme rather than inheriting page colours', () => {
     render(<TerminalSurface />);
 
     const [terminal] = terminalInstances as MockTerminal[];
-    expect(terminal.options.theme).toEqual({
-      background: '#0b1023',
-      foreground: '#dbe4ff',
-    });
+    // Sourced from lib/terminal/ansi.ts, not hand-written here: xterm paints to
+    // a canvas that CSS custom properties cannot reach.
+    expect(terminal.options.theme).toBe(XTERM_THEME);
+    expect(terminal.options.theme).toMatchObject({ background: '#0b1023' });
   });
 
   it('loads the fit addon and fits once on mount', () => {

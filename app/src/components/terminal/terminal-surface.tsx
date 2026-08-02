@@ -2,6 +2,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useState } from 'react';
 
+import { XTERM_THEME } from '@lib/terminal/ansi';
+
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -33,7 +35,19 @@ export function TerminalSurface() {
       cursorBlink: true,
       fontFamily: "ui-monospace, Menlo, 'SF Mono', monospace",
       fontSize: 12,
-      theme: { background: '#0b1023', foreground: '#dbe4ff' },
+      /**
+       * xterm paints to a canvas, which CSS custom properties cannot reach, so
+       * its colours come from JS. `XTERM_THEME` is the single definition,
+       * shared with the ANSI colorizer and the design-system doc.
+       *
+       * It is intentionally theme-independent: the terminal keeps its dark
+       * background in light mode, like the concept and most real tools. That is
+       * why toggling the app theme does not re-theme mounted instances today —
+       * there is nothing to change. Story 042 owns the kept-alive instance
+       * registry that would make a per-session or theme-following palette
+       * possible.
+       */
+      theme: XTERM_THEME,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);

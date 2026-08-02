@@ -1,10 +1,17 @@
 /**
- * Design tokens.
+ * Design tokens — the single source of truth for colour in the app.
  *
- * Story 010 (scaffold) seeds only the handful of custom properties the blank
- * shell needs to render dark. Story 011 (design tokens & theming) owns this
- * file and lands the complete `--cc-*` set, the `body[data-theme="light"]`
- * overrides, and the Tailwind v4 `@theme inline` mapping.
+ * The `--cc-*` custom properties come from the concept file
+ * (`concept/Command Center.dc.html`) and keep its names. `@theme inline` binds
+ * them to Tailwind's namespaces without copying the values, so a single
+ * `data-theme` flip on <body> recolours the whole app.
+ *
+ * Components use the resulting utilities (`bg-panel`, `text-muted`,
+ * `border-soft`). Raw hex literals in component code are banned.
+ *
+ * The terminal text palette is deliberately NOT here — it never reaches CSS.
+ * It lives in `src/lib/terminal/ansi.ts` and is consumed as JS by xterm's
+ * `theme` option and by the ANSI colorizer.
  */
 
 @import 'tailwindcss';
@@ -12,21 +19,69 @@
 :root {
   --cc-bg: #10152a;
   --cc-panel: #141a33;
+  --cc-panel-2: #121731;
+  --cc-hover: #1b2344;
+  --cc-active: #222c55;
   --cc-border: #273159;
+  --cc-border-soft: #1e2747;
   --cc-ink: #e9effc;
   --cc-muted: #98a3cc;
+  --cc-subtle: #6b779f;
   --cc-brand: #8fa7f2;
+  --cc-green: #74b79c;
+  --cc-amber: #ffac47;
+  --cc-red: #ff8d85;
+  --cc-chip: #1c2648;
   --cc-term-bg: #0b1023;
+  --cc-term-input: #0e1430;
 }
 
+body[data-theme='light'] {
+  --cc-bg: #fdfdfb;
+  --cc-panel: #ffffff;
+  --cc-panel-2: #f7fafb;
+  --cc-hover: #f4f9ff;
+  --cc-active: #e9f3fc;
+  --cc-border: #d4dee3;
+  --cc-border-soft: #edf2f4;
+  --cc-ink: #2c2f34;
+  --cc-muted: #73767c;
+  --cc-subtle: #8e949c;
+  --cc-brand: #334fa9;
+  --cc-green: #2e6b52;
+  --cc-amber: #c77414;
+  --cc-red: #d3372f;
+  --cc-chip: #edf2f4;
+
+  /* --cc-term-bg / --cc-term-input intentionally stay dark: the terminal keeps
+     its dark background in light mode, like the concept and most real tools. */
+}
+
+/**
+ * `inline` matters: it makes the utilities emit `var(--cc-*)` rather than
+ * resolving the value at build time, which is what lets the `data-theme`
+ * override above recolour everything through the same variables.
+ */
 @theme inline {
   --color-bg: var(--cc-bg);
   --color-panel: var(--cc-panel);
+  --color-panel-2: var(--cc-panel-2);
+  --color-hover: var(--cc-hover);
+  --color-active: var(--cc-active);
   --color-border: var(--cc-border);
+  --color-border-soft: var(--cc-border-soft);
   --color-ink: var(--cc-ink);
   --color-muted: var(--cc-muted);
+  --color-subtle: var(--cc-subtle);
   --color-brand: var(--cc-brand);
+  --color-green: var(--cc-green);
+  --color-amber: var(--cc-amber);
+  --color-red: var(--cc-red);
+  --color-chip: var(--cc-chip);
   --color-term-bg: var(--cc-term-bg);
+  --color-term-input: var(--cc-term-input);
 
   --font-mono: ui-monospace, Menlo, 'SF Mono', monospace;
+  --animate-ccpulse: ccpulse 1.6s ease-in-out infinite;
+  --animate-ccblink: ccblink 1s step-end infinite;
 }

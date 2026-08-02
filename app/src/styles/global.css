@@ -1,9 +1,8 @@
 /**
- * Global resets and app-wide base styles.
+ * Global resets, keyframes, and scrollbars.
  *
- * Story 010 (scaffold) seeds the reset and the base body styling. Story 011
- * (design tokens & theming) owns this file and lands the `ccpulse` / `ccblink`
- * keyframes and the thin custom scrollbars.
+ * Colour belongs in tokens.css. Anything here that needs a colour reads it
+ * through a `--cc-*` variable so light mode keeps working.
  */
 
 *,
@@ -36,4 +35,70 @@ button:not(:disabled),
 summary,
 label[for] {
   cursor: pointer;
+}
+
+/**
+ * Status animations.
+ *
+ * `ccpulse` drives the working-status dot; `ccblink` is for cursor-like
+ * affordances. Both are registered with Tailwind in tokens.css as
+ * `--animate-ccpulse` / `--animate-ccblink`, so components use
+ * `animate-ccpulse` rather than hand-written CSS.
+ */
+@keyframes ccpulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes ccblink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Respect a user's reduced-motion preference — a pulsing dot is decoration,
+   not information; the status is also carried by colour and by label text. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Thin custom scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cc-border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--cc-border);
+  border-radius: 5px;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
