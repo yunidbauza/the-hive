@@ -8,9 +8,11 @@ Components live in three places, and the boundary between them is lint-enforced:
 - `src/components/layout/` — app chrome, the fixed three-column shell.
 - `src/components/terminal/` — the terminal. Infrastructure, not a feature.
 
-`src/components/**` may not import from `src/features/**`. Chrome and atoms stay
-domain-agnostic; a component that needs to know about sessions belongs in a
-feature slice.
+`src/components/ui/**` and `src/components/terminal/**` may not import from
+`src/features/**`. Atoms and the terminal stay domain-agnostic; a component that
+needs to know about sessions belongs in a feature slice. `src/components/layout/`
+is the exception — the composition root, where feature panels get mounted; see
+below.
 
 ## shadcn/ui primitives
 
@@ -68,6 +70,7 @@ contract for their owning story, not existing code.
 | `Badge` | `ui/badge.tsx` | **021** (also 030, 050, 052) | `count: number`, `tone?: 'danger' \| 'brand' \| 'muted'`, `label?: string`, `className?: string` | **built** |
 | `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | generic over `Id extends string`: `tabs: { id: Id; label: string; badgeCount?: number; badgeLabel?: string }[]`, `active: Id`, `onSelect(id: Id): void`, `label: string`, `className?: string` | **built** |
 | `StatusDot` | `ui/status-dot.tsx` | **030** (used by 031, 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean`, `label?: string`, `className?: string` | **built** |
+| `Icon` | `ui/icon.tsx` | **031** (also 033, 051, 053) | `name: string`, `size?: number`, `weight?: IconWeight`, `className?: string` | **built** |
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
 
 `Badge` moved from story 030 to 021: the header's bell needs an unread count,
@@ -111,6 +114,18 @@ Contracts worth knowing before reusing them:
   nobody using a screen reader. With it, the tab announces `"Work 8 work items"`.
 - **Use the exported `tabId(id)` helper** for a panel's `aria-labelledby` rather
   than re-spelling the `tab-${id}` convention; the atom owns that format.
+- **`Icon` bridges the fixtures' icon strings to the React package.** The
+  fixtures carry `'ph-slack-logo'` because the concept used the phosphor
+  *webfont*; this app ships the React components and no webfont, so `Icon` owns
+  the lookup. **A fixture icon name that is not in its `GLYPHS` map renders a
+  question mark** — visible in review rather than a silent gap. Adding a fixture
+  icon means adding it there.
+- **`Icon` is always `aria-hidden`.** Every icon in this app sits beside the text
+  it illustrates, so it never announces a duplicate. An icon that must carry
+  meaning alone needs a labelled sibling.
+- **`STATUS_TEXT` pairs with `STATUS_FILL`** in `ui/status-dot.tsx`: the dot's
+  `bg-*` and its label's `text-*` come from the same module, because a dot and
+  its label drifting to different colours is the bug that file exists to prevent.
 
 ## Layout
 
@@ -193,6 +208,32 @@ It is the one place under `src/components/` allowed to import `src/features/**` 
 the rails and the center stage exist to mount feature panels. `components/ui/` and
 `components/terminal/` stay fully fenced. See AGENTS.md → Import zones;
 `pnpm verify:boundaries` proves both halves.
+
+## Feature panels
+
+### `<ProjectsPanel />`
+
+`src/features/projects/components/projects-panel.tsx` — story 031, built.
+
+A collapsible tree: `ProjectsPanel` → `ProjectRow` (per fixture project) →
+`SessionRow` (per non-done session). The panel itself holds no state and reads no
+session data — **each row owns its own subscription**, so one session changing
+status repaints that row rather than the whole tree.
+
+Three things here are easy to get wrong:
+
+- **The count pill is a plain span, not `Badge`.** `Badge` renders nothing at
+  zero, and a project with no live sessions must still show its `0` — that is the
+  story's empty state, and losing the pill would read as a rendering bug.
+- **Both rows are `<button>`s, not divs with `onClick`.** The project row carries
+  `aria-expanded`; the session row carries `aria-current` when its tab is open.
+  Keyboard reachability comes free that way.
+- **`SessionRow` renders `null` for an id the store does not know.** The
+  simulation (061) and the spawn flow (044) both mutate entities underneath open
+  panels, so a row that assumes its entity exists is a race waiting to throw.
+
+`collapsed` lives in the ui-store rather than in `ProjectRow` because the panel
+unmounts on every left-rail tab switch; component state would forget the tree.
 
 ### Region placeholders
 

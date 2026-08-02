@@ -278,6 +278,10 @@ export const useNavOrder = () =>
     }),
   );
 
+/** The project list, in fixture order (story 031). */
+export const useProjects = () =>
+  useHiveStore(useShallow((state) => state.projects));
+
 /** Non-done sessions for a project (story 031). */
 export const useProjectSessions = (projectId: string) =>
   useHiveStore(

@@ -13,6 +13,21 @@ const STATUS_FILL: Record<DotStatus, string> = {
 };
 
 /**
+ * The same five colours as text, for the label beside the dot.
+ *
+ * Paired with `STATUS_FILL` deliberately: a dot and its label drifting to
+ * different colours is the exact bug this file exists to prevent. Stories 031
+ * and 041 render the label; 032 has no visible label and uses the dot alone.
+ */
+export const STATUS_TEXT: Record<DotStatus, string> = {
+  working: 'text-green',
+  waiting: 'text-amber',
+  idle: 'text-subtle',
+  done: 'text-brand',
+  online: 'text-green',
+};
+
+/**
  * The words that go with the colours.
  *
  * Exported because status is never carried by colour alone: the projects panel
