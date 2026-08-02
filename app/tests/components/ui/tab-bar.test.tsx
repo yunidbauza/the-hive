@@ -132,4 +132,39 @@ describe('TabBar', () => {
 
     expect(screen.getByRole('tablist')).toHaveClass('shrink-0');
   });
+
+  /**
+   * The activity rail's unread count is an alarm, not an inventory: it means
+   * agents are blocked on the user. The left rail's work count is neutral.
+   */
+  it('lets a tab ask for a louder badge', () => {
+    render(
+      <TabBar
+        tabs={[
+          {
+            id: 'delta',
+            label: 'Delta',
+            badgeCount: 3,
+            badgeLabel: 'blocked things',
+            badgeTone: 'danger',
+          },
+        ]}
+        active="delta"
+        onSelect={vi.fn()}
+        label="Sections"
+      />,
+    );
+
+    // A labelled badge puts the digit in an inner `aria-hidden` span, so the
+    // fill lives on its parent.
+    expect(screen.getByText('3').parentElement).toHaveClass('bg-danger-solid');
+  });
+
+  it('defaults to the quiet badge', () => {
+    render(
+      <TabBar tabs={TABS} active="alpha" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(screen.getByText('4').parentElement).toHaveClass('bg-chip');
+  });
 });
