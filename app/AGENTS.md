@@ -40,6 +40,7 @@ shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` | The six browser specs (story 070) |
 | `pnpm test:e2e:electron` | The built desktop app (story 085) |
+| `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -59,7 +60,7 @@ Load the one that matches the surface you are working on.
 | Any UI task — tokens, palette, type scale | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) |
 | Any UI task — atom inventory and props | [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
-The visual source of truth is [`../concept/`](../concept/). When a story is silent
+The visual source of truth is [`../concept/`](../concept/); when a story is silent
 on a colour, size, or string, the concept file decides.
 
 ## Architecture rules
@@ -192,7 +193,6 @@ import them; read derived state through a hook.
   that spawns real processes is a unit test that leaks them.
   `__mocks__/node-pty.ts` holds a recording fake; assert spawn arguments, cwd,
   write/resize/kill routing and exit handling. Terminal *semantics* — signals,
-  resize, alt-screen, exit codes — need Electron's ABI and get their own runner
-  (story 098).
+  resize, alt-screen, exit codes — need Electron's ABI: `pnpm test:pty` (098).
 - Do not add a coverage-ignore comment to get past the gate. An untestable branch
   is usually a design smell — fix the shape instead.

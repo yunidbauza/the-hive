@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "pnpm": {
-    "//": "Since pnpm 10, dependency lifecycle scripts are blocked unless allowlisted — a supply-chain default, and the right one. Every entry here is a package granted arbitrary code execution at install time; the list stays minimal and every addition is justified in review. `electron` downloads its runtime binary (story 080); `node-pty` compiles its native addon (story 084). Without them, installs succeed and the app does not run.",
+    "//": "Since pnpm 10, dependency lifecycle scripts are blocked unless allowlisted \u2014 a supply-chain default, and the right one. Every entry here is a package granted arbitrary code execution at install time; the list stays minimal and every addition is justified in review. `electron` downloads its runtime binary (story 080); `node-pty` compiles its native addon (story 084). Without them, installs succeed and the app does not run.",
     "onlyBuiltDependencies": [
       "electron",
       "node-pty"
@@ -35,7 +35,8 @@
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
     "test:e2e:web": "playwright test --project=web",
-    "test:e2e:electron": "PW_ELECTRON_ONLY=1 playwright test --project=electron"
+    "test:e2e:electron": "PW_ELECTRON_ONLY=1 playwright test --project=electron",
+    "test:pty": "electron-vite build && ELECTRON_RUN_AS_NODE=1 electron scripts/run-pty-conformance.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
