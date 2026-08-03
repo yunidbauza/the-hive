@@ -142,6 +142,50 @@ describe('what a session runs', () => {
     expect(supervisor.write).toHaveBeenCalledWith(sessionId, 'claude\r');
   });
 
+  it('delivers a spawn task as the session’s first message', () => {
+    /**
+     * Two stages, one mechanism (story 097): the shell settles and `claude`
+     * goes in, then the TUI settles and the task goes in. Timed here rather
+     * than in the renderer, which has no signal for "the TUI is ready".
+     */
+    sessions.open({ ...OPEN, task: 'fix the hero' });
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(150);
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'claude\r');
+
+    emitData({ sessionId, chunk: '╭─ claude ─╮' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(150);
+
+    expect(supervisor.write).toHaveBeenLastCalledWith(
+      sessionId,
+      'fix the hero\r',
+    );
+  });
+
+  it('does not deliver the task again when a surface reattaches', () => {
+    sessions.open({ ...OPEN, task: 'fix the hero' });
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(158);
+    emitData({ sessionId, chunk: 'ready' });
+    vi.advanceTimersByTime(158);
+
+    // Attach-never-respawn: every tab switch re-subscribes a transport.
+    sessions.open({ ...OPEN, task: 'fix the hero' });
+    vi.advanceTimersByTime(6_000);
+
+    expect(
+      vi.mocked(supervisor.write).mock.calls.filter(
+        (call) => call[1] === 'fix the hero\r',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('writes the bootstrap exactly once', () => {
     sessions.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
@@ -200,6 +244,33 @@ describe('lifecycle', () => {
 
     expect(spawned).toHaveLength(2);
     expect(spawned[1]!.sessionId).not.toBe(first);
+  });
+
+  it('does not replay the spawn task on restart', async () => {
+    /**
+     * A restart discards a running agent's context on purpose. Re-delivering
+     * an instruction the previous generation may already have acted on — files
+     * edited, a PR opened — would make "start again" mean "do it twice".
+     */
+    sessions.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    const restarted = sessions.restart({ ...OPEN, task: 'fix the hero' });
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await restarted;
+
+    const second = spawned[1]!.sessionId;
+    emitData({ sessionId: second, chunk: '$ ' });
+    vi.advanceTimersByTime(158);
+    emitData({ sessionId: second, chunk: 'ready' });
+    vi.advanceTimersByTime(6_000);
+
+    expect(vi.mocked(supervisor.write).mock.calls).not.toContainEqual([
+      second,
+      'fix the hero\r',
+    ]);
   });
 
   it('drops output from the generation that was restarted away', async () => {

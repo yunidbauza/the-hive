@@ -45,8 +45,13 @@ export interface BootstrapOptions {
 }
 
 export interface Bootstrap {
-  /** Arm a freshly spawned session. Idempotent per entity. */
-  arm(entityId: string, command: string): void;
+  /**
+   * Arm a freshly spawned session. Idempotent per entity.
+   *
+   * With a `task`, the session gets a second stage: the command goes in first,
+   * then the task once *its* output has settled. See {@link createBootstrap}.
+   */
+  arm(entityId: string, command: string, task?: string): void;
   /** Report output. The first one starts the debounce. */
   sawOutput(entityId: string): void;
   /** Abandon a pending bootstrap — the session died before it ran. */
@@ -58,6 +63,12 @@ export interface Bootstrap {
 
 interface Pending {
   command: string;
+  /**
+   * Written after the *next* settle, once `command`'s own output has quietened
+   * (story 097). Undefined for an ordinary bootstrap and for the second stage
+   * itself, which is what makes the re-arm terminate.
+   */
+  task?: string;
   timer: ReturnType<typeof setTimeout>;
   /** True once the first chunk has arrived and the debounce is running. */
   settling: boolean;
@@ -85,14 +96,38 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
      * run.
      */
     write(entityId, `${entry.command}\r`);
+
+    /**
+     * The task is the same problem one level down, so it gets the same answer.
+     *
+     * `claude` has to start and paint its prompt before it will accept input,
+     * and writing into that window loses the text exactly as writing into the
+     * shell's startup would. The renderer cannot time it — `session:status`
+     * carries `working | idle | done` and deliberately nothing finer — so main
+     * does, with the mechanism it already has.
+     *
+     * Re-arming rather than chaining is what makes this cheap: `settling:
+     * false` means the TUI's first paint restarts the identical debounce, the
+     * fallback still covers a TUI that prints nothing, and `cancel` already
+     * reaches it — a session that dies between the two stages drops its task
+     * with everything else. The new entry carries no `task` of its own, which
+     * is what terminates the recursion.
+     */
+    if (entry.task === undefined) return;
+    pending.set(entityId, {
+      command: entry.task,
+      settling: false,
+      timer: setTimeout(() => fire(entityId, true), fallbackMs),
+    });
   }
 
   return {
-    arm(entityId, command) {
+    arm(entityId, command, task) {
       // Re-arming would stack a second timer and write the command twice.
       if (pending.has(entityId)) return;
       pending.set(entityId, {
         command,
+        ...(task === undefined ? {} : { task }),
         settling: false,
         timer: setTimeout(() => fire(entityId, true), fallbackMs),
       });

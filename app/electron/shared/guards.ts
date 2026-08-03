@@ -44,12 +44,22 @@ const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 /** A plain object with an exact key set and no prototype-polluting keys. */
 function assertShape(
   value: unknown,
-  allowed: readonly string[],
+  required: readonly string[],
   label: string,
+  /**
+   * Keys that may appear but need not.
+   *
+   * Kept separate from `required` rather than folded into one list, because
+   * the two are checked in opposite directions: an unlisted key is rejected,
+   * a missing *required* key is rejected, and a missing optional key is the
+   * ordinary case. Collapsing them would silently make every field optional.
+   */
+  optional: readonly string[] = [],
 ): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return fail(`${label}: expected an object, got ${describe(value)}`);
   }
+  const allowed = [...required, ...optional];
 
   // `Object.keys` sees own enumerable keys, which is what JSON.parse produces —
   // including a literal `__proto__` key.
@@ -65,7 +75,7 @@ function assertShape(
       return fail(`${label}: unexpected key "${key}"`);
     }
   }
-  for (const key of allowed) {
+  for (const key of required) {
     if (!keys.includes(key)) return fail(`${label}: missing key "${key}"`);
   }
   return value as Record<string, unknown>;
@@ -109,17 +119,56 @@ function assertDimension(value: unknown, label: string): number {
   return value;
 }
 
+/**
+ * Free text that will be **written into a pty** (story 097).
+ *
+ * Bounded, and control characters are rejected outright rather than stripped.
+ * A `\r` would submit a line the user never typed; an ESC would let a payload
+ * address the cursor, set the window title, or switch to the alternate screen
+ * in a terminal the user is reading and trusts. Rejecting names the field that
+ * was wrong; stripping would silently send something other than what was asked
+ * for, which is the worse failure for a routing layer.
+ *
+ * The range is tested by code point rather than a regex literal, so this file
+ * stays free of control bytes and `no-control-regex` never has to be disabled.
+ */
+const MAX_TEXT = 4096;
+
+function assertText(value: unknown, label: string): string {
+  const text = assertString(value, label);
+  if (text.length === 0) return fail(`${label}: must not be empty`);
+  if (text.length > MAX_TEXT) return fail(`${label}: too long`);
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    // C0 (which includes CR, LF and ESC), DEL, and the C1 block.
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+      return fail(`${label}: control characters are not allowed`);
+    }
+  }
+  return text;
+}
+
 export function parseSpawnRequest(input: unknown): SpawnRequest {
   const raw = assertShape(
     input,
     ['sessionId', 'projectId', 'cols', 'rows'],
     'spawn',
+    ['task'],
   );
   return {
     sessionId: assertId(raw.sessionId, 'spawn.sessionId'),
     projectId: assertId(raw.projectId, 'spawn.projectId'),
     cols: assertDimension(raw.cols, 'spawn.cols'),
     rows: assertDimension(raw.rows, 'spawn.rows'),
+    /**
+     * Spread rather than `task: undefined`. The returned object is compared
+     * key-for-key by this module's own tests ("does not pass through anything
+     * beyond the declared fields"), and an own property whose value is
+     * undefined is still a key.
+     */
+    ...(raw.task === undefined
+      ? {}
+      : { task: assertText(raw.task, 'spawn.task') }),
   };
 }
 

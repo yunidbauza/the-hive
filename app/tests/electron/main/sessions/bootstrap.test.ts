@@ -196,3 +196,137 @@ describe('bootstrap lifecycle', () => {
     expect(written).toEqual([]);
   });
 });
+
+/**
+ * Delivering a spawn's task as the session's first message (story 097).
+ *
+ * The renderer cannot time this — `session:status` carries
+ * `working | idle | done` and nothing finer — so main does, by applying the
+ * mechanism above a second time: the command settles, then the TUI's own
+ * output settles, then the task goes in.
+ */
+describe('the task stage', () => {
+  const DEBOUNCE = 150;
+  const FALLBACK = 5_000;
+  const armed = () =>
+    bootstrap({ debounceMs: DEBOUNCE, fallbackMs: FALLBACK });
+
+  it('writes the task after the TUI settles, not alongside the command', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+    expect(written).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
+
+    // The TUI paints; that is the signal the second stage waits for.
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+    expect(written).toEqual([
+      { entityId: 'sess-a', data: 'claude\r' },
+      { entityId: 'sess-a', data: 'fix the hero\r' },
+    ]);
+  });
+
+  it('submits the task with a carriage return too', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    expect(written.at(-1)?.data.endsWith('\r')).toBe(true);
+    expect(written.at(-1)?.data).not.toContain('\n');
+  });
+
+  it('writes the task exactly once, however much the TUI paints', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    boot.sawOutput('sess-a');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(FALLBACK * 2);
+
+    expect(written).toHaveLength(2);
+  });
+
+  it('writes the task even if the TUI prints nothing at all', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    vi.advanceTimersByTime(FALLBACK);
+
+    expect(written.at(-1)?.data).toBe('fix the hero\r');
+  });
+
+  it('drops a pending task when the session dies between the stages', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    boot.cancel('sess-a');
+    vi.advanceTimersByTime(FALLBACK * 2);
+
+    // Only the command went in. `cancel` reaches the second stage for free,
+    // which is the reason it is a re-arm rather than a chained timer.
+    expect(written).toHaveLength(1);
+  });
+
+  it('reports the task as still pending until it has been written', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    expect(boot.isPending('sess-a')).toBe(true);
+
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+    expect(boot.isPending('sess-a')).toBe(false);
+  });
+
+  it('drops the second stage on dispose, so nothing outlives the app', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    boot.dispose();
+    vi.advanceTimersByTime(FALLBACK * 2);
+
+    expect(written).toHaveLength(1);
+  });
+
+  it('is still a single write when there is no task', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(FALLBACK * 2);
+
+    expect(written).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
+  });
+
+  it('keeps two sessions’ task stages independent', () => {
+    const boot = armed();
+    boot.arm('sess-a', 'claude', 'first');
+    boot.arm('sess-b', 'claude', 'second');
+
+    for (const id of ['sess-a', 'sess-b']) {
+      boot.sawOutput(id);
+      vi.advanceTimersByTime(DEBOUNCE);
+      boot.sawOutput(id);
+      vi.advanceTimersByTime(DEBOUNCE);
+    }
+
+    expect(written.filter((entry) => entry.data === 'first\r')).toHaveLength(1);
+    expect(written.filter((entry) => entry.data === 'second\r')).toHaveLength(1);
+  });
+});

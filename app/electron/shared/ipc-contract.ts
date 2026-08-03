@@ -87,6 +87,16 @@ export interface SpawnRequest {
   projectId: string;
   cols: number;
   rows: number;
+  /**
+   * The first thing to say to this session, once its TUI is up (story 097).
+   *
+   * Optional because most spawns have nothing to say — a session opened from
+   * the picker starts at a prompt and waits for its user. It is delivered by
+   * main's bootstrap rather than by the renderer, which has no signal for "the
+   * TUI is ready" and by design cannot have one: `session:status` carries
+   * `working | idle | done` and nothing finer.
+   */
+  task?: string;
 }
 
 export interface WriteRequest {

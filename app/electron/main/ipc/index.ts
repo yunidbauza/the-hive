@@ -161,11 +161,20 @@ export function registerIpcHandlers(): void {
       projectId: request.projectId,
       cols: request.cols,
       rows: request.rows,
+      task: request.task,
     });
   });
 
   handle(CH.ptyRestart, async (_event, payload) => {
     const request = parseSpawnRequest(payload);
+    /**
+     * The task is deliberately **not** forwarded (story 097).
+     *
+     * A restart discards a running agent's context and starts a fresh process.
+     * Re-delivering an instruction the previous generation may already have
+     * acted on — edited files, opened a PR — is worse than delivering nothing:
+     * the user asked for a clean slate, not for the work to be redone.
+     */
     await sessions?.restart({
       entityId: request.sessionId,
       projectId: request.projectId,

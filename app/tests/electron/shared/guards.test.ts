@@ -93,6 +93,76 @@ describe('parseSpawnRequest', () => {
   });
 });
 
+describe('parseSpawnRequest — the optional task', () => {
+  it('accepts a request with no task at all', () => {
+    expect(parseSpawnRequest({ ...validSpawn })).not.toHaveProperty('task');
+  });
+
+  it('accepts an ordinary task', () => {
+    expect(
+      parseSpawnRequest({ ...validSpawn, task: 'fix the hero' }).task,
+    ).toBe('fix the hero');
+  });
+
+  it('accepts punctuation and non-ASCII text', () => {
+    const task = 'rename “widget” → gadget (see #219)';
+    expect(parseSpawnRequest({ ...validSpawn, task }).task).toBe(task);
+  });
+
+  /**
+   * The task is written into a pty, so a control character is not a
+   * formatting quirk — it is an instruction to a terminal the user trusts.
+   */
+  it('rejects a carriage return, which would submit a line nobody typed', () => {
+    expect(() =>
+      parseSpawnRequest({ ...validSpawn, task: 'ls\rrm -rf /' }),
+    ).toThrow(/control characters/);
+  });
+
+  it('rejects an escape byte, which could address the cursor', () => {
+    expect(() =>
+      parseSpawnRequest({ ...validSpawn, task: 'a\u001b[31mb' }),
+    ).toThrow(/control characters/);
+  });
+
+  it('rejects a NUL', () => {
+    expect(() =>
+      parseSpawnRequest({ ...validSpawn, task: 'a\u0000b' }),
+    ).toThrow(IpcValidationError);
+  });
+
+  it('rejects an unbounded task', () => {
+    expect(() =>
+      parseSpawnRequest({ ...validSpawn, task: 'x'.repeat(4097) }),
+    ).toThrow(/too long/);
+  });
+
+  it('rejects an empty task rather than spawning a blank instruction', () => {
+    expect(() => parseSpawnRequest({ ...validSpawn, task: '' })).toThrow(
+      /must not be empty/,
+    );
+  });
+
+  it('rejects a non-string task', () => {
+    expect(() => parseSpawnRequest({ ...validSpawn, task: 42 })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('still rejects an unexpected key — optional is not a free-for-all', () => {
+    expect(() => parseSpawnRequest({ ...validSpawn, nope: 1 })).toThrow(
+      /unexpected key/,
+    );
+  });
+
+  it('still rejects a missing required key', () => {
+    const { cols: _cols, ...missing } = validSpawn;
+    expect(() => parseSpawnRequest({ ...missing, task: 'x' })).toThrow(
+      /missing key "cols"/,
+    );
+  });
+});
+
 describe('parseWriteRequest', () => {
   it('accepts keystrokes', () => {
     expect(parseWriteRequest({ sessionId: 'sess-1', data: 'ls -la\r' })).toEqual({

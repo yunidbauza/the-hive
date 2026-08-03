@@ -50,6 +50,13 @@ export interface OpenRequest {
   projectId: string;
   cols: number;
   rows: number;
+  /**
+   * The session's first instruction, delivered after the bootstrap (story 097).
+   *
+   * Absent on `restart`, and on every `open` that is really an attach — see
+   * the note on `restartOnce`.
+   */
+  task?: string;
 }
 
 export interface Sessions {
@@ -228,7 +235,16 @@ export function createSessions(options: SessionsOptions): Sessions {
       await exit;
     }
 
-    spawn(request);
+    /**
+     * The task is dropped, not replayed (story 097).
+     *
+     * A restart discards a running agent's context on purpose. Re-delivering
+     * the instruction it may already have acted on — files edited, a PR opened
+     * — would make "start again" mean "do it twice". The renderer does not send
+     * one on restart either; this is the belt to that braces, because
+     * `restartOnce` takes the same `OpenRequest` shape as `open`.
+     */
+    spawn({ ...request, task: undefined });
   }
 
   /** Refuse with a message the user can act on, never a generic failure. */
@@ -294,7 +310,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       rows: request.rows,
     });
 
-    bootstrap.arm(request.entityId, snapshot.claudeCommand);
+    bootstrap.arm(request.entityId, snapshot.claudeCommand, request.task);
   }
 
   return {
