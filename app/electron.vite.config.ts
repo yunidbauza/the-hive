@@ -23,7 +23,7 @@ export default defineConfig({
      */
     plugins: [externalizeDepsPlugin()],
     /**
-     * Two inputs, not two targets (story 091).
+     * Extra inputs, not extra targets (stories 091 and 098).
      *
      * The story calls the pty host "a third main-process-style target".
      * `electron-vite`'s `defineConfig` has exactly three keys — `main`,

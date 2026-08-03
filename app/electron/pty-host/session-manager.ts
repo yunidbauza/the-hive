@@ -287,11 +287,10 @@ export function createSessionManager(
        * mid-layout, and resizing a pty to zero columns puts curses
        * applications into states they do not recover from. That much was
        * always right. Clamping to 1 was not: a 1×1 pty is not a recovery, it
-       * is the same catastrophe one column wider. A shell resized to 1×1 emits
-       * essentially nothing legible, and nothing ever resizes it back — the
-       * geometry the renderer *believes* is current is the one it last sent,
-       * so no later resize differs from it and the no-op guard below swallows
-       * the correction too.
+       * is the same catastrophe one column wider — and nothing ever resizes it
+       * back, because the *renderer's* own geometry never changed, so it has
+       * no reason to send anything new. The session is simply ruined until
+       * something else happens to resize it.
        *
        * A nonsensical size is not a request to be honoured approximately; it
        * is a frame of bad measurement to be ignored. Story 098's matrix says

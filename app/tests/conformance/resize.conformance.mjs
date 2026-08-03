@@ -1,4 +1,4 @@
-import { assert, describe, it, waitFor } from './harness.mjs';
+import { assert, describe, emitSentinel, it, waitFor } from './harness.mjs';
 
 /**
  * Resize and SIGWINCH (story 098).
@@ -29,7 +29,14 @@ describe('resize', () => {
     // A trap is the only way to prove the *signal* arrived rather than the
     // size merely being readable afterwards.
     session.send("trap 'echo GOT-WINCH' WINCH");
-    await waitFor(() => session.output.includes('WINCH'), {
+    /**
+     * Confirmed by a sentinel, not by looking for "WINCH" in the output — the
+     * typed command line contains that word and the pty echoes it straight
+     * back, so the wait was satisfied before the trap existed. Exactly the trap
+     * `emitSentinel` documents.
+     */
+    session.send(emitSentinel('TRAP-READY'));
+    await session.waitForOutput('TRAP-READY', {
       message: 'the trap to be installed',
     });
     session.clear();

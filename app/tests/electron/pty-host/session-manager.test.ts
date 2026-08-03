@@ -351,10 +351,10 @@ describe('resize', () => {
      * xterm reports 0 transiently while its container is hidden or mid-layout,
      * and a pty resized to zero columns puts curses applications into states
      * they do not recover from. Clamping to 1 was the same catastrophe one
-     * column wider — and worse than it looks, because the renderer's *believed*
-     * geometry never changed, so no later resize differed from it and the
-     * no-op guard swallowed the correction too. A nonsensical size is a frame
-     * of bad measurement to ignore, not a request to honour approximately.
+     * column wider — and nothing resizes it back, because the renderer's own
+     * geometry never changed and so it never sends anything new. A nonsensical
+     * size is a frame of bad measurement to ignore, not a request to honour
+     * approximately.
      */
     expect(pty().resize).not.toHaveBeenCalled();
   });

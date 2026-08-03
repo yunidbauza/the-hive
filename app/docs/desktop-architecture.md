@@ -325,9 +325,9 @@ Two traps that cost time when rediscovered, both handled by the harness:
 #### Two things it found
 
 - `resize(0, 0)` **clamped to 1×1** rather than being dropped. A 1×1 pty emits
-  nothing legible, and the renderer's believed geometry never changed — so no
-  later resize differed from it and the no-op guard swallowed the correction too.
-  Now dropped; `session-manager.ts` carries the reasoning.
+  nothing legible, and nothing resizes it back: the renderer's own geometry
+  never changed, so it never sends anything new. Now dropped;
+  `session-manager.ts` carries the reasoning.
 - A process the user **explicitly backgrounds** (`pnpm dev &`) gets its own
   process group under an interactive shell's job control, so `kill(-shellPid)`
   does not reach it and it survives app shutdown. `claude` is unaffected — the

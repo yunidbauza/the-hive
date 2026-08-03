@@ -56,12 +56,25 @@ describe('throughput', () => {
      * pty buffer fills and the producing process blocks on `write`, exactly as
      * it would piping to a slow consumer in a shell.
      */
+    /**
+     * 40k lines, and the pause waits for the burst to be **in flight** rather
+     * than merely started.
+     *
+     * With 5k short lines the producer routinely finished inside `waitFor`'s
+     * 20ms poll interval, so `pause()` held nothing back and the assertion
+     * failed — reproduced at 3 failures in 10 runs. Waiting for a line that is
+     * present while a much later one is not is the observable for "still
+     * producing"; the volume then keeps it true for long enough to matter.
+     */
+    const lines = 40_000;
     session.send(
-      `for i in $(seq 1 5000); do echo "p-$i"; done; ${emitSentinel('PAUSE-DONE')}`,
+      `for i in $(seq 1 ${lines}); do echo "p-$i"; done; ${emitSentinel('PAUSE-DONE')}`,
     );
-    await waitFor(() => session.output.includes('p-1'), {
-      message: 'the flood to start',
-    });
+    await waitFor(
+      () =>
+        session.output.includes('p-1') && !session.output.includes('PAUSE-DONE'),
+      { message: 'the flood to be in flight' },
+    );
 
     session.pause();
     const atPause = session.output.length;
@@ -79,7 +92,7 @@ describe('throughput', () => {
 
     session.resume();
 
-    await session.waitForOutput('PAUSE-DONE', { timeout: 30_000 });
+    await session.waitForOutput('PAUSE-DONE', { timeout: 60_000 });
     assert.ok(
       session.output.length > settled,
       'resume must deliver what the pause held back',
@@ -89,7 +102,7 @@ describe('throughput', () => {
     // And nothing was dropped while paused — the whole point of blocking the
     // producer rather than discarding.
     const seen = session.output.match(/p-\d+/g) ?? [];
-    assert.equal(seen.length, 5_000, `expected 5000 lines, saw ${seen.length}`);
+    assert.equal(seen.length, lines, `expected ${lines} lines, saw ${seen.length}`);
   });
 
   it('the replay buffer is bounded but keeps the tail', async (context) => {
