@@ -6,6 +6,7 @@ import {
   ChatCircleDots,
   CheckCircle,
   Cube,
+  Folder,
   GitPullRequest,
   GlobeHemisphereWest,
   HandPalm,
@@ -43,6 +44,7 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   // Projects (031).
   'ph-globe-hemisphere-west': GlobeHemisphereWest,
   'ph-cube': Cube,
+  'ph-folder': Folder,
   'ph-users-three': UsersThree,
   'ph-swatches': Swatches,
   'ph-stack': Stack,

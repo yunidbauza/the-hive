@@ -14,7 +14,11 @@ import {
   useProjects,
   useSpawnSession,
 } from '@stores/hive-store';
-import { usePickerActions, usePickerState } from '@stores/ui-store';
+import {
+  usePickerActions,
+  usePickerState,
+  useSettingsActions,
+} from '@stores/ui-store';
 
 const MODELS: readonly Model[] = ['haiku', 'sonnet', 'opus', 'fable'];
 const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'max'];
@@ -50,6 +54,7 @@ export function NewSessionPicker() {
   const { pickerQuery, newModel, newEffort } = usePickerState();
   const { closePicker, setPickerQuery, setNewModel, setNewEffort } =
     usePickerActions();
+  const { openSettings } = useSettingsActions();
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -102,13 +107,26 @@ export function NewSessionPicker() {
 
         {/*
           First run: the config file did not exist and was just written, so
-          there is nothing to be unmapped *from* yet. One line, pointing at the
-          file — a user who has never seen it cannot edit it (story 090).
+          there is nothing to be unmapped *from* yet.
+
+          Story 090 printed the file path here, which is the failure story 101
+          exists to end: a user who has never seen that file cannot edit it, and
+          naming it is not an instruction. The button opens settings, which is
+          the place they can actually do something.
         */}
         {config?.templateWritten ? (
-          <p className="max-w-[560px] text-center font-mono text-[11.5px] text-subtle">
-            {`no projects are mapped yet — edit ${config.configPath} to open sessions in real repositories`}
-          </p>
+          <div className="flex max-w-[560px] flex-col items-center gap-2.5">
+            <p className="text-center font-mono text-[11.5px] text-subtle">
+              no projects yet — add one of your repositories to open a session in it
+            </p>
+            <button
+              type="button"
+              onClick={openSettings}
+              className="rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover"
+            >
+              Add project
+            </button>
+          </div>
         ) : null}
 
         <div className="flex max-w-[560px] flex-wrap justify-center gap-2.5">

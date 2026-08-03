@@ -357,19 +357,38 @@ describe('NewSessionPicker · unmapped projects', () => {
     expect(Object.keys(useHiveStore.getState().entities)).toHaveLength(before + 1);
   });
 
-  it('points a first-run user at the file that was just written for them', () => {
+  /**
+   * Story 090 printed the config path here. Story 101 replaces it with a
+   * button: naming a file the user has never opened is not an instruction, and
+   * that dead end is the failure this story exists to end.
+   */
+  it('offers a first-run user a way into settings, not a file path', () => {
     setProjectConfigForTest(snapshot([], { templateWritten: true }));
     render(<NewSessionPicker />);
 
     expect(
-      screen.getByText(new RegExp(`edit ${CONFIG_PATH}`)),
+      screen.getByRole('button', { name: /add project/i }),
     ).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(CONFIG_PATH))).not.toBeInTheDocument();
+  });
+
+  it('opens settings when the first-run button is pressed', async () => {
+    const user = userEvent.setup();
+    setProjectConfigForTest(snapshot([], { templateWritten: true }));
+    render(<NewSessionPicker />);
+
+    await user.click(screen.getByRole('button', { name: /add project/i }));
+
+    expect(useUiStore.getState().settings).toBe(true);
+    // openSettings clears the picker: two stacked full-stage overlays is what
+    // that rule exists to prevent, and this is the path that would cause it.
+    expect(useUiStore.getState().picker).toBe(false);
   });
 
   it('shows no first-run notice once the file exists', () => {
     setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
     render(<NewSessionPicker />);
 
-    expect(screen.queryByText(/no projects are mapped yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no projects yet/)).not.toBeInTheDocument();
   });
 });

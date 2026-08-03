@@ -78,6 +78,53 @@ describe('CenterStage', () => {
     expect(metaBarFor('feat/hero-refresh')).not.toBeInTheDocument();
   });
 
+  describe('the settings overlay (story 101)', () => {
+    const settingsTitle = () => screen.queryByRole('heading', { name: 'Settings' });
+
+    it('replaces the terminal area without unmounting it', () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+      const before = terminalInstances.length;
+
+      act(() => useUiStore.getState().openSettings());
+
+      expect(settingsTitle()).toBeInTheDocument();
+      /**
+       * The gate that drives this also drives `TerminalHost`'s `activeId`. A
+       * settings overlay that did not extend it would render on top of every
+       * live terminal rather than in place of them.
+       */
+      expect(visibleSurfaces()).toHaveLength(0);
+      expect(metaBarFor('feat/hero-refresh')).not.toBeInTheDocument();
+      // The instances survive, or settings would cost every session its
+      // scrollback.
+      expect(terminalInstances).toHaveLength(before);
+      expect(terminalInstances.some((instance) => instance.disposed)).toBe(false);
+    });
+
+    it('returns to the previous view when closed', () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      act(() => useUiStore.getState().openSettings());
+      act(() => useUiStore.getState().closeSettings());
+
+      // Settings never changed `activeTab`, which is what makes this work.
+      expect(settingsTitle()).not.toBeInTheDocument();
+      expect(visibleSurfaces()).toHaveLength(1);
+    });
+
+    it('wins over the picker rather than stacking with it', () => {
+      render(<CenterStage />);
+
+      act(() => useUiStore.getState().openPicker());
+      act(() => useUiStore.getState().openSettings());
+
+      expect(settingsTitle()).toBeInTheDocument();
+      expect(pickerTitle()).not.toBeInTheDocument();
+    });
+  });
+
   describe('the picker', () => {
     it('replaces the terminal area without unmounting it', () => {
       render(<CenterStage />);

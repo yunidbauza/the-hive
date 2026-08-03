@@ -9,6 +9,7 @@ import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
+import { SettingsOverlay } from '@features/settings/components/settings-overlay';
 import {
   TERMINAL_CHORD_EVENT,
   type TerminalChordDetail,
@@ -152,6 +153,7 @@ export function CenterStage() {
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-panel-2">
       {showingPicker ? <NewSessionPicker /> : null}
+      {view === 'settings' ? <SettingsOverlay /> : null}
 
       {/*
         Hidden, never unmounted. Tearing the terminal region down for the

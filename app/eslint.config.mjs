@@ -26,6 +26,7 @@ const FEATURE_SLICES = [
   'projects',
   'pull-requests',
   'sessions',
+  'settings',
   'simulation',
   'work',
 ];

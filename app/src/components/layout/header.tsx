@@ -1,4 +1,4 @@
-import { Bell, Moon, Sun } from '@phosphor-icons/react';
+import { Bell, Gear, Moon, Sun } from '@phosphor-icons/react';
 
 import { cn } from '@/lib/utils';
 
@@ -10,7 +10,12 @@ import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
 import { isDesktop } from '@config/runtime';
 import { useMarkAllRead, useUnreadCount } from '@stores/hive-store';
-import { usePickerActions, useTheme, useThemeActions } from '@stores/ui-store';
+import {
+  usePickerActions,
+  useSettingsActions,
+  useTheme,
+  useThemeActions,
+} from '@stores/ui-store';
 
 /**
  * Persistent header — 56px, never scrolls, never collapses.
@@ -60,6 +65,7 @@ export function Header() {
   const unread = useUnreadCount();
   const markAllRead = useMarkAllRead();
   const { openPicker } = usePickerActions();
+  const { openSettings } = useSettingsActions();
 
   const isDark = theme === 'dark';
   const desktop = isDesktop();
@@ -143,6 +149,25 @@ export function Header() {
           className="flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink [-webkit-app-region:no-drag]"
         >
           {isDark ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
+
+        {/*
+          One of two ways into settings (story 101); the other is the picker's
+          empty state. `Cmd+,` belongs with story 060's binding registry, which
+          does not exist yet — and a bare window keydown listener is the
+          mistake center-stage already documents making once.
+
+          `[-webkit-app-region:no-drag]` is required, not decorative: the header
+          is the window drag handle, and without it this button cannot be
+          clicked at all.
+        */}
+        <button
+          type="button"
+          onClick={openSettings}
+          aria-label="Settings"
+          className="flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink [-webkit-app-region:no-drag]"
+        >
+          <Gear size={17} />
         </button>
 
         {/*

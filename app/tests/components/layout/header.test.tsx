@@ -173,4 +173,33 @@ describe('Header', () => {
       expect(useUiStore.getState().pickerQuery).toBe('');
     });
   });
+
+  describe('the settings gear (story 101)', () => {
+    it('offers a way into settings', () => {
+      render(<Header />);
+
+      expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    });
+
+    it('opens settings when pressed', async () => {
+      const user = userEvent.setup();
+      render(<Header />);
+
+      await user.click(screen.getByRole('button', { name: 'Settings' }));
+
+      expect(useUiStore.getState().settings).toBe(true);
+    });
+
+    /**
+     * The header is the window drag handle on desktop, so every control in it
+     * needs the no-drag escape or it cannot be clicked at all.
+     */
+    it('is clickable despite sitting in the drag region', () => {
+      render(<Header />);
+
+      expect(
+        screen.getByRole('button', { name: 'Settings' }).className,
+      ).toContain('[-webkit-app-region:no-drag]');
+    });
+  });
 });
