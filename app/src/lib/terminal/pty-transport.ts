@@ -131,6 +131,15 @@ interface EntityChannel {
    * (story 096).
    */
   spawnRequested: boolean;
+  /**
+   * The in-flight (or settled) spawn request, shared by every caller.
+   *
+   * `spawnRequested` answers "has one been asked for"; this answers "how did
+   * it go", which is what a console that must print main's refusal needs
+   * (story 097). Held on the channel rather than in a second map, so the two
+   * can never disagree about whether a process was asked for.
+   */
+  spawnResult: Promise<SpawnOutcome> | null;
   /** The process is gone. Further data for this id is stale and dropped. */
   closed: boolean;
   /** Drops this channel's three bridge subscriptions. Test-only. */
@@ -179,6 +188,7 @@ function openChannel(entityId: string): EntityChannel {
     bufferUnits: 0,
     lastSeq: null,
     spawnRequested: false,
+    spawnResult: null,
     closed: false,
     dispose: () => {},
   };
@@ -254,28 +264,63 @@ function openChannel(entityId: string): EntityChannel {
 }
 
 /**
- * Request a process for this entity, at most once.
+ * Whether there is a process to write to right now (story 097).
  *
- * Fire-and-forget by design: the caller is `onData`, which must return a
- * disposer synchronously, and awaiting the spawn there is precisely the bug
- * this ordering exists to avoid.
+ * Deliberately a different question from `isLiveTerminal`, which answers
+ * "should a PTY back this surface?" — a fact about the target and the build.
+ * This answers a fact about the world, and the channel map is the only thing
+ * in the renderer that knows it: a session that was never opened has no
+ * process yet, and one that exited needs a restart. Those are different
+ * problems with different fixes, and `session-input.ts` words them apart.
  */
-function ensureSpawned(
-  channel: EntityChannel,
+export type ChannelState = 'live' | 'exited' | 'none';
+
+export function sessionChannelState(entityId: string): ChannelState {
+  const channel = channels.get(entityId);
+  if (!channel || !channel.spawnRequested) return 'none';
+  return channel.closed ? 'exited' : 'live';
+}
+
+export type SpawnOutcome = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Request a process for this entity, at most once, and report the outcome.
+ *
+ * Two callers with two different needs, and one request between them: the
+ * console needs main's refusal *as a value* so it can print it in the
+ * transcript, and the terminal needs it as a notice. Sharing the promise is
+ * what stops the second caller starting a second process — which would put two
+ * `claude` instances in one repository, a data-loss bug wearing a rendering
+ * bug's clothes.
+ *
+ * Never rejects. A refusal is an outcome, not an exception: the fire-and-forget
+ * caller below has nowhere to catch one.
+ */
+export function requestSpawn(
   entityId: string,
   projectId: string,
-): void {
-  if (channel.spawnRequested) return;
-  channel.spawnRequested = true;
+  task?: string,
+): Promise<SpawnOutcome> {
+  const channel = channels.get(entityId) ?? openChannel(entityId);
+  if (channel.spawnResult) return channel.spawnResult;
 
-  void pty()
+  channel.spawnRequested = true;
+  channel.spawnResult = pty()
     .spawn({
       sessionId: entityId,
       projectId,
       cols: DEFAULT_COLS,
       rows: DEFAULT_ROWS,
+      /**
+       * Spread rather than `task: undefined`. The IPC guard rejects unexpected
+       * keys, and an own property whose value is undefined survives the
+       * structured clone as a key that is present.
+       */
+      ...(task === undefined ? {} : { task }),
     })
-    .catch((cause: unknown) => {
+    .then((): SpawnOutcome => ({ ok: true }))
+    .catch((cause: unknown): SpawnOutcome => {
+      const reason = cause instanceof Error ? cause.message : String(cause);
       /**
        * A refusal is *information*, and it belongs in the terminal.
        *
@@ -289,13 +334,31 @@ function ensureSpawned(
        * first — but that is a fact about main's ordering, and this file should
        * not depend on it staying true.
        */
-      if (channel.closed) return;
-      channel.closed = true;
-      emit(
-        channel,
-        spawnRefused(cause instanceof Error ? cause.message : String(cause)),
-      );
+      if (!channel.closed) {
+        channel.closed = true;
+        emit(channel, spawnRefused(reason));
+      }
+      return { ok: false, reason };
     });
+
+  return channel.spawnResult;
+}
+
+/**
+ * The lazy path: a surface mounted, so something had better be running.
+ *
+ * Fire-and-forget by design — the caller is `onData`, which must return a
+ * disposer synchronously, and awaiting the spawn there is precisely the bug
+ * the subscribe-then-spawn ordering exists to avoid. When the console asked
+ * first, this is a no-op.
+ */
+function ensureSpawned(
+  channel: EntityChannel,
+  entityId: string,
+  projectId: string,
+): void {
+  if (channel.spawnRequested) return;
+  void requestSpawn(entityId, projectId);
 }
 
 export function createPtyTransport(

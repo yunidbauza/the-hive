@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TERM, toSgrForeground } from '@lib/terminal/ansi';
 import {
   createPtyTransport,
+  requestSpawn,
   resetPtyChannels,
+  sessionChannelState,
 } from '@lib/terminal/pty-transport';
 
 import type {
@@ -433,5 +435,111 @@ describe('PtyTransport — lifecycle lines', () => {
 
     expect(text).not.toContain('code 1');
     expect(text).not.toContain('zombie output');
+  });
+});
+
+describe('sessionChannelState', () => {
+  /**
+   * The question `session-input.ts` asks before writing (story 097).
+   *
+   * `isLiveTerminal` answers "should a PTY back this surface?" — a fact about
+   * the target and the build. This answers "is there a process to write to
+   * right now", which is a fact about the world, and only the channel map
+   * knows it.
+   */
+  it('is none for an entity that has never had a surface', () => {
+    expect(sessionChannelState('never-opened')).toBe('none');
+  });
+
+  it('is live once a transport has requested a spawn', () => {
+    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+
+    expect(sessionChannelState('sess-a')).toBe('live');
+  });
+
+  it('is exited after the process ends', () => {
+    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+
+    for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
+
+    expect(sessionChannelState('sess-a')).toBe('exited');
+  });
+
+  it('is exited after the host is lost, not live', () => {
+    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+
+    for (const cb of [...bridge.lost]) {
+      cb({ sessionId: 'sess-a', reason: 'host-crashed' });
+    }
+
+    expect(sessionChannelState('sess-a')).toBe('exited');
+  });
+});
+
+describe('requestSpawn', () => {
+  it('asks main exactly once, however many callers ask', async () => {
+    await Promise.all([
+      requestSpawn('sess-a', 'apfm-web'),
+      requestSpawn('sess-a', 'apfm-web'),
+    ]);
+
+    expect(bridge.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the task on the spawn request', async () => {
+    await requestSpawn('sess-a', 'apfm-web', 'fix the hero');
+
+    expect(bridge.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'fix the hero' }),
+    );
+  });
+
+  it('omits the task key entirely when there is none', async () => {
+    // Not `task: undefined` — the IPC guard rejects unexpected keys, and an
+    // explicit undefined survives the structured clone as an own property.
+    await requestSpawn('sess-a', 'apfm-web');
+
+    expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
+  });
+
+  it("resolves with main's refusal rather than throwing", async () => {
+    bridge.spawn.mockRejectedValueOnce(
+      new Error('apfm-web is not mapped — add it to /tmp/hive.json'),
+    );
+
+    await expect(requestSpawn('sess-a', 'apfm-web')).resolves.toEqual({
+      ok: false,
+      reason: 'apfm-web is not mapped — add it to /tmp/hive.json',
+    });
+  });
+
+  it('writes the refusal into the terminal as well as returning it', async () => {
+    bridge.spawn.mockRejectedValueOnce(new Error('session limit reached (12)'));
+
+    const seen: string[] = [];
+    await requestSpawn('sess-a', 'apfm-web');
+    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+
+    expect(seen.join('')).toContain('session limit reached (12)');
+  });
+
+  it('hands a mounting surface the same request, so nothing spawns twice', async () => {
+    const pending = requestSpawn('sess-a', 'apfm-web');
+    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+
+    await pending;
+
+    expect(bridge.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-request for a surface that mounts after an exit', async () => {
+    await requestSpawn('sess-a', 'apfm-web');
+    for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
+
+    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+
+    // Attach-never-respawn: a tab switch past a finished session must not
+    // silently start it working again (story 094).
+    expect(bridge.spawn).toHaveBeenCalledTimes(1);
   });
 });
