@@ -48,6 +48,13 @@ export function createPtyHost({
         emit({ type: 'pong', seq: command.seq });
         return;
 
+      case 'pong':
+        // Main answering a ping this host sent. Nothing here drives a health
+        // timer — a host watching a hung *main* process could do nothing
+        // useful with the answer, since the window it would report to is the
+        // thing that hung — so the reply is simply accepted.
+        return;
+
       case 'spawn':
         sessions.spawn(command, emit);
         return;

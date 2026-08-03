@@ -262,6 +262,17 @@ describe('heartbeat', () => {
     });
   });
 
+  it('answers a ping from the host with a pong, not another ping', () => {
+    spawnSession();
+
+    host().emit({ type: 'ping', seq: 5 });
+
+    // Replying with a ping would ask the question back instead of answering
+    // it, and the two sides would sit there interrogating each other.
+    expect(host().sent).toContainEqual({ type: 'pong', seq: 5 });
+    expect(host().commandsOfType('ping')).toHaveLength(0);
+  });
+
   it('does not condemn a host for a single slow tick', () => {
     const lost = vi.fn();
     supervisor.onSessionLost(lost);

@@ -57,7 +57,11 @@ export type HostCommand =
   | ResizeCommand
   | KillCommand
   | ShutdownCommand
-  | PingMessage;
+  // Both halves of the heartbeat travel in both directions, so either side can
+  // ask and either side can answer. Without `PongMessage` here, main could
+  // only ever reply to a ping with another ping.
+  | PingMessage
+  | PongMessage;
 
 /** Messages the host sends back. */
 export interface DataMessage {

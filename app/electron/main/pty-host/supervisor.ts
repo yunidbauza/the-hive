@@ -232,8 +232,9 @@ export function createPtyHostSupervisor(
         return;
       case 'ping':
         // The protocol allows the host to ping; answering costs nothing and
-        // keeps the two sides symmetric.
-        post({ type: 'ping', seq: message.seq });
+        // keeps the two sides symmetric. A *pong*, not a ping — replying with
+        // a ping would ask the question back instead of answering it.
+        post({ type: 'pong', seq: message.seq });
         return;
       case 'data':
         if (!sessions.has(message.sessionId)) return;
