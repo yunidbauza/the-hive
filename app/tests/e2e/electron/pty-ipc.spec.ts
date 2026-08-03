@@ -41,6 +41,17 @@ test('a session spawned from the renderer runs a real shell and streams back seq
       version: 1,
       // `sh`, so this holds wherever CI runs it.
       shell: '/bin/sh',
+      /**
+       * A no-op bootstrap, so this spec measures the IPC path and not `claude`.
+       *
+       * Main holds input written before the bootstrap has run (story 097) —
+       * otherwise a routed message would be executed by the bare login shell —
+       * so the write below is released only once the bootstrap completes.
+       * Without an explicit command this would default to `claude`, and on a
+       * machine where that is installed the spec would be typing into a real
+       * agent's TUI rather than into a shell.
+       */
+      claudeCommand: 'true',
       projects: [{ id: 'apfm-web', path: REAL_DIRECTORY }],
     }),
   );

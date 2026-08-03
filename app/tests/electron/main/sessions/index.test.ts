@@ -82,9 +82,18 @@ const mintedFor = (entityId: string) =>
 /** Can the registry still address the newest generation it spawned? */
 const registryReachable = () => {
   const latest = spawned.at(-1)!.sessionId;
+  /**
+   * Let the bootstrap finish first. Input written before it has run is held
+   * deliberately (story 097) — otherwise a message routed to a session would be
+   * executed by the bare login shell — so a probe sent into that window
+   * measures the hold rather than the registry.
+   */
+  emitData({ sessionId: latest, chunk: '$ ' });
+  vi.advanceTimersByTime(158);
+
   sessions.write('hero-refresh', 'probe');
   return vi.mocked(supervisor.write).mock.calls.some(
-    (call) => call[0] === latest,
+    (call) => call[0] === latest && call[1] === 'probe',
   );
 };
 
@@ -184,6 +193,75 @@ describe('what a session runs', () => {
         (call) => call[1] === 'fix the hero\r',
       ),
     ).toHaveLength(1);
+  });
+
+  it('holds input written before the bootstrap has finished', () => {
+    /**
+     * Until the bootstrap has run, the pty is a bare login shell. A message
+     * routed there (story 097) would be executed by the *shell* as a command
+     * line instead of reaching the agent — the user sees `command not found`
+     * where they expected an answer. The renderer cannot know the difference:
+     * it can see that a process exists, not what is running inside it.
+     */
+    sessions.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    sessions.write('hero-refresh', 'y\r');
+    expect(vi.mocked(supervisor.write).mock.calls).toHaveLength(0);
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(150);
+
+    // The bootstrap first, then the held input — in that order.
+    expect(vi.mocked(supervisor.write).mock.calls).toEqual([
+      [sessionId, 'claude\r'],
+      [sessionId, 'y\r'],
+    ]);
+  });
+
+  it('releases held input in the order it was written', () => {
+    sessions.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    sessions.write('hero-refresh', 'first\r');
+    sessions.write('hero-refresh', 'second\r');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(158);
+
+    expect(vi.mocked(supervisor.write).mock.calls.map((call) => call[1])).toEqual([
+      'claude\r',
+      'first\r',
+      'second\r',
+    ]);
+  });
+
+  it('delivers input directly once the bootstrap is done', () => {
+    sessions.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(158);
+
+    sessions.write('hero-refresh', 'later\r');
+
+    expect(vi.mocked(supervisor.write).mock.calls.at(-1)).toEqual([
+      sessionId,
+      'later\r',
+    ]);
+  });
+
+  it('drops held input when the session dies before the bootstrap runs', () => {
+    sessions.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    sessions.write('hero-refresh', 'never\r');
+    emitExit({ sessionId, exitCode: 0 });
+    vi.advanceTimersByTime(6_000);
+
+    expect(
+      vi.mocked(supervisor.write).mock.calls.some((call) => call[1] === 'never\r'),
+    ).toBe(false);
   });
 
   it('writes the bootstrap exactly once', () => {
@@ -334,6 +412,11 @@ describe('identity: the renderer only ever sees entity ids', () => {
   it('accepts entity ids on the way in', () => {
     sessions.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
+
+    // Past the bootstrap first: input written before it has run is held on
+    // purpose (story 097). The translation is the subject here, not the timing.
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(158);
 
     sessions.write('hero-refresh', 'ls\n');
     sessions.resize('hero-refresh', 120, 40);

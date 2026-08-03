@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TERM, toSgrForeground } from '@lib/terminal/ansi';
 import {
   createPtyTransport,
+  reopenChannel,
   requestSpawn,
   resetPtyChannels,
   sessionChannelState,
@@ -476,6 +477,41 @@ describe('sessionChannelState', () => {
   });
 });
 
+describe('reopenChannel', () => {
+  it('lets a restarted entity receive data again', () => {
+    const seen: string[] = [];
+    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+    for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
+
+    reopenChannel('sess-a');
+    pushData('sess-a', 'from the new generation', 1);
+
+    // Without the reopen the channel stays latched closed and every chunk the
+    // new process produces is dropped.
+    expect(seen.join('')).toContain('from the new generation');
+    expect(sessionChannelState('sess-a')).toBe('none');
+  });
+
+  it('does not report a gap on the new generation’s first chunk', () => {
+    const seen: string[] = [];
+    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+    pushData('sess-a', 'first', 1);
+    pushData('sess-a', 'second', 2);
+    for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
+
+    reopenChannel('sess-a');
+    // Main's sequence counter restarts at 0 for each new session id, so a
+    // retained lastSeq would make this look like a lost batch.
+    pushData('sess-a', 'fresh', 1);
+
+    expect(seen.join('')).not.toContain('output gap detected');
+  });
+
+  it('is a no-op for an entity that never had a channel', () => {
+    expect(() => reopenChannel('never-seen')).not.toThrow();
+  });
+});
+
 describe('requestSpawn', () => {
   it('asks main exactly once, however many callers ask', async () => {
     await Promise.all([
@@ -492,6 +528,33 @@ describe('requestSpawn', () => {
     expect(bridge.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ task: 'fix the hero' }),
     );
+  });
+
+  it('omits an empty task, so the picker can start a task-less session', async () => {
+    /**
+     * The picker passes `''` on purpose — it starts a session and the first
+     * message gives it its job (story 044). Sent on the wire, main's guard
+     * rejects it and every picker-started session fails to spawn.
+     */
+    await requestSpawn('sess-a', 'apfm-web', '');
+
+    expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
+  });
+
+  it('omits a whitespace-only task for the same reason', async () => {
+    await requestSpawn('sess-a', 'apfm-web', '   ');
+
+    expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
+  });
+
+  it('resolves rather than throwing when there is no bridge', async () => {
+    delete (window as { hive?: unknown }).hive;
+
+    // `spawnSession` calls this fire-and-forget after creating the entity; a
+    // synchronous throw would take the whole action down.
+    await expect(requestSpawn('sess-a', 'apfm-web')).resolves.toMatchObject({
+      ok: false,
+    });
   });
 
   it('omits the task key entirely when there is none', async () => {

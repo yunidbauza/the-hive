@@ -99,6 +99,31 @@ export function createSessions(options: SessionsOptions): Sessions {
   const registry: SessionRegistry = createSessionRegistry();
   /** Resolvers waiting for a specific entity's process to exit. */
   const exitWaiters = new Map<string, (() => void)[]>();
+  /**
+   * Input written before the session finished bootstrapping.
+   *
+   * Held rather than delivered, because until the bootstrap has run the pty is
+   * a bare login shell: a message routed there (story 097) would be executed by
+   * the *shell* as a command line instead of reaching the agent, and the user
+   * would see a `command not found` where they expected an answer. The renderer
+   * cannot know — it can see that a process exists, not what is running in it —
+   * so main holds the input and releases it in order once the agent is up.
+   *
+   * The same ordering the task stage already relies on, applied to everything
+   * else that arrives in the same window.
+   */
+  const heldInput = new Map<string, string[]>();
+
+  /** Release everything held for this entity, in the order it was written. */
+  function flushHeldInput(entityId: string): void {
+    const held = heldInput.get(entityId);
+    heldInput.delete(entityId);
+    if (!held) return;
+
+    const sessionId = registry.sessionFor(entityId);
+    if (sessionId === undefined) return;
+    for (const data of held) ptyIpc.write(sessionId, data);
+  }
   /** In-flight restarts, so a second request joins rather than races. */
   const restarting = new Map<string, Promise<void>>();
 
@@ -153,6 +178,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (sessionId === undefined) return;
       ptyIpc.write(sessionId, data);
     },
+    onComplete: (entityId) => flushHeldInput(entityId),
     onSilentStart: (entityId) => {
       // Recorded rather than silent: five seconds of no output at all is
       // unusual, and if the bootstrap also fails to take, this is the fact
@@ -183,6 +209,7 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   function settleExit(entityId: string): void {
     bootstrap.cancel(entityId);
+    heldInput.delete(entityId);
     activity.exited(entityId);
     registry.close(entityId);
 
@@ -331,6 +358,21 @@ export function createSessions(options: SessionsOptions): Sessions {
     write(entityId, data) {
       const sessionId = registry.sessionFor(entityId);
       if (sessionId === undefined) return;
+
+      /**
+       * Held, not dropped and not delivered early. See {@link heldInput}.
+       *
+       * Keystrokes typed directly into the terminal take this path too, which
+       * is the right behaviour for the same reason: anything typed while
+       * `claude` is still starting would otherwise be eaten by the shell.
+       */
+      if (bootstrap.isPending(entityId)) {
+        const held = heldInput.get(entityId) ?? [];
+        held.push(data);
+        heldInput.set(entityId, held);
+        return;
+      }
+
       ptyIpc.write(sessionId, data);
     },
 
@@ -388,6 +430,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       bootstrap.dispose();
       activity.dispose();
       ptyIpc.dispose();
+      heldInput.clear();
       registry.clear();
       restarting.clear();
       exitWaiters.clear();

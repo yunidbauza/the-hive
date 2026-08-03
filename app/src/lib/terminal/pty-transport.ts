@@ -301,7 +301,23 @@ export function requestSpawn(
   projectId: string,
   task?: string,
 ): Promise<SpawnOutcome> {
-  const channel = channels.get(entityId) ?? openChannel(entityId);
+  /**
+   * The bridge is read inside the try, not before it.
+   *
+   * `pty()` throws when there is no bridge, and this function promises never
+   * to reject — the store calls it fire-and-forget from `spawnSession`, where
+   * a synchronous throw would take the whole action down after the entity had
+   * already been created.
+   */
+  let channel: EntityChannel;
+  try {
+    channel = channels.get(entityId) ?? openChannel(entityId);
+  } catch (cause) {
+    return Promise.resolve({
+      ok: false,
+      reason: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
   if (channel.spawnResult) return channel.spawnResult;
 
   channel.spawnRequested = true;
@@ -315,8 +331,16 @@ export function requestSpawn(
        * Spread rather than `task: undefined`. The IPC guard rejects unexpected
        * keys, and an own property whose value is undefined survives the
        * structured clone as a key that is present.
+       *
+       * An **empty** task is absent too, not an empty instruction. The picker
+       * starts a session with no job — the first message gives it one (story
+       * 044) — and it says so by passing `''`. Sending that on the wire made
+       * main's `assertText` reject the whole spawn, so every session started
+       * from the picker failed on desktop with `spawn.task: must not be empty`.
+       * Normalised here rather than only at the call site, because this is the
+       * one place every spawn passes through.
        */
-      ...(task === undefined ? {} : { task }),
+      ...(task === undefined || task.trim() === '' ? {} : { task }),
     })
     .then((): SpawnOutcome => ({ ok: true }))
     .catch((cause: unknown): SpawnOutcome => {
@@ -407,6 +431,31 @@ export function createPtyTransport(
       };
     },
   };
+}
+
+/**
+ * Reopen a channel for a fresh generation of the same entity (story 096).
+ *
+ * `closed` is a one-way latch by design — it is what stops a remount
+ * resurrecting a finished agent — so a restart, which is the one legitimate way
+ * to get a new process for an existing entity, has to clear it explicitly.
+ * Without this the renderer drops every chunk the new process produces
+ * (`onData` returns early on `closed`) and `sendToSession` keeps refusing with
+ * "restart it to send again", pointing at the action the user just took.
+ *
+ * `lastSeq` is reset for the same reason: main's sequence counter starts at 0
+ * for each new session id, so a retained `lastSeq` reports a spurious gap on
+ * the first chunk of every restart.
+ *
+ * `spawnResult` is dropped so the next `requestSpawn` genuinely asks again.
+ */
+export function reopenChannel(entityId: string): void {
+  const channel = channels.get(entityId);
+  if (!channel) return;
+  channel.closed = false;
+  channel.lastSeq = null;
+  channel.spawnRequested = false;
+  channel.spawnResult = null;
 }
 
 /**

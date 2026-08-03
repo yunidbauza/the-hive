@@ -71,6 +71,18 @@ describe('normalizeInput', () => {
     expect(normalizeInput('a\r\nb').length).toBe(3);
   });
 
+  it('strips other control characters', () => {
+    // This text is written into a terminal the user trusts; a pasted ESC could
+    // address the cursor or switch to the alternate screen.
+    expect(normalizeInput('a\u001b[31mb')).toBe('a[31mb');
+    expect(normalizeInput('a\u0000b')).toBe('ab');
+    expect(normalizeInput('a\u0007b')).toBe('ab');
+  });
+
+  it('keeps non-ASCII text intact', () => {
+    expect(normalizeInput('日本語 🐝 ok')).toBe('日本語 🐝 ok');
+  });
+
   it('trims the ends but leaves interior spacing alone', () => {
     expect(normalizeInput('  a  b  ')).toBe('a  b');
   });

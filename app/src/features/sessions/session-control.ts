@@ -1,4 +1,5 @@
 import { isDesktop } from '@config/runtime';
+import { reopenChannel } from '@lib/terminal/pty-transport';
 import type { SpawnRefusal } from '@shared/session-contract';
 
 
@@ -72,4 +73,18 @@ export async function restartSession(request: RestartRequest): Promise<void> {
     cols: request.cols,
     rows: request.rows,
   });
+
+  /**
+   * Reopen the renderer's channel for the new generation.
+   *
+   * `PtyTransport` latches a channel `closed` on exit and never clears it, which
+   * is exactly what stops a tab switch resurrecting a finished agent. A restart
+   * is the one legitimate way an entity gets a new process, so it is the one
+   * place that latch has to be released — otherwise main happily runs the new
+   * shell while the renderer drops every chunk it produces, and `sendToSession`
+   * keeps refusing with "restart it to send again" after the user just did.
+   *
+   * After the await, so a restart that failed leaves the channel closed.
+   */
+  reopenChannel(request.entityId);
 }

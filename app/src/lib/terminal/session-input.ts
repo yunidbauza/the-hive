@@ -27,7 +27,26 @@ export type SendResult = { ok: true } | { ok: false; reason: string };
  * then shows up as mysterious double-spacing in a transcript.
  */
 export function normalizeInput(text: string): string {
-  return text.replace(/\r\n|\r|\n/g, ' ').trim();
+  let out = '';
+  for (const char of text.replace(/\r\n|\r|\n/g, ' ')) {
+    const code = char.codePointAt(0) ?? 0;
+    /**
+     * Other control characters are dropped, not passed through.
+     *
+     * This text is written into a terminal the user is reading and trusts, so
+     * a pasted ESC could address the cursor, set the window title or switch to
+     * the alternate screen. Main's `assertText` rejects the same range in a
+     * spawn's task; here they are stripped rather than refused, because the
+     * message row's job is to send what a person meant to type and a paste
+     * that happens to carry a stray byte should still send.
+     *
+     * Expressed by code point rather than a regex literal, so this file stays
+     * free of control bytes.
+     */
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    out += char;
+  }
+  return out.trim();
 }
 
 export function sendToSession(entityId: string, text: string): SendResult {
