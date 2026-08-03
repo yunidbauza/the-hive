@@ -9,6 +9,10 @@ Stories for the concept in `../concept/`, across two phases:
   Electron shell, with **real local PTYs running Claude Code**. This is the phase where
   the seam is cashed in.
 
+Then, after phase 2, epics numbered from 100. The first is
+**[Settings](100-settings-epic.md)** (100–108) — an in-app configuration surface, so
+adding a repository stops meaning "find and hand-write `~/.hive/config.json`".
+
 Context and decisions: [000-overview.md](000-overview.md).
 
 The backlog is modeled on the architecture of `incorpHQ/incorpx` — feature slices with
@@ -73,8 +77,12 @@ for what we deliberately left behind.
 | 097 | [Orchestrator & inbox drive real PTYs](097-orchestrator-drives-ptys.md) | Real terminals | 5 |
 | 098 | [PTY conformance suite](098-pty-conformance-suite.md) | Real terminals | 8 |
 | 099 | [Desktop CI](099-desktop-ci.md) | Real terminals | 3 |
+| 100 | [**Settings** — epic overview](100-settings-epic.md) | Settings | 1 |
+| 101 | [Settings: add a local project folder](101-settings-add-local-project.md) | Settings | 13 |
 
-**42 stories · 194 points.** Phase 1: 26 stories · 107 pts. Phase 2: 16 stories · 87 pts.
+**44 stories · 208 points.** Phase 1: 26 stories · 107 pts. Phase 2: 16 stories · 87
+pts. Post-phase-2: 2 stories written · 14 pts (the Settings epic scopes 8 stories ·
+47 pts; 102–108 are named in [100](100-settings-epic.md) and not yet written in full).
 
 | Epic | Phase | Stories | Points |
 |---|---|---|---|
@@ -86,6 +94,7 @@ for what we deliberately left behind.
 | Cross-cutting | 1 | 060, 061, 070, 071 | 17 |
 | **Desktop shell** | 2 | 080, 081, 082, 083, 084, 085 | 29 |
 | **Real terminals** | 2 | 090, 091, 092, 093, 094, 095, 096, 097, 098, 099 | 58 |
+| **Settings** | post-2 | 100, 101 *(102–108 scoped, not written)* | 14 *(of 48)* |
 
 ## Jira
 
@@ -103,11 +112,17 @@ mapping:
 | Cross-cutting | `HIVE-6` | 060→`HIVE-29`, 061→`HIVE-30`, 070→`HIVE-31`, 071→`HIVE-32` |
 | **Desktop shell** | `HIVE-33` | 080→`HIVE-35`, 081→`HIVE-36`, 082→`HIVE-37`, 083→`HIVE-38`, 084→`HIVE-39`, 085→`HIVE-40` |
 | **Real terminals** | `HIVE-34` | 090→`HIVE-41`, 091→`HIVE-42`, 092→`HIVE-43`, 093→`HIVE-44`, 094→`HIVE-45`, 095→`HIVE-46`, 096→`HIVE-47`, 097→`HIVE-48`, 098→`HIVE-49`, 099→`HIVE-50` |
+| **Settings** | `HIVE-51` | 100→*the Epic's own description*, 101→`HIVE-52`. 102–108 are scoped in [100](100-settings-epic.md) and have no Jira issue yet |
+
+Doc 100 is the only overview doc with no Story of its own — unlike
+[000](000-overview.md) (`HIVE-7`), its content **is** the Epic's description, because
+an Epic that describes itself beats an Epic pointing at a Story that describes it.
 
 Each Jira Story carries its full spec (tables, code blocks, acceptance checkboxes), its
 story-point estimate, and real **Blocks / is blocked by** links mirroring the graphs
 below — 45 links for phase 1, 40 for phase 2 (9 of which cross the phase boundary).
-The rendered phase-1 graph is attached to the Foundation epic.
+The rendered phase-1 graph is attached to the Foundation epic, and the Settings graph
+to `HIVE-51`.
 
 **These markdown files remain the source of truth.** When a story changes here, update
 its Jira issue too; nothing syncs automatically.
@@ -212,6 +227,28 @@ graph TD
   S071[071 CI] -.-> S099
 ```
 
+## Dependency graph — Settings (post-phase-2)
+
+Dashed edges cross into phase 2. Only 100 and 101 are written in full; 102–108 are
+scoped in [100-settings-epic.md](100-settings-epic.md).
+
+```mermaid
+graph TD
+  S082[082 preload & IPC security] -.-> S101[101 add local folder ★]
+  S090[090 workspace config] -.-> S101
+  S096[096 session lifecycle] -.-> S101
+  S100[100 settings epic] --> S101
+  S101 --> S102[102 add remote repo]
+  S102 --> S103[103 manage projects]
+  S101 --> S104[104 runtime settings]
+  S101 --> S105[105 appearance]
+  S101 --> S106[106 integrations]
+  S101 --> S107[107 advanced & diagnostics]
+  S101 --> S108[108 settings e2e]
+  S102 --> S108
+  S085[085 electron test harness] -.-> S108
+```
+
 ## Suggested sprint slicing
 
 1. **Walking skeleton**: 010 → 011 → 012 → 013 → 014 → 020 — dark shell renders with
@@ -259,6 +296,9 @@ things at once.
   that outlived the app, restoring the fleet on launch.
 - **Real project state.** Git branches, dirty state, worktrees, and `spawn` creating a
   branch — replacing the fixtures that [090](090-workspace-config.md) deliberately left
-  alone.
+  alone. *The project **list** half of this is now written: the
+  [Settings epic](100-settings-epic.md) makes the config the source of truth for which
+  projects exist. Branch, dirty state and worktrees are still fixtures and still
+  unwritten.*
 - **Background agents as real processes.** Long-lived non-`claude` workers
   ([033](033-agents-panel.md)) still run on fixture transcripts.

@@ -189,6 +189,32 @@ demo (no bridge to ask) and the first frames of a desktop launch (the read has n
 landed), the second of which also avoids flashing every project as unmapped on every
 start. On desktop with a config loaded it behaves exactly as the story specifies.
 
+### 4. Superseded by the Settings epic (100 / 101)
+
+Two rules in this story are **reversed** by
+[100-settings-epic.md](100-settings-epic.md) and implemented by
+[101-settings-add-local-project.md](101-settings-add-local-project.md). Recorded
+here so this file cannot be read as current on either point.
+
+**The `id` no longer has to match a fixture project id.** This story's mapping —
+*"`id` matches an existing fixture project id. That is the whole mapping."* — is
+what makes it impossible to add a repository the fixtures never invented. From
+101 the config **declares** projects (`id`, `name`, `path`, `icon`, `origin`) and
+the fixture list becomes the fallback rather than the schema. The merge rule is
+in [100](100-settings-epic.md).
+
+**A settings UI is no longer out of scope.** This story's *"Out of scope"* entry
+— *"A settings UI, project picker, or 'add folder' dialog"* — was correct while
+the job was to make PTYs useful with the minimum real-world surface. That job is
+done, and the cost is now visible: the only onboarding a new user gets is the
+console line this story writes.
+
+Everything else here stands. The file location, the `HIVE_CONFIG_PATH` escape
+hatch, the resolution and validation sequence, the per-entry failure model, and
+`projectAccess`'s permissive-with-no-snapshot rule are all unchanged — 101 adds
+a writer beside the reader rather than replacing it, and reuses this story's
+validation as the gate on everything the renderer sends.
+
 ### Notes
 
 - `HIVE_CONFIG_PATH` needed no new plumbing — story 085's Playwright fixture
