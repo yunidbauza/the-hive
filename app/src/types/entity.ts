@@ -42,6 +42,26 @@ export interface Project {
   icon: string;
 }
 
+/**
+ * A row in the merged project list (story 101).
+ *
+ * Config is the source of truth for the project list, but fixture projects
+ * that still own live fixture sessions stay in it — the work panel, the
+ * orchestrator table, and `resolve-transport` all reach sessions through
+ * `entity.project`, so dropping one would strand every session that named it.
+ *
+ * Deliberately a **separate type** rather than two more fields on
+ * {@link Project}. A fixture genuinely has no display name and no origin —
+ * `src/data/fixtures.ts` is a store-only consumer that this story leaves
+ * byte-identical — so widening `Project` would mean writing values into the
+ * fixtures that only the merge knows how to supply.
+ */
+export interface ProjectRow extends Project {
+  /** Display name. A demo row uses its id, which is what it has always shown. */
+  name: string;
+  source: 'config' | 'demo';
+}
+
 /** Narrowing helpers — cheaper to read than repeating the discriminant. */
 export const isSession = (entity: Entity): entity is Session =>
   entity.kind === 'session';

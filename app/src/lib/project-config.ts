@@ -1,4 +1,9 @@
-import type { ConfigSnapshot, ProjectStatus } from '@shared/config-contract';
+import type {
+  AddProjectRequest,
+  ConfigSnapshot,
+  ProjectStatus,
+  RemoveProjectRequest,
+} from '@shared/config-contract';
 
 /**
  * The workspace config, as the renderer sees it (story 090).
@@ -72,6 +77,35 @@ export const loadProjectConfig = (): Promise<void> =>
 /** Re-read the file the user just edited, without restarting the app. */
 export const reloadProjectConfig = (): Promise<void> =>
   read((bridge) => bridge.config.reload());
+
+/**
+ * Add a directory the user chose (story 101).
+ *
+ * No reload follows. Every mutating verb returns the fresh snapshot, and
+ * `read` installs it — which is the whole reason the contract is shaped that
+ * way: the renderer can never render a list the write already invalidated.
+ */
+export const addProjectToConfig = (request: AddProjectRequest): Promise<void> =>
+  read((bridge) => bridge.config.addProject(request));
+
+/** Remove one entry by id (story 101). */
+export const removeProjectFromConfig = (
+  request: RemoveProjectRequest,
+): Promise<void> => read((bridge) => bridge.config.removeProject(request));
+
+/**
+ * Open the native directory dialog (story 101).
+ *
+ * Resolves `null` when the user cancelled *and* when there is no bridge — the
+ * browser demo has no filesystem to offer, and story 083's rule is to
+ * feature-detect the bridge rather than the user agent. The caller treats both
+ * the same way: no path, no write.
+ */
+export const chooseProjectDirectory = async (): Promise<string | null> => {
+  const bridge = window.hive;
+  if (!bridge) return null;
+  return bridge.config.chooseDirectory();
+};
 
 /** Test-only: drop the snapshot and every subscriber. */
 export function resetProjectConfig(): void {

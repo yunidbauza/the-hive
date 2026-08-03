@@ -1,11 +1,19 @@
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { createInitialState } from '@/data/fixtures';
 import type { ParsedCommand } from '@/types/command';
 import { USAGE } from '@/types/command';
-import type { Effort, Entity, Model, Session, SessionStatus } from '@/types/entity';
+import type {
+  Effort,
+  Entity,
+  Model,
+  Project,
+  ProjectRow,
+  Session,
+  SessionStatus,
+} from '@/types/entity';
 import { isSession } from '@/types/entity';
 import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
@@ -15,6 +23,10 @@ import type { Ticket } from '@/types/ticket';
 
 import { isDesktop } from '@config/runtime';
 import { reset as resetClock, stamp } from '@lib/fake-clock';
+import {
+  projectConfigSnapshot,
+  subscribeProjectConfig,
+} from '@lib/project-config';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import { useUiStore } from '@stores/ui-store';
@@ -630,9 +642,76 @@ export const useSendToEntity = () => useHiveStore((state) => state.sendToEntity)
 export const useRunOrchCommand = () =>
   useHiveStore((state) => state.runOrchCommand);
 
-/** The project list, in fixture order (story 031). */
-export const useProjects = () =>
-  useHiveStore(useShallow((state) => state.projects));
+/** Ids of projects that still own at least one session (story 101). */
+const projectsOwningSessions = (state: HiveState): string[] => {
+  const ids: string[] = [];
+  for (const id of state.order) {
+    const entity = state.entities[id];
+    if (!entity || !isSession(entity)) continue;
+    if (!ids.includes(entity.project)) ids.push(entity.project);
+  }
+  return ids;
+};
+
+/**
+ * The project list: the config's, merged with the fixtures (stories 031, 101).
+ *
+ * | Situation | The list is |
+ * |---|---|
+ * | No snapshot — browser demo, first frames of launch | fixtures, unchanged |
+ * | Snapshot with zero projects | fixtures, unchanged |
+ * | Snapshot with projects | the config's, **plus** fixture projects that still own live sessions, marked `demo` |
+ *
+ * The third row is the load-bearing one. The work panel, the orchestrator
+ * table and its console `ls`, and `lib/terminal/resolve-transport` all reach
+ * sessions through `entity.project`; dropping fixture projects the moment a
+ * real one is added would strand every one of them. Marking them `demo` is
+ * honest and costs one field.
+ *
+ * A config project and a fixture project sharing an id collapse to a single
+ * row and **config wins** — that is the upgrade path for anyone who already
+ * mapped `apfm-web` under story 090.
+ *
+ * **Config order is the file's order and is never sorted.** Story 103's
+ * drag-reorder works by rewriting that array, and the left rail reads it
+ * positionally, so sorting here would silently make 103 unimplementable.
+ */
+export const useProjects = (): ProjectRow[] => {
+  const fixtures = useHiveStore(useShallow((state) => state.projects));
+  const owning = useHiveStore(useShallow(projectsOwningSessions));
+  const snapshot = useSyncExternalStore(
+    subscribeProjectConfig,
+    projectConfigSnapshot,
+    projectConfigSnapshot,
+  );
+
+  return useMemo(() => {
+    const asDemo = (project: Project): ProjectRow => ({
+      ...project,
+      name: project.id,
+      source: 'demo',
+    });
+
+    const configured = snapshot?.projects ?? [];
+    if (configured.length === 0) return fixtures.map(asDemo);
+
+    const rows: ProjectRow[] = configured.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      icon: entry.icon,
+      source: 'config',
+    }));
+    const claimed = new Set(rows.map((row) => row.id));
+
+    for (const fixture of fixtures) {
+      if (claimed.has(fixture.id)) continue; // config wins
+      if (!owning.includes(fixture.id)) continue; // no live sessions, drop it
+      rows.push(asDemo(fixture));
+    }
+
+    return rows;
+  }, [fixtures, owning, snapshot]);
+};
 
 /** Non-done sessions for a project (story 031). */
 export const useProjectSessions = (projectId: string) =>

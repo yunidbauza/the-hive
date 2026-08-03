@@ -1,5 +1,14 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import {
+  emptySnapshot,
+  type ConfigSnapshot,
+} from '../../electron/shared/config-contract';
+import {
+  resetProjectConfig,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 
 import {
   useActiveEntity,
@@ -273,6 +282,25 @@ describe('hive-store selectors', () => {
   });
 
   describe('useProjects', () => {
+    const configured = (
+      entries: { id: string; name?: string }[],
+    ): ConfigSnapshot => ({
+      ...emptySnapshot('/tmp/hive/config.json'),
+      projects: entries.map(({ id, name }) => ({
+        id,
+        name: name ?? id,
+        path: `/repos/${id}`,
+        icon: 'ph-folder',
+        origin: 'local' as const,
+        status: 'ok' as const,
+        isRepo: true,
+      })),
+    });
+
+    afterEach(() => {
+      resetProjectConfig();
+    });
+
     it('returns the five fixture projects in fixture order', () => {
       const { result } = renderHook(() => useProjects());
 
@@ -289,6 +317,88 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useProjects());
 
       expect(result.current[0].icon).toBe('ph-globe-hemisphere-west');
+    });
+
+    describe('the merge rule (story 101)', () => {
+      it('returns the fixtures unchanged when there is no snapshot', () => {
+        setProjectConfigForTest(null);
+
+        const { result } = renderHook(() => useProjects());
+
+        expect(result.current).toHaveLength(5);
+        expect(result.current.every((row) => row.source === 'demo')).toBe(true);
+      });
+
+      it('returns the fixtures unchanged when the snapshot declares no projects', () => {
+        setProjectConfigForTest(configured([]));
+
+        const { result } = renderHook(() => useProjects());
+
+        expect(result.current).toHaveLength(5);
+        expect(result.current.every((row) => row.source === 'demo')).toBe(true);
+      });
+
+      it('names a demo row by its id, which is what it has always shown', () => {
+        setProjectConfigForTest(null);
+
+        const { result } = renderHook(() => useProjects());
+
+        expect(result.current[0].name).toBe('apfm-web');
+      });
+
+      it('returns config projects plus fixture projects that still own sessions', () => {
+        setProjectConfigForTest(configured([{ id: 'the-hive', name: 'The Hive' }]));
+
+        const { result } = renderHook(() => useProjects());
+        const rows = result.current;
+
+        expect(rows[0]).toMatchObject({
+          id: 'the-hive',
+          name: 'The Hive',
+          source: 'config',
+        });
+        // apfm-web owns fixture sessions, so dropping it would strand them.
+        expect(rows.find((row) => row.id === 'apfm-web')?.source).toBe('demo');
+      });
+
+      it('drops fixture projects that own no sessions', () => {
+        setProjectConfigForTest(configured([{ id: 'the-hive' }]));
+
+        const { result } = renderHook(() => useProjects());
+        const owning = new Set(
+          Object.values(useHiveStore.getState().entities)
+            .filter((entity) => entity.kind === 'session')
+            .map((entity) => (entity as { project: string }).project),
+        );
+
+        for (const row of result.current.filter((r) => r.source === 'demo')) {
+          expect(owning.has(row.id)).toBe(true);
+        }
+      });
+
+      it('collapses a shared id to one row, config winning', () => {
+        setProjectConfigForTest(configured([{ id: 'apfm-web', name: 'My APFM' }]));
+
+        const { result } = renderHook(() => useProjects());
+        const rows = result.current.filter((row) => row.id === 'apfm-web');
+
+        // The upgrade path for anyone who already mapped apfm-web under 090.
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ source: 'config', name: 'My APFM' });
+      });
+
+      it('preserves config file order and never sorts', () => {
+        setProjectConfigForTest(configured([{ id: 'zeta' }, { id: 'alpha' }]));
+
+        const { result } = renderHook(() => useProjects());
+        const ids = result.current
+          .filter((row) => row.source === 'config')
+          .map((row) => row.id);
+
+        // Story 103's drag-reorder rewrites this array and the left rail reads
+        // it positionally. Sorting here would make that story unimplementable.
+        expect(ids).toEqual(['zeta', 'alpha']);
+      });
     });
   });
 
