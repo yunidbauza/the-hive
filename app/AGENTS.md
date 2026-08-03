@@ -183,5 +183,12 @@ import them; read derived state through a hook.
   layout, so xterm can never measure a cell.
   `__mocks__/@xterm/` holds recording fakes; assert plumbing only. Colours,
   selection, and scrollback belong in Playwright.
+- **`node-pty` is never loaded for real in unit tests** — not because it cannot
+  load (its N-API prebuild works fine under plain Node), but because a unit test
+  that spawns real processes is a unit test that leaks them.
+  `__mocks__/node-pty.ts` holds a recording fake; assert spawn arguments, cwd,
+  write/resize/kill routing and exit handling. Terminal *semantics* — signals,
+  resize, alt-screen, exit codes — need Electron's ABI and get their own runner
+  (story 098).
 - Do not add a coverage-ignore comment to get past the gate. An untestable branch
   is usually a design smell — fix the shape instead.

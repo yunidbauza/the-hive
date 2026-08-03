@@ -16,15 +16,66 @@ Full backlog: [`../stories/`](../stories/). The visual source of truth is
 - **Chromium** — for `pnpm test:e2e` only. `pnpm install` does not fetch browser
   binaries, so run `pnpm exec playwright install chromium` once per machine.
 
+### Native toolchain (desktop target only)
+
+`node-pty` is a native addon. `pnpm install` handles it on a clean checkout, but the
+compiler toolchain has to be present if a prebuild is ever unavailable for your
+platform:
+
+| Platform | Needs |
+| --- | --- |
+| macOS | Xcode Command Line Tools — `xcode-select --install` |
+| Linux | `build-essential` and `python3` |
+| Windows | **Not supported.** See the gap below. |
+
+**Windows is a known gap.** This epic targets macOS and Linux. Windows terminals go
+through ConPTY/`winpty` rather than a POSIX pty, and `titleBarStyle: 'hiddenInset'`
+(story 081) is not honoured there either. It is its own body of work, deliberately
+not attempted here.
+
+Two facts about the native module that produce unreadable errors when forgotten:
+
+- **`node-pty@1.1.0` ships N-API prebuilds, so it does *not* need rebuilding for
+  Electron.** N-API is ABI-stable across Node versions and across Electron. Verified
+  on this tree: the same `prebuilds/darwin-arm64/pty.node` spawns a working PTY under
+  plain Node (ABI 127) and under Electron 43 (ABI 148). Running `electron-rebuild`
+  unconditionally would *replace* that portable prebuild with an ABI-locked one.
+  `pnpm rebuild:pty` exists for the case that genuinely needs it — no prebuild for
+  your platform (musl, some Linux arches), `node-pty` falls back to `node-gyp
+  rebuild`, and that build *is* Node-ABI-locked.
+- **The published `spawn-helper` has no executable bit.** `node-pty@1.1.0` ships
+  `prebuilds/<platform>-<arch>/spawn-helper` as mode `0644` in the tarball itself, so
+  every package manager reproduces it, and the package's own `post-install.js` only
+  chmods `build/Release/` — which a prebuild install never populates. The symptom is
+  `Error: posix_spawnp failed.` on the first spawn, *after* `require` has already
+  succeeded. `postinstall` repairs it automatically; `pnpm check:abi --fix` repairs it
+  by hand.
+
+Vitest never loads the real module — `__mocks__/node-pty.ts` holds a recording fake.
+A unit test that spawns real processes is a unit test that leaks them. Real terminal
+semantics get their own runner under Electron's ABI:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 pnpm exec electron scripts/run-pty-conformance.mjs   # story 098
+```
+
+`ELECTRON_RUN_AS_NODE=1` runs the Electron binary as a plain Node process — same ABI,
+no window, no Chromium.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Start the Vite dev server |
+| `pnpm dev` | Start the Vite dev server — the **browser** target |
 | `pnpm build` | Type-check, then produce a production build |
 | `pnpm preview` | Serve the production build locally |
-| `pnpm lint` | ESLint across `src/` and config files |
-| `pnpm type-check` | `tsc --noEmit` for the app and the Node-side configs |
+| `pnpm desktop:dev` | The **Electron** app, with renderer HMR |
+| `pnpm desktop:build` | Type-check, then build `out/{main,preload,renderer}/` |
+| `pnpm desktop:preview` | Run the built Electron app |
+| `pnpm check:abi` | Diagnose the native toolchain; `--fix` repairs what it can |
+| `pnpm rebuild:pty` | Rebuild `node-pty` against Electron's ABI (escape hatch) |
+| `pnpm lint` | ESLint across `src/`, `electron/` and config files |
+| `pnpm type-check` | `tsc --noEmit` for the app, the configs, and `electron/` |
 | `pnpm test` | Vitest, single run |
 | `pnpm test:watch` | Vitest in watch mode |
 | `pnpm test:coverage` | Vitest with the coverage gate |

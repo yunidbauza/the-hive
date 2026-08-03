@@ -8,8 +8,10 @@
     "node": ">=22"
   },
   "pnpm": {
+    "//": "Since pnpm 10, dependency lifecycle scripts are blocked unless allowlisted — a supply-chain default, and the right one. Every entry here is a package granted arbitrary code execution at install time; the list stays minimal and every addition is justified in review. `electron` downloads its runtime binary (story 080); `node-pty` compiles its native addon (story 084). Without them, installs succeed and the app does not run.",
     "onlyBuiltDependencies": [
-      "electron"
+      "electron",
+      "node-pty"
     ]
   },
   "main": "out/main/index.js",
@@ -17,6 +19,10 @@
     "dev": "vite",
     "build": "pnpm run type-check && vite build",
     "preview": "vite preview",
+    "postinstall": "node scripts/check-native-abi.mjs --fix",
+    "rebuild:pty": "electron-rebuild --force --only node-pty",
+    "check:abi": "node scripts/check-native-abi.mjs",
+    "predesktop:dev": "node scripts/check-native-abi.mjs",
     "desktop:dev": "electron-vite dev",
     "desktop:build": "pnpm run type-check && electron-vite build",
     "desktop:preview": "electron-vite preview",
@@ -36,6 +42,7 @@
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "node-pty": "1.1.0",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -43,6 +50,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@electron/rebuild": "4.2.0",
     "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
