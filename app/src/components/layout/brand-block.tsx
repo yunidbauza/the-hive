@@ -14,7 +14,14 @@ export function BrandBlock() {
     <div className="flex min-w-0 items-center gap-2.5">
       <div className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-brand-fill-strong">
         <img
-          src="/hive-mark.png"
+          /*
+           * Resolved through `BASE_URL` rather than written as `/hive-mark.png`
+           * (story 083). A built Electron app loads its renderer over `file://`,
+           * where a root-relative URL points at the filesystem root and the
+           * mark silently fails to load. `BASE_URL` is `/` for the browser
+           * target and `./` for the desktop one.
+           */
+          src={`${import.meta.env.BASE_URL}hive-mark.png`}
           alt=""
           aria-hidden="true"
           className="size-[19px] object-contain"

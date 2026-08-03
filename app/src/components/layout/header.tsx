@@ -1,9 +1,14 @@
 import { Bell, Moon, Sun } from '@phosphor-icons/react';
 
+import { cn } from '@/lib/utils';
+
+
 import { BrandBlock } from '@components/layout/brand-block';
+import { DemoChip } from '@components/layout/demo-chip';
 import { ModelChip } from '@components/layout/model-chip';
 import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
+import { isDesktop } from '@config/runtime';
 import { useMarkAllRead, useUnreadCount } from '@stores/hive-store';
 import { usePickerActions, useTheme, useThemeActions } from '@stores/ui-store';
 
@@ -46,6 +51,22 @@ import { usePickerActions, useTheme, useThemeActions } from '@stores/ui-store';
  * wrapper renders even when `ModelChip` returns null — on the orchestrator and
  * agent tabs the track collapses to zero width and the two side zones stay
  * exactly where they were, so switching tabs never reflows the header.
+ *
+ * ## What the two targets add, and why both land on the left (story 083)
+ *
+ * The left track is the *narrow* side — 150px against the controls' 517px — and
+ * the width the header needs is `2 × max(side) + chip`. So anything added on
+ * the left is free until it overtakes the right (≈367px of headroom), while
+ * anything added on the right costs **twice** its width and pushes the counts
+ * further into truncation. Both target-specific additions therefore go here:
+ *
+ * - **browser**: the `demo` chip, so the fixtures-only surface is never
+ *   mistaken for the real thing.
+ * - **desktop**: a 78px inset clearing the traffic lights that
+ *   `titleBarStyle: 'hiddenInset'` (story 081) floats over this bar, plus the
+ *   drag region that replaces the title bar we removed.
+ *
+ * They are mutually exclusive, so the left track never carries both.
  */
 export function Header() {
   const theme = useTheme();
@@ -55,11 +76,32 @@ export function Header() {
   const { openPicker } = usePickerActions();
 
   const isDark = theme === 'dark';
+  const desktop = isDesktop();
 
   return (
-    <header className="grid h-14 shrink-0 grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-[14px] border-b border-border-soft bg-panel px-4">
-      <div className="col-start-1 flex items-center">
+    <header
+      /*
+       * `-webkit-app-region: drag` makes the header the window's drag handle,
+       * which `titleBarStyle: 'hiddenInset'` (story 081) requires — without a
+       * native title bar there is nothing else to grab. Desktop only: in a
+       * browser the property is inert, but the left inset below is not, and a
+       * 78px gap in the demo surface would be a visible regression.
+       */
+      className={cn(
+        'grid h-14 shrink-0 grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-[14px] border-b border-border-soft bg-panel px-4',
+        desktop && '[-webkit-app-region:drag]',
+      )}
+    >
+      <div
+        /*
+         * Clears the macOS traffic lights, which float over our header at
+         * `{ x: 16, y: 20 }`. 78px is the three lights plus their inset plus a
+         * gap — measured against the constant in `electron/shared/window.ts`.
+         */
+        className={cn('col-start-1 flex items-center gap-2.5', desktop && 'pl-[78px]')}
+      >
         <BrandBlock />
+        <DemoChip />
       </div>
 
       <div className="col-start-2 flex min-w-0 items-center justify-center">
@@ -73,7 +115,7 @@ export function Header() {
           type="button"
           onClick={toggleTheme}
           aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
-          className="flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink"
+          className="flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink [-webkit-app-region:no-drag]"
         >
           {isDark ? <Sun size={17} /> : <Moon size={17} />}
         </button>
@@ -91,7 +133,7 @@ export function Header() {
               ? `Mark ${unread} unread notifications as read`
               : 'Inbox — nothing unread'
           }
-          className="relative flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink"
+          className="relative flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink [-webkit-app-region:no-drag]"
         >
           <Bell size={17} />
           {/* No `label` — the button's own aria-label already names the count,
@@ -102,7 +144,7 @@ export function Header() {
         <button
           type="button"
           onClick={openPicker}
-          className="flex h-9 shrink-0 items-center rounded-full bg-brand-fill px-4 text-sm font-bold text-on-brand hover:bg-brand-fill-hover"
+          className="flex h-9 shrink-0 items-center rounded-full bg-brand-fill px-4 text-sm font-bold text-on-brand hover:bg-brand-fill-hover [-webkit-app-region:no-drag]"
         >
           New session
         </button>

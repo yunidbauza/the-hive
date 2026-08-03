@@ -44,11 +44,36 @@ describe('MessageInput', () => {
     render(<MessageInput entityId="lead-form" />);
 
     expect(screen.getByText('lead-form ❯')).toBeInTheDocument();
+    expect(screen.getByText('← back to list · ↵ send')).toBeInTheDocument();
+  });
+
+  /**
+   * The placeholder is where the browser build stops pretending (story 083).
+   * The row still sends in both targets — the fake round-trip is the
+   * prototype's core promise — but what sits above it differs, and this is
+   * where that stops being a surprise.
+   */
+  it('says the transcript is a recording when there is no bridge', () => {
+    render(<MessageInput entityId="lead-form" />);
+
     expect(input()).toHaveAttribute(
       'placeholder',
-      'message this session — routed by the orchestrator',
+      'demo mode — this transcript is a recording',
     );
-    expect(screen.getByText('← back to list · ↵ send')).toBeInTheDocument();
+  });
+
+  it('offers the real routing hint on desktop', () => {
+    (window as { hive?: unknown }).hive = { appInfo: () => Promise.resolve({}) };
+    try {
+      render(<MessageInput entityId="lead-form" />);
+
+      expect(input()).toHaveAttribute(
+        'placeholder',
+        'message this session — routed by the orchestrator',
+      );
+    } finally {
+      delete (window as { hive?: unknown }).hive;
+    }
   });
 
   it('autofocuses when the view opens', () => {

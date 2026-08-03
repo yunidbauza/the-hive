@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
+import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
@@ -77,7 +78,13 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={PLACEHOLDER}
+        /*
+         * The demo surface says what it is (story 083). The row still sends —
+         * the fake round-trip is the prototype's core promise and works in both
+         * targets — but the transcript underneath it is a recording, and the
+         * placeholder is where that stops being a surprise.
+         */
+        placeholder={isDesktop() ? PLACEHOLDER : DEMO_PLACEHOLDER}
         spellCheck={false}
         aria-label={`Message ${entityId}`}
         className="min-w-0 flex-1 border-none bg-transparent font-mono text-[12.5px] text-ink caret-green outline-none placeholder:text-subtle"

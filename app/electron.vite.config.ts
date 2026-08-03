@@ -50,6 +50,16 @@ export default defineConfig({
   renderer: {
     root: '.',
     /**
+     * Relative asset URLs, because a built Electron app is loaded with
+     * `loadFile` and its document origin is `file://`.
+     *
+     * Vite's default `base: '/'` emits root-relative URLs, and under `file://`
+     * the root is the *filesystem* root — `/hive-mark.png` resolves to
+     * `file:///hive-mark.png` and 404s silently as a broken image. The browser
+     * target keeps `base: '/'` and is unaffected.
+     */
+    base: './',
+    /**
      * Tailwind stays scoped to the renderer. Running the PostCSS pipeline over
      * the main or preload target would be meaningless work at best.
      */

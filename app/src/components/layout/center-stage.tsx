@@ -9,10 +9,8 @@ import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
-import {
-  ORCHESTRATOR_ID,
-  createStaticTransport,
-} from '@lib/terminal/static-transport';
+import { resolveTransport } from '@lib/terminal/resolve-transport';
+import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import { useActiveEntity, useAgentOrder, useNavOrder } from '@stores/hive-store';
 import { useActiveTab, usePickerState, useTheme } from '@stores/ui-store';
@@ -77,7 +75,7 @@ export function CenterStage() {
       ids.map((id) => {
         let transport = cache.current.get(id);
         if (!transport) {
-          transport = createStaticTransport(id);
+          transport = resolveTransport(id);
           cache.current.set(id, transport);
         }
         // Read-only for the whole prototype: every view that accepts input
