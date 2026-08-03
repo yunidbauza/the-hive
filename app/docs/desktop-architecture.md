@@ -1,0 +1,149 @@
+# Desktop architecture
+
+The main process, the IPC bridge, and how the desktop app is tested.
+Load this when working on `electron/`, the preload bridge, native modules, or
+the Electron e2e suite.
+
+Terminals and transports: [`terminal-architecture.md`](terminal-architecture.md).
+
+## Two targets, one renderer
+
+```
+                       ┌─────────────────────────────┐
+                       │  src/  (UNCHANGED renderer)  │
+                       └──────────────┬───────────────┘
+                                      │
+              ┌───────────────────────┴────────────────────────┐
+              │                                                │
+   vite.config.ts (browser)                    electron.vite.config.ts (desktop)
+      base: '/'                                   base: './'  ← file:// needs it
+      demo surface                                main + preload + renderer
+              │                                                │
+      pnpm dev / build                         pnpm desktop:dev / desktop:build
+```
+
+**Electron is the product.** The browser build survives as a fixtures-only demo
+surface, and it must degrade visibly — the `demo` chip and the message-row
+placeholder are how (story 083). It will never have real terminals.
+
+`src/` is not moved, wrapped, or forked. `electron/` is a sibling, which is what
+keeps every ESLint import zone, alias site and `tests/` mirror intact.
+
+## Processes
+
+| | Runs | May import | Never |
+|---|---|---|---|
+| `electron/main/**` | Node, full privilege | `electron/shared/**` | `src/**` |
+| `electron/preload/**` | renderer, sandboxed | `electron/shared/**` | `src/**`, `electron/main/**` |
+| `src/**` | renderer | `@shared` (**type-only**) | `electron/main/**`, `electron/preload/**` |
+
+`electron/shared/**` is types and constants only — no runtime imports, no Node
+APIs, no DOM APIs. It is the one module both sides may import, which makes the
+IPC contract a compile-time artifact instead of a convention. All three zones are
+ESLint-enforced and proved by `pnpm verify:boundaries`.
+
+## The bridge
+
+The renderer reaches main through one narrow, typed, allowlisted surface. Three
+rules, each load-bearing:
+
+1. **`ipcRenderer` is never exposed** — not bound to a channel argument, not
+   behind a wrapper taking a channel name. The renderer gets *verbs*, and the set
+   of verbs is the allowlist.
+2. **Every subscription returns its own unsubscribe.** This mirrors
+   `TerminalTransport.onData` exactly, which is what lets `PtyTransport` be a
+   thin adapter.
+3. **The raw `IpcRendererEvent` never crosses.** Passing it hands the renderer a
+   `sender` handle and defeats the isolation.
+
+Main-side, every handler runs `assertSender` (main frame of our own window only)
+and then a hand-written payload guard. Guards **reject** rather than sanitise —
+including extra fields, because an unexpected key means the two sides disagree
+about the contract.
+
+Posture, non-negotiable and asserted in `tests/e2e/electron/security.spec.ts`:
+`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, plus a
+strict CSP applied on the session (not only as a `<meta>` tag).
+
+## Two ABI facts that produce unreadable errors when forgotten
+
+**`node-pty@1.1.0` does NOT need rebuilding for Electron.** It ships **N-API**
+prebuilds, which are ABI-stable across Node versions *and* Electron. The same
+`prebuilds/darwin-arm64/pty.node` spawns a working PTY under plain Node (ABI 127)
+and Electron 43 (ABI 148). Running `electron-rebuild` unconditionally would
+*replace* that portable prebuild with an ABI-locked one. `pnpm rebuild:pty` exists
+for the case that genuinely needs it: no prebuild for the platform, `node-pty`
+falls back to `node-gyp rebuild`, and *that* build is Node-ABI-locked.
+
+**The published `spawn-helper` has no executable bit.** It is mode `0644` in the
+tarball itself, so every package manager reproduces it, and node-pty's own
+`post-install.js` only chmods `build/Release/` — which a prebuild install never
+populates. The symptom is `Error: posix_spawnp failed.` on the first spawn,
+*after* `require` already succeeded, naming neither node-pty nor permissions.
+`postinstall` repairs it; `pnpm check:abi --fix` repairs it by hand.
+
+## Testing: three layers, split by what each can prove
+
+| Layer | Runner | ABI / process | Proves |
+|---|---|---|---|
+| **Main-process unit** | Vitest, node env, `node-pty` mocked | plain Node | spawn arguments, cwd, IPC routing, guards, teardown |
+| **PTY conformance** | `ELECTRON_RUN_AS_NODE=1 electron` | Electron ABI, no window | terminal *semantics*: signals, resize, alt-screen, exit codes (story 098) |
+| **Electron e2e** | Playwright `_electron` | the full app | window chrome, menus, security posture, the UI wired to a live PTY |
+
+The middle layer is the one that does not exist in a web project. Whether Ctrl-C
+delivers `SIGINT` to the foreground process group is not a UI question, and
+asserting it through a browser driver is slow, flaky and indirect.
+
+`ELECTRON_RUN_AS_NODE=1` runs the Electron binary as a plain Node process — same
+ABI, no window, no Chromium. It is what makes the middle layer possible.
+
+### Running it
+
+| Command | Runs |
+|---|---|
+| `pnpm test:e2e` | both projects |
+| `pnpm test:e2e:web` | the six browser specs (story 070) |
+| `pnpm test:e2e:electron` | the built desktop app |
+
+`globalSetup` builds `out/` when it is missing or stale, so `--project=electron`
+can never silently test yesterday's binary. It no-ops for a web-only run.
+
+**`webServer` cannot be scoped to a project.** It is a top-level Playwright
+option that starts before any project is selected, so an Electron-only run would
+build and serve a browser bundle it never touches. `pnpm test:e2e:electron` sets
+`PW_ELECTRON_ONLY=1`, which skips it.
+
+### Gotchas the suite already paid for
+
+- **Every Electron-specific call lives in `tests/e2e/electron/fixtures/hive-app.ts`.**
+  Playwright's Electron support is experimental; `@playwright/test` is pinned
+  exactly and the used surface kept to `launch`, `firstWindow`, `evaluate`,
+  `close`, so a breaking change is a one-file fix.
+- **Each test gets its own `--user-data-dir`.** Window state persists, so a
+  shared profile makes test order change results — and moves the developer's
+  real window.
+- **`getLastWebPreferences()` exists at runtime but is missing from Electron 43's
+  typings.** It needs a cast; it is the only way to read the flags the window was
+  actually constructed with.
+- **Electron lowercases menu roles.** `selectAll` comes back as `selectall`.
+  Comparing against the camelCase spelling silently never matches.
+- **xterm owns its own selection** and paints it into an overlay, so
+  `window.getSelection()` can be empty while the terminal has a live selection.
+  Drag with the mouse and accept either signal.
+- **`.xterm-viewport` reports `scrollHeight === clientHeight`** at every scroll
+  position. Which lines are on screen is the only honest observable — read
+  `.xterm-rows > div` text via `waitForTerminalText`.
+- **Assets must not use root-relative URLs.** A built app loads its renderer over
+  `file://`, where `/hive-mark.png` resolves against the *filesystem* root and
+  404s as a broken image. The renderer builds with `base: './'`; reference public
+  assets through `import.meta.env.BASE_URL`.
+
+## Out of scope here
+
+Packaging, installers, code signing, notarisation, auto-update. Windows — a known
+gap; ConPTY/`winpty` is its own body of work, and `titleBarStyle: 'hiddenInset'`
+is not honoured there either.
+
+When packaging lands, one constraint is already known: the `.node` binary must be
+**unpacked from the asar** (`asarUnpack`), because `dlopen` cannot load from
+inside an archive.

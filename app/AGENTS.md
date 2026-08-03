@@ -37,7 +37,9 @@ shadcn/ui · pnpm.
 | `pnpm type-check` | `tsc --noEmit` for the app, the Node-side configs, and `electron/` |
 | `pnpm test` | Vitest, single run |
 | `pnpm test:coverage` | Vitest with the 80% coverage gate |
-| `pnpm test:e2e` | Playwright specs |
+| `pnpm test:e2e` | Playwright — both the web and electron projects |
+| `pnpm test:e2e:web` | The six browser specs (story 070) |
+| `pnpm test:e2e:electron` | The built desktop app (story 085) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -50,6 +52,7 @@ Load the one that matches the surface you are working on.
 | When you are working on… | Load |
 | --- | --- |
 | The terminal, transports, ANSI, xterm config | [`docs/terminal-architecture.md`](docs/terminal-architecture.md) |
+| The main process, IPC, native modules, packaging | [`docs/desktop-architecture.md`](docs/desktop-architecture.md) |
 | Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
 | Simulation script and the fake clock | [`docs/simulation.md`](docs/simulation.md) |

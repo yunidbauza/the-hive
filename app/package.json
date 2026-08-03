@@ -33,7 +33,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:web": "playwright test --project=web",
+    "test:e2e:electron": "PW_ELECTRON_ONLY=1 playwright test --project=electron"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
