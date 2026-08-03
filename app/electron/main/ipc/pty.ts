@@ -235,13 +235,44 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       orphanDrops += 1;
       return;
     }
+    // A session exits once. A second exit would arrive after the flush that
+    // already closed the stream, so it is dropped rather than delivered to a
+    // terminal that has already been told the process is gone.
+    if (channel.exited) {
+      channel.dropped += 1;
+      return;
+    }
     channel.exitEvent = event;
     // Flush now rather than waiting out the batch timer: the process is gone,
     // so there is nothing more coming to coalesce with.
     flush(event.sessionId, channel);
   }
 
-  const disposers = [supervisor.onData(onData), supervisor.onExit(onExit)];
+  const disposers = [
+    supervisor.onData(onData),
+    supervisor.onExit(onExit),
+    /**
+     * Errors and lost sessions have **no renderer channel yet**.
+     *
+     * The contract carries no error event, and the terminal that writes
+     * `SESSION_LOST_NOTICE` is story 095's surface. Until then they are logged
+     * rather than dropped on the floor: a session that silently fails to start
+     * is indistinguishable from one that started and produced nothing, and
+     * that is the harder bug to chase.
+     */
+    supervisor.onError((event) => {
+      console.error(
+        `[hive] pty error${event.sessionId ? ` (${event.sessionId})` : ''}: ${event.message}`,
+      );
+    }),
+    supervisor.onSessionLost((event) => {
+      console.error(`[hive] pty session lost: ${event.sessionId} (${event.reason})`);
+      const channel = channels.get(event.sessionId);
+      // Its host is gone, so nothing more is coming. Marking it exited stops
+      // in-flight output being delivered to a terminal that is already dead.
+      if (channel) channel.exited = true;
+    }),
+  ];
 
   function clearTimers(channel: Channel): void {
     if (channel.timer !== null) clearTimeout(channel.timer);
@@ -267,7 +298,9 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
 
     resize(sessionId, cols, rows) {
       const channel = channels.get(sessionId);
-      if (!channel) return;
+      // Resizing a session whose process is gone would reach the supervisor as
+      // an unknown-session error for something the user cannot act on.
+      if (!channel || channel.exited) return;
 
       /**
        * Leading edge immediately, then at most one per window, with a

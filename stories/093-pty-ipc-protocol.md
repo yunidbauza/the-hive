@@ -191,3 +191,16 @@ What *is* proven here: every batching, flow-control, throttling, sequencing and
 ordering rule with fake timers (30 unit tests), plus an end-to-end Electron spec
 that spawns a session from the renderer, runs a real shell, and receives sequenced
 output and a correctly-ordered exit back through the whole stack.
+
+### 5. Host errors and lost sessions are logged, not dropped
+
+Found in self-review. The supervisor emits `error` (unknown session, session limit
+reached, crash-loop guard tripped) and `sessionLost` (its host died), and **nothing
+subscribed to either** — they vanished silently.
+
+There is no renderer error channel in the contract, and the terminal that writes
+`SESSION_LOST_NOTICE` is story 095's surface, so inventing one here would be
+speculative. They are logged in main instead, and a lost session is marked exited so
+in-flight output is not delivered to a terminal that is already dead. A session that
+silently fails to start is indistinguishable from one that started and produced
+nothing, and that is the harder bug to chase.

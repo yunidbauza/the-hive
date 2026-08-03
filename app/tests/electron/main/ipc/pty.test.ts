@@ -33,6 +33,8 @@ let supervisor: PtyHostSupervisor;
 let ipc: PtyIpc;
 let emitData: (event: { sessionId: string; chunk: string }) => void;
 let emitExit: (event: ExitEvent) => void;
+let emitError: (event: { sessionId?: string; message: string }) => void;
+let emitLost: (event: { sessionId: string; reason: string }) => void;
 
 const SPAWN = {
   sessionId: 'a',
@@ -62,8 +64,14 @@ function fakeSupervisor(): PtyHostSupervisor {
       return () => {};
     }),
     onSpawned: vi.fn(() => () => {}),
-    onError: vi.fn(() => () => {}),
-    onSessionLost: vi.fn(() => () => {}),
+    onError: vi.fn((listener) => {
+      emitError = listener;
+      return () => {};
+    }),
+    onSessionLost: vi.fn((listener) => {
+      emitLost = listener;
+      return () => {};
+    }),
     shutdown: vi.fn(async () => {}),
     isRunning: vi.fn(() => true),
     isBlocked: vi.fn(() => false),
@@ -357,6 +365,38 @@ describe('dropping', () => {
     // Main and the host disagreeing about what exists is worth seeing rather
     // than silently discarding.
     expect(unknown?.dropped).toBe(1);
+  });
+});
+
+describe('errors and lost sessions', () => {
+  it('logs a host error rather than dropping it on the floor', () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    emitError({ sessionId: 'a', message: 'could not start /bin/zsh' });
+
+    // There is no renderer error channel yet — story 095 owns that surface.
+    // Until then, a session that silently fails to start is indistinguishable
+    // from one that started and produced nothing.
+    expect(logged).toHaveBeenCalledWith(
+      expect.stringContaining('could not start /bin/zsh'),
+    );
+  });
+
+  it('stops delivering output to a session whose host died', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    emitLost({ sessionId: 'a', reason: 'host-crashed' });
+    emitData({ sessionId: 'a', chunk: 'from a dead host' });
+    vi.advanceTimersByTime(8);
+
+    expect(dataEvents()).toHaveLength(0);
+  });
+
+  it('reports an exit only once, however many arrive', () => {
+    emitExit({ sessionId: 'a', exitCode: 0 });
+    emitExit({ sessionId: 'a', exitCode: 0 });
+
+    expect(exitEvents()).toHaveLength(1);
   });
 });
 
