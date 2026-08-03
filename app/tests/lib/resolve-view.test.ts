@@ -14,25 +14,25 @@ const agent = { kind: 'agent', id: 'slack-agent' } as Agent;
 
 describe('resolveView', () => {
   it('shows the orchestrator for the reserved tab', () => {
-    expect(resolveView({ activeTab: 'orch', picker: false, entity: null })).toBe(
+    expect(resolveView({ activeTab: 'orch', picker: false, settings: false, entity: null })).toBe(
       'orchestrator',
     );
   });
 
   it('shows a session for a session entity', () => {
     expect(
-      resolveView({ activeTab: 'hero-refresh', picker: false, entity: session }),
+      resolveView({ activeTab: 'hero-refresh', picker: false, settings: false, entity: session }),
     ).toBe('session');
   });
 
   it('shows an agent for an agent entity', () => {
     expect(
-      resolveView({ activeTab: 'slack-agent', picker: false, entity: agent }),
+      resolveView({ activeTab: 'slack-agent', picker: false, settings: false, entity: agent }),
     ).toBe('agent');
   });
 
   it('shows the picker whenever it is open', () => {
-    expect(resolveView({ activeTab: 'orch', picker: true, entity: null })).toBe(
+    expect(resolveView({ activeTab: 'orch', picker: true, settings: false, entity: null })).toBe(
       'picker',
     );
   });
@@ -46,7 +46,7 @@ describe('resolveView', () => {
        */
       for (const entity of [null, session, agent]) {
         expect(
-          resolveView({ activeTab: entity?.id ?? 'orch', picker: true, entity }),
+          resolveView({ activeTab: entity?.id ?? 'orch', picker: true, settings: false, entity }),
         ).toBe('picker');
       }
     });
@@ -55,7 +55,7 @@ describe('resolveView', () => {
       // A session can be removed while its tab is open. Stranding the user on a
       // blank stage is worse than sending them home.
       expect(
-        resolveView({ activeTab: 'deleted-session', picker: false, entity: null }),
+        resolveView({ activeTab: 'deleted-session', picker: false, settings: false, entity: null }),
       ).toBe('orchestrator');
     });
   });
@@ -63,21 +63,68 @@ describe('resolveView', () => {
   it('resolves to exactly one state for every input combination', () => {
     const states = new Set<ViewState>();
 
-    for (const picker of [true, false]) {
-      for (const entity of [null, session, agent]) {
-        for (const activeTab of ['orch', 'hero-refresh', 'slack-agent', 'gone']) {
-          states.add(resolveView({ activeTab, picker, entity }));
+    for (const settings of [true, false]) {
+      for (const picker of [true, false]) {
+        for (const entity of [null, session, agent]) {
+          for (const activeTab of ['orch', 'hero-refresh', 'slack-agent', 'gone']) {
+            states.add(resolveView({ activeTab, picker, settings, entity }));
+          }
         }
       }
     }
 
-    // All four states are reachable, and nothing else is.
+    // All five states are reachable, and nothing else is.
     expect([...states].sort()).toEqual([
       'agent',
       'orchestrator',
       'picker',
       'session',
+      'settings',
     ]);
+  });
+
+  describe('settings (story 101)', () => {
+    /**
+     * The realistic route into settings is the picker discovering it has no
+     * projects to offer. If the picker won here, the user would be looking at
+     * two stacked full-stage overlays.
+     */
+    it('wins over the picker', () => {
+      expect(
+        resolveView({
+          activeTab: 'orch',
+          picker: true,
+          settings: true,
+          entity: null,
+        }),
+      ).toBe('settings');
+    });
+
+    it('wins over every underlying view', () => {
+      for (const entity of [null, session, agent]) {
+        expect(
+          resolveView({
+            activeTab: entity?.id ?? 'orch',
+            picker: false,
+            settings: true,
+            entity,
+          }),
+        ).toBe('settings');
+      }
+    });
+
+    it('yields to the underlying view once closed', () => {
+      // Closing settings must return the user to the terminal they were
+      // watching, which only works because it never touched `activeTab`.
+      expect(
+        resolveView({
+          activeTab: 'hero-refresh',
+          picker: false,
+          settings: false,
+          entity: session,
+        }),
+      ).toBe('session');
+    });
   });
 });
 
@@ -87,5 +134,6 @@ describe('isEntityView', () => {
     expect(isEntityView('agent')).toBe(true);
     expect(isEntityView('orchestrator')).toBe(false);
     expect(isEntityView('picker')).toBe(false);
+    expect(isEntityView('settings')).toBe(false);
   });
 });

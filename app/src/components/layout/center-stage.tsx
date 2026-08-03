@@ -21,6 +21,7 @@ import {
   useActiveTab,
   useBackToOrch,
   usePickerState,
+  useSettingsOpen,
   useTheme,
 } from '@stores/ui-store';
 
@@ -46,9 +47,18 @@ export function CenterStage() {
   const navOrder = useNavOrder();
   const agentOrder = useAgentOrder();
   const { picker } = usePickerState();
+  const settings = useSettingsOpen();
 
-  const view = resolveView({ activeTab, picker, entity });
+  const view = resolveView({ activeTab, picker, settings, entity });
   const showingPicker = view === 'picker';
+  /**
+   * Both full-stage overlays hide the terminal region, not just the picker.
+   *
+   * This gate drives two things — the `hidden` class and `TerminalHost`'s
+   * `activeId` — and a settings overlay that did not extend it would render on
+   * top of thirteen live terminals.
+   */
+  const showingOverlay = showingPicker || view === 'settings';
 
   const ids = useMemo(
     () => [ORCHESTRATOR_ID, ...navOrder, ...agentOrder],
@@ -145,10 +155,10 @@ export function CenterStage() {
 
       {/*
         Hidden, never unmounted. Tearing the terminal region down for the
-        duration of the picker would dispose every live xterm instance and
+        duration of an overlay would dispose every live xterm instance and
         throw away the scrollback story 042 exists to preserve.
       */}
-      <div className={cn('flex min-h-0 flex-1 flex-col', showingPicker && 'hidden')}>
+      <div className={cn('flex min-h-0 flex-1 flex-col', showingOverlay && 'hidden')}>
         {isEntityView(view) && entity ? <SessionMetaBar entity={entity} /> : null}
 
         {/*
@@ -173,11 +183,11 @@ export function CenterStage() {
           <TerminalHost
             entries={entries}
             /*
-             * `null` while the picker is open: that marks every surface
-             * invisible, so closing the picker re-reveals the previous one and
+             * `null` while either overlay is open: that marks every surface
+             * invisible, so closing it re-reveals the previous one and
              * triggers its refit through the machinery story 042 already has.
              */
-            activeId={showingPicker ? null : activeTab}
+            activeId={showingOverlay ? null : activeTab}
             theme={theme}
           />
         </div>

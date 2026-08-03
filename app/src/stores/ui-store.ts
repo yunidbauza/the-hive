@@ -23,6 +23,7 @@ interface UiState {
   collapsed: Record<string, boolean>; // project id -> collapsed
   picker: boolean; // new-session overlay open
   pickerQuery: string;
+  settings: boolean; // full-stage settings overlay open (story 101)
   newModel: Model;
   newEffort: Effort;
   showActivityRail: boolean;
@@ -37,6 +38,8 @@ interface UiState {
   toggleProject: (id: string) => void;
   openPicker: () => void;
   closePicker: () => void;
+  openSettings: () => void;
+  closeSettings: () => void;
   setPickerQuery: (query: string) => void;
   setNewModel: (model: Model) => void;
   setNewEffort: (effort: Effort) => void;
@@ -70,6 +73,7 @@ const initialUiState = {
   collapsed: {} as Record<string, boolean>,
   picker: false,
   pickerQuery: '',
+  settings: false,
   newModel: 'opus' as Model,
   newEffort: 'high' as Effort,
   showActivityRail: true,
@@ -88,7 +92,9 @@ export const useUiStore = create<UiState>()((set, get) => ({
   },
 
   // Opening a tab always dismisses the picker: the user has made their choice.
-  openTab: (id) => set({ activeTab: id, picker: false }),
+  // Settings goes with it (story 101) — the rails stay visible behind the
+  // overlay, so a rail click that left settings up would look broken.
+  openTab: (id) => set({ activeTab: id, picker: false, settings: false }),
 
   /**
    * Return to the orchestrator — the ← pill on the session meta bar, and the
@@ -98,7 +104,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
    * is a distinct intent from "open this thing", and 060 needs something to
    * bind that reads as the former.
    */
-  backToOrch: () => set({ activeTab: 'orch', picker: false }),
+  backToOrch: () => set({ activeTab: 'orch', picker: false, settings: false }),
 
   setSelIdx: (index) => set({ selIdx: index }),
   setLeftTab: (tab) => set({ leftTab: tab }),
@@ -113,6 +119,17 @@ export const useUiStore = create<UiState>()((set, get) => ({
   // stale filter.
   openPicker: () => set({ picker: true, pickerQuery: '' }),
   closePicker: () => set({ picker: false }),
+
+  /**
+   * Open settings, dismissing the picker (story 101).
+   *
+   * The realistic route here is the picker discovering it has no projects to
+   * offer, so leaving it open would stack two full-stage overlays. Like the
+   * picker, this never touches `activeTab`: closing settings has to return the
+   * user to the terminal they were watching.
+   */
+  openSettings: () => set({ settings: true, picker: false }),
+  closeSettings: () => set({ settings: false }),
   setPickerQuery: (query) => set({ pickerQuery: query }),
 
   setNewModel: (model) => set({ newModel: model }),
@@ -149,6 +166,11 @@ const pickerStateSelector = (state: UiState) => ({
   pickerQuery: state.pickerQuery,
   newModel: state.newModel,
   newEffort: state.newEffort,
+});
+
+const settingsActionsSelector = (state: UiState) => ({
+  openSettings: state.openSettings,
+  closeSettings: state.closeSettings,
 });
 
 const pickerActionsSelector = (state: UiState) => ({
@@ -199,6 +221,13 @@ export const useProjectCollapsed = (id: string) =>
   useUiStore((state) => Boolean(state.collapsed[id]));
 
 export const useToggleProject = () => useUiStore((state) => state.toggleProject);
+
+/** Whether the settings overlay is open (story 101). */
+export const useSettingsOpen = () => useUiStore((state) => state.settings);
+
+/** Settings actions, referentially stable across unrelated state changes. */
+export const useSettingsActions = () =>
+  useUiStore(useShallow(settingsActionsSelector));
 
 /** New-session picker state and actions. */
 export const usePickerState = () => useUiStore(useShallow(pickerStateSelector));

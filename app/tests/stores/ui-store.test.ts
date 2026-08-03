@@ -189,3 +189,62 @@ describe('ui-store — theme without a DOM', () => {
     expect(store.getState().theme).toBe('light');
   });
 });
+
+describe('settings overlay (story 101)', () => {
+  it('openSettings clears the picker and leaves activeTab untouched', () => {
+    useUiStore.getState().openTab('s1');
+    useUiStore.getState().openPicker();
+
+    useUiStore.getState().openSettings();
+
+    const state = useUiStore.getState();
+    expect(state.settings).toBe(true);
+    // Two stacked full-stage overlays is the thing this prevents.
+    expect(state.picker).toBe(false);
+    // Closing settings has to return the user to the terminal they were
+    // watching, which only works if the tab underneath is untouched.
+    expect(state.activeTab).toBe('s1');
+  });
+
+  it('closeSettings changes nothing else — nothing was changed on open', () => {
+    useUiStore.getState().openTab('s1');
+    useUiStore.getState().openSettings();
+
+    useUiStore.getState().closeSettings();
+
+    expect(useUiStore.getState().settings).toBe(false);
+    expect(useUiStore.getState().activeTab).toBe('s1');
+  });
+
+  it('reset clears the settings flag', () => {
+    useUiStore.getState().openSettings();
+
+    useUiStore.getState().reset();
+
+    expect(useUiStore.getState().settings).toBe(false);
+  });
+
+  /**
+   * The rails stay visible behind a full-stage overlay, so they remain
+   * clickable while settings is open. `resolveView` returns `'settings'`
+   * whatever `activeTab` says — so a rail click that left the overlay up would
+   * change the tab underneath and look, to the user, like nothing happened.
+   */
+  it('opening a tab closes settings, as it closes the picker', () => {
+    useUiStore.getState().openSettings();
+
+    useUiStore.getState().openTab('s2');
+
+    expect(useUiStore.getState().settings).toBe(false);
+    expect(useUiStore.getState().activeTab).toBe('s2');
+  });
+
+  it('backToOrch closes settings', () => {
+    useUiStore.getState().openSettings();
+
+    useUiStore.getState().backToOrch();
+
+    expect(useUiStore.getState().settings).toBe(false);
+    expect(useUiStore.getState().activeTab).toBe('orch');
+  });
+});
