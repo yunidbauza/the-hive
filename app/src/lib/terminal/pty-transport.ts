@@ -41,11 +41,18 @@ const DEFAULT_ROWS = 24;
 /**
  * How much output is kept per entity for a surface that subscribes late.
  *
- * Matches the host's own scrollback budget. It is deliberately a *byte* cap
- * rather than a line count: a single `pnpm build` line can be kilobytes wide,
- * and a line-capped buffer bounds nothing that matters.
+ * Counted in **UTF-16 code units**, not UTF-8 bytes, and the distinction is
+ * deliberate. What is being bounded here is a JavaScript string held in the
+ * renderer's heap, which costs about two bytes per code unit regardless of how
+ * the same text would encode on the wire. `Buffer.byteLength` is the right
+ * measure in main, where the thing being counted really is a byte buffer; using
+ * it here would under-count a box-drawing TUI by a factor of three and bound
+ * the wrong quantity.
+ *
+ * A count rather than a line cap for the obvious reason: a single `pnpm build`
+ * line can be kilobytes wide, and a line-capped buffer bounds nothing.
  */
-const REPLAY_BYTES = 256 * 1024;
+const REPLAY_UNITS = 256 * 1024;
 
 /**
  * A lifecycle line, written into the transcript rather than rendered as chrome.
@@ -109,7 +116,8 @@ interface EntityChannel {
    * arriving in the meantime, and the transcript would come out shuffled.
    */
   buffer: string[];
-  bufferBytes: number;
+  /** Size of {@link buffer} in UTF-16 code units. See {@link REPLAY_UNITS}. */
+  bufferUnits: number;
   /** Last `seq` seen, for gap detection. `null` until the first chunk. */
   lastSeq: number | null;
   /**
@@ -143,11 +151,22 @@ function pty(): NonNullable<Window['hive']>['pty'] {
 /** Deliver to every subscriber, and remember it for the next one to arrive. */
 function emit(channel: EntityChannel, chunk: string, parsed?: () => void): void {
   channel.buffer.push(chunk);
-  channel.bufferBytes += chunk.length;
-  while (channel.bufferBytes > REPLAY_BYTES && channel.buffer.length > 1) {
-    channel.bufferBytes -= channel.buffer.shift()!.length;
+  channel.bufferUnits += chunk.length;
+  while (channel.bufferUnits > REPLAY_UNITS && channel.buffer.length > 1) {
+    channel.bufferUnits -= channel.buffer.shift()!.length;
   }
 
+  /**
+   * Every subscriber is handed the *same* `parsed`, so the first one to finish
+   * parsing releases the batch for all of them.
+   *
+   * Harmless today and worth knowing about tomorrow. `TerminalHost` mounts one
+   * surface per entity, so there is only ever one; and main's `ack` is
+   * idempotent, so a second call releases nothing rather than corrupting the
+   * window. If split panes ever put two live surfaces on one session, this
+   * becomes "backpressure follows the fastest pane" — at which point the ack
+   * needs to wait for the slowest, not the first.
+   */
   // Copied before iterating: a subscriber may dispose itself from inside its
   // own callback, and mutating the set mid-iteration would skip its neighbour.
   for (const subscriber of [...channel.subscribers]) subscriber(chunk, parsed);
@@ -157,7 +176,7 @@ function openChannel(entityId: string): EntityChannel {
   const channel: EntityChannel = {
     subscribers: new Set(),
     buffer: [],
-    bufferBytes: 0,
+    bufferUnits: 0,
     lastSeq: null,
     spawnRequested: false,
     closed: false,
@@ -264,7 +283,13 @@ function ensureSpawned(
        * project names the config file to edit. Swallowing it leaves an empty
        * black rectangle, which is the failure mode this whole path exists to
        * avoid.
+       *
+       * Guarded like every other writer here. Unreachable today — main throws
+       * synchronously before a channel exists, so no exit or loss can land
+       * first — but that is a fact about main's ordering, and this file should
+       * not depend on it staying true.
        */
+      if (channel.closed) return;
       channel.closed = true;
       emit(
         channel,
