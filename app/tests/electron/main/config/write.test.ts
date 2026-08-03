@@ -64,13 +64,15 @@ describe('writeConfig — the round trip', () => {
   it('writes a file parseConfig reads back identically', () => {
     seed({ version: 2, projects: [] });
 
-    const snapshot = writeConfig((draft) => ({
+    const result = writeConfig((draft) => ({
       ...draft,
       projects: [entry('repo', projectDir)],
     }));
 
-    expect(snapshot.errors).toEqual([]);
-    expect(snapshot.projects[0]?.status).toBe('ok');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.errors).toEqual([]);
+    expect(result.snapshot.projects[0]?.status).toBe('ok');
 
     const parsed = parseConfig(readFileSync(path, 'utf8'), 'config');
     expect(parsed.fatal).toBe(false);
@@ -80,14 +82,15 @@ describe('writeConfig — the round trip', () => {
   it('returns the fresh snapshot, so no reload is needed', () => {
     seed({ version: 2, shell: '/bin/zsh', projects: [] });
 
-    const snapshot = writeConfig((draft) => ({
+    const result = writeConfig((draft) => ({
       ...draft,
       projects: [entry('repo', projectDir)],
     }));
 
-    expect(snapshot.shell).toBe('/bin/zsh');
-    expect(snapshot.configPath).toBe(path);
-    expect(snapshot.projects).toHaveLength(1);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.shell).toBe('/bin/zsh');
+    expect(result.snapshot.configPath).toBe(path);
+    expect(result.snapshot.projects).toHaveLength(1);
   });
 
   it('ends the file with a trailing newline', () => {
@@ -161,14 +164,14 @@ describe('writeConfig — refusal', () => {
   it('refuses a mutation whose result the reader would reject, leaving the file byte-identical', () => {
     const before = seed({ version: 2, projects: [] });
 
-    const snapshot = writeConfig((draft) => ({
+    const result = writeConfig((draft) => ({
       ...draft,
       ...(JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>),
     }));
 
-    expect(snapshot.errors.some((error) => /could not read back/.test(error))).toBe(
-      true,
-    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toMatch(/could not read back/);
     expect(readFileSync(path, 'utf8')).toBe(before);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
@@ -176,29 +179,29 @@ describe('writeConfig — refusal', () => {
   it('forces the current version regardless of what the mutation returns', () => {
     seed({ version: 2, projects: [] });
 
-    const snapshot = writeConfig((draft) => ({ ...draft, version: 99 }));
+    const result = writeConfig((draft) => ({ ...draft, version: 99 }));
 
-    expect(snapshot.errors).toEqual([]);
+    expect(result.ok).toBe(true);
     expect(JSON.parse(readFileSync(path, 'utf8')).version).toBe(2);
   });
 
   it('refuses to write when the file on disk is already unreadable', () => {
     writeFileSync(path, '{ not json');
 
-    const snapshot = writeConfig((draft) => ({ ...draft, projects: [] }));
+    const result = writeConfig((draft) => ({ ...draft, projects: [] }));
 
-    expect(snapshot.errors.some((error) => /could not be read/.test(error))).toBe(
-      true,
-    );
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toMatch(/could not be read/);
     expect(readFileSync(path, 'utf8')).toBe('{ not json');
   });
 
   it('refuses when the file does not exist at all', () => {
     rmSync(path, { force: true });
 
-    const snapshot = writeConfig((draft) => ({ ...draft, projects: [] }));
+    const result = writeConfig((draft) => ({ ...draft, projects: [] }));
 
-    expect(snapshot.errors.some((error) => /could not read/.test(error))).toBe(true);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toMatch(/could not read/);
   });
 
   /**
@@ -209,12 +212,13 @@ describe('writeConfig — refusal', () => {
   it('still writes a file that carries an unknown top-level key', () => {
     seed({ version: 2, future: 'x', projects: [] });
 
-    const snapshot = writeConfig((draft) => ({
+    const result = writeConfig((draft) => ({
       ...draft,
       projects: [entry('repo', projectDir)],
     }));
 
-    expect(snapshot.projects).toHaveLength(1);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.projects).toHaveLength(1);
     expect(JSON.parse(readFileSync(path, 'utf8')).future).toBe('x');
   });
 
@@ -223,10 +227,11 @@ describe('writeConfig — refusal', () => {
     // A read-only directory makes both the temp write and the rename fail.
     chmodSync(dir, 0o500);
 
-    const snapshot = writeConfig((draft) => ({ ...draft, projects: [] }));
+    const result = writeConfig((draft) => ({ ...draft, projects: [] }));
 
     chmodSync(dir, 0o700);
-    expect(snapshot.errors.some((error) => /could not write/.test(error))).toBe(true);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toMatch(/could not write/);
     expect(readFileSync(path, 'utf8')).toBe(before);
   });
 });

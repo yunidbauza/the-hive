@@ -272,9 +272,29 @@ describe('parseAddProjectRequest', () => {
   });
 
   it('rejects an empty name', () => {
-    expect(() => parseAddProjectRequest({ path: '/x', name: '  ' })).toThrow(
-      /non-empty/,
+    expect(() => parseAddProjectRequest({ path: '/x', name: '' })).toThrow(
+      /must not be empty/,
     );
+  });
+
+  /**
+   * `name` is a display string, so it takes the bounded, control-character-free
+   * guard rather than the deliberately permissive path one. A renderer that
+   * skipped the dialog could otherwise persist an unbounded name into the
+   * config, and control characters would reach a file the user hand-edits.
+   */
+  it('bounds the name and rejects control characters in it', () => {
+    expect(() =>
+      parseAddProjectRequest({ path: '/x', name: 'a'.repeat(4097) }),
+    ).toThrow(/too long/);
+    expect(() =>
+      parseAddProjectRequest({ path: '/x', name: 'evil\u001b[2Jname' }),
+    ).toThrow(/control characters/);
+  });
+
+  it('still accepts an unbounded path, which is about to be realpath-ed', () => {
+    const deep = `/${'nested/'.repeat(700)}repo`;
+    expect(parseAddProjectRequest({ path: deep }).path).toBe(deep);
   });
 });
 

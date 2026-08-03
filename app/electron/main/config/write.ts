@@ -1,11 +1,21 @@
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_SHELL,
-  emptySnapshot,
   type ConfigSnapshot,
 } from '@shared/config-contract';
 
@@ -51,13 +61,41 @@ export type ConfigDocument = Record<string, unknown>;
 
 export type Mutation = (draft: ConfigDocument) => ConfigDocument;
 
-function failed(path: string, message: string): ConfigSnapshot {
-  const snapshot = emptySnapshot(path);
-  snapshot.errors.push(message);
-  return snapshot;
+/**
+ * Thrown by a mutation that has decided not to write.
+ *
+ * A mutation runs against the document **just read from disk**, which is the
+ * only view that is not stale — the config is deliberately not watched, so the
+ * cached snapshot can be older than the file. Checks that must see the current
+ * file (a duplicate path, a colliding id) therefore belong inside the mutation,
+ * and they need a way to abandon the write from in there. `writeConfig` turns
+ * this into an ordinary `{ ok: false }`; it never escapes.
+ */
+export class WriteRefused extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'WriteRefused';
+  }
 }
 
-export function writeConfig(mutate: Mutation): ConfigSnapshot {
+/**
+ * Whether the write happened, said explicitly.
+ *
+ * Deliberately **not** "a `ConfigSnapshot` whose `errors` are non-empty". The
+ * caller's job is to decide whether to install the result as the cache, and
+ * that decision cannot be inferred from the snapshot: a *successful* write can
+ * legitimately produce zero projects and a non-empty `errors` — remove the last
+ * project from a file that also carries an unknown top-level key — which is
+ * indistinguishable, by shape alone, from a failure. Caching a failure would
+ * drop every project from main's view without anything on disk changing.
+ */
+export type WriteResult =
+  | { ok: true; snapshot: ConfigSnapshot }
+  | { ok: false; reason: string };
+
+const failed = (message: string): WriteResult => ({ ok: false, reason: message });
+
+export function writeConfig(mutate: Mutation): WriteResult {
   const path = configPath();
 
   let text: string;
@@ -67,7 +105,6 @@ export function writeConfig(mutate: Mutation): ConfigSnapshot {
     // Includes ENOENT. A file that is not there cannot be safely rewritten from
     // a mutation whose base was never seen; the caller reloads and retries.
     return failed(
-      path,
       `${LABEL}: could not read ${path} (${describe(cause)}) — nothing was written`,
     );
   }
@@ -79,7 +116,6 @@ export function writeConfig(mutate: Mutation): ConfigSnapshot {
     // `errors.length`: an unknown top-level key is advisory, and a config
     // carrying one is exactly the config this story promises to preserve.
     return failed(
-      path,
       `${LABEL}: ${path} could not be read (${current.errors[0] ?? 'unknown reason'}) — nothing was written`,
     );
   }
@@ -89,14 +125,19 @@ export function writeConfig(mutate: Mutation): ConfigSnapshot {
     document = JSON.parse(text) as ConfigDocument;
   } catch (cause) {
     return failed(
-      path,
       `${LABEL}: could not parse ${path} (${describe(cause)}) — nothing was written`,
     );
   }
 
-  // The version emitted is always current: a v1 file becomes v2 on the first
-  // save, which is the only moment a migration is not a surprise.
-  const next: ConfigDocument = { ...mutate(document), version: CONFIG_VERSION };
+  let next: ConfigDocument;
+  try {
+    // The version emitted is always current: a v1 file becomes v2 on the first
+    // save, which is the only moment a migration is not a surprise.
+    next = { ...mutate(document), version: CONFIG_VERSION };
+  } catch (cause) {
+    if (cause instanceof WriteRefused) return failed(`${LABEL}: ${cause.message}`);
+    throw cause;
+  }
 
   // Key order survives because `JSON.stringify` walks own string keys in
   // insertion order and the spread preserves the parsed document's order —
@@ -107,15 +148,53 @@ export function writeConfig(mutate: Mutation): ConfigSnapshot {
   const validated = parseConfig(serialised, LABEL);
   if (validated.fatal) {
     return failed(
-      path,
       `${LABEL}: refusing to write a file this build could not read back (${validated.errors[0] ?? 'unknown reason'})`,
     );
   }
 
-  const temp = join(dirname(path), `config.json.${process.pid}.tmp`);
+  /**
+   * Write beside the **link target**, not the link.
+   *
+   * `rename` replaces whatever is at the destination, so renaming over a
+   * symlink would delete the link and leave a regular file. A config symlinked
+   * into a dotfiles repo is a case this code deliberately supports — it is why
+   * `addProject` stores paths untilde'd — and losing the link on the first save
+   * from Settings would be a silent, surprising break.
+   *
+   * `realpathSync` also keeps the temp file on the same filesystem as the real
+   * target, which is what makes the rename atomic in the first place.
+   */
+  let target = path;
   try {
-    writeFileSync(temp, serialised, 'utf8');
-    renameSync(temp, path);
+    target = realpathSync(path);
+  } catch {
+    // The file was there a moment ago (it was read above). If it has gone since,
+    // the rename below fails and is reported like any other write failure.
+  }
+
+  const temp = join(dirname(target), `config.json.${process.pid}.tmp`);
+  try {
+    /**
+     * Written through a file descriptor so it can be `fsync`ed before the
+     * rename. `rename` alone makes the swap atomic *for a reader*, which
+     * defeats a torn file — but the new contents may still be in the page cache
+     * when the machine loses power, and the rename can land without them.
+     */
+    const fd = openSync(temp, 'w');
+    try {
+      writeSync(fd, serialised, null, 'utf8');
+      fsyncSync(fd);
+      // Preserve the mode the user chose. Without this a `chmod 600` config
+      // silently widens to the default on the first save from Settings.
+      try {
+        chmodSync(temp, statSync(target).mode & 0o777);
+      } catch {
+        // No existing file to copy a mode from; the default is correct.
+      }
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temp, target);
   } catch (cause) {
     try {
       unlinkSync(temp);
@@ -125,7 +204,6 @@ export function writeConfig(mutate: Mutation): ConfigSnapshot {
       // cleanup failure here would bury the cause the user can act on.
     }
     return failed(
-      path,
       `${LABEL}: could not write ${path} (${describe(cause)}) — the previous config is unchanged`,
     );
   }
@@ -133,11 +211,14 @@ export function writeConfig(mutate: Mutation): ConfigSnapshot {
   const projects = resolveProjects(validated.projects, validated.errors);
 
   return {
-    configPath: path,
-    templateWritten: false,
-    shell: validated.shell ?? DEFAULT_SHELL,
-    claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
-    projects,
-    errors: validated.errors,
+    ok: true,
+    snapshot: {
+      configPath: path,
+      templateWritten: false,
+      shell: validated.shell ?? DEFAULT_SHELL,
+      claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
+      projects,
+      errors: validated.errors,
+    },
   };
 }

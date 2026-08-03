@@ -10,7 +10,7 @@ import type { ProjectRow as Row } from '@/types/entity';
 
 import { ProjectRow } from '@features/settings/components/project-row';
 import { useProjectConfig } from '@hooks/use-project-config';
-import { useHiveStore, useProjects } from '@stores/hive-store';
+import { useProjects, useProjectsOwningLiveSessions } from '@stores/hive-store';
 
 /**
  * The Projects section of settings (story 101).
@@ -39,7 +39,7 @@ import { useHiveStore, useProjects } from '@stores/hive-store';
 export function ProjectsSection() {
   const merged = useProjects();
   const snapshot = useProjectConfig();
-  const entities = useHiveStore((state) => state.entities);
+  const owningLiveSessions = useProjectsOwningLiveSessions();
 
   /**
    * Whether a dialog is open, so the button cannot be double-fired.
@@ -49,13 +49,6 @@ export function ProjectsSection() {
    * racing the first, which would open two dialogs and write twice.
    */
   const [choosing, setChoosing] = useState(false);
-
-  /** Ids of projects that own a session that is not done. */
-  const owningLiveSessions = new Set(
-    Object.values(entities)
-      .filter((entity) => entity.kind === 'session' && entity.status !== 'done')
-      .map((entity) => (entity as { project: string }).project),
-  );
 
   const declared = snapshot?.projects ?? [];
   const rows: Row[] = declared.map((entry) => ({
@@ -113,7 +106,7 @@ export function ProjectsSection() {
                 detail={entry?.path ?? 'unresolved'}
                 isRepo={entry?.isRepo ?? true}
                 removeBlockedBy={
-                  owningLiveSessions.has(project.id)
+                  owningLiveSessions.includes(project.id)
                     ? // Story 103 owns the confirmation flow that lifts this.
                       'this project has live sessions — close them first'
                     : null

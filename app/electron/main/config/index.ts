@@ -16,7 +16,12 @@ import { parseConfig } from './parse';
 import { configPath, describe } from './paths';
 import { resolveProject, resolveProjects } from './resolve';
 import { CONFIG_TEMPLATE } from './template';
-import { writeConfig, type ConfigDocument } from './write';
+import {
+  WriteRefused,
+  writeConfig,
+  type ConfigDocument,
+  type WriteResult,
+} from './write';
 
 /**
  * The workspace config (story 090).
@@ -127,6 +132,38 @@ function refused(reason: string): ConfigSnapshot {
 }
 
 /**
+ * Read one entry's declared id off a raw draft entry.
+ *
+ * The draft is the file as JSON parsed it, so entries are unknown shapes — this
+ * is the same untrusted data `parse.ts` guards, reached one step earlier.
+ */
+function idOf(entry: unknown): string | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+  const id = (entry as Record<string, unknown>).id;
+  return typeof id === 'string' ? id : null;
+}
+
+/** Read one entry's declared path off a raw draft entry. */
+function pathOf(entry: unknown): string | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+  const declared = (entry as Record<string, unknown>).path;
+  return typeof declared === 'string' ? declared : null;
+}
+
+/**
+ * Install a write's result as the new cache, or report why nothing changed.
+ *
+ * `writeConfig` says explicitly whether it wrote. Inferring that from the
+ * snapshot would be wrong in both directions, which is why {@link WriteResult}
+ * exists — see its doc comment.
+ */
+function commit(result: WriteResult): ConfigSnapshot {
+  if (!result.ok) return refused(result.reason);
+  cached = result.snapshot;
+  return cached;
+}
+
+/**
  * Add a local directory (story 101).
  *
  * The incoming path re-runs the **entire** story 090 resolution — expand `~`,
@@ -147,29 +184,49 @@ export function addProject(request: AddProjectRequest): ConfigSnapshot {
   }
   const real = probe.path;
 
-  const existing = getConfig().projects.find((entry) => entry.path === real);
-  if (existing) {
-    return refused(`${LABEL}: ${real} is already added as "${existing.id}"`);
-  }
+  /**
+   * Identity and duplicate detection run against the **draft**, not the cache.
+   *
+   * The config is deliberately not watched, so the cached snapshot can be older
+   * than the file — a user who hand-edited it since launch (the workflow this
+   * story is replacing, not forbidding) would otherwise get a colliding id
+   * written to disk, which `resolveProjects` then disables on the next read.
+   * `writeConfig` re-reads from disk precisely so this check can be correct.
+   */
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
 
-  const taken = new Set(getConfig().projects.map((entry) => entry.id));
-  const id = deriveProjectId(basename(real), taken);
+      for (const entry of entries) {
+        const declared = pathOf(entry);
+        if (declared === null) continue;
+        const resolved = resolveProject({ id: 'probe', path: declared });
+        if (resolved.path === real) {
+          throw new WriteRefused(
+            `${real} is already added as "${idOf(entry) ?? 'an existing entry'}"`,
+          );
+        }
+      }
 
-  cached = writeConfig((draft) => ({
-    ...draft,
-    projects: [
-      ...projectsOf(draft),
-      {
-        id,
-        name: request.name ?? basename(real),
-        path: request.path,
-        icon: DEFAULT_PROJECT_ICON,
-        origin: 'local',
-      },
-    ],
-  }));
+      const taken = new Set(
+        entries.map(idOf).filter((id): id is string => id !== null),
+      );
 
-  return cached;
+      return {
+        ...draft,
+        projects: [
+          ...entries,
+          {
+            id: deriveProjectId(basename(real), taken),
+            name: request.name ?? basename(real),
+            path: request.path,
+            icon: DEFAULT_PROJECT_ICON,
+            origin: 'local',
+          },
+        ],
+      };
+    }),
+  );
 }
 
 /**
@@ -180,22 +237,19 @@ export function addProject(request: AddProjectRequest): ConfigSnapshot {
  * 103 owns the confirmation flow that lifts it.
  */
 export function removeProject(request: RemoveProjectRequest): ConfigSnapshot {
-  const present = getConfig().projects.some((entry) => entry.id === request.id);
-  if (!present) {
-    return refused(`${LABEL}: no project with id "${request.id}"`);
-  }
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      // Checked against the draft for the same reason `addProject` is: the
+      // cache can be older than the file.
+      if (!entries.some((entry) => idOf(entry) === request.id)) {
+        throw new WriteRefused(`no project with id "${request.id}"`);
+      }
 
-  cached = writeConfig((draft) => ({
-    ...draft,
-    projects: projectsOf(draft).filter(
-      (entry) =>
-        !(
-          typeof entry === 'object' &&
-          entry !== null &&
-          (entry as Record<string, unknown>).id === request.id
-        ),
-    ),
-  }));
-
-  return cached;
+      return {
+        ...draft,
+        projects: entries.filter((entry) => idOf(entry) !== request.id),
+      };
+    }),
+  );
 }

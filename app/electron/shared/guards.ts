@@ -248,8 +248,15 @@ function assertPath(value: unknown, label: string): string {
 
 export function parseAddProjectRequest(input: unknown): AddProjectRequest {
   const raw = assertShape(input, ['path'], 'addProject', ['name']);
+  /**
+   * `name` is a **display string**, not a path: it is rendered, never resolved.
+   * `assertText` is the guard for that — bounded and control-character free —
+   * where `assertPath` is deliberately unbounded and permissive, which is right
+   * for something about to be `realpath`'d and wrong for something about to be
+   * persisted and shown.
+   */
   const name =
-    raw.name === undefined ? undefined : assertPath(raw.name, 'addProject.name');
+    raw.name === undefined ? undefined : assertText(raw.name, 'addProject.name');
 
   // Conditional spread for the same reason `parseSpawnRequest` uses it: an
   // `undefined`-valued own key would be written to the config file and then

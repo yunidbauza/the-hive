@@ -653,6 +653,29 @@ const projectsOwningSessions = (state: HiveState): string[] => {
   return ids;
 };
 
+/** Ids of projects owning a session that is not done (story 101). */
+const projectsOwningLiveSessions = (state: HiveState): string[] => {
+  const ids: string[] = [];
+  for (const id of state.order) {
+    const entity = state.entities[id];
+    if (!entity || !isSession(entity) || entity.status === 'done') continue;
+    if (!ids.includes(entity.project)) ids.push(entity.project);
+  }
+  return ids;
+};
+
+/**
+ * Projects that cannot be removed yet because a session is still running in
+ * them (story 101; story 103 adds the confirmation that lifts this).
+ *
+ * A named selector rather than a component reading `state.entities` directly:
+ * subscribing to the whole entity map would re-render the settings pane on
+ * every status tick of every session, which is the cost the store's
+ * selector-hook rule exists to prevent.
+ */
+export const useProjectsOwningLiveSessions = () =>
+  useHiveStore(useShallow(projectsOwningLiveSessions));
+
 /**
  * The project list: the config's, merged with the fixtures (stories 031, 101).
  *
