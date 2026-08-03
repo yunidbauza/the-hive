@@ -56,7 +56,8 @@ A unit test that spawns real processes is a unit test that leaks them. Real term
 semantics get their own runner under Electron's ABI:
 
 ```sh
-ELECTRON_RUN_AS_NODE=1 pnpm exec electron scripts/run-pty-conformance.mjs   # story 098
+pnpm test:pty                      # builds, then runs the conformance matrix
+pnpm test:pty --filter signals     # one property group
 ```
 
 `ELECTRON_RUN_AS_NODE=1` runs the Electron binary as a plain Node process — same ABI,

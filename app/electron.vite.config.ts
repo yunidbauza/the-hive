@@ -23,7 +23,7 @@ export default defineConfig({
      */
     plugins: [externalizeDepsPlugin()],
     /**
-     * Two inputs, not two targets (story 091).
+     * Extra inputs, not extra targets (stories 091 and 098).
      *
      * The story calls the pty host "a third main-process-style target".
      * `electron-vite`'s `defineConfig` has exactly three keys — `main`,
@@ -39,6 +39,24 @@ export default defineConfig({
         input: {
           index: 'electron/main/index.ts',
           'pty-host': 'electron/pty-host/index.ts',
+          /**
+           * A third input, for the conformance suite (story 098).
+           *
+           * Not an entry point anything *runs* — it is the session manager
+           * emitted as an importable ESM module, so
+           * `scripts/run-pty-conformance.mjs` can drive **the real thing**
+           * under `ELECTRON_RUN_AS_NODE=1 electron`. A suite that talked to its
+           * own pty wrapper would prove that wrapper works and nothing about
+           * the product.
+           *
+           * It has to come through this build rather than be imported from
+           * source: the file is TypeScript, it resolves `@shared/*`, and its
+           * `node-pty` is built for Electron's ABI (story 084). This target
+           * already solves all three — `externalizeDepsPlugin` keeps `node-pty`
+           * unbundled, and rollup hoists what this shares with `pty-host` into
+           * the chunk they both import.
+           */
+          'session-manager': 'electron/pty-host/session-manager.ts',
         },
       },
     },

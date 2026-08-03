@@ -338,15 +338,44 @@ describe('resize', () => {
     expect(pty().resize).toHaveBeenCalledWith(120, 40);
   });
 
-  it('clamps zero to one rather than passing it through', () => {
+  it('drops a zero-size resize rather than clamping it', () => {
     manager.spawn(SPAWN, emit);
 
     manager.resize('hero-refresh', 0, 0);
 
-    // xterm reports 0 transiently while its container is hidden or
-    // mid-layout, and a pty resized to zero columns puts curses applications
-    // into states they do not recover from.
-    expect(pty().resize).toHaveBeenCalledWith(1, 1);
+    /**
+     * Dropped, not clamped — corrected by the conformance suite (story 098),
+     * which spawned a real shell, resized it to 0×0 and found it produced
+     * nothing legible afterwards.
+     *
+     * xterm reports 0 transiently while its container is hidden or mid-layout,
+     * and a pty resized to zero columns puts curses applications into states
+     * they do not recover from. Clamping to 1 was the same catastrophe one
+     * column wider — and nothing resizes it back, because the renderer's own
+     * geometry never changed and so it never sends anything new. A nonsensical
+     * size is a frame of bad measurement to ignore, not a request to honour
+     * approximately.
+     */
+    expect(pty().resize).not.toHaveBeenCalled();
+  });
+
+  it('drops a negative resize too', () => {
+    manager.spawn(SPAWN, emit);
+
+    manager.resize('hero-refresh', -10, -4);
+
+    expect(pty().resize).not.toHaveBeenCalled();
+  });
+
+  it('still applies the next valid resize after dropping a bad one', () => {
+    manager.spawn(SPAWN, emit);
+
+    // The guard must not latch: a hidden container reporting 0×0 for a frame
+    // cannot be allowed to freeze the geometry for the rest of the session.
+    manager.resize('hero-refresh', 0, 0);
+    manager.resize('hero-refresh', 120, 40);
+
+    expect(pty().resize).toHaveBeenCalledExactlyOnceWith(120, 40);
   });
 
   it('drops a resize that changes nothing', () => {

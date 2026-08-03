@@ -291,6 +291,50 @@ asserting it through a browser driver is slow, flaky and indirect.
 `ELECTRON_RUN_AS_NODE=1` runs the Electron binary as a plain Node process — same
 ABI, no window, no Chromium. It is what makes the middle layer possible.
 
+### The conformance suite (story 098)
+
+```sh
+pnpm test:pty                    # the full matrix
+pnpm test:pty --filter signals   # one property group
+```
+
+It drives the **real** session manager from story 092, not a reimplementation:
+`electron.vite.config.ts` emits `electron/pty-host/session-manager.ts` as a third
+input on the `main` target, so `out/main/session-manager.js` is an importable ESM
+module built for Electron's ABI with `node-pty` left external. A suite that talked
+to its own pty wrapper would prove that wrapper works and nothing about the
+product.
+
+Eight property groups — identity, environment, signals, resize, rendering,
+throughput, lifecycle, bootstrap — and three rules the harness owns so no
+individual assertion can forget them:
+
+- every wait is a **polled predicate with a deadline**, never a fixed sleep;
+- every test gets a scratch directory under the OS temp dir, removed afterwards;
+- every test kills its sessions and **asserts the process group is gone**, so a
+  leak fails the test that caused it rather than a later one.
+
+Two traps that cost time when rediscovered, both handled by the harness:
+
+- **A pty echoes its input.** `echo ALL-DONE` puts `ALL-DONE` in the transcript
+  before the command has run, so a sentinel must not appear literally in the
+  command that prints it — `emitSentinel()` splits it across a quote boundary.
+- **`$!` needs job control**, which varies by shell and platform. Background
+  helpers record their own `$$` to a file instead.
+
+#### Two things it found
+
+- `resize(0, 0)` **clamped to 1×1** rather than being dropped. A 1×1 pty emits
+  nothing legible, and nothing resizes it back: the renderer's own geometry
+  never changed, so it never sends anything new. Now dropped;
+  `session-manager.ts` carries the reasoning.
+- A process the user **explicitly backgrounds** (`pnpm dev &`) gets its own
+  process group under an interactive shell's job control, so `kill(-shellPid)`
+  does not reach it and it survives app shutdown. `claude` is unaffected — the
+  bootstrap runs it in the foreground — but "no orphans on shutdown" is not
+  absolute. Recorded on HIVE-49; closing it means signalling the pty's *session*
+  rather than one process group.
+
 ### Running it
 
 | Command | Runs |

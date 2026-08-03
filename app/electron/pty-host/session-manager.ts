@@ -281,12 +281,25 @@ export function createSessionManager(
       if (!session || session.status !== 'live') return;
 
       /**
-       * Clamped, never zero. xterm reports 0 transiently while its container
-       * is hidden or mid-layout, and resizing a pty to zero columns puts
-       * curses applications into states they do not recover from.
+       * **Dropped, not clamped** — found by the conformance suite (story 098).
+       *
+       * xterm reports 0 transiently while its container is hidden or
+       * mid-layout, and resizing a pty to zero columns puts curses
+       * applications into states they do not recover from. That much was
+       * always right. Clamping to 1 was not: a 1×1 pty is not a recovery, it
+       * is the same catastrophe one column wider — and nothing ever resizes it
+       * back, because the *renderer's* own geometry never changed, so it has
+       * no reason to send anything new. The session is simply ruined until
+       * something else happens to resize it.
+       *
+       * A nonsensical size is not a request to be honoured approximately; it
+       * is a frame of bad measurement to be ignored. Story 098's matrix says
+       * so directly: "zero-size resizes are dropped → geometry unchanged".
        */
-      const nextCols = Math.max(1, Math.floor(cols));
-      const nextRows = Math.max(1, Math.floor(rows));
+      const nextCols = Math.floor(cols);
+      const nextRows = Math.floor(rows);
+      if (!Number.isFinite(nextCols) || !Number.isFinite(nextRows)) return;
+      if (nextCols < 1 || nextRows < 1) return;
 
       // A no-op resize is still a SIGWINCH to the child, and a redraw.
       if (nextCols === session.cols && nextRows === session.rows) return;
