@@ -26,6 +26,8 @@ import type {
   TerminalTransport,
 } from '@lib/terminal/terminal-transport';
 
+import { TERMINAL_CHORD_EVENT } from '@lib/terminal/keymap';
+
 vi.mock('@xterm/addon-webgl');
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
@@ -489,23 +491,49 @@ describe('TerminalSurface', () => {
       expect(press({ key: 'Tab' })).toBe(true);
     });
 
-    it('declines the app chord so it can bubble to the stage', () => {
+    it('announces the app chord rather than letting the key bubble', () => {
       /**
-       * Returning false means xterm neither encodes the event nor calls
-       * `preventDefault`, so it keeps propagating and the window listener in
-       * `center-stage.tsx` sees it. The terminal declines the key rather than
-       * the app racing xterm for it.
+       * The terminal reports that a chord happened *here* and nothing more — it
+       * does not know the app will navigate. Firing a specific event instead of
+       * letting the keystroke bubble is what stops the app from listening for
+       * the raw combination on `window`, where `Cmd+←` is "move caret to start
+       * of line" in every text field.
        */
-      renderInteractive();
-      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+      const seen: string[] = [];
+      const onChord = (event: Event) => {
+        seen.push((event as CustomEvent<{ chord: string }>).detail.chord);
+      };
+      window.addEventListener(TERMINAL_CHORD_EVENT, onChord);
 
-      expect(
-        press(
+      try {
+        renderInteractive();
+        const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+
+        const handled = press(
           mac
             ? { key: 'ArrowLeft', metaKey: true }
             : { key: 'ArrowLeft', ctrlKey: true, shiftKey: true },
-        ),
-      ).toBe(false);
+        );
+
+        expect(handled).toBe(false);
+        expect(seen).toEqual(['back']);
+      } finally {
+        window.removeEventListener(TERMINAL_CHORD_EVENT, onChord);
+      }
+    });
+
+    it('announces nothing for an ordinary key', () => {
+      const seen: string[] = [];
+      const onChord = () => seen.push('fired');
+      window.addEventListener(TERMINAL_CHORD_EVENT, onChord);
+
+      try {
+        renderInteractive();
+        press({ key: 'ArrowLeft' });
+        expect(seen).toEqual([]);
+      } finally {
+        window.removeEventListener(TERMINAL_CHORD_EVENT, onChord);
+      }
     });
 
     it('copies the selection and clears it, without telling the pty', async () => {

@@ -2,7 +2,11 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { KeyHint } from '@components/ui/key-hint';
 import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
-import { backChordLabel, isMacPlatform } from '@lib/terminal/keymap';
+import {
+  backChordLabel,
+  isBackChord,
+  isMacPlatform,
+} from '@lib/terminal/keymap';
 import { isLiveTerminal } from '@lib/terminal/resolve-transport';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
@@ -79,6 +83,22 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
 
     // Only with an empty prompt — otherwise this would hijack ordinary editing.
     if (event.key === 'ArrowLeft' && value === '') {
+      event.preventDefault();
+      backToOrch();
+      return;
+    }
+
+    /**
+     * The terminal's chord works from this row too, so the hint above is true
+     * wherever the user is reading it (story 095).
+     *
+     * This is the one text field in the app that accepts it, and it is a narrow,
+     * deliberate trade: `Cmd+←` is natively "caret to start of line", which
+     * matters little in a single-line prompt that already treats a leftward key
+     * as "go back". Nothing else in the app overrides it — that was the bug this
+     * replaced.
+     */
+    if (live && isBackChord(event, isMacPlatform())) {
       event.preventDefault();
       backToOrch();
     }

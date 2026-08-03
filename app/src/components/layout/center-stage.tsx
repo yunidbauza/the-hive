@@ -9,7 +9,10 @@ import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
-import { isBackChord, isMacPlatform } from '@lib/terminal/keymap';
+import {
+  TERMINAL_CHORD_EVENT,
+  type TerminalChordDetail,
+} from '@lib/terminal/keymap';
 import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
@@ -115,25 +118,25 @@ export function CenterStage() {
   /**
    * The way out of a focused terminal (story 095).
    *
-   * Registered on the window rather than on the terminal, because the terminal
-   * is precisely the thing that must *not* interpret it: its custom key handler
-   * declines the chord so the event keeps bubbling, and it arrives here. That
-   * split is what keeps `components/terminal/` ignorant of what "back to the
-   * orchestrator" means — it knows only that some keys are not its own.
+   * Listens for the terminal's own chord *event*, not for a key combination.
    *
-   * The same chord works from the message row and from anywhere else on the
-   * stage. One binding, one meaning, wherever focus happens to be.
+   * A `keydown` listener on `window` was the obvious first implementation and
+   * it is wrong: `Cmd+←` is "move caret to start of line" in every native text
+   * field, so matching the combination alone fired for keystrokes originating
+   * anywhere — typing in the new-session picker and pressing `Cmd+←` closed the
+   * picker and discarded the query. Listening for an event only a terminal
+   * emits means the chord exists exactly where it was declined, and every text
+   * field in the app keeps its native bindings.
    */
   const backToOrch = useBackToOrch();
   useEffect(() => {
-    const isMac = isMacPlatform();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isBackChord(event, isMac)) return;
-      event.preventDefault();
+    const onChord = (event: Event) => {
+      const { detail } = event as CustomEvent<TerminalChordDetail>;
+      if (detail?.chord !== 'back') return;
       backToOrch();
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener(TERMINAL_CHORD_EVENT, onChord);
+    return () => window.removeEventListener(TERMINAL_CHORD_EVENT, onChord);
   }, [backToOrch]);
 
   return (

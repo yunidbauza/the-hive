@@ -30,6 +30,11 @@ export interface KeyEventLike {
   ctrlKey: boolean;
   metaKey: boolean;
   shiftKey: boolean;
+  /**
+   * Present on a real `KeyboardEvent`; optional so tests can build the common
+   * case without it. See the AltGr note in {@link decideTerminalKey}.
+   */
+  altKey?: boolean;
 }
 
 /**
@@ -64,9 +69,38 @@ export function isMacPlatform(): boolean {
  */
 export function isBackChord(event: KeyEventLike, isMac: boolean): boolean {
   if (event.key !== 'ArrowLeft') return false;
+  /**
+   * `Shift` is excluded on macOS deliberately. `Cmd+Shift+←` is "select to
+   * start of line" in every native text field, and a chord that ate it would
+   * break ordinary editing in the message row and the picker — the same class
+   * of mistake as taking `Ctrl+←` on Linux.
+   */
   return isMac
-    ? event.metaKey && !event.ctrlKey
+    ? event.metaKey && !event.ctrlKey && !event.shiftKey
     : event.ctrlKey && event.shiftKey;
+}
+
+/**
+ * The DOM event a terminal fires when it declines an app chord.
+ *
+ * The alternative — a `keydown` listener on `window` — was implemented first and
+ * is wrong, for a reason worth recording: `Cmd+←` is "move caret to start of
+ * line" in every native text field, and `Ctrl+Shift+←` is "extend selection by
+ * a word". A listener that matches on the key combination alone fires for
+ * keystrokes originating anywhere, so typing in the new-session picker and
+ * pressing `Cmd+←` closed the picker and discarded the query instead of moving
+ * the caret.
+ *
+ * Announcing it from the terminal inverts that: the chord exists only where it
+ * was declined. `components/terminal/` still learns nothing about what the app
+ * does with it — it reports a *keyboard* event, not a navigation intent — and
+ * every text field in the app keeps its native bindings.
+ */
+export const TERMINAL_CHORD_EVENT = 'hive:terminal-chord';
+
+/** What a {@link TERMINAL_CHORD_EVENT} carries. */
+export interface TerminalChordDetail {
+  chord: 'back';
 }
 
 /** How that chord is written in the key-hint row. */
@@ -91,6 +125,16 @@ export function decideTerminalKey(
   { isMac, hasSelection }: KeyContext,
 ): TerminalKeyAction {
   if (isBackChord(event, isMac)) return 'app-chord';
+
+  /**
+   * AltGr is not a modifier here, it is part of the character.
+   *
+   * Windows synthesises `ctrlKey: true, altKey: true` for AltGr, for legacy
+   * compatibility. On layouts where AltGr produces `c` or `v` — and there are
+   * several — every rule below would read the keystroke as a chord and swallow
+   * a character the user was trying to type into their shell.
+   */
+  if (event.altKey) return 'to-pty';
 
   // `event.key` is already case-shifted by Shift ('C', not 'c'), so compare
   // case-insensitively rather than listing both forms at every site.

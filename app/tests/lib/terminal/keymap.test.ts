@@ -47,6 +47,25 @@ describe('decideTerminalKey — the default', () => {
   });
 });
 
+describe('decideTerminalKey — AltGr', () => {
+  it('treats an Alt-modified key as a character, not a chord', () => {
+    /**
+     * Windows synthesises `ctrlKey: true, altKey: true` for AltGr, for legacy
+     * compatibility. On layouts where AltGr produces `c` or `v` the copy and
+     * paste rules would swallow a character the user was typing into a shell.
+     */
+    expect(
+      decideTerminalKey(key({ key: 'c', ctrlKey: true, altKey: true }), PC),
+    ).toBe('to-pty');
+    expect(
+      decideTerminalKey(
+        key({ key: 'v', ctrlKey: true, shiftKey: true, altKey: true }),
+        PC,
+      ),
+    ).toBe('to-pty');
+  });
+});
+
 describe('decideTerminalKey — macOS', () => {
   it('sends Ctrl+C to the pty even when text is selected', () => {
     /**
@@ -149,6 +168,18 @@ describe('the back chord', () => {
   it('leaves a bare ← to the child process', () => {
     expect(isBackChord(key({ key: 'ArrowLeft' }), true)).toBe(false);
     expect(isBackChord(key({ key: 'ArrowLeft' }), false)).toBe(false);
+  });
+
+  it('leaves Cmd+Shift+← to native text selection on macOS', () => {
+    /**
+     * "Select to start of line" in every native text field. A chord that ate it
+     * would break ordinary editing in the message row and the picker — the same
+     * mistake as taking `Ctrl+←` on Linux, and the reason this rule excludes
+     * Shift rather than ignoring it.
+     */
+    expect(
+      isBackChord(key({ key: 'ArrowLeft', metaKey: true, shiftKey: true }), true),
+    ).toBe(false);
   });
 
   it('is checked before the copy rules it shares a prefix with', () => {

@@ -12,6 +12,7 @@ import {
 
 import { CenterStage } from '@components/layout/center-stage';
 import { useHiveStore } from '@stores/hive-store';
+import { TERMINAL_CHORD_EVENT } from '@lib/terminal/keymap';
 import { useUiStore } from '@stores/ui-store';
 
 vi.mock('@xterm/xterm');
@@ -229,38 +230,52 @@ describe('CenterStage — the escape chord', () => {
     resetWebLinksAddonInstances();
   });
 
-  it('returns to the orchestrator from anywhere on the stage', () => {
-    /**
-     * Registered on the window, not the terminal — the terminal is precisely
-     * the thing that must not interpret it. Its key handler declines the chord
-     * so the event keeps bubbling and arrives here.
-     */
+  /** Fire the event a terminal emits when it declines an app chord. */
+  const emitChord = (chord: string) =>
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(TERMINAL_CHORD_EVENT, { detail: { chord } }),
+      );
+    });
+
+  it('returns to the orchestrator when a terminal reports the chord', () => {
     render(<CenterStage />);
     act(() => useUiStore.getState().openTab('hero-refresh'));
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
 
-    const isMac = /mac/i.test(navigator.platform || navigator.userAgent);
-    act(() => {
-      window.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'ArrowLeft',
-          metaKey: isMac,
-          ctrlKey: !isMac,
-          shiftKey: !isMac,
-        }),
-      );
-    });
+    emitChord('back');
 
     expect(useUiStore.getState().activeTab).toBe('orch');
   });
 
-  it('ignores a bare arrow key, which belongs to the child process', () => {
+  it('ignores a chord it does not recognise', () => {
     render(<CenterStage />);
     act(() => useUiStore.getState().openTab('hero-refresh'));
 
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-    });
+    emitChord('something-else');
+
+    expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+  });
+
+  it('does NOT listen for the raw key combination anywhere in the app', () => {
+    /**
+     * The regression this design exists for. `Cmd+←` is "move caret to start of
+     * line" in every native text field and `Ctrl+Shift+←` is "extend selection
+     * by a word". An earlier revision listened for the combination on `window`,
+     * so typing in the new-session picker and pressing it closed the picker and
+     * discarded the query — with no terminal involved at all.
+     */
+    render(<CenterStage />);
+    act(() => useUiStore.getState().openTab('hero-refresh'));
+
+    for (const init of [
+      { key: 'ArrowLeft', metaKey: true },
+      { key: 'ArrowLeft', ctrlKey: true, shiftKey: true },
+    ]) {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', init));
+      });
+    }
 
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
   });
@@ -270,18 +285,42 @@ describe('CenterStage — the escape chord', () => {
     act(() => useUiStore.getState().openTab('hero-refresh'));
     unmount();
 
-    const isMac = /mac/i.test(navigator.platform || navigator.userAgent);
-    act(() => {
-      window.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'ArrowLeft',
-          metaKey: isMac,
-          ctrlKey: !isMac,
-          shiftKey: !isMac,
-        }),
-      );
-    });
+    emitChord('back');
 
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+  });
+});
+
+describe('CenterStage — text fields keep their native bindings', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    useUiStore.getState().reset();
+    resetTerminalInstances();
+    resetFitAddonInstances();
+    resetWebLinksAddonInstances();
+  });
+
+  it('lets the picker keep its query when the chord keys are pressed in it', async () => {
+    /**
+     * The bug this whole design replaced, asserted end to end through the real
+     * input rather than through a synthetic window event.
+     *
+     * `Cmd+←` is "move caret to start of line" and `Ctrl+Shift+←` is "extend
+     * selection by a word". With a `window` keydown listener matching on the
+     * combination, pressing either while typing a search query closed the
+     * picker and threw the query away — no terminal anywhere near it.
+     */
+    const user = userEvent.setup();
+    render(<CenterStage />);
+    act(() => useUiStore.getState().openPicker());
+
+    const search = screen.getByLabelText('Search all projects');
+    await user.click(search);
+    await user.keyboard('hero');
+    await user.keyboard('{Meta>}{ArrowLeft}{/Meta}');
+    await user.keyboard('{Control>}{Shift>}{ArrowLeft}{/Shift}{/Control}');
+
+    expect(pickerTitle()).toBeInTheDocument();
+    expect(search).toHaveValue('hero');
   });
 });

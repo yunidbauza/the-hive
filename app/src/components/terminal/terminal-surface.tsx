@@ -6,7 +6,12 @@ import { useEffect, useRef, useState } from 'react';
 
 import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
-import { decideTerminalKey, isMacPlatform } from '@lib/terminal/keymap';
+import {
+  TERMINAL_CHORD_EVENT,
+  decideTerminalKey,
+  isMacPlatform,
+  type TerminalChordDetail,
+} from '@lib/terminal/keymap';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 
 import '@xterm/xterm/css/xterm.css';
@@ -183,13 +188,23 @@ export function TerminalSurface({
             pasteFromClipboard(terminal);
             return false;
           /**
-           * Returning false leaves the event untouched — xterm neither encodes
-           * it nor calls `preventDefault` — so it keeps bubbling to the app's
-           * own listener. That is the escape hatch: the terminal declines it
-           * rather than the app racing xterm for it.
+           * Announced, not merely declined.
+           *
+           * The terminal says "a chord happened here" and nothing more — it
+           * does not know that the app will navigate, which is what keeps this
+           * component ignorant of domain concepts. Firing a specific event
+           * rather than letting the keystroke bubble is what stops the app from
+           * having to sniff every `keydown` on `window`, where the same
+           * combination is "move caret to start of line" in any text field.
            */
-          case 'app-chord':
+          case 'app-chord': {
+            const detail: TerminalChordDetail = { chord: 'back' };
+            container.dispatchEvent(
+              new CustomEvent(TERMINAL_CHORD_EVENT, { detail, bubbles: true }),
+            );
+            event.preventDefault();
             return false;
+          }
           default:
             return true;
         }
