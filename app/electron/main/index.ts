@@ -3,6 +3,7 @@ import { app } from 'electron';
 import { installContentSecurityPolicy } from './csp';
 import { registerIpcHandlers } from './ipc';
 import { registerLifecycle } from './lifecycle';
+import { registerPtyHost } from './pty-host';
 import { createWindow } from './window';
 
 /**
@@ -25,6 +26,14 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   registerIpcHandlers();
+
+  /**
+   * Creates the pty-host supervisor and registers its teardown — it does
+   * **not** start a process (story 091). The host is forked lazily on the
+   * first session, because most launches land on the orchestrator console,
+   * which owns no PTY.
+   */
+  registerPtyHost();
 
   /**
    * The CSP has to be installed before any renderer loads, and

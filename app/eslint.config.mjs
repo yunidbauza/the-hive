@@ -233,9 +233,35 @@ export default tseslint.config(
             },
             {
               target: './src/**/*',
-              from: ['./electron/main/**/*', './electron/preload/**/*'],
+              from: [
+                './electron/main/**/*',
+                './electron/preload/**/*',
+                './electron/pty-host/**/*',
+              ],
               message:
                 'The renderer may only see @shared. Reaching into electron/main/ or electron/preload/ would bundle main-process code into the renderer.',
+            },
+            /**
+             * THE HOST IS DUMB ON PURPOSE (story 091).
+             *
+             * It owns processes, not policy: it does not read config, does not
+             * know what a project is, and does not decide what to run. Shell,
+             * args, cwd and env all arrive fully resolved on the command.
+             *
+             * That is not a style preference — it is what makes the host
+             * drivable in isolation by the conformance suite (story 098), and
+             * what stops a process whose job is to run whatever it is told
+             * from also being the thing that decides what to run.
+             */
+            {
+              target: './electron/pty-host/**/*',
+              from: [
+                './src/**/*',
+                './electron/main/**/*',
+                './electron/preload/**/*',
+              ],
+              message:
+                'The pty host owns processes, not policy. It may import electron/shared/ only — config, fixtures and main-process code are all off limits.',
             },
           ],
         },

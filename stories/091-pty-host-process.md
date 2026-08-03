@@ -151,3 +151,54 @@ Real supervision — an actual host process actually crashing — belongs to
 - Spawning actual PTYs — [092](092-pty-session-manager.md).
 - Renderer-facing channels and flow control — [093](093-pty-ipc-protocol.md).
 - More than one host process, or per-session isolation. One host, many PTYs.
+
+## UPDATED SPECS
+
+### 1. A second rollup input, not a third target
+
+The story describes the host as "bundled as a third main-process-style target in
+`electron.vite.config.ts`". `electron-vite`'s `defineConfig` has exactly three keys —
+`main`, `preload`, `renderer` — and no fourth, so the same outcome is expressed as a
+second **input** on the `main` target:
+
+```ts
+main: {
+  build: { rollupOptions: { input: {
+    index: 'electron/main/index.ts',
+    'pty-host': 'electron/pty-host/index.ts',
+  } } },
+}
+```
+
+**Resolution: follow the code.** This is strictly better than a separate target — the
+host inherits main's module format, its `externalizeDepsPlugin` (so `node-pty` stays
+unbundled in 092), and its output directory, which is how `import.meta.dirname` finds
+`pty-host.js` next to `index.js`.
+
+### 2. `out/main/` is ESM, so the host is an ESM `utilityProcess` entry
+
+Not a deviation from the story, but the load-bearing fact the design rests on and the
+one thing that could have failed silently. It was verified with a spike before the
+design was committed to, and is now asserted by
+`tests/e2e/electron/pty-host.spec.ts`, which forks the **built** host inside the real
+app and checks it answers a ping and exits on `shutdown`.
+
+### 3. Session operations ship as a documented placeholder
+
+The story's own scope puts "spawning actual PTYs" in 092, so
+`electron/pty-host/sessions.ts` defines the `SessionOperations` seam and a
+`createPendingSessions()` implementation that answers a spawn with a typed error
+rather than silence. Story 092 replaces that one factory; nothing else in the host
+moves.
+
+That is the whole argument for doing 091 first: retrofitting a supervisor after 092's
+handlers and 093's transport are written against in-process calls means re-doing the
+async shape of both.
+
+### Notes
+
+- The renderer-facing `pty:spawn` channel is **not** wired to the supervisor here —
+  093 owns the IPC handlers and their flow control. The supervisor's API
+  (`onData`, `onExit`, `onSessionLost`, `onError`) is the surface 093 consumes.
+- `SESSION_LOST_NOTICE` is exported from the protocol but not yet rendered; the
+  terminal that writes it is story 095's surface.

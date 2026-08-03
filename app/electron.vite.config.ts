@@ -22,7 +22,26 @@ export default defineConfig({
      * arrives in story 092.
      */
     plugins: [externalizeDepsPlugin()],
-    build: { rollupOptions: { input: 'electron/main/index.ts' } },
+    /**
+     * Two inputs, not two targets (story 091).
+     *
+     * The story calls the pty host "a third main-process-style target".
+     * `electron-vite`'s `defineConfig` has exactly three keys — `main`,
+     * `preload`, `renderer` — and no fourth, so the same outcome is expressed
+     * as a second rollup input on the `main` target. That is strictly better
+     * than a separate build: the host inherits main's module format, its
+     * `externalizeDepsPlugin` (so `node-pty` stays unbundled in story 092),
+     * and its output directory, which is how `import.meta.dirname` can find
+     * `pty-host.js` next to `index.js`.
+     */
+    build: {
+      rollupOptions: {
+        input: {
+          index: 'electron/main/index.ts',
+          'pty-host': 'electron/pty-host/index.ts',
+        },
+      },
+    },
     resolve: { alias: aliases },
   },
   preload: {

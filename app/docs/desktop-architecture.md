@@ -93,6 +93,54 @@ Comments in the file are `"//"`-prefixed keys, the same convention
 `package.json` already uses here — JSON has no comment syntax, and the first-run
 template has to explain itself in the file the user opens.
 
+## The pty host
+
+**PTYs run in a dedicated `utilityProcess`, not in main.** `node-pty` is a
+native addon and a segfault in a native addon is not catchable; in main that is
+a hard crash of the whole application — every live session dies, and the UI that
+would have reported the failure dies first. VS Code runs its terminals in a
+separate pty host for exactly this reason, and the more concurrent sessions
+there are, the worse "one bad PTY kills everything" gets.
+
+```
+renderer  ──contextBridge──►  main  ──MessagePort──►  pty host
+                              (policy)                (processes)
+```
+
+Main stays the single policy point — it owns sender validation and session-id
+ownership, and neither can be delegated to a process whose job is to run
+whatever it is told. The renderer never talks to the host.
+
+`utilityProcess`, not `child_process.fork`: the child is an **Electron** Node
+process, so it has the ABI `node-pty` was built for; messaging is MessagePort
+structured-clone rather than a hand-rolled stdio protocol; and Electron ties the
+child's lifetime to the app so a hard quit cannot orphan it.
+
+Split across three places: `electron/shared/pty-host-protocol.ts` (the wire
+types, deliberately distinct from the renderer-facing `ipc-contract.ts` so the
+two can diverge), `electron/main/pty-host/` (the supervisor), and
+`electron/pty-host/` (the child). The child is a **second rollup input on the
+`main` target**, so it lands at `out/main/pty-host.js` and inherits main's
+module format, externals and output directory.
+
+Supervisor behaviour worth knowing before changing it:
+
+- **Lazy start.** Nothing forks until the first spawn — most launches land on
+  the orchestrator console, which owns no PTY.
+- **Heartbeat.** Main pings; three unanswered pings condemn the host. A host can
+  hang without exiting, and a hang is indistinguishable from a dead terminal
+  unless something is watching.
+- **Crashes do not resurrect sessions.** A restarted host has no memory of the
+  old one's children — re-running `claude` unasked could redo work. The user
+  restarts a session explicitly.
+- **Crash-loop guard.** Four crashes inside 60s stops restarts entirely.
+- **Shutdown asks, then insists.** `shutdown` → wait → `kill()`. Killing first
+  orphans every `claude` the sessions own, which is the bug story 098 asserts
+  against.
+
+Everything above is injected (`fork`, the clock, every timeout), so the whole
+story is asserted with fake timers instead of by killing real processes.
+
 ## Two ABI facts that produce unreadable errors when forgotten
 
 **`node-pty@1.1.0` does NOT need rebuilding for Electron.** It ships **N-API**

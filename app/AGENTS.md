@@ -80,7 +80,15 @@ one still fires.
 | everything except `src/stores/**` | `src/data/**` |
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
-| `src/**` | `electron/main/**`, `electron/preload/**` |
+| **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
+| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**` |
+
+The pty host **owns processes, not policy** (story 091). It does not read
+config, does not know what a project is, and does not decide what to run —
+`shell`, `args`, `cwd` and `env` all arrive fully resolved on the command. That
+fence is what lets the conformance suite drive a host in isolation, and what
+stops a process whose job is to run whatever it is told from also being the
+thing that decides what to run.
 
 `electron/shared/**` is the **only** module both processes may import, and it is
 types and constants only — no runtime imports, no Node APIs, no DOM APIs. The
