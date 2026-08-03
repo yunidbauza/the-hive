@@ -405,3 +405,172 @@ describe('schema v1 compatibility (story 101)', () => {
     });
   });
 });
+
+/**
+ * Mutation (story 101).
+ *
+ * These go through the module's cache deliberately: `addProject` reads
+ * `getConfig()` to decide the id and to detect duplicates, so a test that
+ * bypassed the cache would not exercise the path the IPC handler takes.
+ */
+async function mutable() {
+  vi.resetModules();
+  return import('../../../../electron/main/config/index');
+}
+
+describe('addProject', () => {
+  it('adds a directory, deriving id and name from the basename', async () => {
+    const repo = join(sandbox, 'my-repo');
+    mkdirSync(repo);
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    const snapshot = module.addProject({ path: repo });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects).toHaveLength(1);
+    expect(snapshot.projects[0]?.id).toBe('my-repo');
+    expect(snapshot.projects[0]?.name).toBe('my-repo');
+    expect(snapshot.projects[0]?.status).toBe('ok');
+    // The cache is refreshed, so main and the renderer cannot disagree.
+    expect(module.getConfig().projects).toHaveLength(1);
+  });
+
+  it('rejects a relative path, a file, and a missing directory without writing', async () => {
+    const file = join(sandbox, 'notes.txt');
+    writeFileSync(file, 'not a directory');
+    const path = writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    expect(module.addProject({ path: 'relative/path' }).errors[0]).toMatch(
+      /not-absolute/,
+    );
+    expect(module.addProject({ path: file }).errors[0]).toMatch(/not-a-directory/);
+    expect(module.addProject({ path: join(sandbox, 'nope') }).errors[0]).toMatch(
+      /missing/,
+    );
+
+    expect(module.getConfig().projects).toHaveLength(0);
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects).toEqual([]);
+  });
+
+  it('expands ~ and stores the path as the user wrote it', async () => {
+    mkdirSync(join(home, 'tilde-repo'), { recursive: true });
+    const path = writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    const snapshot = module.addProject({ path: '~/tilde-repo' });
+
+    expect(snapshot.projects[0]?.status).toBe('ok');
+    // Resolved for identity and duplicate detection; stored verbatim, so the
+    // file stays portable across machines with different home directories.
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects[0].path).toBe(
+      '~/tilde-repo',
+    );
+  });
+
+  it('is a no-op when the resolved path is already added', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    module.addProject({ path: repo });
+    const second = module.addProject({ path: repo });
+
+    expect(second.projects).toHaveLength(1);
+    expect(second.errors.some((error) => /already added/.test(error))).toBe(true);
+  });
+
+  it('suffixes a colliding id derived from the same basename', async () => {
+    const first = join(sandbox, 'one', 'api');
+    const second = join(sandbox, 'two', 'api');
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second, { recursive: true });
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    module.addProject({ path: first });
+    const snapshot = module.addProject({ path: second });
+
+    expect(snapshot.projects.map((entry) => entry.id)).toEqual(['api', 'api-2']);
+  });
+
+  it('honours an explicit name without changing the id', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    const snapshot = module.addProject({ path: repo, name: 'My Repo' });
+
+    expect(snapshot.projects[0]?.name).toBe('My Repo');
+    expect(snapshot.projects[0]?.id).toBe('repo');
+  });
+
+  it('adds a directory that is not a git repository, tagging it', async () => {
+    const plain = join(sandbox, 'plain');
+    mkdirSync(plain);
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    const snapshot = module.addProject({ path: plain });
+
+    // A PTY needs a cwd, not a repo. Refusing here would be the app inventing
+    // a rule the shell does not have.
+    expect(snapshot.projects[0]?.status).toBe('ok');
+    expect(snapshot.projects[0]?.isRepo).toBe(false);
+  });
+
+  it('upgrades a v1 file on the first add', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({ '//': 'kept', version: 1, projects: [] });
+    const module = await mutable();
+
+    module.addProject({ path: repo });
+
+    const after = JSON.parse(readFileSync(path, 'utf8'));
+    expect(after.version).toBe(2);
+    expect(after['//']).toBe('kept');
+  });
+});
+
+describe('removeProject', () => {
+  it('drops exactly one entry and leaves every other line intact', async () => {
+    const keep = join(sandbox, 'keep');
+    const drop = join(sandbox, 'drop');
+    mkdirSync(keep);
+    mkdirSync(drop);
+    const path = writeConfig({
+      '//': 'kept',
+      version: 2,
+      projects: [
+        { id: 'keep', name: 'Keep', path: keep, icon: 'ph-folder', origin: 'local' },
+        { id: 'drop', name: 'Drop', path: drop, icon: 'ph-folder', origin: 'local' },
+      ],
+    });
+    const module = await mutable();
+
+    const snapshot = module.removeProject({ id: 'drop' });
+
+    expect(snapshot.errors).toEqual([]);
+    const after = JSON.parse(readFileSync(path, 'utf8'));
+    expect(after['//']).toBe('kept');
+    expect(after.projects.map((entry: { id: string }) => entry.id)).toEqual(['keep']);
+    expect(module.getConfig().projects).toHaveLength(1);
+  });
+
+  it('reports an unknown id without writing', async () => {
+    const path = writeConfig({ version: 2, projects: [] });
+    const before = readFileSync(path, 'utf8');
+    const module = await mutable();
+
+    const snapshot = module.removeProject({ id: 'ghost' });
+
+    expect(snapshot.errors.some((error) => /no project with id "ghost"/.test(error))).toBe(
+      true,
+    );
+    expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+});

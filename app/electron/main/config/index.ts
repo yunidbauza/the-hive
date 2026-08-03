@@ -1,17 +1,22 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_PROJECT_ICON,
   DEFAULT_SHELL,
   emptySnapshot,
+  type AddProjectRequest,
   type ConfigSnapshot,
+  type RemoveProjectRequest,
 } from '@shared/config-contract';
 
+import { deriveProjectId } from './identity';
 import { parseConfig } from './parse';
 import { configPath, describe } from './paths';
-import { resolveProjects } from './resolve';
+import { resolveProject, resolveProjects } from './resolve';
 import { CONFIG_TEMPLATE } from './template';
+import { writeConfig, type ConfigDocument } from './write';
 
 /**
  * The workspace config (story 090).
@@ -102,5 +107,95 @@ export function getConfig(): ConfigSnapshot {
 /** Re-read the file. This is what `window.hive.config.reload()` reaches. */
 export function reloadConfig(): ConfigSnapshot {
   cached = loadConfig();
+  return cached;
+}
+
+/**
+ * Read the `projects` array off a raw document, tolerating a missing one.
+ *
+ * The document has already been parsed and found non-fatal by `writeConfig`, so
+ * a `projects` key that is not an array was reported there and is treated as
+ * absent here rather than throwing on the user's data.
+ */
+function projectsOf(document: ConfigDocument): unknown[] {
+  return Array.isArray(document.projects) ? document.projects : [];
+}
+
+/** A snapshot of the current config carrying one reason it could not change. */
+function refused(reason: string): ConfigSnapshot {
+  return { ...getConfig(), errors: [reason] };
+}
+
+/**
+ * Add a local directory (story 101).
+ *
+ * The incoming path re-runs the **entire** story 090 resolution — expand `~`,
+ * require absolute, `realpath`, require a directory. The native dialog is a UX
+ * step, not a capability grant: a renderer that skipped the dialog and posted a
+ * path directly gets exactly the same treatment, because main's validation is
+ * the actual gate either way.
+ *
+ * The path is stored **as the user wrote it**, tilde and all. Storing the
+ * resolved path instead would bake this machine's home directory into a file
+ * people keep in dotfile repos; `realpath` is used for identity and duplicate
+ * detection, which is what it is good for.
+ */
+export function addProject(request: AddProjectRequest): ConfigSnapshot {
+  const probe = resolveProject({ id: 'probe', path: request.path });
+  if (probe.status !== 'ok' || probe.path === null) {
+    return refused(`${LABEL}: cannot add ${request.path} (${probe.status})`);
+  }
+  const real = probe.path;
+
+  const existing = getConfig().projects.find((entry) => entry.path === real);
+  if (existing) {
+    return refused(`${LABEL}: ${real} is already added as "${existing.id}"`);
+  }
+
+  const taken = new Set(getConfig().projects.map((entry) => entry.id));
+  const id = deriveProjectId(basename(real), taken);
+
+  cached = writeConfig((draft) => ({
+    ...draft,
+    projects: [
+      ...projectsOf(draft),
+      {
+        id,
+        name: request.name ?? basename(real),
+        path: request.path,
+        icon: DEFAULT_PROJECT_ICON,
+        origin: 'local',
+      },
+    ],
+  }));
+
+  return cached;
+}
+
+/**
+ * Remove one entry by id (story 101).
+ *
+ * Whether removal is *allowed* — a project that owns live sessions — is the
+ * renderer's gate for this story: the button is disabled with a tooltip. Story
+ * 103 owns the confirmation flow that lifts it.
+ */
+export function removeProject(request: RemoveProjectRequest): ConfigSnapshot {
+  const present = getConfig().projects.some((entry) => entry.id === request.id);
+  if (!present) {
+    return refused(`${LABEL}: no project with id "${request.id}"`);
+  }
+
+  cached = writeConfig((draft) => ({
+    ...draft,
+    projects: projectsOf(draft).filter(
+      (entry) =>
+        !(
+          typeof entry === 'object' &&
+          entry !== null &&
+          (entry as Record<string, unknown>).id === request.id
+        ),
+    ),
+  }));
+
   return cached;
 }
