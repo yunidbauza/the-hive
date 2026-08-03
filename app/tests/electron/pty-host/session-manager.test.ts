@@ -493,6 +493,21 @@ describe('the session cap', () => {
     });
   });
 
+  it('counts live sessions, not retained transcripts', () => {
+    manager = build({ maxSessions: 1 });
+
+    manager.spawn({ ...SPAWN, sessionId: 'a' }, emit);
+    pty().emitExit(0);
+
+    manager.spawn({ ...SPAWN, sessionId: 'b' }, emit);
+
+    // The exited entry is kept so its transcript survives, but it owns no
+    // process. Counting it would mean an app that opened and closed 24
+    // sessions could never open a 25th.
+    expect(manager.isLive('b')).toBe(true);
+    expect(sent.filter((m) => m.type === 'error')).toEqual([]);
+  });
+
   it('refuses a session id it already has', () => {
     manager.spawn(SPAWN, emit);
     manager.spawn(SPAWN, emit);
@@ -537,6 +552,17 @@ describe('exit', () => {
       exitCode: 137,
       signal: 9,
     });
+  });
+
+  it('reports an exit exactly once, however many times the event fires', () => {
+    manager.spawn(SPAWN, emit);
+
+    pty().emitExit(0);
+    pty().emitExit(0);
+
+    // Story 093 promises exit lands after the final data flush. A second exit
+    // would land after nothing.
+    expect(sent.filter((message) => message.type === 'exit')).toHaveLength(1);
   });
 
   it('emits every pending data message before the exit', () => {

@@ -239,3 +239,16 @@ spec that spawns one under Electron's ABI:
       `sleep 100`, `vim`/`htop` rendering and exiting cleanly, and the
       orphan-freedom `pgrep` check — these need the full conformance runner and
       remain **story 098**'s. The plumbing each depends on is unit-asserted here.
+
+### 5. The session cap counts live sessions
+
+Found in self-review. The registry retains exited entries on purpose — their
+transcript is the error the user still needs to read — but the cap was checking
+`sessions.size`, which includes them. An app that had opened and closed 24 sessions
+over a long run could never open a 25th, and the refusal would blame a limit nothing
+was currently using.
+
+The cap now counts entries whose status is `live`. The retained-entry memory growth
+that follows from never cleaning up (one bounded 256 KB buffer per dead session) is a
+real remaining cost; the "user closes a session" verb that would release it belongs
+to **096**.

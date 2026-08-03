@@ -140,6 +140,12 @@ export function createSessionManager(
     exitCode: number,
     exitSignal?: number,
   ): void {
+    // A process exits once, but nothing about `onExit` guarantees the event
+    // fires once. A second `exit` message would break story 093's ordering
+    // contract, which promises exit lands after the final data flush — twice
+    // means the second one lands after nothing.
+    if (session.status === 'exited') return;
+
     clearKillTimer(session);
 
     // Flush whatever the decoder was still holding, so a transcript never ends
@@ -173,7 +179,20 @@ export function createSessionManager(
         return;
       }
 
-      if (sessions.size >= maxSessions) {
+      /**
+       * The cap counts **live** sessions, not registry entries.
+       *
+       * Exited entries are retained on purpose — their transcript is the error
+       * the user still needs to read — but they own no process. Counting them
+       * would mean an app that has opened and closed 24 sessions over a long
+       * session can never open a 25th, with a message blaming a limit that
+       * nothing is currently using.
+       */
+      const live = [...sessions.values()].filter(
+        (session) => session.status === 'live',
+      ).length;
+
+      if (live >= maxSessions) {
         // Refused with a clear error rather than letting the app fork-bomb a
         // laptop.
         fail(
