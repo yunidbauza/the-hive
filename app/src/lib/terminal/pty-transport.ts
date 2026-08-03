@@ -1,23 +1,334 @@
-import { createStaticTransport } from '@lib/terminal/static-transport';
-import type { TerminalTransport } from '@lib/terminal/terminal-transport';
+import type { TermColor } from '@/types/terminal';
+
+import { colorize } from '@lib/terminal/ansi';
+import { signalName } from '@lib/terminal/signals';
+import type {
+  TerminalDataHandler,
+  TerminalTransport,
+} from '@lib/terminal/terminal-transport';
 
 /**
- * The desktop transport — a placeholder until story 094 (story 083).
+ * The desktop transport: a real PTY, behind the same three methods (story 094).
  *
- * It exists as its own module, rather than as an inline branch in
- * `resolve-transport.ts`, for two reasons:
+ * This module is the claim the architecture has been making since story 042 —
+ * that swapping the backend touches `src/lib/terminal/` and nothing else —
+ * being cashed in. Two things about it are load-bearing:
  *
- * - **The routing is testable now.** `resolveTransport` genuinely calls a
- *   different function on desktop, so a test can mock this module and assert
- *   the branch. An inline `isDesktop() ? a(id) : a(id)` would be dead code
- *   wearing a decision's clothes.
- * - **Story 094 has exactly one file to write.** The seam is already the shape
- *   it will need; only the body here changes, and nothing that calls it moves.
- *
- * Until then this returns the recorded transport, so the desktop build shows
- * the same transcripts the browser build does. That is not a degradation —
- * there are no PTYs yet in either target.
+ * - **It reads no store.** `StaticTransport` does, and the lint zone permits it
+ *   here too; this file must not, and the fence cannot enforce that. Session and
+ *   project ids arrive as arguments. Everything else is the bridge.
+ * - **The interface did not grow a method.** It grew one *optional argument* to
+ *   the data callback (`parsed`), for a reason documented on
+ *   `TerminalDataHandler` and surfaced loudly rather than slipped in: story
+ *   093's flow control is meaningless without an ack, and no layer but the
+ *   surface knows when xterm has parsed a chunk.
  */
-export function createPtyTransport(entityId: string): TerminalTransport {
-  return createStaticTransport(entityId);
+
+/**
+ * Geometry for the very first spawn.
+ *
+ * The transport has no viewport — it is not a component and never measures
+ * anything. 80×24 is the conventional default a shell assumes when nothing tells
+ * it otherwise, and it is corrected within a frame: `TerminalSurface`'s
+ * `ResizeObserver` fires on mount and calls `resize` with the real size. The
+ * alternative — plumbing geometry into a factory that has no business knowing
+ * it — would put a layout concern in the transport permanently to save one
+ * `SIGWINCH` once.
+ */
+const DEFAULT_COLS = 80;
+const DEFAULT_ROWS = 24;
+
+/**
+ * How much output is kept per entity for a surface that subscribes late.
+ *
+ * Matches the host's own scrollback budget. It is deliberately a *byte* cap
+ * rather than a line count: a single `pnpm build` line can be kilobytes wide,
+ * and a line-capped buffer bounds nothing that matters.
+ */
+const REPLAY_BYTES = 256 * 1024;
+
+/**
+ * A lifecycle line, written into the transcript rather than rendered as chrome.
+ *
+ * These belong to the terminal, in the place and order they happened — a React
+ * banner beside the terminal would float to the bottom and lose its position in
+ * the story the transcript is telling.
+ *
+ * The leading CRLF is not decoration. A pty's last output routinely ends
+ * mid-line (a prompt, a progress bar), and appending to it would produce
+ * `$ ── session exited ──`.
+ */
+function notice(text: string, color: TermColor): string {
+  return `\r\n${colorize(`── ${text} ──`, color)}\r\n`;
+}
+
+/**
+ * Colour by what the user has to *do* about it, not by severity theatre.
+ *
+ * A clean exit is dim: it is the expected end of a program and needs no
+ * attention. A non-zero code and an abnormal termination are amber — something
+ * finished badly and the transcript above it is worth reading; the story
+ * specifies amber for the non-zero case and this extends the same reading to
+ * signals, which are the same class of outcome. A lost host is red because it
+ * is the only one of these that is *our* fault rather than the program's: no
+ * conclusion was reached, and the output above it may simply stop mid-thought.
+ *
+ * `TERM.amber` — not `--cc-amber`. They are different values in different
+ * systems, and only one of them has a path to a terminal cell (see `ansi.ts`).
+ */
+const EXITED = notice('session exited', 'dim');
+const LOST = notice('session lost (pty host crashed)', 'red');
+const GAP = notice('output gap detected', 'amber');
+
+const exitedWithCode = (code: number): string =>
+  notice(`session exited (code ${code})`, 'amber');
+
+const terminatedBy = (signal: number): string =>
+  notice(`session terminated (${signalName(signal)})`, 'amber');
+
+const spawnRefused = (reason: string): string => notice(reason, 'red');
+
+/**
+ * Everything the renderer knows about one entity's PTY.
+ *
+ * Shared per entity, not per subscriber, because **two surfaces bound to one
+ * session must both receive output and neither may spawn a second process**.
+ * The prototype already mounts a session's terminal in more than one place, and
+ * a per-subscriber spawn would fork a second `claude` in the same repository —
+ * a data-loss bug wearing a rendering bug's clothes.
+ */
+interface EntityChannel {
+  subscribers: Set<TerminalDataHandler>;
+  /**
+   * The transcript so far, for a surface that mounts late.
+   *
+   * Held here rather than fetched from the host's replay buffer on demand. The
+   * host's copy exists for a renderer that was never running (story 092); this
+   * one exists for a tab switch, and it is both exact and *synchronous* — a
+   * replay that resolved asynchronously would interleave with live chunks
+   * arriving in the meantime, and the transcript would come out shuffled.
+   */
+  buffer: string[];
+  bufferBytes: number;
+  /** Last `seq` seen, for gap detection. `null` until the first chunk. */
+  lastSeq: number | null;
+  /**
+   * A spawn has been requested. Never reset — not even after an exit or a lost
+   * host.
+   *
+   * This is what makes `ensureSpawned` idempotent *and* keeps the transport from
+   * auto-respawning. Unmounting a surface happens on every tab switch; if a
+   * remount could restart a dead session, navigating past a finished agent would
+   * silently start it working again. Restarting is an explicit user action
+   * (story 096).
+   */
+  spawnRequested: boolean;
+  /** The process is gone. Further data for this id is stale and dropped. */
+  closed: boolean;
+  /** Drops this channel's three bridge subscriptions. Test-only. */
+  dispose: () => void;
+}
+
+const channels = new Map<string, EntityChannel>();
+
+function pty(): NonNullable<Window['hive']>['pty'] {
+  const bridge = window.hive;
+  // Unreachable through `resolveTransport`, which branches on `isDesktop()`.
+  // Explicit anyway: the alternative is a TypeError from inside a keystroke
+  // handler, which reads as an xterm bug.
+  if (!bridge) throw new Error('pty transport requires the desktop bridge');
+  return bridge.pty;
+}
+
+/** Deliver to every subscriber, and remember it for the next one to arrive. */
+function emit(channel: EntityChannel, chunk: string, parsed?: () => void): void {
+  channel.buffer.push(chunk);
+  channel.bufferBytes += chunk.length;
+  while (channel.bufferBytes > REPLAY_BYTES && channel.buffer.length > 1) {
+    channel.bufferBytes -= channel.buffer.shift()!.length;
+  }
+
+  // Copied before iterating: a subscriber may dispose itself from inside its
+  // own callback, and mutating the set mid-iteration would skip its neighbour.
+  for (const subscriber of [...channel.subscribers]) subscriber(chunk, parsed);
+}
+
+function openChannel(entityId: string): EntityChannel {
+  const channel: EntityChannel = {
+    subscribers: new Set(),
+    buffer: [],
+    bufferBytes: 0,
+    lastSeq: null,
+    spawnRequested: false,
+    closed: false,
+    dispose: () => {},
+  };
+
+  const bridge = pty();
+
+  const disposers = [
+    bridge.onData((event) => {
+      // One `pty:data` channel carries every session (story 082 — a channel per
+      // session would make the allowlist dynamic), so the filter is not an
+      // optimisation, it is correctness.
+      if (event.sessionId !== entityId) return;
+      if (channel.closed) return;
+
+      /**
+       * A skipped sequence number means a batch was lost between main and here.
+       * Saying so is the whole point: a terminal that quietly drops a batch
+       * renders output that never existed in that order, and the user debugs
+       * something that never happened.
+       */
+      if (channel.lastSeq !== null && event.seq !== channel.lastSeq + 1) {
+        emit(channel, GAP);
+      }
+      channel.lastSeq = event.seq;
+
+      /**
+       * The ack is deferred to whoever renders this chunk. See
+       * `TerminalDataHandler`: acking here would confirm delivery to a
+       * *transport*, and the question flow control is asking is whether the
+       * terminal is keeping up.
+       */
+      emit(channel, event.chunk, () => {
+        bridge.ack({ sessionId: entityId, seq: event.seq });
+      });
+    }),
+
+    bridge.onExit((event) => {
+      if (event.sessionId !== entityId) return;
+      if (channel.closed) return;
+      channel.closed = true;
+
+      /**
+       * `0` means *no signal*, and it arrives far more often than `undefined`.
+       *
+       * `node-pty` reports a numeric signal on every exit and uses zero for
+       * "the process just ended", which main forwards unchanged. Testing only
+       * for `undefined` sends every ordinary exit down the signal branch, and
+       * the terminal reports `session terminated (signal 0)` where it should
+       * have said `session exited (code 3)` — which is exactly what the desktop
+       * e2e caught, and what no amount of stubbing the bridge would have.
+       */
+      if (event.signal !== undefined && event.signal !== 0) {
+        emit(channel, terminatedBy(event.signal));
+        return;
+      }
+      emit(channel, event.exitCode === 0 ? EXITED : exitedWithCode(event.exitCode));
+    }),
+
+    bridge.onLost((event) => {
+      if (event.sessionId !== entityId) return;
+      if (channel.closed) return;
+      channel.closed = true;
+      emit(channel, LOST);
+    }),
+  ];
+
+  channel.dispose = () => {
+    for (const dispose of disposers) dispose();
+  };
+
+  channels.set(entityId, channel);
+  return channel;
+}
+
+/**
+ * Request a process for this entity, at most once.
+ *
+ * Fire-and-forget by design: the caller is `onData`, which must return a
+ * disposer synchronously, and awaiting the spawn there is precisely the bug
+ * this ordering exists to avoid.
+ */
+function ensureSpawned(
+  channel: EntityChannel,
+  entityId: string,
+  projectId: string,
+): void {
+  if (channel.spawnRequested) return;
+  channel.spawnRequested = true;
+
+  void pty()
+    .spawn({
+      sessionId: entityId,
+      projectId,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
+    })
+    .catch((cause: unknown) => {
+      /**
+       * A refusal is *information*, and it belongs in the terminal.
+       *
+       * Main rejects a spawn with a specific, actionable message — an unmapped
+       * project names the config file to edit. Swallowing it leaves an empty
+       * black rectangle, which is the failure mode this whole path exists to
+       * avoid.
+       */
+      channel.closed = true;
+      emit(
+        channel,
+        spawnRefused(cause instanceof Error ? cause.message : String(cause)),
+      );
+    });
+}
+
+export function createPtyTransport(
+  entityId: string,
+  projectId: string,
+): TerminalTransport {
+  return {
+    write: (data) => pty().write({ sessionId: entityId, data }),
+
+    resize: (cols, rows) => pty().resize({ sessionId: entityId, cols, rows }),
+
+    onData(cb) {
+      const channel = channels.get(entityId) ?? openChannel(entityId);
+
+      /**
+       * Replay, then subscribe, then spawn — and the order of all three is the
+       * design.
+       *
+       * Subscribing *before* requesting the spawn is what guarantees no output
+       * is lost. A shell prints its prompt the instant it starts; a transport
+       * that awaited the spawn before subscribing would race those first bytes
+       * and drop the prompt roughly once in twenty runs — a bug that reproduces
+       * rarely and looks like a rendering glitch every time.
+       *
+       * Replaying before subscribing keeps the transcript in order: a chunk
+       * arriving mid-replay would otherwise be delivered ahead of the history it
+       * follows.
+       */
+      if (channel.buffer.length > 0) cb(channel.buffer.join(''));
+
+      channel.subscribers.add(cb);
+
+      if (!channel.closed) ensureSpawned(channel, entityId, projectId);
+
+      /**
+       * Unsubscribe only. **This must never kill the PTY.**
+       *
+       * Unmounting happens on tab switches and re-renders. A session has to keep
+       * running while the user looks at something else — that is the product,
+       * not an optimisation. The channel itself outlives the last subscriber for
+       * the same reason: its buffer keeps filling, so switching away for thirty
+       * seconds and back shows what happened while away.
+       */
+      return () => {
+        channel.subscribers.delete(cb);
+      };
+    },
+  };
+}
+
+/**
+ * Drop every channel and its bridge subscriptions.
+ *
+ * Test-only. The module-level map is deliberate — "one spawn per entity" is a
+ * property of the *renderer*, not of any one surface — and a shared map that
+ * survives between tests is a shared map that makes them order-dependent.
+ */
+export function resetPtyChannels(): void {
+  for (const channel of channels.values()) channel.dispose();
+  channels.clear();
 }

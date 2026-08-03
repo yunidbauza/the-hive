@@ -9,6 +9,7 @@ import {
   type ExitEvent,
   type HiveBridge,
   type ResizeRequest,
+  type SessionLostEvent,
   type SpawnRequest,
   type WriteRequest,
 } from '@shared/ipc-contract';
@@ -90,6 +91,8 @@ const bridge: HiveBridge = {
       subscribe<DataEvent>(CH.ptyData, callback),
     onExit: (callback: (event: ExitEvent) => void) =>
       subscribe<ExitEvent>(CH.ptyExit, callback),
+    onLost: (callback: (event: SessionLostEvent) => void) =>
+      subscribe<SessionLostEvent>(CH.ptyLost, callback),
   },
 };
 

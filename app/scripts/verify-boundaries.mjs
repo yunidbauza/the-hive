@@ -200,6 +200,27 @@ const CASES = [
     },
   },
   {
+    /**
+     * The fence that made story 094 a change to `src/lib/terminal/` and not a
+     * component rewrite.
+     *
+     * `PtyTransport` reaches a real process through the preload bridge. If a
+     * terminal component could reach the same bridge directly, the seam would be
+     * decorative: the shortest path to "make the terminal interactive" would be
+     * to call `window.hive.pty.write` from the surface, and every later backend
+     * change would be a component change again. Proven as its own case rather
+     * than left to the generic `src/ may not import electron/preload/` above,
+     * because this is the specific regression the terminal invites.
+     */
+    name: 'zone: THE SEAM — components/terminal/ may not import electron/preload/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/preload/probe-target.ts': 'export const preload = 1;\n',
+      'src/components/terminal/probe.ts':
+        "import { preload } from '../../../electron/preload/probe-target';\nexport const probe = preload;\n",
+    },
+  },
+  {
     name: 'zone: electron/pty-host/ may not import electron/main/ (story 091)',
     rule: 'import/no-restricted-paths',
     files: {

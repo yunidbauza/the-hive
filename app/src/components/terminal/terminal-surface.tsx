@@ -165,7 +165,7 @@ export function TerminalSurface({
     if (!instance) return;
     const { terminal } = instance;
 
-    const unsubscribe = transport.onData((chunk) => {
+    const unsubscribe = transport.onData((chunk, parsed) => {
       /**
        * Measured *before* the write: afterwards `baseY` has already advanced to
        * include the new lines, so every append would look like "the user is at
@@ -177,6 +177,18 @@ export function TerminalSurface({
       // guarantees the new lines exist by the time the viewport moves.
       terminal.write(chunk, () => {
         if (stick) terminal.scrollToBottom();
+        /**
+         * The same callback answers a second question, for a transport that
+         * asks it (story 094): the chunk is now *parsed*, not merely received.
+         *
+         * That distinction is the whole of story 093's flow control. Reporting
+         * it from anywhere else — on arrival, on a timer — measures the IPC
+         * channel instead of the terminal, and never acking at all lets the
+         * unacked window fill and pause the pty for good. This surface still
+         * knows nothing about sessions or sequence numbers; it knows when xterm
+         * finished, which is the one fact only it has.
+         */
+        parsed?.();
       });
     });
 

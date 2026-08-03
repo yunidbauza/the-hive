@@ -76,6 +76,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'kill',
     'onData',
     'onExit',
+    /**
+     * Story 094 added `onLost`, and it is a *listener*, not a capability.
+     *
+     * The bridge grew a way to be told something, not a new thing the renderer
+     * can do to this machine — which is the distinction that decides whether
+     * widening this list is acceptable. Story 093 had to log a crashed host and
+     * forward nothing; a terminal whose host died otherwise just stops
+     * mid-line, indistinguishable from a process that is thinking.
+     */
+    'onLost',
     'resize',
     'spawn',
     'write',

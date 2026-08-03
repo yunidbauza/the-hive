@@ -36,6 +36,20 @@ export const CH = {
   ptyAck: 'pty:ack',
   ptyData: 'pty:data', // main → renderer, stream
   ptyExit: 'pty:exit', // main → renderer
+  /**
+   * A session that stopped existing without its process exiting (story 094).
+   *
+   * Distinct from {@link CH.ptyExit} because the two mean different things to
+   * the user and must read differently in the transcript. An exit is the
+   * process finishing — there is a code, and it is information. A *lost*
+   * session is the host dying underneath a process that may well still have
+   * been working: there is no code, nothing was concluded, and the only honest
+   * thing to say is that the terminal no longer knows.
+   *
+   * Story 093 logged these in main and forwarded nothing, because no renderer
+   * channel existed. This is that channel.
+   */
+  ptyLost: 'pty:lost', // main → renderer
   appInfo: 'app:info',
 } as const;
 
@@ -48,7 +62,7 @@ export type Channel = (typeof CH)[keyof typeof CH];
  * (`pty:data:<id>`) — is rejected because it makes the channel set *dynamic*,
  * which is precisely what an allowlist cannot be.
  */
-export const EVENT_CHANNELS = [CH.ptyData, CH.ptyExit] as const;
+export const EVENT_CHANNELS = [CH.ptyData, CH.ptyExit, CH.ptyLost] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
 export interface SpawnRequest {
@@ -75,10 +89,16 @@ export interface DataEvent {
   /**
    * Monotonic per session (story 093).
    *
-   * The renderer asserts monotonicity and, on a gap, writes
-   * {@link GAP_NOTICE} rather than silently rendering a corrupted stream. A
-   * terminal that quietly drops a batch shows output that never existed in
-   * that order, and the user debugs the wrong thing.
+   * The renderer asserts monotonicity and, on a gap, writes a notice into the
+   * transcript rather than silently rendering a corrupted stream. A terminal
+   * that quietly drops a batch shows output that never existed in that order,
+   * and the user debugs the wrong thing.
+   *
+   * The notice itself lives in `src/lib/terminal/pty-transport.ts`, not here.
+   * Story 093 declared it in this file as a literal SGR string because no
+   * renderer-side consumer existed yet; now that one does, the text is built
+   * from `TERM` like every other colour the terminal shows — which is the rule
+   * this file was quietly the one exception to.
    */
   seq: number;
 }
@@ -100,7 +120,32 @@ export interface AckRequest {
 export interface ExitEvent {
   sessionId: string;
   exitCode: number;
+  /**
+   * The signal that killed the process, as a **number** — `15`, not
+   * `'SIGTERM'`.
+   *
+   * `node-pty` reports the raw signal number and it is carried through
+   * unchanged, because main is not the layer that should be picking names for
+   * things. The renderer maps it for display (`src/lib/terminal/signals.ts`).
+   *
+   * **`0` means no signal**, and it is what an ordinary exit reports — the
+   * field is far more often zero than absent. A consumer that treats only
+   * `undefined` as "not signalled" will describe every clean exit as a
+   * termination.
+   */
   signal?: number;
+}
+
+/**
+ * A session whose host died (story 094).
+ *
+ * `reason` is a closed union rather than a free-text string: it is rendered
+ * into a terminal, and a message the renderer cannot exhaustively switch on is
+ * a message that eventually reaches the user as raw main-process prose.
+ */
+export interface SessionLostEvent {
+  sessionId: string;
+  reason: 'host-crashed';
 }
 
 /** Answer to {@link CH.appInfo} — proves the bridge round-trips. */
@@ -172,16 +217,10 @@ export interface HiveBridge {
     /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
     onData(callback: (event: DataEvent) => void): () => void;
     onExit(callback: (event: ExitEvent) => void): () => void;
+    /** The host died under this session (story 094). See {@link SessionLostEvent}. */
+    onLost(callback: (event: SessionLostEvent) => void): () => void;
   };
 }
-
-/**
- * Written into a terminal when a sequence number is skipped (story 093).
- *
- * Dim SGR written literally: this is produced inside a terminal stream, where
- * an escape sequence is the only way to be dim.
- */
-export const GAP_NOTICE = '\u001b[2m── output gap detected ──\u001b[0m\r\n';
 
 /**
  * At most one IPC message per session per this many milliseconds.
@@ -223,4 +262,5 @@ export const BRIDGE_PTY_KEYS = [
   'kill',
   'onData',
   'onExit',
+  'onLost',
 ] as const;

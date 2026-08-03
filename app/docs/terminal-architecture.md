@@ -11,12 +11,28 @@ Everything the terminal renders, and every keystroke it produces, crosses one
 interface:
 
 ```ts
+export type TerminalDataHandler = (chunk: string, parsed?: () => void) => void;
+
 export interface TerminalTransport {
-  write(data: string): void;                       // keystrokes → backend
-  onData(cb: (chunk: string) => void): () => void; // backend → terminal
+  write(data: string): void;                 // keystrokes → backend
+  onData(cb: TerminalDataHandler): () => void; // backend → terminal
   resize(cols: number, rows: number): void;
 }
 ```
+
+**`parsed` is the one thing this interface gained when the real backend arrived**
+(story 094), and it is worth stating plainly rather than leaving to be
+discovered. A pty can produce output faster than xterm can parse it; batching
+does not fix that, and only an acknowledgement does. But an ack is only
+meaningful if it means *parsed* rather than *received* — and the two facts
+needed to say so live in different layers. The transport knows the sequence
+number; only the surface knows when `xterm.write` has finished. `parsed` is the
+handshake between them: the transport supplies it, the surface calls it from
+`terminal.write`'s callback, and `StaticTransport` omits it entirely because it
+has no backpressure to apply.
+
+The alternative — a fourth method — was rejected. This is one optional argument
+to an existing callback, and every caller that ignores it still compiles.
 
 `src/components/terminal/` is written against that and nothing else. It cannot
 import `features/`, `data/`, or `stores/` — the import zone in
@@ -25,16 +41,34 @@ import `features/`, `data/`, or `stores/` — the import zone in
 | Module | Knows about | Role |
 | --- | --- | --- |
 | `lib/terminal/terminal-transport.ts` | nothing | the interface |
-| `lib/terminal/static-transport.ts` | the store | prototype implementation |
+| `lib/terminal/static-transport.ts` | the store | recorded transcripts |
+| `lib/terminal/pty-transport.ts` | the bridge | a real pty (story 094) |
+| `lib/terminal/resolve-transport.ts` | the store, the target | which of the two |
 | `lib/terminal/ansi.ts` | the palette | `TermColor` → SGR truecolor |
+| `lib/terminal/signals.ts` | nothing | signal number → name |
 | `lib/terminal/auto-scroll.ts` | nothing | the bottom-stick predicate |
 | `components/terminal/terminal-surface.tsx` | a transport | one live terminal |
 | `components/terminal/terminal-host.tsx` | opaque ids | kept-alive registry |
 
+Note which module reads the store and which does not. `PtyTransport` takes its
+session and project ids as **arguments**; `resolveTransport` is the one that
+looks them up. The lint zone permits a store import in either, so this is a
+review rule rather than an enforced one — and it is the reason the transport can
+be tested against nothing but a stubbed bridge.
+
 **The rule that keeps it honest:** if a future story needs the terminal
 component to read the store, that story is wrong — the data belongs in a
-transport. When the PTY daemon arrives, a `PtyTransport` implementing those
-three methods drops in and no component changes.
+transport.
+
+### Did the seam hold?
+
+Story 094 was written as the audit of that claim, so the answer belongs here.
+**Mostly, and the exception is instructive.** Swapping the backend needed no
+change to `terminal-host.tsx`, no change to `center-stage.tsx`, and no new prop
+naming a domain concept. What it did need was the `parsed` argument above and
+the three lines in `terminal-surface.tsx` that call it — because story 093 built
+a flow-control loop whose acknowledgement had no path back from the only layer
+that could produce it. The fence held; the contract was one signal short.
 
 ## Colour
 

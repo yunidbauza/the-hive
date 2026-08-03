@@ -4,10 +4,11 @@ import { resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 
 /**
- * The PTY transport is a placeholder until story 094, so it is mocked here —
- * which is also what makes the *routing* assertable. Without a distinguishable
- * double, "desktop resolves to the PTY transport" would be untestable until 094
- * lands, and by then the branch would have shipped unverified.
+ * The PTY transport is mocked here so the *routing* is assertable without a
+ * bridge behind it. Story 083 introduced the double when the transport was a
+ * placeholder; now that it is real (story 094) the double earns its keep for a
+ * different reason — resolving a session must not spawn a process just because
+ * a test asked which transport it gets.
  */
 const ptyMarker = { write: vi.fn(), resize: vi.fn(), onData: vi.fn(() => vi.fn()) };
 vi.mock('@lib/terminal/pty-transport', () => ({
@@ -25,16 +26,41 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** A real fixture session, because the project id now has to resolve. */
+const SESSION_ID = 'hero-refresh';
+const SESSION_PROJECT = 'apfm-web';
+
 describe('resolveTransport', () => {
-  it('gives a session the PTY transport on desktop', () => {
+  it('gives a session the PTY transport on desktop, with its project', () => {
     withBridge();
 
-    expect(resolveTransport('sess-1')).toBe(ptyMarker);
-    expect(createPtyTransport).toHaveBeenCalledWith('sess-1');
+    expect(resolveTransport(SESSION_ID)).toBe(ptyMarker);
+    /**
+     * The project id travels as an *argument*, which is the whole reason this
+     * lookup lives in `resolveTransport` and not in `PtyTransport`: a PTY needs
+     * a `cwd`, and the transport is not allowed to read a store to find one.
+     */
+    expect(createPtyTransport).toHaveBeenCalledWith(SESSION_ID, SESSION_PROJECT);
+  });
+
+  it('keeps an agent on its recorded transcript, even on desktop', () => {
+    // Agents are background workers with no project and no branch (story 096's
+    // scope note). A PTY would have no directory to spawn in.
+    withBridge();
+
+    expect(resolveTransport('slack-agent')).not.toBe(ptyMarker);
+    expect(createPtyTransport).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unknown entity static rather than guessing a project', () => {
+    withBridge();
+
+    expect(resolveTransport('no-such-entity')).not.toBe(ptyMarker);
+    expect(createPtyTransport).not.toHaveBeenCalled();
   });
 
   it('gives a session the recorded transport in a browser', () => {
-    const transport = resolveTransport('sess-1');
+    const transport = resolveTransport(SESSION_ID);
 
     expect(transport).not.toBe(ptyMarker);
     expect(createPtyTransport).not.toHaveBeenCalled();
@@ -57,7 +83,7 @@ describe('resolveTransport', () => {
   });
 
   it('satisfies the TerminalTransport contract in both targets', () => {
-    for (const id of [ORCHESTRATOR_ID, 'sess-1']) {
+    for (const id of [ORCHESTRATOR_ID, SESSION_ID]) {
       const transport = resolveTransport(id);
       expect(typeof transport.write).toBe('function');
       expect(typeof transport.resize).toBe('function');

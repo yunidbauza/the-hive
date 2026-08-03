@@ -8,6 +8,7 @@ import {
   type DataEvent,
   type ExitEvent,
   type PtyDiagnostics,
+  type SessionLostEvent,
 } from '@shared/ipc-contract';
 
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
@@ -252,25 +253,58 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
     supervisor.onData(onData),
     supervisor.onExit(onExit),
     /**
-     * Errors and lost sessions have **no renderer channel yet**.
+     * Errors still have no renderer channel.
      *
-     * The contract carries no error event, and the terminal that writes
-     * `SESSION_LOST_NOTICE` is story 095's surface. Until then they are logged
-     * rather than dropped on the floor: a session that silently fails to start
-     * is indistinguishable from one that started and produced nothing, and
-     * that is the harder bug to chase.
+     * Deliberate, and narrower than it looks: the errors reaching here are
+     * `unknown session "x"` races and host-level failures, none of which a
+     * *terminal* can act on. They are logged rather than dropped on the floor,
+     * because a session that silently fails to start is indistinguishable from
+     * one that started and produced nothing. Surfacing them as user-visible
+     * activity is story 096's, which has a feed to put them in.
      */
     supervisor.onError((event) => {
       console.error(
         `[hive] pty error${event.sessionId ? ` (${event.sessionId})` : ''}: ${event.message}`,
       );
     }),
+    /**
+     * A lost session **is** forwarded (story 094).
+     *
+     * Story 093 could only log this, because the contract carried no event for
+     * it. It does now, and the difference matters to the user: a terminal whose
+     * host crashed otherwise just stops, mid-line, with no explanation and no
+     * exit code — indistinguishable from a process that is simply thinking.
+     */
     supervisor.onSessionLost((event) => {
       console.error(`[hive] pty session lost: ${event.sessionId} (${event.reason})`);
       const channel = channels.get(event.sessionId);
+      if (!channel) {
+        orphanDrops += 1;
+        return;
+      }
+      if (channel.exited) {
+        channel.dropped += 1;
+        return;
+      }
+
+      /**
+       * Flush first, then report the loss.
+       *
+       * Whatever the process managed to emit before its host died is the most
+       * useful thing on screen — usually the last thing it was doing. Sending
+       * the notice first would put the epitaph above the body.
+       */
+      flush(event.sessionId, channel);
+
+      const lost: SessionLostEvent = {
+        sessionId: event.sessionId,
+        reason: event.reason,
+      };
+      send(CH.ptyLost, lost);
+
       // Its host is gone, so nothing more is coming. Marking it exited stops
       // in-flight output being delivered to a terminal that is already dead.
-      if (channel) channel.exited = true;
+      channel.exited = true;
     }),
   ];
 

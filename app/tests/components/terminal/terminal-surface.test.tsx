@@ -17,7 +17,10 @@ import {
 } from '../../../__mocks__/@xterm/xterm';
 
 import { TerminalSurface } from '@components/terminal/terminal-surface';
-import type { TerminalTransport } from '@lib/terminal/terminal-transport';
+import type {
+  TerminalDataHandler,
+  TerminalTransport,
+} from '@lib/terminal/terminal-transport';
 
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
@@ -34,12 +37,12 @@ vi.mock('@xterm/addon-web-links');
 
 /** A transport that records what it was asked to do and can push output. */
 function fakeTransport() {
-  const emit: ((chunk: string) => void)[] = [];
+  const emit: TerminalDataHandler[] = [];
   const unsubscribe = vi.fn();
   const transport: TerminalTransport = {
     write: vi.fn(),
     resize: vi.fn(),
-    onData: vi.fn((cb: (chunk: string) => void) => {
+    onData: vi.fn((cb: TerminalDataHandler) => {
       emit.push(cb);
       return unsubscribe;
     }),
@@ -48,7 +51,8 @@ function fakeTransport() {
     transport,
     unsubscribe,
     /** Simulate the backend producing output. */
-    push: (chunk: string) => emit.forEach((cb) => cb(chunk)),
+    push: (chunk: string, parsed?: () => void) =>
+      emit.forEach((cb) => cb(chunk, parsed)),
   };
 }
 
@@ -154,6 +158,33 @@ describe('TerminalSurface', () => {
       expect(unsubscribe).not.toHaveBeenCalled();
       unmount();
       expect(unsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a chunk parsed once xterm has taken it (story 094)', () => {
+      /**
+       * The renderer half of story 093's flow control, and the one fact only
+       * this component has: `terminal.write`'s callback fires when the chunk is
+       * in the buffer. Reporting from anywhere else measures the IPC channel
+       * instead of the terminal, and not reporting at all lets the unacked
+       * window fill and pause the pty permanently.
+       */
+      const { transport, push } = fakeTransport();
+      const parsed = vi.fn();
+      render(<TerminalSurface transport={transport} theme="dark" />);
+
+      push('output', parsed);
+
+      expect(parsed).toHaveBeenCalledTimes(1);
+    });
+
+    it('survives a transport that offers no ack', () => {
+      // `StaticTransport` has no backpressure and passes nothing. The optional
+      // argument is what keeps every existing caller working unchanged.
+      const { transport, push } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" />);
+
+      expect(() => push('output')).not.toThrow();
+      expect(terminal().written).toContain('output');
     });
 
     it('resubscribes when handed a different transport', () => {

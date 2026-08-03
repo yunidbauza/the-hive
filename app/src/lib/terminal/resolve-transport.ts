@@ -1,3 +1,5 @@
+import { isSession } from '@/types/entity';
+
 import { isDesktop } from '@config/runtime';
 import { createPtyTransport } from '@lib/terminal/pty-transport';
 import {
@@ -5,6 +7,7 @@ import {
   createStaticTransport,
 } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
+import { useHiveStore } from '@stores/hive-store';
 
 /**
  * Which transport backs a given surface (story 083).
@@ -25,6 +28,32 @@ export function resolveTransport(entityId: string): TerminalTransport {
    * the regression this line and its test exist to prevent.
    */
   if (entityId === ORCHESTRATOR_ID) return createStaticTransport(entityId);
+  if (!isDesktop()) return createStaticTransport(entityId);
 
-  return isDesktop() ? createPtyTransport(entityId) : createStaticTransport(entityId);
+  /**
+   * The project id is read here, and **not** inside `PtyTransport`.
+   *
+   * A PTY needs a `cwd`, so something has to turn an entity into a project.
+   * This module is already the store-aware half of the seam — its sibling
+   * `StaticTransport` reads the store outright — and keeping the lookup here is
+   * what lets `pty-transport.ts` take ids as arguments and touch nothing else.
+   * The lint zone permits a store import in either file; only one of them
+   * should use it, and this is the one.
+   *
+   * `getState()` rather than a hook: this is not a render path, and a
+   * subscription here would rebuild transports on unrelated store writes.
+   */
+  const entity = useHiveStore.getState().entities[entityId];
+
+  /**
+   * Agents keep their recorded transcripts this epic (story 096's scope note).
+   *
+   * They are long-lived background workers, not `claude` in a repository — they
+   * have no project and no branch, so there is no directory to spawn one in.
+   * Falling through to a PTY would spawn a shell in whatever the last resolved
+   * path happened to be, which is worse than the recording.
+   */
+  if (!entity || !isSession(entity)) return createStaticTransport(entityId);
+
+  return createPtyTransport(entityId, entity.project);
 }

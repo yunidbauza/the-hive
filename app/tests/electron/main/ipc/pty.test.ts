@@ -374,9 +374,9 @@ describe('errors and lost sessions', () => {
 
     emitError({ sessionId: 'a', message: 'could not start /bin/zsh' });
 
-    // There is no renderer error channel yet — story 095 owns that surface.
-    // Until then, a session that silently fails to start is indistinguishable
-    // from one that started and produced nothing.
+    // Errors still have no renderer channel: the ones reaching here are races
+    // and host-level failures a *terminal* cannot act on. Story 096 gives them
+    // a feed to appear in.
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining('could not start /bin/zsh'),
     );
@@ -390,6 +390,43 @@ describe('errors and lost sessions', () => {
     vi.advanceTimersByTime(8);
 
     expect(dataEvents()).toHaveLength(0);
+  });
+
+  it('forwards a lost session to the renderer (story 094)', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    emitLost({ sessionId: 'a', reason: 'host-crashed' });
+
+    // Story 093 could only log this. A terminal whose host crashed otherwise
+    // just stops mid-line, indistinguishable from a process that is thinking.
+    expect(sent.filter((entry) => entry.channel === CH.ptyLost)).toEqual([
+      { channel: CH.ptyLost, payload: { sessionId: 'a', reason: 'host-crashed' } },
+    ]);
+  });
+
+  it('flushes pending output before reporting the loss', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    emitData({ sessionId: 'a', chunk: 'the last thing it did' });
+    emitLost({ sessionId: 'a', reason: 'host-crashed' });
+
+    /**
+     * Whatever the process managed to emit before its host died is the most
+     * useful thing on screen. Reporting the loss first would put the epitaph
+     * above the body — and the batch timer had not fired yet, so this only
+     * works because the loss handler flushes.
+     */
+    const channels = sent.map((entry) => entry.channel);
+    expect(channels).toEqual([CH.ptyData, CH.ptyLost]);
+  });
+
+  it('reports a loss only once, and never after an exit', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    emitExit({ sessionId: 'a', exitCode: 0 });
+    emitLost({ sessionId: 'a', reason: 'host-crashed' });
+
+    expect(sent.filter((entry) => entry.channel === CH.ptyLost)).toHaveLength(0);
   });
 
   it('reports an exit only once, however many arrive', () => {
