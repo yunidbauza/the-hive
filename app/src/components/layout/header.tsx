@@ -98,9 +98,22 @@ export function Header() {
          * `{ x: 16, y: 20 }`. 78px is the three lights plus their inset plus a
          * gap — measured against the constant in `electron/shared/window.ts`.
          */
-        className={cn('col-start-1 flex items-center gap-2.5', desktop && 'pl-[78px]')}
+        className={cn('col-start-1 flex items-center', desktop && 'pl-[78px]')}
       >
-        <BrandBlock />
+        {/*
+          The brand claims exactly the left rail's width, so the `demo` chip
+          beside it starts on the rail's trailing edge — the same vertical line
+          the center stage begins on. Without this the chip floats wherever the
+          wordmark happens to end, aligned to nothing.
+
+          252px = the rail's 268px minus this header's own `px-4`, since the
+          rail starts at the viewport edge and the header's content box does
+          not. `left-rail.tsx` owns the 268; `chip-alignment.spec.ts` measures
+          the two against each other so this cannot drift silently.
+        */}
+        <div className="flex w-[252px] shrink-0 items-center">
+          <BrandBlock />
+        </div>
         <DemoChip />
       </div>
 
