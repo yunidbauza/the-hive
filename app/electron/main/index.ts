@@ -1,16 +1,17 @@
-import { app, ipcMain } from 'electron';
+import { app } from 'electron';
 
-import { CH, type AppInfo } from '@shared/ipc-contract';
-
+import { installContentSecurityPolicy } from './csp';
+import { registerIpcHandlers } from './ipc';
 import { registerLifecycle } from './lifecycle';
 import { createWindow } from './window';
 
 /**
- * Main process entry (story 081).
+ * Main process entry (stories 081, 082).
  *
- * Lifecycle only. The window itself is `window.ts`, the platform handlers are
- * `lifecycle.ts`, and teardown registration is `shutdown.ts` — this file exists
- * to decide whether this process should run at all, and then to hand off.
+ * Lifecycle only. The window is `window.ts`, the platform handlers are
+ * `lifecycle.ts`, the channels are `ipc/`, and teardown registration is
+ * `shutdown.ts` — this file decides whether this process should run at all,
+ * and then hands off.
  */
 
 /**
@@ -23,17 +24,13 @@ import { createWindow } from './window';
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  /** The one live channel — it proves renderer → preload → main → renderer. */
-  ipcMain.handle(CH.appInfo, (): AppInfo => {
-    const { electron, chrome, node } = process.versions;
-    return {
-      version: app.getVersion(),
-      electron: electron ?? 'unknown',
-      chrome: chrome ?? 'unknown',
-      node: node ?? 'unknown',
-      platform: process.platform,
-    };
-  });
+  registerIpcHandlers();
+
+  /**
+   * The CSP has to be installed before any renderer loads, and
+   * `session.defaultSession` is only available once the app is ready.
+   */
+  void app.whenReady().then(() => installContentSecurityPolicy());
 
   registerLifecycle({ createWindow });
 }
