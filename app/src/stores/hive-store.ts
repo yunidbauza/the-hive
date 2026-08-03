@@ -13,7 +13,10 @@ import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
+import { isDesktop } from '@config/runtime';
 import { reset as resetClock, stamp } from '@lib/fake-clock';
+import { requestSpawn } from '@lib/terminal/pty-transport';
+import { sendToSession } from '@lib/terminal/session-input';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -48,6 +51,22 @@ const ACK_LINE = '● Acknowledged — working on it';
 /** Where a message came from. The transcript records who spoke. */
 export type MessageOrigin = 'orchestrator' | 'session';
 
+/**
+ * What happened to a message (story 097).
+ *
+ * The action has to *report*, not merely act: the console prints the refusal,
+ * and only its caller knows where that line goes. Story 097 says the signature
+ * is unchanged — it cannot be, and the deviation is recorded in the design
+ * spec beside the reason.
+ *
+ * `demo` still carries the timer handle so the simulation (story 061) and the
+ * tests keep cancelling deterministically rather than racing a real wait.
+ */
+export type SendOutcome =
+  | { kind: 'routed' }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'demo'; timer: ReturnType<typeof setTimeout> };
+
 interface HiveState {
   entities: Record<string, Entity>;
   order: string[];
@@ -69,7 +88,7 @@ interface HiveState {
     id: string,
     msg: string,
     origin?: MessageOrigin,
-  ) => ReturnType<typeof setTimeout> | null;
+  ) => SendOutcome | null;
   runOrchCommand: (command: ParsedCommand) => void;
   markAllRead: () => void;
   markRead: (index: number) => void;
@@ -221,6 +240,32 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ]),
     }));
 
+    /**
+     * Ask for the process **here**, not when a surface mounts (story 097).
+     *
+     * The lazy path works — `PtyTransport` requests a spawn on subscribe — but
+     * its refusal reaches only the terminal, asynchronously, and only if a
+     * surface mounted at all. The console has to print main's exact message,
+     * so the request is made where the transcript is. That is the same
+     * argument that already puts the `spawned …` line above here rather than
+     * at each call site, and it means the picker (044) gets the refusal too.
+     *
+     * Safe in either order: `requestSpawn` and the transport share one channel,
+     * so whoever asks first is the only one who asks, and main's `open()` is
+     * attach-never-respawn regardless.
+     */
+    if (isDesktop()) {
+      void requestSpawn(id, repo, task).then((outcome) => {
+        if (outcome.ok) return;
+        set((state) => ({
+          orchLines: capLines([
+            ...state.orchLines,
+            line(`  ${outcome.reason}`, 'red'),
+          ]),
+        }));
+      });
+    }
+
     useUiStore.getState().openTab(id);
 
     return id;
@@ -229,13 +274,50 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   /**
    * Route a message to an entity.
    *
-   * Returns the pending acknowledgement's timer handle so tests and the
-   * simulation (story 061) can cancel it deterministically rather than racing
-   * a real wait.
+   * **The one branch point in the coordination layer** (story 097). A real
+   * session takes the pty path; everything else keeps the prototype's
+   * round-trip, and the returned {@link SendOutcome} says which happened.
    */
   sendToEntity: (id, msg, origin = 'orchestrator') => {
     const entity = get().entities[id];
     if (!entity) return null;
+
+    /**
+     * Agents are the interesting half of "everything else".
+     *
+     * They have no project and no process this epic (story 096's scope note),
+     * so a pty path would refuse every message where the demo answers one. The
+     * browser target lands here too, for a different reason — there is no
+     * bridge to ask. One predicate covers both, which is what keeps a surface
+     * from becoming typable while its transport stays a recording.
+     */
+    if (isDesktop() && isSession(entity)) {
+      const result = sendToSession(id, msg);
+
+      get().pushFeed({
+        time: stamp(),
+        txt: result.ok
+          ? origin === 'orchestrator'
+            ? `Routed your reply to ${id}`
+            : `Routed your message to ${id}`
+          : `Could not route to ${id} — ${result.reason}`,
+        tone: result.ok ? 'brand' : 'amber',
+        icon: result.ok ? 'ph-paper-plane-tilt' : 'ph-warning',
+      });
+
+      /**
+       * No echo, and no acknowledgement timer.
+       *
+       * The pty echoes what it receives, so appending the sent text here too
+       * would double-print every message. And the status now comes from the
+       * process itself (story 096) rather than from a timer narrating one —
+       * which is the whole point of this story: session status stops being
+       * told by the UI and starts being observed.
+       */
+      return result.ok
+        ? { kind: 'routed' }
+        : { kind: 'refused', reason: result.reason };
+    }
 
     /**
      * The echo differs by where the message came from, because the transcript
@@ -268,13 +350,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * `appendEntityLines` only applies a status to sessions, so agents stay
      * `online` without a branch here.
      */
-    return setTimeout(() => {
-      get().appendEntityLines(
-        id,
-        [line(ACK_LINE, 'blue'), line('✱ Working…', 'amber')],
-        'working',
-      );
-    }, ACK_DELAY_MS);
+    return {
+      kind: 'demo',
+      timer: setTimeout(() => {
+        get().appendEntityLines(
+          id,
+          [line(ACK_LINE, 'blue'), line('✱ Working…', 'amber')],
+          'working',
+        );
+      }, ACK_DELAY_MS),
+    };
   },
 
   /**
@@ -343,7 +428,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           pushOrch(`  no such session: ${command.target}`, 'red');
           return;
         }
-        get().sendToEntity(command.target, command.message);
+
+        const outcome = get().sendToEntity(command.target, command.message);
+        if (outcome?.kind === 'refused') {
+          /**
+           * Verbatim. The console prints failures; it does not translate or
+           * soften them. The reason names what the user has to do about it —
+           * open the session, or restart it — and a generic "could not send"
+           * would be honest and useless.
+           */
+          pushOrch(`  ${outcome.reason}`, 'red');
+          return;
+        }
         pushOrch(`  routed → ${command.target}`, 'dim');
         return;
       }

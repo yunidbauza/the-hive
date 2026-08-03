@@ -1,11 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isSession } from '@/types/entity';
+import { isDesktop } from '@config/runtime';
 import { peek } from '@lib/fake-clock';
+import { requestSpawn } from '@lib/terminal/pty-transport';
+import { sendToSession } from '@lib/terminal/session-input';
 
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
+
+/**
+ * The desktop half of the store is mocked at the module edge, not stubbed
+ * through `window.hive`.
+ *
+ * `isDesktop()` and the two terminal modules are the store's entire contact
+ * with a real process. Mocking them keeps every assertion below about
+ * *routing* — which path a message took, and what the store did about it —
+ * rather than about the bridge, which has its own suites.
+ */
+vi.mock('@config/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@config/runtime')>()),
+  isDesktop: vi.fn(() => false),
+}));
+
+vi.mock('@lib/terminal/session-input', () => ({
+  sendToSession: vi.fn(() => ({ ok: true })),
+  normalizeInput: (text: string) => text.trim(),
+}));
+
+vi.mock('@lib/terminal/pty-transport', () => ({
+  requestSpawn: vi.fn(() => Promise.resolve({ ok: true })),
+  sessionChannelState: vi.fn(() => 'live'),
+  resetPtyChannels: vi.fn(),
+}));
 
 /**
  * Reference pattern for store tests (story 013): call the action against a
@@ -17,6 +45,12 @@ describe('hive-store', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
     useUiStore.getState().reset();
+    // Call history as well as return values: "was the pty asked at all?" is
+    // half the assertions below, and it is meaningless if it accumulates.
+    vi.clearAllMocks();
+    vi.mocked(isDesktop).mockReturnValue(false);
+    vi.mocked(sendToSession).mockReturnValue({ ok: true });
+    vi.mocked(requestSpawn).mockResolvedValue({ ok: true });
   });
 
   describe('fixtures', () => {
@@ -151,10 +185,10 @@ describe('hive-store', () => {
     });
 
     it('returns the timer handle so the ack can be cancelled', () => {
-      const handle = useHiveStore.getState().sendToEntity('lead-form', 'y');
-      expect(handle).not.toBeNull();
+      const outcome = useHiveStore.getState().sendToEntity('lead-form', 'y');
+      expect(outcome).toMatchObject({ kind: 'demo' });
 
-      clearTimeout(handle!);
+      clearTimeout((outcome as { timer: ReturnType<typeof setTimeout> }).timer);
       vi.advanceTimersByTime(ACK_DELAY_MS);
 
       // Only the routed message landed; the acknowledgement never fired.
@@ -163,8 +197,7 @@ describe('hive-store', () => {
     });
 
     it('is a no-op for an unknown entity', () => {
-      const handle = useHiveStore.getState().sendToEntity('nope', 'hi');
-      expect(handle).toBeNull();
+      expect(useHiveStore.getState().sendToEntity('nope', 'hi')).toBeNull();
     });
 
     it('pushes a feed item', () => {
@@ -172,6 +205,105 @@ describe('hive-store', () => {
       expect(useHiveStore.getState().feed[0].txt).toBe(
         'Routed your reply to call-notes',
       );
+    });
+
+    /**
+     * The story's payload (097): on desktop a session's message is a pty
+     * write, not a narration. The demo round-trip above is what the browser
+     * target keeps, and the two are asserted side by side deliberately —
+     * deleting the timer outright would take the browser demo with it.
+     */
+    describe('on a live desktop session', () => {
+      beforeEach(() => {
+        vi.mocked(isDesktop).mockReturnValue(true);
+      });
+
+      it('routes to the pty and reports it', () => {
+        const outcome = useHiveStore.getState().sendToEntity('lead-form', 'y');
+
+        expect(sendToSession).toHaveBeenCalledWith('lead-form', 'y');
+        expect(outcome).toEqual({ kind: 'routed' });
+      });
+
+      it('does not echo into the transcript — that is the pty’s job', () => {
+        const before = useHiveStore.getState().entities['lead-form'].lines.length;
+
+        useHiveStore.getState().sendToEntity('lead-form', 'y');
+
+        // A renderer-side echo plus the pty's own would double-print every
+        // message, which is the defect story 097 names by name.
+        expect(
+          useHiveStore.getState().entities['lead-form'].lines,
+        ).toHaveLength(before);
+      });
+
+      it('starts no acknowledgement timer', () => {
+        useHiveStore.getState().sendToEntity('lead-form', 'y');
+
+        vi.advanceTimersByTime(ACK_DELAY_MS * 2);
+
+        // Status is observed from the process now (096), not narrated here.
+        const entity = useHiveStore.getState().entities['lead-form'];
+        expect(isSession(entity) && entity.status).toBe('waiting');
+      });
+
+      it('still logs the routing to the activity feed', () => {
+        useHiveStore.getState().sendToEntity('lead-form', 'y');
+
+        expect(useHiveStore.getState().feed[0].txt).toBe(
+          'Routed your reply to lead-form',
+        );
+      });
+
+      it('names the origin in the feed, as the demo path does', () => {
+        useHiveStore.getState().sendToEntity('lead-form', 'y', 'session');
+
+        expect(useHiveStore.getState().feed[0].txt).toBe(
+          'Routed your message to lead-form',
+        );
+      });
+
+      it('reports a refusal, writes nothing, and says so in the feed', () => {
+        vi.mocked(sendToSession).mockReturnValue({
+          ok: false,
+          reason: 'lead-form has exited — restart it to send again',
+        });
+        const before = useHiveStore.getState().entities['lead-form'].lines.length;
+
+        const outcome = useHiveStore.getState().sendToEntity('lead-form', 'y');
+
+        expect(outcome).toEqual({
+          kind: 'refused',
+          reason: 'lead-form has exited — restart it to send again',
+        });
+        expect(
+          useHiveStore.getState().entities['lead-form'].lines,
+        ).toHaveLength(before);
+        expect(useHiveStore.getState().feed[0].txt).toBe(
+          'Could not route to lead-form — lead-form has exited — restart it to send again',
+        );
+      });
+
+      it('leaves agents on the demo round-trip — they have no pty this epic', () => {
+        const outcome = useHiveStore.getState().sendToEntity('slack-agent', 'hi');
+
+        expect(sendToSession).not.toHaveBeenCalled();
+        expect(outcome).toMatchObject({ kind: 'demo' });
+      });
+    });
+
+    describe('on the browser target', () => {
+      it('keeps the demo round-trip, timer and all', () => {
+        const outcome = useHiveStore.getState().sendToEntity('lead-form', 'y');
+
+        expect(sendToSession).not.toHaveBeenCalled();
+        expect(outcome).toMatchObject({ kind: 'demo' });
+
+        vi.advanceTimersByTime(ACK_DELAY_MS);
+
+        const entity = useHiveStore.getState().entities['lead-form'];
+        expect(isSession(entity) && entity.status).toBe('working');
+      });
     });
   });
 
@@ -304,6 +436,32 @@ describe('hive-store', () => {
         });
       });
 
+      describe('on desktop', () => {
+        beforeEach(() => {
+          vi.mocked(isDesktop).mockReturnValue(true);
+        });
+
+        it('confirms a routed message', () => {
+          run('send lead-form y');
+
+          expect(lastLine()?.text).toBe('  routed → lead-form');
+        });
+
+        it('prints the refusal verbatim, in red, and does not claim it routed', () => {
+          vi.mocked(sendToSession).mockReturnValue({
+            ok: false,
+            reason: 'lead-form has exited — restart it to send again',
+          });
+
+          run('send lead-form y');
+
+          expect(lastLine()).toEqual({
+            text: '  lead-form has exited — restart it to send again',
+            color: 'red',
+          });
+        });
+      });
+
       it('reports an unknown session', () => {
         run('send nope hello');
         expect(lastLine()).toMatchObject({
@@ -338,6 +496,56 @@ describe('hive-store', () => {
           text: '  unknown repo: not-a-repo — try one from the Projects panel',
           color: 'red',
         });
+      });
+
+      /**
+       * The desktop half (097): a spawn is a real process, so it can be
+       * refused for reasons only main knows. The console prints those
+       * reasons rather than a generic failure.
+       */
+      describe('on desktop', () => {
+        beforeEach(() => {
+          vi.mocked(isDesktop).mockReturnValue(true);
+        });
+
+        it('carries the task to the spawn request', () => {
+          run('spawn apfm-web tidy the footer');
+
+          expect(requestSpawn).toHaveBeenCalledWith(
+            expect.any(String),
+            'apfm-web',
+            'tidy the footer',
+          );
+        });
+
+        it("prints main's refusal verbatim, in red", async () => {
+          vi.mocked(requestSpawn).mockResolvedValue({
+            ok: false,
+            reason: 'apfm-web is not mapped — add it to /tmp/hive.json',
+          });
+
+          run('spawn apfm-web tidy the footer');
+
+          await vi.waitFor(() =>
+            expect(lastLine()).toEqual({
+              text: '  apfm-web is not mapped — add it to /tmp/hive.json',
+              color: 'red',
+            }),
+          );
+        });
+
+        it('says nothing extra when the spawn is accepted', async () => {
+          run('spawn apfm-web tidy the footer');
+          await vi.waitFor(() => expect(requestSpawn).toHaveBeenCalled());
+
+          expect(lastLine()?.color).not.toBe('red');
+        });
+      });
+
+      it('asks for no process on the browser target', () => {
+        run('spawn apfm-web tidy the footer');
+
+        expect(requestSpawn).not.toHaveBeenCalled();
       });
 
       it('rejects a missing task as a usage error', () => {
