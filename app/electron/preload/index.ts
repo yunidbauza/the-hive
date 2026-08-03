@@ -13,6 +13,7 @@ import {
   type SpawnRequest,
   type WriteRequest,
 } from '@shared/ipc-contract';
+import type { SessionStatusEvent } from '@shared/session-contract';
 
 /**
  * The bridge (story 082).
@@ -93,6 +94,12 @@ const bridge: HiveBridge = {
       subscribe<ExitEvent>(CH.ptyExit, callback),
     onLost: (callback: (event: SessionLostEvent) => void) =>
       subscribe<SessionLostEvent>(CH.ptyLost, callback),
+    restart: (request: SpawnRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.ptyRestart, request),
+  },
+  session: {
+    onStatus: (callback: (event: SessionStatusEvent) => void) =>
+      subscribe<SessionStatusEvent>(CH.sessionStatus, callback),
   },
 };
 

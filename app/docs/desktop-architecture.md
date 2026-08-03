@@ -211,6 +211,54 @@ the final output, which is usually the error. Per-session counters (bytes in,
 bytes acked, pauses, batches, drops) ride out on `app:info`; flow-control bugs are
 otherwise diagnosed by staring at a slow terminal and guessing.
 
+### Sessions: what actually runs (story 096)
+
+`electron/main/sessions/` sits between "a pty exists" and "a session is running".
+The PTY layers below it know nothing about projects, bootstraps or attention.
+
+**A session is `$SHELL -l`, with `claude` written in as input.** Both halves are
+deliberate:
+
+- `-l` sources the user's profile, which is what puts `claude`, nvm-managed node
+  and every shim on `PATH`. Without it the failure is `claude: command not found`
+  in an app whose whole purpose is running `claude`.
+- The command is **written into the pty**, not passed as `-c`. With `-c` the
+  shell exits when `claude` does, leaving the user looking at a corpse in the
+  middle of a repository they were working in. Written as input it is an ordinary
+  interactive command and the shell survives it.
+
+The write waits for the shell's first output plus a ~150 ms settle, because
+characters written before the line discipline is installed land in a buffer the
+shell may discard — the session then sits at a bare prompt having silently
+swallowed the command. If nothing is heard for 5 s the bootstrap goes in anyway
+and the fact is logged.
+
+**Identity: `entityId → sessionId → pty`.** The renderer addresses sessions by
+entity id and never sees a pty handle. Main mints a fresh session id per
+generation, so a restart's stale in-flight output belongs to an id nothing maps
+to and is dropped where it arrives — otherwise a restarted `claude` opens showing
+the tail of the conversation the user restarted to be rid of.
+
+| Action | Behaviour |
+|---|---|
+| Open, no pty | spawn, bootstrap, attach |
+| Open, live pty | **attach only, never respawn** — a respawn would discard a running agent's context |
+| Switch away | keeps running; the surface stays mounted |
+| Restart | kill, **wait for the exit**, spawn fresh, bootstrap again — an ordering, not a set |
+| Quit | the host SIGTERMs every process group, waits 3 s, force-kills the rest |
+
+**Status is derived in main**, debounced: output → `working`, 2 s of silence →
+`idle`, exit → `done`. In main rather than the renderer because a per-chunk store
+write at firehose rates would re-render the shell continuously.
+
+`waiting` is **not derived, and the type main sends cannot express it.** A TUI
+that has asked a question and one that is thinking both produce no output;
+distinguishing them by scraping rendered text would be a heuristic that fails
+silently, and the entire inbox and attention model is built on this field.
+Fixture sessions still show `waiting`; no real session enters it. The real
+mechanism is a Claude Code notification hook — a first-class integration with its
+own design, named here so the gap is recorded rather than discovered.
+
 ## Two ABI facts that produce unreadable errors when forgotten
 
 **`node-pty@1.1.0` does NOT need rebuilding for Electron.** It ships **N-API**

@@ -65,10 +65,11 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     top: Object.keys(window.hive!).sort(),
     pty: Object.keys(window.hive!.pty).sort(),
     config: Object.keys(window.hive!.config).sort(),
+    session: Object.keys(window.hive!.session).sort(),
   }));
 
   // Widening any of these lists is the alarm this test exists to raise.
-  expect(surface.top).toEqual(['appInfo', 'config', 'pty']);
+  expect(surface.top).toEqual(['appInfo', 'config', 'pty', 'session']);
   expect(surface.pty).toEqual([
     // Story 093 added `ack` — the renderer reporting what it has parsed, which
     // is what lets main apply backpressure.
@@ -87,12 +88,29 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'onLost',
     'resize',
+    /**
+     * Story 096 added `restart`, and it *is* a capability rather than a
+     * listener — so it is the kind of addition this test exists to make
+     * deliberate.
+     *
+     * It earns the widening by being the only way a session ever restarts.
+     * Nothing auto-respawns: the transport keeps its "already requested" flag
+     * set even after an exit, precisely so a tab switch can never resurrect a
+     * finished agent. Restarting discards a running agent's context, so it has
+     * to be a thing the user chose.
+     */
+    'restart',
     'spawn',
     'write',
   ]);
   // Story 090 added `config`, and it is read-only on purpose — no verb here
   // writes to the user's disk.
   expect(surface.config).toEqual(['get', 'reload']);
+  /**
+   * Story 096 added `session`, and it is a listener only. Main derives status
+   * from pty output and pushes it; the renderer cannot ask for anything here.
+   */
+  expect(surface.session).toEqual(['onStatus']);
 });
 
 test('ipcRenderer is not reachable through the bridge at any depth', async ({

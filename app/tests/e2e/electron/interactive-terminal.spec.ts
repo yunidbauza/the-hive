@@ -28,13 +28,27 @@ const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 const SESSION = 'hero-refresh';
 const PROJECT = 'apfm-web';
 
-function writeConfig(path: string): void {
+/**
+ * The bootstrap has to be *finished* before a spec types, not merely started.
+ *
+ * Story 096 writes `claudeCommand` into every new session shortly after its
+ * first output. A spec that starts typing in that window has its keystrokes
+ * interleaved with an injected command line, and the shell runs neither — which
+ * looks exactly like a broken keyboard handler and is nothing of the sort.
+ *
+ * So the bootstrap is pointed at a stub that announces itself, and
+ * `openLiveSession` waits for that announcement before returning. This also
+ * keeps the real `claude` out of a Playwright run, where it would consume
+ * tokens and touch the working tree.
+ */
+function writeConfig(path: string, bootstrapMarker: string): void {
   writeFileSync(
     path,
     JSON.stringify({
       version: 1,
       // `sh`, so this holds wherever CI runs it.
       shell: '/bin/sh',
+      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'`,
       projects: [{ id: PROJECT, path: REAL_DIRECTORY }],
     }),
   );
@@ -56,7 +70,7 @@ async function expectMarker(path: string, contents: string): Promise<void> {
  */
 async function openLiveSession(
   page: Page,
-  readyMarker: string,
+  markers: { ready: string; bootstrap: string },
 ): Promise<Locator> {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForSelector('header');
@@ -65,6 +79,13 @@ async function openLiveSession(
   const terminal = page.locator(`[data-terminal-id="${SESSION}"]`);
   await expect(terminal).toBeVisible();
 
+  /**
+   * Wait for the bootstrap to have run before touching the keyboard. Typing
+   * into the window where story 096 is still injecting `claudeCommand` would
+   * interleave two command lines and run neither.
+   */
+  await expectMarker(markers.bootstrap, 'bootstrapped');
+
   await page.evaluate(
     ([sessionId, marker]) => {
       window.hive!.pty.write({
@@ -72,9 +93,9 @@ async function openLiveSession(
         data: `echo ready > '${marker}'\n`,
       });
     },
-    [SESSION, readyMarker],
+    [SESSION, markers.ready],
   );
-  await expectMarker(readyMarker, 'ready');
+  await expectMarker(markers.ready, 'ready');
 
   await terminal.click();
   return terminal;
@@ -82,7 +103,8 @@ async function openLiveSession(
 
 test('keystrokes typed into the terminal reach the shell', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
   const marker = testInfo.outputPath('typed.txt');
 
   const app = await launchHive({
@@ -92,7 +114,10 @@ test('keystrokes typed into the terminal reach the shell', async ({}, testInfo) 
 
   try {
     const page = await app.firstWindow();
-    await openLiveSession(page, testInfo.outputPath('ready.txt'));
+    await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
 
     // Typed, not injected — the whole point of the story, driven the way a user
     // would drive it. Clicking to focus is part of the claim.
@@ -107,7 +132,8 @@ test('keystrokes typed into the terminal reach the shell', async ({}, testInfo) 
 
 test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
   const finished = testInfo.outputPath('finished.txt');
   const after = testInfo.outputPath('after.txt');
 
@@ -118,7 +144,10 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
 
   try {
     const page = await app.firstWindow();
-    await openLiveSession(page, testInfo.outputPath('ready.txt'));
+    await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
 
     // Would write `finished` in 100 seconds if it were ever allowed to.
     await page.keyboard.type(`sleep 100 && echo finished > '${finished}'`);
@@ -146,7 +175,8 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
 
 test('arrow keys edit the shell line rather than navigating the app', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
   const marker = testInfo.outputPath('edited.txt');
 
   const app = await launchHive({
@@ -156,7 +186,10 @@ test('arrow keys edit the shell line rather than navigating the app', async ({},
 
   try {
     const page = await app.firstWindow();
-    const terminal = await openLiveSession(page, testInfo.outputPath('ready.txt'));
+    const terminal = await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
 
     /**
      * A bare `←` inside a live terminal is a cursor key belonging to the child
@@ -181,7 +214,8 @@ test('arrow keys edit the shell line rather than navigating the app', async ({},
 
 test('the escape chord leaves a focused terminal for the orchestrator', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
 
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -190,7 +224,10 @@ test('the escape chord leaves a focused terminal for the orchestrator', async ({
 
   try {
     const page = await app.firstWindow();
-    const terminal = await openLiveSession(page, testInfo.outputPath('ready.txt'));
+    const terminal = await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
 
     const isMac = process.platform === 'darwin';
     await page.keyboard.press(isMac ? 'Meta+ArrowLeft' : 'Control+Shift+ArrowLeft');
@@ -208,7 +245,8 @@ test('the escape chord leaves a focused terminal for the orchestrator', async ({
 
 test('the interactive terminal takes a GPU context; the console does not', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
 
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -245,7 +283,8 @@ test('the interactive terminal takes a GPU context; the console does not', async
 
 test('a hidden terminal gives its GPU context back and takes one again on return', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
 
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),

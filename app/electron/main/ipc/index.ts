@@ -18,8 +18,9 @@ import { CH, type AppInfo } from '@shared/ipc-contract';
 
 import { getConfig, reloadConfig } from '../config';
 import { registerPtyHost } from '../pty-host';
+import { createSessions, type Sessions } from '../sessions';
+import { onShutdown } from '../shutdown';
 
-import { createPtyIpc, type PtyIpc } from './pty';
 import { assertSender } from './sender';
 
 /**
@@ -69,17 +70,18 @@ function handle<T>(
   });
 }
 
-let ptyIpc: PtyIpc | null = null;
+let sessions: Sessions | null = null;
 
-/** The live PTY IPC layer, or `null` before registration. Test-only reach-in. */
-export function ptyIpcLayer(): PtyIpc | null {
-  return ptyIpc;
+/** The live sessions layer, or `null` before registration. Test-only reach-in. */
+export function sessionsLayer(): Sessions | null {
+  return sessions;
 }
 
 export function registerIpcHandlers(): void {
   const supervisor = registerPtyHost();
-  ptyIpc = createPtyIpc({
+  sessions = createSessions({
     supervisor,
+    config: getConfig,
     /**
      * One window by design (story 000), so a broadcast reaches exactly the
      * renderer that owns every session. Resolved per send rather than captured:
@@ -94,9 +96,24 @@ export function registerIpcHandlers(): void {
     },
   });
 
+  /**
+   * Drop this layer's timers on quit.
+   *
+   * The *processes* are not killed here, and that is deliberate rather than an
+   * omission: `pty-host/index.ts` already registers a hook that asks the host to
+   * SIGTERM every session's process group, waits, and force-kills what is left
+   * (story 091). Signalling them twice from two hooks would race, and the second
+   * kill would target pids that no longer exist. This hook exists so that the
+   * batching and debounce timers cannot outlive the app and hold `before-quit`
+   * open after the processes are already gone.
+   */
+  onShutdown(() => {
+    sessions?.dispose();
+  });
+
   handle(CH.appInfo, (): AppInfo => {
     const { electron, chrome, node } = process.versions;
-    const diagnostics = ptyIpc?.diagnostics() ?? [];
+    const diagnostics = sessions?.diagnostics() ?? [];
     return {
       version: app.getVersion(),
       electron: electron ?? 'unknown',
@@ -128,59 +145,59 @@ export function registerIpcHandlers(): void {
    * and `ack` use `send`, and every one of them is validated before it reaches
    * process control.
    */
+  /**
+   * `sessionId` on the wire is an **entity** id.
+   *
+   * The renderer has always addressed terminals by entity id (story 094) and
+   * never sees a pty handle. Story 096 makes the two genuinely different: main
+   * mints a session id per generation, and the sessions layer translates in both
+   * directions. Project resolution and every refusal message moved there with
+   * it, so this handler is now only validation and delegation.
+   */
   handle(CH.ptySpawn, (_event, payload) => {
     const request = parseSpawnRequest(payload);
-    const config = getConfig();
-    const project = config.projects.find(
-      (entry) => entry.id === request.projectId,
-    );
+    sessions?.open({
+      entityId: request.sessionId,
+      projectId: request.projectId,
+      cols: request.cols,
+      rows: request.rows,
+    });
+  });
 
-    /**
-     * Resolved here, in main, and never in the host — which does not know what
-     * a project is (story 091). A project with no usable path cannot host a
-     * session, and saying so beats spawning a shell in an arbitrary directory.
-     */
-    if (!project || project.status !== 'ok' || project.path === null) {
-      throw new Error(
-        `cannot start a session in "${request.projectId}": it is not mapped to a usable directory in ${config.configPath}`,
-      );
-    }
-
-    ptyIpc?.spawn({
-      sessionId: request.sessionId,
-      shell: config.shell,
-      args: [],
-      cwd: project.path,
-      env: {},
+  handle(CH.ptyRestart, async (_event, payload) => {
+    const request = parseSpawnRequest(payload);
+    await sessions?.restart({
+      entityId: request.sessionId,
+      projectId: request.projectId,
       cols: request.cols,
       rows: request.rows,
     });
   });
 
   handle(CH.ptyKill, (_event, payload) => {
-    ptyIpc?.kill(parseKillRequest(payload));
+    sessions?.kill(parseKillRequest(payload));
   });
 
   on(CH.ptyWrite, (_event, payload) => {
     const request = parseWriteRequest(payload);
-    ptyIpc?.write(request.sessionId, request.data);
+    sessions?.write(request.sessionId, request.data);
   });
 
   on(CH.ptyResize, (_event, payload) => {
     const request = parseResizeRequest(payload);
-    ptyIpc?.resize(request.sessionId, request.cols, request.rows);
+    sessions?.resize(request.sessionId, request.cols, request.rows);
   });
 
   on(CH.ptyAck, (_event, payload) => {
     const request = parseAckRequest(payload);
-    ptyIpc?.ack(request.sessionId, request.seq);
+    sessions?.ack(request.sessionId, request.seq);
   });
 }
 
-/** Test-only: drop the PTY layer and its timers. */
+/** Test-only: drop the sessions layer and its timers. */
 export function resetIpcHandlers(): void {
-  ptyIpc?.dispose();
-  ptyIpc = null;
+  sessions?.dispose();
+  sessions = null;
 }
 
 export { assertSender, isTrustedSender, IpcSenderError } from './sender';

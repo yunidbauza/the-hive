@@ -2,6 +2,7 @@ import { ActivityRail } from '@components/layout/activity-rail';
 import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
+import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useShowActivityRail } from '@stores/ui-store';
 
 /**
@@ -27,6 +28,15 @@ import { useShowActivityRail } from '@stores/ui-store';
  */
 export function AppShell() {
   const showActivityRail = useShowActivityRail();
+
+  /**
+   * One subscription for every real session's status (story 096).
+   *
+   * Here rather than per session: `session:status` is a single broadcast
+   * channel, so a per-session hook would mean thirteen listeners racing to
+   * ignore twelve messages each.
+   */
+  useSessionStatus();
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">

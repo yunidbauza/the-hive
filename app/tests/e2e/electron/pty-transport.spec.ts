@@ -33,13 +33,24 @@ const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 const SESSION = 'hero-refresh';
 const PROJECT = 'apfm-web';
 
-function writeConfig(path: string): void {
+/**
+ * `claudeCommand` is pointed at a marker-writing stub (story 096).
+ *
+ * Two reasons, both load-bearing. A spec must never start the real `claude` —
+ * it would consume tokens and touch the working tree. And the bootstrap is
+ * written into the shell shortly after its first output, so a spec that sends
+ * its own command in that window has the two interleaved and the shell runs
+ * neither; waiting for the stub's marker is how these specs know the shell is
+ * theirs.
+ */
+function writeConfig(path: string, bootstrapMarker: string): void {
   writeFileSync(
     path,
     JSON.stringify({
       version: 1,
       // `sh`, so this holds wherever CI runs it.
       shell: '/bin/sh',
+      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'`,
       projects: [{ id: PROJECT, path: REAL_DIRECTORY }],
     }),
   );
@@ -66,7 +77,8 @@ async function expectFile(path: string, contents: string): Promise<void> {
 
 test('opening a session runs a real shell in the mapped project', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
   const marker = testInfo.outputPath('where.txt');
 
   const app = await launchHive({
@@ -81,6 +93,8 @@ test('opening a session runs a real shell in the mapped project', async ({}, tes
 
     await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
     await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
+    // The bootstrap has run, so the shell is idle and the next command is ours.
+    await expectFile(bootstrapped, 'bootstrapped');
 
     // `pwd` proves both halves at once: a process is alive, and main resolved
     // its cwd from the workspace config rather than spawning it anywhere.
@@ -94,7 +108,8 @@ test('opening a session runs a real shell in the mapped project', async ({}, tes
 
 test('a session keeps running while the user looks at something else', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
   const before = testInfo.outputPath('before.txt');
   const away = testInfo.outputPath('away.txt');
 
@@ -110,6 +125,8 @@ test('a session keeps running while the user looks at something else', async ({}
 
     await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
     await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
+    // The bootstrap has run, so the shell is idle and the next command is ours.
+    await expectFile(bootstrapped, 'bootstrapped');
 
     // Prove the shell is up before navigating away, so the assertion after the
     // switch cannot pass by accident on a session that never started.
@@ -132,7 +149,8 @@ test('a session keeps running while the user looks at something else', async ({}
 
 test('an exit reports its code, and signal 0 rather than no signal', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
-  writeConfig(configPath);
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
 
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -146,6 +164,8 @@ test('an exit reports its code, and signal 0 rather than no signal', async ({}, 
 
     await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
     await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
+    // The bootstrap has run, so the shell is idle and the next command is ours.
+    await expectFile(bootstrapped, 'bootstrapped');
 
     const exit = await page.evaluate((sessionId) => {
       return new Promise<{ exitCode: number; signal?: number }>((resolve) => {

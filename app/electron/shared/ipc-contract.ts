@@ -18,6 +18,7 @@
  */
 
 import type { ConfigSnapshot } from './config-contract';
+import type { SessionStatusEvent } from './session-contract';
 
 export const CH = {
   configGet: 'config:get',
@@ -50,6 +51,17 @@ export const CH = {
    * channel existed. This is that channel.
    */
   ptyLost: 'pty:lost', // main → renderer
+  /** Kill, wait for the exit, spawn fresh, bootstrap again (story 096). */
+  ptyRestart: 'pty:restart',
+  /**
+   * What a real session is doing, derived in main (story 096).
+   *
+   * Derived in main and not the renderer because the input is a firehose: a
+   * per-chunk store write would re-render the shell continuously, which is
+   * exactly what the store split exists to prevent. One `working`, then one
+   * `idle` two seconds after the output stops.
+   */
+  sessionStatus: 'session:status', // main → renderer
   appInfo: 'app:info',
 } as const;
 
@@ -62,7 +74,12 @@ export type Channel = (typeof CH)[keyof typeof CH];
  * (`pty:data:<id>`) — is rejected because it makes the channel set *dynamic*,
  * which is precisely what an allowlist cannot be.
  */
-export const EVENT_CHANNELS = [CH.ptyData, CH.ptyExit, CH.ptyLost] as const;
+export const EVENT_CHANNELS = [
+  CH.ptyData,
+  CH.ptyExit,
+  CH.ptyLost,
+  CH.sessionStatus,
+] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
 export interface SpawnRequest {
@@ -219,6 +236,19 @@ export interface HiveBridge {
     onExit(callback: (event: ExitEvent) => void): () => void;
     /** The host died under this session (story 094). See {@link SessionLostEvent}. */
     onLost(callback: (event: SessionLostEvent) => void): () => void;
+    /**
+     * Kill this session and start a fresh one (story 096).
+     *
+     * A capability, not a listener — and deliberately explicit. Nothing
+     * auto-respawns: the transport keeps its "already requested" flag set even
+     * after an exit, so a remount can never restart a finished agent. This verb
+     * is the only way back, and it is a thing the user chose to do.
+     */
+    restart(request: SpawnRequest): Promise<void>;
+  };
+  /** Real session lifecycle, derived in main (story 096). */
+  session: {
+    onStatus(callback: (event: SessionStatusEvent) => void): () => void;
   };
 }
 
@@ -248,7 +278,10 @@ export const LOW_WATER_BYTES = 128 * 1024;
 export const RESIZE_THROTTLE_MS = 50;
 
 /** The exact top-level key set of `window.hive`. The surface test asserts it. */
-export const BRIDGE_KEYS = ['appInfo', 'config', 'pty'] as const;
+export const BRIDGE_KEYS = ['appInfo', 'config', 'pty', 'session'] as const;
+
+/** The exact key set of `window.hive.session`. */
+export const BRIDGE_SESSION_KEYS = ['onStatus'] as const;
 
 /** The exact key set of `window.hive.config`. */
 export const BRIDGE_CONFIG_KEYS = ['get', 'reload'] as const;
@@ -263,4 +296,5 @@ export const BRIDGE_PTY_KEYS = [
   'onData',
   'onExit',
   'onLost',
+  'restart',
 ] as const;

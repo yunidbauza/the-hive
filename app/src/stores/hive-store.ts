@@ -80,6 +80,7 @@ interface HiveState {
     lines: TermLine[],
     status?: SessionStatus,
   ) => void;
+  setSessionStatus: (id: string, status: SessionStatus) => void;
   reset: () => void;
 }
 
@@ -412,6 +413,28 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       return { entities: { ...state.entities, [id]: updated } };
     }),
 
+  /**
+   * A real session's status, derived from its pty in the main process
+   * (story 096).
+   *
+   * Separate from `appendEntityLines` because it carries no transcript: with a
+   * real PTY the transcript goes straight to xterm through the transport and
+   * never touches this store. Only the *status* comes back, which is what the
+   * rails and the inbox render.
+   *
+   * Agents are ignored rather than rejected. They have no `status` field of this
+   * shape and no pty this epic, and a status event for one means main and the
+   * fixture set disagree — worth not crashing over, not worth acting on.
+   */
+  setSessionStatus: (id, status) =>
+    set((state) => {
+      const entity = state.entities[id];
+      if (!entity || !isSession(entity) || entity.status === status) return state;
+      return {
+        entities: { ...state.entities, [id]: { ...entity, status } },
+      };
+    }),
+
   reset: () => {
     spawnCounter = 0;
     resetClock();
@@ -499,6 +522,10 @@ export const useAgentOrder = () =>
 
 /** Create a session on a project (stories 041, 044). */
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
+
+/** Story 096: main pushes a real session's derived status through this. */
+export const useSetSessionStatus = () =>
+  useHiveStore((state) => state.setSessionStatus);
 
 /** Route a message to a session or agent (stories 041, 043). */
 export const useSendToEntity = () => useHiveStore((state) => state.sendToEntity);
