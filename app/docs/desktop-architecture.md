@@ -141,6 +141,38 @@ Supervisor behaviour worth knowing before changing it:
 Everything above is injected (`fork`, the clock, every timeout), so the whole
 story is asserted with fake timers instead of by killing real processes.
 
+### What makes a terminal real (story 092)
+
+Not the renderer — xterm.js has been rendering fixtures since story 042. What
+was missing is a kernel pty pair with a process whose controlling terminal it
+is. `electron/pty-host/session-manager.ts` owns that. Four things there are load
+bearing and easy to break:
+
+- **`TERM=xterm-256color`.** How every program in the terminal decides what it
+  may emit. Wrong, and colours silently vanish or garbage appears.
+  `COLORTERM=truecolor` beside it, or tools quantise the 24-bit palette to 256.
+- **Environment sanitisation.** The child must not inherit Electron's
+  environment verbatim. `ELECTRON_*`, `NODE_OPTIONS`, `NODE_PATH`,
+  `GDK_PIXBUF_*` and `CHROME_*` are stripped. This is the bug class behind "it
+  works in my terminal but not in the app", and it stays invisible until
+  something downstream behaves strangely.
+- **`encoding: null` plus a per-session `StringDecoder`.** A multi-byte
+  character can straddle a read boundary, and decoding chunks independently
+  corrupts it *permanently* — the damage happens before the bytes reach xterm.
+  A terminal running Claude Code renders box-drawing and emoji constantly.
+- **`kill` targets the process group.** `process.kill(-pid, sig)`, then SIGKILL
+  after a grace period. SIGTERM to the shell alone leaves `claude` and
+  everything it spawned running with a dangling pty.
+
+Resizes clamp to 1×1 and drop no-ops: xterm reports 0 transiently mid-layout,
+and a pty resized to zero columns puts curses applications into states they do
+not recover from.
+
+Each session keeps a bounded ring buffer (256 KB) so a terminal that mounts late
+still shows the transcript, prefixed with a dim truncation marker when output
+was dropped. The buffer is **retained after exit** — a terminal that clears
+itself when a process dies destroys the error the user needed to read.
+
 ## Two ABI facts that produce unreadable errors when forgotten
 
 **`node-pty@1.1.0` does NOT need rebuilding for Electron.** It ships **N-API**

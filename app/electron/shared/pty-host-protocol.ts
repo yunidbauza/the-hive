@@ -146,3 +146,30 @@ export const CRASH_LIMIT = 4;
 
 /** What a terminal writes when its host died underneath it. */
 export const SESSION_LOST_NOTICE = 'session lost (pty host crashed)';
+
+/**
+ * Prefixed to a replayed transcript that had output dropped from its front
+ * (story 092).
+ *
+ * SGR dim written literally, not through `src/lib/terminal/ansi.ts`: the host
+ * may not import renderer code, and this string is produced inside a pty
+ * stream where an escape sequence is the only way to be dim. A partial
+ * transcript that does not say it is partial is worse than no transcript —
+ * the user reads it as the whole story.
+ */
+export const TRUNCATION_NOTICE =
+  '[2m── earlier output truncated ──[0m\r\n';
+
+/** Default bounded scrollback per session. */
+export const SCROLLBACK_BYTES = 256 * 1024;
+
+/**
+ * Default session cap.
+ *
+ * The fixture set is thirteen entities, so this sits comfortably above
+ * realistic use and well below the point where a laptop is fork-bombed.
+ */
+export const MAX_SESSIONS = 24;
+
+/** How long a killed process group has to die before it is SIGKILLed. */
+export const KILL_GRACE_MS = 2_000;

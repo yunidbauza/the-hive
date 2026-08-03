@@ -2,7 +2,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPtyHost, type HostPort } from '../../../electron/pty-host/host';
-import { createPendingSessions } from '../../../electron/pty-host/sessions';
 import type {
   HostCommand,
   HostMessage,
@@ -164,44 +163,5 @@ describe('shutdown', () => {
     expect(sent).toEqual([
       { type: 'error', message: expect.stringContaining('pty would not die') },
     ]);
-  });
-});
-
-describe('the placeholder session operations', () => {
-  it('reports that spawning is not implemented yet instead of failing silently', () => {
-    const { port, sent, send } = fakePort();
-    createPtyHost({ port, sessions: createPendingSessions(), exit: vi.fn() });
-
-    send(SPAWN);
-
-    // A session that never opens and never says why is the failure mode this
-    // placeholder exists to avoid until story 092 lands.
-    expect(sent).toEqual([
-      {
-        type: 'error',
-        sessionId: 'hero-refresh',
-        message: expect.stringContaining('092'),
-      },
-    ]);
-  });
-
-  it('is inert for the rest — main rejects unknown sessions before they reach here', () => {
-    const { port, sent, send } = fakePort();
-    createPtyHost({ port, sessions: createPendingSessions(), exit: vi.fn() });
-
-    send({ type: 'write', sessionId: 'a', data: 'x' });
-    send({ type: 'resize', sessionId: 'a', cols: 80, rows: 24 });
-    send({ type: 'kill', sessionId: 'a' });
-
-    expect(sent).toEqual([]);
-  });
-
-  it('has nothing to tear down, so shutdown exits cleanly', async () => {
-    const { port, send } = fakePort();
-    const exit = vi.fn();
-    createPtyHost({ port, sessions: createPendingSessions(), exit });
-
-    send({ type: 'shutdown' });
-    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
   });
 });

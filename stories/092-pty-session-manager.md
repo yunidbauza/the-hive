@@ -185,3 +185,57 @@ Everything about *real terminal behaviour* — that `SIGINT` actually arrives, t
 - Deciding *what* to run — [096](096-session-lifecycle-claude.md).
 - Session persistence across app restarts; reattach to a pty that outlives the app.
 - Windows / ConPTY.
+
+## UPDATED SPECS
+
+### 1. `NODE_PATH` joins the deny-list
+
+The story's env table names `ELECTRON_RUN_AS_NODE`, `ELECTRON_*`, `NODE_OPTIONS`,
+`GDK_PIXBUF_*` and `CHROME_*`. It misses `NODE_PATH`, which Electron's launcher
+sets to Electron's **own** bundled `node_modules`. Inheriting it means a `node` the
+user runs in their session resolves modules out of Electron's tree instead of their
+project's — precisely the invisible behaviour change `NODE_OPTIONS` is on the list
+for.
+
+Found the first time a real shell was spawned under Electron and its environment
+read back, which is exactly the kind of thing a mocked unit test cannot surface.
+
+### 2. The node-pty mock now emits Buffers
+
+`__mocks__/node-pty.ts` typed `emitData(chunk: string)`. This story spawns with
+`encoding: null`, so the real module yields **Buffers** — the one option node-pty's
+types do not model. A mock that can only emit strings makes the
+split-multi-byte-character defect untestable, which is the defect the
+`StringDecoder` exists to prevent. `emitData` now takes `string | Buffer`.
+
+### 3. Replay is an accessor, not an emission
+
+The story lists "Replay is emitted before the first live chunk" as a test. The host
+has one port and no notion of a surface mounting, so it cannot know *when* to emit a
+replay — that decision belongs to whoever attaches a consumer. The manager therefore
+exposes `replay(sessionId): string | null`, returning the buffered transcript with
+the truncation marker already applied, and story 093 sends it before subscribing to
+live data.
+
+The buffer's own behaviour — bounding, front-dropping, the marker, retention after
+exit — is asserted directly.
+
+### 4. The 091 placeholder is gone
+
+`createPendingSessions()` is deleted and `electron/pty-host/index.ts` now constructs
+a real `createSessionManager()`. Exactly the one-factory swap 091 designed for;
+nothing else in the host moved.
+
+### Acceptance criteria
+
+Most of these needed a real pty, so `tests/e2e/electron/pty-host.spec.ts` grew a
+spec that spawns one under Electron's ABI:
+
+- [x] A spawned session runs a real shell in the directory it was given.
+- [x] `$TERM` is `xterm-256color`; `test -t 0` says the fd is a tty.
+- [x] No deny-listed variable reaches the child.
+- [x] `COLORTERM=truecolor` is advertised.
+- [ ] 256-colour rendering, `stty size` after a resize, Ctrl-C interrupting
+      `sleep 100`, `vim`/`htop` rendering and exiting cleanly, and the
+      orphan-freedom `pgrep` check — these need the full conformance runner and
+      remain **story 098**'s. The plumbing each depends on is unit-asserted here.

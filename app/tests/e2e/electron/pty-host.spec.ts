@@ -79,47 +79,94 @@ test('the bundled host forks under Electron and answers the heartbeat', async ({
   expect(result.exitCode).toBe(0);
 });
 
-test('a spawn request reaches the real host and is answered, not swallowed', async ({
+/**
+ * A **real** pseudo-terminal, under Electron's ABI (story 092).
+ *
+ * This is the one assertion the unit suite structurally cannot make. `node-pty`
+ * is mocked there — a unit test that spawns real processes is a unit test that
+ * leaks them — so everything it proves is plumbing. Whether a kernel pty pair
+ * actually exists behind the session, whether `TERM` reached the child, and
+ * whether `isatty()` returns true is only answerable by running one.
+ *
+ * Story 098 owns the full conformance suite. These are the headline claims,
+ * asserted now rather than deferred, because "the terminal is real" is the
+ * entire point of the epic.
+ */
+test('spawns a real pty: a real shell, a real TERM, and a real tty', async ({
   hive,
 }) => {
-  const reply = await hive.evaluate(async ({ utilityProcess }, entry) => {
+  const transcript = await hive.evaluate(async ({ utilityProcess }, entry) => {
     const child = utilityProcess.fork(entry, [], {
       serviceName: 'hive-pty-host-probe',
     });
 
-    return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error('the host never answered the spawn')),
-        10_000,
-      );
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error('the shell never exited'));
+      }, 20_000);
+
+      let output = '';
 
       child.on('spawn', () => {
         child.postMessage({
           type: 'spawn',
-          sessionId: 'hero-refresh',
-          shell: '/bin/zsh',
+          sessionId: 'probe',
+          // `sh`, not `zsh`: this has to hold on any machine CI runs on.
+          shell: '/bin/sh',
           args: [],
           cwd: '/',
           env: {},
-          cols: 80,
+          // Wide enough that the echoed command cannot wrap into the middle of
+          // an assertion. A wrapped line inserts a CR and splits the token.
+          cols: 400,
           rows: 24,
         });
       });
 
-      child.on('message', (message: unknown) => {
-        clearTimeout(timer);
-        child.kill();
-        resolve(message);
+      child.on('message', (message: { type: string; chunk?: string }) => {
+        if (message.type === 'data') output += message.chunk ?? '';
+
+        if (message.type === 'spawned') {
+          // `test -t 0` is the assertion that matters most: it is `isatty()`,
+          // which is why interactive tools enable their interactive paths at
+          // all — and why Claude Code's TUI renders.
+          //
+          // The leak check matches variable **names against the deny-list**,
+          // anchored. A loose `grep ELECTRON` over whole `env` lines also
+          // matches this suite's own `PW_ELECTRON_ONLY` flag and any variable
+          // whose *value* happens to contain the word — which is how the
+          // first version of this test managed to fail against a correctly
+          // sanitised environment.
+          //
+          // Leaked names are listed rather than counted, so a failure names
+          // the offender instead of just saying "not zero".
+          child.postMessage({
+            type: 'write',
+            sessionId: 'probe',
+            data: 'echo "T=$TERM C=$COLORTERM TTY=$(test -t 0 && echo yes || echo no) LEAK=[$(env | cut -d= -f1 | grep -E \'^(ELECTRON_|GDK_PIXBUF_|CHROME_|NODE_OPTIONS$|NODE_PATH$)\' | tr \'\\n\' \' \')]"; exit\n',
+          });
+        }
+
+        if (message.type === 'exit') {
+          clearTimeout(timer);
+          const captured = output;
+          child.postMessage({ type: 'shutdown' });
+          resolve(captured);
+        }
       });
     });
   }, HOST_ENTRY);
 
-  // Story 091 ships the host, not the PTYs. What matters is that the request
-  // is *answered* — a session that never opens and never says why is the
-  // failure mode the placeholder exists to prevent until story 092 lands.
-  expect(reply).toEqual({
-    type: 'error',
-    sessionId: 'hero-refresh',
-    message: expect.stringContaining('092'),
-  });
+  // The single most consequential option: it is how every program in the
+  // terminal decides what it may emit.
+  expect(transcript).toContain('T=xterm-256color');
+  // Without this, some tools quantise the truecolor palette to 256.
+  expect(transcript).toContain('C=truecolor');
+  // A kernel pty pair really is behind this, not a pipe. This is `isatty()`,
+  // and it is why Claude Code's TUI renders at all.
+  expect(transcript).toContain('TTY=yes');
+  // The bug class that produces "it works in my terminal but not in the app".
+  // The empty brackets are the assertion; a failure prints the leaked names.
+  expect(transcript).toContain('LEAK=[]');
 });

@@ -1,5 +1,5 @@
 import { createPtyHost, type HostPort } from './host';
-import { createPendingSessions } from './sessions';
+import { createSessionManager } from './session-manager';
 
 /**
  * The pty-host process entry (story 091).
@@ -31,4 +31,4 @@ if (!parentPort) {
   );
 }
 
-createPtyHost({ port: parentPort, sessions: createPendingSessions() });
+createPtyHost({ port: parentPort, sessions: createSessionManager() });

@@ -40,7 +40,7 @@ export class MockPty {
   rows: number;
   process: string;
 
-  private readonly dataListeners: ((chunk: string) => void)[] = [];
+  private readonly dataListeners: ((chunk: string | Buffer) => void)[] = [];
   private readonly exitListeners: ((e: {
     exitCode: number;
     signal?: number;
@@ -54,7 +54,7 @@ export class MockPty {
   }
 
   /** Mirrors node-pty's disposable-returning listener API. */
-  onData(cb: (chunk: string) => void) {
+  onData(cb: (chunk: string | Buffer) => void) {
     this.dataListeners.push(cb);
     return {
       dispose: () => {
@@ -74,8 +74,16 @@ export class MockPty {
     };
   }
 
-  /** Test-only: push output as if the child had written it. */
-  emitData(chunk: string) {
+  /**
+   * Test-only: push output as if the child had written it.
+   *
+   * Accepts a `Buffer` because story 092 spawns with `encoding: null`, so the
+   * real module emits Buffers rather than strings — the one option node-pty's
+   * own types do not model. A mock that could only emit strings would make the
+   * split-multi-byte-character defect untestable, which is precisely the
+   * defect the `StringDecoder` exists to prevent.
+   */
+  emitData(chunk: string | Buffer) {
     for (const cb of [...this.dataListeners]) cb(chunk);
   }
 
