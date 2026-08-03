@@ -113,7 +113,7 @@ test('a malformed file still launches the app, with nothing spawnable', async ({
   }
 });
 
-test('a first run writes a template and points the user at it', async ({}, testInfo) => {
+test('a first run writes a template and offers a way to add a project', async ({}, testInfo) => {
   // `contents: null` — no file at all, which is the normal state on a fresh
   // machine and must not be an error.
   const { app, page, configPath } = await launchWithConfig(
@@ -129,12 +129,25 @@ test('a first run writes a template and points the user at it', async ({}, testI
       version: number;
       projects: unknown[];
     };
-    expect(written.version).toBe(1);
+    // Story 101 took CONFIG_VERSION to 2, and the template emits whatever this
+    // build writes. A v1 file the user already has still loads unchanged.
+    expect(written.version).toBe(2);
     expect(written.projects).toEqual([]);
 
     await page.getByRole('button', { name: 'New session' }).click();
-    await expect(page.getByText(/no projects are mapped yet/)).toBeVisible();
-    await expect(page.getByText(configPath, { exact: false })).toBeVisible();
+
+    /**
+     * Story 090 printed `configPath` here and story 101 replaced it with a
+     * button, deliberately: naming a file the user has never opened is not an
+     * instruction, and that dead end is the whole reason story 101 exists.
+     *
+     * The path is still discoverable — it is the last line of the settings
+     * Projects section — but it is no longer the *only* thing the app offers a
+     * user who cannot start a session.
+     */
+    await expect(page.getByText(/no projects yet/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /add project/i })).toBeVisible();
+    await expect(page.getByText(configPath, { exact: false })).not.toBeVisible();
   } finally {
     await app.close();
   }

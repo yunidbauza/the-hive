@@ -19,13 +19,28 @@ import {
  */
 export const CONFIG_TEMPLATE = `${JSON.stringify(
   {
-    '//': 'The Hive — workspace config. Maps a project shown in the left rail to a real directory on this machine.',
-    '//docs': 'A project listed here can host a real terminal session. One that is not still appears, marked "unmapped".',
+    '//': 'The Hive — workspace config. Declares the repositories you can open a session in.',
+    '//docs': 'You do not have to edit this by hand: Settings → Projects adds and removes entries, and preserves these comments when it writes.',
     version: CONFIG_VERSION,
     '//shell': 'Optional. The login shell every session runs. Defaults to $SHELL.',
     '//claudeCommand': `Optional. The command a session bootstraps with. Defaults to "${DEFAULT_CLAUDE_COMMAND}".`,
-    '//projects': 'id must match a project id shown in the left rail. "~" is expanded; the path must be an existing directory.',
-    '//example': [{ id: 'apfm-web', path: '~/repos/apfm-web' }],
+    /**
+     * Story 090 required `id` to match a fixture project id. Story 101 reverses
+     * that — the config now *declares* projects — so the template must stop
+     * teaching the old rule, or a fresh install ships documentation that is
+     * false the moment it is written.
+     */
+    '//projects':
+      'id is stable and referenced by sessions; name is what you see. "~" is expanded; the path must be an existing directory.',
+    '//example': [
+      {
+        id: 'apfm-web',
+        name: 'APFM Web',
+        path: '~/repos/apfm-web',
+        icon: 'ph-folder',
+        origin: 'local',
+      },
+    ],
     projects: [],
   },
   null,
