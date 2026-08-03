@@ -46,39 +46,56 @@ describe('Header', () => {
   });
 
   /**
-   * happy-dom performs no layout, so "is it centred?" is unanswerable here —
-   * `smoke.spec.ts` measures the boxes in a real browser. What unit tests can
-   * pin is the structure that produces the centring: three tracks, equal `1fr`
-   * on both sides, and the chip in the middle one.
+   * happy-dom performs no layout, so "does it line up with the rail?" is
+   * unanswerable here — `chip-alignment.spec.ts` measures the boxes in a real
+   * browser. What unit tests can pin is the structure that produces the
+   * alignment: two zones, and a brand wrapper that claims the rail's width so
+   * the chips beside it start on the rail's edge.
    */
-  describe('centred model chip', () => {
-    it('lays out as three tracks with the chip in the middle one', () => {
+  describe('left-aligned chips', () => {
+    it('lays out as two zones, with both chips in the left one', () => {
       useUiStore.setState({ activeTab: 'hero-refresh' });
 
       render(<Header />);
 
       const banner = screen.getByRole('banner');
-      expect(banner).toHaveClass('grid', 'grid-cols-[1fr_minmax(0,auto)_1fr]');
+      // Flex, not a grid: nothing is centred any more, so the equal-track
+      // machinery that existed to find the true midpoint is gone.
+      expect(banner).toHaveClass('flex');
+      expect(banner).not.toHaveClass('grid');
 
-      const [brand, centre, controls] = Array.from(banner.children);
-      expect(brand).toHaveTextContent('The Hive');
-      expect(centre).toHaveTextContent(/Opus 4.5 \(1M\)/);
+      const [left, controls] = Array.from(banner.children);
+      expect(banner.children).toHaveLength(2);
+      expect(left).toHaveTextContent('The Hive');
+      expect(left).toHaveTextContent(/Opus 4.5 \(1M\)/);
       expect(controls).toHaveTextContent('4 working');
     });
 
+    it('gives the brand exactly the rail’s width, so the chips start on its edge', () => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
+
+      render(<Header />);
+
+      // 252px = the rail's 268px minus the header's own px-4. The real
+      // geometry is measured in chip-alignment.spec.ts; this pins the
+      // mechanism so a refactor cannot quietly drop it.
+      const [left] = Array.from(screen.getByRole('banner').children);
+      expect(left.firstElementChild).toHaveClass('w-[252px]', 'shrink-0');
+    });
+
     /**
-     * The regression this guards: if the middle wrapper rendered only when the
-     * chip did, grid auto-placement would drop the controls into the centre
-     * track on the orchestrator and agent tabs and the header would reflow on
-     * every tab switch.
+     * The chip is conditional on a session being active. In a flex row its
+     * absence simply closes the gap — there is no empty track to keep, which
+     * is the simplification that dropping the grid bought.
      */
-    it('keeps the middle track when the chip is absent, so the sides never move', () => {
+    it('closes the gap when the chip is absent instead of leaving a hole', () => {
       render(<Header />);
 
       const banner = screen.getByRole('banner');
-      expect(banner.children).toHaveLength(3);
-      expect(banner.children[1]).toBeEmptyDOMElement();
-      expect(banner.children[2]).toHaveTextContent('4 working');
+      expect(banner.children).toHaveLength(2);
+      expect(banner.children[0]).toHaveTextContent('The Hive');
+      expect(banner.children[0]).not.toHaveTextContent(/Opus 4.5/);
+      expect(banner.children[1]).toHaveTextContent('4 working');
     });
   });
 

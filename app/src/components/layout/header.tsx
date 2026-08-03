@@ -19,54 +19,40 @@ import { usePickerActions, useTheme, useThemeActions } from '@stores/ui-store';
  * subscription (`ModelChip`, `StatusCounts`), so a session changing status
  * repaints one span rather than the whole bar.
  *
- * Three zones: brand left, model chip (sessions only) centered, controls right —
+ * Two zones: an identity-and-state cluster on the left, controls on the right —
  * fleet counts, theme toggle, inbox bell, New session.
  *
- * The layout is a `1fr minmax(0,auto) 1fr` grid rather than the flex row with a
- * spacer it replaces, because the chip has to sit at the header's *true*
- * midpoint. Flex spacers would centre the gap between two unequal clusters —
- * the brand measures 150px and the controls 517px, which lands the chip about
- * 198px *left* of centre. Equal `1fr` tracks put it at the real midpoint
- * regardless of what either side grows to.
+ * ## Nothing is centred any more, so the centring machinery is gone
  *
- * Equal tracks have a price worth stating, because it is what the measurements
- * say and not what the markup suggests. Both side tracks size to the *wider*
- * side, so the space the layout needs is `2 × controls + chip`, not the sum of
- * the three: 2×517 + 459 = 1493px against the 1380px a 1440px header has to
- * give. The 113px deficit has to land somewhere, and the only question a
- * centred header really asks is *on which zone*.
+ * This used to be a `1fr minmax(0,auto) 1fr` grid whose entire purpose was to
+ * put the model chip at the header's *true* midpoint: equal side tracks find
+ * the real centre where a flex spacer would only centre the gap between two
+ * unequal clusters. That was correct while the chip was meant to be centred.
  *
- * It lands on the counts, which ellipsise from the tail (see `StatusCounts`) —
- * the alternative is the chip losing `resets 02:30 PM`, and the chip is the
- * thing being centred. Left alone the browser picks worse still: the counts are
- * wrappable, so grid quietly reflows them onto a second line inside a bar that
- * is one line tall. Above roughly 1553px the deficit disappears and nothing
- * truncates.
+ * It no longer is. Both chips now start on the **left rail's trailing edge** —
+ * the vertical line the center stage begins on — so a plain flex row is the
+ * honest structure, and the equal-track machinery would be dead weight that
+ * still cost the layout `2 x max(side)` of width.
  *
- * `minmax(0, auto)` on the middle track, not bare `auto`: it drops that track's
- * minimum to zero, so the chip's own truncation is the last valve — it gives
- * only once the counts have already collapsed, far below any supported width.
+ * ## Where the width goes when the header runs out
  *
- * Each zone is wrapped and explicitly placed with `col-start-*`. The middle
- * wrapper renders even when `ModelChip` returns null — on the orchestrator and
- * agent tabs the track collapses to zero width and the two side zones stay
- * exactly where they were, so switching tabs never reflows the header.
+ * The brand claims exactly the rail's width (252px = the rail's 268px minus
+ * this header's own `px-4`), so whatever follows it starts on that line.
  *
- * ## What the two targets add, and why both land on the left (story 083)
+ * The left cluster is `min-w-0` and the right one does not shrink, so the model
+ * chip is what gives when the window narrows. That is the right way round now:
+ * the chip already truncates by design and carries its full text in a `title`,
+ * while the fleet counts have no tooltip and would simply lose information.
+ * (Under the old grid the counts absorbed the deficit instead, because the chip
+ * was the thing being centred and could not be allowed to move.)
  *
- * The left track is the *narrow* side — 150px against the controls' 517px — and
- * the width the header needs is `2 × max(side) + chip`. So anything added on
- * the left is free until it overtakes the right (≈367px of headroom), while
- * anything added on the right costs **twice** its width and pushes the counts
- * further into truncation. Both target-specific additions therefore go here:
+ * ## Target-specific additions, both on the left
  *
  * - **browser**: the `demo` chip, so the fixtures-only surface is never
  *   mistaken for the real thing.
  * - **desktop**: a 78px inset clearing the traffic lights that
  *   `titleBarStyle: 'hiddenInset'` (story 081) floats over this bar, plus the
  *   drag region that replaces the title bar we removed.
- *
- * They are mutually exclusive, so the left track never carries both.
  */
 export function Header() {
   const theme = useTheme();
@@ -88,40 +74,66 @@ export function Header() {
        * 78px gap in the demo surface would be a visible regression.
        */
       className={cn(
-        'grid h-14 shrink-0 grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-[14px] border-b border-border-soft bg-panel px-4',
+        'flex h-14 shrink-0 items-center gap-[14px] border-b border-border-soft bg-panel px-4',
         desktop && '[-webkit-app-region:drag]',
       )}
     >
-      <div
-        /*
-         * Clears the macOS traffic lights, which float over our header at
-         * `{ x: 16, y: 20 }`. 78px is the three lights plus their inset plus a
-         * gap — measured against the constant in `electron/shared/window.ts`.
-         */
-        className={cn('col-start-1 flex items-center', desktop && 'pl-[78px]')}
-      >
+      <div className="flex min-w-0 flex-1 items-center">
         {/*
-          The brand claims exactly the left rail's width, so the `demo` chip
-          beside it starts on the rail's trailing edge — the same vertical line
-          the center stage begins on. Without this the chip floats wherever the
-          wordmark happens to end, aligned to nothing.
+          The brand claims exactly the left rail's width, so whatever follows it
+          starts on the rail's trailing edge — the same vertical line the center
+          stage begins on. Without this the chips float wherever the wordmark
+          happens to end, aligned to nothing.
 
           252px = the rail's 268px minus this header's own `px-4`, since the
           rail starts at the viewport edge and the header's content box does
           not. `left-rail.tsx` owns the 268; `chip-alignment.spec.ts` measures
           the two against each other so this cannot drift silently.
         */}
-        <div className="flex w-[252px] shrink-0 items-center">
+        <div
+          /*
+           * The traffic-light inset lives INSIDE this fixed width, not on the
+           * zone around it. Electron floats the lights over our header at
+           * `{ x: 16, y: 20 }` (story 081), and 78px clears them — but padding
+           * the outer zone would push the whole cluster 78px right and land the
+           * chips at 346 instead of the rail's 268. Absorbed here, the wrapper
+           * still spans 16 → 268 on both targets and only the wordmark moves.
+           */
+          className={cn(
+            'flex w-[252px] shrink-0 items-center',
+            desktop && 'pl-[78px]',
+          )}
+        >
           <BrandBlock />
         </div>
-        <DemoChip />
+        {/*
+          The chips get their own row so the gap between THEM does not also
+          apply between the brand and the first chip — that would push the
+          cluster 10px past the rail's edge and quietly undo the alignment.
+
+          The model chip sits here too, not in a centred track. On desktop there
+          is no `demo` chip, so it starts exactly on the rail's edge; in the
+          browser it follows the `demo` chip. It renders nothing on the
+          orchestrator and agent tabs, and because this is a flex row rather
+          than a fixed grid, its absence simply closes the gap instead of
+          leaving a hole.
+        */}
+        <div
+          /*
+           * Named so the alignment specs can measure the cluster's left edge
+           * directly. Whichever chip comes first sits on that edge, and which
+           * one that is depends on the target — so "the first chip" is not a
+           * thing a selector can express without encoding the target too.
+           */
+          data-testid="header-chips"
+          className="flex min-w-0 items-center gap-2.5"
+        >
+          <DemoChip />
+          <ModelChip />
+        </div>
       </div>
 
-      <div className="col-start-2 flex min-w-0 items-center justify-center">
-        <ModelChip />
-      </div>
-
-      <div className="col-start-3 flex min-w-0 items-center justify-end gap-[14px]">
+      <div className="flex shrink-0 items-center justify-end gap-[14px]">
         <StatusCounts />
 
         <button
