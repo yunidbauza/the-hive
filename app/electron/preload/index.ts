@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
-import type { ConfigSnapshot } from '@shared/config-contract';
+import type {
+  AddProjectRequest,
+  ConfigSnapshot,
+  RemoveProjectRequest,
+} from '@shared/config-contract';
 import {
   CH,
   type AckRequest,
@@ -73,6 +77,15 @@ const bridge: HiveBridge = {
   config: {
     get: (): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configGet),
     reload: (): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configReload),
+    // Story 101's mutating verbs. All `invoke`: the dialog needs its result,
+    // and the other two return the fresh snapshot so the renderer never has to
+    // follow a write with a reload.
+    chooseDirectory: (): Promise<string | null> =>
+      ipcRenderer.invoke(CH.configChooseDirectory),
+    addProject: (request: AddProjectRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configAddProject, request),
+    removeProject: (request: RemoveProjectRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configRemoveProject, request),
   },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>

@@ -17,12 +17,20 @@
  * that proves the whole path.
  */
 
-import type { ConfigSnapshot } from './config-contract';
+import type {
+  AddProjectRequest,
+  ConfigSnapshot,
+  RemoveProjectRequest,
+} from './config-contract';
 import type { SessionStatusEvent } from './session-contract';
 
 export const CH = {
   configGet: 'config:get',
   configReload: 'config:reload',
+  /** Story 101's three mutating channels. All `invoke` — each needs a result. */
+  configChooseDirectory: 'config:choose-directory',
+  configAddProject: 'config:add-project',
+  configRemoveProject: 'config:remove-project',
   ptySpawn: 'pty:spawn',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
@@ -223,16 +231,36 @@ export interface PtyDiagnostics {
 export interface HiveBridge {
   appInfo(): Promise<AppInfo>;
   /**
-   * The workspace config (story 090).
+   * The workspace config (stories 090, 101).
    *
-   * Read-only from the renderer, deliberately. `reload()` re-reads the file
-   * the *user* edited; there is no `set`, because a settings UI that writes
-   * this file is out of scope and a bridge verb that can write to disk is not
-   * something to add speculatively.
+   * No longer read-only. Story 090's comment here said there was no `set`
+   * "because a settings UI that writes this file is out of scope and a bridge
+   * verb that can write to disk is not something to add speculatively". Story
+   * 101 is that settings UI: the reasoning was sound and the condition
+   * changed, so the comment is rewritten rather than deleted.
+   *
+   * What bounds the widening, and what a reviewer should check any future verb
+   * here against:
+   *
+   * - The bridge can write to **exactly one file** — the config. No verb
+   *   accepts a destination path, and none ever should.
+   * - Every path arriving from the renderer is **re-validated in main from
+   *   scratch** — expanded, made absolute, `realpath`'d, confirmed to be a
+   *   directory — exactly as a path arriving from the file is.
+   * - `chooseDirectory` is a UX step, not a capability grant. A renderer that
+   *   skips the dialog and posts a path directly gets identical treatment,
+   *   because main's validation is the actual gate either way.
+   *
+   * Every mutating verb returns the fresh snapshot, so the renderer never has
+   * to follow a write with a reload and can never render a stale list.
    */
   config: {
     get(): Promise<ConfigSnapshot>;
     reload(): Promise<ConfigSnapshot>;
+    /** Native directory dialog, owned by main. Resolves null when cancelled. */
+    chooseDirectory(): Promise<string | null>;
+    addProject(request: AddProjectRequest): Promise<ConfigSnapshot>;
+    removeProject(request: RemoveProjectRequest): Promise<ConfigSnapshot>;
   };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;
@@ -294,7 +322,13 @@ export const BRIDGE_KEYS = ['appInfo', 'config', 'pty', 'session'] as const;
 export const BRIDGE_SESSION_KEYS = ['onStatus'] as const;
 
 /** The exact key set of `window.hive.config`. */
-export const BRIDGE_CONFIG_KEYS = ['get', 'reload'] as const;
+export const BRIDGE_CONFIG_KEYS = [
+  'get',
+  'reload',
+  'chooseDirectory',
+  'addProject',
+  'removeProject',
+] as const;
 
 /** The exact key set of `window.hive.pty`. */
 export const BRIDGE_PTY_KEYS = [

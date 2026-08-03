@@ -63,7 +63,7 @@ describe('exposed surface', () => {
     expect(Object.keys(config()).sort()).toEqual([...BRIDGE_CONFIG_KEYS].sort());
   });
 
-  it('routes the config verbs to their channels and nothing else (story 090)', async () => {
+  it('routes the config verbs to their channels (stories 090, 101)', async () => {
     const { ipcRenderer } = await import('electron');
 
     await config().get();
@@ -72,8 +72,32 @@ describe('exposed surface', () => {
     await config().reload();
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configReload);
 
-    // Read-only from the renderer: no verb writes the file (story 090).
+    await config().chooseDirectory();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configChooseDirectory);
+
+    await config().addProject({ path: '/tmp/x' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configAddProject, {
+      path: '/tmp/x',
+    });
+
+    await config().removeProject({ id: 'x' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configRemoveProject, {
+      id: 'x',
+    });
+  });
+
+  /**
+   * Story 101 makes the config writable, and this is what bounds the widening.
+   *
+   * Story 090's comment here said the config was read-only "because a settings
+   * UI that writes this file is out of scope". Story 101 is that settings UI,
+   * so the reasoning stood and the condition changed. What did not change: the
+   * bridge can write to exactly one file, and no verb names a destination.
+   */
+  it('exposes no verb that takes a destination path', () => {
     expect(Object.keys(config())).not.toContain('set');
+    expect(Object.keys(config())).not.toContain('writeTo');
+    expect(Object.keys(config())).not.toContain('setPath');
   });
 
   it('exposes it as `hive`', async () => {

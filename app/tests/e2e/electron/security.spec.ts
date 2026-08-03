@@ -103,9 +103,25 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'spawn',
     'write',
   ]);
-  // Story 090 added `config`, and it is read-only on purpose — no verb here
-  // writes to the user's disk.
-  expect(surface.config).toEqual(['get', 'reload']);
+  /**
+   * Story 090 added `config` read-only; story 101 makes it writable, and the
+   * widening is deliberate and bounded.
+   *
+   * 090's comment here said no verb writes to the user's disk "because a
+   * settings UI that writes this file is out of scope". Story 101 *is* that
+   * settings UI, so the reasoning was right and the condition changed. What
+   * bounds it: the bridge can write to exactly one file, no verb accepts a
+   * destination path, and every path arriving from the renderer is re-validated
+   * in main from scratch — `chooseDirectory` is a UX step, not a capability
+   * grant.
+   */
+  expect(surface.config).toEqual([
+    'addProject',
+    'chooseDirectory',
+    'get',
+    'reload',
+    'removeProject',
+  ]);
   /**
    * Story 096 added `session`, and it is a listener only. Main derives status
    * from pty output and pushes it; the renderer cannot ask for anything here.

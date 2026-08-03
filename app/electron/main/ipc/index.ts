@@ -1,6 +1,7 @@
 import {
   BrowserWindow,
   app,
+  dialog,
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -9,14 +10,16 @@ import {
 import type { ConfigSnapshot } from '@shared/config-contract';
 import {
   parseAckRequest,
+  parseAddProjectRequest,
   parseSpawnRequest,
   parseKillRequest,
+  parseRemoveProjectRequest,
   parseResizeRequest,
   parseWriteRequest,
 } from '@shared/guards';
 import { CH, type AppInfo } from '@shared/ipc-contract';
 
-import { getConfig, reloadConfig } from '../config';
+import { addProject, getConfig, reloadConfig, removeProject } from '../config';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
@@ -137,6 +140,47 @@ export function registerIpcHandlers(): void {
    */
   handle(CH.configGet, (): ConfigSnapshot => getConfig());
   handle(CH.configReload, (): ConfigSnapshot => reloadConfig());
+
+  /**
+   * Config mutation (story 101).
+   *
+   * `chooseDirectory` takes no payload, so — like `get` and `reload` — the
+   * sender check `handle` applies is its whole validation. The other two carry
+   * a payload, are guarded here, and are then re-validated inside `addProject`
+   * from scratch: the guard proves the *shape*, main proves the *path*.
+   */
+  handle(CH.configChooseDirectory, async (event): Promise<string | null> => {
+    /**
+     * The parent window is resolved from the event rather than captured.
+     *
+     * There is no `mainWindow` singleton in this process, deliberately: on
+     * macOS the window can be closed and re-created while the app keeps
+     * running, so a held reference goes stale. `send` above resolves windows
+     * per call for the same reason. `assertSender` has already proven this
+     * sender is the main frame, so its window is the one that asked.
+     */
+    const window = BrowserWindow.fromWebContents(event.sender);
+    // Destroyed between the invoke and here. Nothing to attach a sheet to, and
+    // treating it as a cancelled dialog is what the caller already handles.
+    if (!window) return null;
+
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0] ?? null;
+  });
+
+  handle(
+    CH.configAddProject,
+    (_event, payload): ConfigSnapshot => addProject(parseAddProjectRequest(payload)),
+  );
+
+  handle(
+    CH.configRemoveProject,
+    (_event, payload): ConfigSnapshot =>
+      removeProject(parseRemoveProjectRequest(payload)),
+  );
 
   /**
    * The PTY channels (story 093).
