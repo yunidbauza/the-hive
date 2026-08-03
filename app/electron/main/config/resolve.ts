@@ -57,9 +57,16 @@ export function resolveProject(raw: RawProject): ProjectConfig {
   }
 
   // `realpathSync` already followed every link, so this cannot be a dangling
-  // symlink and `statSync` cannot fail for a path we just canonicalised.
-  if (!statSync(real).isDirectory()) {
-    return { id: raw.id, path: null, status: 'not-a-directory' };
+  // symlink. It can still fail if the path is removed between the two calls —
+  // rare, but this function's contract is that it never throws, and a throw
+  // here would abort the whole load and take every *other* project's verdict
+  // with it.
+  try {
+    if (!statSync(real).isDirectory()) {
+      return { id: raw.id, path: null, status: 'not-a-directory' };
+    }
+  } catch {
+    return { id: raw.id, path: null, status: 'missing' };
   }
 
   return { id: raw.id, path: real, status: 'ok' };
