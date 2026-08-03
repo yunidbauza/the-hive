@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
+import { KeyHint } from '@components/ui/key-hint';
 import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
+import { backChordLabel, isMacPlatform } from '@lib/terminal/keymap';
+import { isLiveTerminal } from '@lib/terminal/resolve-transport';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
 const PLACEHOLDER = 'message this session — routed by the orchestrator';
-const KEY_HINT = '← back to list · ↵ send';
 
 interface MessageInputProps {
   /** The entity this row talks to. Its id is the prompt label. */
@@ -33,6 +35,20 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
 
   const sendToEntity = useSendToEntity();
   const backToOrch = useBackToOrch();
+
+  /**
+   * The hint tells the truth about *this* surface.
+   *
+   * Over a recorded transcript, `←` from an empty prompt goes back — the row
+   * owns the keyboard because nothing else wants it. Over a live terminal the
+   * user's focus is usually in the terminal, where `←` is a cursor key the
+   * child process needs, so the way back is a chord (story 095). Showing `←`
+   * there would document a binding that does nothing where they are looking.
+   */
+  const live = isLiveTerminal(entityId);
+  const hints = live
+    ? [`${backChordLabel(isMacPlatform())} back to list`, '↵ send']
+    : ['← back to list', '↵ send'];
 
   /**
    * Focus on open and after every send. The component is keyed by entity id at
@@ -89,9 +105,7 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
         aria-label={`Message ${entityId}`}
         className="min-w-0 flex-1 border-none bg-transparent font-mono text-[12.5px] text-ink caret-green outline-none placeholder:text-subtle"
       />
-      <span className="shrink-0 font-mono text-[10.5px] whitespace-nowrap text-subtle">
-        {KEY_HINT}
-      </span>
+      <KeyHint hints={hints} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveTransport } from '@lib/terminal/resolve-transport';
+import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 
 /**
@@ -89,5 +89,42 @@ describe('resolveTransport', () => {
       expect(typeof transport.resize).toBe('function');
       expect(typeof transport.onData).toBe('function');
     }
+  });
+});
+
+/**
+ * `isLiveTerminal` is the same question `resolveTransport` answers, exposed so
+ * `readOnly` and the key-hint row cannot drift from the transport (story 095).
+ *
+ * The drift it prevents is specific and ugly: a surface that reports itself
+ * typable while its transport is a recording blinks a cursor and swallows every
+ * keystroke, which reads as a hung session rather than a read-only one.
+ */
+describe('isLiveTerminal', () => {
+  it('agrees with resolveTransport on every case', () => {
+    withBridge();
+
+    for (const id of [SESSION_ID, 'slack-agent', 'no-such-entity', ORCHESTRATOR_ID]) {
+      const live = isLiveTerminal(id);
+      vi.clearAllMocks();
+      resolveTransport(id);
+      expect(vi.mocked(createPtyTransport).mock.calls.length > 0).toBe(live);
+    }
+  });
+
+  it('is true only for a mapped session on desktop', () => {
+    withBridge();
+
+    expect(isLiveTerminal(SESSION_ID)).toBe(true);
+    expect(isLiveTerminal('slack-agent')).toBe(false);
+    expect(isLiveTerminal(ORCHESTRATOR_ID)).toBe(false);
+    expect(isLiveTerminal('no-such-entity')).toBe(false);
+  });
+
+  it('is false for everything in the browser', () => {
+    // The demo surface is a recording end to end — story 083's condition for
+    // the browser target surviving at all is that it degrades visibly.
+    expect(isLiveTerminal(SESSION_ID)).toBe(false);
+    expect(isLiveTerminal(ORCHESTRATOR_ID)).toBe(false);
   });
 });

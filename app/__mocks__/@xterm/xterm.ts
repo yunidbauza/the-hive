@@ -36,6 +36,18 @@ export class MockTerminal {
   readonly focus = vi.fn();
   readonly scrollToBottom = vi.fn();
   readonly clear = vi.fn();
+  readonly paste = vi.fn();
+
+  /**
+   * The custom key handler the surface installs (story 095), plus a selection
+   * a test can stage.
+   *
+   * Recorded rather than invoked: the handler is a pure decision over a key
+   * event, so a test drives it directly with a synthetic event and asserts the
+   * boolean. Real xterm would have to be typed into.
+   */
+  keyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
+  selection = '';
 
   private readonly dataListeners = new Set<(data: string) => void>();
 
@@ -66,6 +78,22 @@ export class MockTerminal {
   resize(cols: number, rows: number) {
     this.cols = cols;
     this.rows = rows;
+  }
+
+  attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+    this.keyEventHandler = handler;
+  }
+
+  hasSelection() {
+    return this.selection !== '';
+  }
+
+  getSelection() {
+    return this.selection;
+  }
+
+  clearSelection() {
+    this.selection = '';
   }
 
   onData(listener: (data: string) => void) {

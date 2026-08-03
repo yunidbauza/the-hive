@@ -1,4 +1,4 @@
-import { isSession } from '@/types/entity';
+import { isSession, type Session } from '@/types/entity';
 
 import { isDesktop } from '@config/runtime';
 import { createPtyTransport } from '@lib/terminal/pty-transport';
@@ -18,7 +18,15 @@ import { useHiveStore } from '@stores/hive-store';
  * stand. `src/components/terminal/` does not learn that any of this happened —
  * that is the seam doing its job, and this function is the check it exists for.
  */
-export function resolveTransport(entityId: string): TerminalTransport {
+/**
+ * The session behind a live terminal, or `null` if this surface is a recording.
+ *
+ * One predicate, three consumers: the transport factory below, the `readOnly`
+ * decision in `center-stage.tsx`, and the key-hint row. Splitting them would let
+ * a surface become typable while its transport stayed a recording — a cursor
+ * that blinks over a transcript and swallows every keystroke.
+ */
+function liveSession(entityId: string): Session | null {
   /**
    * The orchestrator console is **always static**, in both targets.
    *
@@ -27,8 +35,8 @@ export function resolveTransport(entityId: string): TerminalTransport {
    * desktop build real terminals would silently turn the console into a shell —
    * the regression this line and its test exist to prevent.
    */
-  if (entityId === ORCHESTRATOR_ID) return createStaticTransport(entityId);
-  if (!isDesktop()) return createStaticTransport(entityId);
+  if (entityId === ORCHESTRATOR_ID) return null;
+  if (!isDesktop()) return null;
 
   /**
    * The project id is read here, and **not** inside `PtyTransport`.
@@ -53,7 +61,22 @@ export function resolveTransport(entityId: string): TerminalTransport {
    * Falling through to a PTY would spawn a shell in whatever the last resolved
    * path happened to be, which is worse than the recording.
    */
-  if (!entity || !isSession(entity)) return createStaticTransport(entityId);
+  if (!entity || !isSession(entity)) return null;
+  return entity;
+}
 
-  return createPtyTransport(entityId, entity.project);
+/**
+ * Is this surface a live shell the user can type into?
+ *
+ * The one question `readOnly` is really asking. Story 095's table phrases it per
+ * surface — console always read-only, browser always read-only, desktop session
+ * writable — and every row of that table is this predicate.
+ */
+export const isLiveTerminal = (entityId: string): boolean =>
+  liveSession(entityId) !== null;
+
+export function resolveTransport(entityId: string): TerminalTransport {
+  const session = liveSession(entityId);
+  if (!session) return createStaticTransport(entityId);
+  return createPtyTransport(entityId, session.project);
 }

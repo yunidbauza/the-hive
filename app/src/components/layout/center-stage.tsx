@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { isEntityView, resolveView } from '@/lib/resolve-view';
 import { cn } from '@/lib/utils';
@@ -9,11 +9,17 @@ import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
-import { resolveTransport } from '@lib/terminal/resolve-transport';
+import { isBackChord, isMacPlatform } from '@lib/terminal/keymap';
+import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import { useActiveEntity, useAgentOrder, useNavOrder } from '@stores/hive-store';
-import { useActiveTab, usePickerState, useTheme } from '@stores/ui-store';
+import {
+  useActiveTab,
+  useBackToOrch,
+  usePickerState,
+  useTheme,
+} from '@stores/ui-store';
 
 /**
  * Center stage — one focused thing at a time (story 040).
@@ -56,6 +62,33 @@ export function CenterStage() {
 
   const messageInputRef = useRef<HTMLInputElement>(null);
 
+  const entries = useMemo(
+    () =>
+      ids.map((id) => {
+        let transport = cache.current.get(id);
+        if (!transport) {
+          transport = resolveTransport(id);
+          cache.current.set(id, transport);
+        }
+        /**
+         * Typable exactly when there is a live shell to type into (story 095).
+         *
+         * Both halves come from one predicate, and that is the point: the
+         * console stays a command surface, the browser demo stays a recording,
+         * and an agent's replayed transcript stays a replay. Deciding
+         * `readOnly` separately from the transport would eventually produce a
+         * terminal that blinks a cursor and swallows every keystroke, which
+         * reads as a hung session rather than as a read-only one.
+         */
+        return { id, transport, readOnly: !isLiveTerminal(id) };
+      }),
+    [ids],
+  );
+
+  /** Whether the surface currently on screen is a live shell. */
+  const activeIsLive =
+    entries.find((entry) => entry.id === activeTab)?.readOnly === false;
+
   /**
    * Focus the message row when the terminal area is clicked — unless the user
    * just finished selecting text.
@@ -67,23 +100,41 @@ export function CenterStage() {
   const focusMessageInput = () => {
     const selection = window.getSelection()?.toString() ?? '';
     if (selection !== '') return;
+    /**
+     * A live terminal focuses itself instead (story 095).
+     *
+     * Clicking a shell and landing in a text box beneath it is the single most
+     * confusing thing this stage could do once the terminal accepts input — the
+     * user types, the terminal ignores them, and the characters appear
+     * somewhere else. The surface owns that focus; this handler steps aside.
+     */
+    if (activeIsLive) return;
     messageInputRef.current?.focus();
   };
 
-  const entries = useMemo(
-    () =>
-      ids.map((id) => {
-        let transport = cache.current.get(id);
-        if (!transport) {
-          transport = resolveTransport(id);
-          cache.current.set(id, transport);
-        }
-        // Read-only for the whole prototype: every view that accepts input
-        // does it through a DOM row beside the terminal (stories 041, 043).
-        return { id, transport, readOnly: true };
-      }),
-    [ids],
-  );
+  /**
+   * The way out of a focused terminal (story 095).
+   *
+   * Registered on the window rather than on the terminal, because the terminal
+   * is precisely the thing that must *not* interpret it: its custom key handler
+   * declines the chord so the event keeps bubbling, and it arrives here. That
+   * split is what keeps `components/terminal/` ignorant of what "back to the
+   * orchestrator" means — it knows only that some keys are not its own.
+   *
+   * The same chord works from the message row and from anywhere else on the
+   * stage. One binding, one meaning, wherever focus happens to be.
+   */
+  const backToOrch = useBackToOrch();
+  useEffect(() => {
+    const isMac = isMacPlatform();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isBackChord(event, isMac)) return;
+      event.preventDefault();
+      backToOrch();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [backToOrch]);
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-panel-2">

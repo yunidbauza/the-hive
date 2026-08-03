@@ -11,6 +11,10 @@ import {
   webLinksAddonInstances,
 } from '../../../__mocks__/@xterm/addon-web-links';
 import {
+  resetWebglAddonInstances,
+  webglAddonInstances,
+} from '../../../__mocks__/@xterm/addon-webgl';
+import {
   MockTerminal,
   resetTerminalInstances,
   terminalInstances,
@@ -22,6 +26,7 @@ import type {
   TerminalTransport,
 } from '@lib/terminal/terminal-transport';
 
+vi.mock('@xterm/addon-webgl');
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
 vi.mock('@xterm/addon-web-links');
@@ -63,6 +68,7 @@ describe('TerminalSurface', () => {
     resetTerminalInstances();
     resetFitAddonInstances();
     resetWebLinksAddonInstances();
+    resetWebglAddonInstances();
   });
 
   it('constructs one terminal and attaches it to its container', () => {
@@ -433,6 +439,211 @@ describe('TerminalSurface', () => {
       expect(terminal().disposed).toBe(false);
       unmount();
       expect(terminal().disposed).toBe(true);
+    });
+  });
+
+  describe('the keyboard, when interactive (story 095)', () => {
+    /** Drive the installed handler with a synthetic event. */
+    function press(init: Partial<KeyboardEventInit> & { key: string }): boolean {
+      const handler = terminal().keyEventHandler;
+      if (!handler) throw new Error('no custom key handler was installed');
+      return handler(new KeyboardEvent('keydown', init));
+    }
+
+    function renderInteractive() {
+      const { transport } = fakeTransport();
+      const result = render(
+        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+      );
+      return { ...result, transport };
+    }
+
+    it('installs no key handler on a read-only surface', () => {
+      /**
+       * The orchestrator-console regression. A read-only surface sends nothing
+       * to a pty, so there is no conflict to arbitrate — and a handler there
+       * would be the first step toward the console quietly becoming a shell.
+       */
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly />);
+
+      expect(terminal().keyEventHandler).toBeNull();
+    });
+
+    it('ignores keypress and keyup, deciding only on keydown', () => {
+      // Deciding on all three would run the copy twice and fight the pty for
+      // the same chord.
+      renderInteractive();
+      const handler = terminal().keyEventHandler!;
+
+      expect(handler(new KeyboardEvent('keyup', { key: 'c', ctrlKey: true }))).toBe(
+        true,
+      );
+    });
+
+    it('lets ordinary keys through to the pty', () => {
+      renderInteractive();
+
+      expect(press({ key: 'a' })).toBe(true);
+      expect(press({ key: 'ArrowLeft' })).toBe(true);
+      expect(press({ key: 'Tab' })).toBe(true);
+    });
+
+    it('declines the app chord so it can bubble to the stage', () => {
+      /**
+       * Returning false means xterm neither encodes the event nor calls
+       * `preventDefault`, so it keeps propagating and the window listener in
+       * `center-stage.tsx` sees it. The terminal declines the key rather than
+       * the app racing xterm for it.
+       */
+      renderInteractive();
+      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+
+      expect(
+        press(
+          mac
+            ? { key: 'ArrowLeft', metaKey: true }
+            : { key: 'ArrowLeft', ctrlKey: true, shiftKey: true },
+        ),
+      ).toBe(false);
+    });
+
+    it('copies the selection and clears it, without telling the pty', async () => {
+      const writeText = vi.fn(() => Promise.resolve());
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+
+      renderInteractive();
+      terminal().selection = 'copied text';
+      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+
+      const handled = press(
+        mac ? { key: 'c', metaKey: true } : { key: 'C', ctrlKey: true, shiftKey: true },
+      );
+
+      expect(handled).toBe(false);
+      expect(writeText).toHaveBeenCalledWith('copied text');
+      /**
+       * Cleared, so the next press means something different. On Linux bare
+       * Ctrl+C copies only *because* there is a selection — leaving it would
+       * mean a user trying to stop a runaway process copied it again instead.
+       */
+      expect(terminal().hasSelection()).toBe(false);
+
+      vi.unstubAllGlobals();
+    });
+
+    it('pastes through the terminal so bracketed paste is honoured', async () => {
+      const readText = vi.fn(() => Promise.resolve('pasted'));
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { readText } });
+
+      renderInteractive();
+      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+
+      expect(
+        press(
+          mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true },
+        ),
+      ).toBe(false);
+
+      await vi.waitFor(() => expect(terminal().paste).toHaveBeenCalledWith('pasted'));
+
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('the WebGL renderer (story 095)', () => {
+    it('attaches to a visible interactive terminal', () => {
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+
+      expect(webglAddonInstances).toHaveLength(1);
+    });
+
+    it('leaves read-only surfaces on the DOM renderer', () => {
+      // They render a recording, once. The DOM renderer was always right for
+      // that workload.
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly />);
+
+      expect(webglAddonInstances).toHaveLength(0);
+    });
+
+    it('does not attach while hidden', () => {
+      /**
+       * The context cap is the whole reason. Browsers allow ~16 WebGL contexts
+       * process-wide and this app can hold a dozen live terminals; one per
+       * instance would exhaust the pool and start silently killing the oldest.
+       */
+      const { transport } = fakeTransport();
+      render(
+        <TerminalSurface
+          transport={transport}
+          theme="dark"
+          readOnly={false}
+          visible={false}
+        />,
+      );
+
+      expect(webglAddonInstances).toHaveLength(0);
+    });
+
+    it('gives up its context when hidden and takes one again on reveal', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+      );
+
+      expect(webglAddonInstances).toHaveLength(1);
+
+      rerender(
+        <TerminalSurface
+          transport={transport}
+          theme="dark"
+          readOnly={false}
+          visible={false}
+        />,
+      );
+      expect(webglAddonInstances[0]!.dispose).toHaveBeenCalled();
+
+      rerender(
+        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+      );
+      // A fresh context, and the buffer is untouched — the terminal itself was
+      // never rebuilt.
+      expect(webglAddonInstances).toHaveLength(2);
+      expect(terminalInstances).toHaveLength(1);
+    });
+
+    it('falls back to DOM when the context is lost', () => {
+      /**
+       * Without this the terminal simply stops painting, which looks exactly
+       * like a frozen session and sends the user hunting for a hung process
+       * that is running perfectly.
+       */
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+
+      const addon = webglAddonInstances[0]!;
+      expect(addon.dispose).not.toHaveBeenCalled();
+
+      addon.emitContextLoss();
+
+      expect(addon.dispose).toHaveBeenCalledTimes(1);
+      // The terminal survives — only the renderer changed.
+      expect(terminal().disposed).toBe(false);
+    });
+
+    it('drops its context-loss listener on unmount', () => {
+      const { transport } = fakeTransport();
+      const { unmount } = render(
+        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+      );
+
+      const addon = webglAddonInstances[0]!;
+      expect(addon.contextLossListenerCount).toBe(1);
+
+      unmount();
+      expect(addon.contextLossListenerCount).toBe(0);
     });
   });
 });

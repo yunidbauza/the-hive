@@ -78,14 +78,48 @@ property declared on `:root` has no path to a terminal cell.
 
 > **A correction worth keeping.** Earlier revisions of these docs justified this
 > with "xterm paints to a canvas". That reason was wrong even though the
-> conclusion holds: xterm 6 core ships the **DOM** renderer by default, and this
-> app installs neither `@xterm/addon-canvas` nor `@xterm/addon-webgl`. A live
-> instance renders as `.xterm-dom-renderer-owner-*` with zero canvas elements.
-> The palette has to be JS either way.
+> conclusion holds: xterm 6 core ships the **DOM** renderer by default. Story
+> 095 has since installed `@xterm/addon-webgl`, so *some* terminals really do
+> paint to a canvas now — see below — but the palette has to be JS either way,
+> which is why the conclusion never depended on the reason.
 
 `TERM` and `XTERM_THEME` in `src/lib/terminal/ansi.ts` are the single
 definition, shared with the colorizer and `.claude/DESIGN-SYSTEM.md`. Never
 hand-write a hex into a terminal component.
+
+## Renderers: which terminal paints how
+
+| Surface | Renderer | Why |
+| --- | --- | --- |
+| Orchestrator console | DOM | a command surface, never a shell |
+| Any browser-target terminal | DOM | a recording; it renders once |
+| Visible desktop session | **WebGL** | a live pty streaming a build log |
+| Hidden desktop session | DOM | kept alive, painting nothing |
+
+The DOM renderer allocates elements per cell, which is fine for a fixture
+transcript and wrong for a firehose. But WebGL contexts are a **capped,
+process-wide** resource — browsers commonly allow ~16, and this app can hold a
+dozen live terminals — so the addon follows *visibility*, not lifetime: exactly
+one context exists, on the terminal being looked at. It is disposed on hide and
+re-attached on reveal, and `onContextLoss` disposes it too, dropping back to DOM
+with the buffer intact. Without that handler a lost context simply stops
+painting, which is indistinguishable from a frozen session.
+
+### The consequence that catches people out
+
+**A WebGL-rendered terminal's text is not in the DOM.** `.xterm-rows` is never
+populated; the transcript lives in canvases. Two things follow:
+
+- **Tests cannot read it.** Every desktop spec that asserted terminal contents
+  with `toContainText` broke the moment the addon landed, silently reading `''`.
+  They now assert what the shell *did* — a marker file it wrote — which is
+  stronger evidence anyway, or they read the pty events directly. See
+  `tests/e2e/electron/interactive-terminal.spec.ts`.
+- **Assistive technology cannot read it either.** xterm's answer is
+  `screenReaderMode`, which maintains a separate accessibility buffer at a
+  performance cost. It is **not** enabled, and that is an open gap rather than a
+  decision this story was equipped to make — it trades against the exact
+  throughput the renderer was introduced to get.
 
 ### Theming
 

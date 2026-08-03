@@ -232,13 +232,19 @@ test('lays out at desktop width without overflowing horizontally', async ({ page
  * asserts plumbing against a recording fake. Whether a real xterm boots,
  * measures its container and lays out is unfalsifiable outside a browser.
  *
- * On the renderer: xterm 6 core ships the **DOM** renderer by default and
- * neither `@xterm/addon-canvas` nor `@xterm/addon-webgl` is installed, so the
- * live instance renders as `.xterm-dom-renderer-owner-*` with zero canvas
- * elements. Story 042 has since landed and deliberately kept it that way — a
- * WebGL renderer is listed out of scope there — and corrected the docs that
- * called the terminal a canvas. If a renderer addon ever arrives, this is the
- * spec that should fail and be updated deliberately.
+ * On the renderer: xterm 6 core ships the **DOM** renderer by default, and in
+ * *this* target that is still what runs. Story 095 installed
+ * `@xterm/addon-webgl`, but attaches it only to a visible **interactive**
+ * terminal — and every surface in the browser build is a recording, so none of
+ * them qualifies. The live instance therefore still renders as
+ * `.xterm-dom-renderer-owner-*` with zero canvas elements.
+ *
+ * The assertion was written to fail deliberately if a renderer addon ever
+ * arrived, and it did exactly that. Rescoped rather than deleted: "the demo
+ * surface does not take a GPU context" is a stronger and more useful claim than
+ * "nobody installed the package", and it is the one that keeps the browser
+ * target honest now that the desktop build renders differently. The desktop
+ * side is asserted in `tests/e2e/electron/interactive-terminal.spec.ts`.
  *
  * Depth beyond "it booted" — colours, selection, scrollback, refit, re-theming
  * — lives in `terminal.spec.ts`.
@@ -267,4 +273,16 @@ test('mounts a live xterm instance that has measured its container', async ({ pa
 
   /** xterm's input target, and the surface keyboard specs (story 060) drive. */
   await expect(page.getByRole('textbox', { name: 'Terminal input' })).toBeAttached();
+
+  /**
+   * The demo surface takes **no GPU context** (story 095).
+   *
+   * Now asserted rather than merely described. `@xterm/addon-webgl` is
+   * installed, so "nobody added the package" has stopped being a guarantee —
+   * what keeps this target on the DOM renderer is that the addon attaches only
+   * to an interactive terminal, and every surface here is a recording. A canvas
+   * appearing means that rule broke and the browser build started spending
+   * contexts it has no use for.
+   */
+  await expect(terminal.locator('canvas')).toHaveCount(0);
 });

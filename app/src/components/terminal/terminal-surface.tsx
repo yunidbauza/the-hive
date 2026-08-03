@@ -1,10 +1,12 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
 
 import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
+import { decideTerminalKey, isMacPlatform } from '@lib/terminal/keymap';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 
 import '@xterm/xterm/css/xterm.css';
@@ -48,6 +50,35 @@ interface Instance {
 /** Whether the viewport is parked at the end of the transcript. */
 const atBottom = (terminal: Terminal) =>
   shouldAutoScroll(terminal.buffer.active.viewportY, terminal.buffer.active.baseY);
+
+/**
+ * Copy the selection, then drop it.
+ *
+ * Clearing matters most on Linux and Windows, where bare `Ctrl+C` copies only
+ * *because* there is a selection: leaving it in place would mean the second
+ * press copied again instead of interrupting, and a user trying to stop a
+ * runaway process would press it repeatedly to no effect.
+ *
+ * Failures are swallowed on purpose. `writeText` rejects when the document is
+ * not focused or permission is denied, and neither is worth an unhandled
+ * rejection in the console of an app whose terminal is otherwise fine.
+ */
+function copySelection(terminal: Terminal): void {
+  const selection = terminal.getSelection();
+  if (selection === '') return;
+  terminal.clearSelection();
+  void navigator.clipboard?.writeText(selection).catch(() => {});
+}
+
+/** Paste as if typed — through the terminal, so bracketed paste is honoured. */
+function pasteFromClipboard(terminal: Terminal): void {
+  void navigator.clipboard
+    ?.readText()
+    .then((text) => {
+      if (text !== '') terminal.paste(text);
+    })
+    .catch(() => {});
+}
 
 /**
  * Refit, keeping a bottom-parked viewport at the bottom.
@@ -127,6 +158,44 @@ export function TerminalSurface({
     // Makes a URL pasted into a transcript clickable, which is the difference
     // between "looks like a terminal" and "behaves like one".
     terminal.loadAddon(new WebLinksAddon());
+
+    /**
+     * Who owns a keystroke (story 095). Read-only surfaces skip it entirely —
+     * they send nothing to a pty, so there is no conflict to arbitrate, and
+     * installing a handler on the orchestrator console would be the regression
+     * the console's own test exists to catch.
+     */
+    if (!readOnly) {
+      const isMac = isMacPlatform();
+      terminal.attachCustomKeyEventHandler((event) => {
+        // `keypress`/`keyup` arrive here too. Deciding on anything but keydown
+        // would run the copy twice and fight the pty for the same chord.
+        if (event.type !== 'keydown') return true;
+
+        switch (decideTerminalKey(event, {
+          isMac,
+          hasSelection: terminal.hasSelection(),
+        })) {
+          case 'copy':
+            copySelection(terminal);
+            return false;
+          case 'paste':
+            pasteFromClipboard(terminal);
+            return false;
+          /**
+           * Returning false leaves the event untouched — xterm neither encodes
+           * it nor calls `preventDefault` — so it keeps bubbling to the app's
+           * own listener. That is the escape hatch: the terminal declines it
+           * rather than the app racing xterm for it.
+           */
+          case 'app-chord':
+            return false;
+          default:
+            return true;
+        }
+      });
+    }
+
     terminal.open(container);
     // The initial fit is deliberately not done here — the visibility effect
     // below owns every fit, so a surface that mounts hidden is not measured
@@ -214,11 +283,81 @@ export function TerminalSurface({
     fitPreservingBottom(instance);
   }, [instance, visible]);
 
+  /**
+   * The WebGL renderer, attached to the visible interactive terminal only.
+   *
+   * The DOM renderer was the right default for fixture transcripts and is the
+   * wrong one for a live pty streaming a build log — it allocates elements per
+   * cell. But WebGL contexts are a **capped, process-wide** resource (browsers
+   * commonly allow ~16), and this app can hold a dozen live terminals at once.
+   * Attaching one per instance would exhaust the pool and start silently
+   * killing the oldest contexts.
+   *
+   * So the addon follows visibility rather than lifetime: exactly one context
+   * exists, on the terminal the user is looking at. Hidden kept-alive instances
+   * (story 042) keep their buffers and give up their GPU context, which costs
+   * nothing — nothing is painting them.
+   *
+   * Read-only surfaces stay on DOM. They render a recording, once.
+   */
+  useEffect(() => {
+    if (!instance || readOnly || !visible) return;
+    const { terminal } = instance;
+
+    let addon: WebglAddon | null = new WebglAddon();
+
+    /**
+     * A lost context is not an error to report, it is a renderer to stop using.
+     *
+     * Contexts are lost on GPU driver resets and when too many exist. Without
+     * this the terminal simply stops painting — which looks exactly like a
+     * frozen session, and sends the user hunting for a hung process that is
+     * running perfectly. Disposing the addon drops xterm back to the DOM
+     * renderer with the buffer intact.
+     */
+    const lost = addon.onContextLoss(() => {
+      addon?.dispose();
+      addon = null;
+    });
+
+    try {
+      terminal.loadAddon(addon);
+    } catch {
+      // No WebGL2 at all — a software-rendering VM, a blocklisted driver. The
+      // DOM renderer is still there and still correct, just slower.
+      addon.dispose();
+      addon = null;
+    }
+
+    return () => {
+      lost.dispose();
+      addon?.dispose();
+    };
+  }, [instance, readOnly, visible]);
+
+  /**
+   * Clicking a live terminal focuses it.
+   *
+   * The stage focuses the message row on the same click (story 043) and steps
+   * aside when the terminal is interactive — but the *guard* is duplicated here
+   * rather than assumed, because it is the same bug in both places: moving
+   * focus collapses the document selection, so focusing on any click would
+   * delete the highlight a click-drag-release had only just made, before it
+   * could be copied.
+   */
+  const focusTerminal = () => {
+    if (readOnly || !instance) return;
+    if ((window.getSelection()?.toString() ?? '') !== '') return;
+    instance.terminal.focus();
+  };
+
   return (
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <div
       className="h-full w-full overflow-hidden bg-term-bg px-[18px] py-4"
       // Kept alive, not unmounted: hiding preserves scrollback and selection.
       style={visible ? undefined : { display: 'none' }}
+      onClick={focusTerminal}
       data-testid="terminal-surface"
       data-terminal-id={id}
     >
