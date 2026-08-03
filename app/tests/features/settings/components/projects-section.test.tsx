@@ -70,21 +70,41 @@ describe('ProjectsSection', () => {
     resetProjectConfig();
   });
 
-  it('renders config and demo rows distinctly', () => {
+  it('lists the projects the config declares', () => {
     seed([entry({ id: 'the-hive', name: 'The Hive' })]);
 
     render(<ProjectsSection />);
 
-    // The config row: a real name over a real path, and no demo tag.
     expect(screen.getByText('The Hive')).toBeInTheDocument();
     expect(screen.getByText('/repos/the-hive')).toBeInTheDocument();
+  });
 
-    // Every fixture project that still owns live sessions is kept and tagged.
-    // There is more than one, which is the point — dropping them would strand
-    // every panel that reaches a session through `entity.project`.
-    expect(screen.getAllByText('demo').length).toBeGreaterThan(0);
-    expect(screen.getByText('apfm-web')).toBeInTheDocument();
-    expect(screen.getAllByText('not a real directory').length).toBeGreaterThan(0);
+  /**
+   * Settings lists what the user owns, not the merged list the rails use.
+   *
+   * The merge rule keeps fixture projects alive for the rails, because the work
+   * panel and `resolve-transport` reach sessions through `entity.project`.
+   * Listing them *here* would open a fresh install on five rows the user did
+   * not add and cannot remove, and would make the empty state unreachable.
+   */
+  it('does not list demo projects as rows', () => {
+    seed([entry({ id: 'the-hive', name: 'The Hive' })]);
+
+    render(<ProjectsSection />);
+
+    expect(screen.queryByText('demo')).not.toBeInTheDocument();
+    expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
+  });
+
+  it('accounts for the demo projects in one line instead', () => {
+    seed([entry({ id: 'the-hive' })]);
+
+    render(<ProjectsSection />);
+
+    // The user can still tell where the rail's other projects come from.
+    expect(
+      screen.getByText(/demo projects from the sample data also appear/i),
+    ).toBeInTheDocument();
   });
 
   it('names the config file', () => {
@@ -136,8 +156,8 @@ describe('ProjectsSection', () => {
 
   describe('the empty state', () => {
     it('shows a bordered empty state when the config declares no projects', () => {
-      // No snapshot projects *and* no fixture sessions: a genuinely empty list.
-      useHiveStore.setState({ entities: {}, order: [], projects: [] });
+      // The fixtures are left alone: this is the real fresh-install screen, and
+      // demo projects must not stand in the way of it.
       seed([]);
 
       render(<ProjectsSection />);
@@ -147,7 +167,6 @@ describe('ProjectsSection', () => {
     });
 
     it('still offers Add project when empty', () => {
-      useHiveStore.setState({ entities: {}, order: [], projects: [] });
       seed([]);
 
       render(<ProjectsSection />);
@@ -181,20 +200,10 @@ describe('ProjectsSection', () => {
       expect(removeProjectFromConfig).toHaveBeenCalledWith({ id: 'the-hive' });
     });
 
-    it('disables remove for a demo project and explains why', () => {
-      seed([entry({ id: 'the-hive' })]);
-
-      render(<ProjectsSection />);
-
-      const remove = screen.getByRole('button', { name: 'Remove apfm-web' });
-      expect(remove).toBeDisabled();
-      expect(remove).toHaveAttribute('aria-describedby');
-    });
-
     it('disables remove for a config project that owns live sessions', () => {
-      // The fixtures already run live sessions on apfm-web; declaring it in the
-      // config collapses the two rows and config wins, so this row is a config
-      // row that owns live sessions — the case story 103 will unlock.
+      // The fixtures already run live sessions on apfm-web, so declaring it in
+      // the config produces a row that owns live sessions — the case story 103
+      // will unlock with a confirmation flow.
       seed([entry({ id: 'apfm-web', name: 'APFM' })]);
 
       render(<ProjectsSection />);

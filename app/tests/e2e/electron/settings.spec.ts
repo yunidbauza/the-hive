@@ -1,0 +1,189 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+
+import { launchHive } from './fixtures/hive-app';
+
+/**
+ * Settings: adding a local project folder, driven through the real app
+ * (story 101).
+ *
+ * This is the only proof the whole slice works. The unit suite proves the
+ * pieces against fakes — a stubbed snapshot renders a row, a mocked bridge
+ * routes a verb — and none of that says whether the renderer's click reaches
+ * main, whether main resolves and writes the path, whether the file on disk is
+ * one the reader accepts, or whether the new project is spawnable without a
+ * restart.
+ *
+ * `dialog.showOpenDialog` is stubbed **in main**, not bypassed. The renderer
+ * still calls `chooseDirectory` and still echoes the returned path back through
+ * `addProject`, so the round trip under test is the real one; only the native
+ * sheet — which Playwright cannot drive — is replaced.
+ */
+
+/** Launch with a config file already on disk, plus a scratch repo to add. */
+async function launchWithConfig(
+  outputPath: (name: string) => string,
+  contents: string,
+): Promise<{
+  app: ElectronApplication;
+  page: Page;
+  configPath: string;
+  repoDir: string;
+}> {
+  const configPath = outputPath('hive-config.json');
+  writeFileSync(configPath, contents);
+
+  // A real directory, created for this test, that is not the developer's tree.
+  const repoDir = outputPath('scratch-repo');
+  mkdirSync(join(repoDir, '.git'), { recursive: true });
+
+  const app = await launchHive({
+    userDataDir: outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForSelector('header');
+
+  return { app, page, configPath, repoDir };
+}
+
+/** Replace the native sheet with one that answers immediately. */
+async function stubDirectoryDialog(
+  app: ElectronApplication,
+  filePaths: string[],
+): Promise<void> {
+  await app.evaluate(({ dialog }, paths) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (dialog as any).showOpenDialog = async () => ({
+      canceled: paths.length === 0,
+      filePaths: paths,
+    });
+  }, filePaths);
+}
+
+const openSettings = async (page: Page): Promise<void> => {
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+};
+
+const EMPTY_CONFIG = JSON.stringify(
+  { '//': 'a comment the UI must not eat', version: 2, projects: [] },
+  null,
+  2,
+);
+
+test('adds a folder, shows it in the rail, and makes it spawnable', async ({}, testInfo) => {
+  const { app, page, configPath, repoDir } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+
+  try {
+    await stubDirectoryDialog(app, [repoDir]);
+    await openSettings(page);
+
+    // The empty state is the screen a fresh install actually sees.
+    await expect(page.getByText(/no projects yet/i)).toBeVisible();
+
+    await page.getByRole('button', { name: /add project/i }).click();
+
+    // The row appears without a reload: every mutating verb returns the fresh
+    // snapshot, so the renderer never has to ask again.
+    await expect(page.getByText('scratch-repo').first()).toBeVisible();
+
+    // The file on disk is what the reader accepts, and it is now v2.
+    const written = JSON.parse(readFileSync(configPath, 'utf8'));
+    expect(written.version).toBe(2);
+    expect(written.projects).toHaveLength(1);
+    expect(written.projects[0].id).toBe('scratch-repo');
+    // The comment survived the write.
+    expect(written['//']).toBe('a comment the UI must not eat');
+
+    // Close settings and confirm the project reached the left rail.
+    await page.getByRole('button', { name: 'Close settings' }).click();
+    await expect(
+      page.getByRole('button', { name: /^scratch-repo/ }),
+    ).toBeVisible();
+
+    // …and the picker offers it as spawnable, which is the acceptance criterion
+    // the whole story is named for.
+    await page.getByRole('button', { name: 'New session' }).click();
+    const offered = page.getByRole('button', { name: /^scratch-repo/ }).first();
+    await expect(offered).toBeVisible();
+    await expect(offered).not.toContainText('unmapped');
+  } finally {
+    await app.close();
+  }
+});
+
+test('a cancelled dialog writes nothing', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+
+  try {
+    await stubDirectoryDialog(app, []);
+    await openSettings(page);
+
+    await page.getByRole('button', { name: /add project/i }).click();
+
+    // No write, no error, no row: the user closed a dialog they opened.
+    await expect(page.getByText(/no projects yet/i)).toBeVisible();
+    expect(readFileSync(configPath, 'utf8')).toBe(EMPTY_CONFIG);
+  } finally {
+    await app.close();
+  }
+});
+
+test('removing a project leaves every other line of the file intact', async ({}, testInfo) => {
+  const { app, page, configPath, repoDir } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+
+  try {
+    await stubDirectoryDialog(app, [repoDir]);
+    await openSettings(page);
+    await page.getByRole('button', { name: /add project/i }).click();
+    await expect(page.getByText('scratch-repo').first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Remove scratch-repo' }).click();
+
+    await expect(page.getByText(/no projects yet/i)).toBeVisible();
+
+    const after = JSON.parse(readFileSync(configPath, 'utf8'));
+    expect(after.projects).toEqual([]);
+    // The comment key outlived both a write and a delete.
+    expect(after['//']).toBe('a comment the UI must not eat');
+  } finally {
+    await app.close();
+  }
+});
+
+test('a directory that is not a repository is added anyway, and says so', async ({}, testInfo) => {
+  const { app, page } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+
+  try {
+    // A real directory with no `.git` in it.
+    const plain = testInfo.outputPath('plain-directory');
+    mkdirSync(plain, { recursive: true });
+    await stubDirectoryDialog(app, [plain]);
+    await openSettings(page);
+
+    await page.getByRole('button', { name: /add project/i }).click();
+
+    // A PTY needs a cwd, not a repo. Refusing would be the app inventing a
+    // rule the shell does not have, so it reports rather than blocks.
+    await expect(page.getByText('plain-directory').first()).toBeVisible();
+    await expect(page.getByText('no git')).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});

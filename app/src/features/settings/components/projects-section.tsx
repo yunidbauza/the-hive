@@ -6,22 +6,38 @@ import {
   chooseProjectDirectory,
   removeProjectFromConfig,
 } from '@/lib/project-config';
+import type { ProjectRow as Row } from '@/types/entity';
 
 import { ProjectRow } from '@features/settings/components/project-row';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { useHiveStore, useProjects } from '@stores/hive-store';
 
-
 /**
  * The Projects section of settings (story 101).
  *
- * The list is a bordered card in **both** states. The empty state is the one
- * that matters — a fresh install is the entire reason this story exists — and a
- * bordered box saying "No projects yet" reads as a furnished, empty place,
- * where a bare heading above a button reads as a broken render.
+ * ## What this lists, and what it deliberately does not
+ *
+ * **The user's own projects — the ones the config declares.** Not the merged
+ * list `useProjects()` returns.
+ *
+ * The merge rule exists so the *rails and the picker* keep working: a fixture
+ * project that still owns live sessions stays in that list, because the work
+ * panel, the orchestrator table and `resolve-transport` all reach sessions
+ * through `entity.project`. That is right for the rails and wrong here.
+ * Fixture projects always own sessions in this phase, so listing them would
+ * mean a fresh install opens Settings on five rows the user did not add,
+ * cannot remove, and did not come here for — and the empty state, which is the
+ * screen this whole story exists to produce, would never appear at all.
+ *
+ * They are accounted for instead by one muted line beneath the list, so the
+ * user can still tell where the rail's projects come from.
+ *
+ * The list is a bordered card in **both** states. A bordered box saying "No
+ * projects yet" reads as a furnished, empty place; a bare heading above a
+ * button reads as a broken render.
  */
 export function ProjectsSection() {
-  const projects = useProjects();
+  const merged = useProjects();
   const snapshot = useProjectConfig();
   const entities = useHiveStore((state) => state.entities);
 
@@ -37,13 +53,20 @@ export function ProjectsSection() {
   /** Ids of projects that own a session that is not done. */
   const owningLiveSessions = new Set(
     Object.values(entities)
-      .filter(
-        (entity) => entity.kind === 'session' && entity.status !== 'done',
-      )
+      .filter((entity) => entity.kind === 'session' && entity.status !== 'done')
       .map((entity) => (entity as { project: string }).project),
   );
 
-  const byId = new Map(snapshot?.projects.map((entry) => [entry.id, entry]));
+  const declared = snapshot?.projects ?? [];
+  const rows: Row[] = declared.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    icon: entry.icon,
+    source: 'config',
+  }));
+
+  /** Demo projects still on screen elsewhere, counted rather than listed. */
+  const demoCount = merged.filter((project) => project.source === 'demo').length;
 
   const onAdd = async () => {
     if (choosing) return;
@@ -63,28 +86,6 @@ export function ProjectsSection() {
     void removeProjectFromConfig({ id });
   };
 
-  /** What the row shows beneath the name, and why removal may be refused. */
-  const describe = (id: string, source: 'config' | 'demo') => {
-    const entry = byId.get(id);
-    if (source === 'demo') {
-      return {
-        detail: 'not a real directory',
-        isRepo: true,
-        // A demo project has no config entry to remove. Saying so is more
-        // useful than a disabled button with no explanation.
-        removeBlockedBy: 'demo projects come from the sample data',
-      };
-    }
-    return {
-      detail: entry?.path ?? 'unresolved',
-      isRepo: entry?.isRepo ?? true,
-      removeBlockedBy: owningLiveSessions.has(id)
-        ? // Story 103 owns the confirmation flow that lifts this.
-          'this project has live sessions — close them first'
-        : null,
-    };
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-5 py-4">
       <div className="flex flex-col gap-0.5">
@@ -94,7 +95,7 @@ export function ProjectsSection() {
         </p>
       </div>
 
-      {projects.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="flex flex-col items-center gap-1 rounded-[7px] border border-dashed border-border px-4 py-6 text-center">
           <span className="text-[13px] text-muted">No projects yet.</span>
           <span className="text-[11.5px] text-subtle">
@@ -103,18 +104,20 @@ export function ProjectsSection() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-[7px] border border-border">
-          {projects.map((project) => {
-            const { detail, isRepo, removeBlockedBy } = describe(
-              project.id,
-              project.source,
-            );
+          {rows.map((project) => {
+            const entry = declared.find((item) => item.id === project.id);
             return (
               <ProjectRow
                 key={project.id}
                 project={project}
-                detail={detail}
-                isRepo={isRepo}
-                removeBlockedBy={removeBlockedBy}
+                detail={entry?.path ?? 'unresolved'}
+                isRepo={entry?.isRepo ?? true}
+                removeBlockedBy={
+                  owningLiveSessions.has(project.id)
+                    ? // Story 103 owns the confirmation flow that lifts this.
+                      'this project has live sessions — close them first'
+                    : null
+                }
                 onRemove={onRemove}
               />
             );
@@ -146,6 +149,14 @@ export function ProjectsSection() {
         <Plus size={12} weight="bold" />
         Add project
       </button>
+
+      {demoCount > 0 ? (
+        <p className="text-[11px] text-subtle">
+          {demoCount === 1
+            ? '1 demo project from the sample data also appears in the rail.'
+            : `${demoCount} demo projects from the sample data also appear in the rail.`}
+        </p>
+      ) : null}
 
       {snapshot ? (
         <p className="mt-auto pt-2 text-[11px] text-subtle">
