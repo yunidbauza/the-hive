@@ -70,6 +70,49 @@ the three lines in `terminal-surface.tsx` that call it — because story 093 bui
 a flow-control loop whose acknowledgement had no path back from the only layer
 that could produce it. The fence held; the contract was one signal short.
 
+## Sending text into a session
+
+`src/lib/terminal/session-input.ts` is the whole coordination layer (story 097).
+Both call sites that mean "say something to a session" — the console's
+`send <id> <msg>` and the message row under a session terminal — collapse to:
+
+```ts
+pty.write(sessionId, text + '\r')
+```
+
+Claude Code's TUI sits at a prompt, so text plus a carriage return is what a
+person typing would produce. There is no message bus, no protocol, no injection
+format, and adding one would be the wrong shape.
+
+Three details are load-bearing:
+
+- **`\r`, not `\n`.** A terminal's Enter key sends carriage return; the line
+  discipline is what turns it into "line submitted". A bare line feed is
+  inserted literally by some shells and readline configurations, leaving the
+  message typed but never sent. `sessions/bootstrap.ts` rests on the same fact.
+- **Newlines inside the text become spaces.** A multi-line paste would otherwise
+  submit its first line and leave the rest half-typed at the prompt.
+- **The renderer never echoes.** The pty echoes what it receives, so appending
+  the sent text to the transcript as well would double-print every message.
+
+### Liveness is a different question from `isLiveTerminal`
+
+`isLiveTerminal(entityId)` answers *should* a PTY back this surface — desktop, a
+session, not the console. It is a fact about the target and the build, and it is
+what `readOnly` and the key-hint row ask.
+
+`sessionChannelState(entityId)` answers *is there a process right now*:
+`'live' | 'exited' | 'none'`. It reads `pty-transport.ts`'s module-level channel
+map, which is the only thing in the renderer that knows a process has died.
+Sending needs this one. Main's `write` returns early for an entity with no live
+session — silently, and correctly, since it cannot tell a bug from a race — so
+if the renderer did not refuse, a message to a dead session would vanish without
+a word. A routing layer that fails silently is the worst outcome available.
+
+The two are deliberately separate functions. Collapsing them would make a
+surface typable whose transport was a recording, or make a send succeed into a
+session that had already exited.
+
 ## Colour
 
 Terminal colour lives in JS, never CSS. xterm resolves colours from its own

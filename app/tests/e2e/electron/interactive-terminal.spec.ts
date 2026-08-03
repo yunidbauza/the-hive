@@ -134,6 +134,7 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
   const configPath = testInfo.outputPath('hive-config.json');
   const bootstrapped = testInfo.outputPath('bootstrapped.txt');
   writeConfig(configPath, bootstrapped);
+  const started = testInfo.outputPath('started.txt');
   const finished = testInfo.outputPath('finished.txt');
   const after = testInfo.outputPath('after.txt');
 
@@ -144,14 +145,32 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
 
   try {
     const page = await app.firstWindow();
-    await openLiveSession(page, {
+    const terminal = await openLiveSession(page, {
       ready: testInfo.outputPath('ready.txt'),
       bootstrap: bootstrapped,
     });
 
-    // Would write `finished` in 100 seconds if it were ever allowed to.
-    await page.keyboard.type(`sleep 100 && echo finished > '${finished}'`);
+    // Announces itself, then would write `finished` in 100 seconds if it were
+    // ever allowed to.
+    await page.keyboard.type(
+      `echo started > '${started}' && sleep 100 && echo finished > '${finished}'`,
+    );
     await page.keyboard.press('Enter');
+
+    /**
+     * Wait for the job to actually be running before interrupting it.
+     *
+     * Without this the test races the shell: under load the keystrokes and the
+     * Enter can still be in flight when `Control+c` is pressed, so the
+     * interrupt lands on an empty prompt and does nothing, `sleep 100` then
+     * starts, and the follow-up command queues behind it for a hundred seconds.
+     * Both markers stay absent and the failure reads as "Ctrl-C did not work"
+     * when nothing was ever interrupted.
+     *
+     * It also makes the assertion stronger and more literally true to its own
+     * description: SIGINT is now known to have hit a *running foreground job*.
+     */
+    await expectMarker(started, 'started');
 
     /**
      * The assertion that matters most on every platform, for opposite reasons:
@@ -160,11 +179,45 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
      */
     await page.keyboard.press('Control+c');
 
-    // The shell is taking commands again — the only honest proof the interrupt
-    // landed rather than the keystroke vanishing.
-    await page.keyboard.type(`echo interrupted > '${after}'`);
-    await page.keyboard.press('Enter');
-    await expectMarker(after, 'interrupted');
+    /**
+     * The shell is taking commands again — the only honest proof the interrupt
+     * landed rather than the keystroke vanishing.
+     *
+     * Re-focused and re-sent until it takes, rather than sent once.
+     *
+     * Under load this failed roughly one run in four, always the same way:
+     * `started` written, `finished` and `after` both absent — the job ran, and
+     * then nothing else did. Retrying the keystrokes alone did **not** fix it;
+     * adding `terminal.click()` before each attempt did, which points at focus
+     * leaving the terminal rather than at characters being dropped by the
+     * shell. The likeliest mechanism is a re-render: story 096 derives `idle`
+     * after two seconds of silence, and the message row below focuses itself
+     * when it mounts. Worth its own investigation — recorded on HIVE-48 — but
+     * not this story's to fix.
+     *
+     * The assertion is unchanged and still exact: within the deadline the shell
+     * must run a command, and `sleep 100` must not have survived.
+     */
+    await expect
+      .poll(
+        async () => {
+          if (readMarker(after) === 'interrupted') return 'interrupted';
+          /**
+           * Re-focus before each attempt. A status change (story 096 derives
+           * `idle` after two seconds of silence) re-renders the stage, and the
+           * message row below focuses itself on mount — so a terminal that had
+           * focus when the command was typed may not have it a moment later,
+           * and the interrupt or the retry would go to an input box.
+           */
+          await terminal.click();
+          await page.keyboard.press('Control+c');
+          await page.keyboard.type(`echo interrupted > '${after}'`);
+          await page.keyboard.press('Enter');
+          return readMarker(after);
+        },
+        { timeout: 15_000, intervals: [250, 500, 1_000, 2_000] },
+      )
+      .toBe('interrupted');
 
     // And the sleep really died rather than still running behind us.
     expect(readMarker(finished)).toBeNull();

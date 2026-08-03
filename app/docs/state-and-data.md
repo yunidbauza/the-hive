@@ -102,6 +102,38 @@ All six commands are implemented — `help`, `status`, `open`, `send`, `spawn`,
 transcript is capped at 200 lines, oldest dropped first, because it is replayed
 into an xterm on every subscribe.
 
+### Where a message actually goes
+
+`sendToEntity` is the one branch point in the coordination layer (story 097). On
+desktop, for a real session, it calls `sendToSession` and returns
+`{ kind: 'routed' }` — a feed item, **no transcript echo** and **no
+acknowledgement timer**, because status now comes from the process itself
+(story 096) rather than from a timer narrating one.
+
+Everything else keeps the prototype's round-trip: the browser target, which has
+no bridge to ask, and agents, which have no project and no pty this epic. That
+is why the timer still exists. Deleting it, as story 097's text asks, would take
+the browser demo and its Playwright suite with it — `waiting-session.spec.ts`
+asserts the acknowledgement directly.
+
+The action returns a `SendOutcome` rather than a bare timer handle:
+
+```ts
+type SendOutcome =
+  | { kind: 'routed' }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'demo'; timer: ReturnType<typeof setTimeout> };
+```
+
+It has to *report*, not merely act, because the console prints the refusal and
+only its caller knows where that line belongs. `demo` still carries the handle so
+the simulation and the tests cancel deterministically rather than racing a wait.
+
+`spawnSession` asks main for the process itself rather than leaving it to the
+transport's lazy path, so main's refusal — "not mapped", "session limit
+reached", "pty host unavailable" — reaches the console transcript verbatim. Both
+routes share one channel, so whoever asks first is the only one who asks.
+
 `useActiveSessions()` / `useDoneSessions()` are two flat selectors rather than
 one returning `{ active, done }`: `useShallow` compares the returned value's own
 properties, so an object of two freshly-built arrays never compares equal and the
