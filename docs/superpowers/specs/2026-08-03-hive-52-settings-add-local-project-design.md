@@ -226,6 +226,68 @@ deleted, in the same idiom the file already uses for `onLost` and `restart`.
 
 `src/data/fixtures.ts` ends this story byte-identical; the merge is a selector.
 
+## Decided during implementation
+
+Five things the spec did not reach, each settled against the code and pinned by
+a test. Recorded here because stories 102–108 build on this surface.
+
+### 1. Settings lists the config's projects, not the merged list
+
+**Confirmed with the reporter.** The merge rule returns *the fixtures* when the
+config declares none, and fixture projects always own live sessions in this
+phase — so a fresh install opened Settings on five rows the user had not added,
+could not remove, and had not come for, and the empty state (the screen this
+story exists to produce) was unreachable. The e2e caught it; no unit test could,
+because each one seeded its own snapshot.
+
+Settings now lists what the config declares and accounts for the demo projects
+in one muted line. **The merge rule itself is unchanged** — it exists so the
+rails and the picker keep working, which is a different question from what the
+user manages in Settings.
+
+### 2. The merged row is `ProjectRow`, not a widened `Project`
+
+The spec asks for both "`Project` gains `name` and `source`" and
+"`src/data/fixtures.ts` ends byte-identical". Those are incompatible: the
+fixtures construct `{ id, icon }` literals, so widening `Project` forces editing
+them. The acceptance criterion is the stronger commitment, and a fixture
+genuinely has no display name or origin — so `ProjectRow extends Project` adds
+them where they are real. `git diff app/src/data/` is empty.
+
+### 3. `openTab` and `backToOrch` clear the settings flag
+
+Not in the spec, and necessary. The rails stay visible behind a full-stage
+overlay and remain clickable, while `resolveView` returns `'settings'` whatever
+`activeTab` says — so a rail click that left the overlay up would change the tab
+underneath and look, to the user, like nothing happened. The picker already
+clears for the same reason.
+
+### 4. `ParsedConfig` gains a `fatal` flag
+
+`checkKeys` returns `false` only for a forbidden key; an *unknown* top-level key
+is pushed into `errors` and tolerated. So `errors.length > 0` cannot be the write
+path's refusal test — a config carrying one unknown key is exactly the config
+this story promises to preserve, and refusing on it would make that file
+permanently unwritable. `fatal` marks only the four wholesale-rejection paths.
+
+### 5. The first-run template is rewritten, and now emits v2
+
+The template still said *"id must match a project id shown in the left rail"* —
+the rule this story reverses. A fresh install was writing documentation that was
+false the moment it was written. It now describes the v2 entry shape and points
+at Settings. Because it emits `CONFIG_VERSION`, a first run now writes
+`version: 2`; a v1 file a user already has still loads unchanged and is not
+rewritten until they save.
+
+### Also worth knowing
+
+`configPath` and `describe` moved to `electron/main/config/paths.ts` so
+`write.ts` and `config/index.ts` do not import each other. Pure move.
+
+The added path is stored **as the user wrote it** (`~/repo`), not resolved:
+storing the realpath would bake this machine's home directory into a file people
+keep in dotfile repos. `realpath` is used for identity and duplicate detection.
+
 ## Not in this story
 
 Cloning a remote (102). Rename, re-point, reorder (103). Any other settings
