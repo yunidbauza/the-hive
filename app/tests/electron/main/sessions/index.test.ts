@@ -79,6 +79,15 @@ const OPEN = { entityId: 'hero-refresh', projectId: 'apfm-web', cols: 80, rows: 
 const mintedFor = (entityId: string) =>
   spawned.filter((call) => call.sessionId.startsWith(entityId)).at(-1)!.sessionId;
 
+/** Can the registry still address the newest generation it spawned? */
+const registryReachable = () => {
+  const latest = spawned.at(-1)!.sessionId;
+  sessions.write('hero-refresh', 'probe');
+  return vi.mocked(supervisor.write).mock.calls.some(
+    (call) => call[0] === latest,
+  );
+};
+
 /** Everything the renderer received on a channel. */
 const on = (channel: string) => sent.filter((entry) => entry.channel === channel);
 
@@ -362,5 +371,103 @@ describe('spawn preconditions', () => {
     expect(() => sessions.open(OPEN)).toThrow();
     expect(spawned).toEqual([]);
     expect(sessions.entities()).toEqual([]);
+  });
+});
+
+describe('restart: the defects the self review found', () => {
+  it('lets a restarted session report status again', async () => {
+    /**
+     * The regression, and it was subtle. `done` is deliberately sticky —
+     * output after an exit must not resurrect a dead session — but that guard
+     * is keyed on the *entity*, and a restart gives the same entity a new
+     * process. Without forgetting the old generation, the fresh shell's output
+     * hits the guard, the status never leaves `done`, and the entity drops out
+     * of the attention model for the rest of the app's life.
+     */
+    sessions.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    expect(on(CH.sessionStatus).at(-1)!.payload.status).toBe('done');
+
+    await sessions.restart(OPEN);
+    emitData({ sessionId: mintedFor('hero-refresh'), chunk: 'alive again' });
+    vi.advanceTimersByTime(8);
+
+    expect(on(CH.sessionStatus).at(-1)!.payload).toEqual({
+      entityId: 'hero-refresh',
+      status: 'working',
+    });
+  });
+
+  it('joins a concurrent restart instead of racing it', async () => {
+    /**
+     * Two simultaneous restarts used to be destructive rather than redundant:
+     * both read the same live session id, both awaited the same exit, and both
+     * spawned. The second `registry.open` overwrote the first's mapping, so the
+     * first new shell was orphaned — still running, uncounted, unaddressable,
+     * and invisible until the app quit.
+     */
+    sessions.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    const a = sessions.restart(OPEN);
+    const b = sessions.restart(OPEN);
+    await Promise.resolve();
+
+    // One kill, not two: the second request joined the first.
+    expect(killed).toEqual([first]);
+
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await Promise.all([a, b]);
+
+    // One new generation, and the registry can address it.
+    expect(spawned).toHaveLength(2);
+    expect(registryReachable()).toBe(true);
+  });
+
+  it('allows a fresh restart once the first has finished', async () => {
+    sessions.open(OPEN);
+
+    const first = mintedFor('hero-refresh');
+    const one = sessions.restart(OPEN);
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await one;
+
+    const second = mintedFor('hero-refresh');
+    const two = sessions.restart(OPEN);
+    await Promise.resolve();
+    emitExit({ sessionId: second, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await two;
+
+    expect(spawned).toHaveLength(3);
+  });
+
+  it('rejects rather than hanging when the old process never exits', async () => {
+    /**
+     * The promise is awaited across an `invoke`. Without a bound of its own, a
+     * wedged host would leave the renderer's `restart()` pending forever — a
+     * spinner with no error and no timeout. It rejects rather than spawning
+     * anyway, because spawning would mint a fresh id the supervisor would
+     * accept, leaving two live shells in one repository.
+     */
+    sessions.open(OPEN);
+
+    const restarted = sessions.restart(OPEN);
+    const settled = restarted.then(
+      () => 'resolved',
+      (cause: Error) => cause.message,
+    );
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await settled).toContain('did not exit');
+    // Nothing new was started.
+    expect(spawned).toHaveLength(1);
   });
 });

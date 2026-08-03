@@ -77,12 +77,23 @@ export interface Sessions {
  */
 const LOGIN_SHELL_ARGS = ['-l'];
 
+/**
+ * How long a restart waits for the old process to die before giving up.
+ *
+ * Comfortably past the host's own SIGTERM-then-SIGKILL escalation, so this only
+ * fires when that escalation itself has failed — which means the host is wedged,
+ * not that the process is slow.
+ */
+const RESTART_EXIT_TIMEOUT_MS = 10_000;
+
 export function createSessions(options: SessionsOptions): Sessions {
   const { supervisor, send, config, maxSessions = MAX_SESSIONS } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
   /** Resolvers waiting for a specific entity's process to exit. */
   const exitWaiters = new Map<string, (() => void)[]>();
+  /** In-flight restarts, so a second request joins rather than races. */
+  const restarting = new Map<string, Promise<void>>();
 
   /**
    * Everything main pushes to the renderer passes through here, and the
@@ -174,6 +185,52 @@ export function createSessions(options: SessionsOptions): Sessions {
     for (const resolve of waiters) resolve();
   }
 
+  /**
+   * Kill, **wait for the exit**, then spawn. An ordering, not a set.
+   *
+   * Spawning before the old process is reaped means two `claude` instances in
+   * one repository writing the same files. Waiting is what makes the new
+   * generation genuinely new.
+   */
+  async function restartOnce(request: OpenRequest): Promise<void> {
+    const sessionId = registry.sessionFor(request.entityId);
+
+    if (sessionId !== undefined) {
+      const exit = new Promise<void>((resolve, reject) => {
+        const waiters = exitWaiters.get(request.entityId) ?? [];
+        waiters.push(resolve);
+        exitWaiters.set(request.entityId, waiters);
+
+        /**
+         * A bound of this layer's own, rather than trust in two others.
+         *
+         * The host escalates SIGTERM to SIGKILL and the supervisor's heartbeat
+         * eventually condemns a hung host, so in practice the exit arrives. But
+         * this promise is awaited across an `invoke`, so if it ever did not, the
+         * renderer's `restart()` would hang forever with no error and no
+         * timeout — a spinner that never resolves.
+         *
+         * It **rejects** rather than proceeding. Spawning anyway would mint a
+         * fresh session id, which the supervisor would happily accept, leaving
+         * two live shells in one repository — the exact outcome the wait exists
+         * to prevent, arrived at by way of a safety net.
+         */
+        setTimeout(() => {
+          reject(
+            new Error(
+              `restart: ${request.entityId} did not exit within ${RESTART_EXIT_TIMEOUT_MS}ms — its process may still be running`,
+            ),
+          );
+        }, RESTART_EXIT_TIMEOUT_MS);
+      });
+
+      ptyIpc.kill(sessionId);
+      await exit;
+    }
+
+    spawn(request);
+  }
+
   /** Refuse with a message the user can act on, never a generic failure. */
   function spawn(request: OpenRequest): void {
     const snapshot = config();
@@ -203,6 +260,22 @@ export function createSessions(options: SessionsOptions): Sessions {
         }),
       );
     }
+
+    /**
+     * A new generation starts with no status history.
+     *
+     * Without this the tracker keeps the previous generation's terminal `done`,
+     * and `done` is deliberately sticky — output after an exit must not
+     * resurrect a dead session, or the last bytes of a finished process would
+     * strand it claiming to be busy forever. That guard is right, and it is
+     * exactly what makes a *restarted* session invisible: its new process
+     * produces output, the tracker sees an entity it already considers
+     * finished, and the status never leaves `done` again.
+     *
+     * Forgetting here is the seam between the two: the entity is the same, the
+     * session is not.
+     */
+    activity.forget(request.entityId);
 
     const sessionId = registry.open(request.entityId);
 
@@ -265,28 +338,31 @@ export function createSessions(options: SessionsOptions): Sessions {
       ptyIpc.kill(sessionId);
     },
 
-    async restart(request) {
-      const sessionId = registry.sessionFor(request.entityId);
-
+    restart(request) {
       /**
-       * Kill, **wait for the exit**, then spawn. An ordering, not a set.
+       * One restart per entity at a time, and a second request **joins** the
+       * first rather than starting its own.
        *
-       * Spawning before the old process is reaped means two `claude` instances
-       * in one repository writing the same files, and the supervisor rejects
-       * the second spawn if the id is still live. Waiting is what makes the new
-       * generation genuinely new.
+       * Without this the two are genuinely destructive rather than merely
+       * redundant: both read the same live session id, both wait on the same
+       * exit, and both then spawn. The second `registry.open` overwrites the
+       * first's mapping, so the first new shell is orphaned — still running,
+       * not counted against the cap, not reachable through `entities()`, and
+       * invisible until the app quits. Two `claude` processes in one repository,
+       * one of which nothing can address.
+       *
+       * Joining is also the right *semantics*. Two restarts issued together mean
+       * "restart it", not "restart it twice" — and restarting twice would kill
+       * the process the first one had only just started.
        */
-      if (sessionId !== undefined) {
-        const exit = new Promise<void>((resolve) => {
-          const waiters = exitWaiters.get(request.entityId) ?? [];
-          waiters.push(resolve);
-          exitWaiters.set(request.entityId, waiters);
-        });
-        ptyIpc.kill(sessionId);
-        await exit;
-      }
+      const inFlight = restarting.get(request.entityId);
+      if (inFlight) return inFlight;
 
-      spawn(request);
+      const run = restartOnce(request).finally(() => {
+        restarting.delete(request.entityId);
+      });
+      restarting.set(request.entityId, run);
+      return run;
     },
 
     entities: () => registry.entities(),
@@ -297,6 +373,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       activity.dispose();
       ptyIpc.dispose();
       registry.clear();
+      restarting.clear();
       exitWaiters.clear();
     },
   };
