@@ -1,4 +1,9 @@
-import type { ResizeRequest, SpawnRequest, WriteRequest } from './ipc-contract';
+import type {
+  AckRequest,
+  ResizeRequest,
+  SpawnRequest,
+  WriteRequest,
+} from './ipc-contract';
 
 /**
  * Payload guards (story 082).
@@ -140,4 +145,30 @@ export function parseResizeRequest(input: unknown): ResizeRequest {
 
 export function parseKillRequest(input: unknown): string {
   return assertId(input, 'kill.sessionId');
+}
+
+/**
+ * A sequence number: a non-negative integer, bounded (story 093).
+ *
+ * Bounded because it is used to release accounted-for bytes from a
+ * backpressure window. A renderer that acked `Number.MAX_SAFE_INTEGER` would
+ * clear the window in one message and disable flow control entirely — which is
+ * exactly the sort of thing a guard on this boundary exists to refuse.
+ */
+function assertSeq(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return fail(`${label}: expected an integer, got ${describe(value)}`);
+  }
+  if (value < 0 || value > Number.MAX_SAFE_INTEGER) {
+    return fail(`${label}: out of range`);
+  }
+  return value;
+}
+
+export function parseAckRequest(input: unknown): AckRequest {
+  const raw = assertShape(input, ['sessionId', 'seq'], 'ack');
+  return {
+    sessionId: assertId(raw.sessionId, 'ack.sessionId'),
+    seq: assertSeq(raw.seq, 'ack.seq'),
+  };
 }

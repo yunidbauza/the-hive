@@ -57,6 +57,8 @@ function recordingSessions() {
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
     killAll: vi.fn(),
   };
 }
@@ -108,6 +110,18 @@ describe('routing', () => {
     expect(sessions.write).toHaveBeenCalledWith('a', 'ls\r');
     expect(sessions.resize).toHaveBeenCalledWith('a', 120, 40);
     expect(sessions.kill).toHaveBeenCalledWith('a', 'SIGTERM');
+  });
+
+  it('routes pause and resume, the two halves of backpressure (story 093)', () => {
+    const { port, send } = fakePort();
+    const sessions = recordingSessions();
+    createPtyHost({ port, sessions, exit: vi.fn() });
+
+    send({ type: 'pause', sessionId: 'a' });
+    send({ type: 'resume', sessionId: 'a' });
+
+    expect(sessions.pause).toHaveBeenCalledWith('a');
+    expect(sessions.resume).toHaveBeenCalledWith('a');
   });
 
   it('gives spawn an emit that reaches the port', () => {

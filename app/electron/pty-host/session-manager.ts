@@ -73,6 +73,8 @@ interface Session {
   buffer: Scrollback;
   emit: (message: HostMessage) => void;
   status: 'live' | 'exited';
+  /** Tracked so a redundant pause/resume cannot desynchronise the fd. */
+  paused: boolean;
   cols: number;
   rows: number;
   killTimer: ReturnType<typeof setTimeout> | null;
@@ -237,6 +239,7 @@ export function createSessionManager(
         buffer: new Scrollback(scrollbackBytes),
         emit,
         status: 'live',
+        paused: false,
         cols: Math.max(1, cols),
         rows: Math.max(1, rows),
         killTimer: null,
@@ -307,6 +310,23 @@ export function createSessionManager(
         if (session.status !== 'live') return;
         signal(session, 'SIGKILL');
       }, killGraceMs);
+    },
+
+    pause(sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session || session.status !== 'live' || session.paused) return;
+      session.paused = true;
+      // Stops reading the fd. The kernel pty buffer fills and the producing
+      // process blocks on write — the same thing that happens when you pipe to
+      // a slow consumer in a shell.
+      session.pty.pause();
+    },
+
+    resume(sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session || session.status !== 'live' || !session.paused) return;
+      session.paused = false;
+      session.pty.resume();
     },
 
     async killAll() {

@@ -26,6 +26,14 @@ export const CH = {
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   ptyKill: 'pty:kill',
+  /**
+   * The ack half of the flow-control loop (story 093).
+   *
+   * Renderer → main, `send` rather than `invoke`: an ack is a report, not a
+   * question, and awaiting one would put the main process in the path of the
+   * very backpressure it is measuring.
+   */
+  ptyAck: 'pty:ack',
   ptyData: 'pty:data', // main → renderer, stream
   ptyExit: 'pty:exit', // main → renderer
   appInfo: 'app:info',
@@ -64,6 +72,29 @@ export interface ResizeRequest {
 export interface DataEvent {
   sessionId: string;
   chunk: string;
+  /**
+   * Monotonic per session (story 093).
+   *
+   * The renderer asserts monotonicity and, on a gap, writes
+   * {@link GAP_NOTICE} rather than silently rendering a corrupted stream. A
+   * terminal that quietly drops a batch shows output that never existed in
+   * that order, and the user debugs the wrong thing.
+   */
+  seq: number;
+}
+
+/**
+ * The renderer reporting that it has *parsed* everything up to `seq`.
+ *
+ * The critical detail of the whole design: this is sent from xterm's
+ * `write` callback, **not** on receipt. `xterm.write` is asynchronous and its
+ * callback fires once the chunk is in the buffer. Acking on arrival measures
+ * the IPC channel and learns nothing about whether the terminal is keeping up,
+ * which is the entire question.
+ */
+export interface AckRequest {
+  sessionId: string;
+  seq: number;
 }
 
 export interface ExitEvent {
@@ -82,6 +113,31 @@ export interface AppInfo {
   node: string;
   /** `process.platform`, so the renderer can reason about chrome differences. */
   platform: string;
+  /**
+   * Per-session flow-control counters (story 093).
+   *
+   * Flow-control bugs are otherwise diagnosed by staring at a slow terminal
+   * and guessing. Absent when no session has ever run.
+   */
+  pty?: PtyDiagnostics[];
+}
+
+/** What the diagnostics counter set records for one session. */
+export interface PtyDiagnostics {
+  sessionId: string;
+  /** Bytes received from the pty host. */
+  bytesIn: number;
+  /** Bytes the renderer has confirmed it parsed. */
+  bytesAcked: number;
+  /** Bytes sent but not yet acked — the number the water marks compare. */
+  unacked: number;
+  /** How many times the pty was paused for being too far ahead. */
+  pauses: number;
+  /** IPC messages sent. `bytesIn / batches` is the coalescing ratio. */
+  batches: number;
+  /** Messages dropped for an unknown or exited session. */
+  dropped: number;
+  paused: boolean;
 }
 
 /**
@@ -111,11 +167,46 @@ export interface HiveBridge {
     write(request: WriteRequest): void;
     resize(request: ResizeRequest): void;
     kill(sessionId: string): Promise<void>;
+    /** Report progress so main can apply backpressure. See {@link AckRequest}. */
+    ack(request: AckRequest): void;
     /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
     onData(callback: (event: DataEvent) => void): () => void;
     onExit(callback: (event: ExitEvent) => void): () => void;
   };
 }
+
+/**
+ * Written into a terminal when a sequence number is skipped (story 093).
+ *
+ * Dim SGR written literally: this is produced inside a terminal stream, where
+ * an escape sequence is the only way to be dim.
+ */
+export const GAP_NOTICE = '\u001b[2m── output gap detected ──\u001b[0m\r\n';
+
+/**
+ * At most one IPC message per session per this many milliseconds.
+ *
+ * Under a frame at 120 Hz, so no perceptible latency is added to interactive
+ * typing — the echo of a keystroke still lands in the frame it would have.
+ */
+export const BATCH_INTERVAL_MS = 8;
+
+/** Flush immediately past this, so a firehose cannot build a huge string. */
+export const BATCH_FLUSH_BYTES = 64 * 1024;
+
+/** Unacked bytes above which the pty is paused. */
+export const HIGH_WATER_BYTES = 512 * 1024;
+
+/** Unacked bytes below which it is resumed. */
+export const LOW_WATER_BYTES = 128 * 1024;
+
+/**
+ * At most one resize per session per this many milliseconds.
+ *
+ * A window drag fires `ResizeObserver` continuously, and every resize is a
+ * `SIGWINCH` to a process that redraws on each one.
+ */
+export const RESIZE_THROTTLE_MS = 50;
 
 /** The exact top-level key set of `window.hive`. The surface test asserts it. */
 export const BRIDGE_KEYS = ['appInfo', 'config', 'pty'] as const;
@@ -125,6 +216,7 @@ export const BRIDGE_CONFIG_KEYS = ['get', 'reload'] as const;
 
 /** The exact key set of `window.hive.pty`. */
 export const BRIDGE_PTY_KEYS = [
+  'ack',
   'spawn',
   'write',
   'resize',

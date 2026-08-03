@@ -70,6 +70,9 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   // Widening any of these lists is the alarm this test exists to raise.
   expect(surface.top).toEqual(['appInfo', 'config', 'pty']);
   expect(surface.pty).toEqual([
+    // Story 093 added `ack` — the renderer reporting what it has parsed, which
+    // is what lets main apply backpressure.
+    'ack',
     'kill',
     'onData',
     'onExit',

@@ -46,6 +46,23 @@ export interface KillCommand {
   signal?: string;
 }
 
+/**
+ * Stop reading the pty's fd (story 093).
+ *
+ * Real backpressure, not a buffer somewhere: the kernel pty buffer fills and
+ * the producing process blocks on `write`, exactly as it would piping to a
+ * slow consumer in a shell.
+ */
+export interface PauseCommand {
+  type: 'pause';
+  sessionId: string;
+}
+
+export interface ResumeCommand {
+  type: 'resume';
+  sessionId: string;
+}
+
 /** Kill every session and exit. Sent on app quit (story 081's shutdown hook). */
 export interface ShutdownCommand {
   type: 'shutdown';
@@ -56,6 +73,8 @@ export type HostCommand =
   | WriteCommand
   | ResizeCommand
   | KillCommand
+  | PauseCommand
+  | ResumeCommand
   | ShutdownCommand
   // Both halves of the heartbeat travel in both directions, so either side can
   // ask and either side can answer. Without `PongMessage` here, main could

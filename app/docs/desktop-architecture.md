@@ -173,6 +173,44 @@ still shows the transcript, prefixed with a dim truncation marker when output
 was dropped. The buffer is **retained after exit** — a terminal that clears
 itself when a process dies destroys the error the user needed to read.
 
+### Batching and flow control (story 093)
+
+`pty:data` is the only high-volume channel in the app — a single `pnpm build`
+emits tens of thousands of small writes. Forwarding each as its own IPC message
+produces **two distinct failures that need different fixes**:
+
+| Failure | Fix |
+|---|---|
+| **Message storm.** Electron IPC has real per-message overhead, and thousands of tiny messages per second saturate the main process — which is also the thing drawing the window | **Batching.** At most one message per session per 8 ms (under a frame at 120 Hz, so no perceptible typing latency), flushed immediately past 64 KB |
+| **Unbounded queueing.** A pty produces faster than xterm parses. The queue grows, memory climbs, and the terminal falls behind real time until Ctrl-C appears to do nothing | **Acknowledgement.** Only an ack can fix this — batching cannot |
+
+Batching is **per session**: one noisy session must not delay another's echo.
+
+The ack loop: main tracks unacked bytes per session, pauses the pty above 512 KB
+and resumes below 128 KB. `pause()` stops the host reading the fd, so the kernel
+pty buffer fills and the producing process blocks on `write` — real backpressure,
+the same thing that happens piping to a slow consumer in a shell, not a queue
+growing somewhere invisible.
+
+**The critical detail: the ack is sent from xterm's `write` callback, not on
+receipt.** `xterm.write` is asynchronous and its callback fires once the chunk is
+parsed into the buffer. Acking on arrival measures the IPC channel and learns
+nothing about whether the terminal is keeping up, which is the entire question.
+
+Direction matters for the verbs. `write`, `resize` and `ack` use `send` —
+awaiting a round trip per keystroke would put main in the typing-latency path,
+and ordering is already guaranteed on a single channel. `spawn` and `kill` use
+`invoke`; both need a result. Resizes are throttled to one per 50 ms per session
+**with a trailing call**, because every resize is a `SIGWINCH` and a drag without
+the trailing call ends on a stale size.
+
+Each batch carries a monotonic `seq`. The renderer asserts monotonicity and, on a
+gap, writes a dim marker rather than silently rendering a corrupted stream. `exit`
+is held until the session's last data has flushed — delivering it early truncates
+the final output, which is usually the error. Per-session counters (bytes in,
+bytes acked, pauses, batches, drops) ride out on `app:info`; flow-control bugs are
+otherwise diagnosed by staring at a slow terminal and guessing.
+
 ## Two ABI facts that produce unreadable errors when forgotten
 
 **`node-pty@1.1.0` does NOT need rebuilding for Electron.** It ships **N-API**

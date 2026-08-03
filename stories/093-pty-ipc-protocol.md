@@ -136,3 +136,58 @@ staring at a slow terminal and guessing.
 - The renderer-side transport that consumes this — [094](094-pty-transport.md).
 - Persisting scrollback to disk.
 - Compressing IPC payloads. Batching is sufficient at this scale; revisit with evidence.
+
+## UPDATED SPECS
+
+### 1. The contract this story needs did not exist yet
+
+Story 082 declared the PTY channels and said they would be "implemented in story
+093". They were declared **incompletely**: nothing in the shipped contract could
+express this design.
+
+Added here — `seq` on `DataEvent`, a `pty:ack` channel, `AckRequest` and its guard,
+an `ack` verb on the bridge (so `BRIDGE_PTY_KEYS` and both surface tests grew), and
+`PtyDiagnostics` on `AppInfo`. The surface-test failure that resulted is the
+allowlist working, not a regression.
+
+### 2. `pause` / `resume` are new host protocol commands
+
+The story says main "calls `pause()` on the pty". The pty lives in the host process
+(091), so this became two new `HostCommand`s, a `pause`/`resume` pair on
+`SessionOperations`, and their implementation in the session manager against
+`IPty.pause()` / `IPty.resume()`.
+
+### 3. Resize throttling lives in main
+
+The story lists resize throttling under "Renderer → main", which reads as
+client-side. It is implemented in **main** instead, for two reasons: the harm the
+story actually names is `SIGWINCH` storming the child, which main is the last place
+able to prevent; and the story's own test list puts these assertions in
+`tests/electron/main/ipc/pty.test.ts`. Story 094 may add a client-side throttle on
+top; it would be an optimisation, not the guarantee.
+
+### 4. An undeclared dependency on 090
+
+The story's Depends-on names 082 and 092. Spawning also needs the **workspace
+config**: `SpawnRequest` carries a `projectId`, and something has to turn that into
+a `cwd`. That resolution happens in main's `pty:spawn` handler, which refuses a
+project that is not mapped to a usable directory rather than starting a shell
+somewhere arbitrary.
+
+### Acceptance criteria
+
+Per the reconciliation decision, the criteria that need a live terminal are
+**deferred to 094/095** — they are unprovable here, because the ack that drives the
+whole loop is supposed to come from xterm's write callback and there is no xterm on
+this path yet:
+
+- [ ] `yes` does not freeze the window; other terminals keep echoing.
+- [ ] Ctrl-C during that flood stops it within a few hundred milliseconds.
+- [ ] Memory is stable during a 60-second flood.
+- [ ] Typing latency is imperceptible; the counter shows batches of 1 when idle.
+- [ ] Dragging the window edge produces a final geometry matching `stty size`.
+
+What *is* proven here: every batching, flow-control, throttling, sequencing and
+ordering rule with fake timers (30 unit tests), plus an end-to-end Electron spec
+that spawns a session from the renderer, runs a real shell, and receives sequenced
+output and a correctly-ordered exit back through the whole stack.

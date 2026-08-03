@@ -71,6 +71,14 @@ export function createPtyHost({
         sessions.kill(command.sessionId, command.signal);
         return;
 
+      case 'pause':
+        sessions.pause(command.sessionId);
+        return;
+
+      case 'resume':
+        sessions.resume(command.sessionId);
+        return;
+
       case 'shutdown':
         /**
          * Kill everything, *then* exit.

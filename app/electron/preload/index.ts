@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { ConfigSnapshot } from '@shared/config-contract';
 import {
   CH,
+  type AckRequest,
   type AppInfo,
   type DataEvent,
   type ExitEvent,
@@ -82,6 +83,9 @@ const bridge: HiveBridge = {
       ipcRenderer.send(CH.ptyResize, request),
     kill: (sessionId: string): Promise<void> =>
       ipcRenderer.invoke(CH.ptyKill, sessionId),
+    // `send`: an ack is a report, not a question. Awaiting one would put the
+    // main process in the path of the backpressure it is measuring.
+    ack: (request: AckRequest): void => ipcRenderer.send(CH.ptyAck, request),
     onData: (callback: (event: DataEvent) => void) =>
       subscribe<DataEvent>(CH.ptyData, callback),
     onExit: (callback: (event: ExitEvent) => void) =>

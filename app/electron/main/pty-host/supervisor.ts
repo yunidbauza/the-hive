@@ -76,6 +76,15 @@ export interface PtyHostSupervisor {
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   kill(sessionId: string, signal?: string): void;
+  /**
+   * Stop / start the pty reading its fd (story 093).
+   *
+   * Silent for an unknown session rather than an error: flow control runs on a
+   * timer against a session the user may have just killed, and a race there is
+   * ordinary, not a fault worth surfacing in the feed.
+   */
+  pause(sessionId: string): void;
+  resume(sessionId: string): void;
 
   onData(listener: Listener<DataMessage>): () => void;
   onExit(listener: Listener<ExitMessage>): () => void;
@@ -347,6 +356,16 @@ export function createPtyHostSupervisor(
     kill(sessionId, signal) {
       if (!owned(sessionId, 'kill')) return;
       post({ type: 'kill', sessionId, signal });
+    },
+
+    pause(sessionId) {
+      if (!sessions.has(sessionId)) return;
+      post({ type: 'pause', sessionId });
+    },
+
+    resume(sessionId) {
+      if (!sessions.has(sessionId)) return;
+      post({ type: 'resume', sessionId });
     },
 
     onData: data.add,

@@ -16,6 +16,14 @@ export interface SessionOperations {
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   kill(sessionId: string, signal?: string): void;
+  /**
+   * Stop / start reading the pty's fd (story 093).
+   *
+   * Paused, the kernel pty buffer fills and the producing process blocks on
+   * `write` — real backpressure, not a queue growing somewhere out of sight.
+   */
+  pause(sessionId: string): void;
+  resume(sessionId: string): void;
   /** Kill every session's process group. Awaited on shutdown. */
   killAll(): Promise<void> | void;
 }
