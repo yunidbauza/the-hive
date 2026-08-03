@@ -282,8 +282,12 @@ describe('NewSessionPicker · unmapped projects', () => {
       claudeCommand: 'claude',
       projects: projects.map(({ id, status }) => ({
         id,
+        name: id,
         path: status === 'ok' ? `/repos/${id}` : null,
+        icon: 'ph-folder',
+        origin: 'local' as const,
         status,
+        isRepo: true,
       })),
       errors: [],
       ...overrides,

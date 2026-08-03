@@ -29,7 +29,11 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
     projects: projects.map(({ id, status }) => ({
       id,
       path: status === 'ok' ? `/repos/${id}` : null,
+      name: id,
+      icon: 'ph-folder',
+      origin: 'local' as const,
       status,
+      isRepo: true,
     })),
     errors: [],
   };

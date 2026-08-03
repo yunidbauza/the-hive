@@ -91,6 +91,12 @@ describe('path resolution', () => {
         // would be asserting that resolution did *not* happen.
         path: realpathSync(join(home, 'repos', 'apfm-web')),
         status: 'ok',
+        // The v1 upgrade, applied in memory (story 101). The file on disk is
+        // still v1 and stays that way until the user saves something.
+        name: 'apfm-web',
+        icon: 'ph-folder',
+        origin: 'local',
+        isRepo: false,
       },
     ]);
   });
@@ -338,5 +344,64 @@ describe('caching', () => {
       status: 'ok',
     });
     expect(module.getConfig().projects).toHaveLength(1);
+  });
+});
+
+describe('schema v1 compatibility (story 101)', () => {
+  it('reads a v1 file, defaults the new fields, and leaves the file byte-identical', async () => {
+    const repo = join(sandbox, 'legacy');
+    mkdirSync(repo);
+    const original = `${JSON.stringify(
+      {
+        '//': 'hand-written under story 090',
+        version: 1,
+        projects: [{ id: 'apfm-web', path: repo }],
+      },
+      null,
+      2,
+    )}\n`;
+    const path = join(sandbox, 'config.json');
+    writeFileSync(path, original);
+    process.env[CONFIG_PATH_ENV] = path;
+
+    const snapshot = await loadConfig();
+    const entry = snapshot.projects[0];
+
+    expect(entry?.status).toBe('ok');
+    expect(entry?.name).toBe('legacy');
+    expect(entry?.icon).toBe('ph-folder');
+    expect(entry?.origin).toBe('local');
+
+    // The upgrade is in memory. Reading someone's file and rewriting it before
+    // they asked for anything is a surprise, not a migration — a v1 file the
+    // user never edits through the UI stays v1 forever and keeps working.
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  it('still accepts a v2 file', async () => {
+    const repo = join(sandbox, 'modern');
+    mkdirSync(repo);
+    writeConfig({
+      version: 2,
+      projects: [
+        {
+          id: 'modern',
+          name: 'Modern',
+          path: repo,
+          icon: 'ph-folder',
+          origin: 'local',
+        },
+      ],
+    });
+
+    const snapshot = await loadConfig();
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects[0]).toMatchObject({
+      id: 'modern',
+      name: 'Modern',
+      origin: 'local',
+      status: 'ok',
+    });
   });
 });

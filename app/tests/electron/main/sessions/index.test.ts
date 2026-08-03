@@ -39,8 +39,24 @@ const CONFIG: ConfigSnapshot = {
   shell: '/bin/zsh',
   claudeCommand: 'claude',
   projects: [
-    { id: 'apfm-web', path: '/repos/apfm-web', status: 'ok' },
-    { id: 'referral-api', path: null, status: 'missing' },
+    {
+      id: 'apfm-web',
+      name: 'apfm-web',
+      path: '/repos/apfm-web',
+      icon: 'ph-folder',
+      origin: 'local',
+      status: 'ok',
+      isRepo: true,
+    },
+    {
+      id: 'referral-api',
+      name: 'referral-api',
+      path: null,
+      icon: 'ph-folder',
+      origin: 'local',
+      status: 'missing',
+      isRepo: false,
+    },
   ],
   errors: [],
 };

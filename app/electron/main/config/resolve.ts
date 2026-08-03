@@ -1,8 +1,11 @@
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 
-import type { ProjectConfig } from '@shared/config-contract';
+import {
+  DEFAULT_PROJECT_ICON,
+  type ProjectConfig,
+} from '@shared/config-contract';
 
 import type { RawProject } from './parse';
 
@@ -38,12 +41,52 @@ function expandHome(path: string): string {
   return path;
 }
 
+/**
+ * Whether a resolved directory is a git repository (story 101).
+ *
+ * `existsSync`, deliberately not `statSync(...).isDirectory()`: inside a git
+ * **worktree** or a submodule, `.git` is a *file* holding a `gitdir:` pointer,
+ * and a directory-only check would report a perfectly real repository — the one
+ * this project is developed in among them — as not one.
+ *
+ * A directory that is not a repository is still added, with a muted tag. A PTY
+ * needs a `cwd`, not a repo; refusing here would be the app inventing a rule
+ * the shell does not have.
+ */
+function looksLikeRepo(real: string): boolean {
+  return existsSync(join(real, '.git'));
+}
+
+/**
+ * The fields every verdict carries, resolved or not (story 101).
+ *
+ * `name` falls back to the id rather than the raw path when resolution failed:
+ * the path is already shown beneath the name in the settings row, and repeating
+ * an unusable one as the title says nothing the row does not already say.
+ */
+function decorate(
+  raw: RawProject,
+  real: string | null,
+): Pick<ProjectConfig, 'id' | 'name' | 'icon' | 'origin'> {
+  return {
+    id: raw.id,
+    name: raw.name ?? (real === null ? raw.id : basename(real)),
+    icon: raw.icon ?? DEFAULT_PROJECT_ICON,
+    origin: raw.origin ?? 'local',
+  };
+}
+
 /** Resolve one declared entry to its verdict. Never throws. */
 export function resolveProject(raw: RawProject): ProjectConfig {
   const expanded = expandHome(raw.path);
 
   if (!isAbsolute(expanded)) {
-    return { id: raw.id, path: null, status: 'not-absolute' };
+    return {
+      ...decorate(raw, null),
+      path: null,
+      status: 'not-absolute',
+      isRepo: false,
+    };
   }
 
   let real: string;
@@ -53,7 +96,7 @@ export function resolveProject(raw: RawProject): ProjectConfig {
     // ENOENT is the overwhelmingly common case; EACCES on a parent directory
     // lands here too, and "the app cannot reach it" is the same answer to the
     // user either way.
-    return { id: raw.id, path: null, status: 'missing' };
+    return { ...decorate(raw, null), path: null, status: 'missing', isRepo: false };
   }
 
   // `realpathSync` already followed every link, so this cannot be a dangling
@@ -63,13 +106,23 @@ export function resolveProject(raw: RawProject): ProjectConfig {
   // with it.
   try {
     if (!statSync(real).isDirectory()) {
-      return { id: raw.id, path: null, status: 'not-a-directory' };
+      return {
+        ...decorate(raw, null),
+        path: null,
+        status: 'not-a-directory',
+        isRepo: false,
+      };
     }
   } catch {
-    return { id: raw.id, path: null, status: 'missing' };
+    return { ...decorate(raw, null), path: null, status: 'missing', isRepo: false };
   }
 
-  return { id: raw.id, path: real, status: 'ok' };
+  return {
+    ...decorate(raw, real),
+    path: real,
+    status: 'ok',
+    isRepo: looksLikeRepo(real),
+  };
 }
 
 /**
@@ -90,7 +143,12 @@ export function resolveProjects(
       errors.push(
         `projects: duplicate id "${raw.id}" — keeping the first entry, ignoring this one`,
       );
-      return { id: raw.id, path: null, status: 'duplicate-id' as const };
+      return {
+        ...decorate(raw, null),
+        path: null,
+        status: 'duplicate-id' as const,
+        isRepo: false,
+      };
     }
     claimed.add(raw.id);
 
