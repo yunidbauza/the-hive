@@ -1,4 +1,7 @@
-import { CONFIG_VERSION } from '@shared/config-contract';
+import {
+  SUPPORTED_CONFIG_VERSIONS,
+  type ProjectOrigin,
+} from '@shared/config-contract';
 import { assertId } from '@shared/guards';
 
 /**
@@ -20,6 +23,10 @@ import { assertId } from '@shared/guards';
 export interface RawProject {
   id: string;
   path: string;
+  /** Absent when the file omitted it; `resolveProject` supplies the default. */
+  name?: string;
+  icon?: string;
+  origin?: ProjectOrigin;
 }
 
 export interface ParsedConfig {
@@ -28,6 +35,22 @@ export interface ParsedConfig {
   claudeCommand: string | null;
   projects: RawProject[];
   errors: string[];
+  /** The version the file declared, or `null` when it was unreadable. */
+  version: number | null;
+  /**
+   * True when the reader rejected the file **wholesale** (story 101).
+   *
+   * Only the paths that abandon the document set this: unparseable JSON, a
+   * non-object top level, a forbidden key, an unsupported version.
+   *
+   * An unknown top-level key or a bad entry is *advisory* — it is reported and
+   * the rest of the file still applies. The write path depends on the
+   * difference: `errors.length > 0` cannot be its refusal test, because a file
+   * carrying one unknown key is exactly the file story 101 promises to
+   * preserve across a write, and treating that as a refusal would make it
+   * permanently unwritable.
+   */
+  fatal: boolean;
 }
 
 /**
@@ -42,7 +65,13 @@ export interface ParsedConfig {
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const TOP_LEVEL_KEYS = ['version', 'shell', 'claudeCommand', 'projects'];
-const PROJECT_KEYS = ['id', 'path'];
+const PROJECT_KEYS = ['id', 'path', 'name', 'icon', 'origin'];
+
+const ORIGINS: readonly string[] = ['local', 'cloned'];
+
+function isOrigin(value: unknown): value is ProjectOrigin {
+  return typeof value === 'string' && ORIGINS.includes(value);
+}
 
 /**
  * `"//"`-prefixed keys are comments and are ignored.
@@ -102,11 +131,15 @@ function optionalString(
 
 export function parseConfig(text: string, label: string): ParsedConfig {
   const errors: string[] = [];
+  // Every `return empty` below is a wholesale rejection, so `fatal` is set
+  // once here rather than at each of the four sites.
   const empty: ParsedConfig = {
     shell: null,
     claudeCommand: null,
     projects: [],
     errors,
+    version: null,
+    fatal: true,
   };
 
   let document: unknown;
@@ -128,12 +161,13 @@ export function parseConfig(text: string, label: string): ParsedConfig {
 
   if (!checkKeys(document, TOP_LEVEL_KEYS, label, errors)) return empty;
 
-  if (document.version !== CONFIG_VERSION) {
+  const version = document.version;
+  if (typeof version !== 'number' || !SUPPORTED_CONFIG_VERSIONS.includes(version)) {
     // Refused rather than guessed at. A future version may move a field, and
     // interpreting it under this version's rules would point a PTY somewhere
     // the user did not ask for.
     errors.push(
-      `${label}: unsupported version ${JSON.stringify(document.version)} — expected ${CONFIG_VERSION}`,
+      `${label}: unsupported version ${JSON.stringify(version)} — expected one of ${SUPPORTED_CONFIG_VERSIONS.join(', ')}`,
     );
     return empty;
   }
@@ -142,10 +176,12 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const claudeCommand = optionalString(document, 'claudeCommand', label, errors);
 
   const raw = document.projects;
-  if (raw === undefined) return { shell, claudeCommand, projects: [], errors };
+  if (raw === undefined) {
+    return { shell, claudeCommand, projects: [], errors, version, fatal: false };
+  }
   if (!Array.isArray(raw)) {
     errors.push(`${label}.projects: expected an array`);
-    return { shell, claudeCommand, projects: [], errors };
+    return { shell, claudeCommand, projects: [], errors, version, fatal: false };
   }
 
   const projects: RawProject[] = [];
@@ -174,8 +210,45 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       return;
     }
 
-    projects.push({ id, path: entry.path });
+    // The three fields story 101 adds. Each is optional: a v1 file omits all
+    // of them, and `resolveProject` supplies the defaults in memory.
+    let name: string | undefined;
+    if (entry.name !== undefined) {
+      if (typeof entry.name !== 'string' || entry.name.trim() === '') {
+        errors.push(`${at}.name: expected a non-empty string`);
+        return;
+      }
+      name = entry.name;
+    }
+
+    let icon: string | undefined;
+    if (entry.icon !== undefined) {
+      if (typeof entry.icon !== 'string' || entry.icon.trim() === '') {
+        errors.push(`${at}.icon: expected a non-empty string`);
+        return;
+      }
+      icon = entry.icon;
+    }
+
+    let origin: ProjectOrigin | undefined;
+    if (entry.origin !== undefined) {
+      if (!isOrigin(entry.origin)) {
+        errors.push(`${at}.origin: expected "local" or "cloned"`);
+        return;
+      }
+      origin = entry.origin;
+    }
+
+    // Conditional spread, matching `parseSpawnRequest`: an `undefined`-valued
+    // own key would be reported as unknown the next time this file is read.
+    projects.push({
+      id,
+      path: entry.path,
+      ...(name !== undefined ? { name } : {}),
+      ...(icon !== undefined ? { icon } : {}),
+      ...(origin !== undefined ? { origin } : {}),
+    });
   });
 
-  return { shell, claudeCommand, projects, errors };
+  return { shell, claudeCommand, projects, errors, version, fatal: false };
 }
