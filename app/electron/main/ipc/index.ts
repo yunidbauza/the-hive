@@ -1,6 +1,9 @@
 import { app, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
+import type { ConfigSnapshot } from '@shared/config-contract';
 import { CH, type AppInfo } from '@shared/ipc-contract';
+
+import { getConfig, reloadConfig } from '../config';
 
 import { assertSender } from './sender';
 
@@ -38,6 +41,18 @@ export function registerIpcHandlers(): void {
       platform: process.platform,
     };
   });
+
+  /**
+   * The workspace config (story 090).
+   *
+   * Both channels take no payload, so there is no guard to run — the sender
+   * check `handle` applies is the whole validation. The snapshot they return
+   * is already validated: every path in it was resolved and checked in the
+   * main process, and the renderer is trusted with the *verdict* precisely
+   * because it was never trusted with the input.
+   */
+  handle(CH.configGet, (): ConfigSnapshot => getConfig());
+  handle(CH.configReload, (): ConfigSnapshot => reloadConfig());
 }
 
 export { assertSender, isTrustedSender, IpcSenderError } from './sender';

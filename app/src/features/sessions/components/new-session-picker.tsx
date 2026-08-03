@@ -2,10 +2,13 @@ import { MagnifyingGlass } from '@phosphor-icons/react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useRef } from 'react';
 
+import { cn } from '@/lib/utils';
 import type { Effort, Model } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
+import { can } from '@config/runtime';
 import { OptionStepper } from '@features/sessions/components/option-stepper';
+import { useProjectAccess, useProjectConfig } from '@hooks/use-project-config';
 import {
   useProjectSessions,
   useProjects,
@@ -43,6 +46,7 @@ const PINNED_COUNT = 4;
 export function NewSessionPicker() {
   const projects = useProjects();
   const spawnSession = useSpawnSession();
+  const config = useProjectConfig();
   const { pickerQuery, newModel, newEffort } = usePickerState();
   const { closePicker, setPickerQuery, setNewModel, setNewEffort } =
     usePickerActions();
@@ -58,6 +62,10 @@ export function NewSessionPicker() {
       : projects.filter((project) => project.id.toLowerCase().includes(query));
 
   const spawn = (repo: string) => {
+    // Refused rather than trusted: every button that reaches here is already
+    // disabled when the project has no real directory, but Enter in the search
+    // box reaches here too (story 090).
+    if (!can.spawnSessionIn(repo)) return;
     // Task is empty on purpose: the picker starts a session, and the first
     // message gives it its job (story 043). `spawnSession` opens the new tab,
     // which also dismisses the picker.
@@ -92,17 +100,25 @@ export function NewSessionPicker() {
           </span>
         </div>
 
+        {/*
+          First run: the config file did not exist and was just written, so
+          there is nothing to be unmapped *from* yet. One line, pointing at the
+          file — a user who has never seen it cannot edit it (story 090).
+        */}
+        {config?.templateWritten ? (
+          <p className="max-w-[560px] text-center font-mono text-[11.5px] text-subtle">
+            {`no projects are mapped yet — edit ${config.configPath} to open sessions in real repositories`}
+          </p>
+        ) : null}
+
         <div className="flex max-w-[560px] flex-wrap justify-center gap-2.5">
           {projects.slice(0, PINNED_COUNT).map((project) => (
-            <button
+            <PinnedProject
               key={project.id}
-              type="button"
-              onClick={() => spawn(project.id)}
-              className="flex items-center gap-2 rounded-full border border-border bg-chip px-3.5 py-2 font-mono text-[13px] text-ink hover:border-brand hover:bg-hover"
-            >
-              <Icon name={project.icon} size={15} className="text-brand" />
-              {project.id}
-            </button>
+              id={project.id}
+              icon={project.icon}
+              onSelect={spawn}
+            />
           ))}
         </div>
 
@@ -179,6 +195,41 @@ export function NewSessionPicker() {
   );
 }
 
+/**
+ * One of the pinned one-click starts.
+ *
+ * Its own component rather than an inline `.map()` body because it needs
+ * `useProjectAccess`, and a hook cannot be called from inside a loop callback.
+ */
+function PinnedProject({
+  id,
+  icon,
+  onSelect,
+}: {
+  id: string;
+  icon: string;
+  onSelect: (id: string) => void;
+}) {
+  const access = useProjectAccess(id);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(id)}
+      disabled={!access.spawnable}
+      title={access.reason ?? undefined}
+      className="flex items-center gap-2 rounded-full border border-border bg-chip px-3.5 py-2 font-mono text-[13px] text-ink hover:border-brand hover:bg-hover disabled:cursor-not-allowed disabled:text-subtle disabled:hover:border-border disabled:hover:bg-chip"
+    >
+      <Icon
+        name={icon}
+        size={15}
+        className={access.spawnable ? 'text-brand' : 'text-subtle'}
+      />
+      {id}
+    </button>
+  );
+}
+
 /** One search result. Owns its own count subscription. */
 function ProjectRow({
   id,
@@ -190,19 +241,36 @@ function ProjectRow({
   onSelect: (id: string) => void;
 }) {
   const sessions = useProjectSessions(id);
+  const access = useProjectAccess(id);
 
   return (
     <button
       type="button"
       onClick={() => onSelect(id)}
-      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
+      disabled={!access.spawnable}
+      title={access.reason ?? undefined}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover disabled:cursor-not-allowed disabled:hover:bg-transparent"
     >
-      <Icon name={icon} size={14} className="shrink-0 text-brand" />
-      <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">
+      <Icon
+        name={icon}
+        size={14}
+        className={cn('shrink-0', access.spawnable ? 'text-brand' : 'text-subtle')}
+      />
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate font-mono text-[12.5px]',
+          access.spawnable ? 'text-ink' : 'text-subtle',
+        )}
+      >
         {id}
       </span>
+      {/*
+        The refusal replaces the session count rather than joining it: a row
+        that cannot be started has nothing useful to say about how many
+        sessions it is running (story 090).
+      */}
       <span className="shrink-0 font-mono text-[11px] text-subtle">
-        {`${sessions.length} active`}
+        {access.spawnable ? `${sessions.length} active` : 'unmapped'}
       </span>
     </button>
   );

@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  BRIDGE_CONFIG_KEYS,
   BRIDGE_KEYS,
   BRIDGE_PTY_KEYS,
   CH,
@@ -52,11 +53,27 @@ beforeEach(async () => {
 });
 
 const pty = () => exposed.pty as Record<string, (...args: unknown[]) => unknown>;
+const config = () =>
+  exposed.config as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
     expect(Object.keys(exposed).sort()).toEqual([...BRIDGE_KEYS].sort());
     expect(Object.keys(pty()).sort()).toEqual([...BRIDGE_PTY_KEYS].sort());
+    expect(Object.keys(config()).sort()).toEqual([...BRIDGE_CONFIG_KEYS].sort());
+  });
+
+  it('routes the config verbs to their channels and nothing else (story 090)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await config().get();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configGet);
+
+    await config().reload();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configReload);
+
+    // Read-only from the renderer: no verb writes the file (story 090).
+    expect(Object.keys(config())).not.toContain('set');
   });
 
   it('exposes it as `hive`', async () => {

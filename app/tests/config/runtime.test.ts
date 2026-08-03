@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { can, isDesktop } from '@config/runtime';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
 /**
  * Install a fake bridge. Shape does not matter — `isDesktop` is a *presence*
@@ -46,5 +47,45 @@ describe('can', () => {
     expect(can.spawnSession()).toBe(true);
     expect(can.killSession()).toBe(true);
     expect(can.typeIntoTerminal()).toBe(true);
+  });
+
+  /**
+   * `spawnSessionIn` deliberately does NOT follow the same signal (story 090).
+   *
+   * It answers from the workspace config, not from the target, and with no
+   * config it answers `true` — which is what keeps the browser demo's main
+   * flow working and the six Playwright web specs passing. Story 083 already
+   * names breaking those specs as the signal that a gate is wrong.
+   */
+  describe('spawnSessionIn', () => {
+    afterEach(() => {
+      resetProjectConfig();
+    });
+
+    it('permits every project when no config has been read', () => {
+      expect(can.spawnSessionIn('apfm-web')).toBe(true);
+
+      withBridge();
+
+      expect(can.spawnSessionIn('apfm-web')).toBe(true);
+    });
+
+    it('refuses a project the config cannot resolve', () => {
+      setProjectConfigForTest({
+        configPath: '/home/dev/.hive/config.json',
+        templateWritten: false,
+        shell: '/bin/zsh',
+        claudeCommand: 'claude',
+        projects: [
+          { id: 'apfm-web', path: '/repos/apfm-web', status: 'ok' },
+          { id: 'referral-api', path: null, status: 'missing' },
+        ],
+        errors: [],
+      });
+
+      expect(can.spawnSessionIn('apfm-web')).toBe(true);
+      expect(can.spawnSessionIn('referral-api')).toBe(false);
+      expect(can.spawnSessionIn('advisor-portal')).toBe(false);
+    });
   });
 });

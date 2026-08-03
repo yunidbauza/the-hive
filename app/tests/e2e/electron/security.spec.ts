@@ -64,10 +64,11 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   const surface = await page.evaluate(() => ({
     top: Object.keys(window.hive!).sort(),
     pty: Object.keys(window.hive!.pty).sort(),
+    config: Object.keys(window.hive!.config).sort(),
   }));
 
-  // Widening either list is the alarm this test exists to raise.
-  expect(surface.top).toEqual(['appInfo', 'pty']);
+  // Widening any of these lists is the alarm this test exists to raise.
+  expect(surface.top).toEqual(['appInfo', 'config', 'pty']);
   expect(surface.pty).toEqual([
     'kill',
     'onData',
@@ -76,6 +77,9 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'spawn',
     'write',
   ]);
+  // Story 090 added `config`, and it is read-only on purpose — no verb here
+  // writes to the user's disk.
+  expect(surface.config).toEqual(['get', 'reload']);
 });
 
 test('ipcRenderer is not reachable through the bridge at any depth', async ({

@@ -17,7 +17,11 @@
  * that proves the whole path.
  */
 
+import type { ConfigSnapshot } from './config-contract';
+
 export const CH = {
+  configGet: 'config:get',
+  configReload: 'config:reload',
   ptySpawn: 'pty:spawn',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
@@ -90,6 +94,18 @@ export interface AppInfo {
  */
 export interface HiveBridge {
   appInfo(): Promise<AppInfo>;
+  /**
+   * The workspace config (story 090).
+   *
+   * Read-only from the renderer, deliberately. `reload()` re-reads the file
+   * the *user* edited; there is no `set`, because a settings UI that writes
+   * this file is out of scope and a bridge verb that can write to disk is not
+   * something to add speculatively.
+   */
+  config: {
+    get(): Promise<ConfigSnapshot>;
+    reload(): Promise<ConfigSnapshot>;
+  };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;
     write(request: WriteRequest): void;
@@ -102,7 +118,10 @@ export interface HiveBridge {
 }
 
 /** The exact top-level key set of `window.hive`. The surface test asserts it. */
-export const BRIDGE_KEYS = ['appInfo', 'pty'] as const;
+export const BRIDGE_KEYS = ['appInfo', 'config', 'pty'] as const;
+
+/** The exact key set of `window.hive.config`. */
+export const BRIDGE_CONFIG_KEYS = ['get', 'reload'] as const;
 
 /** The exact key set of `window.hive.pty`. */
 export const BRIDGE_PTY_KEYS = [

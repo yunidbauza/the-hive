@@ -1,7 +1,9 @@
 import type { Project } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
+import { Tag } from '@components/ui/tag';
 import { SessionRow } from '@features/projects/components/session-row';
+import { useProjectAccess } from '@hooks/use-project-config';
 import { useProjectSessions } from '@stores/hive-store';
 import { useProjectCollapsed, useToggleProject } from '@stores/ui-store';
 
@@ -24,6 +26,7 @@ export function ProjectRow({ project }: ProjectRowProps) {
   const sessionIds = useProjectSessions(project.id);
   const collapsed = useProjectCollapsed(project.id);
   const toggleProject = useToggleProject();
+  const access = useProjectAccess(project.id);
 
   const expanded = !collapsed;
 
@@ -45,6 +48,23 @@ export function ProjectRow({ project }: ProjectRowProps) {
         <span className="flex-1 truncate text-left font-mono text-[12.5px]">
           {project.id}
         </span>
+
+        {/*
+          The project has no real directory behind it, so no session can open
+          here (story 090). Muted when it is simply not in the config — a thing
+          the user has not done yet — and amber when the entry exists but does
+          not resolve, which is a thing they did wrong. The tooltip carries the
+          reason and names the file to edit.
+        */}
+        {access.reason ? (
+          <Tag
+            tone={access.invalid ? 'amber' : 'subtle'}
+            title={access.reason}
+            className="shrink-0"
+          >
+            unmapped
+          </Tag>
+        ) : null}
 
         {/*
           A plain span, not `Badge`: `Badge` renders nothing at zero, and a

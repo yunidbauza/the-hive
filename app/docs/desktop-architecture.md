@@ -65,6 +65,34 @@ Posture, non-negotiable and asserted in `tests/e2e/electron/security.spec.ts`:
 `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, plus a
 strict CSP applied on the session (not only as a `<meta>` tag).
 
+## The workspace config
+
+`~/.hive/config.json` — overridable by `HIVE_CONFIG_PATH` — maps a project id
+shown in the left rail to a real directory on this machine. It is the only thing
+that makes a PTY's `cwd` real; everything else about a project is still fixtures.
+
+Read in main (`electron/main/config/`), never in the renderer. The file is
+user-authored input arriving from disk, so it gets the same treatment as input
+arriving from the renderer: hand-written guards, an explicit key allowlist, and
+`__proto__` rejected outright. Paths are `~`-expanded, required absolute,
+`realpath`'d once, and required to be directories — in that order, and up front,
+so the path handed to `node-pty` is the one that was validated.
+
+**Nothing here throws.** A failing entry disables that project; a malformed file
+disables all of them. One mistyped path must not stop the app launching, but it
+must be *visible* — every failure carries a `ProjectStatus` the renderer turns
+into an `unmapped` badge and a tooltip naming the file to edit.
+
+The renderer sees the verdict through `window.hive.config` (read-only — no verb
+writes to disk) and consults it via `can.spawnSessionIn(projectId)`. That
+predicate is **permissive with no snapshot loaded**: the browser demo has no
+config to read and no process to protect, and gating it would break the web
+specs. See `src/lib/project-config.ts` for the full reasoning.
+
+Comments in the file are `"//"`-prefixed keys, the same convention
+`package.json` already uses here — JSON has no comment syntax, and the first-run
+template has to explain itself in the file the user opens.
+
 ## Two ABI facts that produce unreadable errors when forgotten
 
 **`node-pty@1.1.0` does NOT need rebuilding for Electron.** It ships **N-API**

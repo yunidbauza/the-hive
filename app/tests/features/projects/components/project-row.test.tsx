@@ -1,0 +1,100 @@
+import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import type { ConfigSnapshot, ProjectStatus } from '@shared/config-contract';
+
+import { ProjectRow } from '@features/projects/components/project-row';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import { useHiveStore } from '@stores/hive-store';
+import { useUiStore } from '@stores/ui-store';
+
+/**
+ * The unmapped badge (story 090).
+ *
+ * `Tag`, not `Badge`: `Badge` takes a `count` and renders nothing at zero, so
+ * it cannot carry a word. See the story's UPDATED SPECS note — the ticket said
+ * "reuse badge.tsx", the code said `Badge` is a counter, and the code won.
+ */
+
+const CONFIG_PATH = '/home/dev/.hive/config.json';
+
+const PROJECT = { id: 'apfm-web', icon: 'ph-globe-hemisphere-west' };
+
+function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnapshot {
+  return {
+    configPath: CONFIG_PATH,
+    templateWritten: false,
+    shell: '/bin/zsh',
+    claudeCommand: 'claude',
+    projects: projects.map(({ id, status }) => ({
+      id,
+      path: status === 'ok' ? `/repos/${id}` : null,
+      status,
+    })),
+    errors: [],
+  };
+}
+
+beforeEach(() => {
+  useHiveStore.getState().reset();
+  useUiStore.getState().reset();
+  resetProjectConfig();
+});
+
+afterEach(() => {
+  resetProjectConfig();
+});
+
+describe('ProjectRow', () => {
+  it('shows no badge with no config — the browser demo is unchanged', () => {
+    render(<ProjectRow project={PROJECT} />);
+
+    expect(screen.queryByText('unmapped')).not.toBeInTheDocument();
+  });
+
+  it('shows no badge for a project that resolves', () => {
+    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+    render(<ProjectRow project={PROJECT} />);
+
+    expect(screen.queryByText('unmapped')).not.toBeInTheDocument();
+  });
+
+  it('marks a project the config never mentions, and names the file in the tooltip', () => {
+    setProjectConfigForTest(snapshot([{ id: 'referral-api', status: 'ok' }]));
+
+    render(<ProjectRow project={PROJECT} />);
+
+    const badge = screen.getByText('unmapped');
+    expect(badge).toHaveAttribute('title', expect.stringContaining(CONFIG_PATH));
+    // Muted — a thing the user has not done yet, not a thing they did wrong.
+    expect(badge).toHaveClass('text-subtle');
+  });
+
+  it('marks a broken entry in amber, with its reason verbatim', () => {
+    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'missing' }]));
+
+    render(<ProjectRow project={PROJECT} />);
+
+    const badge = screen.getByText('unmapped');
+    expect(badge).toHaveClass('text-amber');
+    expect(badge).toHaveAttribute('title', expect.stringContaining('missing'));
+  });
+
+  it('still renders the session count and stays expandable while unmapped', () => {
+    setProjectConfigForTest(snapshot([]));
+
+    render(<ProjectRow project={PROJECT} />);
+
+    // apfm-web has three live fixture sessions; being unmapped changes what a
+    // user can *start*, not what the rail reports about what is running.
+    //
+    // "unmapped" lands inside the row's accessible name on purpose. The badge
+    // is the only signal that this project cannot host a session, and a
+    // screen-reader user who never hears it is exactly the user who will be
+    // surprised when the picker refuses.
+    expect(
+      screen.getByRole('button', { expanded: true }),
+    ).toHaveAccessibleName('apfm-web unmapped 3 active sessions');
+  });
+});

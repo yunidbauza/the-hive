@@ -15,6 +15,16 @@ const TONE_TEXT: Record<TagTone, string> = {
 interface TagProps {
   children: ReactNode;
   tone: TagTone;
+  /**
+   * Native tooltip text, exactly as `Chip` already takes it.
+   *
+   * The Radix `Tooltip` atom is the richer answer, but its trigger cannot be
+   * nested inside the left rail's project row — that row *is* a `<button>`,
+   * and a button inside a button is invalid markup that React will warn about
+   * and screen readers will read wrong. `title` is announced by assistive tech
+   * and needs no wrapper (story 090).
+   */
+  title?: string;
   className?: string;
 }
 
@@ -28,9 +38,10 @@ interface TagProps {
  * `--cc-chip` and only the ink changes, which is what lets four of them sit in
  * one wrapping row without competing.
  */
-export function Tag({ children, tone, className }: TagProps) {
+export function Tag({ children, tone, title, className }: TagProps) {
   return (
     <span
+      title={title}
       className={cn(
         'inline-flex items-center rounded-full bg-chip px-2 py-0.5 text-[10.5px] font-semibold',
         TONE_TEXT[tone],

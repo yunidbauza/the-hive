@@ -147,3 +147,54 @@ and disable the create action.
 - Reading real git state — branch, dirty, worktrees. Still fixtures.
 - Watching the config file for changes (explicit reload only).
 - Per-project environment variables or per-project shells. One shell, app-wide.
+
+## UPDATED SPECS
+
+Three deviations, found by reconciling this story against the code as it stands
+after 082/083 and confirmed before implementation.
+
+### 1. The badge is `Tag`, not `Badge`
+
+The story says "reusing `badge.tsx` and existing tokens — no new atoms". `Badge`
+takes a `count: number` and **returns `null` at zero** (`src/components/ui/badge.tsx`)
+— it is a counter and cannot carry a word. `Tag` is the atom that carries a word at
+badge scale, and it already has the `amber` tone this story asks for.
+
+**Resolution: follow the code.** The badge is a `Tag`. Still no new atoms; `Tag`
+gained an optional `title` prop, mirroring its sibling `Chip`, which already had one.
+
+### 2. The badge and the disabled action live in different places
+
+The story's table implies one surface showing both a badge and a disabled create
+action. The left rail's project row (`src/features/projects/components/project-row.tsx`)
+has **no create action** — the whole row is a collapse toggle. The only surface that
+starts a session is the new-session picker.
+
+**Resolution: split them.** The rail row carries the `unmapped` badge and its
+tooltip (display only). The picker's pinned pills and search rows carry the disabled
+state, the tooltip, and — on a first run — a one-line notice naming the file.
+
+### 3. `can.spawnSessionIn` is permissive with no config loaded
+
+The story defines it as `desktop AND project mapped AND status === 'ok'`. Applied
+literally, the browser demo maps nothing, so **every** project becomes unspawnable,
+the picker's main flow disappears, and five of the six Playwright web specs fail —
+which story 083 explicitly names as the signal that the gate is wrong rather than
+the specs. Story 083's own `can` block already records that decision for
+`spawnSession`.
+
+**Resolution: permissive with no snapshot.** The predicate answers from the config
+snapshot alone: no snapshot, every project spawnable. That covers both the browser
+demo (no bridge to ask) and the first frames of a desktop launch (the read has not
+landed), the second of which also avoids flashing every project as unmapped on every
+start. On desktop with a config loaded it behaves exactly as the story specifies.
+
+### Notes
+
+- `HIVE_CONFIG_PATH` needed no new plumbing — story 085's Playwright fixture
+  already sets it (`tests/e2e/electron/fixtures/hive-app.ts`).
+- Config-file comments are `"//"`-prefixed keys. JSON has no comment syntax, and
+  this repo's `package.json` already documents its `pnpm` block the same way.
+- The bridge grew a `config` key, so story 082's surface allowlist
+  (`BRIDGE_KEYS`) and both surface tests were updated. That alarm firing is the
+  test working, not a regression.

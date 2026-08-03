@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
+import type { ConfigSnapshot } from '@shared/config-contract';
 import {
   CH,
   type AppInfo,
@@ -66,6 +67,10 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
 
 const bridge: HiveBridge = {
   appInfo: (): Promise<AppInfo> => ipcRenderer.invoke(CH.appInfo),
+  config: {
+    get: (): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configGet),
+    reload: (): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configReload),
+  },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>
       ipcRenderer.invoke(CH.ptySpawn, request),

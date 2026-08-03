@@ -1,3 +1,5 @@
+import { projectAccess } from '@lib/project-config';
+
 /**
  * Which runtime is this (story 083)?
  *
@@ -59,6 +61,21 @@ export const can = {
   spawnSession: isDesktop,
   killSession: isDesktop,
   typeIntoTerminal: isDesktop,
+  /**
+   * The project-level answer story 090 adds: desktop **and** mapped **and**
+   * resolvable.
+   *
+   * It is the one capability wired to a real surface today, because it gates
+   * something that genuinely cannot work — a PTY with no `cwd` — rather than
+   * gating the demo's fixture flow.
+   *
+   * With no config snapshot it answers `true`, which is what keeps the browser
+   * demo and the first frames of a desktop launch fully usable. The reasoning
+   * is in {@link projectAccess}; the short version is that the browser build
+   * has no config to consult and no process to protect.
+   */
+  spawnSessionIn: (projectId: string): boolean =>
+    projectAccess(projectId).spawnable,
 } as const;
 
 /**

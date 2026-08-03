@@ -1,8 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import type { ConfigSnapshot, ProjectStatus } from '@shared/config-contract';
 
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
@@ -18,6 +21,11 @@ describe('NewSessionPicker', () => {
     useHiveStore.getState().reset();
     useUiStore.getState().reset();
     useUiStore.getState().openPicker();
+    resetProjectConfig();
+  });
+
+  afterEach(() => {
+    resetProjectConfig();
   });
 
   it('names itself and explains what picking does', () => {
@@ -249,5 +257,115 @@ describe('NewSessionPicker', () => {
         activeTab: 'webhooks',
       });
     });
+  });
+});
+
+/**
+ * Gating on the workspace config (story 090).
+ *
+ * A project with no real directory behind it cannot host a PTY, so the picker
+ * refuses it rather than opening a terminal with nowhere to run. Note every
+ * assertion above this block runs with **no** config loaded and is unchanged —
+ * that is the browser demo, and it stays whole.
+ */
+describe('NewSessionPicker · unmapped projects', () => {
+  const CONFIG_PATH = '/home/dev/.hive/config.json';
+
+  function snapshot(
+    projects: { id: string; status: ProjectStatus }[],
+    overrides: Partial<ConfigSnapshot> = {},
+  ): ConfigSnapshot {
+    return {
+      configPath: CONFIG_PATH,
+      templateWritten: false,
+      shell: '/bin/zsh',
+      claudeCommand: 'claude',
+      projects: projects.map(({ id, status }) => ({
+        id,
+        path: status === 'ok' ? `/repos/${id}` : null,
+        status,
+      })),
+      errors: [],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    useUiStore.getState().reset();
+    useUiStore.getState().openPicker();
+    resetProjectConfig();
+  });
+
+  afterEach(() => {
+    resetProjectConfig();
+  });
+
+  it('disables a pinned project that is not mapped, and says why', () => {
+    setProjectConfigForTest(snapshot([{ id: 'referral-api', status: 'ok' }]));
+    render(<NewSessionPicker />);
+
+    const pinned = screen.getByRole('button', { name: 'apfm-web' });
+
+    expect(pinned).toBeDisabled();
+    expect(pinned).toHaveAttribute(
+      'title',
+      expect.stringContaining(CONFIG_PATH),
+    );
+    expect(screen.getByRole('button', { name: 'referral-api' })).toBeEnabled();
+  });
+
+  it('disables a search row and replaces its count with the refusal', async () => {
+    const user = userEvent.setup();
+    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'missing' }]));
+    render(<NewSessionPicker />);
+
+    await user.type(search(), 'apfm');
+
+    const row = screen.getByRole('button', { name: 'apfm-web unmapped' });
+    expect(row).toBeDisabled();
+    expect(row).toHaveAttribute('title', expect.stringContaining('missing'));
+  });
+
+  it('refuses Enter on an unmapped project rather than spawning into nowhere', async () => {
+    const user = userEvent.setup();
+    setProjectConfigForTest(snapshot([]));
+    render(<NewSessionPicker />);
+    const before = Object.keys(useHiveStore.getState().entities).length;
+
+    await user.type(search(), 'apfm');
+    await user.keyboard('{Enter}');
+
+    // The buttons are disabled, but Enter in the search box does not go
+    // through them — this is the path a keyboard-first picker actually takes.
+    expect(Object.keys(useHiveStore.getState().entities)).toHaveLength(before);
+    expect(useUiStore.getState().picker).toBe(true);
+  });
+
+  it('still spawns into a project that resolves', async () => {
+    const user = userEvent.setup();
+    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    render(<NewSessionPicker />);
+    const before = Object.keys(useHiveStore.getState().entities).length;
+
+    await user.click(screen.getByRole('button', { name: 'apfm-web' }));
+
+    expect(Object.keys(useHiveStore.getState().entities)).toHaveLength(before + 1);
+  });
+
+  it('points a first-run user at the file that was just written for them', () => {
+    setProjectConfigForTest(snapshot([], { templateWritten: true }));
+    render(<NewSessionPicker />);
+
+    expect(
+      screen.getByText(new RegExp(`edit ${CONFIG_PATH}`)),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no first-run notice once the file exists', () => {
+    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    render(<NewSessionPicker />);
+
+    expect(screen.queryByText(/no projects are mapped yet/)).not.toBeInTheDocument();
   });
 });
