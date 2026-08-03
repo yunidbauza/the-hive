@@ -1,9 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 import {
-  CONFIG_PATH_ENV,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_SHELL,
   emptySnapshot,
@@ -11,6 +9,7 @@ import {
 } from '@shared/config-contract';
 
 import { parseConfig } from './parse';
+import { configPath, describe } from './paths';
 import { resolveProjects } from './resolve';
 import { CONFIG_TEMPLATE } from './template';
 
@@ -31,22 +30,9 @@ import { CONFIG_TEMPLATE } from './template';
 
 const LABEL = 'config';
 
-/**
- * Where the config lives.
- *
- * Read from the environment on every call rather than captured at module load:
- * story 085's Playwright fixture sets `HIVE_CONFIG_PATH` per test, and a
- * value frozen at import time would make the first spec to load this module
- * decide the path for all of them.
- */
-export function configPath(): string {
-  const override = process.env[CONFIG_PATH_ENV];
-  if (override !== undefined && override.trim() !== '') return override;
-  return join(homedir(), '.hive', 'config.json');
-}
-
-const describe = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+// Re-exported so every existing importer of `configPath` is untouched by the
+// move to `paths.ts`.
+export { configPath };
 
 /**
  * First run: create the directory, write the template, carry on.
