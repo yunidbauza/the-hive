@@ -26,12 +26,35 @@ export type ProjectStatus =
   | 'not-absolute'
   | 'duplicate-id';
 
+/** Where a project entry came from. `cloned` is written by story 102. */
+export type ProjectOrigin = 'local' | 'cloned';
+
 export interface ProjectConfig {
-  /** Matches a fixture project id. That is the whole mapping. */
+  /**
+   * Stable, derived once from the directory basename (story 101).
+   *
+   * Story 090 required this to match a fixture project id. Story 101 reverses
+   * that: the config now *declares* projects, and the fixtures are the
+   * fallback rather than the schema.
+   */
   id: string;
+  /** Display name. Defaults to the resolved directory's basename. */
+  name: string;
   /** The resolved, symlink-free absolute path — or `null` when unusable. */
   path: string | null;
+  /** Phosphor icon name, as `Icon` spells them. */
+  icon: string;
+  origin: ProjectOrigin;
   status: ProjectStatus;
+  /**
+   * Whether the resolved directory is a git repository.
+   *
+   * Derived on load and **never written to the file** — like {@link status}.
+   * Keeping it out of the config means a hand-edited file cannot lie about it,
+   * and a directory that is `git init`-ed after being added reports correctly
+   * on the next load.
+   */
+  isRepo: boolean;
 }
 
 /**
@@ -68,8 +91,23 @@ export interface ConfigSnapshot {
   errors: string[];
 }
 
-/** The only config schema version this build understands. */
-export const CONFIG_VERSION = 1;
+/** The schema version this build writes (story 101). */
+export const CONFIG_VERSION = 2;
+
+/**
+ * Versions the reader accepts.
+ *
+ * A v1 file is read normally and upgraded **in memory** — `name` from the
+ * resolved directory's basename, a default `icon`, `origin: 'local'` — and
+ * rewritten as v2 only when the user first saves something. Reading someone's
+ * file and rewriting it before they asked for anything is not a migration, it
+ * is a surprise. A v1 file the user never edits through the UI stays v1 forever
+ * and keeps working.
+ */
+export const SUPPORTED_CONFIG_VERSIONS: readonly number[] = [1, 2];
+
+/** What a project entry gets when the file names no icon. */
+export const DEFAULT_PROJECT_ICON = 'ph-folder';
 
 /** Used when the file names no shell and `$SHELL` is unset. */
 export const DEFAULT_SHELL = '/bin/sh';
@@ -105,4 +143,24 @@ export function emptySnapshot(
     projects: [],
     errors: [],
   };
+}
+
+/**
+ * Payload of `config:add-project` (story 101).
+ *
+ * The path is one the user chose, usually through the native dialog. It is
+ * **re-validated in main from scratch** — expanded, made absolute, `realpath`'d,
+ * confirmed to be a directory — because the dialog is a UX step, not a
+ * capability grant: a renderer that skipped it and posted a path directly gets
+ * exactly the same treatment.
+ */
+export interface AddProjectRequest {
+  path: string;
+  /** Optional display name. Defaults to the directory basename. */
+  name?: string;
+}
+
+/** Payload of `config:remove-project` (story 101). */
+export interface RemoveProjectRequest {
+  id: string;
 }
