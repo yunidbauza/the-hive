@@ -13,6 +13,17 @@
 ## Global Constraints
 
 - All commands run from `app/`. Unit tests: `pnpm vitest run <path>`. Type check: `pnpm type-check`. Lint: `pnpm lint`. Boundaries: `pnpm verify:boundaries`.
+- **`tests/` mirrors source, exactly.** A test for `electron/main/config/X.ts`
+  lives at `tests/electron/main/config/X.test.ts`. Do not put main-process
+  tests in `tests/config/` — that directory mirrors `src/config/` (the
+  renderer's `isDesktop`/`env`), and the two `runtime.ts` files are different
+  modules. This was wrong in the plan's first draft and corrected after Task 1.
+- **Tests under `tests/electron/` use relative imports and no aliases.** All 30
+  of them do: `import { effectiveRuntime } from '../../../../electron/main/config/runtime';`.
+  Production code under `electron/` *does* use `@shared/…`; tests do not. Do
+  not add an alias to reach main-process code from a test.
+- **Every test under `tests/electron/` starts with `// @vitest-environment node`**
+  on line 1. The suite default is `happy-dom` (`vitest.config.ts:24`).
 - `app/electron/shared/config-contract.ts` is **types and constants only — no Node APIs, no DOM APIs**. It is imported by the renderer. `node:os` must never appear there.
 - The refusal list is shared: `unsafeEnvReason()` in `config-contract.ts` is the single rule, enforced by both `shared/guards.ts` (bridge) and `main/config/parse.ts` (file). Never add a second copy.
 - Env limits are already fixed and must match across both entry points: `MAX_ENV_ENTRIES = 200`, `MAX_ENV_VALUE = 4096` (`parse.ts:124-125`), `MAX_ENV_ENTRIES = 200` (`guards.ts:404`).
@@ -27,7 +38,7 @@
 
 **Files:**
 - Create: `app/electron/main/config/shell.ts`
-- Test: `app/tests/config/shell.test.ts`
+- Test: `app/tests/electron/main/config/shell.test.ts`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -36,10 +47,11 @@
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// app/tests/config/shell.test.ts
+// @vitest-environment node
+// app/tests/electron/main/config/shell.test.ts
 import { describe, expect, it } from 'vitest';
 
-import { defaultShell } from '@electron/main/config/shell';
+import { defaultShell } from '../../../../electron/main/config/shell';
 
 const info = (shell: string | null) => () => ({ shell });
 
@@ -74,8 +86,8 @@ describe('defaultShell', () => {
 
 - [ ] **Step 2: Run the test and confirm it fails**
 
-Run: `pnpm vitest run tests/config/shell.test.ts`
-Expected: FAIL — cannot resolve `@electron/main/config/shell`.
+Run: `pnpm vitest run tests/electron/main/config/shell.test.ts`
+Expected: FAIL — cannot resolve `../../../../electron/main/config/shell`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -129,13 +141,13 @@ export function defaultShell(
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run: `pnpm vitest run tests/config/shell.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/shell.test.ts`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/electron/main/config/shell.ts app/tests/config/shell.test.ts
+git add app/electron/main/config/shell.ts app/tests/electron/main/config/shell.test.ts
 git commit -m "feat(config): resolve the default shell from the password database"
 ```
 
@@ -148,7 +160,7 @@ git commit -m "feat(config): resolve the default shell from the password databas
 - Modify: `app/electron/main/config/index.ts` (the load path's `?? DEFAULT_SHELL`)
 - Modify: `app/electron/shared/config-contract.ts:188`, `:231`
 - Modify: `app/electron/main/config/template.ts:25`
-- Test: `app/tests/config/shell.test.ts` (extend)
+- Test: `app/tests/electron/main/config/shell.test.ts` (extend)
 
 **Interfaces:**
 - Consumes: `defaultShell()` from Task 1.
@@ -162,8 +174,9 @@ Expected: `write.ts:219` and the equivalent in `config/index.ts`. Record both; e
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-// append to app/tests/config/shell.test.ts
-import { emptySnapshot } from '@shared/config-contract';
+// append to app/tests/electron/main/config/shell.test.ts
+// Add to the existing import block at the top of the file:
+//   import { emptySnapshot } from '../../../../electron/shared/config-contract';
 
 describe('snapshot defaulting', () => {
   it('a file naming no shell resolves to the login shell, not /bin/sh', () => {
@@ -177,7 +190,7 @@ describe('snapshot defaulting', () => {
 
 - [ ] **Step 3: Run it and confirm it fails**
 
-Run: `pnpm vitest run tests/config/shell.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/shell.test.ts`
 Expected: FAIL — `info` is not defined at this scope if the helper was declared inside the first `describe`. Hoist `const info` to module scope, re-run, and confirm the assertion itself is what fails.
 
 - [ ] **Step 4: Replace the constant with the function at both sites**
@@ -228,7 +241,7 @@ git commit -m "feat(config): default the shell to the login shell, correct the \
 
 **Files:**
 - Modify: `app/electron/main/config/parse.ts` (`TOP_LEVEL_KEYS:85`, `ParsedConfig:39`, `parseConfig:316`)
-- Test: `app/tests/config/env.test.ts` (extend)
+- Test: `app/tests/electron/main/config/parse.test.ts` (extend)
 
 **Interfaces:**
 - Consumes: `optionalEnv(value, label, errors)` — already in `parse.ts:143`, already applies `FORBIDDEN_KEYS`, `ENV_NAME`, `unsafeEnvReason`, `MAX_ENV_ENTRIES`, `MAX_ENV_VALUE` and the control-character rule.
@@ -237,8 +250,8 @@ git commit -m "feat(config): default the shell to the login shell, correct the \
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// append to app/tests/config/env.test.ts
-import { parseConfig } from '@electron/main/config/parse';
+// append to app/tests/electron/main/config/parse.test.ts
+// `parseConfig` is ALREADY imported at the top of this file — do not re-import it.
 
 const doc = (extra: object) =>
   JSON.stringify({ version: 2, projects: [], ...extra });
@@ -275,7 +288,7 @@ describe('top-level env', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run: `pnpm vitest run tests/config/env.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/parse.test.ts`
 Expected: FAIL — `parsed.env` is `undefined` in the first case, and the third case reports `env` as an unknown top-level key.
 
 - [ ] **Step 3: Add `env` to the key list and the parsed shape**
@@ -325,13 +338,13 @@ and include `env` in the returned object. `optionalEnv` already returns `undefin
 
 - [ ] **Step 5: Run the tests and confirm they pass**
 
-Run: `pnpm vitest run tests/config/env.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/parse.test.ts`
 Expected: PASS (5 new tests).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/electron/main/config/parse.ts app/tests/config/env.test.ts
+git add app/electron/main/config/parse.ts app/tests/electron/main/config/parse.test.ts
 git commit -m "feat(config): read a workspace-level env block from the config file"
 ```
 
@@ -343,7 +356,7 @@ git commit -m "feat(config): read a workspace-level env block from the config fi
 - Modify: `app/electron/shared/config-contract.ts` (`ConfigSnapshot`, `SetRuntimeRequest:395`, `emptySnapshot`)
 - Modify: `app/electron/shared/guards.ts` (`parseSetRuntimeRequest:464`)
 - Modify: `app/electron/main/config/write.ts` (`:219` block) and `app/electron/main/config/index.ts` (`setRuntime:455`)
-- Test: `app/tests/config/env.test.ts`, `app/tests/electron/guards.test.ts`
+- Test: `app/tests/electron/main/config/parse.test.ts`, `app/tests/electron/shared/guards.runtime.test.ts`
 
 **Interfaces:**
 - Consumes: `ParsedConfig.env` (Task 3); `assertEnv(value, label)` — already in `guards.ts:419`.
@@ -352,8 +365,8 @@ git commit -m "feat(config): read a workspace-level env block from the config fi
 - [ ] **Step 1: Write the failing guard test**
 
 ```ts
-// append to app/tests/electron/guards.test.ts
-import { parseSetRuntimeRequest } from '@shared/guards';
+// append to app/tests/electron/shared/guards.runtime.test.ts
+// `parseSetRuntimeRequest` is ALREADY imported at the top of this file — do not re-import it.
 
 describe('parseSetRuntimeRequest env', () => {
   it('accepts a valid map', () => {
@@ -380,7 +393,7 @@ describe('parseSetRuntimeRequest env', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run: `pnpm vitest run tests/electron/guards.test.ts`
+Run: `pnpm vitest run tests/electron/shared/guards.runtime.test.ts`
 Expected: FAIL — `env` is rejected as an unexpected key by `assertShape`.
 
 - [ ] **Step 3: Extend the contract types**
@@ -483,7 +496,7 @@ git commit -m "feat(config): carry a workspace env through the snapshot, guard a
 
 **Files:**
 - Modify: `app/electron/main/config/runtime.ts:49`
-- Test: `app/tests/config/runtime.test.ts`
+- Test: `app/tests/electron/main/config/runtime.test.ts`
 
 **Interfaces:**
 - Consumes: `ConfigSnapshot.env` (Task 4).
@@ -492,7 +505,7 @@ git commit -m "feat(config): carry a workspace env through the snapshot, guard a
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// append to app/tests/config/runtime.test.ts
+// append to app/tests/electron/main/config/runtime.test.ts
 describe('effectiveRuntime env layering', () => {
   const snapshot = (env: Record<string, string>) =>
     ({ ...emptySnapshot('/tmp/c.json', '/bin/zsh'), env }) as ConfigSnapshot;
@@ -519,7 +532,7 @@ describe('effectiveRuntime env layering', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run: `pnpm vitest run tests/config/runtime.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/runtime.test.ts`
 Expected: FAIL — the first case returns `{}` because only the project layer is read today.
 
 - [ ] **Step 3: Merge the layers**
@@ -541,13 +554,13 @@ Replace `runtime.ts:49`:
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run: `pnpm vitest run tests/config/runtime.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/runtime.test.ts`
 Expected: PASS (3 new tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/electron/main/config/runtime.ts app/tests/config/runtime.test.ts
+git add app/electron/main/config/runtime.ts app/tests/electron/main/config/runtime.test.ts
 git commit -m "feat(config): merge workspace env under per-project env"
 ```
 
@@ -647,7 +660,7 @@ git commit -m "feat(settings): edit the workspace environment in Runtime setting
 - Create: `app/electron/main/config/env-diagnostic.ts`
 - Modify: `app/electron/shared/ipc-contract.ts` (add `configDiagnoseEnv`), `app/electron/preload/index.ts`, `app/electron/main/ipc/config.ts`, `app/src/lib/project-config.ts`
 - Modify: `app/src/features/settings/components/runtime-section.tsx`
-- Test: `app/tests/config/env-diagnostic.test.ts`
+- Test: `app/tests/electron/main/config/env-diagnostic.test.ts`
 
 **Interfaces:**
 - Consumes: `effectiveRuntime` (Task 5); `EffectiveRuntime.shell`, `.env`.
@@ -674,10 +687,11 @@ export interface EnvDiagnostic {
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// app/tests/config/env-diagnostic.test.ts
+// @vitest-environment node
+// app/tests/electron/main/config/env-diagnostic.test.ts
 import { describe, expect, it } from 'vitest';
 
-import { compareEnv } from '@electron/main/config/env-diagnostic';
+import { compareEnv } from '../../../../electron/main/config/env-diagnostic';
 
 describe('compareEnv', () => {
   it('marks a variable the shell kept as applied', () => {
@@ -712,8 +726,8 @@ describe('compareEnv', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run: `pnpm vitest run tests/config/env-diagnostic.test.ts`
-Expected: FAIL — cannot resolve `@electron/main/config/env-diagnostic`.
+Run: `pnpm vitest run tests/electron/main/config/env-diagnostic.test.ts`
+Expected: FAIL — cannot resolve `../../../../electron/main/config/env-diagnostic`.
 
 - [ ] **Step 3: Write the module**
 
@@ -796,7 +810,7 @@ export function diagnoseEnv(
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run: `pnpm vitest run tests/config/env-diagnostic.test.ts`
+Run: `pnpm vitest run tests/electron/main/config/env-diagnostic.test.ts`
 Expected: PASS (5 tests).
 
 - [ ] **Step 5: Wire the channel**
