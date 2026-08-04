@@ -11,6 +11,7 @@ import {
   type ProjectOrigin,
   type RemoveProjectRequest,
   type RenameProjectRequest,
+  type ReorderProjectsRequest,
   type RepointProjectRequest,
 } from '@shared/config-contract';
 
@@ -360,6 +361,56 @@ export function repointProject(request: RepointProjectRequest): ConfigSnapshot {
             ? { ...(entry as Record<string, unknown>), path: request.path }
             : entry,
         ),
+      };
+    }),
+  );
+}
+
+/**
+ * Rewrite the order of the `projects` array (story 103).
+ *
+ * The payload is the **whole** ordering, and it must be a permutation of the
+ * ids on disk *at write time*. That check is the reason the verb takes a full
+ * list rather than a delta: the config is deliberately not watched (story 107
+ * owns reload), so the renderer's list can be older than the file, and applying
+ * a stale ordering would silently drop the project a hand edit had just added
+ * — or resurrect one it had removed. Refusing and asking for a reload is honest
+ * and costs the user one click.
+ *
+ * The left rail reads this order positionally and the merged list is explicitly
+ * never sorted, so the array *is* the ordering — there is nowhere else it could
+ * be stored.
+ */
+export function reorderProjects(
+  request: ReorderProjectsRequest,
+): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      const byId = new Map<string, unknown>();
+      for (const entry of entries) {
+        const id = idOf(entry);
+        if (id !== null) byId.set(id, entry);
+      }
+
+      /*
+        The guard already rejected duplicates, so "same size and every id
+        present" is exactly "is a permutation" — no counting required.
+      */
+      const matches =
+        byId.size === request.ids.length &&
+        request.ids.every((id) => byId.has(id));
+      if (!matches) {
+        throw new WriteRefused(
+          'the requested order does not match the projects on disk — reload and try again',
+        );
+      }
+
+      return {
+        ...draft,
+        // Entries are carried across by reference, never rebuilt, so anything
+        // this build does not understand rides along untouched.
+        projects: request.ids.map((id) => byId.get(id)),
       };
     }),
   );

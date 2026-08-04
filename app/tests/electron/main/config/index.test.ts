@@ -846,3 +846,99 @@ describe('repointProject', () => {
     expect(JSON.parse(readFileSync(path, 'utf8')).projects[0].note).toBe('keep me');
   });
 });
+
+describe('reorderProjects', () => {
+  /** Three real directories and a config listing them a, b, c. */
+  async function threeProjects() {
+    for (const name of ['a', 'b', 'c']) mkdirSync(join(sandbox, name));
+    const path = writeConfig({
+      version: 2,
+      projects: ['a', 'b', 'c'].map((id) => ({
+        id,
+        name: id.toUpperCase(),
+        path: join(sandbox, id),
+      })),
+    });
+    return { path, module: await mutable() };
+  }
+
+  const idsIn = (path: string): string[] =>
+    JSON.parse(readFileSync(path, 'utf8')).projects.map(
+      (entry: { id: string }) => entry.id,
+    );
+
+  it('rewrites the array into the given order', async () => {
+    const { path, module } = await threeProjects();
+
+    const snapshot = module.reorderProjects({ ids: ['c', 'a', 'b'] });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects.map((project) => project.id)).toEqual(['c', 'a', 'b']);
+    // The left rail reads this order positionally, so the array is the ordering
+    // — there is nowhere else for it to live.
+    expect(idsIn(path)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('carries each entry across whole, including keys it does not own', async () => {
+    mkdirSync(join(sandbox, 'a'));
+    mkdirSync(join(sandbox, 'b'));
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'a', name: 'A', path: join(sandbox, 'a'), origin: 'cloned', note: 'keep' },
+        { id: 'b', name: 'B', path: join(sandbox, 'b') },
+      ],
+    });
+    const module = await mutable();
+
+    module.reorderProjects({ ids: ['b', 'a'] });
+
+    const written = JSON.parse(readFileSync(path, 'utf8')).projects;
+    expect(written[0].id).toBe('b');
+    expect(written[1]).toMatchObject({ id: 'a', origin: 'cloned', note: 'keep' });
+  });
+
+  it('refuses an ordering that is not a permutation of the file', async () => {
+    const { path, module } = await threeProjects();
+
+    // Too few: a project the renderer never knew about would be dropped.
+    expect(module.reorderProjects({ ids: ['a', 'b'] }).errors[0]).toMatch(
+      /does not match the projects on disk/,
+    );
+    // An id that is not there.
+    expect(module.reorderProjects({ ids: ['a', 'b', 'z'] }).errors[0]).toMatch(
+      /does not match the projects on disk/,
+    );
+
+    expect(idsIn(path)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('refuses an ordering built before the file gained a project', async () => {
+    const { path, module } = await threeProjects();
+    // A hand edit between the renderer's read and its write. The config is
+    // deliberately not watched, so this is the ordinary case, not a race.
+    mkdirSync(join(sandbox, 'd'));
+    const document = JSON.parse(readFileSync(path, 'utf8'));
+    document.projects.push({ id: 'd', name: 'D', path: join(sandbox, 'd') });
+    writeFileSync(path, JSON.stringify(document));
+
+    const snapshot = module.reorderProjects({ ids: ['c', 'b', 'a'] });
+
+    expect(snapshot.errors[0]).toMatch(/does not match the projects on disk/);
+    expect(idsIn(path)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('accepts an empty ordering for an empty file', async () => {
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    expect(module.reorderProjects({ ids: [] }).errors).toEqual([]);
+  });
+
+  it('accepts the order the file already has', async () => {
+    const { path, module } = await threeProjects();
+
+    expect(module.reorderProjects({ ids: ['a', 'b', 'c'] }).errors).toEqual([]);
+    expect(idsIn(path)).toEqual(['a', 'b', 'c']);
+  });
+});
