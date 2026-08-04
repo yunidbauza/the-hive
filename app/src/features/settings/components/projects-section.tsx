@@ -1,4 +1,4 @@
-import { Plus } from '@phosphor-icons/react';
+import { GitBranch, Plus } from '@phosphor-icons/react';
 import { useState } from 'react';
 
 import {
@@ -8,6 +8,7 @@ import {
 } from '@/lib/project-config';
 import type { ProjectRow as Row } from '@/types/entity';
 
+import { CloneRepoView } from '@features/settings/components/clone-repo-view';
 import { ProjectRow } from '@features/settings/components/project-row';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { useProjects, useProjectsOwningLiveSessions } from '@stores/hive-store';
@@ -50,6 +51,17 @@ export function ProjectsSection() {
    */
   const [choosing, setChoosing] = useState(false);
 
+  /**
+   * Which pane this section is showing (story 102).
+   *
+   * Local state rather than `ui-store`: that store holds app-wide view state,
+   * and this is scoped to one section and dies with it — the same reasoning as
+   * `choosing` above. Cloning is also the reason the flag is not in
+   * `resolve-view.ts`: settings is already the fifth view state, and a clone is
+   * a step inside it, not a sixth.
+   */
+  const [view, setView] = useState<'list' | 'clone'>('list');
+
   const declared = snapshot?.projects ?? [];
   const rows: Row[] = declared.map((entry) => ({
     id: entry.id,
@@ -78,6 +90,10 @@ export function ProjectsSection() {
   const onRemove = (id: string) => {
     void removeProjectFromConfig({ id });
   };
+
+  if (view === 'clone') {
+    return <CloneRepoView onDone={() => setView('list')} />;
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-5 py-4">
@@ -133,15 +149,30 @@ export function ProjectsSection() {
         </p>
       ))}
 
-      <button
-        type="button"
-        onClick={() => void onAdd()}
-        disabled={choosing}
-        className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
-      >
-        <Plus size={12} weight="bold" />
-        Add project
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void onAdd()}
+          disabled={choosing}
+          className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
+        >
+          <Plus size={12} weight="bold" />
+          Add project
+        </button>
+
+        {/*
+          Secondary, because adding a folder you already have is the commoner
+          path — cloning is the one you take once per repository.
+        */}
+        <button
+          type="button"
+          onClick={() => setView('clone')}
+          className="flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink"
+        >
+          <GitBranch size={12} weight="bold" />
+          Clone from URL
+        </button>
+      </div>
 
       {demoCount > 0 ? (
         <p className="text-[11px] text-subtle">

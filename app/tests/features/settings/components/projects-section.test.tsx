@@ -232,3 +232,32 @@ describe('ProjectsSection', () => {
     });
   });
 });
+
+describe('cloning a repository (story 102)', () => {
+  it('swaps the pane for the clone view', async () => {
+    seed([]);
+    const user = userEvent.setup();
+    render(<ProjectsSection />);
+
+    await user.click(screen.getByRole('button', { name: /clone from url/i }));
+
+    expect(screen.getByLabelText(/repository url/i)).toBeInTheDocument();
+    // The list is gone: cloning owns the pane while it runs.
+    expect(
+      screen.queryByRole('button', { name: /add project/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('comes back to the list', async () => {
+    seed([]);
+    const user = userEvent.setup();
+    render(<ProjectsSection />);
+
+    await user.click(screen.getByRole('button', { name: /clone from url/i }));
+    await user.click(screen.getByRole('button', { name: /projects/i }));
+
+    expect(
+      screen.getByRole('button', { name: /add project/i }),
+    ).toBeInTheDocument();
+  });
+});
