@@ -733,7 +733,8 @@ Expected: FAIL — cannot resolve `../../../../electron/main/config/env-diagnost
 
 ```ts
 // app/electron/main/config/env-diagnostic.ts
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import type { EffectiveRuntime, EnvDiagnostic, EnvVarVerdict } from '@shared/config-contract';
 
@@ -784,7 +785,7 @@ export function diagnoseEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): EnvDiagnostic {
   try {
-    const printenv = execFileSync(runtime.shell, ['-l', '-c', 'printenv'], {
+    const printenv = await execFileAsync(runtime.shell, ['-l', '-i', '-c', 'printenv'], {
       env: { ...baseEnv, ...runtime.env },
       encoding: 'utf8',
       timeout: 5_000,

@@ -143,7 +143,7 @@ rejects `API_TOKEN` while accepting `TOKEN_API` teaches nothing.
 
 Decision 3 is only safe if its consequence is observable. The Runtime section
 gains a second diagnostic that runs the resolved shell once as
-`<shell> -l -c printenv` and diffs the result against what was configured,
+`<shell> -l -i -c printenv` and diffs the result against what was configured,
 reporting each variable as applied or overridden-by-rc.
 
 It is scoped exactly as `diagnoseCommand` is — `projectId: string | null`,
@@ -151,6 +151,26 @@ driven by the same project selector already on the section, so the shell it
 runs is the shell that project's sessions would spawn. A diagnostic that
 reported the default while the user was looking at an overriding project would
 be worse than none.
+
+**`-i` is not optional, and `-l -c` alone is a bug.** The first draft of this
+spec said `-l -c`. That makes the probe *non-interactive*, and zsh sources
+`.zshrc` only for interactive shells — so on the default macOS shell the probe
+would miss the very file this diagnostic exists to expose, reporting a variable
+as "kept" while the real session got the rc file's value. Measured:
+`zsh -l -c printenv` does not see `.zshrc`; `zsh -l -i -c printenv` does.
+
+A residual gap remains and is documented rather than hidden: the probe has no
+TTY, so an rc file gated on `[[ -t 0 ]]` can still behave differently from a
+real session. The view states the exact invocation it ran, so the user can see
+what was and was not exercised.
+
+**It must not block the main process.** `spawnSync`'s `timeout` only *sends*
+`killSignal`; it does not guarantee return. Measured: a shell running
+`trap '' TERM; sleep 20` blocked for 20.2s against a 2s timeout. Since this
+runs a user-configured program that executes arbitrary rc code, and the button
+is renderer-triggerable, a synchronous call is a renderer-triggerable freeze of
+every window and every IPC channel. The probe is asynchronous; `ipcMain.handle`
+already accepts a returned Promise.
 
 It runs through `execFile` with `shell: false`, the pattern
 `integrations/gh.ts:65` establishes and documents ("`execFile` semantics, never
