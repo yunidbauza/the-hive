@@ -736,3 +736,113 @@ describe('renameProject', () => {
     expect(written.projects[0].name).toBe('Upgraded');
   });
 });
+
+describe('repointProject', () => {
+  it('writes the new path as the user wrote it and keeps origin', async () => {
+    const old = join(sandbox, 'old');
+    const moved = join(home, 'moved');
+    mkdirSync(old);
+    mkdirSync(moved);
+    const path = writeConfig({
+      version: 2,
+      projects: [{ id: 'repo', name: 'Repo', path: old, origin: 'cloned' }],
+    });
+    const module = await mutable();
+
+    const snapshot = module.repointProject({ id: 'repo', path: '~/moved' });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects[0]?.status).toBe('ok');
+    const written = JSON.parse(readFileSync(path, 'utf8')).projects[0];
+    // Stored verbatim so the file stays portable across machines; resolved only
+    // for validation and identity.
+    expect(written.path).toBe('~/moved');
+    // Re-pointing changes where a project is, never where it came from.
+    expect(written.origin).toBe('cloned');
+    expect(written.name).toBe('Repo');
+  });
+
+  it('refuses a missing path, a file, and a relative path, writing nothing', async () => {
+    const old = join(sandbox, 'old');
+    const file = join(sandbox, 'a-file');
+    mkdirSync(old);
+    writeFileSync(file, '');
+    const path = writeConfig({
+      version: 2,
+      projects: [{ id: 'repo', name: 'Repo', path: old }],
+    });
+    const module = await mutable();
+
+    expect(module.repointProject({ id: 'repo', path: 'relative' }).errors[0]).toMatch(
+      /not-absolute/,
+    );
+    expect(module.repointProject({ id: 'repo', path: file }).errors[0]).toMatch(
+      /not-a-directory/,
+    );
+    expect(
+      module.repointProject({ id: 'repo', path: join(sandbox, 'nope') }).errors[0],
+    ).toMatch(/missing/);
+
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects[0].path).toBe(old);
+  });
+
+  it('refuses a path another project already occupies', async () => {
+    const first = join(sandbox, 'first');
+    const second = join(sandbox, 'second');
+    mkdirSync(first);
+    mkdirSync(second);
+    writeConfig({
+      version: 2,
+      projects: [
+        { id: 'first', name: 'First', path: first },
+        { id: 'second', name: 'Second', path: second },
+      ],
+    });
+    const module = await mutable();
+
+    const snapshot = module.repointProject({ id: 'second', path: first });
+
+    expect(snapshot.errors[0]).toMatch(/already added as "first"/);
+  });
+
+  it('permits re-pointing a project at the folder it already has', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    writeConfig({ version: 2, projects: [{ id: 'repo', name: 'Repo', path: repo }] });
+    const module = await mutable();
+
+    // The duplicate check skips the project being moved: a no-op is something
+    // the user is allowed to do, not a clash with itself.
+    const snapshot = module.repointProject({ id: 'repo', path: repo });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects[0]?.status).toBe('ok');
+  });
+
+  it('refuses an id that is not in the file', async () => {
+    writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+
+    expect(module.repointProject({ id: 'ghost', path: repo }).errors[0]).toMatch(
+      /no project with id "ghost"/,
+    );
+  });
+
+  it('preserves per-entry keys it does not own', async () => {
+    const old = join(sandbox, 'old');
+    const moved = join(sandbox, 'moved');
+    mkdirSync(old);
+    mkdirSync(moved);
+    const path = writeConfig({
+      version: 2,
+      projects: [{ id: 'repo', name: 'Repo', path: old, note: 'keep me' }],
+    });
+    const module = await mutable();
+
+    module.repointProject({ id: 'repo', path: moved });
+
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects[0].note).toBe('keep me');
+  });
+});

@@ -11,6 +11,7 @@ import {
   type ProjectOrigin,
   type RemoveProjectRequest,
   type RenameProjectRequest,
+  type RepointProjectRequest,
 } from '@shared/config-contract';
 
 import { deriveProjectId } from './identity';
@@ -295,6 +296,68 @@ export function renameProject(request: RenameProjectRequest): ConfigSnapshot {
         projects: entries.map((entry) =>
           idOf(entry) === request.id
             ? { ...(entry as Record<string, unknown>), name: request.name }
+            : entry,
+        ),
+      };
+    }),
+  );
+}
+
+/**
+ * Point a project at a folder that moved (story 103).
+ *
+ * The incoming path re-runs the **entire** story 090 resolution, exactly as
+ * `addProject` does — expand `~`, require absolute, `realpath`, require a
+ * directory. The native dialog is a UX step, not a capability grant: a renderer
+ * that skipped it and posted a path directly gets identical treatment.
+ *
+ * The path is stored **as the user wrote it**, tilde and all, for the same
+ * reason `addProject` stores it that way — `realpath` is used for identity and
+ * duplicate detection, which is what it is good for, and baking a resolved home
+ * directory into a file people keep in dotfile repos is what it is not.
+ *
+ * `origin` survives because the entry is spread and only `path` is overwritten.
+ * Re-pointing changes where a project *is*, never where it came from, so a
+ * cloned project stays `origin: "cloned"` — a property of the mutation's shape
+ * rather than a rule this function has to remember.
+ */
+export function repointProject(request: RepointProjectRequest): ConfigSnapshot {
+  const probe = resolveProject({ id: 'probe', path: request.path });
+  if (probe.status !== 'ok' || probe.path === null) {
+    return refused(
+      `${LABEL}: cannot re-point to ${request.path} (${probe.status})`,
+    );
+  }
+  const real = probe.path;
+
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      if (!entries.some((entry) => idOf(entry) === request.id)) {
+        throw new WriteRefused(`no project with id "${request.id}"`);
+      }
+
+      for (const entry of entries) {
+        /*
+          Skip the project being moved. Re-pointing it at the folder it already
+          has is a no-op the user is allowed to perform — treating it as a
+          collision would make the verb refuse to confirm the status quo.
+        */
+        if (idOf(entry) === request.id) continue;
+        const declared = pathOf(entry);
+        if (declared === null) continue;
+        if (resolveProject({ id: 'probe', path: declared }).path === real) {
+          throw new WriteRefused(
+            `${real} is already added as "${idOf(entry) ?? 'an existing entry'}"`,
+          );
+        }
+      }
+
+      return {
+        ...draft,
+        projects: entries.map((entry) =>
+          idOf(entry) === request.id
+            ? { ...(entry as Record<string, unknown>), path: request.path }
             : entry,
         ),
       };
