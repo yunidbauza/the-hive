@@ -39,20 +39,19 @@ describe('SettingsOverlay', () => {
     ).toBeInTheDocument();
   });
 
-  it('ships the two sections that exist, and no placeholders', () => {
+  it('ships the sections that exist, and no placeholders', () => {
     render(<SettingsOverlay />);
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
 
     expect(nav).toBeInTheDocument();
-    expect(within(nav).getByRole('button', { name: 'Projects' })).toBeInTheDocument();
-    expect(
-      within(nav).getByRole('button', { name: 'Appearance' }),
-    ).toBeInTheDocument();
+    for (const present of ['Projects', 'Runtime', 'Appearance']) {
+      expect(within(nav).getByRole('button', { name: present })).toBeInTheDocument();
+    }
 
-    // Stories 104, 106 and 107 fill the rest. Rendering them now as disabled
-    // items would teach the user that settings are broken.
-    for (const absent of ['Runtime', 'Integrations', 'Advanced']) {
+    // Stories 106 and 107 fill the rest. Rendering them now as disabled items
+    // would teach the user that settings are broken.
+    for (const absent of ['Integrations', 'Advanced']) {
       expect(screen.queryByText(absent)).not.toBeInTheDocument();
     }
   });

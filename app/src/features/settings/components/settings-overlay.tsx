@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 
 import { AppearanceSection } from '@features/settings/components/appearance-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
+import { RuntimeSection } from '@features/settings/components/runtime-section';
 import { useSettingsActions } from '@stores/ui-store';
 
 
@@ -42,6 +43,7 @@ import { useSettingsActions } from '@stores/ui-store';
  */
 const SECTIONS = [
   { id: 'projects', label: 'Projects' },
+  { id: 'runtime', label: 'Runtime' },
   { id: 'appearance', label: 'Appearance' },
 ] as const;
 
@@ -55,6 +57,7 @@ type SectionId = (typeof SECTIONS)[number]['id'];
  */
 const PANES: Record<SectionId, ComponentType> = {
   projects: ProjectsSection,
+  runtime: RuntimeSection,
   appearance: AppearanceSection,
 };
 

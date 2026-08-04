@@ -5,11 +5,15 @@ import type {
   CloneDoneEvent,
   CloneRequest,
   CloneStartResult,
+  CommandDiagnostic,
   ConfigSnapshot,
+  DiagnoseCommandRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetProjectRuntimeRequest,
+  SetRuntimeRequest,
 } from '@shared/config-contract';
 import {
   CH,
@@ -102,6 +106,18 @@ const bridge: HiveBridge = {
       request: ReorderProjectsRequest,
     ): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configReorderProjects, request),
+    // Story 104. Two mutating verbs returning the fresh snapshot like the
+    // rest, plus a read-only diagnostic that writes nothing.
+    setRuntime: (request: SetRuntimeRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetRuntime, request),
+    setProjectRuntime: (
+      request: SetProjectRuntimeRequest,
+    ): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetProjectRuntime, request),
+    diagnoseCommand: (
+      request: DiagnoseCommandRequest,
+    ): Promise<CommandDiagnostic> =>
+      ipcRenderer.invoke(CH.configDiagnoseCommand, request),
     // Story 102. `startClone` resolves on the pre-flight verdict, not on the
     // clone — the terminal streams in between and `onCloneDone` concludes it.
     startClone: (request: CloneRequest): Promise<CloneStartResult> =>

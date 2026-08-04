@@ -13,6 +13,7 @@ import {
   type SessionStatusEvent,
 } from '@shared/session-contract';
 
+import { effectiveRuntime } from '../config/runtime';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
@@ -407,6 +408,8 @@ export function createSessions(options: SessionsOptions): Sessions {
     args: string[];
     cols: number;
     rows: number;
+    /** Per-project environment (story 104). Empty for a clone. */
+    env?: Record<string, string>;
   }): void {
     if (registry.size() >= maxSessions) {
       throw new Error(spawnRefusal({ reason: 'at-capacity', limit: maxSessions }));
@@ -429,11 +432,16 @@ export function createSessions(options: SessionsOptions): Sessions {
       args: request.args,
       cwd: request.cwd,
       /**
-       * Nothing added. The host builds the environment (story 092); a session
-       * inherits the user's, which is the only environment in which their
-       * `claude` and their tooling behave the way they do outside this app.
+       * The host builds the environment (story 092); a session inherits the
+       * user's, which is the only environment in which their `claude` and their
+       * tooling behave the way they do outside this app.
+       *
+       * Story 104 adds one thing on top: the project's own variables. They are
+       * *merged* by `buildEnv` in the host, which then forces `TERM`,
+       * `COLORTERM` and `PWD` — which is why those three are refused at the
+       * guard rather than accepted and silently overwritten.
        */
-      env: {},
+      env: request.env ?? {},
       cols: request.cols,
       rows: request.rows,
     });
@@ -472,16 +480,27 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     activity.forget(request.entityId);
 
+    /**
+     * Per-project overrides win over the top-level values (story 104).
+     *
+     * Resolved through the same `effectiveRuntime` the PATH diagnostic uses, so
+     * what the diagnostic explains is exactly what this spawns — a diagnostic
+     * that computed its own answer would eventually reassure the user about an
+     * environment no session runs in.
+     */
+    const runtime = effectiveRuntime(snapshot, project);
+
     startProcess({
       entityId: request.entityId,
       cwd: project.path,
-      file: snapshot.shell,
+      file: runtime.shell,
       args: LOGIN_SHELL_ARGS,
       cols: request.cols,
       rows: request.rows,
+      env: runtime.env,
     });
 
-    bootstrap.arm(request.entityId, snapshot.claudeCommand, request.task);
+    bootstrap.arm(request.entityId, runtime.claudeCommand, request.task);
   }
 
   return {

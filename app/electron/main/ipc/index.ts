@@ -9,12 +9,14 @@ import {
 
 import type {
   CloneStartResult,
+  CommandDiagnostic,
   ConfigSnapshot,
 } from '@shared/config-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
   parseCloneRequest,
+  parseDiagnoseCommandRequest,
   parseSpawnRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
@@ -22,6 +24,8 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseSetProjectRuntimeRequest,
+  parseSetRuntimeRequest,
   parseWriteRequest,
 } from '@shared/guards';
 import { CH, type AppInfo } from '@shared/ipc-contract';
@@ -35,7 +39,10 @@ import {
   renameProject,
   reorderProjects,
   repointProject,
+  setProjectRuntime,
+  setRuntime,
 } from '../config';
+import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
@@ -235,6 +242,48 @@ export function registerIpcHandlers(): void {
     (_event, payload): ConfigSnapshot =>
       reorderProjects(parseReorderProjectsRequest(payload)),
   );
+
+  /**
+   * Runtime settings (story 104).
+   *
+   * The two mutating verbs follow every other config channel exactly — guard
+   * first, verb second, fresh `ConfigSnapshot` back.
+   */
+  handle(
+    CH.configSetRuntime,
+    (_event, payload): ConfigSnapshot => setRuntime(parseSetRuntimeRequest(payload)),
+  );
+
+  handle(
+    CH.configSetProjectRuntime,
+    (_event, payload): ConfigSnapshot =>
+      setProjectRuntime(parseSetProjectRuntimeRequest(payload)),
+  );
+
+  /**
+   * The PATH diagnostic (story 104) — read-only, so no write path.
+   *
+   * Resolved through the *same* `effectiveRuntime` the spawn path uses, which
+   * is the whole point: a diagnostic that computed its own answer would
+   * eventually describe an environment no session runs in.
+   *
+   * An unknown id is not an error. The renderer can ask about a project that a
+   * concurrent hand-edit has since removed, and answering for the top-level
+   * command is more useful than throwing at a user who only pressed a button.
+   */
+  handle(CH.configDiagnoseCommand, (_event, payload): CommandDiagnostic => {
+    const request = parseDiagnoseCommandRequest(payload);
+    const snapshot = getConfig();
+    const project =
+      request.id === undefined
+        ? null
+        : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
+
+    return diagnoseCommand(
+      effectiveRuntime(snapshot, project),
+      project?.id ?? null,
+    );
+  });
 
   /**
    * Cloning a repository (story 102).

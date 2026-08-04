@@ -1,11 +1,15 @@
 import type {
   AddProjectRequest,
+  CommandDiagnostic,
   ConfigSnapshot,
+  DiagnoseCommandRequest,
   ProjectStatus,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetProjectRuntimeRequest,
+  SetRuntimeRequest,
 } from '@shared/config-contract';
 
 /**
@@ -120,6 +124,50 @@ export const reloadProjectConfig = (): Promise<void> =>
  */
 export const addProjectToConfig = (request: AddProjectRequest): Promise<void> =>
   mutate((bridge) => bridge.config.addProject(request));
+
+/**
+ * Change the top-level shell or agent command (story 104).
+ *
+ * Same `mutate` path as every other write: main returns the fresh snapshot and
+ * it becomes what the UI renders, so there is no optimistic value here to
+ * reconcile if the write is refused.
+ */
+export const setRuntimeConfig = (request: SetRuntimeRequest): Promise<void> =>
+  mutate((bridge) => bridge.config.setRuntime(request));
+
+/**
+ * Change one project's overrides (story 104).
+ *
+ * `null` clears an override; an absent field is untouched. The distinction is
+ * preserved all the way from the input to the file, which is what lets the UI
+ * save the shell field without disturbing an env map it is not showing.
+ */
+export const setProjectRuntimeConfig = (
+  request: SetProjectRuntimeRequest,
+): Promise<void> =>
+  mutate((bridge) => bridge.config.setProjectRuntime(request));
+
+/**
+ * Ask why the agent command was not found (story 104).
+ *
+ * Not routed through `mutate`: it writes nothing, so there is no snapshot to
+ * install. Returns `null` when there is no bridge (the browser demo) or the
+ * channel fails, and the caller renders nothing rather than a fake verdict —
+ * a diagnostic that invented an answer would be worse than no diagnostic.
+ */
+export async function diagnoseAgentCommand(
+  request: DiagnoseCommandRequest,
+): Promise<CommandDiagnostic | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.config.diagnoseCommand(request);
+  } catch (cause) {
+    console.error('[hive] the command diagnostic failed:', cause);
+    return null;
+  }
+}
 
 /** Remove one entry by id (story 101). */
 export const removeProjectFromConfig = (

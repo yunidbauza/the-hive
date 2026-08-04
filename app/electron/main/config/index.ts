@@ -13,6 +13,8 @@ import {
   type RenameProjectRequest,
   type ReorderProjectsRequest,
   type RepointProjectRequest,
+  type SetProjectRuntimeRequest,
+  type SetRuntimeRequest,
 } from '@shared/config-contract';
 
 import { deriveProjectId } from './identity';
@@ -435,4 +437,90 @@ export function reorderProjects(
       };
     }),
   );
+}
+
+/**
+ * Change the top-level runtime settings (story 104).
+ *
+ * Only the fields the request names are touched, so saving the shell cannot
+ * silently restate — or clear — the agent command. There is no way to *unset*
+ * either: they have no lower level to fall back to, and a session with no shell
+ * cannot start, so the guard requires a real value whenever the key is present.
+ */
+export function setRuntime(request: SetRuntimeRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => ({
+      ...draft,
+      ...(request.shell !== undefined ? { shell: request.shell } : {}),
+      ...(request.claudeCommand !== undefined
+        ? { claudeCommand: request.claudeCommand }
+        : {}),
+    })),
+  );
+}
+
+/**
+ * Change one project's runtime overrides (story 104).
+ *
+ * Three states per field, and all three are needed:
+ *
+ * - **absent** — leave it alone. The UI saves one field at a time, and a shell
+ *   edit must not wipe an env map that row does not show.
+ * - **`null`** — remove the override, so the project inherits the top level
+ *   again. This is what an emptied input means; storing `""` instead would
+ *   spawn a shell named `""` and fail with a message nobody could act on.
+ * - **a value** — set the override.
+ *
+ * The entry is **spread, never rebuilt**, so per-entry keys this build does not
+ * understand survive the write — the same promise story 103's verbs make, and
+ * the one a conformance test that reconstructed an entry would pass while the
+ * real code path regressed.
+ */
+export function setProjectRuntime(
+  request: SetProjectRuntimeRequest,
+): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      // Checked against the draft, never the cache: the file on disk can be
+      // newer than the snapshot the renderer built this request from.
+      if (!entries.some((entry) => idOf(entry) === request.id)) {
+        throw new WriteRefused(`no project with id "${request.id}"`);
+      }
+
+      return {
+        ...draft,
+        projects: entries.map((entry) => {
+          if (idOf(entry) !== request.id) return entry;
+
+          const next = { ...(entry as Record<string, unknown>) };
+          applyOverride(next, 'shell', request.shell);
+          applyOverride(next, 'claudeCommand', request.claudeCommand);
+          applyOverride(next, 'env', request.env);
+          return next;
+        }),
+      };
+    }),
+  );
+}
+
+/**
+ * Apply one three-state override onto a draft entry, in place.
+ *
+ * `delete` rather than writing `undefined`: a key whose value is `undefined`
+ * disappears from `JSON.stringify` anyway, but leaving it on the object means
+ * every later reader has to know that. Removing it keeps the draft honest about
+ * what is going to be written.
+ */
+function applyOverride(
+  entry: Record<string, unknown>,
+  key: 'shell' | 'claudeCommand' | 'env',
+  value: string | Record<string, string> | null | undefined,
+): void {
+  if (value === undefined) return;
+  if (value === null) {
+    delete entry[key];
+    return;
+  }
+  entry[key] = value;
 }

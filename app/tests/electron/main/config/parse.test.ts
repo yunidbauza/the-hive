@@ -157,3 +157,112 @@ describe('parseConfig — the new entry fields', () => {
     expect(icon.errors.some((error) => /icon/.test(error))).toBe(true);
   });
 });
+
+describe('per-project runtime overrides (story 104)', () => {
+  it('reads shell, claudeCommand and env off an entry', () => {
+    const result = parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [
+          {
+            id: 'a',
+            path: '/tmp/a',
+            shell: '/bin/bash',
+            claudeCommand: '/opt/claude',
+            env: { API_URL: 'https://x.test', EMPTY: '' },
+          },
+        ],
+      }),
+      'config',
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.projects[0]).toMatchObject({
+      shell: '/bin/bash',
+      claudeCommand: '/opt/claude',
+      env: { API_URL: 'https://x.test', EMPTY: '' },
+    });
+  });
+
+  it('leaves the keys absent when the entry omits them', () => {
+    const result = parseConfig(
+      JSON.stringify({ version: 2, projects: [{ id: 'a', path: '/tmp/a' }] }),
+      'config',
+    );
+
+    // Absence is the meaningful state: it is what "inherit" looks like.
+    expect('shell' in (result.projects[0] ?? {})).toBe(false);
+    expect('env' in (result.projects[0] ?? {})).toBe(false);
+  });
+
+  it('no longer reports them as unknown keys', () => {
+    const result = parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [{ id: 'a', path: '/tmp/a', shell: '/bin/bash' }],
+      }),
+      'config',
+    );
+
+    expect(result.errors).toEqual([]);
+  });
+
+  it('drops a blank override rather than storing an empty command', () => {
+    const result = parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [{ id: 'a', path: '/tmp/a', shell: '   ' }],
+      }),
+      'config',
+    );
+
+    // An empty override is not a command; inheriting beats spawning "".
+    expect(result.errors[0]).toMatch(/shell: expected a non-empty string/);
+    expect('shell' in (result.projects[0] ?? {})).toBe(false);
+  });
+
+  it('rejects the whole env map on any bad member', () => {
+    const bad = [
+      { env: { '1FOO': 'x' }, match: /not a valid variable name/ },
+      { env: { TERM: 'x' }, match: /set by the terminal/ },
+      { env: { FOO: 1 }, match: /expected a string/ },
+    ];
+
+    for (const { env, match } of bad) {
+      const result = parseConfig(
+        JSON.stringify({ version: 2, projects: [{ id: 'a', path: '/tmp/a', env }] }),
+        'config',
+      );
+
+      // All-or-nothing: an env map is a set of assumptions a command runs
+      // under, and running with half of them is stranger than running with none.
+      expect(result.errors.some((error) => match.test(error))).toBe(true);
+      expect('env' in (result.projects[0] ?? {})).toBe(false);
+    }
+  });
+
+  it('ignores an env that is not an object', () => {
+    const result = parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [{ id: 'a', path: '/tmp/a', env: ['NOPE'] }],
+      }),
+      'config',
+    );
+
+    expect(result.errors.some((error) => /env: expected an object/.test(error))).toBe(
+      true,
+    );
+    expect('env' in (result.projects[0] ?? {})).toBe(false);
+  });
+
+  it('refuses the file when an env key is __proto__', () => {
+    const result = parseConfig(
+      '{"version":2,"projects":[{"id":"a","path":"/tmp/a","env":{"__proto__":"x"}}]}',
+      'config',
+    );
+
+    expect(result.errors.some((error) => /forbidden key/.test(error))).toBe(true);
+    expect('env' in (result.projects[0] ?? {})).toBe(false);
+  });
+});

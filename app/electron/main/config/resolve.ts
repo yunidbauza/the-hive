@@ -67,12 +67,27 @@ function looksLikeRepo(real: string): boolean {
 function decorate(
   raw: RawProject,
   real: string | null,
-): Pick<ProjectConfig, 'id' | 'name' | 'icon' | 'origin'> {
+): Pick<
+  ProjectConfig,
+  'id' | 'name' | 'icon' | 'origin' | 'shell' | 'claudeCommand' | 'env'
+> {
   return {
     id: raw.id,
     name: raw.name ?? (real === null ? raw.id : basename(real)),
     icon: raw.icon ?? DEFAULT_PROJECT_ICON,
     origin: raw.origin ?? 'local',
+    /**
+     * Story 104's overrides are carried through **undefaulted**, unlike `name`
+     * and `icon` above. The absence of an override is the meaningful state —
+     * it is what "inherit the top-level value" looks like — so filling it in
+     * here would erase the only thing the snapshot needs to say, and the
+     * settings UI could never tell an override from an inherited value.
+     */
+    ...(raw.shell !== undefined ? { shell: raw.shell } : {}),
+    ...(raw.claudeCommand !== undefined
+      ? { claudeCommand: raw.claudeCommand }
+      : {}),
+    ...(raw.env !== undefined ? { env: raw.env } : {}),
   };
 }
 

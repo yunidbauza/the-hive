@@ -1047,3 +1047,173 @@ describe('reorderProjects', () => {
     expect(idsIn(path)).toEqual(['a', 'b', 'c']);
   });
 });
+
+describe('setRuntime (story 104)', () => {
+  it('writes the shell without restating the command', async () => {
+    const path = writeConfig({
+      version: 2,
+      shell: '/bin/sh',
+      claudeCommand: 'claude',
+      projects: [],
+    });
+    const module = await mutable();
+
+    const snapshot = module.setRuntime({ shell: '/bin/zsh' });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.shell).toBe('/bin/zsh');
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    expect(written.shell).toBe('/bin/zsh');
+    // Untouched, not rewritten: saving one field must not restate the other.
+    expect(written.claudeCommand).toBe('claude');
+  });
+
+  it('writes both when both are given', async () => {
+    const path = writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    module.setRuntime({ shell: '/bin/bash', claudeCommand: '/opt/claude' });
+
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    expect(written).toMatchObject({
+      shell: '/bin/bash',
+      claudeCommand: '/opt/claude',
+    });
+  });
+
+  it('preserves "//" comments and unknown top-level keys', async () => {
+    const path = writeConfig({
+      version: 2,
+      '// shell': 'the login shell every session starts',
+      somethingNewer: { keep: true },
+      projects: [],
+    });
+    const module = await mutable();
+
+    module.setRuntime({ shell: '/bin/zsh' });
+
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    // The template is comment-heavy on purpose; a UI that ate the user's
+    // comments would make hand-editing and the settings page mutually exclusive.
+    expect(written['// shell']).toBe('the login shell every session starts');
+    expect(written.somethingNewer).toEqual({ keep: true });
+  });
+});
+
+describe('setProjectRuntime (story 104)', () => {
+  const seedProject = () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    return {
+      repo,
+      path: writeConfig({
+        version: 2,
+        shell: '/bin/sh',
+        claudeCommand: 'claude',
+        projects: [{ id: 'repo', name: 'repo', path: repo, icon: 'ph-folder' }],
+      }),
+    };
+  };
+
+  it('sets an override on one project only', async () => {
+    const { path } = seedProject();
+    const module = await mutable();
+
+    const snapshot = module.setProjectRuntime({
+      id: 'repo',
+      shell: '/bin/bash',
+    });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects[0]?.shell).toBe('/bin/bash');
+    // The top level is untouched — this is an override, not a change of default.
+    expect(snapshot.shell).toBe('/bin/sh');
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects[0].shell).toBe(
+      '/bin/bash',
+    );
+  });
+
+  it('removes an override when the field is null, restoring inheritance', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      shell: '/bin/sh',
+      projects: [{ id: 'repo', path: repo, shell: '/bin/bash' }],
+    });
+    const module = await mutable();
+
+    const snapshot = module.setProjectRuntime({ id: 'repo', shell: null });
+
+    // The key is gone, not set to "" — storing "" would spawn a shell named "".
+    expect(snapshot.projects[0]?.shell).toBeUndefined();
+    expect('shell' in JSON.parse(readFileSync(path, 'utf8')).projects[0]).toBe(
+      false,
+    );
+  });
+
+  it('leaves an absent field alone', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'repo', path: repo, shell: '/bin/bash', env: { FOO: 'bar' } },
+      ],
+    });
+    const module = await mutable();
+
+    module.setProjectRuntime({ id: 'repo', claudeCommand: '/opt/claude' });
+
+    const written = JSON.parse(readFileSync(path, 'utf8')).projects[0];
+    // Saving the command must not disturb an env map the row does not show.
+    expect(written.shell).toBe('/bin/bash');
+    expect(written.env).toEqual({ FOO: 'bar' });
+    expect(written.claudeCommand).toBe('/opt/claude');
+  });
+
+  it('writes and clears an env map', async () => {
+    const { path } = seedProject();
+    const module = await mutable();
+
+    module.setProjectRuntime({ id: 'repo', env: { API_URL: 'https://x.test' } });
+    expect(
+      JSON.parse(readFileSync(path, 'utf8')).projects[0].env,
+    ).toEqual({ API_URL: 'https://x.test' });
+
+    module.setProjectRuntime({ id: 'repo', env: null });
+    expect('env' in JSON.parse(readFileSync(path, 'utf8')).projects[0]).toBe(false);
+  });
+
+  it('refuses an unknown id, leaving the file byte-identical', async () => {
+    const { path } = seedProject();
+    const before = readFileSync(path, 'utf8');
+    const module = await mutable();
+
+    const snapshot = module.setProjectRuntime({ id: 'nope', shell: '/bin/bash' });
+
+    expect(snapshot.errors[0]).toMatch(/no project with id "nope"/);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+
+  it('preserves per-entry keys this build does not understand', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'repo', path: repo, futureField: { keep: true }, '// note': 'hi' },
+      ],
+    });
+    const module = await mutable();
+
+    module.setProjectRuntime({ id: 'repo', shell: '/bin/bash' });
+
+    const written = JSON.parse(readFileSync(path, 'utf8')).projects[0];
+    // The entry is spread, never rebuilt — a test that reconstructed an entry
+    // would pass while the real code path regressed (story 103's note on 108).
+    expect(written.futureField).toEqual({ keep: true });
+    expect(written['// note']).toBe('hi');
+    expect(written.shell).toBe('/bin/bash');
+  });
+});

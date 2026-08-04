@@ -55,6 +55,74 @@ export interface ProjectConfig {
    * on the next load.
    */
   isRepo: boolean;
+  /**
+   * Per-project runtime overrides (story 104). All three are optional, and
+   * absent means "use the top-level value" — never "use an empty string".
+   *
+   * They are stored on the entry rather than in a parallel map so that removing
+   * a project takes its overrides with it, and so a hand-edited file keeps a
+   * project's settings next to the project they belong to.
+   */
+  shell?: string;
+  claudeCommand?: string;
+  /**
+   * Extra environment for every session in this project.
+   *
+   * Merged by the pty-host on top of the inherited environment
+   * (`pty-host/env.ts`), which then forces `TERM`, `COLORTERM` and `PWD` — so
+   * those three are rejected at the guard rather than accepted and silently
+   * overwritten.
+   */
+  env?: Record<string, string>;
+}
+
+/**
+ * The runtime values a session actually spawns with (story 104).
+ *
+ * Resolved per project: an override when the entry declares one, the top-level
+ * value otherwise. Returned by `effectiveRuntime` and used both by the spawn
+ * path and by the diagnostic, so the thing being explained is the same thing
+ * being run.
+ */
+export interface EffectiveRuntime {
+  shell: string;
+  claudeCommand: string;
+  env: Record<string, string>;
+  /** Which of the two scalars came from the project rather than the top level. */
+  shellFromProject: boolean;
+  commandFromProject: boolean;
+}
+
+/** One `PATH` entry the diagnostic looked in, and what it found. */
+export interface PathProbe {
+  directory: string;
+  /** True when an executable file of that name exists there. */
+  found: boolean;
+  /** Present when a file exists but is not executable — the confusing case. */
+  notExecutable?: boolean;
+}
+
+/**
+ * Why `claude` was or was not found (story 104).
+ *
+ * The epic's story table asks for "a PATH diagnostic that says why `claude` was
+ * not found". The answer is almost always that the app's `PATH` is not the
+ * login shell's `PATH` — a GUI app on macOS inherits launchd's environment, not
+ * the one `.zshrc` builds — so the diagnostic reports the `PATH` it actually
+ * searched rather than asserting the command is missing.
+ */
+export interface CommandDiagnostic {
+  /** The project the diagnostic ran for, or `null` for the top-level command. */
+  projectId: string | null;
+  /** The command as resolved, before any lookup. */
+  command: string;
+  /** True when the command contains a separator and is used as a path directly. */
+  isPath: boolean;
+  /** Where it was found, or `null` when no candidate was executable. */
+  resolved: string | null;
+  /** The `PATH` that was searched — the merged env's, never `process.env`'s. */
+  path: string;
+  probes: PathProbe[];
 }
 
 /**
@@ -206,6 +274,40 @@ export interface RepointProjectRequest {
  */
 export interface ReorderProjectsRequest {
   ids: readonly string[];
+}
+
+/**
+ * Change the top-level runtime settings (story 104).
+ *
+ * Both fields are optional so the UI can save one without restating the other,
+ * but a *present* field is always a real value — clearing a top-level setting
+ * is not offered, because there is no lower level to fall back to and a session
+ * with no shell cannot start.
+ */
+export interface SetRuntimeRequest {
+  shell?: string;
+  claudeCommand?: string;
+}
+
+/**
+ * Change one project's runtime overrides (story 104).
+ *
+ * Here `null` is meaningful and distinct from absent: **absent leaves the
+ * override alone, `null` removes it.** The UI needs both — saving the shell
+ * field must not wipe an env map the user cannot see from that row, and
+ * clearing a field has to mean "fall back to the top level" rather than
+ * "override with an empty string", which would spawn `""`.
+ */
+export interface SetProjectRuntimeRequest {
+  id: string;
+  shell?: string | null;
+  claudeCommand?: string | null;
+  env?: Record<string, string> | null;
+}
+
+/** Which command to explain. Omitted id means the top-level command. */
+export interface DiagnoseCommandRequest {
+  id?: string;
 }
 
 /**

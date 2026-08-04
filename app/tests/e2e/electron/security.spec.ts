@@ -133,6 +133,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'addProject',
     'cancelClone',
     'chooseDirectory',
+    /**
+     * Story 104 added `diagnoseCommand`, and it is the *safest* kind of
+     * addition this list can take: it writes nothing, takes no path, and only
+     * stats files the config already names. It is here because the renderer
+     * must not do its own filesystem lookup — the answer has to come from the
+     * process that will actually spawn the session, or it describes an
+     * environment nobody runs in.
+     */
+    'diagnoseCommand',
     'get',
     'onCloneDone',
     'reload',
@@ -140,6 +149,19 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'renameProject',
     'reorderProjects',
     'repointProject',
+    /**
+     * Story 104's two mutating verbs, and they *are* capabilities — the kind
+     * this test exists to make deliberate rather than accidental.
+     *
+     * What keeps them within story 082's posture: neither takes a destination,
+     * so writes stay confined to the config file; `setProjectRuntime` names an
+     * existing project by id and is refused if that id is not on disk; and the
+     * env map — the one payload here that reaches process control — is checked
+     * key by key against a whitelist pattern, with the terminal's own three
+     * variables and `__proto__` refused outright.
+     */
+    'setProjectRuntime',
+    'setRuntime',
     'startClone',
   ]);
   /**

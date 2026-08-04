@@ -22,11 +22,15 @@ import type {
   CloneDoneEvent,
   CloneRequest,
   CloneStartResult,
+  CommandDiagnostic,
   ConfigSnapshot,
+  DiagnoseCommandRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetProjectRuntimeRequest,
+  SetRuntimeRequest,
 } from './config-contract';
 import type { SessionStatusEvent } from './session-contract';
 
@@ -53,6 +57,16 @@ export const CH = {
    *
    * See `CloneRequest` for why none of them takes a destination path.
    */
+  /**
+   * Story 104's runtime channels.
+   *
+   * Two mutating verbs returning `ConfigSnapshot` like every other, plus one
+   * read-only diagnostic that writes nothing and so does not go through the
+   * write path at all.
+   */
+  configSetRuntime: 'config:set-runtime',
+  configSetProjectRuntime: 'config:set-project-runtime',
+  configDiagnoseCommand: 'config:diagnose-command',
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
   configCloneDone: 'config:clone-done', // main → renderer
@@ -305,6 +319,30 @@ export interface HiveBridge {
      */
     reorderProjects(request: ReorderProjectsRequest): Promise<ConfigSnapshot>;
     /**
+     * Change the top-level shell or agent command (story 104).
+     *
+     * Only the fields named are touched, so saving one cannot restate the
+     * other. Neither can be cleared — there is no lower level to inherit from.
+     */
+    setRuntime(request: SetRuntimeRequest): Promise<ConfigSnapshot>;
+    /**
+     * Change one project's overrides (story 104).
+     *
+     * `null` removes an override so the project inherits the top level again;
+     * an absent field is left untouched. Storing `""` instead of removing would
+     * spawn a shell named `""`.
+     */
+    setProjectRuntime(request: SetProjectRuntimeRequest): Promise<ConfigSnapshot>;
+    /**
+     * Explain where the agent command was looked for (story 104).
+     *
+     * Read-only. Answers the question the epic actually poses — why `claude`
+     * "is installed" and still not found — by reporting the `PATH` a session
+     * would really search, which for a GUI app is launchd's, not the login
+     * shell's.
+     */
+    diagnoseCommand(request: DiagnoseCommandRequest): Promise<CommandDiagnostic>;
+    /**
      * Start a clone (story 102).
      *
      * Resolves once `git` is running, **not** once it has finished — the
@@ -391,6 +429,10 @@ export const BRIDGE_CONFIG_KEYS = [
   'startClone',
   'cancelClone',
   'onCloneDone',
+  // Story 104.
+  'setRuntime',
+  'setProjectRuntime',
+  'diagnoseCommand',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */
