@@ -63,22 +63,38 @@ describe('parseSetRuntimeRequest env', () => {
     expect(parseSetRuntimeRequest({ env: {} })).toEqual({ env: {} });
   });
 
-  it('refuses the same keys the project layer refuses', () => {
-    for (const key of [
-      'LD_PRELOAD',
-      'DYLD_INSERT_LIBRARIES',
-      'NODE_OPTIONS',
-      'BASH_ENV',
-      'TERM',
-      'COLORTERM',
-      'PWD',
-    ]) {
-      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow();
+  /*
+    Split by refusal *category*, not lumped under a bare `.toThrow()`. This is
+    the same rule as the project-layer tests below (`refuses the dynamic-loader
+    variables`, `refuses the interpreter hooks`, `refuses the variables the
+    terminal sets for itself`): `assertEnv` calls the *same* `unsafeEnvReason`
+    those tests pin, and a bare `.toThrow()` here cannot tell "refused for the
+    right reason" apart from "refused because of an unrelated bug" — e.g. a
+    typo that failed `ENV_NAME` instead of the dynamic-loader check. On a
+    security boundary the category is the actual contract, not just "it threw".
+  */
+  it('refuses the dynamic-loader variables', () => {
+    for (const key of ['LD_PRELOAD', 'DYLD_INSERT_LIBRARIES']) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow(
+        /dynamic loader/,
+      );
     }
   });
 
-  it('still refuses a request that changes nothing', () => {
-    expect(() => parseSetRuntimeRequest({})).toThrow(/nothing to change/);
+  it('refuses the interpreter hooks', () => {
+    for (const key of ['NODE_OPTIONS', 'BASH_ENV']) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow(
+        /run code/,
+      );
+    }
+  });
+
+  it('refuses the variables the terminal sets for itself', () => {
+    for (const key of ['TERM', 'COLORTERM', 'PWD']) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow(
+        /set by the terminal/,
+      );
+    }
   });
 });
 
