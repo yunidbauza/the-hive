@@ -30,3 +30,6 @@ blob-report/
 *.swp
 .claude/worktrees/
 .tmp/
+
+# Brainstorming visual companion (superpowers)
+.superpowers/
