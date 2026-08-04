@@ -192,7 +192,7 @@ gate either way.
 | 104 | Runtime settings — shell, command, env | 5 | `shell` and `claudeCommand` editable in the UI, per-project overrides, per-project env vars, a PATH diagnostic that says why `claude` was not found |
 | 105 | Appearance settings | 5 | Theme incl. **system** (today `ui-store` has only `'dark' \| 'light'`), terminal font family and size, scrollback limit, rail density — the first settings that persist *renderer* state and so need their own storage decision |
 | 106 | Integrations & notifications | 5 | `gh` CLI detection and auth status, the token source for the PR panel, OS notification preferences per event class |
-| 107 | Advanced & diagnostics | 3 | Reveal config in Finder, explicit reload, reset to template, versions and PTY diagnostics from `appInfo()`, log location |
+| 107 | [Advanced & diagnostics](107-advanced-diagnostics.md) | 3 | Reveal config in Finder, explicit reload, reset to template, versions and PTY diagnostics from `appInfo()`, log location — and the log *location* only: the app writes no log file, and 107 records why building one is a different story |
 | 108 | Settings e2e & config-write conformance | 3 | Playwright `_electron` specs for the add/remove round trip against a `HIVE_CONFIG_PATH` sandbox; crash-during-write leaves the old file intact |
 
 **8 stories · 47 points** (plus this doc, 1 pt).
