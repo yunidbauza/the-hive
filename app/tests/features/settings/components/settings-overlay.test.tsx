@@ -45,13 +45,13 @@ describe('SettingsOverlay', () => {
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
 
     expect(nav).toBeInTheDocument();
-    for (const present of ['Projects', 'Runtime', 'Appearance']) {
+    for (const present of ['Projects', 'Runtime', 'Appearance', 'Integrations']) {
       expect(within(nav).getByRole('button', { name: present })).toBeInTheDocument();
     }
 
-    // Stories 106 and 107 fill the rest. Rendering them now as disabled items
-    // would teach the user that settings are broken.
-    for (const absent of ['Integrations', 'Advanced']) {
+    // Story 107 fills the last slot. Rendering it now as a disabled item would
+    // teach the user that settings are broken.
+    for (const absent of ['Advanced']) {
       expect(screen.queryByText(absent)).not.toBeInTheDocument();
     }
   });

@@ -5,6 +5,7 @@ import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
+import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
 import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
 
@@ -40,6 +41,14 @@ export function AppShell() {
    * ignore twelve messages each.
    */
   useSessionStatus();
+
+  /**
+   * Open the session a clicked OS notification was about (story 106).
+   *
+   * Here for the same reason as above — one broadcast channel, one listener —
+   * and at the composition root because the tab it opens can be any of them.
+   */
+  useNotificationActivate();
 
   /**
    * Follow the OS while the app is open (story 105).

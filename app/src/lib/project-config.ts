@@ -8,9 +8,11 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
+import type { IntegrationsStatus } from '@shared/ipc-contract';
 
 /**
  * The workspace config, as the renderer sees it (story 090).
@@ -146,6 +148,35 @@ export const setProjectRuntimeConfig = (
   request: SetProjectRuntimeRequest,
 ): Promise<void> =>
   mutate((bridge) => bridge.config.setProjectRuntime(request));
+
+/**
+ * Change which events raise an OS notification (story 106).
+ *
+ * The same `mutate` path as every other write. Only the classes named are
+ * touched, so a section that saves one switch cannot restate another.
+ */
+export const setNotificationPrefs = (
+  request: SetNotificationsRequest,
+): Promise<void> => mutate((bridge) => bridge.config.setNotifications(request));
+
+/**
+ * What this machine's `gh` looks like (story 106).
+ *
+ * Not routed through `mutate` — it writes nothing, so there is no snapshot to
+ * install. Returns `null` with no bridge (the browser demo) or on a failed
+ * channel, and the caller says so rather than rendering a fabricated verdict.
+ */
+export async function readIntegrationsStatus(): Promise<IntegrationsStatus | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.integrations.status();
+  } catch (cause) {
+    console.error('[hive] reading integrations status failed:', cause);
+    return null;
+  }
+}
 
 /**
  * Ask why the agent command was not found (story 104).

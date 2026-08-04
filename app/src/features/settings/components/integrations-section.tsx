@@ -1,0 +1,255 @@
+import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
+import { useEffect, useState } from 'react';
+
+import { Switch } from '@components/ui/switch';
+import { PathProbes } from '@features/settings/components/path-probes';
+import { SettingsGroup } from '@features/settings/components/settings-group';
+import { useProjectConfig } from '@hooks/use-project-config';
+import { readIntegrationsStatus, setNotificationPrefs } from '@lib/project-config';
+import { NOTIFICATION_KEYS, type NotificationPrefs } from '@shared/config-contract';
+import type { GhStatus, IntegrationsStatus } from '@shared/ipc-contract';
+
+/**
+ * Integrations & notifications (story 106).
+ *
+ * Two things the app can see but does not own: the `gh` CLI, and the OS's
+ * notification centre.
+ *
+ * ## Why this reports a token source and offers nowhere to type one
+ *
+ * The epic asks this story to settle "the token source for the PR panel". The
+ * PR panel is fixture-backed — nothing in this app fetches from GitHub — so a
+ * token typed here would be a credential no code reads, stored in a plaintext
+ * file the product encourages hand-editing. What is genuinely useful now is the
+ * answer to *which source would be used*, which is the thing people get wrong
+ * and the same answer the future real-PR story needs. So: reported, never
+ * stored, and the pane says so rather than leaving the user to wonder where
+ * their token went.
+ *
+ * ## Why only three notification classes
+ *
+ * These are the events main can actually observe. `waiting` — the state the
+ * whole attention model is built around — is not derivable from a pty (story
+ * 096) and is the next epic's subject. A switch for it would be a control that
+ * silently does nothing, and the epic's own rule for the section nav applies
+ * here: absent rather than disabled.
+ */
+
+/** Label and explanation per class, in the order the config declares them. */
+const CLASS_COPY: Record<
+  keyof NotificationPrefs,
+  { label: string; description: string }
+> = {
+  sessionDone: {
+    label: 'When a session finishes',
+    description: 'Its process exited — the thing you walked away from is done.',
+  },
+  sessionIdle: {
+    label: 'When a session goes quiet',
+    description:
+      'No output for a couple of seconds. Real, but chatty: a build that pauses to download is not news.',
+  },
+  cloneDone: {
+    label: 'When a clone finishes',
+    description: 'Succeeded or failed. Long, and usually unattended.',
+  },
+};
+
+function TokenSourceLine({ gh }: { gh: GhStatus }) {
+  if (gh.tokenSource === 'env' && gh.envVar !== null) {
+    return (
+      <p className="text-[12.5px] text-ink">
+        <code className="font-mono">{gh.envVar}</code> is set in this app&rsquo;s
+        environment, so that is the token that would be used.
+      </p>
+    );
+  }
+
+  if (gh.tokenSource === 'keyring') {
+    return (
+      <p className="text-[12.5px] text-ink">
+        <code className="font-mono">gh</code> holds the credential itself, in your
+        system keychain. Nothing needs to be configured here.
+      </p>
+    );
+  }
+
+  return (
+    <p className="text-[12.5px] text-amber">
+      No token source. Run <code className="font-mono">gh auth login</code>, or set{' '}
+      <code className="font-mono">GH_TOKEN</code> in this app&rsquo;s environment.
+    </p>
+  );
+}
+
+function GhSummary({ gh }: { gh: GhStatus }) {
+  if (!gh.installed) {
+    return (
+      <>
+        <p className="flex items-start gap-2 text-[12.5px]">
+          <WarningCircle size={14} className="mt-px shrink-0 text-amber" />
+          <span className="text-amber">
+            <code className="font-mono">gh</code> was not found.
+          </span>
+        </p>
+        <p className="text-[11.5px] text-subtle">
+          This app searches its own <code className="font-mono">PATH</code>, which is
+          usually not the one your login shell builds — a desktop app inherits the
+          environment it was launched from. Installing{' '}
+          <code className="font-mono">gh</code> where that PATH can see it is the fix.
+        </p>
+        <PathProbes probes={gh.probes} />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="flex items-start gap-2 text-[12.5px]">
+        <CheckCircle size={14} className="mt-px shrink-0 text-green" />
+        <span className="text-ink">
+          <code className="font-mono text-muted">{gh.resolved}</code>
+          {gh.version === null ? null : (
+            <span className="text-subtle"> · version {gh.version}</span>
+          )}
+        </span>
+      </p>
+
+      {gh.error === null ? null : (
+        <p className="text-[11.5px] text-amber">
+          Asking <code className="font-mono">gh</code> about its auth status failed:{' '}
+          {gh.error}
+        </p>
+      )}
+
+      {gh.authenticated ? (
+        <p className="text-[12.5px] text-ink">
+          Signed in as <span className="text-muted">{gh.account ?? 'unknown'}</span>.
+        </p>
+      ) : gh.error === null ? (
+        <p className="text-[12.5px] text-amber">
+          Installed, but not signed in. Run{' '}
+          <code className="font-mono">gh auth login</code> in any terminal.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+export function IntegrationsSection() {
+  const snapshot = useProjectConfig();
+  const [status, setStatus] = useState<IntegrationsStatus | null>(null);
+
+  /**
+   * Asked once, when the pane opens.
+   *
+   * Not polled: `gh` being installed is not a thing that changes while a
+   * settings pane is open, and re-running a subprocess on a timer to discover
+   * that would be a cost paid for nothing.
+   */
+  useEffect(() => {
+    if (!snapshot) return;
+
+    let cancelled = false;
+    void readIntegrationsStatus().then((next) => {
+      if (!cancelled) setStatus(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot]);
+
+  if (!snapshot) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+        <h2 className="text-[13px] text-ink">Integrations</h2>
+        <p className="text-[11.5px] text-subtle">
+          Integrations are only available in the desktop app.
+        </p>
+      </div>
+    );
+  }
+
+  const prefs = snapshot.notifications;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-[13px] text-ink">Integrations</h2>
+        <p className="text-[11.5px] text-subtle">
+          What this app can see outside itself, and when it should interrupt you.
+        </p>
+      </div>
+
+      {snapshot.errors.map((error) => (
+        <p
+          key={error}
+          className="rounded-[5px] border border-red px-2.5 py-1.5 text-[11.5px] text-red"
+        >
+          {error}
+        </p>
+      ))}
+
+      <SettingsGroup
+        title="GitHub CLI"
+        description="Where gh is, and whether it is signed in."
+      >
+        <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
+          {status === null ? (
+            <p className="text-[12.5px] text-subtle">Checking…</p>
+          ) : (
+            <GhSummary gh={status.gh} />
+          )}
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Token source"
+        description="Which credential a GitHub request would use."
+      >
+        <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
+          {status === null ? (
+            <p className="text-[12.5px] text-subtle">Checking…</p>
+          ) : (
+            <TokenSourceLine gh={status.gh} />
+          )}
+          <p className="text-[11.5px] text-subtle">
+            The pull-request list is still sample data — nothing in the app calls
+            GitHub yet. This reports which source would be used when it does. The
+            Hive <strong className="font-normal text-muted">does not store a token</strong>;
+            it never reads the value of these variables, only whether they are set.
+          </p>
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Notifications"
+        description="Desktop notifications for the things you walked away from."
+      >
+        {status !== null && !status.notificationsSupported ? (
+          <p className="text-[12.5px] text-amber">
+            This system cannot show notifications, so these settings would have no
+            effect. On Linux this usually means no notification daemon is running.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {NOTIFICATION_KEYS.map((key) => (
+              <Switch
+                key={key}
+                label={CLASS_COPY[key].label}
+                description={CLASS_COPY[key].description}
+                checked={prefs[key]}
+                onCheckedChange={(checked) => {
+                  // One class per call, so saving one switch cannot restate
+                  // another — the write path is partial all the way down.
+                  void setNotificationPrefs({ [key]: checked });
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </SettingsGroup>
+    </div>
+  );
+}

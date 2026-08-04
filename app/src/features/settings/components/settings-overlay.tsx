@@ -5,6 +5,7 @@ import { useState, type ComponentType } from 'react';
 import { cn } from '@/lib/utils';
 
 import { AppearanceSection } from '@features/settings/components/appearance-section';
+import { IntegrationsSection } from '@features/settings/components/integrations-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
 import { RuntimeSection } from '@features/settings/components/runtime-section';
 import { useSettingsActions } from '@stores/ui-store';
@@ -35,8 +36,9 @@ import { useSettingsActions } from '@stores/ui-store';
  * The section list.
  *
  * Story 101 shipped Projects alone; story 105 adds Appearance and, with it, the
- * switching this nav only ever described. Stories 104, 106 and 107 fill the
- * rest by adding a row here and an entry to `PANES` — nothing else.
+ * switching this nav only ever described. Stories 104 and 106 cost exactly what
+ * that promised — a row here and an entry in `PANES`, nothing else — and 107
+ * fills the last slot the same way.
  *
  * Sections stay **absent rather than disabled** until they exist: a nav full of
  * dead items teaches the user that settings are broken.
@@ -45,6 +47,7 @@ const SECTIONS = [
   { id: 'projects', label: 'Projects' },
   { id: 'runtime', label: 'Runtime' },
   { id: 'appearance', label: 'Appearance' },
+  { id: 'integrations', label: 'Integrations' },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]['id'];
@@ -59,6 +62,7 @@ const PANES: Record<SectionId, ComponentType> = {
   projects: ProjectsSection,
   runtime: RuntimeSection,
   appearance: AppearanceSection,
+  integrations: IntegrationsSection,
 };
 
 export function SettingsOverlay() {
