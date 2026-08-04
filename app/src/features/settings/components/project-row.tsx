@@ -50,9 +50,17 @@ export function ProjectRow({
     <li
       draggable
       onDragStart={onDragStart}
-      onDragEnter={onDragEnter}
-      // Without `preventDefault` here the element is not a valid drop target
-      // and `drop` never fires. This one line is what makes the drag land.
+      /*
+        `preventDefault` on **both** dragenter and dragover, which is what the
+        HTML drag-and-drop model requires to declare a drop target. Doing it on
+        dragover alone is the quiet failure: the row still highlights and
+        dragenter still fires, but the browser never sends dragover to it, so
+        `drop` never arrives and the drag ends as if it were abandoned.
+      */
+      onDragEnter={(event) => {
+        event.preventDefault();
+        onDragEnter();
+      }}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();

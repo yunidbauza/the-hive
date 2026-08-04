@@ -122,6 +122,13 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * destination, and the only directory main will remove is one it computed and
    * created within a single clone.
    */
+  /**
+   * Story 103 adds three more, and the bound still holds. `renameProject` takes
+   * a display string; `repointProject` takes a path the renderer got from
+   * `chooseDirectory` and main re-validates from scratch; `reorderProjects`
+   * takes ids and no path at all. Still exactly one file writable, still no
+   * verb naming a destination.
+   */
   expect(surface.config).toEqual([
     'addProject',
     'cancelClone',
@@ -130,6 +137,9 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'onCloneDone',
     'reload',
     'removeProject',
+    'renameProject',
+    'reorderProjects',
+    'repointProject',
     'startClone',
   ]);
   /**

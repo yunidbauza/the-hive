@@ -151,7 +151,9 @@ test('removing a project leaves every other line of the file intact', async ({},
     await page.getByRole('button', { name: /add project/i }).click();
     await expect(page.getByText('scratch-repo').first()).toBeVisible();
 
-    await page.getByRole('button', { name: 'Remove scratch-repo' }).click();
+    // Remove moved into the row's overflow menu in story 103.
+    await page.getByRole('button', { name: 'Actions for scratch-repo' }).click();
+    await page.getByRole('menuitem', { name: /remove/i }).click();
 
     await expect(page.getByText(/no projects yet/i)).toBeVisible();
 
