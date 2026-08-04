@@ -145,7 +145,45 @@ describe('RuntimeSection — workspace environment', () => {
     install();
     render(<RuntimeSection />);
 
-    expect(screen.getByText(/plain text/i)).toBeInTheDocument();
+    // The full requirement is "plain text" *and* the steer toward the rc
+    // file for secrets — asserting "plain text" alone would still pass if a
+    // copy edit quietly dropped the "tokens and credentials" clause.
+    expect(
+      screen.getByText(/tokens and credentials.*plain text/i),
+    ).toBeInTheDocument();
+  });
+
+  it('gives each env editor a distinct accessible name once a project is also shown', async () => {
+    const user = userEvent.setup();
+    install({ projects: [entry({ id: 'apfm-web', env: { FOO: 'bar' } })] });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'apfm-web',
+    );
+
+    // Both groups are individually addressable by name — this is what lets
+    // a screen-reader user tell two identically-labelled "Save variables"
+    // buttons apart, since `EnvEditor` renders the same literal control
+    // names in both places and neither `<section>` wires an
+    // `aria-labelledby` down to its own heading.
+    const workspaceGroup = screen.getByRole('group', {
+      name: 'Workspace environment variables',
+    });
+    const projectGroup = screen.getByRole('group', {
+      name: 'Project environment variables',
+    });
+
+    // Each group contains exactly one save control — `getByRole` throws if
+    // it finds zero or more than one, which is exactly the ambiguity this
+    // test exists to catch.
+    expect(
+      within(workspaceGroup).getByRole('button', { name: 'Save variables' }),
+    ).toBeInTheDocument();
+    expect(
+      within(projectGroup).getByRole('button', { name: 'Save variables' }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -226,16 +264,17 @@ describe('RuntimeSection — per-project overrides', () => {
       screen.getByRole('combobox', { name: 'Project' }),
       'apfm-web',
     );
-    // Scoped to the per-project section: the Defaults group now carries its
-    // own EnvEditor too (story 108), so an unscoped query would find two
+    // Scoped to the project's own named group: the Defaults group now carries
+    // its own EnvEditor too (story 108), so an unscoped query would find two
     // "Save variables" buttons once a project is selected.
-    const overrides = screen
-      .getByRole('heading', { name: 'Per-project overrides' })
-      .closest('section');
-    if (!overrides) throw new Error('per-project overrides section not found');
+    const projectGroup = screen.getByRole('group', {
+      name: 'Project environment variables',
+    });
 
     await user.click(screen.getByRole('button', { name: 'Remove variable 1' }));
-    await user.click(within(overrides).getByRole('button', { name: 'Save variables' }));
+    await user.click(
+      within(projectGroup).getByRole('button', { name: 'Save variables' }),
+    );
 
     // `null`, not `{}` — leaving `"env": {}` behind is litter in a file people
     // hand-edit.

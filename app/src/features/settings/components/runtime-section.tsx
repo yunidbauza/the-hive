@@ -133,7 +133,21 @@ export function RuntimeSection() {
           />
         </div>
 
-        <div className="flex flex-col gap-1.5 pt-1">
+        <div
+          // A named group, not just a visually-adjacent block: `EnvEditor`
+          // renders the same literal "Save variables" / "Add variable"
+          // control names everywhere it is used, and `SettingsGroup`'s own
+          // heading carries no `aria-labelledby` down to this `<section>`.
+          // With a project also selected below, a screen-reader user gets
+          // two indistinguishable "Save variables, button" announcements
+          // with nothing to tell them apart — this `aria-label` is that
+          // disambiguation. It must read differently from the per-project
+          // group's group name (`"Project environment variables"`, in
+          // `ProjectOverrides` below).
+          role="group"
+          aria-label="Workspace environment variables"
+          className="flex flex-col gap-1.5 pt-1"
+        >
           {/*
            * Two things a user hitting a wall needs to already know, before
            * they file a bug (story 108):
@@ -158,6 +172,13 @@ export function RuntimeSection() {
             Prefer your rc file for tokens and credentials — this file is
             stored in plain text.
           </p>
+          {/*
+           * A visible label, matching the per-project editor's pattern
+           * below — sighted users get the same visual parity a magnifier or
+           * a quick scroll relies on, not just proximity to the section
+           * heading above.
+           */}
+          <span className="text-[12.5px] text-muted">Environment variables</span>
           <EnvEditor
             value={snapshot.env}
             onSave={(env) => void setRuntimeConfig({ env })}
@@ -287,7 +308,16 @@ function ProjectOverrides({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div
+        // Named distinctly from the workspace group above (`"Workspace
+        // environment variables"`) — see the comment there. Without this,
+        // once a project is selected, a screen reader hears two identical
+        // "Save variables, button" announcements with no way to tell which
+        // is which.
+        role="group"
+        aria-label="Project environment variables"
+        className="flex flex-col gap-1.5"
+      >
         <span className="text-[12.5px] text-muted">Environment variables</span>
         <EnvEditor
           value={env}
