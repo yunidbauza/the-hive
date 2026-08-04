@@ -1,6 +1,8 @@
 import {
+  NOTIFICATION_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
   unsafeEnvReason,
+  type NotificationPrefs,
   type ProjectOrigin,
 } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
@@ -39,6 +41,17 @@ export interface ParsedConfig {
   shell: string | null;
   claudeCommand: string | null;
   projects: RawProject[];
+  /**
+   * Story 106's notification block, exactly as the file declared it.
+   *
+   * `undefined` when the file has no block at all — which every config written
+   * before this story does. Partial when it names only some classes; the caller
+   * merges `DEFAULT_NOTIFICATIONS` over it. Kept partial here rather than
+   * defaulted so the write path can tell "the user chose this" from "the file
+   * said nothing", which is what keeps an untouched file from growing a block
+   * it never asked for.
+   */
+  notifications?: Partial<NotificationPrefs>;
   errors: string[];
   /** The version the file declared, or `null` when it was unreadable. */
   version: number | null;
@@ -69,7 +82,16 @@ export interface ParsedConfig {
  */
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
-const TOP_LEVEL_KEYS = ['version', 'shell', 'claudeCommand', 'projects'];
+const TOP_LEVEL_KEYS = [
+  'version',
+  'shell',
+  'claudeCommand',
+  'projects',
+  // Story 106. Listed so a hand-written block is read rather than reported as
+  // an unknown key — the same courtesy story 104 extended to the per-project
+  // runtime overrides below.
+  'notifications',
+];
 /**
  * `shell`, `claudeCommand` and `env` are story 104's per-project overrides.
  *
@@ -236,6 +258,44 @@ function optionalString(
   return value;
 }
 
+/**
+ * Read the notification block, keeping whatever the file got right (story 106).
+ *
+ * Per-key salvage, unlike `optionalEnv` above, and the difference is
+ * deliberate: an env map is a single set of assumptions a command runs under,
+ * so half of it is a stranger outcome than none of it. Three independent
+ * switches are not that — a typo in one is no reason to silently restore the
+ * default for the other two, which is a change the user did not make and would
+ * not see.
+ */
+function optionalNotifications(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<NotificationPrefs> | undefined {
+  const value = record.notifications;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.notifications: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.notifications`;
+  if (!checkKeys(value, NOTIFICATION_KEYS, at, errors)) return undefined;
+
+  const prefs: Partial<NotificationPrefs> = {};
+  for (const key of NOTIFICATION_KEYS) {
+    const raw = value[key];
+    if (raw === undefined) continue;
+    if (typeof raw !== 'boolean') {
+      errors.push(`${at}.${key}: expected a boolean — using the default`);
+      continue;
+    }
+    prefs[key] = raw;
+  }
+  return prefs;
+}
+
 export function parseConfig(text: string, label: string): ParsedConfig {
   const errors: string[] = [];
   // Every `return empty` below is a wholesale rejection, so `fatal` is set
@@ -281,14 +341,31 @@ export function parseConfig(text: string, label: string): ParsedConfig {
 
   const shell = optionalString(document, 'shell', label, errors);
   const claudeCommand = optionalString(document, 'claudeCommand', label, errors);
+  const notifications = optionalNotifications(document, label, errors);
 
   const raw = document.projects;
   if (raw === undefined) {
-    return { shell, claudeCommand, projects: [], errors, version, fatal: false };
+    return {
+      shell,
+      claudeCommand,
+      notifications,
+      projects: [],
+      errors,
+      version,
+      fatal: false,
+    };
   }
   if (!Array.isArray(raw)) {
     errors.push(`${label}.projects: expected an array`);
-    return { shell, claudeCommand, projects: [], errors, version, fatal: false };
+    return {
+      shell,
+      claudeCommand,
+      notifications,
+      projects: [],
+      errors,
+      version,
+      fatal: false,
+    };
   }
 
   const projects: RawProject[] = [];
@@ -367,5 +444,13 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     });
   });
 
-  return { shell, claudeCommand, projects, errors, version, fatal: false };
+  return {
+    shell,
+    claudeCommand,
+    notifications,
+    projects,
+    errors,
+    version,
+    fatal: false,
+  };
 }

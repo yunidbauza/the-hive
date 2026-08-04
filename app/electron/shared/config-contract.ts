@@ -126,6 +126,48 @@ export interface CommandDiagnostic {
 }
 
 /**
+ * Which events raise an OS notification (story 106).
+ *
+ * Only classes backed by an event main can actually observe. There is
+ * deliberately no `waiting`: it is not derivable from a pty — a TUI that has
+ * asked a question and a TUI that is thinking both produce no output (story
+ * 096) — and the real mechanism is the Claude Code hook named as the next
+ * epic's work. Shipping the switch before the event would be a control that
+ * silently does nothing, and the epic's rule for the section nav applies here
+ * too: absent rather than disabled.
+ */
+export interface NotificationPrefs {
+  /** A session's process exited. */
+  sessionDone: boolean;
+  /** A session produced no output for `ACTIVITY_IDLE_MS`. */
+  sessionIdle: boolean;
+  /** A clone finished — whether it succeeded or failed. */
+  cloneDone: boolean;
+}
+
+/**
+ * `sessionIdle` is off, and the other two are on.
+ *
+ * Idle is a real event but a chatty one: a build that pauses to download is not
+ * news, and a notification stream the user stops trusting is worse than no
+ * notifications at all. Finishing a session and finishing a clone are both
+ * discrete, both worth interrupting for, and both things the user walked away
+ * from.
+ */
+export const DEFAULT_NOTIFICATIONS: NotificationPrefs = {
+  sessionDone: true,
+  sessionIdle: false,
+  cloneDone: true,
+};
+
+/** The preference keys, in the order the settings section shows them. */
+export const NOTIFICATION_KEYS: readonly (keyof NotificationPrefs)[] = [
+  'sessionDone',
+  'sessionIdle',
+  'cloneDone',
+];
+
+/**
  * What `window.hive.config.get()` answers with.
  *
  * Note there is no `ok` / `valid` flag. A snapshot is always returned, even for
@@ -149,6 +191,15 @@ export interface ConfigSnapshot {
   claudeCommand: string;
   /** Every entry the file declared, in file order, each with its verdict. */
   projects: ProjectConfig[];
+  /**
+   * Notification preferences, always fully resolved (story 106).
+   *
+   * Defaulted here rather than left partial for the same reason `shell` and
+   * `claudeCommand` are: main reads this on every event it might announce, and
+   * a consumer that had to remember to apply defaults is one that will
+   * eventually forget on one branch.
+   */
+  notifications: NotificationPrefs;
   /**
    * Human-readable problems, in the order they were found.
    *
@@ -265,6 +316,7 @@ export function emptySnapshot(
     shell,
     claudeCommand: DEFAULT_CLAUDE_COMMAND,
     projects: [],
+    notifications: { ...DEFAULT_NOTIFICATIONS },
     errors: [],
   };
 }

@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_PROJECT_ICON,
   DEFAULT_SHELL,
   emptySnapshot,
@@ -103,6 +104,9 @@ export function loadConfig(): ConfigSnapshot {
     shell: parsed.shell ?? shell,
     claudeCommand: parsed.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
     projects,
+    // Defaults *under* whatever the file named, so a file declaring one switch
+    // still answers for all three (story 106).
+    notifications: { ...DEFAULT_NOTIFICATIONS, ...parsed.notifications },
     errors: parsed.errors,
   };
 }

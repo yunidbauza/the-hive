@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ConfigSnapshot } from '../../../../electron/shared/config-contract';
+import {
+  DEFAULT_NOTIFICATIONS,
+  type ConfigSnapshot,
+} from '../../../../electron/shared/config-contract';
 import { CH } from '../../../../electron/shared/ipc-contract';
 
 import type { PtyHostSupervisor } from '../../../../electron/main/pty-host/supervisor';
@@ -65,6 +68,7 @@ const CONFIG: ConfigSnapshot = {
       isRepo: false,
     },
   ],
+  notifications: { ...DEFAULT_NOTIFICATIONS },
   errors: [],
 };
 

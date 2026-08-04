@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
 } from '@shared/config-contract';
@@ -218,6 +219,11 @@ export function writeConfig(mutate: Mutation): WriteResult {
       shell: validated.shell ?? DEFAULT_SHELL,
       claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
       projects,
+      // Re-resolved from the document that was just written, not carried over
+      // from the caller's request: the snapshot every mutating verb returns has
+      // to describe the file on disk, including a block a concurrent hand-edit
+      // changed (story 106).
+      notifications: { ...DEFAULT_NOTIFICATIONS, ...validated.notifications },
       errors: validated.errors,
     },
   };

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ConfigSnapshot, ProjectStatus } from '@shared/config-contract';
+import {
+  DEFAULT_NOTIFICATIONS,
+  type ConfigSnapshot,
+  type ProjectStatus,
+} from '@shared/config-contract';
 
 import {
   loadProjectConfig,
@@ -44,6 +48,7 @@ function snapshot(
       status,
       isRepo: true,
     })),
+    notifications: { ...DEFAULT_NOTIFICATIONS },
     errors: [],
     ...overrides,
   };

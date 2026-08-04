@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { can, isDesktop } from '@config/runtime';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import { DEFAULT_NOTIFICATIONS } from '@shared/config-contract';
 
 /**
  * Install a fake bridge. Shape does not matter — `isDesktop` is a *presence*
@@ -96,6 +97,7 @@ describe('can', () => {
             isRepo: false,
           },
         ],
+        notifications: { ...DEFAULT_NOTIFICATIONS },
         errors: [],
       });
 

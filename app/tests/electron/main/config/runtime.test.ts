@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
   type ProjectConfig,
@@ -32,6 +33,7 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   shell: DEFAULT_SHELL,
   claudeCommand: DEFAULT_CLAUDE_COMMAND,
   projects: [],
+  notifications: { ...DEFAULT_NOTIFICATIONS },
   errors: [],
   ...over,
 });

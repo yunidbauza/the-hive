@@ -1,7 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ConfigSnapshot, ProjectStatus } from '@shared/config-contract';
+import {
+  DEFAULT_NOTIFICATIONS,
+  type ConfigSnapshot,
+  type ProjectStatus,
+} from '@shared/config-contract';
 
 import { ProjectRow } from '@features/projects/components/project-row';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
@@ -35,6 +39,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
       status,
       isRepo: true,
     })),
+    notifications: { ...DEFAULT_NOTIFICATIONS },
     errors: [],
   };
 }
