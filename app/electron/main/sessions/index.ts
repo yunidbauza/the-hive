@@ -59,9 +59,46 @@ export interface OpenRequest {
   task?: string;
 }
 
+/**
+ * A PTY that runs a command rather than a session (story 102).
+ *
+ * Everything {@link OpenRequest} resolves — a project, a shell, a bootstrap —
+ * is absent here on purpose. The caller has already decided what to run and
+ * where, because the only caller is the clone flow, and a clone's cwd is a
+ * directory *it* validated whose child does not exist yet. Routing it through
+ * `open()` would hit the `unmapped` refusal, which is right for a session and
+ * wrong for this.
+ */
+export interface OpenCommandRequest {
+  entityId: string;
+  cwd: string;
+  file: string;
+  args: string[];
+  cols: number;
+  rows: number;
+  /** Fires once, for whichever ending arrives first. */
+  onExit: (result: CommandExit) => void;
+}
+
+/** How a command session ended. */
+export interface CommandExit {
+  /** `-1` when nothing ran or nothing concluded — never a real status then. */
+  exitCode: number;
+  /** The host died under a process that may still have been working. */
+  lost: boolean;
+  /** A host-level failure — set when the binary could not start at all. */
+  message?: string;
+}
+
 export interface Sessions {
   /** Spawn, bootstrap and attach — or attach to what is already running. */
   open(request: OpenRequest): void;
+  /**
+   * Spawn a bare command in a PTY — no project, no bootstrap, no activity
+   * tracking (story 102). `onExit` fires once, for whichever of exit, host
+   * loss, or a failure to start arrives first.
+   */
+  openCommand(request: OpenCommandRequest): void;
   write(entityId: string, data: string): void;
   resize(entityId: string, cols: number, rows: number): void;
   ack(entityId: string, seq: number): void;
@@ -124,6 +161,33 @@ export function createSessions(options: SessionsOptions): Sessions {
     if (sessionId === undefined) return;
     for (const data of held) ptyIpc.write(sessionId, data);
   }
+  /**
+   * Exit callbacks for command sessions (story 102).
+   *
+   * Kept out of `exitWaiters` deliberately: those resolve `void` for the
+   * restart ordering and may hold several waiters, where this is one owner that
+   * needs the *code*. Deleted before it is invoked, so a re-entrant ending
+   * cannot fire it twice.
+   */
+  const commandExit = new Map<string, (result: CommandExit) => void>();
+
+  /**
+   * Entities that are commands, not sessions (story 102).
+   *
+   * Separate from {@link commandExit} because the two have different lifetimes:
+   * the callback is deleted the moment it fires, and this must outlive it — the
+   * exit path still has to know not to publish a `done` status for an entity
+   * the renderer's store has never heard of.
+   */
+  const commandEntities = new Set<string>();
+
+  function settleCommand(entityId: string, result: CommandExit): void {
+    const onExit = commandExit.get(entityId);
+    if (!onExit) return;
+    commandExit.delete(entityId);
+    onExit(result);
+  }
+
   /** In-flight restarts, so a second request joins rather than races. */
   const restarting = new Map<string, Promise<void>>();
 
@@ -146,20 +210,31 @@ export function createSessions(options: SessionsOptions): Sessions {
     switch (channel) {
       case CH.ptyData: {
         const data = payload as DataEvent;
-        activity.sawOutput(entityId);
-        bootstrap.sawOutput(entityId);
+        /**
+         * A command has no activity and no bootstrap (story 102). Feeding the
+         * tracker would publish `session:status` for an entity the store does
+         * not have, and feeding the bootstrap would type `claude` into it.
+         */
+        if (!commandEntities.has(entityId)) {
+          activity.sawOutput(entityId);
+          bootstrap.sawOutput(entityId);
+        }
         send(channel, { ...data, sessionId: entityId } satisfies DataEvent);
         return;
       }
       case CH.ptyExit: {
         const data = payload as ExitEvent;
         send(channel, { ...data, sessionId: entityId } satisfies ExitEvent);
+        settleCommand(entityId, { exitCode: data.exitCode, lost: false });
         settleExit(entityId);
         return;
       }
       case CH.ptyLost: {
         const data = payload as SessionLostEvent;
         send(channel, { ...data, sessionId: entityId } satisfies SessionLostEvent);
+        // No code: nothing concluded. `-1` is the sentinel a command caller
+        // reads as "did not finish", never as an exit status.
+        settleCommand(entityId, { exitCode: -1, lost: true });
         settleExit(entityId);
         return;
       }
@@ -196,6 +271,29 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   const ptyIpc: PtyIpc = createPtyIpc({ supervisor, send: forward });
 
+  /**
+   * A host error for a command session is that command's ending (story 102).
+   *
+   * `node-pty` failing to spawn emits `{ type: 'error' }` and **no exit**, so
+   * for `openCommand` this is the only signal that will ever arrive. A session
+   * does not need it — its surface shows an empty terminal and the user can
+   * restart — but a clone does: without this, `git` missing from `PATH` leaves
+   * the clone view waiting forever on a process that was never created.
+   */
+  const disposeErrors = supervisor.onError((event) => {
+    if (event.sessionId === undefined) return;
+    const entityId = registry.entityFor(event.sessionId);
+    if (entityId === undefined) return;
+    if (!commandExit.has(entityId)) return;
+
+    settleCommand(entityId, {
+      exitCode: -1,
+      lost: false,
+      message: event.message,
+    });
+    settleExit(entityId);
+  });
+
   function publishStatus(entityId: string, status: DerivedStatus): void {
     send(CH.sessionStatus, { entityId, status } satisfies SessionStatusEvent);
   }
@@ -210,7 +308,12 @@ export function createSessions(options: SessionsOptions): Sessions {
   function settleExit(entityId: string): void {
     bootstrap.cancel(entityId);
     heldInput.delete(entityId);
-    activity.exited(entityId);
+    // Same reason as the data path: a command's ending is not a session's.
+    if (commandEntities.delete(entityId)) {
+      // Nothing to tell the store about.
+    } else {
+      activity.exited(entityId);
+    }
     registry.close(entityId);
 
     const waiters = exitWaiters.get(entityId);
@@ -274,10 +377,21 @@ export function createSessions(options: SessionsOptions): Sessions {
     spawn({ ...request, task: undefined });
   }
 
-  /** Refuse with a message the user can act on, never a generic failure. */
-  function spawn(request: OpenRequest): void {
-    const snapshot = config();
-
+  /**
+   * Mint a session id and start a process. The one place a PTY is spawned.
+   *
+   * Both entry points funnel through here so there is no second way to start
+   * one: the capacity check and the host-blocked check must apply to a clone
+   * exactly as they apply to a session, and two copies of them would drift.
+   */
+  function startProcess(request: {
+    entityId: string;
+    cwd: string;
+    file: string;
+    args: string[];
+    cols: number;
+    rows: number;
+  }): void {
     if (registry.size() >= maxSessions) {
       throw new Error(spawnRefusal({ reason: 'at-capacity', limit: maxSessions }));
     }
@@ -290,6 +404,28 @@ export function createSessions(options: SessionsOptions): Sessions {
     if (supervisor.isBlocked()) {
       throw new Error(spawnRefusal({ reason: 'host-unavailable' }));
     }
+
+    const sessionId = registry.open(request.entityId);
+
+    ptyIpc.spawn({
+      sessionId,
+      shell: request.file,
+      args: request.args,
+      cwd: request.cwd,
+      /**
+       * Nothing added. The host builds the environment (story 092); a session
+       * inherits the user's, which is the only environment in which their
+       * `claude` and their tooling behave the way they do outside this app.
+       */
+      env: {},
+      cols: request.cols,
+      rows: request.rows,
+    });
+  }
+
+  /** Refuse with a message the user can act on, never a generic failure. */
+  function spawn(request: OpenRequest): void {
+    const snapshot = config();
 
     const project = snapshot.projects.find(
       (entry) => entry.id === request.projectId,
@@ -320,19 +456,11 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     activity.forget(request.entityId);
 
-    const sessionId = registry.open(request.entityId);
-
-    ptyIpc.spawn({
-      sessionId,
-      shell: snapshot.shell,
-      args: LOGIN_SHELL_ARGS,
+    startProcess({
+      entityId: request.entityId,
       cwd: project.path,
-      /**
-       * Nothing added. The host builds the environment (story 092); a session
-       * inherits the user's, which is the only environment in which their
-       * `claude` and their tooling behave the way they do outside this app.
-       */
-      env: {},
+      file: snapshot.shell,
+      args: LOGIN_SHELL_ARGS,
       cols: request.cols,
       rows: request.rows,
     });
@@ -341,6 +469,29 @@ export function createSessions(options: SessionsOptions): Sessions {
   }
 
   return {
+    openCommand(request) {
+      /**
+       * Registered *before* the spawn, because a failure to start is reported
+       * asynchronously and could otherwise land before there was anything to
+       * settle.
+       */
+      commandExit.set(request.entityId, request.onExit);
+      commandEntities.add(request.entityId);
+      try {
+        startProcess(request);
+      } catch (cause) {
+        /**
+         * The callback owns every ending *except* this one. A caller that had
+         * to handle a throw **and** a callback would have two cleanup paths and
+         * would eventually only implement one — so a refusal to start stays a
+         * throw, and the registration is undone rather than left dangling.
+         */
+        commandExit.delete(request.entityId);
+        commandEntities.delete(request.entityId);
+        throw cause;
+      }
+    },
+
     open(request) {
       /**
        * **Attach, never respawn.** The invariant that makes the product work.
@@ -430,10 +581,13 @@ export function createSessions(options: SessionsOptions): Sessions {
       bootstrap.dispose();
       activity.dispose();
       ptyIpc.dispose();
+      disposeErrors();
       heldInput.clear();
       registry.clear();
       restarting.clear();
       exitWaiters.clear();
+      commandExit.clear();
+      commandEntities.clear();
     },
   };
 }

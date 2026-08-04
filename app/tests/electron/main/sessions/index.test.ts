@@ -31,6 +31,9 @@ let sessions: Sessions;
 let supervisor: PtyHostSupervisor;
 let emitData: (event: { sessionId: string; chunk: string }) => void;
 let emitExit: (event: { sessionId: string; exitCode: number }) => void;
+/** Story 102: a host-level failure, which is how a bad binary reports. */
+let emitError: (event: { sessionId?: string; message: string }) => void;
+let emitLost: (event: { sessionId: string }) => void;
 let blocked: boolean;
 
 const CONFIG: ConfigSnapshot = {
@@ -80,8 +83,14 @@ function fakeSupervisor(): PtyHostSupervisor {
       return () => {};
     }),
     onSpawned: vi.fn(() => () => {}),
-    onError: vi.fn(() => () => {}),
-    onSessionLost: vi.fn(() => () => {}),
+    onError: vi.fn((listener) => {
+      emitError = listener;
+      return () => {};
+    }),
+    onSessionLost: vi.fn((listener) => {
+      emitLost = listener;
+      return () => {};
+    }),
     shutdown: vi.fn(async () => {}),
     isRunning: vi.fn(() => true),
     isBlocked: vi.fn(() => blocked),
@@ -639,5 +648,139 @@ describe('restart: the defects the self review found', () => {
     expect(await settled).toContain('did not exit');
     // Nothing new was started.
     expect(spawned).toHaveLength(1);
+  });
+});
+
+/**
+ * A PTY that runs a command rather than a session (story 102).
+ *
+ * Everything `open` resolves — a project, a login shell, a `claude` bootstrap —
+ * is absent here on purpose. The only caller is the clone flow, whose cwd is a
+ * directory it validated and whose child does not exist yet.
+ */
+describe('openCommand', () => {
+  const CLONE = {
+    entityId: 'hive:clone',
+    cwd: '/Users/me/Projects',
+    file: 'git',
+    args: ['clone', '--progress', '--', 'https://x/y.git', 'y'],
+    cols: 80,
+    rows: 24,
+  };
+
+  it('spawns the given file and args in the given cwd', () => {
+    sessions.openCommand({ ...CLONE, onExit: () => {} });
+
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toMatchObject({
+      shell: 'git',
+      args: ['clone', '--progress', '--', 'https://x/y.git', 'y'],
+      cwd: '/Users/me/Projects',
+    });
+  });
+
+  /**
+   * The regression that matters most: arming the bootstrap would type `claude`
+   * into a `git clone`, in a directory that does not exist yet.
+   */
+  it('does not arm the claude bootstrap', () => {
+    sessions.openCommand({ ...CLONE, onExit: () => {} });
+
+    emitData({ sessionId: mintedFor('hive:clone'), chunk: "Cloning into 'y'...\r\n" });
+    vi.advanceTimersByTime(5_000);
+
+    expect(supervisor.write).not.toHaveBeenCalled();
+  });
+
+  it('publishes no session status for an entity the store never heard of', () => {
+    sessions.openCommand({ ...CLONE, onExit: () => {} });
+
+    emitData({ sessionId: mintedFor('hive:clone'), chunk: 'receiving objects\r\n' });
+    vi.advanceTimersByTime(5_000);
+
+    expect(on(CH.sessionStatus)).toHaveLength(0);
+  });
+
+  it('calls onExit with the exit code', () => {
+    const onExit = vi.fn();
+    sessions.openCommand({ ...CLONE, onExit });
+
+    emitExit({ sessionId: mintedFor('hive:clone'), exitCode: 0 });
+
+    expect(onExit).toHaveBeenCalledWith({ exitCode: 0, lost: false });
+  });
+
+  it('calls onExit with lost when the host dies under it', () => {
+    const onExit = vi.fn();
+    sessions.openCommand({ ...CLONE, onExit });
+
+    emitLost({ sessionId: mintedFor('hive:clone') });
+
+    expect(onExit).toHaveBeenCalledWith({ exitCode: -1, lost: true });
+  });
+
+  /**
+   * node-pty failing to start a binary emits a host `error` and **no exit**, so
+   * for a command session this is the only signal that will ever arrive.
+   * Without it, `git` missing from PATH leaves the caller waiting forever.
+   */
+  it('calls onExit when the binary could not start', () => {
+    const onExit = vi.fn();
+    sessions.openCommand({ ...CLONE, onExit });
+
+    emitError({
+      sessionId: mintedFor('hive:clone'),
+      message: 'could not start git in /Users/me/Projects: ENOENT',
+    });
+
+    expect(onExit).toHaveBeenCalledWith({
+      exitCode: -1,
+      lost: false,
+      message: 'could not start git in /Users/me/Projects: ENOENT',
+    });
+  });
+
+  it('calls onExit exactly once', () => {
+    const onExit = vi.fn();
+    sessions.openCommand({ ...CLONE, onExit });
+
+    const sessionId = mintedFor('hive:clone');
+    emitExit({ sessionId, exitCode: 1 });
+    emitExit({ sessionId, exitCode: 1 });
+
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes write to the command session, so prompts are answerable', () => {
+    sessions.openCommand({ ...CLONE, onExit: () => {} });
+
+    sessions.write('hive:clone', 'hunter2\r');
+
+    expect(supervisor.write).toHaveBeenCalledWith(
+      mintedFor('hive:clone'),
+      'hunter2\r',
+    );
+  });
+
+  it('refuses when the host is blocked', () => {
+    blocked = true;
+    expect(() =>
+      sessions.openCommand({ ...CLONE, onExit: () => {} }),
+    ).toThrow();
+  });
+
+  it('refuses when the session cap is reached', () => {
+    const capped = createSessions({
+      supervisor,
+      send: () => {},
+      config: () => CONFIG,
+      maxSessions: 0,
+    });
+
+    expect(() =>
+      capped.openCommand({ ...CLONE, onExit: () => {} }),
+    ).toThrow(/capacity|limit/i);
+
+    capped.dispose();
   });
 });
