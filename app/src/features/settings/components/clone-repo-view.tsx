@@ -5,7 +5,10 @@ import { TerminalSurface } from '@/components/terminal/terminal-surface';
 import { cancelClone, onCloneDone, startClone } from '@/lib/clone-repo';
 import { chooseProjectDirectory } from '@/lib/project-config';
 
-import { createCloneTransport } from '@lib/terminal/pty-transport';
+import {
+  createCloneTransport,
+  resetCloneChannel,
+} from '@lib/terminal/pty-transport';
 import { useTheme } from '@stores/ui-store';
 
 /**
@@ -101,6 +104,14 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
   const onClone = async () => {
     if (!ready || parentPath === null) return;
     setError(null);
+
+    /**
+     * Clear the previous clone's transcript and reopen its channel before the
+     * new process can produce a byte. Every clone reuses one entity id, and the
+     * channel closes when a clone exits — so without this the second clone of a
+     * session shows an empty terminal.
+     */
+    resetCloneChannel();
 
     const result = await startClone({ url: url.trim(), parentPath, cols: 80, rows: 24 });
     if (!result.ok) {

@@ -475,6 +475,35 @@ export function createCloneTransport(): TerminalTransport {
 }
 
 /**
+ * Start the clone channel over (story 102).
+ *
+ * A session's channel is deliberately sticky in two ways, and **both are wrong
+ * for a clone**:
+ *
+ * - `closed` is a one-way latch, so a remount cannot resurrect a finished
+ *   agent. But every clone reuses {@link CLONE_ENTITY_ID}, so without this the
+ *   *second* clone of a session renders nothing at all — `onData` returns early
+ *   on a channel the first clone closed, and the terminal sits empty while git
+ *   runs perfectly well underneath it.
+ * - the buffer survives so that switching tabs and back shows what happened
+ *   while away. A clone is a fresh task, not a session being revisited, so
+ *   replaying the previous clone's transcript above the new one is noise.
+ *
+ * Called when a clone actually starts, not when the view mounts: a mount that
+ * cleared the transcript would wipe the terminal on any re-render.
+ */
+export function resetCloneChannel(): void {
+  const channel = channels.get(CLONE_ENTITY_ID);
+  if (!channel) return;
+  channel.closed = false;
+  channel.lastSeq = null;
+  channel.spawnRequested = false;
+  channel.spawnResult = null;
+  channel.buffer.length = 0;
+  channel.bufferUnits = 0;
+}
+
+/**
  * Reopen a channel for a fresh generation of the same entity (story 096).
  *
  * `closed` is a one-way latch by design — it is what stops a remount

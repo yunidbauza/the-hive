@@ -5,6 +5,7 @@ import {
   createCloneTransport,
   createPtyTransport,
   reopenChannel,
+  resetCloneChannel,
   requestSpawn,
   resetPtyChannels,
   sessionChannelState,
@@ -682,5 +683,56 @@ describe('createCloneTransport', () => {
     transport.onData(() => {})();
 
     expect(bridge.kill).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Every clone reuses one entity id, so its channel has to be startable again.
+ *
+ * A session's channel is sticky on purpose — `closed` is a one-way latch and
+ * the buffer survives a remount — and both are wrong here. Without a reset the
+ * *second* clone of a session renders nothing at all: `onData` returns early on
+ * a channel the first clone closed, and the terminal sits empty while git runs
+ * perfectly well underneath it.
+ */
+describe('resetCloneChannel', () => {
+  const CLONE_ID = 'hive.clone';
+
+  it('lets a second clone deliver output after the first exited', () => {
+    const transport = createCloneTransport();
+    const first: string[] = [];
+    transport.onData((chunk) => first.push(chunk));
+
+    pushData(CLONE_ID, 'first clone\r\n', 0);
+    for (const cb of [...bridge.exit]) {
+      cb({ sessionId: CLONE_ID, exitCode: 0, signal: 0 });
+    }
+
+    // Without the reset this chunk is dropped and the terminal stays empty.
+    resetCloneChannel();
+
+    const second: string[] = [];
+    const stop = transport.onData((chunk) => second.push(chunk));
+    pushData(CLONE_ID, 'second clone\r\n', 0);
+    stop();
+
+    expect(second.join('')).toContain('second clone');
+  });
+
+  it('drops the previous clone transcript rather than replaying it', () => {
+    const transport = createCloneTransport();
+    transport.onData(() => {})();
+    pushData(CLONE_ID, 'first clone\r\n', 0);
+
+    resetCloneChannel();
+
+    const replayed: string[] = [];
+    transport.onData((chunk) => replayed.push(chunk));
+
+    expect(replayed.join('')).not.toContain('first clone');
+  });
+
+  it('is safe before any clone has run', () => {
+    expect(() => resetCloneChannel()).not.toThrow();
   });
 });
