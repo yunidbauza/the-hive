@@ -94,6 +94,13 @@ function exists(candidate: string): boolean {
  * `env` is the **merged** environment the session would get, not
  * `process.env` — a project that sets its own `PATH` must be diagnosed against
  * that `PATH`, or the diagnostic describes a session nobody is running.
+ *
+ * **POSIX only, deliberately.** `PATHEXT` is not consulted, so on Windows a
+ * `claude.cmd` would be reported as not found. That is consistent rather than
+ * wrong: the whole session model is POSIX today — `DEFAULT_SHELL` is
+ * `/bin/sh`, `LOGIN_SHELL_ARGS` is `['-l']`, and nothing packages a Windows
+ * build. Teaching only the diagnostic about Windows would make it describe a
+ * session this app cannot start.
  */
 export function diagnoseCommand(
   runtime: EffectiveRuntime,

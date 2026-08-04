@@ -266,3 +266,64 @@ describe('per-project runtime overrides (story 104)', () => {
     expect('env' in (result.projects[0] ?? {})).toBe(false);
   });
 });
+
+describe('env safety at the file boundary (story 104)', () => {
+  const withEnv = (env: Record<string, unknown>) =>
+    parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [{ id: 'a', path: '/tmp/a', env }],
+      }),
+      'config',
+    );
+
+  /**
+   * The same refusals the IPC guard applies.
+   *
+   * Hand-editing the config file is an explicitly supported workflow, so this
+   * reader is a real entry point — a rule enforced on only one of the two paths
+   * is a rule with a documented bypass, and the file is the path someone would
+   * reach for precisely because it looks like the unguarded one.
+   */
+  it('refuses the dynamic-loader variables', () => {
+    for (const key of ['LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH']) {
+      const result = withEnv({ [key]: '/tmp/evil.so' });
+      expect(result.errors.some((error) => /dynamic loader/.test(error))).toBe(true);
+      expect('env' in (result.projects[0] ?? {})).toBe(false);
+    }
+  });
+
+  it('refuses the interpreter hooks', () => {
+    for (const key of ['NODE_OPTIONS', 'BASH_ENV', 'ELECTRON_RUN_AS_NODE']) {
+      const result = withEnv({ [key]: 'x' });
+      expect(result.errors.some((error) => /run code/.test(error))).toBe(true);
+      expect('env' in (result.projects[0] ?? {})).toBe(false);
+    }
+  });
+
+  it('applies the same caps as the IPC guard', () => {
+    const tooMany = Object.fromEntries(
+      Array.from({ length: 201 }, (_, index) => [`V${index}`, 'x']),
+    );
+    expect(withEnv(tooMany).errors.some((e) => /too many variables/.test(e))).toBe(
+      true,
+    );
+
+    expect(
+      withEnv({ FOO: 'x'.repeat(4097) }).errors.some((e) => /too long/.test(e)),
+    ).toBe(true);
+
+    expect(
+      withEnv({ FOO: 'a\nb' }).errors.some((e) => /control characters/.test(e)),
+    ).toBe(true);
+  });
+
+  it('still accepts an ordinary variable', () => {
+    const result = withEnv({ API_URL: 'https://x.test', LDAP_URL: 'ldap://y' });
+    expect(result.errors).toEqual([]);
+    expect(result.projects[0]?.env).toEqual({
+      API_URL: 'https://x.test',
+      LDAP_URL: 'ldap://y',
+    });
+  });
+});

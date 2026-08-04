@@ -1,5 +1,6 @@
 import {
   SUPPORTED_CONFIG_VERSIONS,
+  unsafeEnvReason,
   type ProjectOrigin,
 } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
@@ -88,16 +89,27 @@ const PROJECT_KEYS = [
   'env',
 ];
 
-/**
- * Variables the pty-host sets itself, after merging anything injected here
- * (`pty-host/env.ts`). Accepting them would let the config appear to set a
- * value that is then silently overwritten — a setting that does nothing is
- * worse than a setting that is refused.
- */
-const RESERVED_ENV_KEYS = new Set(['TERM', 'COLORTERM', 'PWD']);
-
 /** POSIX-portable environment variable name. */
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * The same limits the IPC guard applies (`guards.ts`).
+ *
+ * Hand-editing the config file is an explicitly supported workflow, so this
+ * reader is a real entry point and not a formality — a rule enforced on only
+ * one of the two paths is a rule with a documented bypass.
+ */
+const MAX_ENV_ENTRIES = 200;
+const MAX_ENV_VALUE = 4096;
+
+/** C0 (including CR, LF and ESC), DEL, and the C1 block. */
+function hasControlCharacters(text: string): boolean {
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
 
 /**
  * Read an entry's `env` map, rejecting the whole map on any bad member.
@@ -118,8 +130,14 @@ function optionalEnv(
     return undefined;
   }
 
+  const entries = Object.entries(value);
+  if (entries.length > MAX_ENV_ENTRIES) {
+    errors.push(`${label}.env: too many variables (max ${MAX_ENV_ENTRIES}) — env ignored`);
+    return undefined;
+  }
+
   const env: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(value)) {
+  for (const [key, raw] of entries) {
     if (FORBIDDEN_KEYS.has(key)) {
       errors.push(`${label}.env: forbidden key "${key}" — env ignored`);
       return undefined;
@@ -128,12 +146,27 @@ function optionalEnv(
       errors.push(`${label}.env: "${key}" is not a valid variable name — env ignored`);
       return undefined;
     }
-    if (RESERVED_ENV_KEYS.has(key)) {
-      errors.push(`${label}.env: "${key}" is set by the terminal — env ignored`);
+    /**
+     * Shared with the IPC guard, deliberately: a hand-edited `LD_PRELOAD` is
+     * exactly as dangerous as one posted over the bridge, and the file is the
+     * path an attacker would reach for precisely *because* it looks like the
+     * unguarded one.
+     */
+    const unsafe = unsafeEnvReason(key);
+    if (unsafe !== null) {
+      errors.push(`${label}.env: ${unsafe} — env ignored`);
       return undefined;
     }
     if (typeof raw !== 'string') {
       errors.push(`${label}.env.${key}: expected a string — env ignored`);
+      return undefined;
+    }
+    if (raw.length > MAX_ENV_VALUE) {
+      errors.push(`${label}.env.${key}: too long — env ignored`);
+      return undefined;
+    }
+    if (hasControlCharacters(raw)) {
+      errors.push(`${label}.env.${key}: control characters are not allowed — env ignored`);
       return undefined;
     }
     env[key] = raw;

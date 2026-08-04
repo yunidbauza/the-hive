@@ -9,6 +9,7 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
+import { unsafeEnvReason } from './config-contract';
 import type {
   AckRequest,
   ResizeRequest,
@@ -395,16 +396,6 @@ export function parseCloneRequest(input: unknown): CloneRequest {
   };
 }
 
-/**
- * Environment variable names the pty-host sets for itself.
- *
- * `buildEnv` (`pty-host/env.ts`) merges injected values and *then* forces these
- * three, so accepting them here would store a setting that silently does
- * nothing. Refusing is the honest outcome: the user finds out at the moment
- * they set it rather than the next time they wonder why `TERM` is wrong.
- */
-const RESERVED_ENV_KEYS = new Set(['TERM', 'COLORTERM', 'PWD']);
-
 /** POSIX-portable environment variable name. */
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -440,9 +431,13 @@ function assertEnv(value: unknown, label: string): Record<string, string> {
     if (!ENV_NAME.test(key)) {
       return fail(`${label}: "${key}" is not a valid variable name`);
     }
-    if (RESERVED_ENV_KEYS.has(key)) {
-      return fail(`${label}: "${key}" is set by the terminal and cannot be overridden`);
-    }
+    /**
+     * The refusal list lives in `config-contract.ts` so this boundary and the
+     * config-file reader enforce the *same* rule. Two copies would drift, and
+     * the copy that drifted would be the one nobody tested.
+     */
+    const unsafe = unsafeEnvReason(key);
+    if (unsafe !== null) return fail(`${label}: ${unsafe}`);
 
     const text = assertString(raw, `${label}.${key}`);
     if (text.length > MAX_TEXT) return fail(`${label}.${key}: too long`);

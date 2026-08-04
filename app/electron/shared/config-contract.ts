@@ -184,6 +184,62 @@ export const DEFAULT_SHELL = '/bin/sh';
 export const DEFAULT_CLAUDE_COMMAND = 'claude';
 
 /**
+ * Environment variables a project may never set (story 104).
+ *
+ * Two groups, refused for two different reasons.
+ *
+ * **The dynamic loader.** `LD_*` and `DYLD_*` tell the OS to load arbitrary
+ * shared libraries into *every* process the spawned shell goes on to fork.
+ * That is native code execution, and it is a genuine escalation rather than a
+ * theoretical one: story 082's posture is that **the renderer is untrusted
+ * input**, so a compromised renderer that can write the config file must not
+ * thereby be able to run native code. Before this story `injected` was always
+ * `{}`, so this path did not exist; refusing these keeps it from opening.
+ *
+ * The `pty-host` deny-list is not the answer here — it exists to strip
+ * *Electron's own* leakage from the inherited environment (`ELECTRON_*`,
+ * `NODE_OPTIONS`), a different job, and it runs a process boundary away from
+ * the guard that should have refused the value in the first place.
+ *
+ * **Interpreter hooks.** `NODE_OPTIONS` (`--require` runs a file),
+ * `BASH_ENV` (sourced by non-interactive bash) and `ELECTRON_RUN_AS_NODE` are
+ * the same trick in a different coat.
+ *
+ * Refused rather than silently dropped: a setting that vanishes is worse than
+ * one that names itself.
+ */
+export const UNSAFE_ENV_PREFIXES: readonly string[] = ['LD_', 'DYLD_'];
+
+export const UNSAFE_ENV_KEYS: readonly string[] = [
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'BASH_ENV',
+  'ELECTRON_RUN_AS_NODE',
+];
+
+/**
+ * Variables the pty-host sets for itself, after merging anything injected.
+ *
+ * Accepting one would store a setting that `buildEnv` then overwrites — a
+ * setting that does nothing is worse than a setting that is refused.
+ */
+export const RESERVED_ENV_KEYS: readonly string[] = ['TERM', 'COLORTERM', 'PWD'];
+
+/** Why an environment variable name was refused, or `null` if it is fine. */
+export function unsafeEnvReason(key: string): string | null {
+  if (RESERVED_ENV_KEYS.includes(key)) {
+    return `"${key}" is set by the terminal and cannot be overridden`;
+  }
+  if (UNSAFE_ENV_KEYS.includes(key)) {
+    return `"${key}" can make other programs run code and cannot be set here`;
+  }
+  if (UNSAFE_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+    return `"${key}" controls the dynamic loader and cannot be set here`;
+  }
+  return null;
+}
+
+/**
  * The env var that relocates the config file.
  *
  * The escape hatch story 085 already depends on — its Playwright fixture sets

@@ -1,6 +1,8 @@
 import { Plus, Trash } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { unsafeEnvReason } from '@shared/config-contract';
+
 /**
  * Per-project environment variables (story 104).
  *
@@ -14,8 +16,6 @@ import { useState } from 'react';
  * write, so committing per keystroke would mean one write per character.
  */
 
-/** Names the pty-host sets itself; main refuses them, so say so before the trip. */
-const RESERVED = new Set(['TERM', 'COLORTERM', 'PWD']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 interface EnvEditorProps {
@@ -61,9 +61,10 @@ function rowError(row: Row, rows: Row[], index: number): string | null {
   if (!ENV_NAME.test(row.key)) {
     return `"${row.key}" is not a valid variable name`;
   }
-  if (RESERVED.has(row.key)) {
-    return `${row.key} is set by the terminal and cannot be overridden`;
-  }
+  // The refusal list is shared with both guards, so the explanation shown here
+  // is the same sentence main would answer with.
+  const unsafe = unsafeEnvReason(row.key);
+  if (unsafe !== null) return unsafe;
   if (rows.some((other, at) => at !== index && other.key === row.key)) {
     return `${row.key} is listed twice`;
   }

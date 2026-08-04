@@ -104,6 +104,55 @@ describe('parseSetProjectRuntimeRequest', () => {
     }
   });
 
+  /**
+   * The finding that mattered most in review.
+   *
+   * Per-project env is the first user-reachable path into `buildEnv`'s
+   * `injected` argument — before story 104 it was always `{}`. These variables
+   * make the OS load arbitrary shared libraries into every process the spawned
+   * shell forks, which is native code execution. Story 082's posture is that
+   * the renderer is untrusted, so a compromised renderer that can write the
+   * config must not thereby be able to run native code.
+   */
+  it('refuses the dynamic-loader variables', () => {
+    for (const key of [
+      'LD_PRELOAD',
+      'LD_LIBRARY_PATH',
+      'LD_AUDIT',
+      'DYLD_INSERT_LIBRARIES',
+      'DYLD_LIBRARY_PATH',
+      'DYLD_FRAMEWORK_PATH',
+    ]) {
+      expect(() =>
+        parseSetProjectRuntimeRequest({ id: 'a', env: { [key]: '/tmp/evil.so' } }),
+      ).toThrow(/dynamic loader/);
+    }
+  });
+
+  it('refuses the interpreter hooks', () => {
+    for (const key of [
+      'NODE_OPTIONS',
+      'NODE_PATH',
+      'BASH_ENV',
+      'ELECTRON_RUN_AS_NODE',
+    ]) {
+      expect(() =>
+        parseSetProjectRuntimeRequest({ id: 'a', env: { [key]: 'x' } }),
+      ).toThrow(/run code/);
+    }
+  });
+
+  it('still allows ordinary variables that merely start with a letter pair', () => {
+    // The rule is a prefix match on LD_/DYLD_, not a substring one — refusing
+    // `LDAP_URL` or `OLD_PATH` would be a bug in the other direction.
+    expect(
+      parseSetProjectRuntimeRequest({
+        id: 'a',
+        env: { LDAP_URL: 'ldap://x', OLD_PATH: '/tmp' },
+      }).env,
+    ).toEqual({ LDAP_URL: 'ldap://x', OLD_PATH: '/tmp' });
+  });
+
   it('refuses a non-string env value', () => {
     expect(() =>
       parseSetProjectRuntimeRequest({ id: 'a', env: { FOO: 1 } }),
