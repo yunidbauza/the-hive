@@ -658,7 +658,7 @@ git commit -m "feat(settings): edit the workspace environment in Runtime setting
 **Files:**
 - Modify: `app/electron/shared/config-contract.ts` (add `EnvDiagnostic`)
 - Create: `app/electron/main/config/env-diagnostic.ts`
-- Modify: `app/electron/shared/ipc-contract.ts` (add `configDiagnoseEnv`), `app/electron/preload/index.ts`, `app/electron/main/ipc/config.ts`, `app/src/lib/project-config.ts`
+- Modify: `app/electron/shared/ipc-contract.ts` (add `configDiagnoseEnv`), `app/electron/preload/index.ts`, `app/electron/main/ipc/index.ts`, `app/src/lib/project-config.ts`
 - Modify: `app/src/features/settings/components/runtime-section.tsx`
 - Test: `app/tests/electron/main/config/env-diagnostic.test.ts`
 
@@ -818,7 +818,7 @@ Expected: PASS (5 tests).
 Follow `configDiagnoseCommand` exactly, in the four places it appears — it is the closest possible template, being the other read-only diagnostic:
 
 1. `ipc-contract.ts` — add `configDiagnoseEnv: 'config:diagnose-env'` beside it.
-2. `main/ipc/config.ts` — register the handler, reusing the same request guard `configDiagnoseCommand` uses (payload is `{ id?: string }`) and calling `diagnoseEnv(effectiveRuntime(snapshot, project), id ?? null)`.
+2. `main/ipc/index.ts` — register the handler, reusing the same request guard `configDiagnoseCommand` uses (payload is `{ id?: string }`) and calling `diagnoseEnv(effectiveRuntime(snapshot, project), id ?? null)`.
 3. `preload/index.ts` — add `diagnoseEnv` next to `diagnoseCommand:120`.
 4. `src/lib/project-config.ts` — add `diagnoseSessionEnv`, copying `diagnoseAgentCommand:248` including its `return null` on a missing bridge or a thrown channel.
 
