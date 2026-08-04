@@ -72,6 +72,12 @@ export function ProjectNameEditor({
   return (
     <input
       ref={input}
+      /*
+        Claims Escape from the settings dialog. Radix decides on a
+        document-capture listener, before the key reaches this input, so the
+        overlay consults this attribute instead — see `settings-overlay.tsx`.
+      */
+      data-escape-scope=""
       aria-label="Project name"
       defaultValue={initialName}
       onBlur={commit}
@@ -82,6 +88,13 @@ export function ProjectNameEditor({
         }
         if (event.key === 'Escape') {
           event.preventDefault();
+          /*
+            Stops bubble-phase ancestors seeing it. This is *not* what keeps the
+            settings dialog open — Radix decides on a document-capture listener
+            that runs before this handler, so that half is handled by the
+            `data-escape-scope` attribute below.
+          */
+          event.stopPropagation();
           cancelled.current = true;
           onCancel();
         }

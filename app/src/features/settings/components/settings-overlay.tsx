@@ -49,6 +49,25 @@ export function SettingsOverlay() {
     >
       <DialogPrimitive.Content
         aria-describedby={undefined}
+        /**
+         * An Escape a nested control has claimed is not this dialog's (103).
+         *
+         * Radix listens for Escape on the **document, in the capture phase**,
+         * so it decides before the keystroke reaches whatever is focused — a
+         * `stopPropagation` inside the rename editor can never win that race,
+         * and the whole overlay closed when the user only meant to abandon an
+         * edit. Anything that owns Escape for itself marks its subtree with
+         * `data-escape-scope`, and this declines those.
+         *
+         * A data attribute rather than shared state: the overlay does not need
+         * to know *which* control is open, only that one has claimed the key,
+         * and a future section gets the behaviour by opting in rather than by
+         * wiring something through here.
+         */
+        onEscapeKeyDown={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest?.('[data-escape-scope]')) event.preventDefault();
+        }}
         className="flex min-h-0 flex-1 flex-col bg-panel-2 outline-none"
       >
         <div className="flex items-center justify-between border-b border-border-soft px-4 py-2.5">

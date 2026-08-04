@@ -205,6 +205,43 @@ test('renaming survives a reload and never touches the id', async ({}, testInfo)
   }
 });
 
+/**
+ * Escape backs out of the rename, not out of Settings.
+ *
+ * Settings is a Radix dialog and Escape is how a dialog is dismissed, so an
+ * Escape left to bubble closed the whole overlay — the user pressed one key to
+ * abandon an edit and lost the screen. Only a real dialog can show this: in
+ * jsdom the editor has no dialog above it to close.
+ */
+test('cancelling a rename leaves settings open and the list usable', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithThree((name) =>
+    testInfo.outputPath(name),
+  );
+  const before = readFileSync(configPath, 'utf8');
+
+  try {
+    await openSettings(page);
+
+    await openRowMenu(page, 'alpha');
+    await page.getByRole('menuitem', { name: 'Rename…' }).click();
+    const input = page.getByRole('textbox', { name: 'Project name' });
+    await expect(input).toBeFocused();
+    await input.fill('Abandoned');
+    await page.keyboard.press('Escape');
+
+    await expect(input).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+
+    // And the list still takes input: another row's menu opens.
+    await openRowMenu(page, 'bravo');
+    await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeVisible();
+
+    expect(readFileSync(configPath, 'utf8')).toBe(before);
+  } finally {
+    await app.close();
+  }
+});
+
 test('re-pointing writes the new folder and leaves the rest of the entry alone', async ({}, testInfo) => {
   const { app, page, configPath, moved } = await launchWithThree((name) =>
     testInfo.outputPath(name),

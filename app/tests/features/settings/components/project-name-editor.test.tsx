@@ -90,6 +90,29 @@ describe('ProjectNameEditor', () => {
     expect(onCommit).not.toHaveBeenCalled();
   });
 
+  /**
+   * Settings is a Radix dialog, and Escape is how a dialog is dismissed. An
+   * Escape that bubbled would back out of Settings entirely rather than out of
+   * the rename — one keystroke losing the user's place for an edit they only
+   * meant to abandon.
+   */
+  it('does not let Escape reach the dialog that contains it', async () => {
+    const onAncestorKeyDown = vi.fn();
+    render(
+      <div onKeyDown={onAncestorKeyDown}>
+        <ProjectNameEditor
+          initialName="Old"
+          onCommit={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      </div>,
+    );
+
+    await userEvent.type(screen.getByRole('textbox'), '{Escape}');
+
+    expect(onAncestorKeyDown).not.toHaveBeenCalled();
+  });
+
   it('cancels rather than committing when the name is blank', async () => {
     const onCommit = vi.fn();
     const onCancel = vi.fn();

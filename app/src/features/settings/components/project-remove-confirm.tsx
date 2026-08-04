@@ -69,12 +69,21 @@ export function ProjectRemoveConfirm({
    * than a gap.
    */
   const escapes = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') onCancel();
+    if (event.key !== 'Escape') return;
+    /*
+      Stops bubble-phase ancestors seeing it. Keeping the settings dialog open
+      is a separate matter — Radix decides on a document-capture listener that
+      runs first, which `data-escape-scope` below is what answers.
+    */
+    event.stopPropagation();
+    onCancel();
   };
 
   return (
     <div
       role="alertdialog"
+      // Claims Escape from the settings dialog — see `settings-overlay.tsx`.
+      data-escape-scope=""
       aria-label={`Remove ${projectName}?`}
       className="border-b border-border-soft bg-red/8 px-3 py-2.5 last:border-b-0"
     >

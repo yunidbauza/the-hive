@@ -78,4 +78,23 @@ describe('ProjectRemoveConfirm', () => {
     expect(props.onCancel).toHaveBeenCalledTimes(1);
     expect(props.onConfirm).not.toHaveBeenCalled();
   });
+
+  /** Settings is a Radix dialog; a bubbling Escape would dismiss all of it. */
+  it('does not let Escape reach the dialog that contains it', async () => {
+    const onAncestorKeyDown = vi.fn();
+    render(
+      <div onKeyDown={onAncestorKeyDown}>
+        <ProjectRemoveConfirm
+          projectName="A"
+          liveSessionCount={0}
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      </div>,
+    );
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(onAncestorKeyDown).not.toHaveBeenCalled();
+  });
 });
