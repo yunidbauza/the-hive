@@ -126,6 +126,56 @@ export interface CommandDiagnostic {
 }
 
 /**
+ * One configured variable, and what the shell actually ended up with (story
+ * 108).
+ *
+ * The design decision this exists to make observable: injected environment
+ * is applied before the shell starts, and a login shell's rc file — which
+ * runs afterward — can overwrite anything set here. `overridden` is the
+ * user-facing signal for exactly that; `actual: null` is the sub-case where
+ * the rc file did not merely change the value but dropped the variable
+ * entirely, which the view names differently ("dropped" vs "overridden by").
+ */
+export interface EnvVarVerdict {
+  key: string;
+  /** What was injected — the value from the merged workspace+project env. */
+  configured: string;
+  /** What the shell reported for this key, or `null` if it had none at all. */
+  actual: string | null;
+  /** True when the shell reported a different value than was injected. */
+  overridden: boolean;
+}
+
+/**
+ * Why a configured variable did or did not survive to reach the shell's own
+ * environment (story 108).
+ *
+ * Scoped to one project's runtime, exactly like {@link CommandDiagnostic} —
+ * the shell probed is the shell that project's sessions would actually spawn,
+ * via the same `effectiveRuntime`. Only the variables the user configured are
+ * reported; see {@link EnvVarVerdict} and `compareEnv` for why dumping the
+ * shell's whole environment would be the wrong answer.
+ */
+export interface EnvDiagnostic {
+  /** The project the diagnostic ran for, or `null` for the top-level env. */
+  projectId: string | null;
+  /** The shell that was probed — `effectiveRuntime(...).shell`. */
+  shell: string;
+  /**
+   * Present when the probe itself could not run — the shell could not be
+   * started, or did not exit cleanly. `vars` is always empty when this is
+   * set: a failed observation is not a partial one.
+   */
+  error: string | null;
+  vars: EnvVarVerdict[];
+}
+
+/** Which project's environment to diagnose. Omitted id means the top-level env. */
+export interface DiagnoseEnvRequest {
+  id?: string;
+}
+
+/**
  * Which events raise an OS notification (story 106).
  *
  * Only classes backed by an event main can actually observe. There is

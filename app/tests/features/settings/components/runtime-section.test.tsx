@@ -6,6 +6,7 @@ import {
   emptySnapshot,
   type CommandDiagnostic,
   type ConfigSnapshot,
+  type EnvDiagnostic,
   type ProjectConfig,
 } from '@shared/config-contract';
 
@@ -15,6 +16,7 @@ import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config
 const setRuntimeConfig = vi.fn();
 const setProjectRuntimeConfig = vi.fn();
 const diagnoseAgentCommand = vi.fn();
+const diagnoseSessionEnv = vi.fn();
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -23,6 +25,7 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
     setRuntimeConfig: (request: unknown) => setRuntimeConfig(request),
     setProjectRuntimeConfig: (request: unknown) => setProjectRuntimeConfig(request),
     diagnoseAgentCommand: (request: unknown) => diagnoseAgentCommand(request),
+    diagnoseSessionEnv: (request: unknown) => diagnoseSessionEnv(request),
   };
 });
 
@@ -50,6 +53,7 @@ const install = (over: Partial<ConfigSnapshot> = {}) => {
 beforeEach(() => {
   vi.clearAllMocks();
   diagnoseAgentCommand.mockResolvedValue(null);
+  diagnoseSessionEnv.mockResolvedValue(null);
   resetProjectConfig();
 });
 
@@ -340,7 +344,7 @@ describe('RuntimeSection — diagnostic', () => {
       'apfm-web',
     );
     await user.click(
-      screen.getByRole('button', { name: /Check this project/ }),
+      screen.getByRole('button', { name: /Check this project’s command/ }),
     );
 
     expect(diagnoseAgentCommand).toHaveBeenCalledWith({ id: 'apfm-web' });
@@ -354,13 +358,100 @@ describe('RuntimeSection — diagnostic', () => {
 
     const select = screen.getByRole('combobox', { name: 'Project' });
     await user.selectOptions(select, 'a');
-    await user.click(screen.getByRole('button', { name: /Check this project/ }));
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s command/ }),
+    );
     expect(await screen.findByText('/usr/bin/claude')).toBeInTheDocument();
 
     await user.selectOptions(select, 'b');
 
     // The old verdict describes the old project's PATH; leaving it on screen
     // next to a new selection would be actively misleading.
+    expect(screen.queryByText('/usr/bin/claude')).not.toBeInTheDocument();
+  });
+});
+
+describe('RuntimeSection — environment diagnostic', () => {
+  const kept: EnvDiagnostic = {
+    projectId: null,
+    shell: '/bin/zsh',
+    error: null,
+    vars: [{ key: 'AWS_PROFILE', configured: 'hive', actual: 'hive', overridden: false }],
+  };
+
+  it('asks about the default shell when no project is picked', async () => {
+    const user = userEvent.setup();
+    diagnoseSessionEnv.mockResolvedValue(kept);
+    install();
+    render(<RuntimeSection />);
+
+    await user.click(screen.getByRole('button', { name: 'Check the default shell' }));
+
+    expect(diagnoseSessionEnv).toHaveBeenCalledWith({});
+    expect(await screen.findByText('AWS_PROFILE')).toBeInTheDocument();
+  });
+
+  it('asks about the selected project’s shell', async () => {
+    const user = userEvent.setup();
+    diagnoseSessionEnv.mockResolvedValue({ ...kept, projectId: 'apfm-web' });
+    install({ projects: [entry({ id: 'apfm-web' })] });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'apfm-web',
+    );
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s shell/ }),
+    );
+
+    expect(diagnoseSessionEnv).toHaveBeenCalledWith({ id: 'apfm-web' });
+  });
+
+  it('drops a stale env verdict when the project changes', async () => {
+    const user = userEvent.setup();
+    diagnoseSessionEnv.mockResolvedValue(kept);
+    install({ projects: [entry({ id: 'a' }), entry({ id: 'b' })] });
+    render(<RuntimeSection />);
+
+    const select = screen.getByRole('combobox', { name: 'Project' });
+    await user.selectOptions(select, 'a');
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s shell/ }),
+    );
+    expect(await screen.findByText('AWS_PROFILE')).toBeInTheDocument();
+
+    await user.selectOptions(select, 'b');
+
+    // The old verdict describes the old project's shell; leaving it on
+    // screen next to a new selection would be actively misleading.
+    expect(screen.queryByText('AWS_PROFILE')).not.toBeInTheDocument();
+  });
+
+  it('also drops a stale command verdict when the project changes, independently', async () => {
+    const user = userEvent.setup();
+    diagnoseAgentCommand.mockResolvedValue({
+      projectId: null,
+      command: 'claude',
+      isPath: false,
+      resolved: '/usr/bin/claude',
+      path: '/usr/bin',
+      probes: [{ directory: '/usr/bin', found: true }],
+    });
+    install({ projects: [entry({ id: 'a' }), entry({ id: 'b' })] });
+    render(<RuntimeSection />);
+
+    const select = screen.getByRole('combobox', { name: 'Project' });
+    await user.selectOptions(select, 'a');
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s command/ }),
+    );
+    expect(await screen.findByText('/usr/bin/claude')).toBeInTheDocument();
+
+    await user.selectOptions(select, 'b');
+
+    // The two diagnostics are cleared independently — switching projects must
+    // not leave either verdict behind.
     expect(screen.queryByText('/usr/bin/claude')).not.toBeInTheDocument();
   });
 });

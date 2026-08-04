@@ -2,6 +2,7 @@ import type {
   AddProjectRequest,
   CloneRequest,
   DiagnoseCommandRequest,
+  DiagnoseEnvRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
@@ -586,5 +587,21 @@ export function parseDiagnoseCommandRequest(
     ...(raw.id !== undefined
       ? { id: assertId(raw.id, 'diagnoseCommand.id') }
       : {}),
+  };
+}
+
+/**
+ * Which project's environment to diagnose (story 108). An absent id means the
+ * top-level env.
+ *
+ * A separate guard from {@link parseDiagnoseCommandRequest} rather than a
+ * shared one, even though the shape is identical — its error messages are
+ * labelled `diagnoseEnv.*`, so a rejected payload names the channel that
+ * actually rejected it rather than the unrelated one next to it.
+ */
+export function parseDiagnoseEnvRequest(input: unknown): DiagnoseEnvRequest {
+  const raw = assertShape(input, [], 'diagnoseEnv', ['id']);
+  return {
+    ...(raw.id !== undefined ? { id: assertId(raw.id, 'diagnoseEnv.id') } : {}),
   };
 }

@@ -13,12 +13,14 @@ import type {
   CloneStartResult,
   CommandDiagnostic,
   ConfigSnapshot,
+  EnvDiagnostic,
 } from '@shared/config-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
   parseCloneRequest,
   parseDiagnoseCommandRequest,
+  parseDiagnoseEnvRequest,
   parseSpawnRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
@@ -53,6 +55,7 @@ import {
   setProjectRuntime,
   setRuntime,
 } from '../config';
+import { diagnoseEnv } from '../config/env-diagnostic';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { readGhStatus, runCommand } from '../integrations/gh';
 import { createNotifier } from '../notifications';
@@ -342,6 +345,26 @@ export function registerIpcHandlers(): void {
       effectiveRuntime(snapshot, project),
       project?.id ?? null,
     );
+  });
+
+  /**
+   * The environment diagnostic (story 108) — read-only, so no write path.
+   *
+   * Resolved through the same `effectiveRuntime` as `configDiagnoseCommand`,
+   * for the identical reason: the shell probed must be the shell that
+   * project's sessions would actually spawn, or the diagnostic answers for an
+   * environment nobody is running in. An unknown id falls back to the
+   * top-level env rather than throwing, matching `configDiagnoseCommand`.
+   */
+  handle(CH.configDiagnoseEnv, (_event, payload): EnvDiagnostic => {
+    const request = parseDiagnoseEnvRequest(payload);
+    const snapshot = getConfig();
+    const project =
+      request.id === undefined
+        ? null
+        : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
+
+    return diagnoseEnv(effectiveRuntime(snapshot, project), project?.id ?? null);
   });
 
   /**

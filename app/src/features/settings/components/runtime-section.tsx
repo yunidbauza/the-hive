@@ -3,15 +3,17 @@ import { useEffect, useState } from 'react';
 import { SelectField } from '@components/ui/select-field';
 import { TextField } from '@components/ui/text-field';
 import { CommandDiagnosticView } from '@features/settings/components/command-diagnostic-view';
+import { EnvDiagnosticView } from '@features/settings/components/env-diagnostic-view';
 import { EnvEditor } from '@features/settings/components/env-editor';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
   diagnoseAgentCommand,
+  diagnoseSessionEnv,
   setProjectRuntimeConfig,
   setRuntimeConfig,
 } from '@lib/project-config';
-import type { CommandDiagnostic } from '@shared/config-contract';
+import type { CommandDiagnostic, EnvDiagnostic } from '@shared/config-contract';
 
 /**
  * Runtime settings — shell, agent command, per-project overrides (story 104).
@@ -41,6 +43,7 @@ export function RuntimeSection() {
   const [command, setCommand] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [diagnostic, setDiagnostic] = useState<CommandDiagnostic | null>(null);
+  const [envDiagnostic, setEnvDiagnostic] = useState<EnvDiagnostic | null>(null);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -90,6 +93,13 @@ export function RuntimeSection() {
       selectedId === '' ? {} : { id: selectedId },
     );
     setDiagnostic(result);
+  };
+
+  const runEnvDiagnostic = async () => {
+    const result = await diagnoseSessionEnv(
+      selectedId === '' ? {} : { id: selectedId },
+    );
+    setEnvDiagnostic(result);
   };
 
   return (
@@ -205,6 +215,9 @@ export function RuntimeSection() {
             // The old verdict describes the old project's PATH; keeping it on
             // screen next to a new selection would be actively misleading.
             setDiagnostic(null);
+            // Same reasoning: a verdict about the old project's shell/env
+            // would be actively misleading sitting next to a new selection.
+            setEnvDiagnostic(null);
           }}
           className="max-w-[240px]"
         />
@@ -237,6 +250,21 @@ export function RuntimeSection() {
         </button>
 
         {diagnostic ? <CommandDiagnosticView diagnostic={diagnostic} /> : null}
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Environment diagnostic"
+        description="Which variables survived the shell’s rc file."
+      >
+        <button
+          type="button"
+          onClick={() => void runEnvDiagnostic()}
+          className="w-fit rounded-[6px] border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink"
+        >
+          {selectedId === '' ? 'Check the default shell' : 'Check this project’s shell'}
+        </button>
+
+        {envDiagnostic ? <EnvDiagnosticView diagnostic={envDiagnostic} /> : null}
       </SettingsGroup>
     </div>
   );

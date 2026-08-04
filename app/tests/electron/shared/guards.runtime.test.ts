@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   parseDiagnoseCommandRequest,
+  parseDiagnoseEnvRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
 } from '../../../electron/shared/guards';
@@ -259,5 +260,22 @@ describe('parseDiagnoseCommandRequest', () => {
     expect(() => parseDiagnoseCommandRequest({ nope: 1 })).toThrow(
       /unexpected key/,
     );
+  });
+});
+
+describe('parseDiagnoseEnvRequest', () => {
+  it('accepts an empty request — that means the top-level env', () => {
+    expect(parseDiagnoseEnvRequest({})).toEqual({});
+  });
+
+  it('accepts an id', () => {
+    expect(parseDiagnoseEnvRequest({ id: 'apfm-web' })).toEqual({
+      id: 'apfm-web',
+    });
+  });
+
+  it('rejects a malformed id and unknown keys', () => {
+    expect(() => parseDiagnoseEnvRequest({ id: '../etc' })).toThrow();
+    expect(() => parseDiagnoseEnvRequest({ nope: 1 })).toThrow(/unexpected key/);
   });
 });
