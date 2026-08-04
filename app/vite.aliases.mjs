@@ -34,6 +34,5 @@ export const aliases = {
    * process, which the ESLint zones forbid outright.
    */
   '@shared': fileURLToPath(new URL('./electron/shared', import.meta.url)),
-  '@electron/main': fileURLToPath(new URL('./electron/main', import.meta.url)),
   '@': srcPath(),
 };

@@ -1,6 +1,7 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { defaultShell } from '@electron/main/config/shell';
+import { defaultShell } from '../../../../electron/main/config/shell';
 
 const info = (shell: string | null) => () => ({ shell });
 
