@@ -61,6 +61,7 @@ function makeFlow(overrides: Partial<CloneFlowOptions> = {}) {
 const exitOf = (openCommand: ReturnType<typeof vi.fn>) =>
   openCommand.mock.calls[0]![0].onExit as (result: {
     exitCode: number;
+    signal: number;
     lost: boolean;
     message?: string;
   }) => void;
@@ -133,7 +134,7 @@ describe('createCloneFlow', () => {
     const { flow, openCommand, addProject, emit } = makeFlow();
     flow.start(REQUEST);
 
-    exitOf(openCommand)({ exitCode: 0, lost: false });
+    exitOf(openCommand)({ exitCode: 0, signal: 0, lost: false });
 
     expect(addProject).toHaveBeenCalledWith({ path: TARGET }, 'cloned');
     expect(emit).toHaveBeenCalledWith({
@@ -148,7 +149,7 @@ describe('createCloneFlow', () => {
     const { flow, openCommand, addProject, rmSync, emit } = makeFlow();
     flow.start(REQUEST);
 
-    exitOf(openCommand)({ exitCode: 128, lost: false });
+    exitOf(openCommand)({ exitCode: 128, signal: 0, lost: false });
 
     expect(addProject).not.toHaveBeenCalled();
     expect(rmSync).toHaveBeenCalledWith(TARGET, { recursive: true, force: true });
@@ -163,6 +164,7 @@ describe('createCloneFlow', () => {
 
     exitOf(openCommand)({
       exitCode: -1,
+      signal: 0,
       lost: false,
       message: 'could not start git in /Users/me/Projects: ENOENT',
     });
@@ -176,11 +178,33 @@ describe('createCloneFlow', () => {
     expect(rmSync).toHaveBeenCalled();
   });
 
+  /**
+   * The bug an end-to-end cancel caught: `git clone` killed with SIGTERM exits
+   * **0 with signal 15**. A success check that read only the code registered a
+   * cancelled clone as a finished project — and, once `git` had removed its own
+   * partial checkout, registered a directory that was no longer there.
+   */
+  it('treats exit 0 with a signal as a failure, not a success', () => {
+    const { flow, openCommand, addProject, rmSync, emit } = makeFlow();
+    flow.start(REQUEST);
+
+    exitOf(openCommand)({ exitCode: 0, signal: 15, lost: false });
+
+    expect(addProject).not.toHaveBeenCalled();
+    expect(rmSync).toHaveBeenCalledWith(TARGET, { recursive: true, force: true });
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: false,
+        reason: 'the clone was stopped before it finished',
+      }),
+    );
+  });
+
   it('treats a lost host as a failure', () => {
     const { flow, openCommand, rmSync } = makeFlow();
     flow.start(REQUEST);
 
-    exitOf(openCommand)({ exitCode: -1, lost: true });
+    exitOf(openCommand)({ exitCode: -1, signal: 0, lost: true });
 
     expect(rmSync).toHaveBeenCalled();
   });
@@ -197,7 +221,7 @@ describe('createCloneFlow', () => {
      */
     expect(rmSync).not.toHaveBeenCalled();
 
-    exitOf(openCommand)({ exitCode: 143, lost: false });
+    exitOf(openCommand)({ exitCode: 143, signal: 15, lost: false });
     expect(rmSync).toHaveBeenCalledWith(TARGET, { recursive: true, force: true });
   });
 
@@ -211,7 +235,7 @@ describe('createCloneFlow', () => {
   it('allows a new clone once the previous one finished', () => {
     const { flow, openCommand } = makeFlow();
     flow.start(REQUEST);
-    exitOf(openCommand)({ exitCode: 0, lost: false });
+    exitOf(openCommand)({ exitCode: 0, signal: 0, lost: false });
 
     expect(flow.start(REQUEST)).toMatchObject({ ok: true });
   });

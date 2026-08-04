@@ -84,6 +84,15 @@ export interface OpenCommandRequest {
 export interface CommandExit {
   /** `-1` when nothing ran or nothing concluded — never a real status then. */
   exitCode: number;
+  /**
+   * The signal that ended it, as a number. **`0` means no signal.**
+   *
+   * Carried separately because a signalled process routinely reports
+   * `exitCode: 0` — a `git clone` killed with SIGTERM exits 0 with signal 15,
+   * and a caller that read only the code would call that a success. Every
+   * consumer must treat a non-zero signal as "did not finish".
+   */
+  signal: number;
   /** The host died under a process that may still have been working. */
   lost: boolean;
   /** A host-level failure — set when the binary could not start at all. */
@@ -225,7 +234,13 @@ export function createSessions(options: SessionsOptions): Sessions {
       case CH.ptyExit: {
         const data = payload as ExitEvent;
         send(channel, { ...data, sessionId: entityId } satisfies ExitEvent);
-        settleCommand(entityId, { exitCode: data.exitCode, lost: false });
+        settleCommand(entityId, {
+          exitCode: data.exitCode,
+          // `0` means no signal, which is also the right reading of an absent
+          // one — see `ExitEvent.signal`.
+          signal: data.signal ?? 0,
+          lost: false,
+        });
         settleExit(entityId);
         return;
       }
@@ -234,7 +249,7 @@ export function createSessions(options: SessionsOptions): Sessions {
         send(channel, { ...data, sessionId: entityId } satisfies SessionLostEvent);
         // No code: nothing concluded. `-1` is the sentinel a command caller
         // reads as "did not finish", never as an exit status.
-        settleCommand(entityId, { exitCode: -1, lost: true });
+        settleCommand(entityId, { exitCode: -1, signal: 0, lost: true });
         settleExit(entityId);
         return;
       }
@@ -288,6 +303,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
     settleCommand(entityId, {
       exitCode: -1,
+      signal: 0,
       lost: false,
       message: event.message,
     });

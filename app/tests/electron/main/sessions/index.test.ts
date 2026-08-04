@@ -30,7 +30,11 @@ let killed: string[];
 let sessions: Sessions;
 let supervisor: PtyHostSupervisor;
 let emitData: (event: { sessionId: string; chunk: string }) => void;
-let emitExit: (event: { sessionId: string; exitCode: number }) => void;
+let emitExit: (event: {
+  sessionId: string;
+  exitCode: number;
+  signal?: number;
+}) => void;
 /** Story 102: a host-level failure, which is how a bad binary reports. */
 let emitError: (event: { sessionId?: string; message: string }) => void;
 let emitLost: (event: { sessionId: string }) => void;
@@ -707,7 +711,7 @@ describe('openCommand', () => {
 
     emitExit({ sessionId: mintedFor('hive:clone'), exitCode: 0 });
 
-    expect(onExit).toHaveBeenCalledWith({ exitCode: 0, lost: false });
+    expect(onExit).toHaveBeenCalledWith({ exitCode: 0, signal: 0, lost: false });
   });
 
   it('calls onExit with lost when the host dies under it', () => {
@@ -716,7 +720,7 @@ describe('openCommand', () => {
 
     emitLost({ sessionId: mintedFor('hive:clone') });
 
-    expect(onExit).toHaveBeenCalledWith({ exitCode: -1, lost: true });
+    expect(onExit).toHaveBeenCalledWith({ exitCode: -1, signal: 0, lost: true });
   });
 
   /**
@@ -735,8 +739,23 @@ describe('openCommand', () => {
 
     expect(onExit).toHaveBeenCalledWith({
       exitCode: -1,
+      signal: 0,
       lost: false,
       message: 'could not start git in /Users/me/Projects: ENOENT',
+    });
+  });
+
+  /** A signalled process reports its signal separately from its code. */
+  it('carries the signal through, so a killed command is not a success', () => {
+    const onExit = vi.fn();
+    sessions.openCommand({ ...CLONE, onExit });
+
+    emitExit({ sessionId: mintedFor('hive:clone'), exitCode: 0, signal: 15 });
+
+    expect(onExit).toHaveBeenCalledWith({
+      exitCode: 0,
+      signal: 15,
+      lost: false,
     });
   });
 

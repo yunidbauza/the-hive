@@ -170,8 +170,17 @@ export function createCloneFlow(options: CloneFlowOptions): CloneFlow {
           args: ['clone', '--progress', '--', verdict.url, verdict.repoName],
           cols: request.cols,
           rows: request.rows,
-          onExit: ({ exitCode, lost, message }) => {
-            if (exitCode === 0 && !lost) {
+          onExit: ({ exitCode, signal, lost, message }) => {
+            /**
+             * `signal === 0` is as load-bearing as the exit code.
+             *
+             * A `git clone` killed with SIGTERM exits **0 with signal 15**, so a
+             * success check that read only the code would treat every cancelled
+             * clone as a finished one — registering a half-clone as a project,
+             * or, once `git` has removed its own partial checkout, registering a
+             * directory that is no longer there.
+             */
+            if (exitCode === 0 && signal === 0 && !lost) {
               finish(targetPath, null);
               return;
             }
@@ -186,7 +195,9 @@ export function createCloneFlow(options: CloneFlowOptions): CloneFlow {
               message ??
                 (lost
                   ? 'the terminal host stopped before the clone finished'
-                  : `git exited with code ${exitCode}`),
+                  : signal !== 0
+                    ? 'the clone was stopped before it finished'
+                    : `git exited with code ${exitCode}`),
             );
           },
         });
