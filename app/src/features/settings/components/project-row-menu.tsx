@@ -1,4 +1,5 @@
 import { DotsThreeVertical } from '@phosphor-icons/react';
+import { useRef } from 'react';
 
 import {
   DropdownMenu,
@@ -63,6 +64,25 @@ export function ProjectRowMenu({
   const item =
     'rounded-[4px] px-2 py-1 text-[12.5px] text-muted focus:bg-hover focus:text-ink data-[disabled]:opacity-35';
 
+  /**
+   * Whether the chosen item replaces the row with something that focuses itself.
+   *
+   * Radix returns focus to the trigger when the menu closes, which is right for
+   * *Move up* and *Change folder…* — the row is still a row afterwards. It is
+   * wrong for *Rename…* and *Remove*: both swap the row's contents for a
+   * control that focuses itself on mount, and the restore lands after that,
+   * stealing focus straight back. For rename that is not merely untidy — the
+   * steal blurs the input, blur commits, an unchanged name cancels, and the
+   * editor closes before a key is pressed.
+   */
+  const handsOffFocus = useRef(false);
+
+  /** Run an action, recording whether it takes focus with it. */
+  const select = (action: () => void, takesFocus = false) => {
+    handsOffFocus.current = takesFocus;
+    action();
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -73,6 +93,11 @@ export function ProjectRowMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
+        onCloseAutoFocus={(event) => {
+          if (!handsOffFocus.current) return;
+          handsOffFocus.current = false;
+          event.preventDefault();
+        }}
         className="min-w-[11rem] rounded-[7px] border border-border bg-panel p-1 shadow-lg"
       >
         {/*
@@ -82,14 +107,14 @@ export function ProjectRowMenu({
         */}
         <DropdownMenuItem
           disabled={!canMoveUp}
-          onSelect={onMoveUp}
+          onSelect={() => select(onMoveUp)}
           className={item}
         >
           Move up
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!canMoveDown}
-          onSelect={onMoveDown}
+          onSelect={() => select(onMoveDown)}
           className={item}
         >
           Move down
@@ -97,17 +122,23 @@ export function ProjectRowMenu({
 
         <DropdownMenuSeparator className="my-1 bg-border-soft" />
 
-        <DropdownMenuItem onSelect={onRename} className={item}>
+        <DropdownMenuItem
+          onSelect={() => select(onRename, true)}
+          className={item}
+        >
           Rename…
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onRepoint} className={item}>
+        <DropdownMenuItem
+          onSelect={() => select(onRepoint)}
+          className={item}
+        >
           Change folder…
         </DropdownMenuItem>
 
         <DropdownMenuSeparator className="my-1 bg-border-soft" />
 
         <DropdownMenuItem
-          onSelect={onRemove}
+          onSelect={() => select(onRemove, true)}
           className={`${item} text-red focus:text-red`}
         >
           Remove

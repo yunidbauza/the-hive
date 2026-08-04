@@ -44,9 +44,19 @@ export function ProjectNameEditor({
 
       Selected, not merely focused: the common edit replaces a name derived from
       the directory basename outright, which should not need a Cmd+A first.
+
+      **On the next frame, not synchronously.** This editor is opened from a
+      Radix menu item, and Radix moves focus as its menu unmounts — after this
+      effect runs. Focusing synchronously means the input holds focus for that
+      teardown, gets blurred by it, and blur on an unchanged name is a cancel:
+      the editor would close before a key was ever pressed. Waiting a frame lets
+      the menu finish, so there is no focus for it to take away.
     */
-    input.current?.focus();
-    input.current?.select();
+    const frame = requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   const commit = () => {

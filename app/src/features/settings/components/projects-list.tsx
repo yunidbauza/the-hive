@@ -1,0 +1,180 @@
+import { useMemo, useState } from 'react';
+
+import {
+  chooseProjectDirectory,
+  removeProjectFromConfig,
+  renameProjectInConfig,
+  reorderProjectsInConfig,
+  repointProjectInConfig,
+} from '@/lib/project-config';
+
+
+import { ProjectNameEditor } from '@features/settings/components/project-name-editor';
+import { ProjectRemoveConfirm } from '@features/settings/components/project-remove-confirm';
+import { ProjectRow } from '@features/settings/components/project-row';
+import { ProjectRowMenu } from '@features/settings/components/project-row-menu';
+import type { ProjectConfig } from '@shared/config-contract';
+import { useProjectsOwningLiveSessions } from '@stores/hive-store';
+
+interface ProjectsListProps {
+  /** The config's own entries, in file order. */
+  entries: readonly ProjectConfig[];
+}
+
+/** Which row, if any, has replaced its resting state with something else. */
+type RowMode = { id: string; kind: 'rename' | 'confirm-remove' } | null;
+
+/**
+ * The ordered list of the user's projects (story 103).
+ *
+ * Extracted from `projects-section.tsx` because the drag state has to live
+ * above the rows, and because a row that grew a grip, a menu, an inline editor
+ * and an inline confirmation would have been doing far too much alone. The
+ * section keeps what it was always about: the panes, the action row, errors and
+ * the footer.
+ *
+ * Every piece of state here is **local**, following the rule story 101 used for
+ * `choosing` and 102 for `view`: it is scoped to this list and dies with it, so
+ * promoting it to `ui-store` would put view state nobody else reads into a
+ * store shared with thirteen live terminals.
+ */
+export function ProjectsList({ entries }: ProjectsListProps) {
+  const owningLiveSessions = useProjectsOwningLiveSessions();
+
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [mode, setMode] = useState<RowMode>(null);
+
+  /**
+   * The order to paint right now.
+   *
+   * Derived from the drag rather than held in state. An optimistic copy of the
+   * list would have to be reconciled when the write returns, and the whole
+   * reason every mutating verb answers with a snapshot is that the renderer
+   * never holds a list the write already invalidated.
+   */
+  const ordered = useMemo(() => {
+    if (draggingId === null || dropIndex === null) return entries;
+    const from = entries.findIndex((item) => item.id === draggingId);
+    if (from === -1 || from === dropIndex) return entries;
+    const next = [...entries];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return entries;
+    next.splice(dropIndex, 0, moved);
+    return next;
+  }, [entries, draggingId, dropIndex]);
+
+  const commitOrder = (next: readonly ProjectConfig[]): void => {
+    const before = entries.map((item) => item.id);
+    const after = next.map((item) => item.id);
+    // Nothing moved: a drag that ended where it began, or a no-op menu click.
+    // Writing anyway would churn the file and log a pointless snapshot.
+    if (before.every((id, index) => id === after[index])) return;
+    void reorderProjectsInConfig({ ids: after });
+  };
+
+  /** Move one row by `delta`, the keyboard and menu path for reordering. */
+  const move = (id: string, delta: number): void => {
+    const from = entries.findIndex((item) => item.id === id);
+    const to = from + delta;
+    if (from === -1 || to < 0 || to >= entries.length) return;
+    const next = [...entries];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    commitOrder(next);
+  };
+
+  const endDrag = (): void => {
+    setDraggingId(null);
+    setDropIndex(null);
+  };
+
+  const onRepoint = async (id: string): Promise<void> => {
+    const path = await chooseProjectDirectory();
+    // Cancelled, or no bridge to ask. Nothing to write, and nothing to say —
+    // the user closed a dialog they opened. Same shape as the section's `onAdd`.
+    if (path === null) return;
+    await repointProjectInConfig({ id, path });
+  };
+
+  const onRemove = (id: string): void => {
+    if (owningLiveSessions.includes(id)) {
+      // Story 101 disabled this outright; the confirmation is what lifts it.
+      setMode({ id, kind: 'confirm-remove' });
+      return;
+    }
+    void removeProjectFromConfig({ id });
+  };
+
+  return (
+    <ul className="overflow-hidden rounded-[7px] border border-border">
+      {ordered.map((project) => {
+        const index = entries.findIndex((item) => item.id === project.id);
+        const active = mode?.id === project.id ? mode.kind : null;
+
+        if (active === 'confirm-remove') {
+          return (
+            <li key={project.id}>
+              <ProjectRemoveConfirm
+                projectName={project.name}
+                liveSessionCount={
+                  owningLiveSessions.filter((id) => id === project.id).length
+                }
+                onConfirm={() => {
+                  setMode(null);
+                  void removeProjectFromConfig({ id: project.id });
+                }}
+                onCancel={() => setMode(null)}
+              />
+            </li>
+          );
+        }
+
+        return (
+          <ProjectRow
+            key={project.id}
+            project={project}
+            isDragging={draggingId === project.id}
+            onDragStart={() => {
+              setDraggingId(project.id);
+              setDropIndex(index);
+            }}
+            onDragEnter={() => {
+              if (draggingId !== null) setDropIndex(index);
+            }}
+            onDrop={() => {
+              commitOrder(ordered);
+              endDrag();
+            }}
+            onDragEnd={endDrag}
+            editor={
+              active === 'rename' ? (
+                <ProjectNameEditor
+                  initialName={project.name}
+                  onCommit={(name) => {
+                    setMode(null);
+                    void renameProjectInConfig({ id: project.id, name });
+                  }}
+                  onCancel={() => setMode(null)}
+                />
+              ) : null
+            }
+            menu={
+              <ProjectRowMenu
+                projectName={project.name}
+                canMoveUp={index > 0}
+                canMoveDown={index < entries.length - 1}
+                onMoveUp={() => move(project.id, -1)}
+                onMoveDown={() => move(project.id, 1)}
+                onRename={() => setMode({ id: project.id, kind: 'rename' })}
+                onRepoint={() => void onRepoint(project.id)}
+                onRemove={() => onRemove(project.id)}
+              />
+            }
+          />
+        );
+      })}
+    </ul>
+  );
+}

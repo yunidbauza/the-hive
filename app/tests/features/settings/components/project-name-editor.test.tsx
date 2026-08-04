@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,7 +13,13 @@ import { ProjectNameEditor } from '@features/settings/components/project-name-ed
  * the convenience rather than the gate.
  */
 describe('ProjectNameEditor', () => {
-  it('focuses and selects the current name, so typing replaces it', () => {
+  /**
+   * Focus lands a frame late, deliberately — see the component. Radix moves
+   * focus as the menu that opened this unmounts, and holding focus through that
+   * teardown would get the editor blurred, and so closed, before a key is
+   * pressed.
+   */
+  it('focuses and selects the current name, so typing replaces it', async () => {
     render(
       <ProjectNameEditor
         initialName="The Hive"
@@ -23,7 +29,7 @@ describe('ProjectNameEditor', () => {
     );
     const input = screen.getByRole('textbox') as HTMLInputElement;
 
-    expect(input).toHaveFocus();
+    await waitFor(() => expect(input).toHaveFocus());
     // Selected, not merely focused: the common edit replaces a derived
     // basename outright, and that should not need a Cmd+A first.
     expect(input.selectionStart).toBe(0);

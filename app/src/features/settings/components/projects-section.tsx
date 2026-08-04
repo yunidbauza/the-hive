@@ -1,17 +1,12 @@
 import { GitBranch, Plus } from '@phosphor-icons/react';
 import { useState } from 'react';
 
-import {
-  addProjectToConfig,
-  chooseProjectDirectory,
-  removeProjectFromConfig,
-} from '@/lib/project-config';
-import type { ProjectRow as Row } from '@/types/entity';
+import { addProjectToConfig, chooseProjectDirectory } from '@/lib/project-config';
 
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
-import { ProjectRow } from '@features/settings/components/project-row';
+import { ProjectsList } from '@features/settings/components/projects-list';
 import { useProjectConfig } from '@hooks/use-project-config';
-import { useProjects, useProjectsOwningLiveSessions } from '@stores/hive-store';
+import { useProjects } from '@stores/hive-store';
 
 /**
  * The Projects section of settings (story 101).
@@ -40,7 +35,6 @@ import { useProjects, useProjectsOwningLiveSessions } from '@stores/hive-store';
 export function ProjectsSection() {
   const merged = useProjects();
   const snapshot = useProjectConfig();
-  const owningLiveSessions = useProjectsOwningLiveSessions();
 
   /**
    * Whether a dialog is open, so the button cannot be double-fired.
@@ -63,12 +57,6 @@ export function ProjectsSection() {
   const [view, setView] = useState<'list' | 'clone'>('list');
 
   const declared = snapshot?.projects ?? [];
-  const rows: Row[] = declared.map((entry) => ({
-    id: entry.id,
-    name: entry.name,
-    icon: entry.icon,
-    source: 'config',
-  }));
 
   /** Demo projects still on screen elsewhere, counted rather than listed. */
   const demoCount = merged.filter((project) => project.source === 'demo').length;
@@ -87,10 +75,6 @@ export function ProjectsSection() {
     }
   };
 
-  const onRemove = (id: string) => {
-    void removeProjectFromConfig({ id });
-  };
-
   if (view === 'clone') {
     return <CloneRepoView onDone={() => setView('list')} />;
   }
@@ -104,7 +88,7 @@ export function ProjectsSection() {
         </p>
       </div>
 
-      {rows.length === 0 ? (
+      {declared.length === 0 ? (
         <div className="flex flex-col items-center gap-1 rounded-[7px] border border-dashed border-border px-4 py-6 text-center">
           <span className="text-[13px] text-muted">No projects yet.</span>
           <span className="text-[11.5px] text-subtle">
@@ -112,26 +96,7 @@ export function ProjectsSection() {
           </span>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-[7px] border border-border">
-          {rows.map((project) => {
-            const entry = declared.find((item) => item.id === project.id);
-            return (
-              <ProjectRow
-                key={project.id}
-                project={project}
-                detail={entry?.path ?? 'unresolved'}
-                isRepo={entry?.isRepo ?? true}
-                removeBlockedBy={
-                  owningLiveSessions.includes(project.id)
-                    ? // Story 103 owns the confirmation flow that lifts this.
-                      'this project has live sessions — close them first'
-                    : null
-                }
-                onRemove={onRemove}
-              />
-            );
-          })}
-        </div>
+        <ProjectsList entries={declared} />
       )}
 
       {/*

@@ -189,28 +189,39 @@ describe('ProjectsSection', () => {
     });
   });
 
+  /**
+   * Removing moved into the row's overflow menu in story 103, and the disabled
+   * button this used to assert became a confirmation. The behaviour now lives
+   * in `projects-list.test.tsx`; what the section still owes is that a row's
+   * actions are reachable at all from here.
+   */
   describe('removing', () => {
     it('removes a config project that owns no live sessions', async () => {
       const user = userEvent.setup();
       seed([entry({ id: 'the-hive', name: 'The Hive' })]);
 
       render(<ProjectsSection />);
-      await user.click(screen.getByRole('button', { name: 'Remove The Hive' }));
+      await user.click(
+        screen.getByRole('button', { name: 'Actions for The Hive' }),
+      );
+      await user.click(screen.getByRole('menuitem', { name: /remove/i }));
 
       expect(removeProjectFromConfig).toHaveBeenCalledWith({ id: 'the-hive' });
     });
 
-    it('disables remove for a config project that owns live sessions', () => {
+    it('confirms instead of removing when the project owns live sessions', async () => {
+      const user = userEvent.setup();
       // The fixtures already run live sessions on apfm-web, so declaring it in
-      // the config produces a row that owns live sessions — the case story 103
-      // will unlock with a confirmation flow.
+      // the config produces a row that owns live sessions — the case story 101
+      // disabled and this story unlocks with a confirmation.
       seed([entry({ id: 'apfm-web', name: 'APFM' })]);
 
       render(<ProjectsSection />);
+      await user.click(screen.getByRole('button', { name: 'Actions for APFM' }));
+      await user.click(screen.getByRole('menuitem', { name: /remove/i }));
 
-      const remove = screen.getByRole('button', { name: 'Remove APFM' });
-      expect(remove).toBeDisabled();
-      expect(remove).toHaveAttribute('title', expect.stringMatching(/live sessions/));
+      expect(removeProjectFromConfig).not.toHaveBeenCalled();
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     });
   });
 
