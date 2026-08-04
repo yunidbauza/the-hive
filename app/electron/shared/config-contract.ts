@@ -166,6 +166,49 @@ export interface RemoveProjectRequest {
 }
 
 /**
+ * Payload of `config:rename-project` (story 103).
+ *
+ * `name` only. The `id` is never rewritten: sessions reference projects by
+ * `entity.project`, so an id that drifted when a folder was renamed would
+ * strand them. The display name is what the user edits; the id is machinery.
+ */
+export interface RenameProjectRequest {
+  id: string;
+  name: string;
+}
+
+/**
+ * Payload of `config:repoint-project` (story 103).
+ *
+ * The path is re-validated in main from scratch, exactly like
+ * {@link AddProjectRequest} — the native dialog is a UX step, not a capability
+ * grant. `origin` is absent on purpose: re-pointing changes where a project
+ * *is*, never where it came from, and the mutation spreads the existing entry
+ * so a cloned project stays cloned without this having to say so.
+ */
+export interface RepointProjectRequest {
+  id: string;
+  path: string;
+}
+
+/**
+ * Payload of `config:reorder-projects` (story 103).
+ *
+ * The **whole** ordering, not a delta. Both input paths — a drop and a menu
+ * item — produce a full list, the verb is idempotent, and it can be validated
+ * exactly: main requires these ids to be a permutation of the ids on disk at
+ * write time.
+ *
+ * That check is the reason for the shape. The config is deliberately not
+ * watched (story 107 owns reload), so the renderer's list can be older than the
+ * file; a delta applied to a config someone hand-edited in between would
+ * silently drop the project that edit added, or resurrect one it removed.
+ */
+export interface ReorderProjectsRequest {
+  ids: readonly string[];
+}
+
+/**
  * The entity id a clone's terminal runs under (story 102).
  *
  * Reserved, single, and not a real entity: it is the id the existing PTY

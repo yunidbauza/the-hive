@@ -9,6 +9,9 @@ import {
   parseCloneRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
+  parseRenameProjectRequest,
+  parseReorderProjectsRequest,
+  parseRepointProjectRequest,
   parseResizeRequest,
   parseSpawnRequest,
   parseWriteRequest,
@@ -408,5 +411,142 @@ describe('CLONE_ENTITY_ID', () => {
    */
   it('cannot be produced by project-id derivation', () => {
     expect(CLONE_ENTITY_ID).toContain('.');
+  });
+});
+
+/**
+ * Story 103's three mutating payloads.
+ *
+ * Same matrix as story 101's: wrong type, missing field, extra field, and a
+ * prototype-polluting key. The additions specific to this story are the ones
+ * about *display* text — a name is rendered rather than resolved, so it is
+ * bounded and control-character free where a path deliberately is not.
+ */
+describe('parseRenameProjectRequest', () => {
+  it('accepts an id and a display name', () => {
+    expect(parseRenameProjectRequest({ id: 'the-hive', name: 'The Hive' })).toEqual({
+      id: 'the-hive',
+      name: 'The Hive',
+    });
+  });
+
+  it('trims the name, so a padded one cannot masquerade as different', () => {
+    expect(parseRenameProjectRequest({ id: 'a', name: '  The Hive  ' })).toEqual({
+      id: 'a',
+      name: 'The Hive',
+    });
+  });
+
+  it('rejects an empty or whitespace-only name', () => {
+    expect(() => parseRenameProjectRequest({ id: 'a', name: '' })).toThrow(
+      /must not be empty/,
+    );
+    expect(() => parseRenameProjectRequest({ id: 'a', name: '   ' })).toThrow(
+      /must not be empty/,
+    );
+  });
+
+  it('rejects control characters and over-long names', () => {
+    expect(() => parseRenameProjectRequest({ id: 'a', name: 'x\ny' })).toThrow(
+      /control characters/,
+    );
+    expect(() =>
+      parseRenameProjectRequest({ id: 'a', name: 'x'.repeat(4097) }),
+    ).toThrow(/too long/);
+  });
+
+  it('rejects unknown keys, __proto__ and a missing field', () => {
+    expect(() =>
+      parseRenameProjectRequest({ id: 'a', name: 'b', extra: 1 }),
+    ).toThrow(/unexpected key/);
+    expect(() =>
+      parseRenameProjectRequest(JSON.parse('{"id":"a","name":"b","__proto__":{}}')),
+    ).toThrow(/forbidden key/);
+    expect(() => parseRenameProjectRequest({ id: 'a' })).toThrow(/missing key/);
+  });
+
+  it('rejects a non-string name and a malformed id', () => {
+    expect(() => parseRenameProjectRequest({ id: 'a', name: 7 })).toThrow(
+      IpcValidationError,
+    );
+    expect(() => parseRenameProjectRequest({ id: 'a b', name: 'c' })).toThrow(
+      /renameProject.id/,
+    );
+  });
+});
+
+describe('parseRepointProjectRequest', () => {
+  it('accepts an id and a path, keeping the path verbatim', () => {
+    expect(
+      parseRepointProjectRequest({ id: 'the-hive', path: '~/Projects/hive' }),
+    ).toEqual({ id: 'the-hive', path: '~/Projects/hive' });
+  });
+
+  it('rejects an empty path and an unknown key', () => {
+    expect(() => parseRepointProjectRequest({ id: 'a', path: '  ' })).toThrow(
+      /expected a non-empty string/,
+    );
+    expect(() =>
+      parseRepointProjectRequest({ id: 'a', path: '/x', to: '/y' }),
+    ).toThrow(/unexpected key/);
+  });
+
+  it('rejects __proto__ and a missing field', () => {
+    expect(() =>
+      parseRepointProjectRequest(JSON.parse('{"id":"a","path":"/x","__proto__":{}}')),
+    ).toThrow(/forbidden key/);
+    expect(() => parseRepointProjectRequest({ id: 'a' })).toThrow(/missing key/);
+  });
+
+  /**
+   * A path is about to be `realpath`'d, so it gets the permissive guard — the
+   * same call `parseAddProjectRequest` makes. Main is the gate, not this.
+   */
+  it('does not bound the path the way it bounds a display name', () => {
+    const long = `/${'x'.repeat(5000)}`;
+    expect(parseRepointProjectRequest({ id: 'a', path: long }).path).toBe(long);
+  });
+});
+
+describe('parseReorderProjectsRequest', () => {
+  it('accepts an array of ids and returns them in order', () => {
+    expect(parseReorderProjectsRequest({ ids: ['a', 'b', 'c'] })).toEqual({
+      ids: ['a', 'b', 'c'],
+    });
+  });
+
+  it('accepts an empty list', () => {
+    expect(parseReorderProjectsRequest({ ids: [] })).toEqual({ ids: [] });
+  });
+
+  it('rejects a non-array', () => {
+    expect(() => parseReorderProjectsRequest({ ids: 'a' })).toThrow(
+      /expected an array/,
+    );
+  });
+
+  it('names the offending index when an id is malformed', () => {
+    expect(() => parseReorderProjectsRequest({ ids: ['a', 'a b'] })).toThrow(
+      /reorderProjects\.ids\[1\]/,
+    );
+  });
+
+  /**
+   * A duplicate can never be a permutation of the file's ids, so rejecting it
+   * here keeps the verb's own check a plain set comparison.
+   */
+  it('rejects a duplicate id', () => {
+    expect(() => parseReorderProjectsRequest({ ids: ['a', 'a'] })).toThrow(
+      /duplicate id/,
+    );
+  });
+
+  it('rejects unknown keys and __proto__', () => {
+    expect(() => parseReorderProjectsRequest({ ids: [], extra: 1 })).toThrow(
+      /unexpected key/,
+    );
+    expect(() =>
+      parseReorderProjectsRequest(JSON.parse('{"ids":[],"__proto__":{}}')),
+    ).toThrow(/forbidden key/);
   });
 });
