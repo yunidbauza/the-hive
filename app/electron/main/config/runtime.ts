@@ -1,13 +1,11 @@
-import { accessSync, constants, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join, sep } from 'node:path';
-
 import type {
   CommandDiagnostic,
   ConfigSnapshot,
   EffectiveRuntime,
-  PathProbe,
   ProjectConfig,
 } from '../../shared/config-contract';
+
+import { probeCommand } from './probe';
 
 /**
  * What a session actually spawns with, and why (story 104).
@@ -18,6 +16,11 @@ import type {
  * a diagnostic that resolved its own `PATH` would eventually reassure the user
  * about an environment no session runs in, which is exactly the failure it
  * exists to prevent.
+ *
+ * The filesystem search itself moved to `probe.ts` in story 106, when `gh`
+ * detection needed the identical question asked. That does not weaken the
+ * pairing above: choosing the command and the `PATH` — the part that must match
+ * the spawn path — still happens here.
  */
 
 /**
@@ -47,33 +50,6 @@ export function effectiveRuntime(
     shellFromProject,
     commandFromProject,
   };
-}
-
-/**
- * Whether a file exists and is executable by this process.
- *
- * `accessSync` with `X_OK` rather than reading the mode bits: the answer
- * depends on the process's uid/gid and on ACLs, and re-deriving that from
- * `statSync().mode` gets it wrong for exactly the users who have an unusual
- * setup — which is the population asking why `claude` was not found.
- */
-function isExecutable(candidate: string): boolean {
-  try {
-    if (!statSync(candidate).isFile()) return false;
-    accessSync(candidate, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Whether a file exists at all, executable or not. */
-function exists(candidate: string): boolean {
-  try {
-    return statSync(candidate).isFile();
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -110,56 +86,11 @@ export function diagnoseCommand(
   const command = runtime.claudeCommand;
   const path = runtime.env.PATH ?? baseEnv.PATH ?? '';
 
-  /**
-   * A command containing a separator is used as a path, not searched for.
-   *
-   * This mirrors what a shell does, and it matters here: reporting "not found
-   * on PATH" for `/opt/homebrew/bin/claude` would send the user editing a
-   * `PATH` that was never consulted.
-   */
-  const isPath = command.includes(sep) || command.includes('/');
+  // The search itself lives in `probe.ts` (story 106), because `gh` detection
+  // asks the identical question. What stays here is the part that is specific
+  // to *this* diagnostic: which command to look for, and which `PATH` the
+  // session would really use.
+  const { isPath, resolved, probes } = probeCommand(command, path);
 
-  if (isPath) {
-    /**
-     * A *relative* path is reported as unresolved rather than probed.
-     *
-     * It would be resolved against the session's cwd — the project directory —
-     * which this process does not share, so stat-ing it here would answer a
-     * different question than the one the user asked. Saying "not found" for
-     * `./bin/claude` is honest; claiming to have found it would not be.
-     */
-    return {
-      projectId,
-      command,
-      isPath: true,
-      resolved:
-        isAbsolute(command) && isExecutable(command) ? command : null,
-      path,
-      probes: [],
-    };
-  }
-
-  const probes: PathProbe[] = [];
-  let resolved: string | null = null;
-
-  for (const directory of path.split(delimiter)) {
-    // An empty entry means "the current directory" to some shells. Probing it
-    // would report a result that depends on a cwd this process does not share
-    // with the session, so it is skipped rather than guessed at.
-    if (directory === '') continue;
-
-    const candidate = join(directory, command);
-    const found = isExecutable(candidate);
-    const probe: PathProbe = { directory, found };
-
-    // The genuinely confusing case, called out rather than shown as "not
-    // found": the file is right there, and the reason it does not run is a
-    // missing +x bit.
-    if (!found && exists(candidate)) probe.notExecutable = true;
-
-    probes.push(probe);
-    if (found && resolved === null) resolved = candidate;
-  }
-
-  return { projectId, command, isPath: false, resolved, path, probes };
+  return { projectId, command, isPath, resolved, path, probes };
 }
