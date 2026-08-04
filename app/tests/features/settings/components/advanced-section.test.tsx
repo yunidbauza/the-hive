@@ -256,12 +256,23 @@ describe('AdvancedSection', () => {
     expect(screen.queryByText('paused')).not.toBeInTheDocument();
   });
 
+  /**
+   * Three states, and collapsing any two would make the pane lie.
+   *
+   * A failed channel is *not* "nothing has run" — that would assert a fact the
+   * pane does not have, which is the one thing this surface must never do.
+   */
   it('says so rather than inventing versions when the channel fails', async () => {
     readAppInfo.mockResolvedValue(null);
     render(<AdvancedSection />);
 
     expect(await screen.findByText('Reading…')).toBeInTheDocument();
     expect(screen.queryByText(/writes no log file/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/could not read diagnostics/i),
+    ).toBeInTheDocument();
+    // The claim it must not make: nothing was asked, so nothing is known.
+    expect(screen.queryByText(/no session has run yet/i)).not.toBeInTheDocument();
   });
 
   it('degrades to a sentence with no bridge', () => {

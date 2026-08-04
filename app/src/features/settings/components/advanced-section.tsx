@@ -61,12 +61,24 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 /**
+ * The keys of {@link PtyDiagnostics} that hold a number.
+ *
+ * Narrower than `keyof PtyDiagnostics` deliberately. The union also contains
+ * `sessionId` and `paused`, and **a boolean in JSX renders as nothing** — so a
+ * later edit adding `paused` to the table below would produce a silently blank
+ * cell rather than a type error. This makes that a type error.
+ */
+type CounterKey = {
+  [K in keyof PtyDiagnostics]: PtyDiagnostics[K] extends number ? K : never;
+}[keyof PtyDiagnostics];
+
+/**
  * The counters, in the order that reads as a story.
  *
  * `in` and `acked` bracket `unacked`, which is the number the water marks
  * compare and the one a stall shows up in first.
  */
-const COUNTERS: readonly { key: keyof PtyDiagnostics; label: string }[] = [
+const COUNTERS: readonly { key: CounterKey; label: string }[] = [
   { key: 'bytesIn', label: 'in' },
   { key: 'bytesAcked', label: 'acked' },
   { key: 'unacked', label: 'unacked' },
@@ -306,13 +318,23 @@ export function AdvancedSection() {
           </button>
         </div>
 
-        {info?.pty === undefined ? (
-          /*
-            Absent rather than empty is the distinction main deliberately keeps
-            — the field is omitted when nothing has run, so its presence means
-            something — and this pane keeps it rather than collapsing both to a
-            blank list.
-          */
+        {/*
+          Three states, and collapsing any two of them would make this pane lie.
+
+          `info === null` means the question could not be *asked* — no bridge, or
+          a failed channel. Saying "no session has run yet" there would assert a
+          fact we do not have, in the one pane that exists to be honest.
+
+          An absent `pty` means the question was asked and nothing has run. Main
+          omits the field rather than sending an empty array precisely so this
+          can be told apart from "sessions ran and moved no bytes", and that
+          distinction survives to the screen here.
+        */}
+        {info === null ? (
+          <p className="text-[12.5px] text-subtle">
+            Could not read diagnostics from the app.
+          </p>
+        ) : info.pty === undefined ? (
           <p className="text-[12.5px] text-subtle">
             No session has run yet, so there is nothing to count.
           </p>
