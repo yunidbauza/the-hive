@@ -66,10 +66,35 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     pty: Object.keys(window.hive!.pty).sort(),
     config: Object.keys(window.hive!.config).sort(),
     session: Object.keys(window.hive!.session).sort(),
+    integrations: Object.keys(window.hive!.integrations).sort(),
+    notifications: Object.keys(window.hive!.notifications).sort(),
   }));
 
   // Widening any of these lists is the alarm this test exists to raise.
-  expect(surface.top).toEqual(['appInfo', 'config', 'pty', 'session']);
+  /**
+   * Story 106 adds two top-level namespaces, and the bound still holds.
+   *
+   * `integrations.status` is the first verb behind which main executes another
+   * program, which is exactly the kind of addition this test exists to make
+   * deliberate. What keeps it inside story 082's posture: it takes **no
+   * argument at all**, so nothing from the renderer reaches the argv; main runs
+   * a resolved absolute path with a constant argv and no shell, bounded by a
+   * timeout; and it writes nothing and returns no token value — only which
+   * source would supply one.
+   *
+   * `notifications.onActivate` is a listener, not a capability: main → renderer
+   * only, and it grants the page nothing it could not already be told.
+   */
+  expect(surface.top).toEqual([
+    'appInfo',
+    'config',
+    'integrations',
+    'notifications',
+    'pty',
+    'session',
+  ]);
+  expect(surface.integrations).toEqual(['status']);
+  expect(surface.notifications).toEqual(['onActivate']);
   expect(surface.pty).toEqual([
     // Story 093 added `ack` — the renderer reporting what it has parsed, which
     // is what lets main apply backpressure.
@@ -160,6 +185,13 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * key by key against a whitelist pattern, with the terminal's own three
      * variables and `__proto__` refused outright.
      */
+    /**
+      * Story 106's `setNotifications` — a capability, and the mildest one on
+      * this list. It carries three booleans, takes no path, and goes through
+      * the same single write path as everything above it: the file the bridge
+      * can write is still exactly one, and it is still not named by the caller.
+      */
+    'setNotifications',
     'setProjectRuntime',
     'setRuntime',
     'startClone',
