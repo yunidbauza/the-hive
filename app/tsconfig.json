@@ -44,7 +44,8 @@
       "@config/*": ["./src/config/*"],
       /* Types only. A value import from here would pull main-process code into
          the renderer bundle and trip the ESLint zone (story 083). */
-      "@shared/*": ["./electron/shared/*"]
+      "@shared/*": ["./electron/shared/*"],
+      "@electron/main/*": ["./electron/main/*"]
     }
   },
   "include": ["src", "tests", "__mocks__"]
