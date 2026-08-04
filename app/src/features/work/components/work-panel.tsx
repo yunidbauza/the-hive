@@ -11,7 +11,7 @@ export function WorkPanel() {
   const tickets = useTickets();
 
   return (
-    <div data-panel="work" className="flex flex-col gap-2.5">
+    <div data-panel="work" className="flex flex-col gap-[var(--cc-list-gap)]">
       {tickets.map((ticket) => (
         <TicketCard key={ticket.key} ticket={ticket} />
       ))}

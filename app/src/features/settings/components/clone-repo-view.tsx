@@ -9,7 +9,7 @@ import {
   createCloneTransport,
   resetCloneChannel,
 } from '@lib/terminal/pty-transport';
-import { useTheme } from '@stores/ui-store';
+import { useTheme } from '@stores/appearance-store';
 
 /**
  * Cloning a repository, as a focused sub-view of Settings (story 102).

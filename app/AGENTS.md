@@ -141,13 +141,13 @@ conclusion stands regardless — see `docs/terminal-architecture.md`.)
 
 ## State management
 
-Two stores, split along what the user is *looking at* versus what the system
-*knows*. The split is not cosmetic — it keeps a keystroke in the picker from
-re-rendering thirteen live terminals.
+Three stores: what the user is *looking at*, what the system *knows*, what the
+user has *chosen*. Not cosmetic — it keeps a picker keystroke from re-rendering
+thirteen live terminals.
 
-- `src/stores/hive-store.ts` — domain state: entities, tickets, PRs, notifications,
-  feed, orchestrator transcript.
-- `src/stores/ui-store.ts` — view state: theme, tabs, selection, picker, rails.
+- `hive-store.ts` — domain: entities, tickets, PRs, notifications, feed, transcript.
+- `ui-store.ts` — view state: tabs, selection, picker, rails. **Never persisted.**
+- `appearance-store.ts` — theme, terminal font/size/scrollback, density. **Always persisted**, to `localStorage`, not the config file (`docs/state-and-data.md`).
 
 **Components never read a store object directly and never call `getState()`.**
 Every consumer goes through a named selector hook exported next to the store

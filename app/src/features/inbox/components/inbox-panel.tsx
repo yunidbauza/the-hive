@@ -17,7 +17,7 @@ export function InboxPanel() {
   const notifs = useNotifs();
 
   return (
-    <div data-panel="inbox" className="flex flex-col gap-2">
+    <div data-panel="inbox" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
       {notifs.map((notif, index) => (
         <NotificationCard
           key={`${notif.title}-${notif.time}-${index}`}

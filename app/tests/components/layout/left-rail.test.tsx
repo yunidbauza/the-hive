@@ -113,9 +113,11 @@ describe('LeftRail', () => {
     expect(rail()).not.toHaveClass('overflow-y-auto');
   });
 
-  it('keeps the rail at its fixed 268px', () => {
+  it('keeps the rail at a fixed, density-driven width', () => {
     render(<LeftRail />);
 
-    expect(rail()).toHaveClass('w-[268px]', 'shrink-0');
+    // 268px comfortable, narrower compact (story 105) — the token carries the
+    // number so a density change never re-renders the rail.
+    expect(rail()).toHaveClass('w-[var(--cc-rail-w-left)]', 'shrink-0');
   });
 });

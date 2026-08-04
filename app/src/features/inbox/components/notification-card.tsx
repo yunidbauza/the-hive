@@ -42,7 +42,7 @@ export function NotificationCard({ notif, index }: NotificationCardProps) {
         markRead(index);
       }}
       className={cn(
-        'flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left hover:bg-hover',
+        'flex items-start gap-2.5 rounded-xl border px-3 py-[var(--cc-card-py)] text-left hover:bg-hover',
         notif.unread ? 'border-border bg-chip' : 'border-border-soft',
       )}
     >

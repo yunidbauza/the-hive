@@ -13,8 +13,6 @@ import {
   useSetLeftTab,
   useSetSelIdx,
   useShowActivityRail,
-  useTheme,
-  useThemeActions,
   useToggleProject,
   useUiStore,
 } from '@stores/ui-store';
@@ -26,29 +24,7 @@ import {
  */
 describe('ui-store selectors', () => {
   beforeEach(() => {
-    document.body.removeAttribute('data-theme');
     useUiStore.getState().reset();
-  });
-
-  it('useTheme reports the active theme and follows changes', () => {
-    const { result } = renderHook(() => useTheme());
-    expect(result.current).toBe('dark');
-
-    act(() => {
-      useUiStore.getState().setTheme('light');
-    });
-
-    expect(result.current).toBe('light');
-  });
-
-  it('useThemeActions exposes the theme actions', () => {
-    const { result } = renderHook(() => useThemeActions());
-
-    act(() => {
-      result.current.toggleTheme();
-    });
-
-    expect(useUiStore.getState().theme).toBe('light');
   });
 
   it('useActiveTab and useOpenTab drive the center stage', () => {

@@ -104,6 +104,90 @@ describe('TerminalSurface', () => {
     expect(terminal().options.fontSize).toBe(16);
   });
 
+  it('honours an explicit font family and scrollback', () => {
+    const { transport } = fakeTransport();
+    render(
+      <TerminalSurface
+        transport={transport}
+        theme="dark"
+        fontFamily="Menlo, monospace"
+        scrollback={1000}
+      />,
+    );
+
+    expect(terminal().options).toMatchObject({
+      fontFamily: 'Menlo, monospace',
+      scrollback: 1000,
+    });
+  });
+
+  /**
+   * The behaviour story 105 exists to protect.
+   *
+   * Story 042 listed `fontSize` in the mount effect's deps and called it
+   * structural, which was true only while nothing set it. Once appearance
+   * became a live setting, a rebuild on every change would dispose the terminal
+   * — and disposing the terminal throws away the scrollback of every
+   * kept-alive instance. Changing a font size must not clear thirteen
+   * transcripts.
+   */
+  describe('appearance changes in place', () => {
+    it('applies a new font, size and scrollback without rebuilding', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" />,
+      );
+      const before = terminal();
+
+      rerender(
+        <TerminalSurface
+          transport={transport}
+          theme="dark"
+          fontFamily="Monaco, monospace"
+          fontSize={16}
+          scrollback={10_000}
+        />,
+      );
+
+      expect(terminalInstances).toHaveLength(1);
+      expect(before.disposed).toBe(false);
+      expect(terminal().options).toMatchObject({
+        fontFamily: 'Monaco, monospace',
+        fontSize: 16,
+        scrollback: 10_000,
+      });
+    });
+
+    it('refits afterwards, because the measured cell changed', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" />,
+      );
+      const [fitAddon] = fitAddonInstances as MockFitAddon[];
+
+      expect(fitAddon.fit).toHaveBeenCalledTimes(1); // mount only
+
+      rerender(<TerminalSurface transport={transport} theme="dark" fontSize={16} />);
+
+      // Without this the terminal keeps the old cols/rows, reports stale
+      // dimensions to its transport, and renders into a box that no longer fits.
+      expect(fitAddon.fit).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not refit when the appearance props are unchanged', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" fontSize={16} />,
+      );
+      const [fitAddon] = fitAddonInstances as MockFitAddon[];
+
+      rerender(<TerminalSurface transport={transport} theme="light" fontSize={16} />);
+
+      // A theme change has its own effect and costs no geometry.
+      expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('loads the fit and web-links addons and fits once on mount', () => {
     const { transport } = fakeTransport();
     render(<TerminalSurface transport={transport} theme="dark" />);

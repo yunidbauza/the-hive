@@ -1,6 +1,10 @@
 import { X } from '@phosphor-icons/react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
+import { useState, type ComponentType } from 'react';
 
+import { cn } from '@/lib/utils';
+
+import { AppearanceSection } from '@features/settings/components/appearance-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
 import { useSettingsActions } from '@stores/ui-store';
 
@@ -29,16 +33,44 @@ import { useSettingsActions } from '@stores/ui-store';
 /**
  * The section list.
  *
- * One entry, in a nav built for six. Story 101 ships Projects alone and stories
- * 104–107 fill the rest; a settings page that starts as a single pane and grows
- * a nav later is a settings page that gets redesigned twice. The other sections
- * are deliberately **absent rather than disabled** — a nav full of dead items
- * teaches the user that settings are broken.
+ * Story 101 shipped Projects alone; story 105 adds Appearance and, with it, the
+ * switching this nav only ever described. Stories 104, 106 and 107 fill the
+ * rest by adding a row here and an entry to `PANES` — nothing else.
+ *
+ * Sections stay **absent rather than disabled** until they exist: a nav full of
+ * dead items teaches the user that settings are broken.
  */
-const SECTIONS = [{ id: 'projects', label: 'Projects' }] as const;
+const SECTIONS = [
+  { id: 'projects', label: 'Projects' },
+  { id: 'appearance', label: 'Appearance' },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]['id'];
+
+/**
+ * Section id → pane, the same shape `left-rail.tsx` uses for its panels.
+ *
+ * A map rather than a chain of ternaries: adding story 104's section should be
+ * two lines and no control flow.
+ */
+const PANES: Record<SectionId, ComponentType> = {
+  projects: ProjectsSection,
+  appearance: AppearanceSection,
+};
 
 export function SettingsOverlay() {
   const { closeSettings } = useSettingsActions();
+
+  /**
+   * Component-local, deliberately not `ui-store`.
+   *
+   * Settings should always open on Projects. The realistic route in is the
+   * picker discovering it has no projects to offer (story 101), and reopening
+   * onto whichever pane was last visited would strand exactly that user in
+   * Appearance with no idea where the thing they came for went.
+   */
+  const [section, setSection] = useState<SectionId>('projects');
+  const Pane = PANES[section];
 
   return (
     <DialogPrimitive.Root
@@ -87,18 +119,32 @@ export function SettingsOverlay() {
             aria-label="Settings sections"
             className="flex flex-col gap-0.5 border-r border-border-soft p-3"
           >
-            {SECTIONS.map((section) => (
-              <span
-                key={section.id}
-                aria-current="page"
-                className="rounded-[5px] bg-active px-2.5 py-1 text-[13px] text-ink"
-              >
-                {section.label}
-              </span>
-            ))}
+            {SECTIONS.map((entry) => {
+              const active = entry.id === section;
+
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  // `page` rather than `true`: this nav selects which page of
+                  // settings is showing, which is what the token means.
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => setSection(entry.id)}
+                  className={cn(
+                    'rounded-[5px] px-2.5 py-1 text-left text-[13px] outline-none',
+                    'focus-visible:ring-1 focus-visible:ring-brand',
+                    active
+                      ? 'bg-active text-ink'
+                      : 'text-muted hover:bg-hover hover:text-ink',
+                  )}
+                >
+                  {entry.label}
+                </button>
+              );
+            })}
           </nav>
 
-          <ProjectsSection />
+          <Pane />
         </div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Root>

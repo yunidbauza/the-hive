@@ -19,10 +19,17 @@ import '@xterm/xterm/css/xterm.css';
 /** xterm's line-height is a multiple of the font size, not a CSS length. */
 const LINE_HEIGHT = 1.4;
 
-/** Deep enough that no fixture transcript can reach the top of the buffer. */
-const SCROLLBACK = 5000;
-
+/**
+ * Fallbacks for a caller that expresses no preference — the orchestrator
+ * console, and every test that renders a surface directly. The *settings* live
+ * in `lib/terminal/fonts.ts`; these are deliberately duplicated rather than
+ * imported, because this component may not depend on a module that exists to
+ * describe a user's choices. It takes a font stack and a number.
+ */
+const DEFAULT_FONT_FAMILY = "ui-monospace, Menlo, 'SF Mono', monospace";
 const DEFAULT_FONT_SIZE = 12.5;
+/** Deep enough that no fixture transcript can reach the top of the buffer. */
+const DEFAULT_SCROLLBACK = 5000;
 
 export interface TerminalSurfaceProps {
   /** The only channel in or out. See `lib/terminal/terminal-transport.ts`. */
@@ -34,7 +41,10 @@ export interface TerminalSurfaceProps {
    */
   id?: string;
   theme: TerminalTheme;
+  /** A CSS font stack, already resolved. This component knows nothing of fonts. */
+  fontFamily?: string;
   fontSize?: number;
+  scrollback?: number;
   /** Orchestrator console and every prototype view: input is a separate row. */
   readOnly?: boolean;
   /**
@@ -115,7 +125,9 @@ export function TerminalSurface({
   transport,
   id,
   theme,
+  fontFamily = DEFAULT_FONT_FAMILY,
   fontSize = DEFAULT_FONT_SIZE,
+  scrollback = DEFAULT_SCROLLBACK,
   readOnly = false,
   visible = true,
 }: TerminalSurfaceProps) {
@@ -151,10 +163,10 @@ export function TerminalSurface({
       convertEol: true,
       cursorBlink: !readOnly,
       disableStdin: readOnly,
-      fontFamily: "ui-monospace, Menlo, 'SF Mono', monospace",
+      fontFamily,
       fontSize,
       lineHeight: LINE_HEIGHT,
-      scrollback: SCROLLBACK,
+      scrollback,
       theme: buildXtermTheme(theme),
     });
 
@@ -230,19 +242,72 @@ export function TerminalSurface({
       setInstance(null);
     };
     /**
-     * `theme` and `transport` are deliberately absent: both are handled by
-     * their own effects below, so a theme toggle or a transport swap never
-     * destroys scrollback. `fontSize` and `readOnly` are structural — xterm
-     * cannot change `disableStdin` after construction — so they do rebuild.
+     * Only `container` and `readOnly` rebuild.
+     *
+     * `theme`, `transport`, and the three appearance options are absent because
+     * each is handled by an effect below — a rebuild disposes the terminal, and
+     * disposing the terminal throws away the scrollback of a kept-alive
+     * instance. Changing a font size should not clear thirteen transcripts.
+     *
+     * `readOnly` genuinely is structural: xterm cannot change `disableStdin`
+     * after construction, and the custom key handler is installed once.
+     *
+     * (Story 042 listed `fontSize` here and called it structural. That was true
+     * only while nothing set it — the prop existed and no caller passed one, so
+     * the rebuild path never ran. Story 105 made it a live setting.)
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [container, fontSize, readOnly]);
+  }, [container, readOnly]);
 
   /** Re-theme in place. Assigning `options.theme` preserves buffer content. */
   useEffect(() => {
     if (!instance) return;
     instance.terminal.options.theme = buildXtermTheme(theme);
   }, [instance, theme]);
+
+  /**
+   * Appearance in place (story 105), buffer intact.
+   *
+   * The refit is not optional and not defensive: font family and size change
+   * the measured cell, so without it the terminal keeps the old `cols`/`rows`,
+   * reports stale dimensions to its transport, and renders into a box that no
+   * longer matches. `fitPreservingBottom` is the same helper the resize
+   * observer uses, for the same reason — a reader parked at the end of a
+   * transcript should stay there.
+   *
+   * `scrollback` needs no refit (it changes buffer depth, not geometry) but
+   * shares the effect: three assignments and one fit is cheaper than two
+   * effects, and shrinking the buffer while the viewport is deep in it is
+   * exactly the case the bottom-preserving fit already handles.
+   */
+  const appearanceRef = useRef({ fontFamily, fontSize, scrollback });
+  useEffect(() => {
+    if (!instance) return;
+
+    const previous = appearanceRef.current;
+    appearanceRef.current = { fontFamily, fontSize, scrollback };
+
+    /**
+     * Nothing to do on the first run for a given instance: the mount effect
+     * constructed the terminal with exactly these values. Applying them again
+     * would be harmless, but the *fit* would not — it would double the number
+     * of fits on mount, and the fit count is what the geometry tests assert
+     * because it is what tells the transport how big the pty should be.
+     */
+    if (
+      previous.fontFamily === fontFamily &&
+      previous.fontSize === fontSize &&
+      previous.scrollback === scrollback
+    ) {
+      return;
+    }
+
+    const { terminal } = instance;
+    terminal.options.fontFamily = fontFamily;
+    terminal.options.fontSize = fontSize;
+    terminal.options.scrollback = scrollback;
+    fitPreservingBottom(instance);
+  }, [instance, fontFamily, fontSize, scrollback]);
 
   /** Backend output in, keystrokes out. */
   useEffect(() => {

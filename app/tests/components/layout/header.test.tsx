@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Header } from '@components/layout/header';
+import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
@@ -14,8 +15,17 @@ import { useUiStore } from '@stores/ui-store';
 describe('Header', () => {
   beforeEach(() => {
     document.body.removeAttribute('data-theme');
+    localStorage.clear();
     useHiveStore.getState().reset();
     useUiStore.getState().reset();
+    /**
+     * Pinned to dark rather than left on the story-105 default of `system`.
+     * `system` resolves against `prefers-color-scheme`, which the test
+     * environment answers for us — so leaving it would make the header's label
+     * depend on happy-dom's media-query default rather than on the header.
+     */
+    useAppearanceStore.getState().reset();
+    useAppearanceStore.getState().setTheme('dark');
   });
 
   it('renders as the page banner at the fixed 56px height', () => {
@@ -116,7 +126,7 @@ describe('Header', () => {
         screen.getByRole('button', { name: 'Switch to light theme' }),
       );
 
-      expect(useUiStore.getState().theme).toBe('light');
+      expect(useAppearanceStore.getState().theme).toBe('light');
       expect(document.body.getAttribute('data-theme')).toBe('light');
       expect(
         screen.getByRole('button', { name: 'Switch to dark theme' }),

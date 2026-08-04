@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -12,9 +12,10 @@ import { useUiStore } from '@stores/ui-store';
 /**
  * The settings overlay shell (story 101).
  *
- * The section list is the part worth pinning: it ships with one entry in a nav
- * built for six, and the other five are *absent* rather than disabled — a nav
- * full of dead items teaches the user that settings are broken.
+ * The section list is the part worth pinning: story 105 turned it into a real
+ * switcher, and the sections that do not exist yet are *absent* rather than
+ * disabled — a nav full of dead items teaches the user that settings are
+ * broken.
  */
 describe('SettingsOverlay', () => {
   beforeEach(() => {
@@ -38,17 +39,50 @@ describe('SettingsOverlay', () => {
     ).toBeInTheDocument();
   });
 
-  it('ships one section, in a nav built for six', () => {
+  it('ships the two sections that exist, and no placeholders', () => {
     render(<SettingsOverlay />);
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
 
     expect(nav).toBeInTheDocument();
-    // Stories 104–107 fill the rest. Rendering them now as disabled items would
-    // teach the user that settings are broken.
-    for (const absent of ['Runtime', 'Appearance', 'Integrations', 'Advanced']) {
+    expect(within(nav).getByRole('button', { name: 'Projects' })).toBeInTheDocument();
+    expect(
+      within(nav).getByRole('button', { name: 'Appearance' }),
+    ).toBeInTheDocument();
+
+    // Stories 104, 106 and 107 fill the rest. Rendering them now as disabled
+    // items would teach the user that settings are broken.
+    for (const absent of ['Runtime', 'Integrations', 'Advanced']) {
       expect(screen.queryByText(absent)).not.toBeInTheDocument();
     }
+  });
+
+  it('opens on Projects and switches panes on click', async () => {
+    const user = userEvent.setup();
+    render(<SettingsOverlay />);
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const projects = within(nav).getByRole('button', { name: 'Projects' });
+    const appearance = within(nav).getByRole('button', { name: 'Appearance' });
+
+    // Always Projects on open: the realistic route in is the picker finding no
+    // projects to offer, and landing that user in Appearance would strand them.
+    expect(projects).toHaveAttribute('aria-current', 'page');
+    expect(appearance).not.toHaveAttribute('aria-current');
+
+    await user.click(appearance);
+
+    expect(
+      screen.getByRole('heading', { name: 'Appearance', level: 2 }),
+    ).toBeInTheDocument();
+    expect(appearance).toHaveAttribute('aria-current', 'page');
+    expect(projects).not.toHaveAttribute('aria-current');
+
+    await user.click(projects);
+
+    expect(
+      screen.getByRole('heading', { name: 'Projects', level: 2 }),
+    ).toBeInTheDocument();
   });
 
   it('closes on the close button', async () => {

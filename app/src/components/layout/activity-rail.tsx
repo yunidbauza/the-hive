@@ -58,7 +58,7 @@ export function ActivityRail() {
   return (
     <aside
       aria-label="Activity"
-      className="flex w-[316px] shrink-0 flex-col gap-[18px] border-l border-border-soft bg-panel px-3.5 pt-3.5 pb-5"
+      className="flex w-[var(--cc-rail-w-right)] shrink-0 flex-col gap-[var(--cc-rail-gap)] border-l border-border-soft bg-panel px-3.5 pt-3.5 pb-5"
     >
       <TabBar
         tabs={tabs}

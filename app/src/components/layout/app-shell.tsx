@@ -1,8 +1,11 @@
+import { useEffect } from 'react';
+
 import { ActivityRail } from '@components/layout/activity-rail';
 import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
+import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
 
 /**
@@ -37,6 +40,17 @@ export function AppShell() {
    * ignore twelve messages each.
    */
   useSessionStatus();
+
+  /**
+   * Follow the OS while the app is open (story 105).
+   *
+   * The store already read `prefers-color-scheme` once, synchronously, when it
+   * was constructed — that is what paints the right theme on the first frame.
+   * This subscribes to *changes*, which is a different thing and needs a
+   * lifetime to be torn down with. One listener for the app, alongside the one
+   * session-status subscription, for the same reason.
+   */
+  useEffect(() => watchSystemTheme(), []);
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">

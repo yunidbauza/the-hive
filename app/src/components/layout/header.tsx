@@ -9,13 +9,9 @@ import { ModelChip } from '@components/layout/model-chip';
 import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
 import { isDesktop } from '@config/runtime';
+import { useTheme, useThemeActions } from '@stores/appearance-store';
 import { useMarkAllRead, useUnreadCount } from '@stores/hive-store';
-import {
-  usePickerActions,
-  useSettingsActions,
-  useTheme,
-  useThemeActions,
-} from '@stores/ui-store';
+import { usePickerActions, useSettingsActions } from '@stores/ui-store';
 
 /**
  * Persistent header — 56px, never scrolls, never collapses.

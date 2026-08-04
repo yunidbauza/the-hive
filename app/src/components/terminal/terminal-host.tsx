@@ -16,7 +16,10 @@ interface TerminalHostProps {
   /** Which entry is on screen. `null` shows nothing. */
   activeId: string | null;
   theme: TerminalTheme;
+  /** Appearance, already resolved (story 105). Forwarded verbatim. */
+  fontFamily?: string;
   fontSize?: number;
+  scrollback?: number;
 }
 
 /**
@@ -36,7 +39,9 @@ export function TerminalHost({
   entries,
   activeId,
   theme,
+  fontFamily,
   fontSize,
+  scrollback,
 }: TerminalHostProps) {
   const [visited, setVisited] = useState<string[]>([]);
 
@@ -65,7 +70,9 @@ export function TerminalHost({
           id={entry.id}
           transport={entry.transport}
           theme={theme}
+          fontFamily={fontFamily}
           fontSize={fontSize}
+          scrollback={scrollback}
           readOnly={entry.readOnly}
           visible={entry.id === activeId}
         />

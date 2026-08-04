@@ -28,7 +28,7 @@ export function TicketCard({ ticket }: TicketCardProps) {
   const prs = useTicketPrs(ticket.key);
 
   return (
-    <article className="flex flex-col gap-[7px] rounded-xl border border-border-soft px-3 py-2.5">
+    <article className="flex flex-col gap-[7px] rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)]">
       <div className="flex items-center gap-2">
         <span className="font-mono text-[12px] font-bold text-brand">
           {ticket.key}

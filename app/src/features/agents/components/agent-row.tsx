@@ -31,7 +31,7 @@ export function AgentRow({ id }: AgentRowProps) {
       onClick={() => openTab(id)}
       aria-current={active ? 'true' : undefined}
       className={cn(
-        'flex items-center gap-2.5 rounded-lg px-2.5 py-[7px]',
+        'flex items-center gap-2.5 rounded-lg px-2.5 py-[var(--cc-row-py)]',
         active ? 'bg-active' : 'hover:bg-hover',
       )}
     >

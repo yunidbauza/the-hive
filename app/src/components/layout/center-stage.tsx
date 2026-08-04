@@ -17,13 +17,13 @@ import {
 import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
+import { useTerminalAppearance, useTheme } from '@stores/appearance-store';
 import { useActiveEntity, useAgentOrder, useNavOrder } from '@stores/hive-store';
 import {
   useActiveTab,
   useBackToOrch,
   usePickerState,
   useSettingsOpen,
-  useTheme,
 } from '@stores/ui-store';
 
 /**
@@ -43,6 +43,14 @@ import {
  */
 export function CenterStage() {
   const theme = useTheme();
+  /**
+   * The one place appearance crosses into the terminal (story 105).
+   *
+   * `components/terminal/**` may not import `stores/**` — the lint zone fails
+   * the build — so the composition root reads the store and passes props, which
+   * is what it already does for `theme`. The seam stays a seam.
+   */
+  const terminalAppearance = useTerminalAppearance();
   const activeTab = useActiveTab();
   const entity = useActiveEntity();
   const navOrder = useNavOrder();
@@ -191,6 +199,9 @@ export function CenterStage() {
              */
             activeId={showingOverlay ? null : activeTab}
             theme={theme}
+            fontFamily={terminalAppearance.fontFamily}
+            fontSize={terminalAppearance.fontSize}
+            scrollback={terminalAppearance.scrollback}
           />
         </div>
 

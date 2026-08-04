@@ -10,8 +10,11 @@ import { useLeftTab, useSetLeftTab, type LeftTab } from '@stores/ui-store';
 /**
  * Left rail — three views of the same fleet: by project, by work item, by agent.
  *
- * 268px fixed: the rails never flex, so the center stage absorbs every width
- * change and the terminal is the only thing that resizes with the window.
+ * Fixed width, never flexed, so the center stage absorbs every width change and
+ * the terminal is the only thing that resizes with the window. The width itself
+ * is `--cc-rail-w-left` (story 105): 268px comfortable, narrower compact. A
+ * density change therefore resizes the terminal through exactly the path a
+ * window resize already takes — `min-w-0` on the stage, then the fit addon.
  *
  * The tab bar is the first flex child and stays put; the panel below it owns
  * the scrollbar. Scrolling the whole rail instead would push the tabs
@@ -50,7 +53,7 @@ export function LeftRail() {
   return (
     <nav
       aria-label="Projects, work, and agents"
-      className="flex w-[268px] shrink-0 flex-col gap-[18px] border-r border-border-soft bg-panel px-2.5 pt-3.5 pb-5"
+      className="flex w-[var(--cc-rail-w-left)] shrink-0 flex-col gap-[var(--cc-rail-gap)] border-r border-border-soft bg-panel px-2.5 pt-3.5 pb-5"
     >
       <TabBar
         tabs={tabs}

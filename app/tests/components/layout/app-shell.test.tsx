@@ -58,11 +58,14 @@ describe('AppShell', () => {
   it('pins the rails to a fixed width so the center column absorbs resizes', () => {
     render(<AppShell />);
 
+    // The width is a custom property from story 105 so density can change it,
+    // but it is still a *fixed* width: neither rail flexes, which is what makes
+    // the center column absorb every resize.
     expect(
       screen.getByRole('navigation', { name: 'Projects, work, and agents' }),
-    ).toHaveClass('w-[268px]', 'shrink-0');
+    ).toHaveClass('w-[var(--cc-rail-w-left)]', 'shrink-0');
     expect(screen.getByRole('complementary', { name: 'Activity' })).toHaveClass(
-      'w-[316px]',
+      'w-[var(--cc-rail-w-right)]',
       'shrink-0',
     );
   });

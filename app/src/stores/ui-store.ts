@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow';
 
 import type { Effort, Model } from '@/types/entity';
 
-export type Theme = 'dark' | 'light';
 export type LeftTab = 'projects' | 'work' | 'agents';
 export type RailTab = 'inbox' | 'prs' | 'activity';
 
@@ -13,9 +12,13 @@ export type RailTab = 'inbox' | 'prs' | 'activity';
  *
  * The split is not cosmetic: it keeps a keystroke in the picker from
  * re-rendering thirteen live terminals.
+ *
+ * Nothing here is persisted, and that is now a structural rule rather than an
+ * omission: durable preferences live in `appearance-store.ts`, which persists
+ * everything it holds. `theme` moved there in story 105 — restoring `picker` or
+ * `activeTab` across a launch would reopen an overlay the user had closed.
  */
 interface UiState {
-  theme: Theme;
   activeTab: 'orch' | string; // entity id, or the orchestrator
   selIdx: number; // orchestrator table selection
   leftTab: LeftTab;
@@ -28,8 +31,6 @@ interface UiState {
   newEffort: Effort;
   showActivityRail: boolean;
 
-  setTheme: (theme: Theme) => void;
-  toggleTheme: () => void;
   openTab: (id: 'orch' | string) => void;
   backToOrch: () => void;
   setSelIdx: (index: number) => void;
@@ -47,25 +48,7 @@ interface UiState {
   reset: () => void;
 }
 
-/**
- * Write the theme to `<body data-theme>`, which is what the
- * `body[data-theme="light"]` override in tokens.css keys off.
- *
- * Dark is the default and carries no attribute, so the `:root` block applies
- * unmodified — one less thing to keep in sync.
- */
-function applyTheme(theme: Theme) {
-  if (typeof document === 'undefined') return;
-
-  if (theme === 'light') {
-    document.body.setAttribute('data-theme', 'light');
-  } else {
-    document.body.removeAttribute('data-theme');
-  }
-}
-
 const initialUiState = {
-  theme: 'dark' as Theme,
   activeTab: 'orch' as 'orch' | string,
   selIdx: 0,
   leftTab: 'projects' as LeftTab,
@@ -79,17 +62,8 @@ const initialUiState = {
   showActivityRail: true,
 };
 
-export const useUiStore = create<UiState>()((set, get) => ({
+export const useUiStore = create<UiState>()((set) => ({
   ...initialUiState,
-
-  setTheme: (theme) => {
-    applyTheme(theme);
-    set({ theme });
-  },
-
-  toggleTheme: () => {
-    get().setTheme(get().theme === 'dark' ? 'light' : 'dark');
-  },
 
   // Opening a tab always dismisses the picker: the user has made their choice.
   // Settings goes with it (story 101) — the rails stay visible behind the
@@ -138,10 +112,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   toggleActivityRail: () =>
     set((state) => ({ showActivityRail: !state.showActivityRail })),
 
-  reset: () => {
-    applyTheme(initialUiState.theme);
-    set(initialUiState);
-  },
+  reset: () => set(initialUiState),
 }));
 
 /**
@@ -151,11 +122,6 @@ export const useUiStore = create<UiState>()((set, get) => ({
  * Every consumer goes through a named hook so a change to one slice of state
  * cannot re-render everything subscribed to the store.
  */
-const themeActionsSelector = (state: UiState) => ({
-  setTheme: state.setTheme,
-  toggleTheme: state.toggleTheme,
-});
-
 const railStateSelector = (state: UiState) => ({
   railTab: state.railTab,
   showActivityRail: state.showActivityRail,
@@ -180,12 +146,6 @@ const pickerActionsSelector = (state: UiState) => ({
   setNewModel: state.setNewModel,
   setNewEffort: state.setNewEffort,
 });
-
-/** The active theme. */
-export const useTheme = () => useUiStore((state) => state.theme);
-
-/** Theme actions, referentially stable across unrelated state changes. */
-export const useThemeActions = () => useUiStore(useShallow(themeActionsSelector));
 
 /** Which tab the center stage is showing. */
 export const useActiveTab = () => useUiStore((state) => state.activeTab);

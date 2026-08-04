@@ -36,7 +36,7 @@ export function ProjectRow({ project }: ProjectRowProps) {
         type="button"
         onClick={() => toggleProject(project.id)}
         aria-expanded={expanded}
-        className="mt-2.5 flex items-center gap-2 rounded-lg px-2.5 pt-[7px] pb-0.5 hover:bg-hover"
+        className="mt-2.5 flex items-center gap-2 rounded-lg px-2.5 pt-[var(--cc-row-py)] pb-0.5 hover:bg-hover"
       >
         <Icon
           name={expanded ? 'ph-caret-down' : 'ph-caret-right'}

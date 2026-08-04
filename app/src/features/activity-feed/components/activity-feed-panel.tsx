@@ -16,7 +16,7 @@ export function ActivityFeedPanel() {
   const feed = useFeed();
 
   return (
-    <div data-panel="activity" className="flex flex-col gap-2.5">
+    <div data-panel="activity" className="flex flex-col gap-[var(--cc-list-gap)]">
       {feed.map((item, index) => (
         <FeedRow key={`${item.time}-${item.txt}-${index}`} item={item} />
       ))}

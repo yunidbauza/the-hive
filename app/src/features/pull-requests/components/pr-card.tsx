@@ -29,7 +29,7 @@ export function PrCard({ pr }: PrCardProps) {
     <button
       type="button"
       onClick={() => openTab(pr.session)}
-      className="flex items-start gap-2.5 rounded-xl border border-border-soft px-3 py-2.5 text-left hover:bg-hover"
+      className="flex items-start gap-2.5 rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)] text-left hover:bg-hover"
     >
       <Icon
         name="ph-git-pull-request"

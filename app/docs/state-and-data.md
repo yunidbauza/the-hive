@@ -13,8 +13,43 @@ terminals.
 - `src/stores/hive-store.ts` — domain state and the actions that mimic the future
   orchestrator daemon: `spawnSession`, `sendToEntity`, `runOrchCommand`,
   `markAllRead`, `markRead`, `pushNotif`, `pushFeed`, `appendEntityLines`.
-- `src/stores/ui-store.ts` — view state: theme, `activeTab`, `selIdx`, `leftTab`,
+- `src/stores/ui-store.ts` — view state: `activeTab`, `selIdx`, `leftTab`,
   `railTab`, `collapsed`, picker fields, `showActivityRail`.
+- `src/stores/appearance-store.ts` — durable preferences: `theme`,
+  `terminalFont`, `terminalFontSize`, `terminalScrollback`, `density`.
+
+## What persists, and where (story 105)
+
+The line between `ui-store` and `appearance-store` is persistence, and it is
+structural rather than a matter of taste:
+
+- **Nothing in `ui-store` is persisted.** Restoring `picker` or `activeTab`
+  across a launch would reopen an overlay the user had closed.
+- **Everything in `appearance-store` is persisted**, to `localStorage` through
+  zustand's `persist`, whitelisted by `partialize`. Making the boundary the
+  store rather than a field list is the point: otherwise every new `ui-store`
+  field becomes a question somebody has to remember to answer, and answering it
+  wrong is silent.
+
+`systemDark` is the one exception inside `appearance-store` — it is an
+observation of the OS, not a preference, so it is excluded from `partialize`.
+Restoring it would mean trusting a stale answer on a machine whose theme has
+since changed. `resolvedTheme` is likewise derived in a selector and never
+stored, per the one-source-of-truth rule below.
+
+**Why `localStorage` and not `~/.hive/config.json`.** That file is main's and
+describes the *workspace* — project paths, shell, agent command — facts a
+session needs before it can run. Appearance is a fact about the person looking
+at the screen, wanted by the renderer before its first paint. Reading it over
+the async bridge would paint dark and then flip on every launch, and the browser
+target (`pnpm dev`) has no bridge at all, so that route would need this fallback
+anyway rather than replacing it. The cost, stated plainly: appearance does not
+follow the user to another machine and cannot be hand-edited.
+
+Terminal settings reach the terminal **by prop, not by store**:
+`components/terminal/**` may not import `stores/**`, so `center-stage.tsx` (the
+composition root) reads the store and passes `fontFamily`/`fontSize`/`scrollback`
+down, exactly as it already did for `theme`.
 
 Cross-store effects call the other store's action explicitly. No store subscribes
 to another, so the dependency stays one-way and the effect is visible at the call

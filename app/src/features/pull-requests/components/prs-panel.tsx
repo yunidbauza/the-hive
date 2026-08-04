@@ -12,7 +12,7 @@ export function PrsPanel() {
   const prs = usePrs();
 
   return (
-    <div data-panel="prs" className="flex flex-col gap-2">
+    <div data-panel="prs" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
       {prs.map((pr) => (
         <PrCard key={pr.n} pr={pr} />
       ))}

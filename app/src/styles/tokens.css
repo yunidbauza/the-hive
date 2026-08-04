@@ -70,6 +70,48 @@
   /* Notification badge fill. Theme-invariant for the same reason, and darker
      than `--cc-red` so white badge text clears AA (4.87:1). */
   --cc-danger-solid: #d3372f;
+
+  /**
+   * Rail density (story 105) — the comfortable values, which are the numbers
+   * the rails have always used.
+   *
+   * Spacing rather than colour, but the same mechanism and the same reason: one
+   * attribute write on <body> re-spaces both rails and every row inside them,
+   * and no component re-renders to do it. Density is a preference, so it has to
+   * survive a reload; a prop threaded through six panels would have to be read
+   * from the store by each of them.
+   *
+   * These are what actually read as "dense" — rail width, the gap under a
+   * rail's tab bar, the gap between items in a list, and the vertical padding
+   * of a bordered card.
+   *
+   * There are two list scales because the panels already had two: work and the
+   * activity feed sit at 10px, the inbox and PRs at 8px. Collapsing them to one
+   * token would have re-spaced two panels in *comfortable* mode, which is a
+   * visual change this story is not making. Each keeps its own value and gets
+   * its own compact one.
+   */
+  --cc-rail-w-left: 268px;
+  --cc-rail-w-right: 316px;
+  --cc-rail-gap: 18px;
+  --cc-list-gap: 10px;
+  --cc-list-gap-sm: 8px;
+  --cc-row-py: 7px;
+  --cc-card-py: 10px;
+}
+
+/**
+ * Compact. Comfortable carries no attribute, so the `:root` values above apply
+ * unmodified — the same arrangement `data-theme` uses for dark.
+ */
+body[data-density='compact'] {
+  --cc-rail-w-left: 232px;
+  --cc-rail-w-right: 276px;
+  --cc-rail-gap: 11px;
+  --cc-list-gap: 6px;
+  --cc-list-gap-sm: 5px;
+  --cc-row-py: 4px;
+  --cc-card-py: 6px;
 }
 
 body[data-theme='light'] {
