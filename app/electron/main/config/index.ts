@@ -543,6 +543,40 @@ export function setNotifications(
 }
 
 /**
+ * Put the config file back to the first-run template (story 107).
+ *
+ * The one mutation that deliberately **discards** user data, and so the one
+ * exception to the epic's preservation promise: unknown top-level keys and
+ * hand-written `"//"` comments ride across every other write and are replaced
+ * here. That is what "reset" means, and the confirmation in the UI says so in
+ * those words rather than asking a generic "are you sure?".
+ *
+ * Still routed through `writeConfig` like everything else, which is the point.
+ * It inherits the whole discipline for free — the file is re-read first, the
+ * result is validated by the *reader's* own parser before anything touches
+ * disk, the swap is a temp file plus `rename`, and the file's mode and any
+ * symlink into a dotfiles repo are preserved. A reset that wrote the template
+ * string straight to the path would be the one write in the app that could
+ * leave a torn file, which is exactly the failure `write.ts` exists to make
+ * impossible.
+ *
+ * `JSON.parse` of the template rather than the string verbatim, for two
+ * reasons. The mutation keeps the same shape as every other — a
+ * `ConfigDocument` in, one out — and the template goes through the reader's
+ * validator, so a template this build could not read back fails in CI rather
+ * than on a user's machine. The `"//"` comment keys survive `JSON.parse`, so
+ * what lands on disk is still the commented file.
+ *
+ * `writeConfig` refuses when there is no file to read, so a reset with the
+ * config deleted underneath reports that rather than recreating it. Recreating
+ * it is `reload`'s job — `loadConfig` writes the template when the file is
+ * gone — and exactly one path that creates the file is worth the extra click.
+ */
+export function resetConfig(): ConfigSnapshot {
+  return commit(writeConfig(() => JSON.parse(CONFIG_TEMPLATE) as ConfigDocument));
+}
+
+/**
  * Apply one three-state override onto a draft entry, in place.
  *
  * `delete` rather than writing `undefined`: a key whose value is `undefined`
