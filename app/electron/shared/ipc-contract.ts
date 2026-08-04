@@ -19,6 +19,9 @@
 
 import type {
   AddProjectRequest,
+  CloneDoneEvent,
+  CloneRequest,
+  CloneStartResult,
   ConfigSnapshot,
   RemoveProjectRequest,
 } from './config-contract';
@@ -31,6 +34,18 @@ export const CH = {
   configChooseDirectory: 'config:choose-directory',
   configAddProject: 'config:add-project',
   configRemoveProject: 'config:remove-project',
+  /**
+   * Story 102's clone verbs.
+   *
+   * `start` and `cancel` are `invoke` — start needs its pre-flight verdict, and
+   * cancel is awaited so the view can disable its own button. `done` is a push:
+   * a clone concludes long after the call that started it returned.
+   *
+   * See `CloneRequest` for why none of them takes a destination path.
+   */
+  configCloneStart: 'config:clone-start',
+  configCloneCancel: 'config:clone-cancel',
+  configCloneDone: 'config:clone-done', // main → renderer
   ptySpawn: 'pty:spawn',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
@@ -87,6 +102,7 @@ export const EVENT_CHANNELS = [
   CH.ptyExit,
   CH.ptyLost,
   CH.sessionStatus,
+  CH.configCloneDone,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -261,6 +277,18 @@ export interface HiveBridge {
     chooseDirectory(): Promise<string | null>;
     addProject(request: AddProjectRequest): Promise<ConfigSnapshot>;
     removeProject(request: RemoveProjectRequest): Promise<ConfigSnapshot>;
+    /**
+     * Start a clone (story 102).
+     *
+     * Resolves once `git` is running, **not** once it has finished — the
+     * terminal streams in between, and completion arrives on
+     * {@link HiveBridge.config.onCloneDone}.
+     */
+    startClone(request: CloneRequest): Promise<CloneStartResult>;
+    /** Kill a running clone and remove the directory it had created. */
+    cancelClone(): Promise<void>;
+    /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
+    onCloneDone(callback: (event: CloneDoneEvent) => void): () => void;
   };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;
@@ -328,6 +356,10 @@ export const BRIDGE_CONFIG_KEYS = [
   'chooseDirectory',
   'addProject',
   'removeProject',
+  // Story 102.
+  'startClone',
+  'cancelClone',
+  'onCloneDone',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */

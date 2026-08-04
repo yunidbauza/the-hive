@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import type {
   AddProjectRequest,
+  CloneDoneEvent,
+  CloneRequest,
+  CloneStartResult,
   ConfigSnapshot,
   RemoveProjectRequest,
 } from '@shared/config-contract';
@@ -86,6 +89,13 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.configAddProject, request),
     removeProject: (request: RemoveProjectRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configRemoveProject, request),
+    // Story 102. `startClone` resolves on the pre-flight verdict, not on the
+    // clone — the terminal streams in between and `onCloneDone` concludes it.
+    startClone: (request: CloneRequest): Promise<CloneStartResult> =>
+      ipcRenderer.invoke(CH.configCloneStart, request),
+    cancelClone: (): Promise<void> => ipcRenderer.invoke(CH.configCloneCancel),
+    onCloneDone: (callback: (event: CloneDoneEvent) => void) =>
+      subscribe<CloneDoneEvent>(CH.configCloneDone, callback),
   },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>

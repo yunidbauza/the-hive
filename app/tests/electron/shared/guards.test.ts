@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   IpcValidationError,
   parseAddProjectRequest,
+  parseCloneRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
   parseResizeRequest,
@@ -309,5 +310,65 @@ describe('parseRemoveProjectRequest', () => {
     expect(() =>
       parseRemoveProjectRequest(JSON.parse('{"id":"a","__proto__":{}}')),
     ).toThrow(/forbidden key/);
+  });
+});
+
+describe('parseCloneRequest', () => {
+  const validClone = {
+    url: 'https://github.com/behiques/the-hive.git',
+    parentPath: '/Users/me/Projects',
+    cols: 80,
+    rows: 24,
+  };
+
+  it('accepts a well-formed request', () => {
+    expect(parseCloneRequest(validClone)).toEqual(validClone);
+  });
+
+  it('rejects a missing key', () => {
+    const { url: _url, ...rest } = validClone;
+    expect(() => parseCloneRequest(rest)).toThrow(IpcValidationError);
+  });
+
+  /**
+   * The key that matters most: a renderer naming where the clone should land
+   * is refused before main sees it, which is what keeps the epic's "no verb
+   * takes a destination path" rule true for this story.
+   */
+  it('rejects a destination key', () => {
+    expect(() =>
+      parseCloneRequest({ ...validClone, destination: '/etc' }),
+    ).toThrow(IpcValidationError);
+  });
+
+  it('rejects __proto__', () => {
+    const payload = JSON.parse(
+      '{"url":"https://x/y.git","parentPath":"/p","cols":80,"rows":24,"__proto__":{"admin":true}}',
+    ) as unknown;
+    expect(() => parseCloneRequest(payload)).toThrow(IpcValidationError);
+  });
+
+  it('rejects a non-string url', () => {
+    expect(() => parseCloneRequest({ ...validClone, url: 42 })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('rejects an empty parentPath', () => {
+    expect(() => parseCloneRequest({ ...validClone, parentPath: '  ' })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('rejects a non-integer cols', () => {
+    expect(() => parseCloneRequest({ ...validClone, cols: 1.5 })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('rejects a zero rows', () => {
+    expect(() => parseCloneRequest({ ...validClone, rows: 0 })).toThrow(
+      IpcValidationError,
+    );
   });
 });

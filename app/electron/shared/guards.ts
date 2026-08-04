@@ -1,5 +1,6 @@
 import type {
   AddProjectRequest,
+  CloneRequest,
   RemoveProjectRequest,
 } from './config-contract';
 import type {
@@ -270,4 +271,31 @@ export function parseAddProjectRequest(input: unknown): AddProjectRequest {
 export function parseRemoveProjectRequest(input: unknown): RemoveProjectRequest {
   const raw = assertShape(input, ['id'], 'removeProject');
   return { id: assertId(raw.id, 'removeProject.id') };
+}
+
+/**
+ * Payload guard for `config:clone-start` (story 102).
+ *
+ * `url` gets `assertPath`'s permissiveness rather than `assertText`'s bounds:
+ * it is about to be handed to `parseCloneUrl`, which is the guard that actually
+ * decides whether it is a URL. Two validators disagreeing about what a URL may
+ * contain is how a rule gets quietly relaxed — this one proves the *shape*, and
+ * `parseCloneUrl` proves the *value*.
+ *
+ * There is no optional key, and in particular no destination: `assertShape`
+ * rejects any key not listed, so a renderer that tried to name where the clone
+ * should land is refused here before main ever sees it.
+ */
+export function parseCloneRequest(input: unknown): CloneRequest {
+  const raw = assertShape(
+    input,
+    ['url', 'parentPath', 'cols', 'rows'],
+    'startClone',
+  );
+  return {
+    url: assertPath(raw.url, 'startClone.url'),
+    parentPath: assertPath(raw.parentPath, 'startClone.parentPath'),
+    cols: assertDimension(raw.cols, 'startClone.cols'),
+    rows: assertDimension(raw.rows, 'startClone.rows'),
+  };
 }
