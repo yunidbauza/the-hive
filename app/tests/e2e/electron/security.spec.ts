@@ -175,6 +175,24 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'reorderProjects',
     'repointProject',
     /**
+     * Story 107's two verbs, and what makes them acceptable additions is that
+     * **neither takes an argument at all**.
+     *
+     * `revealConfig` shows main's own `configPath()` in the OS file manager —
+     * `showItemInFolder`, which selects a file in a folder window and cannot
+     * launch a program. `resetConfig` rewrites that same file through the one
+     * guarded write path every other mutation uses, so it is atomic, validated
+     * by the reader's own parser, and mode- and symlink-preserving.
+     *
+     * Nothing arrives from the renderer on either channel. There is therefore
+     * no payload guard to write, nothing to inject into, and no way for a
+     * compromised renderer to aim either verb at a file main did not choose —
+     * which is strictly stronger than the epic's "no verb takes a destination
+     * path" rule rather than an exception to it.
+     */
+    'resetConfig',
+    'revealConfig',
+    /**
      * Story 104's two mutating verbs, and they *are* capabilities — the kind
      * this test exists to make deliberate rather than accidental.
      *
