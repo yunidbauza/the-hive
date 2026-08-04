@@ -43,10 +43,16 @@ export function effectiveRuntime(
   return {
     shell: project?.shell ?? snapshot.shell,
     claudeCommand: project?.claudeCommand ?? snapshot.claudeCommand,
-    // A fresh object every call: the caller passes this to the pty-host, and
-    // handing out the snapshot's own map would let a mutation downstream edit
-    // the cached config.
-    env: { ...(project?.env ?? {}) },
+    /**
+     * Workspace first, project over it, per key (story 108) — the same
+     * "project overrides default" rule `shell` and `claudeCommand` above
+     * already follow, so all three runtime values resolve the same way.
+     *
+     * A fresh object every call: the caller passes this to the pty-host, and
+     * handing out either stored map would let a mutation downstream edit the
+     * cached config.
+     */
+    env: { ...snapshot.env, ...(project?.env ?? {}) },
     shellFromProject,
     commandFromProject,
   };
