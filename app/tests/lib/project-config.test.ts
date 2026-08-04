@@ -7,6 +7,9 @@ import {
   projectAccess,
   projectConfigSnapshot,
   reloadProjectConfig,
+  renameProjectInConfig,
+  reorderProjectsInConfig,
+  repointProjectInConfig,
   resetProjectConfig,
   setProjectConfigForTest,
   subscribeProjectConfig,
@@ -176,5 +179,75 @@ describe('loadProjectConfig', () => {
     await loadProjectConfig();
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Story 103's mutating verbs.
+ *
+ * The assertion that matters is the same one story 101 established: the verb
+ * returns a snapshot and `read` installs it, so the renderer can never render a
+ * list the write already invalidated. No reload follows any of them.
+ */
+describe('managing projects', () => {
+  /** A bridge whose three story-103 verbs all answer with `next`. */
+  function withManageBridge(next: ConfigSnapshot) {
+    const verbs = {
+      renameProject: vi.fn().mockResolvedValue(next),
+      repointProject: vi.fn().mockResolvedValue(next),
+      reorderProjects: vi.fn().mockResolvedValue(next),
+    };
+    (window as { hive?: unknown }).hive = { config: verbs };
+    return verbs;
+  }
+
+  it('installs the snapshot a rename returns and notifies subscribers', async () => {
+    const next = snapshot([{ id: 'a', status: 'ok' }]);
+    const verbs = withManageBridge(next);
+    const seen = vi.fn();
+    subscribeProjectConfig(seen);
+
+    await renameProjectInConfig({ id: 'a', name: 'A' });
+
+    expect(verbs.renameProject).toHaveBeenCalledWith({ id: 'a', name: 'A' });
+    expect(projectConfigSnapshot()).toBe(next);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it('installs the snapshot a re-point returns', async () => {
+    const next = snapshot([{ id: 'a', status: 'ok' }]);
+    const verbs = withManageBridge(next);
+
+    await repointProjectInConfig({ id: 'a', path: '~/moved' });
+
+    expect(verbs.repointProject).toHaveBeenCalledWith({
+      id: 'a',
+      path: '~/moved',
+    });
+    expect(projectConfigSnapshot()).toBe(next);
+  });
+
+  it('installs the snapshot a reorder returns', async () => {
+    const next = snapshot([
+      { id: 'b', status: 'ok' },
+      { id: 'a', status: 'ok' },
+    ]);
+    const verbs = withManageBridge(next);
+
+    await reorderProjectsInConfig({ ids: ['b', 'a'] });
+
+    expect(verbs.reorderProjects).toHaveBeenCalledWith({ ids: ['b', 'a'] });
+    expect(projectConfigSnapshot()?.projects.map((p) => p.id)).toEqual([
+      'b',
+      'a',
+    ]);
+  });
+
+  /** The browser demo has no bridge; story 083's rule is to feature-detect it. */
+  it('is a no-op with no bridge, like every other verb', async () => {
+    await expect(
+      reorderProjectsInConfig({ ids: [] }),
+    ).resolves.toBeUndefined();
+    expect(projectConfigSnapshot()).toBeNull();
   });
 });

@@ -3,6 +3,9 @@ import type {
   ConfigSnapshot,
   ProjectStatus,
   RemoveProjectRequest,
+  RenameProjectRequest,
+  ReorderProjectsRequest,
+  RepointProjectRequest,
 } from '@shared/config-contract';
 
 /**
@@ -92,6 +95,33 @@ export const addProjectToConfig = (request: AddProjectRequest): Promise<void> =>
 export const removeProjectFromConfig = (
   request: RemoveProjectRequest,
 ): Promise<void> => read((bridge) => bridge.config.removeProject(request));
+
+/**
+ * Change a project's display name (story 103).
+ *
+ * Routed through `read` like every other mutating verb, so the snapshot main
+ * returns is the one the UI renders. There is deliberately no optimistic name
+ * held here to reconcile — that is the whole reason the contract returns a
+ * snapshot instead of a status.
+ */
+export const renameProjectInConfig = (
+  request: RenameProjectRequest,
+): Promise<void> => read((bridge) => bridge.config.renameProject(request));
+
+/** Point a project at a folder that moved (story 103). */
+export const repointProjectInConfig = (
+  request: RepointProjectRequest,
+): Promise<void> => read((bridge) => bridge.config.repointProject(request));
+
+/**
+ * Rewrite the project order (story 103).
+ *
+ * The whole ordering, because main refuses one that is not a permutation of the
+ * file on disk — see {@link ReorderProjectsRequest}.
+ */
+export const reorderProjectsInConfig = (
+  request: ReorderProjectsRequest,
+): Promise<void> => read((bridge) => bridge.config.reorderProjects(request));
 
 /**
  * Open the native directory dialog (story 101).
