@@ -8,6 +8,7 @@ import {
   emptySnapshot,
   type AddProjectRequest,
   type ConfigSnapshot,
+  type ProjectOrigin,
   type RemoveProjectRequest,
 } from '@shared/config-contract';
 
@@ -177,7 +178,18 @@ function commit(result: WriteResult): ConfigSnapshot {
  * people keep in dotfile repos; `realpath` is used for identity and duplicate
  * detection, which is what it is good for.
  */
-export function addProject(request: AddProjectRequest): ConfigSnapshot {
+export function addProject(
+  request: AddProjectRequest,
+  /**
+   * Where this entry came from (story 102).
+   *
+   * **Main-internal, never from the payload.** `parseAddProjectRequest` does
+   * not accept an `origin`, so a renderer cannot claim a hand-picked folder was
+   * cloned. The only caller that passes anything but the default is the clone
+   * flow, which knows because it ran the clone.
+   */
+  origin: ProjectOrigin = 'local',
+): ConfigSnapshot {
   const probe = resolveProject({ id: 'probe', path: request.path });
   if (probe.status !== 'ok' || probe.path === null) {
     return refused(`${LABEL}: cannot add ${request.path} (${probe.status})`);
@@ -221,7 +233,7 @@ export function addProject(request: AddProjectRequest): ConfigSnapshot {
             name: request.name ?? basename(real),
             path: request.path,
             icon: DEFAULT_PROJECT_ICON,
-            origin: 'local',
+            origin,
           },
         ],
       };
