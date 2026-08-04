@@ -189,6 +189,14 @@ export interface ConfigSnapshot {
   shell: string;
   /** The bootstrap command a session runs (story 096), already defaulted. */
   claudeCommand: string;
+  /**
+   * Environment applied to every session, under any project's own (story 108).
+   *
+   * Always fully resolved — `{}` rather than absent — for the reason
+   * `notifications` is: main reads this on every spawn, and a consumer that
+   * must remember to apply a default is one that will forget on one branch.
+   */
+  env: Record<string, string>;
   /** Every entry the file declared, in file order, each with its verdict. */
   projects: ProjectConfig[];
   /**
@@ -315,6 +323,7 @@ export function emptySnapshot(
     templateWritten: false,
     shell,
     claudeCommand: DEFAULT_CLAUDE_COMMAND,
+    env: {},
     projects: [],
     notifications: { ...DEFAULT_NOTIFICATIONS },
     errors: [],
@@ -385,16 +394,25 @@ export interface ReorderProjectsRequest {
 }
 
 /**
- * Change the top-level runtime settings (story 104).
+ * Change the top-level runtime settings (story 104, extended by 108).
  *
- * Both fields are optional so the UI can save one without restating the other,
- * but a *present* field is always a real value — clearing a top-level setting
- * is not offered, because there is no lower level to fall back to and a session
- * with no shell cannot start.
+ * All fields are optional so the UI can save one without restating the
+ * others. `shell` and `claudeCommand` may not be cleared — there is no lower
+ * level to fall back to, and a session with no shell cannot start — but `env`
+ * is different: it is the whole map rather than a scalar, so `{}` is a real,
+ * offered value and is how the last workspace variable is removed. See
+ * {@link SetRuntimeRequest.env}.
  */
 export interface SetRuntimeRequest {
   shell?: string;
   claudeCommand?: string;
+  /**
+   * The whole map, replacing what is stored — not a patch.
+   *
+   * `{}` is meaningful and is how the last variable is removed. Unlike `shell`,
+   * there is no `null` case: absent already means "leave it alone".
+   */
+  env?: Record<string, string>;
 }
 
 /**

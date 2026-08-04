@@ -52,6 +52,36 @@ describe('parseSetRuntimeRequest', () => {
   });
 });
 
+describe('parseSetRuntimeRequest env', () => {
+  it('accepts a valid map', () => {
+    expect(parseSetRuntimeRequest({ env: { AWS_PROFILE: 'incorp' } })).toEqual({
+      env: { AWS_PROFILE: 'incorp' },
+    });
+  });
+
+  it('accepts an empty map — that is how the last variable is removed', () => {
+    expect(parseSetRuntimeRequest({ env: {} })).toEqual({ env: {} });
+  });
+
+  it('refuses the same keys the project layer refuses', () => {
+    for (const key of [
+      'LD_PRELOAD',
+      'DYLD_INSERT_LIBRARIES',
+      'NODE_OPTIONS',
+      'BASH_ENV',
+      'TERM',
+      'COLORTERM',
+      'PWD',
+    ]) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow();
+    }
+  });
+
+  it('still refuses a request that changes nothing', () => {
+    expect(() => parseSetRuntimeRequest({})).toThrow(/nothing to change/);
+  });
+});
+
 describe('parseSetProjectRuntimeRequest', () => {
   it('keeps absent, null and a value distinct', () => {
     // The three-state contract: absent leaves it alone, null removes it, a

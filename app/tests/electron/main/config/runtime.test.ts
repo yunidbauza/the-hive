@@ -32,6 +32,7 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   templateWritten: false,
   shell: DEFAULT_SHELL,
   claudeCommand: DEFAULT_CLAUDE_COMMAND,
+  env: {},
   projects: [],
   notifications: { ...DEFAULT_NOTIFICATIONS },
   errors: [],

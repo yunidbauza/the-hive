@@ -454,16 +454,27 @@ function assertEnv(value: unknown, label: string): Record<string, string> {
 }
 
 /**
- * Top-level runtime settings (story 104).
+ * Top-level runtime settings (story 104, extended by 108 for `env`).
  *
- * Both keys are optional so one can be saved without restating the other, but
- * at least one must be present — an empty request is a bug at the call site,
- * not a no-op worth writing the file for. Neither may be cleared: there is no
- * lower level to fall back to.
+ * All three keys are optional so one can be saved without restating the
+ * others, but at least one must be present — an empty request is a bug at the
+ * call site, not a no-op worth writing the file for. `shell` and
+ * `claudeCommand` may not be cleared: there is no lower level to fall back to.
+ * `env` has no `null` case either — absent already means "leave it alone" —
+ * but `{}` is accepted and meaningful, since it is the whole map replacing
+ * what is stored.
  */
 export function parseSetRuntimeRequest(input: unknown): SetRuntimeRequest {
-  const raw = assertShape(input, [], 'setRuntime', ['shell', 'claudeCommand']);
-  if (raw.shell === undefined && raw.claudeCommand === undefined) {
+  const raw = assertShape(input, [], 'setRuntime', [
+    'shell',
+    'claudeCommand',
+    'env',
+  ]);
+  if (
+    raw.shell === undefined &&
+    raw.claudeCommand === undefined &&
+    raw.env === undefined
+  ) {
     return fail('setRuntime: nothing to change');
   }
 
@@ -479,6 +490,12 @@ export function parseSetRuntimeRequest(input: unknown): SetRuntimeRequest {
           ),
         }
       : {}),
+    // Reuses the project layer's `assertEnv` verbatim — the refusal list is
+    // deliberately shared between this boundary and the config-file reader, so
+    // a hand-edited LD_PRELOAD and one posted over the bridge are refused by
+    // the same code. A second validator would drift, and the drifted copy is
+    // the one nobody tests.
+    ...(raw.env !== undefined ? { env: assertEnv(raw.env, 'setRuntime.env') } : {}),
   };
 }
 

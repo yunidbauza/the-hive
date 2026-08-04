@@ -218,6 +218,7 @@ export function writeConfig(mutate: Mutation): WriteResult {
       templateWritten: false,
       shell: validated.shell ?? defaultShell(),
       claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
+      env: validated.env ?? {},
       projects,
       // Re-resolved from the document that was just written, not carried over
       // from the caller's request: the snapshot every mutating verb returns has

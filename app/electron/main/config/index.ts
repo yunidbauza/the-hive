@@ -104,6 +104,7 @@ export function loadConfig(): ConfigSnapshot {
     templateWritten: false,
     shell: parsed.shell ?? shell,
     claudeCommand: parsed.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
+    env: parsed.env ?? {},
     projects,
     // Defaults *under* whatever the file named, so a file declaring one switch
     // still answers for all three (story 106).
@@ -445,12 +446,17 @@ export function reorderProjects(
 }
 
 /**
- * Change the top-level runtime settings (story 104).
+ * Change the top-level runtime settings (story 104, extended by 108 for
+ * `env`).
  *
  * Only the fields the request names are touched, so saving the shell cannot
- * silently restate — or clear — the agent command. There is no way to *unset*
- * either: they have no lower level to fall back to, and a session with no shell
- * cannot start, so the guard requires a real value whenever the key is present.
+ * silently restate — or clear — the agent command or the workspace env. There
+ * is no way to *unset* `shell` or `claudeCommand`: they have no lower level to
+ * fall back to, and a session with no shell cannot start, so the guard
+ * requires a real value whenever either key is present. `env` is different —
+ * it is the whole map, and `{}` is a real, accepted value — but it is still a
+ * whole-map replace, never a patch: the draft's block is overwritten, not
+ * merged into.
  */
 export function setRuntime(request: SetRuntimeRequest): ConfigSnapshot {
   return commit(
@@ -460,6 +466,7 @@ export function setRuntime(request: SetRuntimeRequest): ConfigSnapshot {
       ...(request.claudeCommand !== undefined
         ? { claudeCommand: request.claudeCommand }
         : {}),
+      ...(request.env !== undefined ? { env: request.env } : {}),
     })),
   );
 }

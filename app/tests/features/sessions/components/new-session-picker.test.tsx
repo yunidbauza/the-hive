@@ -293,6 +293,7 @@ describe('NewSessionPicker · unmapped projects', () => {
         status,
         isRepo: true,
       })),
+      env: {},
       notifications: { ...DEFAULT_NOTIFICATIONS },
       errors: [],
       ...overrides,
