@@ -4,6 +4,7 @@ import { SelectField } from '@components/ui/select-field';
 import { TextField } from '@components/ui/text-field';
 import { CommandDiagnosticView } from '@features/settings/components/command-diagnostic-view';
 import { EnvEditor } from '@features/settings/components/env-editor';
+import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
   diagnoseAgentCommand,
@@ -25,27 +26,6 @@ import type { CommandDiagnostic } from '@shared/config-contract';
  * and returns a fresh `ConfigSnapshot`, so nothing here holds an optimistic
  * value to reconcile.
  */
-
-/** A titled group with an explanation — matching the appearance section. */
-function Group({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-2 border-b border-border-soft pb-4 last:border-b-0 last:pb-0">
-      <div className="flex flex-col gap-0.5">
-        <h3 className="text-[13px] text-ink">{title}</h3>
-        <p className="text-[11.5px] text-subtle">{description}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
 
 export function RuntimeSection() {
   const snapshot = useProjectConfig();
@@ -130,7 +110,7 @@ export function RuntimeSection() {
         </p>
       ))}
 
-      <Group
+      <SettingsGroup
         title="Defaults"
         description="Used by every project that does not override them."
       >
@@ -152,9 +132,9 @@ export function RuntimeSection() {
             hint="Typed into the shell when a session starts."
           />
         </div>
-      </Group>
+      </SettingsGroup>
 
-      <Group
+      <SettingsGroup
         title="Per-project overrides"
         description="Pick a project to override the defaults or add environment variables for it."
       >
@@ -188,9 +168,9 @@ export function RuntimeSection() {
             inheritedCommand={snapshot.claudeCommand}
           />
         ) : null}
-      </Group>
+      </SettingsGroup>
 
-      <Group
+      <SettingsGroup
         title="Command diagnostic"
         description="Where the agent command is looked for, and whether it was found."
       >
@@ -205,7 +185,7 @@ export function RuntimeSection() {
         </button>
 
         {diagnostic ? <CommandDiagnosticView diagnostic={diagnostic} /> : null}
-      </Group>
+      </SettingsGroup>
     </div>
   );
 }

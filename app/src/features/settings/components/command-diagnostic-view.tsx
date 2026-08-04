@@ -1,5 +1,6 @@
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 
+import { PathProbes } from '@features/settings/components/path-probes';
 import type { CommandDiagnostic } from '@shared/config-contract';
 
 /**
@@ -73,33 +74,7 @@ export function CommandDiagnosticView({ diagnostic }: CommandDiagnosticViewProps
         </code>
       </div>
 
-      {probes.length > 0 ? (
-        <ul className="flex flex-col gap-0.5">
-          {probes.map((probe) => (
-            <li
-              key={probe.directory}
-              className="flex items-center gap-2 font-mono text-[11px]"
-            >
-              <span
-                aria-hidden
-                className={
-                  probe.found ? 'text-green' : probe.notExecutable ? 'text-amber' : 'text-subtle'
-                }
-              >
-                {probe.found ? '✓' : probe.notExecutable ? '!' : '·'}
-              </span>
-              <span className={probe.found ? 'text-ink' : 'text-subtle'}>
-                {probe.directory}
-              </span>
-              {/* The genuinely confusing case: the file is right there, and the
-                  only reason it does not run is a missing +x bit. */}
-              {probe.notExecutable ? (
-                <span className="text-amber">present, not executable</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <PathProbes probes={probes} />
     </div>
   );
 }

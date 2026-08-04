@@ -1,5 +1,6 @@
 import { SegmentedControl, type SegmentedOption } from '@components/ui/segmented-control';
 import { SelectField, type SelectFieldOption } from '@components/ui/select-field';
+import { SettingsGroup } from '@features/settings/components/settings-group';
 import {
   TERMINAL_FONTS,
   TERMINAL_FONT_SIZES,
@@ -48,27 +49,6 @@ const SCROLLBACK_OPTIONS: readonly SelectFieldOption[] = TERMINAL_SCROLLBACKS.ma
   (lines) => ({ value: String(lines), label: formatScrollback(lines) }),
 );
 
-/** A titled group with an explanation — the section's only layout unit. */
-function Group({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-2 border-b border-border-soft pb-4 last:border-b-0 last:pb-0">
-      <div className="flex flex-col gap-0.5">
-        <h3 className="text-[13px] text-ink">{title}</h3>
-        <p className="text-[11.5px] text-subtle">{description}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
-
 export function AppearanceSection() {
   const settings = useAppearanceSettings();
   const {
@@ -88,7 +68,7 @@ export function AppearanceSection() {
         </p>
       </div>
 
-      <Group
+      <SettingsGroup
         title="Theme"
         description="System follows your operating system and changes with it."
       >
@@ -98,9 +78,9 @@ export function AppearanceSection() {
           value={settings.theme}
           onChange={setTheme}
         />
-      </Group>
+      </SettingsGroup>
 
-      <Group
+      <SettingsGroup
         title="Terminal"
         description="Applied to every open terminal without clearing its scrollback."
       >
@@ -129,9 +109,9 @@ export function AppearanceSection() {
             className="col-span-2 max-w-[204px]"
           />
         </div>
-      </Group>
+      </SettingsGroup>
 
-      <Group
+      <SettingsGroup
         title="Density"
         description="Compact narrows both rails and tightens the rows inside them."
       >
@@ -141,7 +121,7 @@ export function AppearanceSection() {
           value={settings.density}
           onChange={setDensity}
         />
-      </Group>
+      </SettingsGroup>
     </div>
   );
 }
