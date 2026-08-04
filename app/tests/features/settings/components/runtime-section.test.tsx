@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -108,6 +108,47 @@ describe('RuntimeSection — defaults', () => {
   });
 });
 
+describe('RuntimeSection — workspace environment', () => {
+  it('saves a workspace variable through setRuntimeConfig', async () => {
+    const user = userEvent.setup();
+    install();
+    render(<RuntimeSection />);
+
+    // No project is selected, so this is the only EnvEditor on screen — the
+    // per-project one only mounts once `ProjectOverrides` renders.
+    await user.click(screen.getByRole('button', { name: 'Add variable' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Variable 1 name' }),
+      'AWS_PROFILE',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Variable 1 value' }),
+      'incorp',
+    );
+    await user.click(screen.getByRole('button', { name: 'Save variables' }));
+
+    expect(setRuntimeConfig).toHaveBeenCalledWith({
+      env: { AWS_PROFILE: 'incorp' },
+    });
+  });
+
+  it('states that the rc file runs afterward and can override these', () => {
+    install();
+    render(<RuntimeSection />);
+
+    expect(
+      screen.getByText(/rc file runs afterward and can override/i),
+    ).toBeInTheDocument();
+  });
+
+  it('warns that the config file is plain text, steering credentials elsewhere', () => {
+    install();
+    render(<RuntimeSection />);
+
+    expect(screen.getByText(/plain text/i)).toBeInTheDocument();
+  });
+});
+
 describe('RuntimeSection — per-project overrides', () => {
   it('shows nothing until a project is picked', () => {
     install({ projects: [entry({ id: 'apfm-web' })] });
@@ -185,8 +226,16 @@ describe('RuntimeSection — per-project overrides', () => {
       screen.getByRole('combobox', { name: 'Project' }),
       'apfm-web',
     );
+    // Scoped to the per-project section: the Defaults group now carries its
+    // own EnvEditor too (story 108), so an unscoped query would find two
+    // "Save variables" buttons once a project is selected.
+    const overrides = screen
+      .getByRole('heading', { name: 'Per-project overrides' })
+      .closest('section');
+    if (!overrides) throw new Error('per-project overrides section not found');
+
     await user.click(screen.getByRole('button', { name: 'Remove variable 1' }));
-    await user.click(screen.getByRole('button', { name: 'Save variables' }));
+    await user.click(within(overrides).getByRole('button', { name: 'Save variables' }));
 
     // `null`, not `{}` — leaving `"env": {}` behind is litter in a file people
     // hand-edit.

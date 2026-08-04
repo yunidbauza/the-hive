@@ -132,6 +132,37 @@ export function RuntimeSection() {
             hint="Typed into the shell when a session starts."
           />
         </div>
+
+        <div className="flex flex-col gap-1.5 pt-1">
+          {/*
+           * Two things a user hitting a wall needs to already know, before
+           * they file a bug (story 108):
+           *
+           * - Order of operations: this is injected before the shell starts,
+           *   but a login shell's rc file runs afterward and can silently
+           *   clobber it. Without saying so, "I set FOO here and it's still
+           *   the old value" reads as a bug in this editor rather than in
+           *   `.zshrc`.
+           * - Storage: `~/.hive/config.json` is plain JSON on disk, not a
+           *   secrets store, so credentials belong in the rc file instead.
+           *   This is guidance, not a guard — there is deliberately no
+           *   secret-detection here, since a check that rejects `API_TOKEN`
+           *   while waving through `TOKEN_API` teaches nothing.
+           */}
+          <p className="text-[11.5px] text-subtle">
+            Environment for every session, applied before the shell starts. A
+            login shell’s rc file runs afterward and can override anything
+            set here.
+          </p>
+          <p className="text-[11.5px] text-subtle">
+            Prefer your rc file for tokens and credentials — this file is
+            stored in plain text.
+          </p>
+          <EnvEditor
+            value={snapshot.env}
+            onSave={(env) => void setRuntimeConfig({ env })}
+          />
+        </div>
       </SettingsGroup>
 
       <SettingsGroup
