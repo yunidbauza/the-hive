@@ -12,7 +12,7 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
-import type { IntegrationsStatus } from '@shared/ipc-contract';
+import type { AppInfo, IntegrationsStatus } from '@shared/ipc-contract';
 
 /**
  * The workspace config, as the renderer sees it (story 090).
@@ -174,6 +174,65 @@ export async function readIntegrationsStatus(): Promise<IntegrationsStatus | nul
     return await bridge.integrations.status();
   } catch (cause) {
     console.error('[hive] reading integrations status failed:', cause);
+    return null;
+  }
+}
+
+/**
+ * Show the config file in the OS file manager (story 107).
+ *
+ * Not routed through `mutate`: it writes nothing and returns no snapshot, so
+ * there is nothing to install. Silent with no bridge — the browser demo has no
+ * file manager to open, and story 083's rule is to feature-detect the bridge
+ * rather than the user agent.
+ *
+ * A failure is logged rather than surfaced. The only thing that can go wrong is
+ * that the OS declined to open a window, and there is nothing the user could do
+ * about that in this pane which the path printed above the button has not
+ * already given them.
+ */
+export async function revealConfigFile(): Promise<void> {
+  const bridge = window.hive;
+  if (!bridge) return;
+
+  try {
+    await bridge.config.revealConfig();
+  } catch (cause) {
+    console.error('[hive] could not reveal the config file:', cause);
+  }
+}
+
+/**
+ * Put the config file back to the first-run template (story 107).
+ *
+ * Routed through `mutate` like every other write, which is what makes a refused
+ * reset leave the last good snapshot in place rather than emptying the UI's
+ * project list over a write that never happened — the bug story 103 fixed, and
+ * the whole reason `mutate` exists separately from `read`.
+ */
+export const resetConfigToTemplate = (): Promise<void> =>
+  mutate((bridge) => bridge.config.resetConfig());
+
+/**
+ * Versions, platform, log directory and PTY counters (story 107).
+ *
+ * Not routed through `mutate` — it writes nothing, so there is no snapshot to
+ * install. `null` with no bridge (the browser demo) or on a failed channel, and
+ * the caller says so rather than rendering fabricated version numbers: a
+ * diagnostics pane that invented an answer would be worse than no pane.
+ *
+ * Asked on demand rather than subscribed to. `appInfo` is `invoke`-only and
+ * there is no push channel for the counters, so the pane carries an explicit
+ * refresh — see `advanced-section.tsx` for why polling was rejected.
+ */
+export async function readAppInfo(): Promise<AppInfo | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.appInfo();
+  } catch (cause) {
+    console.error('[hive] reading app info failed:', cause);
     return null;
   }
 }

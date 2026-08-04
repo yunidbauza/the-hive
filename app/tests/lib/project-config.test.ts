@@ -9,12 +9,15 @@ import {
 import {
   loadProjectConfig,
   projectAccess,
+  readAppInfo,
   projectConfigSnapshot,
   reloadProjectConfig,
   renameProjectInConfig,
   reorderProjectsInConfig,
   repointProjectInConfig,
+  resetConfigToTemplate,
   resetProjectConfig,
+  revealConfigFile,
   setProjectConfigForTest,
   subscribeProjectConfig,
 } from '@lib/project-config';
@@ -279,5 +282,96 @@ describe('managing projects', () => {
       reorderProjectsInConfig({ ids: [] }),
     ).resolves.toBeUndefined();
     expect(projectConfigSnapshot()).toBeNull();
+  });
+});
+
+/**
+ * Story 107's three calls.
+ *
+ * Two of them write nothing and so deliberately do *not* go through `mutate`;
+ * the third does, which is what keeps a refused reset from emptying the UI's
+ * project list over a write that never happened.
+ */
+describe('story 107 verbs', () => {
+  beforeEach(() => {
+    // Both read paths log a failed channel. Silenced so a deliberate rejection
+    // does not print a stack into a passing run.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('revealConfigFile calls through, passing nothing', async () => {
+    const revealConfig = vi.fn().mockResolvedValue(undefined);
+    (window as { hive?: unknown }).hive = { config: { revealConfig } };
+
+    await revealConfigFile();
+
+    expect(revealConfig).toHaveBeenCalledWith();
+  });
+
+  it('revealConfigFile swallows a failed channel and a missing bridge alike', async () => {
+    await expect(revealConfigFile()).resolves.toBeUndefined();
+
+    (window as { hive?: unknown }).hive = {
+      config: { revealConfig: vi.fn().mockRejectedValue(new Error('no window')) },
+    };
+    await expect(revealConfigFile()).resolves.toBeUndefined();
+  });
+
+  it('resetConfigToTemplate installs the snapshot main returns', async () => {
+    const next = snapshot();
+    (window as { hive?: unknown }).hive = {
+      config: { resetConfig: vi.fn().mockResolvedValue(next) },
+    };
+
+    await resetConfigToTemplate();
+
+    expect(projectConfigSnapshot()).toBe(next);
+  });
+
+  it('resetConfigToTemplate keeps the last good snapshot when refused', async () => {
+    const good = snapshot([{ id: 'alpha', status: 'ok' }]);
+    setProjectConfigForTest(good);
+    (window as { hive?: unknown }).hive = {
+      config: { resetConfig: vi.fn().mockRejectedValue(new Error('refused')) },
+    };
+
+    await resetConfigToTemplate();
+
+    expect(projectConfigSnapshot()).toBe(good);
+  });
+
+  it('resetConfigToTemplate is a no-op with no bridge', async () => {
+    await expect(resetConfigToTemplate()).resolves.toBeUndefined();
+    expect(projectConfigSnapshot()).toBeNull();
+  });
+
+  it('readAppInfo returns what the bridge answers', async () => {
+    const info = {
+      version: '0.1.0',
+      electron: '38.0.0',
+      chrome: '140.0.0',
+      node: '22.0.0',
+      platform: 'darwin',
+      logPath: '/Users/dev/Library/Logs/The Hive',
+    };
+    (window as { hive?: unknown }).hive = {
+      appInfo: vi.fn().mockResolvedValue(info),
+    };
+
+    await expect(readAppInfo()).resolves.toBe(info);
+  });
+
+  it('readAppInfo answers null rather than inventing versions', async () => {
+    // No bridge: the browser demo.
+    await expect(readAppInfo()).resolves.toBeNull();
+
+    (window as { hive?: unknown }).hive = {
+      appInfo: vi.fn().mockRejectedValue(new Error('channel gone')),
+    };
+    await expect(readAppInfo()).resolves.toBeNull();
   });
 });
