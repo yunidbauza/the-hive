@@ -174,6 +174,44 @@ describe('TerminalSurface', () => {
       expect(fitAddon.fit).toHaveBeenCalledTimes(2);
     });
 
+    it('applies the options to a hidden surface but does not fit it', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+      );
+      const [fitAddon] = fitAddonInstances as MockFitAddon[];
+
+      // Hidden surfaces are never fitted at all — the visibility effect owns
+      // every fit, so a zero-height box is never measured.
+      expect(fitAddon.fit).toHaveBeenCalledTimes(0);
+
+      rerender(
+        <TerminalSurface
+          transport={transport}
+          theme="dark"
+          fontSize={16}
+          visible={false}
+        />,
+      );
+
+      /**
+       * Appearance is forwarded to *every* kept-alive surface, not just the
+       * active one, so this effect runs on hidden terminals too. A hidden
+       * surface is `display: none`, whose `h-full` resolves to 0px rather than
+       * `auto` — the fit addon's isNaN guard does not catch that, and it would
+       * resize a background terminal to the 2×1 floor and reflow its buffer at
+       * two columns.
+       */
+      expect(terminal().options.fontSize).toBe(16);
+      expect(fitAddon.fit).toHaveBeenCalledTimes(0);
+
+      // Revealing it fits once, with the new font already applied.
+      rerender(
+        <TerminalSurface transport={transport} theme="dark" fontSize={16} visible />,
+      );
+      expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+    });
+
     it('does not refit when the appearance props are unchanged', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(

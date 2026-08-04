@@ -279,6 +279,15 @@ export function TerminalSurface({
    * shares the effect: three assignments and one fit is cheaper than two
    * effects, and shrinking the buffer while the viewport is deep in it is
    * exactly the case the bottom-preserving fit already handles.
+   *
+   * **The options are applied to every instance; only the fit waits for
+   * visibility.** Appearance is forwarded to all kept-alive surfaces, not just
+   * the active one, so this effect runs on hidden terminals too — and a hidden
+   * surface is `display: none`, whose `h-full` resolves to 0px rather than
+   * `auto`. The fit addon's `isNaN` guard does not catch that, so it would
+   * resize a background terminal to the 2×1 floor and reflow its buffer at two
+   * columns. The visibility effect already re-fits on reveal, which is where
+   * the geometry actually exists to measure.
    */
   const appearanceRef = useRef({ fontFamily, fontSize, scrollback });
   useEffect(() => {
@@ -306,8 +315,8 @@ export function TerminalSurface({
     terminal.options.fontFamily = fontFamily;
     terminal.options.fontSize = fontSize;
     terminal.options.scrollback = scrollback;
-    fitPreservingBottom(instance);
-  }, [instance, fontFamily, fontSize, scrollback]);
+    if (visible) fitPreservingBottom(instance);
+  }, [instance, fontFamily, fontSize, scrollback, visible]);
 
   /** Backend output in, keystrokes out. */
   useEffect(() => {
