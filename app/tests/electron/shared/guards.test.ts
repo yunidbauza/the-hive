@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
+import { CLONE_ENTITY_ID } from '../../../electron/shared/config-contract';
+
 import {
   IpcValidationError,
   parseAddProjectRequest,
@@ -370,5 +372,41 @@ describe('parseCloneRequest', () => {
     expect(() => parseCloneRequest({ ...validClone, rows: 0 })).toThrow(
       IpcValidationError,
     );
+  });
+});
+
+/**
+ * The clone entity id has to survive the id guard (story 102).
+ *
+ * It travels on `pty:write` as `sessionId`, and `pty:write` is a `send`
+ * channel — a rejected payload is logged and dropped, never returned. So an id
+ * this guard refuses does not fail loudly: every keystroke vanishes, the
+ * terminal keeps blinking its cursor, and no credential prompt can ever be
+ * answered. That is the whole reason the story runs `git` in a PTY, so it is
+ * worth a test of its own rather than trust in a constant.
+ */
+describe('CLONE_ENTITY_ID', () => {
+  it('is accepted wherever a session id is validated', () => {
+    expect(parseKillRequest(CLONE_ENTITY_ID)).toBe(CLONE_ENTITY_ID);
+    expect(
+      parseWriteRequest({ sessionId: CLONE_ENTITY_ID, data: 'hunter2\r' }),
+    ).toEqual({ sessionId: CLONE_ENTITY_ID, data: 'hunter2\r' });
+    expect(
+      parseResizeRequest({ sessionId: CLONE_ENTITY_ID, cols: 80, rows: 24 }),
+    ).toMatchObject({ sessionId: CLONE_ENTITY_ID });
+  });
+
+  /** A colon is the specific character that broke this in development. */
+  it('contains no character the id guard rejects', () => {
+    expect(CLONE_ENTITY_ID).not.toContain(':');
+    expect(CLONE_ENTITY_ID).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+  });
+
+  /**
+   * `deriveProjectId` kebabs a basename to `[a-z0-9-]`, so a dot is a character
+   * it can never emit — which is what makes a collision impossible.
+   */
+  it('cannot be produced by project-id derivation', () => {
+    expect(CLONE_ENTITY_ID).toContain('.');
   });
 });

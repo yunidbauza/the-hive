@@ -664,7 +664,7 @@ describe('restart: the defects the self review found', () => {
  */
 describe('openCommand', () => {
   const CLONE = {
-    entityId: 'hive:clone',
+    entityId: 'hive.clone',
     cwd: '/Users/me/Projects',
     file: 'git',
     args: ['clone', '--progress', '--', 'https://x/y.git', 'y'],
@@ -690,7 +690,7 @@ describe('openCommand', () => {
   it('does not arm the claude bootstrap', () => {
     sessions.openCommand({ ...CLONE, onExit: () => {} });
 
-    emitData({ sessionId: mintedFor('hive:clone'), chunk: "Cloning into 'y'...\r\n" });
+    emitData({ sessionId: mintedFor('hive.clone'), chunk: "Cloning into 'y'...\r\n" });
     vi.advanceTimersByTime(5_000);
 
     expect(supervisor.write).not.toHaveBeenCalled();
@@ -699,7 +699,7 @@ describe('openCommand', () => {
   it('publishes no session status for an entity the store never heard of', () => {
     sessions.openCommand({ ...CLONE, onExit: () => {} });
 
-    emitData({ sessionId: mintedFor('hive:clone'), chunk: 'receiving objects\r\n' });
+    emitData({ sessionId: mintedFor('hive.clone'), chunk: 'receiving objects\r\n' });
     vi.advanceTimersByTime(5_000);
 
     expect(on(CH.sessionStatus)).toHaveLength(0);
@@ -709,7 +709,7 @@ describe('openCommand', () => {
     const onExit = vi.fn();
     sessions.openCommand({ ...CLONE, onExit });
 
-    emitExit({ sessionId: mintedFor('hive:clone'), exitCode: 0 });
+    emitExit({ sessionId: mintedFor('hive.clone'), exitCode: 0 });
 
     expect(onExit).toHaveBeenCalledWith({ exitCode: 0, signal: 0, lost: false });
   });
@@ -718,7 +718,7 @@ describe('openCommand', () => {
     const onExit = vi.fn();
     sessions.openCommand({ ...CLONE, onExit });
 
-    emitLost({ sessionId: mintedFor('hive:clone') });
+    emitLost({ sessionId: mintedFor('hive.clone') });
 
     expect(onExit).toHaveBeenCalledWith({ exitCode: -1, signal: 0, lost: true });
   });
@@ -733,7 +733,7 @@ describe('openCommand', () => {
     sessions.openCommand({ ...CLONE, onExit });
 
     emitError({
-      sessionId: mintedFor('hive:clone'),
+      sessionId: mintedFor('hive.clone'),
       message: 'could not start git in /Users/me/Projects: ENOENT',
     });
 
@@ -750,7 +750,7 @@ describe('openCommand', () => {
     const onExit = vi.fn();
     sessions.openCommand({ ...CLONE, onExit });
 
-    emitExit({ sessionId: mintedFor('hive:clone'), exitCode: 0, signal: 15 });
+    emitExit({ sessionId: mintedFor('hive.clone'), exitCode: 0, signal: 15 });
 
     expect(onExit).toHaveBeenCalledWith({
       exitCode: 0,
@@ -763,7 +763,7 @@ describe('openCommand', () => {
     const onExit = vi.fn();
     sessions.openCommand({ ...CLONE, onExit });
 
-    const sessionId = mintedFor('hive:clone');
+    const sessionId = mintedFor('hive.clone');
     emitExit({ sessionId, exitCode: 1 });
     emitExit({ sessionId, exitCode: 1 });
 
@@ -773,10 +773,10 @@ describe('openCommand', () => {
   it('routes write to the command session, so prompts are answerable', () => {
     sessions.openCommand({ ...CLONE, onExit: () => {} });
 
-    sessions.write('hive:clone', 'hunter2\r');
+    sessions.write('hive.clone', 'hunter2\r');
 
     expect(supervisor.write).toHaveBeenCalledWith(
-      mintedFor('hive:clone'),
+      mintedFor('hive.clone'),
       'hunter2\r',
     );
   });

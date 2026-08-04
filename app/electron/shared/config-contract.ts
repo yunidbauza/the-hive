@@ -179,10 +179,19 @@ export interface RemoveProjectRequest {
  * Being a single id also caps concurrency at one clone, which the focused
  * sub-view already implies.
  *
- * The `hive:` prefix cannot collide with a project-derived entity id — story
- * 101's `deriveProjectId` builds ids from directory basenames.
+ * **The dot is load-bearing, and so is the absence of a colon.**
+ *
+ * This id travels on `pty:write` as `sessionId`, where `assertId` requires
+ * `/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/`. An id with a colon fails that guard,
+ * and because `pty:write` is a `send` channel the rejection is logged and
+ * dropped rather than returned — so every keystroke would vanish silently and
+ * no credential prompt could ever be answered, which is the one thing this
+ * whole design exists to make possible.
+ *
+ * The dot also makes collision impossible: `deriveProjectId` (story 101) kebabs
+ * a directory basename to `[a-z0-9-]`, so no project can ever be given this id.
  */
-export const CLONE_ENTITY_ID = 'hive:clone';
+export const CLONE_ENTITY_ID = 'hive.clone';
 
 /**
  * Payload of `config:clone-start` (story 102).

@@ -617,7 +617,7 @@ describe('requestSpawn', () => {
  * credential prompt is answerable.
  */
 describe('createCloneTransport', () => {
-  const CLONE_ID = 'hive:clone';
+  const CLONE_ID = 'hive.clone';
 
   it('never spawns, because main already started git', () => {
     const transport = createCloneTransport();
