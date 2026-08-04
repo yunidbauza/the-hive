@@ -44,6 +44,16 @@ export function RuntimeSection() {
   const [selectedId, setSelectedId] = useState('');
   const [diagnostic, setDiagnostic] = useState<CommandDiagnostic | null>(null);
   const [envDiagnostic, setEnvDiagnostic] = useState<EnvDiagnostic | null>(null);
+  /**
+   * Whether the env probe is in flight.
+   *
+   * The env diagnostic spawns a real login shell and waits for it — typically
+   * a second or more with oh-my-zsh or nvm, and up to the probe's own timeout
+   * in the worst case — unlike the command diagnostic, which only stats
+   * files. A button with no feedback for that long reads as broken rather
+   * than working.
+   */
+  const [envDiagnosticPending, setEnvDiagnosticPending] = useState(false);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -96,10 +106,15 @@ export function RuntimeSection() {
   };
 
   const runEnvDiagnostic = async () => {
-    const result = await diagnoseSessionEnv(
-      selectedId === '' ? {} : { id: selectedId },
-    );
-    setEnvDiagnostic(result);
+    setEnvDiagnosticPending(true);
+    try {
+      const result = await diagnoseSessionEnv(
+        selectedId === '' ? {} : { id: selectedId },
+      );
+      setEnvDiagnostic(result);
+    } finally {
+      setEnvDiagnosticPending(false);
+    }
   };
 
   return (
@@ -259,9 +274,15 @@ export function RuntimeSection() {
         <button
           type="button"
           onClick={() => void runEnvDiagnostic()}
-          className="w-fit rounded-[6px] border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink"
+          disabled={envDiagnosticPending}
+          aria-busy={envDiagnosticPending}
+          className="w-fit rounded-[6px] border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink disabled:opacity-60"
         >
-          {selectedId === '' ? 'Check the default shell' : 'Check this project’s shell'}
+          {envDiagnosticPending
+            ? 'Checking…'
+            : selectedId === ''
+              ? 'Check the default environment'
+              : 'Check this project’s environment'}
         </button>
 
         {envDiagnostic ? <EnvDiagnosticView diagnostic={envDiagnostic} /> : null}

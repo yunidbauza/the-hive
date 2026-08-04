@@ -71,7 +71,10 @@ describe('EnvDiagnosticView', () => {
     );
 
     expect(screen.getByText(/ENOENT/)).toBeInTheDocument();
-    expect(screen.getByText('/opt/nonexistent-shell')).toBeInTheDocument();
+    // The invocation block ("Ran ...") always shows the exact shell that was
+    // probed, whether or not the probe succeeded — it appears twice here,
+    // once in that block and once in the error message itself.
+    expect(screen.getAllByText(/\/opt\/nonexistent-shell/).length).toBeGreaterThan(0);
   });
 
   it('says nothing is configured when there is nothing to report', () => {
@@ -85,14 +88,61 @@ describe('EnvDiagnosticView', () => {
       <EnvDiagnosticView
         diagnostic={diagnostic({
           vars: [
-            { key: 'A', configured: '1', actual: '1', overridden: false },
-            { key: 'B', configured: '2', actual: '9', overridden: true },
+            { key: 'FOO_KEPT', configured: '1', actual: '1', overridden: false },
+            // Overridden, so its key legitimately appears twice: once in the
+            // row header, once again inside that row's own remediation
+            // prose. Distinct from the kept variable's key precisely so this
+            // test cannot pass by accident.
+            { key: 'BAR_OVERRIDDEN', configured: '2', actual: '9', overridden: true },
           ],
         })}
       />,
     );
 
-    expect(screen.getByText('A')).toBeInTheDocument();
-    expect(screen.getByText('B')).toBeInTheDocument();
+    expect(screen.getByText('FOO_KEPT')).toBeInTheDocument();
+    expect(screen.getAllByText('BAR_OVERRIDDEN').length).toBeGreaterThan(0);
+  });
+
+  it('shows the exact shell and argv that were probed, even on a clean success', () => {
+    render(
+      <EnvDiagnosticView
+        diagnostic={diagnostic({
+          shell: '/bin/zsh',
+          vars: [{ key: 'A', configured: '1', actual: '1', overridden: false }],
+        })}
+      />,
+    );
+
+    // Review's finding: a successful verdict never named what was probed,
+    // which matters once per-project shell overrides are in the same
+    // section. The exact invocation — including the interactive flag — is
+    // now always shown, success or failure.
+    expect(screen.getByText(/\/bin\/zsh.*-l.*-i.*-c.*printenv/)).toBeInTheDocument();
+  });
+
+  it('names the rc file as the likely cause and says what to do about an override', () => {
+    render(
+      <EnvDiagnosticView
+        diagnostic={diagnostic({
+          vars: [
+            { key: 'AWS_PROFILE', configured: 'hive', actual: 'incorp', overridden: true },
+          ],
+        })}
+      />,
+    );
+
+    // Matches `command-diagnostic-view.tsx`'s tone: name the likely cause and
+    // what to do, not just state the fact and stop.
+    expect(screen.getByText(/usually your shell.s rc file/)).toBeInTheDocument();
+    expect(screen.getByText(/remove this variable from Settings/)).toBeInTheDocument();
+  });
+
+  it('documents the no-TTY gap rather than hiding it', () => {
+    render(<EnvDiagnosticView diagnostic={diagnostic()} />);
+
+    // The residual gap review asked to be surfaced: the probe has no
+    // terminal, so a `[[ -t 0 ]]`-gated rc file can still diverge from a
+    // real, PTY-backed session.
+    expect(screen.getByText(/no terminal/)).toBeInTheDocument();
   });
 });

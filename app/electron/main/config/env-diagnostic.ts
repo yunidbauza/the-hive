@@ -1,19 +1,21 @@
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-import type {
-  EffectiveRuntime,
-  EnvDiagnostic,
-  EnvVarVerdict,
+import {
+  ENV_PROBE_ARGS,
+  type EffectiveRuntime,
+  type EnvDiagnostic,
+  type EnvVarVerdict,
 } from '@shared/config-contract';
 
 /**
  * The environment diagnostic (story 108).
  *
- * The design this diagnostic exists to make observable: injected environment
- * is applied **before** the shell starts, and the login shell that follows
- * sources its rc file **afterward** — which can silently overwrite anything
- * just set. That order is deliberate (the alternative is typing `export`
- * statements into the PTY, which is the arbitrary-code path
+ * The design decision this diagnostic exists to make observable: injected
+ * env is applied **before** the shell starts, and the login shell that
+ * follows sources its rc file **afterward** — which can silently overwrite
+ * anything just set. That order is deliberate (the alternative is typing
+ * `export` statements into the PTY, which is the arbitrary-code path
  * `UNSAFE_ENV_KEYS` exists to close), but a decision whose consequence is
  * invisible is not a decision the user can act on. Without this, "I set FOO
  * in Settings and it's still the old value" looks like a bug in this app
@@ -23,9 +25,26 @@ import type {
  * {@link compareEnv} reads a `printenv` transcript and is pure, so the
  * interesting logic — what counts as "overridden" — is unit-testable without
  * spawning anything. {@link diagnoseEnv} is the one function in this module
- * that touches a process, and it does the least amount of work it can once it
- * has a transcript in hand.
+ * that touches a process.
+ *
+ * **Asynchronous, not `spawnSync`.** A first pass used `spawnSync`, and
+ * review caught what that hides: `spawnSync`'s `timeout` only *sends*
+ * `killSignal`, it does not guarantee the child actually returns control —
+ * measured, a shell running `trap '' TERM; sleep 20` blocked the whole call
+ * for 20+ seconds against a 2-second timeout, because the default
+ * `killSignal` (`SIGTERM`) can be trapped and ignored. This runs on the
+ * **main process**, so that block is every window, every IPC channel and the
+ * pty-host pump frozen — triggered by a renderer button, running a
+ * user-configured program that executes arbitrary rc code. `execFile`
+ * (promisified) fixes both halves: it does not block the event loop while the
+ * child runs, and passing `killSignal: 'SIGKILL'` — a signal that cannot be
+ * trapped — actually bounds a hostile or hung shell to the timeout. Measured:
+ * the same trapping script against the same 2-second timeout now returns in
+ * ~2.0s, and the main thread's own timers keep firing the whole time the
+ * child is still alive.
  */
+
+const execFileAsync = promisify(execFile);
 
 /** How long the probe shell gets before it is considered hung. */
 const TIMEOUT_MS = 5_000;
@@ -70,75 +89,112 @@ export function compareEnv(
 }
 
 /**
- * Run the resolved shell once, as a login shell, and report what survived.
+ * Turn a rejected probe into one sentence, preserving the distinction between
+ * the three ways it can fail.
  *
- * `spawnSync` with `shell: false` and an argv array — never a shell string —
+ * `execFile`'s rejection carries all three as properties on **one** Error
+ * object rather than as two separate result fields to check in a particular
+ * order — which is what closes off the exact class of bug review flagged in
+ * the `spawnSync` version (`result.error` had to be checked *before*
+ * `result.status`, because a timeout there reported `status: 0` and would
+ * have silently read as a successful, empty-diff run if checked in the wrong
+ * order). Here there is only ever one failure path, so `killed` is checked
+ * first only because a killed process can also carry a stale, misleading
+ * `code` — not because of an ordering hazard between two separate results.
+ */
+function describeProbeFailure(cause: unknown, timeoutMs: number): string {
+  if (!(cause instanceof Error)) return String(cause);
+
+  const err = cause as NodeJS.ErrnoException & {
+    killed?: boolean;
+    signal?: NodeJS.Signals | null;
+  };
+
+  if (err.killed) {
+    return `the shell did not finish within ${timeoutMs / 1000}s and was killed (${err.signal ?? 'unknown signal'})`;
+  }
+  if (typeof err.code === 'number') {
+    return `the shell exited with status ${err.code}`;
+  }
+  // A string code (`ENOENT`, `EACCES`, ...) or none at all: the shell could
+  // not even be started. `err.message` already names it plainly, e.g.
+  // "spawn /opt/bad-shell ENOENT".
+  return err.message;
+}
+
+/**
+ * Run the resolved shell once, as an interactive login shell, and report what
+ * survived.
+ *
+ * `execFile` with `shell: false` and an argv array — never a shell string —
  * matching the rule `integrations/gh.ts` states for the only other place in
  * `electron/main` that executes another program: the shell here is the
  * *program* being probed, never an interpreter for a string this process
- * assembled. `spawnSync` rather than `execFileSync` for consistency with that
- * established precedent: `execFileSync` throws on a non-zero exit and on a
- * failed spawn alike, which would force this function back into a try/catch
- * that re-derives the same distinction `gh.ts`'s `result.error` / `result.status`
- * check already makes explicit.
+ * assembled.
+ *
+ * `ENV_PROBE_ARGS` (`-l -i -c printenv`) includes `-i`, not just `-l -c` —
+ * see its doc comment in `config-contract.ts` for why the interactive flag is
+ * load-bearing rather than decorative.
  *
  * Read-only, so — like `diagnoseCommand` — it does not go through
  * `writeConfig`.
  *
  * A failed probe is a failed *observation*, never a configuration error:
  * reporting it as the latter would tell the user their settings are wrong
- * when all that happened is that this diagnostic could not run. Both ways a
- * probe can fail — the shell could not even be started (`result.error`, e.g.
- * `ENOENT` for a typo'd path) and the shell ran but did not finish cleanly
- * (a non-zero exit, or a signal from the timeout) — are reported through
- * `error` with `vars: []`, never as a verdict.
+ * when all that happened is that this diagnostic could not run. Every way a
+ * probe can fail — the shell could not even be started (`ENOENT` for a
+ * typo'd path), the shell ran but exited non-zero, or it did not finish
+ * before the timeout and was killed — is reported through `error` with
+ * `vars: []`, never as a verdict.
  */
-export function diagnoseEnv(
+export async function diagnoseEnv(
   runtime: EffectiveRuntime,
   projectId: string | null,
   baseEnv: NodeJS.ProcessEnv = process.env,
-): EnvDiagnostic {
-  const result = spawnSync(runtime.shell, ['-l', '-c', 'printenv'], {
-    // The merged env this session would actually spawn with, not the
-    // process's own — a project that overrides a variable must be diagnosed
-    // against *its* value, or this describes a session nobody is running.
-    env: { ...baseEnv, ...runtime.env },
-    encoding: 'utf8',
-    timeout: TIMEOUT_MS,
-    maxBuffer: MAX_BUFFER,
-    shell: false,
-    // An rc file that writes to stderr is normal and is not this diagnostic's
-    // business; stdin is closed so a shell that decided to prompt cannot hang
-    // waiting on a terminal this process does not have.
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  /**
+   * How long the probe gets before it is killed.
+   *
+   * Overridable only so the timeout/`SIGKILL` path is unit-testable in
+   * bounded time — production never passes this, and always gets
+   * {@link TIMEOUT_MS}. A test that had to wait out a real 5-second timeout
+   * to prove the kill signal is what actually bounds a hung shell would be a
+   * slow test nobody re-runs; one that waits 200ms proves the identical
+   * thing.
+   */
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<EnvDiagnostic> {
+  try {
+    const { stdout } = await execFileAsync(runtime.shell, [...ENV_PROBE_ARGS], {
+      // The merged env this session would actually spawn with, not the
+      // process's own — a project that overrides a variable must be
+      // diagnosed against *its* value, or this describes a session nobody is
+      // running.
+      env: { ...baseEnv, ...runtime.env },
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      // A signal that cannot be trapped or ignored. `SIGTERM` (the default)
+      // is what a hostile or merely oh-my-zsh-heavy rc file can catch and
+      // sit through — see this module's top comment for the measured 20s+
+      // freeze that produced when this diagnostic ran synchronously. This is
+      // the second line of defence review asked for, and it is what actually
+      // bounds the timeout above to something the app can rely on.
+      killSignal: 'SIGKILL',
+      maxBuffer: MAX_BUFFER,
+      shell: false,
+    });
 
-  if (result.error !== undefined) {
     return {
       projectId,
       shell: runtime.shell,
-      error: result.error.message,
-      vars: [],
+      error: null,
+      vars: compareEnv(runtime.env, stdout),
     };
-  }
-
-  if (result.status !== 0) {
-    const detail =
-      result.status === null
-        ? `it was killed by signal ${result.signal ?? 'unknown'}`
-        : `it exited with status ${result.status}`;
+  } catch (cause) {
     return {
       projectId,
       shell: runtime.shell,
-      error: `the shell did not run to completion — ${detail}`,
+      error: describeProbeFailure(cause, timeoutMs),
       vars: [],
     };
   }
-
-  return {
-    projectId,
-    shell: runtime.shell,
-    error: null,
-    vars: compareEnv(runtime.env, result.stdout ?? ''),
-  };
 }

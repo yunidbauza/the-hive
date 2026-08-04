@@ -356,7 +356,7 @@ export function registerIpcHandlers(): void {
    * environment nobody is running in. An unknown id falls back to the
    * top-level env rather than throwing, matching `configDiagnoseCommand`.
    */
-  handle(CH.configDiagnoseEnv, (_event, payload): EnvDiagnostic => {
+  handle(CH.configDiagnoseEnv, (_event, payload): Promise<EnvDiagnostic> => {
     const request = parseDiagnoseEnvRequest(payload);
     const snapshot = getConfig();
     const project =

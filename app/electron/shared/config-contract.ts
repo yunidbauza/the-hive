@@ -170,6 +170,28 @@ export interface EnvDiagnostic {
   vars: EnvVarVerdict[];
 }
 
+/**
+ * The exact argv the environment diagnostic runs the shell with (story 108).
+ *
+ * A shared constant rather than a string literal duplicated in
+ * `env-diagnostic.ts` (which runs it) and `env-diagnostic-view.tsx` (which
+ * displays it) — a second, hand-typed copy is exactly the kind of drift that
+ * turned a missing `-i` into a defect in the first place.
+ *
+ * **`-i`, not just `-l -c`.** zsh sources `.zshrc` only for *interactive*
+ * shells, and a real session's `<shell> -l` on a PTY is interactive — so a
+ * merely-login, non-interactive probe misses the exact file this diagnostic
+ * exists to expose, reporting a variable as "kept" while a real session would
+ * have gotten the rc file's value. Measured directly: `zsh -l -c printenv`
+ * does not see a variable set in `.zshrc`; `zsh -l -i -c printenv` does.
+ *
+ * **A residual gap remains, and is surfaced rather than hidden.** The probe
+ * has no TTY, so an rc file gated on `[[ -t 0 ]]` can still diverge from a
+ * real session. `EnvDiagnosticView` renders this exact argv next to the
+ * result precisely so the user can see what was, and was not, exercised.
+ */
+export const ENV_PROBE_ARGS: readonly string[] = ['-l', '-i', '-c', 'printenv'];
+
 /** Which project's environment to diagnose. Omitted id means the top-level env. */
 export interface DiagnoseEnvRequest {
   id?: string;

@@ -379,19 +379,21 @@ describe('RuntimeSection — environment diagnostic', () => {
     vars: [{ key: 'AWS_PROFILE', configured: 'hive', actual: 'hive', overridden: false }],
   };
 
-  it('asks about the default shell when no project is picked', async () => {
+  it('asks about the default environment when no project is picked', async () => {
     const user = userEvent.setup();
     diagnoseSessionEnv.mockResolvedValue(kept);
     install();
     render(<RuntimeSection />);
 
-    await user.click(screen.getByRole('button', { name: 'Check the default shell' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Check the default environment' }),
+    );
 
     expect(diagnoseSessionEnv).toHaveBeenCalledWith({});
     expect(await screen.findByText('AWS_PROFILE')).toBeInTheDocument();
   });
 
-  it('asks about the selected project’s shell', async () => {
+  it('asks about the selected project’s environment', async () => {
     const user = userEvent.setup();
     diagnoseSessionEnv.mockResolvedValue({ ...kept, projectId: 'apfm-web' });
     install({ projects: [entry({ id: 'apfm-web' })] });
@@ -402,10 +404,37 @@ describe('RuntimeSection — environment diagnostic', () => {
       'apfm-web',
     );
     await user.click(
-      screen.getByRole('button', { name: /Check this project’s shell/ }),
+      screen.getByRole('button', { name: /Check this project’s environment/ }),
     );
 
     expect(diagnoseSessionEnv).toHaveBeenCalledWith({ id: 'apfm-web' });
+  });
+
+  it('shows a pending state while the probe is in flight, and clears it after', async () => {
+    const user = userEvent.setup();
+    // A promise this test controls the resolution of, so the pending state
+    // between click and resolution is actually observable — a diagnostic
+    // that spawns a real shell can take a second or more, unlike the
+    // instant, file-stat-only command diagnostic.
+    let resolve!: (value: EnvDiagnostic) => void;
+    diagnoseSessionEnv.mockReturnValue(
+      new Promise<EnvDiagnostic>((r) => {
+        resolve = r;
+      }),
+    );
+    install();
+    render(<RuntimeSection />);
+
+    const button = screen.getByRole('button', { name: 'Check the default environment' });
+    await user.click(button);
+
+    expect(await screen.findByRole('button', { name: 'Checking…' })).toBeDisabled();
+
+    resolve(kept);
+
+    expect(
+      await screen.findByRole('button', { name: 'Check the default environment' }),
+    ).not.toBeDisabled();
   });
 
   it('drops a stale env verdict when the project changes', async () => {
@@ -417,7 +446,7 @@ describe('RuntimeSection — environment diagnostic', () => {
     const select = screen.getByRole('combobox', { name: 'Project' });
     await user.selectOptions(select, 'a');
     await user.click(
-      screen.getByRole('button', { name: /Check this project’s shell/ }),
+      screen.getByRole('button', { name: /Check this project’s environment/ }),
     );
     expect(await screen.findByText('AWS_PROFILE')).toBeInTheDocument();
 
