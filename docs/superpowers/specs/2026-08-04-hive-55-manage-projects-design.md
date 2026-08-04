@@ -94,10 +94,20 @@ Jira issue yet"; HIVE-54, HIVE-55 and HIVE-60 all exist. An untracked
 `stories/README copy.md` — a stale pre-phase-2 snapshot — sits in the tree as
 `git status` noise.
 
-**Resolution:** add the 102 and 103 rows, correct the Jira table, delete the
-junk file. `README.md:127` says "when a story changes here, update its Jira
-issue too; nothing syncs automatically", so HIVE-55 and HIVE-60 are updated in
-Jira as part of this story.
+**Resolution:** add the 102 and 103 rows and correct the Jira table.
+`README.md:127` says "when a story changes here, update its Jira issue too;
+nothing syncs automatically", so HIVE-55 and HIVE-60 are updated in Jira as part
+of this story.
+
+**Correction, recorded after the fact.** This section originally said the junk
+file would be deleted too, and the commit that added this spec (`250e75d`) says
+so in its message. Neither is true: `stories/README copy.md` was never tracked
+by git, so no commit can remove it — it exists only as an untracked file in the
+maintainer's own checkout, and a worktree never saw it. Deleting it is a local
+`rm`, not a change this branch can carry. The commit message is left as-is
+rather than rewritten, because the branch is pushed and a misleading sentence in
+one message is a smaller problem than rewriting fifteen commits of shared
+history.
 
 ---
 
