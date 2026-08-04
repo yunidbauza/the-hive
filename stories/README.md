@@ -79,10 +79,18 @@ for what we deliberately left behind.
 | 099 | [Desktop CI](099-desktop-ci.md) | Real terminals | 3 |
 | 100 | [**Settings** — epic overview](100-settings-epic.md) | Settings | 1 |
 | 101 | [Settings: add a local project folder](101-settings-add-local-project.md) | Settings | 13 |
+| 102 | [Settings: add a remote repository by URL](100-settings-epic.md) | Settings | 8 |
+| 103 | [Settings: manage projects — rename, re-point, reorder](100-settings-epic.md) | Settings | 5 |
 
-**44 stories · 208 points.** Phase 1: 26 stories · 107 pts. Phase 2: 16 stories · 87
-pts. Post-phase-2: 2 stories written · 14 pts (the Settings epic scopes 8 stories ·
-47 pts; 102–108 are named in [100](100-settings-epic.md) and not yet written in full).
+**46 stories · 221 points.** Phase 1: 26 stories · 107 pts. Phase 2: 16 stories · 87
+pts. Post-phase-2: 4 stories delivered · 27 pts (the Settings epic scopes 8 stories ·
+47 pts; 104–108 are named in [100](100-settings-epic.md) and not yet written).
+
+Stories 102 and 103 link to the epic because **neither has a story file**. Both were
+built from a design doc instead — `docs/superpowers/specs/2026-08-03-hive-54-settings-add-remote-repo-design.md`
+and `docs/superpowers/specs/2026-08-04-hive-55-manage-projects-design.md` — each
+carrying the acceptance criteria, file-touch table and test plan a story file would
+have held.
 
 | Epic | Phase | Stories | Points |
 |---|---|---|---|
@@ -112,7 +120,7 @@ mapping:
 | Cross-cutting | `HIVE-6` | 060→`HIVE-29`, 061→`HIVE-30`, 070→`HIVE-31`, 071→`HIVE-32` |
 | **Desktop shell** | `HIVE-33` | 080→`HIVE-35`, 081→`HIVE-36`, 082→`HIVE-37`, 083→`HIVE-38`, 084→`HIVE-39`, 085→`HIVE-40` |
 | **Real terminals** | `HIVE-34` | 090→`HIVE-41`, 091→`HIVE-42`, 092→`HIVE-43`, 093→`HIVE-44`, 094→`HIVE-45`, 095→`HIVE-46`, 096→`HIVE-47`, 097→`HIVE-48`, 098→`HIVE-49`, 099→`HIVE-50` |
-| **Settings** | `HIVE-51` | 100→*the Epic's own description*, 101→`HIVE-52`. 102–108 are scoped in [100](100-settings-epic.md) and have no Jira issue yet |
+| **Settings** | `HIVE-51` | 100→*the Epic's own description*, 101→`HIVE-52`, 102→`HIVE-54`, 103→`HIVE-55`, 104→`HIVE-56`, 105→`HIVE-57`, 106→`HIVE-58`, 107→`HIVE-59`, 108→`HIVE-60`. Stories 102 and 103 have no story file; their specs live in `docs/superpowers/specs/` |
 
 Doc 100 is the only overview doc with no Story of its own — unlike
 [000](000-overview.md) (`HIVE-7`), its content **is** the Epic's description, because
@@ -229,8 +237,9 @@ graph TD
 
 ## Dependency graph — Settings (post-phase-2)
 
-Dashed edges cross into phase 2. Only 100 and 101 are written in full; 102–108 are
-scoped in [100-settings-epic.md](100-settings-epic.md).
+Dashed edges cross into phase 2. Only 100 and 101 are written in full as story files;
+102 and 103 shipped design docs under `docs/superpowers/specs/` instead, and 104–108
+are still scoped only in [100-settings-epic.md](100-settings-epic.md).
 
 ```mermaid
 graph TD
