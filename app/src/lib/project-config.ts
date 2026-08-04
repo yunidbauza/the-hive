@@ -63,12 +63,42 @@ async function read(
   try {
     snapshot = await fetch(bridge);
   } catch (cause) {
-    // Main never rejects these — it returns a snapshot even for a malformed
+    // Main never rejects a *read* — it returns a snapshot even for a malformed
     // file. A rejection here means the channel itself failed, which is not
     // something the user can fix by editing their config, so the surfaces stay
     // permissive rather than locking the app over a broken IPC hop.
     console.error('[hive] could not read the workspace config:', cause);
     snapshot = null;
+  }
+  emit();
+}
+
+/**
+ * Run a mutating verb, keeping the last good snapshot if it is refused.
+ *
+ * Separate from {@link read} because the two failures mean opposite things. A
+ * failed read is a broken channel, and story 090 decided that must leave the
+ * app permissive rather than locked. A failed **write** says only that the
+ * write did not happen — nothing on disk changed, so the snapshot the renderer
+ * already holds is still exactly true.
+ *
+ * Clearing it here was a real bug: story 103's payload guards throw, and
+ * `handle` does not catch, so a refused mutation rejects the invoke. That is
+ * reachable without malice — a config holding two entries with the same id
+ * renders two rows, and reordering posts a duplicate the guard refuses. The
+ * settings list emptied, and `projectAccess` (permissive with no snapshot, by
+ * design) reopened the spawn gate for every project until a reload.
+ */
+async function mutate(
+  call: (bridge: NonNullable<Window['hive']>) => Promise<ConfigSnapshot>,
+): Promise<void> {
+  const bridge = window.hive;
+  if (!bridge) return;
+
+  try {
+    snapshot = await call(bridge);
+  } catch (cause) {
+    console.error('[hive] the workspace config was not written:', cause);
   }
   emit();
 }
@@ -85,33 +115,33 @@ export const reloadProjectConfig = (): Promise<void> =>
  * Add a directory the user chose (story 101).
  *
  * No reload follows. Every mutating verb returns the fresh snapshot, and
- * `read` installs it — which is the whole reason the contract is shaped that
+ * `mutate` installs it — which is the whole reason the contract is shaped that
  * way: the renderer can never render a list the write already invalidated.
  */
 export const addProjectToConfig = (request: AddProjectRequest): Promise<void> =>
-  read((bridge) => bridge.config.addProject(request));
+  mutate((bridge) => bridge.config.addProject(request));
 
 /** Remove one entry by id (story 101). */
 export const removeProjectFromConfig = (
   request: RemoveProjectRequest,
-): Promise<void> => read((bridge) => bridge.config.removeProject(request));
+): Promise<void> => mutate((bridge) => bridge.config.removeProject(request));
 
 /**
  * Change a project's display name (story 103).
  *
- * Routed through `read` like every other mutating verb, so the snapshot main
+ * Routed through `mutate` like every other mutating verb, so the snapshot main
  * returns is the one the UI renders. There is deliberately no optimistic name
  * held here to reconcile — that is the whole reason the contract returns a
  * snapshot instead of a status.
  */
 export const renameProjectInConfig = (
   request: RenameProjectRequest,
-): Promise<void> => read((bridge) => bridge.config.renameProject(request));
+): Promise<void> => mutate((bridge) => bridge.config.renameProject(request));
 
 /** Point a project at a folder that moved (story 103). */
 export const repointProjectInConfig = (
   request: RepointProjectRequest,
-): Promise<void> => read((bridge) => bridge.config.repointProject(request));
+): Promise<void> => mutate((bridge) => bridge.config.repointProject(request));
 
 /**
  * Rewrite the project order (story 103).
@@ -121,7 +151,7 @@ export const repointProjectInConfig = (
  */
 export const reorderProjectsInConfig = (
   request: ReorderProjectsRequest,
-): Promise<void> => read((bridge) => bridge.config.reorderProjects(request));
+): Promise<void> => mutate((bridge) => bridge.config.reorderProjects(request));
 
 /**
  * Open the native directory dialog (story 101).
@@ -140,7 +170,7 @@ export const chooseProjectDirectory = async (): Promise<string | null> => {
 /**
  * Install a snapshot main pushed with an event (story 102).
  *
- * The mutating *verbs* return their snapshot and `read` installs it, which is
+ * The mutating *verbs* return their snapshot and `mutate` installs it, which is
  * what stops the renderer rendering a list a write already invalidated. A clone
  * concludes on an **event** instead — it finishes long after the call that
  * started it returned — so its snapshot needs the same treatment, or the

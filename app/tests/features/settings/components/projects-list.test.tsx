@@ -106,7 +106,7 @@ describe('ProjectsList', () => {
       });
     });
 
-    it('disables the move that would fall off the end', async () => {
+    it('disables the move that would fall off either end', async () => {
       render(<ProjectsList entries={abc} />);
 
       await openMenu('a');
@@ -114,6 +114,12 @@ describe('ProjectsList', () => {
         'aria-disabled',
         'true',
       );
+      await userEvent.keyboard('{Escape}');
+
+      await openMenu('c');
+      expect(
+        screen.getByRole('menuitem', { name: /move down/i }),
+      ).toHaveAttribute('aria-disabled', 'true');
     });
   });
 
@@ -139,6 +145,56 @@ describe('ProjectsList', () => {
       fireEvent.dragEnter(rows[0]!);
       fireEvent.drop(rows[0]!);
 
+      expect(reorderProjectsInConfig).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The regression that the original index caused.
+     *
+     * `index` must be the row's **painted** position. Reading its position in
+     * the pre-drag `entries` instead made every reversal lag by one, and made
+     * the original order unreachable: a row dragged down could never be
+     * dragged back to the top.
+     */
+    it('follows the pointer back up again, and can return a row to the top', () => {
+      render(
+        <ProjectsList
+          entries={[entry({ id: 'a' }), entry({ id: 'b' }), entry({ id: 'c' })]}
+        />,
+      );
+      const at = (i: number) => screen.getAllByRole('listitem')[i]!;
+
+      fireEvent.dragStart(at(0));
+      fireEvent.dragEnter(at(1));
+      fireEvent.dragEnter(at(2));
+      // Now painted b, c, a — reverse all the way back.
+      fireEvent.dragEnter(at(1));
+      fireEvent.dragEnter(at(0));
+      fireEvent.drop(at(0));
+
+      // Back where it started, so there is nothing to write.
+      expect(reorderProjectsInConfig).not.toHaveBeenCalled();
+    });
+
+    it('paints a live preview of where the row will land', () => {
+      render(
+        <ProjectsList
+          entries={[entry({ id: 'a' }), entry({ id: 'b' }), entry({ id: 'c' })]}
+        />,
+      );
+      const names = () =>
+        screen
+          .getAllByRole('listitem')
+          .map((row) => row.textContent?.match(/^[abc]/)?.[0]);
+
+      expect(names()).toEqual(['a', 'b', 'c']);
+
+      fireEvent.dragStart(screen.getAllByRole('listitem')[0]!);
+      fireEvent.dragEnter(screen.getAllByRole('listitem')[1]!);
+
+      // The preview moved before any write — this is what the derived
+      // `ordered` memo exists for.
+      expect(names()).toEqual(['b', 'a', 'c']);
       expect(reorderProjectsInConfig).not.toHaveBeenCalled();
     });
 
@@ -247,14 +303,33 @@ describe('ProjectsList', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     });
 
-    it('counts the live sessions in the confirmation', async () => {
-      render(<ProjectsList entries={[entry({ id: 'apfm-web', name: 'APFM' })]} />);
+    /**
+     * The count must be the real one.
+     *
+     * `useProjectsOwningLiveSessions` deduplicates — it answers "may this be
+     * removed?" — so counting *it* always yielded 1, and the confirmation read
+     * "1 live session will keep running — **they** just stop resolving",
+     * disagreeing with itself in one sentence.
+     */
+    it('states how many live sessions the project actually owns', async () => {
+      const live = useHiveStore
+        .getState()
+        .order.map((id) => useHiveStore.getState().entities[id])
+        .filter(
+          (entity) =>
+            entity?.kind === 'session' &&
+            entity.project === 'apfm-web' &&
+            entity.status !== 'done',
+        ).length;
+      // The fixtures are the point of this test; guard against them changing.
+      expect(live).toBeGreaterThan(1);
 
+      render(<ProjectsList entries={[entry({ id: 'apfm-web', name: 'APFM' })]} />);
       await openMenu('APFM');
       await choose(/remove/i);
 
       expect(
-        screen.getByText(/live sessions? will keep running/i),
+        screen.getByText(new RegExp(`${live} live sessions will keep running`)),
       ).toBeInTheDocument();
     });
   });

@@ -676,6 +676,28 @@ const projectsOwningLiveSessions = (state: HiveState): string[] => {
 export const useProjectsOwningLiveSessions = () =>
   useHiveStore(useShallow(projectsOwningLiveSessions));
 
+/** How many not-done sessions each project owns (story 103). */
+const liveSessionCounts = (state: HiveState): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const id of state.order) {
+    const entity = state.entities[id];
+    if (!entity || !isSession(entity) || entity.status === 'done') continue;
+    counts[entity.project] = (counts[entity.project] ?? 0) + 1;
+  }
+  return counts;
+};
+
+/**
+ * Live session counts per project (story 103).
+ *
+ * Counts rather than membership, because the remove confirmation states the
+ * number out loud. {@link useProjectsOwningLiveSessions} deduplicates by
+ * design — it answers "may this be removed?" — so counting its result always
+ * yields 1, which is a sentence that contradicts its own plural.
+ */
+export const useLiveSessionCounts = () =>
+  useHiveStore(useShallow(liveSessionCounts));
+
 /**
  * The project list: the config's, merged with the fixtures (stories 031, 101).
  *

@@ -142,6 +142,14 @@ function assertDimension(value: unknown, label: string): number {
  */
 const MAX_TEXT = 4096;
 
+/**
+ * Upper bound on a reorder payload (story 103).
+ *
+ * Generous — nobody maps a thousand repositories — but finite, which is the
+ * point: the legitimate value is bounded by the projects on disk.
+ */
+const MAX_PROJECT_IDS = 1000;
+
 function assertText(value: unknown, label: string): string {
   const text = assertString(value, label);
   if (text.length === 0) return fail(`${label}: must not be empty`);
@@ -332,7 +340,23 @@ export function parseReorderProjectsRequest(
       `reorderProjects.ids: expected an array, got ${describe(raw.ids)}`,
     );
   }
-  const ids = raw.ids.map((id, index) =>
+  /*
+    Bounded, like every other guard in this file. The legitimate value can
+    never exceed the number of projects on disk, and an unbounded array is
+    allocated twice in main before anything rejects it — a wedged main process
+    takes every terminal with it.
+  */
+  if (raw.ids.length > MAX_PROJECT_IDS) {
+    return fail('reorderProjects.ids: too many ids');
+  }
+  /*
+    `Array.from` first, so array holes become `undefined` and are rejected.
+    `.map`, `.every` and `Set` all *skip* holes, which would let a sparse array
+    through this guard and put a literal `null` into the config file. A
+    `contextBridge` clone happens to densify it today; main's only shape guard
+    should not rest on a renderer-side implementation detail.
+  */
+  const ids = Array.from(raw.ids as unknown[]).map((id, index) =>
     assertId(id, `reorderProjects.ids[${index}]`),
   );
   if (new Set(ids).size !== ids.length) {

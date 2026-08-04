@@ -1,7 +1,6 @@
 import { DotsSixVertical } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 
-
 import { Icon } from '@components/ui/icon';
 import { Tag } from '@components/ui/tag';
 import type { ProjectConfig } from '@shared/config-contract';

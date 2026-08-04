@@ -20,10 +20,10 @@ import { launchHive } from './fixtures/hive-app';
  * whether the left rail — which reads the merged list positionally — actually
  * follows the new order.
  *
- * Drag is asserted through Playwright's `dragTo`, which drives native HTML5
- * drag-and-drop. That is exactly why this story hand-rolled the drag instead of
- * taking a pointer-event library: the e2e proof would otherwise have to step
- * the mouse by hand.
+ * Drag is driven with real, stepped mouse movement (see `dragRow`), which is
+ * what native HTML5 drag-and-drop needs — and what a hand-rolled drag buys:
+ * a pointer-event library would need the same stepping *and* a bespoke
+ * keyboard path on top.
  *
  * `dialog.showOpenDialog` is stubbed **in main**, not bypassed — the renderer
  * still calls `chooseDirectory` and still echoes the path back, so the round
@@ -82,6 +82,9 @@ const idsOnDisk = (configPath: string): string[] =>
     JSON.parse(readFileSync(configPath, 'utf8')).projects as { id: string }[]
   ).map((entry) => entry.id);
 
+/** Where `alpha` lands when dragged onto the last row — asserted by two tests. */
+const DRAG_RESULT = ['bravo', 'charlie', 'alpha'];
+
 const openRowMenu = (page: Page, name: string) =>
   page.getByRole('button', { name: `Actions for ${name}` }).click();
 
@@ -134,7 +137,7 @@ test('drag reorders the file and the left rail follows', async ({}, testInfo) =>
 
     await expect
       .poll(() => idsOnDisk(configPath))
-      .toEqual(['bravo', 'charlie', 'alpha']);
+      .toEqual(DRAG_RESULT);
 
     // The comment outlived a reorder, not just an add.
     expect(JSON.parse(readFileSync(configPath, 'utf8'))['//']).toBe(
@@ -158,7 +161,13 @@ test('drag reorders the file and the left rail follows', async ({}, testInfo) =>
   }
 });
 
-test('Move up produces the same file a drag would', async ({}, testInfo) => {
+/**
+ * The acceptance criterion is that both input paths produce the same config,
+ * so this drives the menu to the *same destination* the drag test reaches and
+ * compares against it, rather than merely asserting that a menu click does
+ * something.
+ */
+test('the menu reaches the same order a drag does', async ({}, testInfo) => {
   const { app, page, configPath } = await launchWithThree((name) =>
     testInfo.outputPath(name),
   );
@@ -166,18 +175,27 @@ test('Move up produces the same file a drag would', async ({}, testInfo) => {
   try {
     await openSettings(page);
 
-    await openRowMenu(page, 'charlie');
-    await page.getByRole('menuitem', { name: 'Move up' }).click();
+    // The drag test moves alpha to the end; two Move downs is the same journey.
+    await openRowMenu(page, 'alpha');
+    await page.getByRole('menuitem', { name: 'Move down' }).click();
+    await expect.poll(() => idsOnDisk(configPath)).toEqual([
+      'bravo',
+      'alpha',
+      'charlie',
+    ]);
 
-    await expect
-      .poll(() => idsOnDisk(configPath))
-      .toEqual(['alpha', 'charlie', 'bravo']);
+    await openRowMenu(page, 'alpha');
+    await page.getByRole('menuitem', { name: 'Move down' }).click();
+
+    // DRAG_RESULT is what `drag reorders the file and the left rail follows`
+    // asserts; the two paths must agree byte for byte.
+    await expect.poll(() => idsOnDisk(configPath)).toEqual(DRAG_RESULT);
   } finally {
     await app.close();
   }
 });
 
-test('renaming survives a reload and never touches the id', async ({}, testInfo) => {
+test('renaming writes the file and never touches the id', async ({}, testInfo) => {
   const { app, page, configPath } = await launchWithThree((name) =>
     testInfo.outputPath(name),
   );
@@ -304,21 +322,22 @@ test('a cancelled re-point writes nothing', async ({}, testInfo) => {
   }
 });
 
-test('removing a project asks first, and cancelling writes nothing', async ({}, testInfo) => {
+/**
+ * The one-click path only.
+ *
+ * These fixtures own no sessions, so no confirmation appears — which is the
+ * behaviour under test here: the quick path stayed quick. The confirmation
+ * itself needs a project that owns a *live* session, which in this phase means
+ * the renderer's fixture sessions; that is covered against the real store in
+ * `tests/features/settings/components/projects-list.test.tsx`.
+ */
+test('removing a project with no live sessions takes one click', async ({}, testInfo) => {
   const { app, page, configPath } = await launchWithThree((name) =>
     testInfo.outputPath(name),
   );
-  const before = readFileSync(configPath, 'utf8');
-
   try {
     await openSettings(page);
 
-    /*
-      These projects own no sessions, so this is the one-click path — the
-      confirmation is reserved for a project with live sessions, which needs a
-      running PTY to set up and is covered against the store in the unit suite.
-      What this proves is the other half: that the quick path stayed quick.
-    */
     await openRowMenu(page, 'charlie');
     await page.getByRole('menuitem', { name: 'Remove' }).click();
 
@@ -328,7 +347,8 @@ test('removing a project asks first, and cancelling writes nothing', async ({}, 
     expect(JSON.parse(readFileSync(configPath, 'utf8'))['//']).toBe(
       'a comment the UI must not eat',
     );
-    expect(before).toContain('charlie');
+    // No confirmation was shown on the way — that is the point of this path.
+    expect(await page.getByRole('alertdialog').count()).toBe(0);
   } finally {
     await app.close();
   }

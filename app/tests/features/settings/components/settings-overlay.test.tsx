@@ -69,6 +69,42 @@ describe('SettingsOverlay', () => {
     expect(useUiStore.getState().settings).toBe(false);
   });
 
+  /**
+   * The half that `stopPropagation` cannot cover (story 103).
+   *
+   * Radix listens for Escape on the document in the **capture** phase, so it
+   * decides before the key reaches whatever is focused — a nested control can
+   * never win that race by stopping propagation. Anything that owns Escape for
+   * itself marks its subtree `data-escape-scope`, and the overlay declines
+   * those; without it, cancelling a rename closed the whole of Settings.
+   */
+  it('ignores an Escape a nested control has claimed', async () => {
+    const user = userEvent.setup();
+    render(<SettingsOverlay />);
+
+    const claimed = document.createElement('input');
+    claimed.setAttribute('data-escape-scope', '');
+    screen.getByRole('dialog').append(claimed);
+    claimed.focus();
+
+    await user.keyboard('{Escape}');
+
+    expect(useUiStore.getState().settings).toBe(true);
+  });
+
+  it('still closes on an Escape from an unclaimed element', async () => {
+    const user = userEvent.setup();
+    render(<SettingsOverlay />);
+
+    const plain = document.createElement('input');
+    screen.getByRole('dialog').append(plain);
+    plain.focus();
+
+    await user.keyboard('{Escape}');
+
+    expect(useUiStore.getState().settings).toBe(false);
+  });
+
   it('leaves activeTab untouched when it closes', async () => {
     const user = userEvent.setup();
     useUiStore.setState({ activeTab: 'hero-refresh' });

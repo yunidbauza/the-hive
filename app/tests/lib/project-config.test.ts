@@ -243,6 +243,31 @@ describe('managing projects', () => {
     ]);
   });
 
+  /**
+   * A rejected write must not look like an empty config.
+   *
+   * Story 103's guards throw, and `handle` does not catch, so a bad payload
+   * rejects the invoke — reachable without malice from a config holding two
+   * entries with the same id. Clearing the snapshot there emptied the settings
+   * list and, worse, reopened `projectAccess` for every project, because a
+   * missing snapshot is permissive by design.
+   */
+  it('keeps the last good snapshot when a mutation is rejected', async () => {
+    const good = snapshot([{ id: 'alpha', status: 'ok' }]);
+    setProjectConfigForTest(good);
+    (window as { hive?: unknown }).hive = {
+      config: {
+        reorderProjects: vi.fn().mockRejectedValue(new Error('malformed id')),
+      },
+    };
+
+    await reorderProjectsInConfig({ ids: ['alpha', 'alpha'] });
+
+    expect(projectConfigSnapshot()).toBe(good);
+    // The spawn gate stays closed for a project the config never declared.
+    expect(projectAccess('ghost-project').spawnable).toBe(false);
+  });
+
   /** The browser demo has no bridge; story 083's rule is to feature-detect it. */
   it('is a no-op with no bridge, like every other verb', async () => {
     await expect(

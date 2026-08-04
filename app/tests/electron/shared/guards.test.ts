@@ -541,6 +541,30 @@ describe('parseReorderProjectsRequest', () => {
     );
   });
 
+  /**
+   * `.map`, `.every` and `Set` all skip array holes, so a sparse array could
+   * satisfy every check and still return a value violating its own
+   * `readonly string[]` type — putting a literal `null` into the config file.
+   * A `contextBridge` clone densifies it today; main's only shape guard should
+   * not rest on a renderer-side implementation detail.
+   */
+  it('rejects a sparse array rather than passing the hole through', () => {
+    const sparse = ['a', 'b'];
+    delete sparse[0];
+    expect(() => parseReorderProjectsRequest({ ids: sparse })).toThrow(
+      /reorderProjects\.ids\[0\]/,
+    );
+  });
+
+  /** Bounded like every other guard here: the real value is bounded by disk. */
+  it('rejects an absurdly long list', () => {
+    const ids = Array.from({ length: 1001 }, (_unused, index) => `p${index}`);
+    expect(() => parseReorderProjectsRequest({ ids })).toThrow(/too many ids/);
+    expect(() =>
+      parseReorderProjectsRequest({ ids: ids.slice(0, 1000) }),
+    ).not.toThrow();
+  });
+
   it('rejects unknown keys and __proto__', () => {
     expect(() => parseReorderProjectsRequest({ ids: [], extra: 1 })).toThrow(
       /unexpected key/,

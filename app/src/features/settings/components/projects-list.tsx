@@ -8,13 +8,12 @@ import {
   repointProjectInConfig,
 } from '@/lib/project-config';
 
-
 import { ProjectNameEditor } from '@features/settings/components/project-name-editor';
 import { ProjectRemoveConfirm } from '@features/settings/components/project-remove-confirm';
 import { ProjectRow } from '@features/settings/components/project-row';
 import { ProjectRowMenu } from '@features/settings/components/project-row-menu';
 import type { ProjectConfig } from '@shared/config-contract';
-import { useProjectsOwningLiveSessions } from '@stores/hive-store';
+import { useLiveSessionCounts } from '@stores/hive-store';
 
 interface ProjectsListProps {
   /** The config's own entries, in file order. */
@@ -39,7 +38,13 @@ type RowMode = { id: string; kind: 'rename' | 'confirm-remove' } | null;
  * store shared with thirteen live terminals.
  */
 export function ProjectsList({ entries }: ProjectsListProps) {
-  const owningLiveSessions = useProjectsOwningLiveSessions();
+  /*
+    Counts, not membership. The confirmation says the number out loud, and the
+    membership selector deduplicates by design, so counting it always gave 1 —
+    "1 live session will keep running — they just stop resolving" contradicted
+    itself in the same sentence.
+  */
+  const liveCounts = useLiveSessionCounts();
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -99,7 +104,7 @@ export function ProjectsList({ entries }: ProjectsListProps) {
   };
 
   const onRemove = (id: string): void => {
-    if (owningLiveSessions.includes(id)) {
+    if ((liveCounts[id] ?? 0) > 0) {
       // Story 101 disabled this outright; the confirmation is what lifts it.
       setMode({ id, kind: 'confirm-remove' });
       return;
@@ -109,8 +114,23 @@ export function ProjectsList({ entries }: ProjectsListProps) {
 
   return (
     <ul className="overflow-hidden rounded-[7px] border border-border">
-      {ordered.map((project) => {
-        const index = entries.findIndex((item) => item.id === project.id);
+      {ordered.map((project, index) => {
+        /*
+          `index` is the row's **painted** position, not its position in
+          `entries`, and that distinction is the whole correctness of the drag.
+
+          The two agree until the preview moves something, and then they
+          diverge: after dragging a row down, the row you are now hovering sits
+          at a different original index than visual one. Feeding the original
+          index back in as the drop target made a reversal lag by one — a row
+          dragged down could never be dragged back to the top, because entering
+          the first row asked for a position the preview had already vacated.
+
+          Reading the painted position instead is self-correcting: `ordered`
+          places the dragged row *at* `dropIndex`, so "the row I am over is at
+          visual position i" and "move me to position i" are the same
+          statement, in both directions.
+        */
         const active = mode?.id === project.id ? mode.kind : null;
 
         if (active === 'confirm-remove') {
@@ -118,9 +138,7 @@ export function ProjectsList({ entries }: ProjectsListProps) {
             <li key={project.id}>
               <ProjectRemoveConfirm
                 projectName={project.name}
-                liveSessionCount={
-                  owningLiveSessions.filter((id) => id === project.id).length
-                }
+                liveSessionCount={liveCounts[project.id] ?? 0}
                 onConfirm={() => {
                   setMode(null);
                   void removeProjectFromConfig({ id: project.id });

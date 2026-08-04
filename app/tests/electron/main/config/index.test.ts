@@ -830,6 +830,26 @@ describe('repointProject', () => {
     );
   });
 
+  it('preserves top-level comment and unknown keys', async () => {
+    const old = join(sandbox, 'old');
+    const moved = join(sandbox, 'moved');
+    mkdirSync(old);
+    mkdirSync(moved);
+    const path = writeConfig({
+      version: 2,
+      '// note': 'hand written',
+      somethingElse: { kept: true },
+      projects: [{ id: 'repo', name: 'Repo', path: old }],
+    });
+    const module = await mutable();
+
+    module.repointProject({ id: 'repo', path: moved });
+
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    expect(written['// note']).toBe('hand written');
+    expect(written.somethingElse).toEqual({ kept: true });
+  });
+
   it('preserves per-entry keys it does not own', async () => {
     const old = join(sandbox, 'old');
     const moved = join(sandbox, 'moved');
@@ -926,6 +946,91 @@ describe('reorderProjects', () => {
 
     expect(snapshot.errors[0]).toMatch(/does not match the projects on disk/);
     expect(idsIn(path)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  /**
+   * The check that stops this verb destroying data.
+   *
+   * `parse.ts` reports an entry with no id and **skips** it, leaving it in the
+   * file, so the renderer posts only the ids it can see. Comparing the payload
+   * against the ids the map collected would agree with itself and write the
+   * survivors — reporting success while deleting an entry the user never saw.
+   */
+  it('refuses rather than dropping an entry that has no id', async () => {
+    for (const name of ['alpha', 'charlie']) mkdirSync(join(sandbox, name));
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'alpha', path: join(sandbox, 'alpha') },
+        { path: join(sandbox, 'draft'), note: 'my notes' },
+        { id: 'charlie', path: join(sandbox, 'charlie') },
+      ],
+    });
+    const module = await mutable();
+
+    const snapshot = module.reorderProjects({ ids: ['charlie', 'alpha'] });
+
+    expect(snapshot.errors[0]).toMatch(/no id, or share one/);
+    const after = JSON.parse(readFileSync(path, 'utf8')).projects;
+    expect(after).toHaveLength(3);
+    expect(after[1].note).toBe('my notes');
+  });
+
+  it('refuses rather than collapsing two entries that share an id', async () => {
+    mkdirSync(join(sandbox, 'a1'));
+    mkdirSync(join(sandbox, 'a2'));
+    mkdirSync(join(sandbox, 'b'));
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'a', path: join(sandbox, 'a1') },
+        { id: 'a', path: join(sandbox, 'a2') },
+        { id: 'b', path: join(sandbox, 'b') },
+      ],
+    });
+    const module = await mutable();
+
+    // Last-wins in the lookup would delete the entry `resolveProjects` marks
+    // `ok` and promote the one it disabled, silently repointing the project.
+    const snapshot = module.reorderProjects({ ids: ['b', 'a'] });
+
+    expect(snapshot.errors[0]).toMatch(/no id, or share one/);
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects).toHaveLength(3);
+  });
+
+  it('does not wipe a file whose entries are all unreadable', async () => {
+    const path = writeConfig({
+      version: 2,
+      projects: [{ path: '/tmp/no-id-here' }],
+    });
+    const module = await mutable();
+
+    expect(module.reorderProjects({ ids: [] }).errors[0]).toMatch(
+      /no id, or share one/,
+    );
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects).toHaveLength(1);
+  });
+
+  /**
+   * `idOf` accepts any string; `parse` requires `ID_PATTERN`. So the file can
+   * hold an entry main can address and the renderer cannot see, and the
+   * refusal must not tell the user to do something that cannot help.
+   */
+  it('refuses an ordering built without an entry whose id the reader rejects', async () => {
+    mkdirSync(join(sandbox, 'good'));
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'good', path: join(sandbox, 'good') },
+        { id: 'has space', path: join(sandbox, 'good') },
+      ],
+    });
+    const module = await mutable();
+
+    const snapshot = module.reorderProjects({ ids: ['good'] });
+
+    expect(snapshot.errors[0]).toMatch(/could not be read/);
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects).toHaveLength(2);
   });
 
   it('accepts an empty ordering for an empty file', async () => {

@@ -394,15 +394,36 @@ export function reorderProjects(
       }
 
       /*
-        The guard already rejected duplicates, so "same size and every id
-        present" is exactly "is a permutation" — no counting required.
+        Every entry must be addressable by a unique id before an ordering can
+        be applied at all.
+
+        This is the check that stops the verb destroying data. The rebuild
+        below is `request.ids.map(...)`, so any entry missing from `byId` is
+        simply not written — and entries go missing for two ordinary reasons,
+        neither of which the renderer can see: an entry with no `id` (or a
+        non-string one), which `parse.ts` reports and skips while leaving it in
+        the file, and two entries sharing an id, where the map keeps only the
+        last. In both cases the renderer posts exactly the ids it knows about,
+        a size comparison against `byId` alone would agree, and the write would
+        report success while deleting the entry the user could not see.
+
+        Comparing against `entries.length` instead is what makes the promise
+        below — that entries are carried across whole — actually true.
       */
+      if (byId.size !== entries.length) {
+        throw new WriteRefused(
+          'some entries in the config have no id, or share one with another entry — give every project a unique id before reordering',
+        );
+      }
+
       const matches =
         byId.size === request.ids.length &&
         request.ids.every((id) => byId.has(id));
       if (!matches) {
         throw new WriteRefused(
-          'the requested order does not match the projects on disk — reload and try again',
+          // Not just "reload": the file can also hold an entry whose id this
+          // build refuses, which no amount of reloading will change.
+          'the requested order does not match the projects on disk — reload, and check the file for an entry whose id could not be read',
         );
       }
 

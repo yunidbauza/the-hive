@@ -110,18 +110,24 @@ describe('ProjectRow', () => {
   });
 
   /**
-   * Without `preventDefault` on dragover the element is not a valid drop
-   * target and `drop` never fires — the one line that makes a drag land.
+   * The HTML drag-and-drop model needs `preventDefault` on **both** to declare
+   * a drop target. With it on `dragover` alone the row still highlighted and
+   * `dragenter` still fired, but the browser never sent `dragover` here, so
+   * `drop` never arrived and every drag ended as if abandoned — which is
+   * exactly how this shipped until the e2e caught it.
    */
-  it('accepts a drop by preventing the dragover default', () => {
-    setup();
-    const row = screen.getByRole('listitem');
+  it.each(['dragenter', 'dragover'])(
+    'accepts a drop by preventing the %s default',
+    (type) => {
+      setup();
+      const row = screen.getByRole('listitem');
 
-    const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
-    fireEvent(row, dragOver);
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      fireEvent(row, event);
 
-    expect(dragOver.defaultPrevented).toBe(true);
-  });
+      expect(event.defaultPrevented).toBe(true);
+    },
+  );
 
   it('dims itself while it is the row being dragged', () => {
     setup({ isDragging: true });

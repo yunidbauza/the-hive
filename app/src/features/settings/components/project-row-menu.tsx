@@ -27,10 +27,13 @@ interface ProjectRowMenuProps {
  * ## Why a menu
  *
  * The alternative considered was three hover-revealed icon buttons. This list
- * is read far more often than it is edited, and the row already carries the
- * `demo` and `no git` tags on its right edge — four controls plus two tags in
- * the same ~120px buys one click and costs the resting state, which is the
- * state the row is in almost always.
+ * is read far more often than it is edited, and the row already carries a
+ * `no git` tag on its right edge — four controls plus a tag in the same ~120px
+ * buys one click and costs the resting state, which is the state the row is in
+ * almost always.
+ *
+ * (The `demo` tag the row once carried went with story 103: the settings list
+ * only ever holds config projects, so that branch was unreachable here.)
  *
  * ## Why Move up / Move down live here
  *
