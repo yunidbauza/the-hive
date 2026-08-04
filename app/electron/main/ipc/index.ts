@@ -18,13 +18,24 @@ import {
   parseSpawnRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
+  parseRenameProjectRequest,
+  parseReorderProjectsRequest,
+  parseRepointProjectRequest,
   parseResizeRequest,
   parseWriteRequest,
 } from '@shared/guards';
 import { CH, type AppInfo } from '@shared/ipc-contract';
 
 import { createCloneFlow, type CloneFlow } from '../clone';
-import { addProject, getConfig, reloadConfig, removeProject } from '../config';
+import {
+  addProject,
+  getConfig,
+  reloadConfig,
+  removeProject,
+  renameProject,
+  reorderProjects,
+  repointProject,
+} from '../config';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
@@ -197,6 +208,32 @@ export function registerIpcHandlers(): void {
     CH.configRemoveProject,
     (_event, payload): ConfigSnapshot =>
       removeProject(parseRemoveProjectRequest(payload)),
+  );
+
+  /**
+   * Managing projects (story 103).
+   *
+   * Same contract as story 101's mutating verbs: the guard proves the *shape*,
+   * and main proves the *value*. `repointProject` re-runs the full path
+   * resolution, and `reorderProjects` re-reads the file before deciding whether
+   * the ordering it was handed still describes it.
+   */
+  handle(
+    CH.configRenameProject,
+    (_event, payload): ConfigSnapshot =>
+      renameProject(parseRenameProjectRequest(payload)),
+  );
+
+  handle(
+    CH.configRepointProject,
+    (_event, payload): ConfigSnapshot =>
+      repointProject(parseRepointProjectRequest(payload)),
+  );
+
+  handle(
+    CH.configReorderProjects,
+    (_event, payload): ConfigSnapshot =>
+      reorderProjects(parseReorderProjectsRequest(payload)),
   );
 
   /**

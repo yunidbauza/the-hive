@@ -7,6 +7,9 @@ import type {
   CloneStartResult,
   ConfigSnapshot,
   RemoveProjectRequest,
+  RenameProjectRequest,
+  ReorderProjectsRequest,
+  RepointProjectRequest,
 } from '@shared/config-contract';
 import {
   CH,
@@ -89,6 +92,16 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.configAddProject, request),
     removeProject: (request: RemoveProjectRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configRemoveProject, request),
+    // Story 103. Like 101's verbs, each returns the fresh snapshot, so the
+    // renderer never has to follow a write with a reload.
+    renameProject: (request: RenameProjectRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configRenameProject, request),
+    repointProject: (request: RepointProjectRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configRepointProject, request),
+    reorderProjects: (
+      request: ReorderProjectsRequest,
+    ): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configReorderProjects, request),
     // Story 102. `startClone` resolves on the pre-flight verdict, not on the
     // clone — the terminal streams in between and `onCloneDone` concludes it.
     startClone: (request: CloneRequest): Promise<CloneStartResult> =>

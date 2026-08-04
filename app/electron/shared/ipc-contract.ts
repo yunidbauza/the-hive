@@ -24,6 +24,9 @@ import type {
   CloneStartResult,
   ConfigSnapshot,
   RemoveProjectRequest,
+  RenameProjectRequest,
+  ReorderProjectsRequest,
+  RepointProjectRequest,
 } from './config-contract';
 import type { SessionStatusEvent } from './session-contract';
 
@@ -34,6 +37,13 @@ export const CH = {
   configChooseDirectory: 'config:choose-directory',
   configAddProject: 'config:add-project',
   configRemoveProject: 'config:remove-project',
+  /**
+   * Story 103's three mutating channels. All `invoke` — each returns the fresh
+   * snapshot, so the renderer never follows a write with a reload.
+   */
+  configRenameProject: 'config:rename-project',
+  configRepointProject: 'config:repoint-project',
+  configReorderProjects: 'config:reorder-projects',
   /**
    * Story 102's clone verbs.
    *
@@ -277,6 +287,23 @@ export interface HiveBridge {
     chooseDirectory(): Promise<string | null>;
     addProject(request: AddProjectRequest): Promise<ConfigSnapshot>;
     removeProject(request: RemoveProjectRequest): Promise<ConfigSnapshot>;
+    /** Change a project's display name (story 103). The id is never touched. */
+    renameProject(request: RenameProjectRequest): Promise<ConfigSnapshot>;
+    /**
+     * Point a project at a folder that moved (story 103).
+     *
+     * The path comes from {@link HiveBridge.config.chooseDirectory}, and main
+     * re-validates it from scratch — the dialog is a UX step, not a capability
+     * grant.
+     */
+    repointProject(request: RepointProjectRequest): Promise<ConfigSnapshot>;
+    /**
+     * Rewrite the whole project order (story 103).
+     *
+     * Refused unless the ids are a permutation of the file on disk, so an
+     * ordering built before a hand edit cannot drop or resurrect a project.
+     */
+    reorderProjects(request: ReorderProjectsRequest): Promise<ConfigSnapshot>;
     /**
      * Start a clone (story 102).
      *
@@ -356,6 +383,10 @@ export const BRIDGE_CONFIG_KEYS = [
   'chooseDirectory',
   'addProject',
   'removeProject',
+  // Story 103.
+  'renameProject',
+  'repointProject',
+  'reorderProjects',
   // Story 102.
   'startClone',
   'cancelClone',

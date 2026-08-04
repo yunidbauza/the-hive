@@ -86,6 +86,27 @@ describe('exposed surface', () => {
     });
   });
 
+  it('routes the manage-projects verbs to their channels (story 103)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await config().renameProject({ id: 'x', name: 'X' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configRenameProject, {
+      id: 'x',
+      name: 'X',
+    });
+
+    await config().repointProject({ id: 'x', path: '~/moved' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configRepointProject, {
+      id: 'x',
+      path: '~/moved',
+    });
+
+    await config().reorderProjects({ ids: ['x', 'y'] });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configReorderProjects, {
+      ids: ['x', 'y'],
+    });
+  });
+
   /**
    * Story 101 makes the config writable, and this is what bounds the widening.
    *
