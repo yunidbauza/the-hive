@@ -779,11 +779,11 @@ export function compareEnv(
  * process assembled. Read-only, so it does not go through `writeConfig` —
  * matching `diagnoseCommand`.
  */
-export function diagnoseEnv(
+export async function diagnoseEnv(
   runtime: EffectiveRuntime,
   projectId: string | null,
   baseEnv: NodeJS.ProcessEnv = process.env,
-): EnvDiagnostic {
+): Promise<EnvDiagnostic> {
   try {
     const printenv = await execFileAsync(runtime.shell, ['-l', '-i', '-c', 'printenv'], {
       env: { ...baseEnv, ...runtime.env },
