@@ -1,3 +1,4 @@
+
 import type { TermColor } from '@/types/terminal';
 
 import { colorize } from '@lib/terminal/ansi';
@@ -6,6 +7,7 @@ import type {
   TerminalDataHandler,
   TerminalTransport,
 } from '@lib/terminal/terminal-transport';
+import { CLONE_ENTITY_ID } from '@shared/config-contract';
 
 /**
  * The desktop transport: a real PTY, behind the same three methods (story 094).
@@ -385,9 +387,22 @@ function ensureSpawned(
   void requestSpawn(entityId, projectId);
 }
 
-export function createPtyTransport(
+/**
+ * The two transports differ in exactly one moment: what happens when a surface
+ * mounts (story 102).
+ *
+ * A session's transport spawns, because mounting its surface is what starts it.
+ * A clone's does not — main started `git` before this view existed, and a
+ * transport that spawned on mount would start a *second* clone the first time
+ * React remounted the pane.
+ *
+ * Parameterising that one moment is what keeps the replay-then-subscribe
+ * ordering, the sequence-gap detection and the ack loop identical for both,
+ * rather than duplicated and free to drift.
+ */
+function createTransport(
   entityId: string,
-  projectId: string,
+  onMount: (channel: EntityChannel) => void,
 ): TerminalTransport {
   return {
     write: (data) => pty().write({ sessionId: entityId, data }),
@@ -415,7 +430,7 @@ export function createPtyTransport(
 
       channel.subscribers.add(cb);
 
-      if (!channel.closed) ensureSpawned(channel, entityId, projectId);
+      if (!channel.closed) onMount(channel);
 
       /**
        * Unsubscribe only. **This must never kill the PTY.**
@@ -431,6 +446,32 @@ export function createPtyTransport(
       };
     },
   };
+}
+
+/** A live session's transport: mounting a surface is what starts the process. */
+export function createPtyTransport(
+  entityId: string,
+  projectId: string,
+): TerminalTransport {
+  return createTransport(entityId, (channel) =>
+    ensureSpawned(channel, entityId, projectId),
+  );
+}
+
+/**
+ * The clone terminal's transport (story 102).
+ *
+ * No spawn, and no project — a clone has neither. Main started `git` before
+ * this surface existed, so mounting must attach and nothing more; everything
+ * that carries bytes is the session path's, unchanged.
+ *
+ * It lives here rather than in a file of its own because the channel map, the
+ * replay buffer, the sequence tracking and the ack loop it needs are all
+ * module-private. A separate module would either duplicate them or force them
+ * to be exported, and both are worse than one extra factory.
+ */
+export function createCloneTransport(): TerminalTransport {
+  return createTransport(CLONE_ENTITY_ID, () => {});
 }
 
 /**
