@@ -7,10 +7,14 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 
-import type { ConfigSnapshot } from '@shared/config-contract';
+import type {
+  CloneStartResult,
+  ConfigSnapshot,
+} from '@shared/config-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
+  parseCloneRequest,
   parseSpawnRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
@@ -19,6 +23,7 @@ import {
 } from '@shared/guards';
 import { CH, type AppInfo } from '@shared/ipc-contract';
 
+import { createCloneFlow, type CloneFlow } from '../clone';
 import { addProject, getConfig, reloadConfig, removeProject } from '../config';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
@@ -74,6 +79,8 @@ function handle<T>(
 }
 
 let sessions: Sessions | null = null;
+/** The clone flow (story 102), or `null` before registration. */
+let cloneFlow: CloneFlow | null = null;
 
 /** The live sessions layer, or `null` before registration. Test-only reach-in. */
 export function sessionsLayer(): Sessions | null {
@@ -82,21 +89,25 @@ export function sessionsLayer(): Sessions | null {
 
 export function registerIpcHandlers(): void {
   const supervisor = registerPtyHost();
-  sessions = createSessions({
-    supervisor,
-    config: getConfig,
-    /**
-     * One window by design (story 000), so a broadcast reaches exactly the
-     * renderer that owns every session. Resolved per send rather than captured:
-     * the window is created after this runs, and on macOS it can be closed and
-     * re-created while the app keeps running.
-     */
-    send: (channel, payload) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (window.isDestroyed()) continue;
-        window.webContents.send(channel, payload);
-      }
-    },
+
+  /**
+   * One window by design (story 000), so a broadcast reaches exactly the
+   * renderer that owns every session. Resolved per send rather than captured:
+   * the window is created after this runs, and on macOS it can be closed and
+   * re-created while the app keeps running.
+   */
+  const send = (channel: string, payload: unknown): void => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue;
+      window.webContents.send(channel, payload);
+    }
+  };
+
+  sessions = createSessions({ supervisor, config: getConfig, send });
+
+  cloneFlow = createCloneFlow({
+    sessions,
+    emit: (event) => send(CH.configCloneDone, event),
   });
 
   /**
@@ -112,6 +123,12 @@ export function registerIpcHandlers(): void {
    */
   onShutdown(() => {
     sessions?.dispose();
+    /**
+     * A clone in flight when the app quits is the likeliest way to strand a
+     * half-clone: `git` cleans up after its own failures, but not after the
+     * process tree is torn down underneath it.
+     */
+    cloneFlow?.dispose();
   });
 
   handle(CH.appInfo, (): AppInfo => {
@@ -183,6 +200,28 @@ export function registerIpcHandlers(): void {
   );
 
   /**
+   * Cloning a repository (story 102).
+   *
+   * `startClone` returns a **refusal**, it does not throw: a mistyped URL or a
+   * folder that already exists is something the user fixes in a text field, not
+   * an exception the renderer has to catch. Guard failures still throw — those
+   * are malformed payloads, which are a bug or an attack, not a user mistake.
+   */
+  handle(CH.configCloneStart, (_event, payload): CloneStartResult => {
+    const request = parseCloneRequest(payload);
+    return (
+      cloneFlow?.start(request) ?? {
+        ok: false,
+        reason: 'the clone service is not available',
+      }
+    );
+  });
+
+  handle(CH.configCloneCancel, (): void => {
+    cloneFlow?.cancel();
+  });
+
+  /**
    * The PTY channels (story 093).
    *
    * `spawn` and `kill` use `invoke` — both need a result. `write`, `resize`
@@ -251,6 +290,8 @@ export function registerIpcHandlers(): void {
 export function resetIpcHandlers(): void {
   sessions?.dispose();
   sessions = null;
+  cloneFlow?.dispose();
+  cloneFlow = null;
 }
 
 export { assertSender, isTrustedSender, IpcSenderError } from './sender';
