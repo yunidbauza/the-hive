@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   BRIDGE_CONFIG_KEYS,
+  BRIDGE_INTEGRATIONS_KEYS,
   BRIDGE_KEYS,
+  BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
   CH,
 } from '../../../electron/shared/ipc-contract';
@@ -55,12 +57,55 @@ beforeEach(async () => {
 const pty = () => exposed.pty as Record<string, (...args: unknown[]) => unknown>;
 const config = () =>
   exposed.config as Record<string, (...args: unknown[]) => unknown>;
+const integrations = () =>
+  exposed.integrations as Record<string, (...args: unknown[]) => unknown>;
+const notifications = () =>
+  exposed.notifications as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
     expect(Object.keys(exposed).sort()).toEqual([...BRIDGE_KEYS].sort());
     expect(Object.keys(pty()).sort()).toEqual([...BRIDGE_PTY_KEYS].sort());
     expect(Object.keys(config()).sort()).toEqual([...BRIDGE_CONFIG_KEYS].sort());
+    expect(Object.keys(integrations()).sort()).toEqual([
+      ...BRIDGE_INTEGRATIONS_KEYS,
+    ].sort());
+    expect(Object.keys(notifications()).sort()).toEqual([
+      ...BRIDGE_NOTIFICATIONS_KEYS,
+    ].sort());
+  });
+
+  /**
+   * Story 106's two additions, asserted for what they can and cannot do.
+   *
+   * `integrations.status` is the first verb behind which main executes another
+   * program, so the property worth pinning is that the renderer contributes
+   * *nothing* to that execution: the call takes no argument, and none reaches
+   * the channel.
+   */
+  it('routes the integrations and notification verbs (story 106)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await integrations().status();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.integrationsStatus);
+
+    await config().setNotifications({ sessionDone: false });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configSetNotifications, {
+      sessionDone: false,
+    });
+  });
+
+  it('passes no payload to integrations:status, whatever the caller does', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    // A caller that tried to smuggle an argument gets it dropped: the bridge
+    // function ignores its parameters, so nothing from the renderer can reach
+    // the argv main builds.
+    await (integrations().status as (...args: unknown[]) => unknown)({
+      command: '/bin/sh',
+    });
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.integrationsStatus);
   });
 
   it('routes the config verbs to their channels (stories 090, 101)', async () => {

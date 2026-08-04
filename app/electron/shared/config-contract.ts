@@ -398,6 +398,20 @@ export interface SetRuntimeRequest {
 }
 
 /**
+ * Change notification preferences (story 106).
+ *
+ * Partial in the same way {@link SetRuntimeRequest} is: only the classes named
+ * are touched, so moving one switch never restates another. There is no `null`
+ * case — unlike a per-project override, a preference has no lower level to fall
+ * back to, so "off" is a value rather than an absence.
+ */
+export interface SetNotificationsRequest {
+  sessionDone?: boolean;
+  sessionIdle?: boolean;
+  cloneDone?: boolean;
+}
+
+/**
  * Change one project's runtime overrides (story 104).
  *
  * Here `null` is meaningful and distinct from absent: **absent leaves the

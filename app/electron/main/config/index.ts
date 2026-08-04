@@ -14,6 +14,7 @@ import {
   type RenameProjectRequest,
   type ReorderProjectsRequest,
   type RepointProjectRequest,
+  type SetNotificationsRequest,
   type SetProjectRuntimeRequest,
   type SetRuntimeRequest,
 } from '@shared/config-contract';
@@ -504,6 +505,39 @@ export function setProjectRuntime(
           return next;
         }),
       };
+    }),
+  );
+}
+
+/**
+ * Change notification preferences (story 106).
+ *
+ * The block is **spread, never rebuilt**, for the same reason every other verb
+ * spreads its target: a key this build has not heard of — a class a later story
+ * adds, edited by hand in the meantime — must survive a save made by this one.
+ *
+ * Only the classes the request names are written. The two that are merely
+ * *defaulted* stay out of the file, so a later change to
+ * `DEFAULT_NOTIFICATIONS` still reaches a user who once toggled one switch;
+ * materialising all three here would quietly freeze today's defaults into their
+ * config forever.
+ */
+export function setNotifications(
+  request: SetNotificationsRequest,
+): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      // A non-object block is replaced rather than merged into. The reader has
+      // already reported it, and merging onto a string would produce something
+      // neither the user nor the parser meant.
+      const current =
+        typeof draft.notifications === 'object' &&
+        draft.notifications !== null &&
+        !Array.isArray(draft.notifications)
+          ? (draft.notifications as Record<string, unknown>)
+          : {};
+
+      return { ...draft, notifications: { ...current, ...request } };
     }),
   );
 }

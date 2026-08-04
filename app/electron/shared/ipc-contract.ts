@@ -25,10 +25,12 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   DiagnoseCommandRequest,
+  PathProbe,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
@@ -67,6 +69,18 @@ export const CH = {
   configSetRuntime: 'config:set-runtime',
   configSetProjectRuntime: 'config:set-project-runtime',
   configDiagnoseCommand: 'config:diagnose-command',
+  /**
+   * Story 106's channels.
+   *
+   * One mutating verb returning `ConfigSnapshot` like every other; one
+   * read-only status that takes **no payload at all**, which is its security
+   * design rather than an omission — with nothing arriving from the renderer
+   * there is no argv to inject into; and one main → renderer event naming the
+   * session a clicked notification was about.
+   */
+  configSetNotifications: 'config:set-notifications',
+  integrationsStatus: 'integrations:status',
+  notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
   configCloneDone: 'config:clone-done', // main → renderer
@@ -127,6 +141,7 @@ export const EVENT_CHANNELS = [
   CH.ptyLost,
   CH.sessionStatus,
   CH.configCloneDone,
+  CH.notificationsActivate,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -221,6 +236,69 @@ export interface ExitEvent {
 export interface SessionLostEvent {
   sessionId: string;
   reason: 'host-crashed';
+}
+
+/**
+ * Where a GitHub token would come from, if anything asked for one (story 106).
+ *
+ * Reported, never stored. The PR panel is fixture-backed today — nothing in
+ * this app fetches from GitHub — so a token persisted here would be a
+ * credential no code reads, sitting in a plaintext file the product actively
+ * encourages hand-editing. What is useful *now* is the answer to "which source
+ * would be used", which is the thing users get wrong and the same answer the
+ * future real-PR story needs.
+ */
+export type GhTokenSource = 'keyring' | 'env' | 'none';
+
+/** What this machine's `gh` install looks like from here (story 106). */
+export interface GhStatus {
+  /** An executable `gh` was found on the `PATH` a session would search. */
+  installed: boolean;
+  /** Absolute path to it, or `null`. This exact path is what gets executed. */
+  resolved: string | null;
+  /** The `PATH` that was consulted — for a GUI app this is launchd's. */
+  path: string;
+  /** Every directory looked in, so "not found" can explain itself. */
+  probes: PathProbe[];
+  /** As reported by `gh --version`, or `null` if it could not be read. */
+  version: string | null;
+  /** `gh` reports a logged-in account. */
+  authenticated: boolean;
+  /** The login `gh` reports, or `null`. Never a token, never raw output. */
+  account: string | null;
+  tokenSource: GhTokenSource;
+  /** Which variable supplied it, when `tokenSource` is `env`. */
+  envVar: 'GH_TOKEN' | 'GITHUB_TOKEN' | null;
+  /**
+   * `gh` ran and failed in a way that is not an answer — a timeout, or output
+   * that could not be read. Not-installed and not-logged-in are **ordinary
+   * answers**, not errors: a settings pane that reports a failure because a
+   * tool is missing tells the user the app is broken when the tool is what is
+   * missing.
+   */
+  error: string | null;
+}
+
+/**
+ * Answer to {@link CH.integrationsStatus}.
+ *
+ * Both facts in one round trip because the section needs both on open, and two
+ * verbs would paint the pane twice.
+ */
+export interface IntegrationsStatus {
+  gh: GhStatus;
+  /**
+   * `Notification.isSupported()`. False on a Linux box with no notification
+   * daemon, where the switches must be replaced by an explanation rather than
+   * left as controls that quietly do nothing.
+   */
+  notificationsSupported: boolean;
+}
+
+/** A clicked notification, naming the session it was about (story 106). */
+export interface NotificationActivateEvent {
+  /** The *entity* id, matching {@link SessionStatusEvent}. */
+  entityId: string;
 }
 
 /** Answer to {@link CH.appInfo} — proves the bridge round-trips. */
@@ -343,6 +421,14 @@ export interface HiveBridge {
      */
     diagnoseCommand(request: DiagnoseCommandRequest): Promise<CommandDiagnostic>;
     /**
+     * Change which events raise an OS notification (story 106).
+     *
+     * Only the classes named are touched. Off is a value, not an absence, so
+     * there is no clearing case: a preference has no lower level to inherit
+     * from.
+     */
+    setNotifications(request: SetNotificationsRequest): Promise<ConfigSnapshot>;
+    /**
      * Start a clone (story 102).
      *
      * Resolves once `git` is running, **not** once it has finished — the
@@ -377,6 +463,26 @@ export interface HiveBridge {
      */
     restart(request: SpawnRequest): Promise<void>;
   };
+  /**
+   * External tooling this app can see but does not own (story 106).
+   *
+   * Read-only, and `status()` takes no arguments at all. That is the whole
+   * security story for a verb that executes a binary: with nothing arriving
+   * from the renderer, there is no argv to inject into and nothing to guard.
+   */
+  integrations: {
+    status(): Promise<IntegrationsStatus>;
+  };
+  /** OS notifications raised by main (story 106). */
+  notifications: {
+    /**
+     * A notification was clicked. Returns its own unsubscribe.
+     *
+     * Main focuses the window itself; this says *which session* the user was
+     * answering, because only the renderer knows how to open one.
+     */
+    onActivate(callback: (event: NotificationActivateEvent) => void): () => void;
+  };
   /** Real session lifecycle, derived in main (story 096). */
   session: {
     onStatus(callback: (event: SessionStatusEvent) => void): () => void;
@@ -408,11 +514,34 @@ export const LOW_WATER_BYTES = 128 * 1024;
  */
 export const RESIZE_THROTTLE_MS = 50;
 
-/** The exact top-level key set of `window.hive`. The surface test asserts it. */
-export const BRIDGE_KEYS = ['appInfo', 'config', 'pty', 'session'] as const;
+/**
+ * The exact top-level key set of `window.hive`. The surface test asserts it.
+ *
+ * Story 106 adds two namespaces, and the alarm firing was the point. What a web
+ * page can now do that it could not before: ask what this machine's `gh` looks
+ * like (`integrations.status`, no arguments, read-only, no token value ever
+ * returned), and hear that a notification was clicked
+ * (`notifications.onActivate`, main → renderer only). Neither widens what the
+ * renderer can *change*; the one new mutating verb is `config.setNotifications`,
+ * which goes through the same guarded write path as every other.
+ */
+export const BRIDGE_KEYS = [
+  'appInfo',
+  'config',
+  'integrations',
+  'notifications',
+  'pty',
+  'session',
+] as const;
 
 /** The exact key set of `window.hive.session`. */
 export const BRIDGE_SESSION_KEYS = ['onStatus'] as const;
+
+/** The exact key set of `window.hive.integrations`. */
+export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
+
+/** The exact key set of `window.hive.notifications`. */
+export const BRIDGE_NOTIFICATIONS_KEYS = ['onActivate'] as const;
 
 /** The exact key set of `window.hive.config`. */
 export const BRIDGE_CONFIG_KEYS = [
@@ -433,6 +562,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'setRuntime',
   'setProjectRuntime',
   'diagnoseCommand',
+  // Story 106.
+  'setNotifications',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */

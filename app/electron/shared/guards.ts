@@ -6,10 +6,11 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
-import { unsafeEnvReason } from './config-contract';
+import { NOTIFICATION_KEYS, unsafeEnvReason } from './config-contract';
 import type {
   AckRequest,
   ResizeRequest,
@@ -479,6 +480,39 @@ export function parseSetRuntimeRequest(input: unknown): SetRuntimeRequest {
         }
       : {}),
   };
+}
+
+/**
+ * Notification preferences (story 106).
+ *
+ * The smallest payload on the bridge, and still hand-guarded rather than cast:
+ * story 082's rules are not waived because a shape looks harmless. The one that
+ * earns its keep here is the refusal to coerce — `'false'` is a truthy string,
+ * so a guard that accepted it would turn switching a class *off* into switching
+ * it on.
+ */
+export function parseSetNotificationsRequest(
+  input: unknown,
+): SetNotificationsRequest {
+  const raw = assertShape(input, [], 'setNotifications', [
+    ...NOTIFICATION_KEYS,
+  ]);
+
+  const request: SetNotificationsRequest = {};
+  for (const key of NOTIFICATION_KEYS) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'boolean') {
+      return fail(`setNotifications.${key}: expected a boolean`);
+    }
+    request[key] = value;
+  }
+
+  if (Object.keys(request).length === 0) {
+    return fail('setNotifications: nothing to change');
+  }
+
+  return request;
 }
 
 /**

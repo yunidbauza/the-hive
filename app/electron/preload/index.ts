@@ -12,6 +12,7 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
@@ -22,6 +23,8 @@ import {
   type DataEvent,
   type ExitEvent,
   type HiveBridge,
+  type IntegrationsStatus,
+  type NotificationActivateEvent,
   type ResizeRequest,
   type SessionLostEvent,
   type SpawnRequest,
@@ -118,6 +121,11 @@ const bridge: HiveBridge = {
       request: DiagnoseCommandRequest,
     ): Promise<CommandDiagnostic> =>
       ipcRenderer.invoke(CH.configDiagnoseCommand, request),
+    // Story 106. One more mutating verb, returning the fresh snapshot.
+    setNotifications: (
+      request: SetNotificationsRequest,
+    ): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetNotifications, request),
     // Story 102. `startClone` resolves on the pre-flight verdict, not on the
     // clone — the terminal streams in between and `onCloneDone` concludes it.
     startClone: (request: CloneRequest): Promise<CloneStartResult> =>
@@ -148,6 +156,16 @@ const bridge: HiveBridge = {
       subscribe<SessionLostEvent>(CH.ptyLost, callback),
     restart: (request: SpawnRequest): Promise<void> =>
       ipcRenderer.invoke(CH.ptyRestart, request),
+  },
+  // Story 106. `status` takes no argument — see the contract for why that is
+  // the security design and not an oversight.
+  integrations: {
+    status: (): Promise<IntegrationsStatus> =>
+      ipcRenderer.invoke(CH.integrationsStatus),
+  },
+  notifications: {
+    onActivate: (callback: (event: NotificationActivateEvent) => void) =>
+      subscribe<NotificationActivateEvent>(CH.notificationsActivate, callback),
   },
   session: {
     onStatus: (callback: (event: SessionStatusEvent) => void) =>

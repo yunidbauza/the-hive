@@ -1,5 +1,6 @@
 import {
   BrowserWindow,
+  Notification,
   app,
   dialog,
   ipcMain,
@@ -24,11 +25,17 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
   parseWriteRequest,
 } from '@shared/guards';
-import { CH, type AppInfo } from '@shared/ipc-contract';
+import {
+  CH,
+  type AppInfo,
+  type IntegrationsStatus,
+  type NotificationActivateEvent,
+} from '@shared/ipc-contract';
 
 import { createCloneFlow, type CloneFlow } from '../clone';
 import {
@@ -39,10 +46,13 @@ import {
   renameProject,
   reorderProjects,
   repointProject,
+  setNotifications,
   setProjectRuntime,
   setRuntime,
 } from '../config';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
+import { readGhStatus, runCommand } from '../integrations/gh';
+import { createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
@@ -115,11 +125,55 @@ export function registerIpcHandlers(): void {
    * re-created while the app keeps running.
    */
   const send = (channel: string, payload: unknown): void => {
+    // Story 106 taps the broadcast here rather than at each source, so an event
+    // class added later cannot forget to notify. `observe` never throws — a
+    // failed notification must not cost a `pty:data`.
+    notifier.observe(channel, payload);
+
     for (const window of BrowserWindow.getAllWindows()) {
       if (window.isDestroyed()) continue;
       window.webContents.send(channel, payload);
     }
   };
+
+  /**
+   * OS notifications (story 106).
+   *
+   * Mutually recursive with `send` — `send` taps the notifier, and the
+   * notifier's `activate` broadcasts through `send`. Both references resolve at
+   * call time and nothing broadcasts during registration, so the ordering here
+   * is a declaration detail rather than a cycle.
+   */
+  const notifier = createNotifier({
+    prefs: () => getConfig().notifications,
+    present: ({ title, body, onClick }) => {
+      // False on a Linux box with no notification daemon. Checked per send
+      // rather than once at boot: the daemon can arrive or go away while the
+      // app is running, and constructing one when unsupported throws.
+      if (!Notification.isSupported()) return;
+
+      const notification = new Notification({ title, body });
+      notification.on('click', onClick);
+      notification.show();
+    },
+    activate: (entityId) => {
+      /**
+       * Main focuses the window; the renderer opens the session.
+       *
+       * Split that way because only main can raise a window and only the
+       * renderer knows what opening a session means — and a minimised window
+       * has to be restored first, or focusing it does nothing visible.
+       */
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        if (window.isMinimized()) window.restore();
+        window.focus();
+      }
+      send(CH.notificationsActivate, {
+        entityId,
+      } satisfies NotificationActivateEvent);
+    },
+  });
 
   sessions = createSessions({ supervisor, config: getConfig, send });
 
@@ -283,6 +337,44 @@ export function registerIpcHandlers(): void {
       effectiveRuntime(snapshot, project),
       project?.id ?? null,
     );
+  });
+
+  /**
+   * Notification preferences (story 106).
+   *
+   * A mutating verb like every other: guard first, verb second, fresh
+   * `ConfigSnapshot` back.
+   */
+  handle(
+    CH.configSetNotifications,
+    (_event, payload): ConfigSnapshot =>
+      setNotifications(parseSetNotificationsRequest(payload)),
+  );
+
+  /**
+   * Integrations status (story 106) — read-only, and **takes no payload**.
+   *
+   * The absent parameter list is the security design rather than an omission.
+   * This is the first handler in main that executes another program, and the
+   * reason it is safe to is that nothing from the renderer reaches the argv:
+   * there is no path, no flag and no name to guard, so there is nothing to
+   * inject into. See `integrations/gh.ts` for the rest of the execution rules.
+   *
+   * The `PATH` searched is the one the *spawn* path would use, not this
+   * process's raw environment — the same discipline story 104's diagnostic
+   * applies, so what is reported is what would actually run.
+   */
+  handle(CH.integrationsStatus, (): IntegrationsStatus => {
+    // Merged the way `diagnoseCommand` merges: the config's env wins, and
+    // `process.env` supplies the `PATH` when it names none. `gh` is a
+    // workspace-level tool, so the top-level runtime is the right scope — there
+    // is no project selected when the section opens.
+    const env = { ...process.env, ...effectiveRuntime(getConfig(), null).env };
+
+    return {
+      gh: readGhStatus(env, runCommand),
+      notificationsSupported: Notification.isSupported(),
+    };
   });
 
   /**
