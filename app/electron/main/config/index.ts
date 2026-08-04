@@ -5,7 +5,6 @@ import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_PROJECT_ICON,
-  DEFAULT_SHELL,
   emptySnapshot,
   type AddProjectRequest,
   type ConfigSnapshot,
@@ -23,6 +22,7 @@ import { deriveProjectId } from './identity';
 import { parseConfig } from './parse';
 import { configPath, describe } from './paths';
 import { resolveProject, resolveProjects } from './resolve';
+import { defaultShell } from './shell';
 import { CONFIG_TEMPLATE } from './template';
 import {
   WriteRefused,
@@ -80,7 +80,7 @@ function writeTemplate(path: string, shell: string): ConfigSnapshot {
 /** Read, parse, and resolve the config file. Always returns a snapshot. */
 export function loadConfig(): ConfigSnapshot {
   const path = configPath();
-  const shell = process.env.SHELL ?? DEFAULT_SHELL;
+  const shell = defaultShell();
 
   let text: string;
   try {

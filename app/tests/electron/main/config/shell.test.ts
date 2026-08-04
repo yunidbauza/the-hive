@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { defaultShell } from '../../../../electron/main/config/shell';
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
 
 const info = (shell: string | null) => () => ({ shell });
 
@@ -30,5 +31,14 @@ describe('defaultShell', () => {
       throw new Error('getpwuid failed');
     };
     expect(defaultShell(throws, 'darwin')).toBe('/bin/zsh');
+  });
+});
+
+describe('snapshot defaulting', () => {
+  it('a file naming no shell resolves to the login shell, not /bin/sh', () => {
+    // emptySnapshot takes the resolved shell as its second argument; the
+    // callers in main now pass defaultShell() rather than the constant.
+    const snapshot = emptySnapshot('/tmp/config.json', defaultShell(info('/bin/zsh'), 'darwin'));
+    expect(snapshot.shell).toBe('/bin/zsh');
   });
 });

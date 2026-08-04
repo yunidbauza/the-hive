@@ -16,13 +16,13 @@ import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_NOTIFICATIONS,
-  DEFAULT_SHELL,
   type ConfigSnapshot,
 } from '@shared/config-contract';
 
 import { parseConfig } from './parse';
 import { configPath, describe } from './paths';
 import { resolveProjects } from './resolve';
+import { defaultShell } from './shell';
 
 /**
  * The single write path for the workspace config (story 101).
@@ -216,7 +216,7 @@ export function writeConfig(mutate: Mutation): WriteResult {
     snapshot: {
       configPath: path,
       templateWritten: false,
-      shell: validated.shell ?? DEFAULT_SHELL,
+      shell: validated.shell ?? defaultShell(),
       claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
       projects,
       // Re-resolved from the document that was just written, not carried over

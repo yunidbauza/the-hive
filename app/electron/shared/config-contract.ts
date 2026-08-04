@@ -185,7 +185,7 @@ export interface ConfigSnapshot {
    * error: no config file is the normal state on a fresh machine.
    */
   templateWritten: boolean;
-  /** The login shell for every session, already defaulted from `$SHELL`. */
+  /** The login shell for every session, already defaulted by `defaultShell()`. */
   shell: string;
   /** The bootstrap command a session runs (story 096), already defaulted. */
   claudeCommand: string;
@@ -228,7 +228,7 @@ export const SUPPORTED_CONFIG_VERSIONS: readonly number[] = [1, 2];
 /** What a project entry gets when the file names no icon. */
 export const DEFAULT_PROJECT_ICON = 'ph-folder';
 
-/** Used when the file names no shell and `$SHELL` is unset. */
+/** The last-resort shell: used off darwin when the password database has no usable entry. */
 export const DEFAULT_SHELL = '/bin/sh';
 
 /** Used when the file names no bootstrap command (story 096). */
