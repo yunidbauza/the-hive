@@ -10,6 +10,7 @@ import {
   type ConfigSnapshot,
   type ProjectOrigin,
   type RemoveProjectRequest,
+  type RenameProjectRequest,
 } from '@shared/config-contract';
 
 import { deriveProjectId } from './identity';
@@ -261,6 +262,41 @@ export function removeProject(request: RemoveProjectRequest): ConfigSnapshot {
       return {
         ...draft,
         projects: entries.filter((entry) => idOf(entry) !== request.id),
+      };
+    }),
+  );
+}
+
+/**
+ * Change one project's display name (story 103).
+ *
+ * `name` only — the `id` is machinery and is never rewritten, because sessions
+ * reference projects by `entity.project` and an id that drifted when a folder
+ * was renamed would strand them.
+ *
+ * The entry is **spread, not rebuilt**. `addProject` and `removeProject` copy
+ * raw entries wholesale, which is the only reason per-entry keys this build
+ * does not know about survive a write; a rename that reconstructed an entry
+ * from `ProjectConfig` would quietly eat them, and the epic's preservation rule
+ * would hold for the top level while failing one level down.
+ */
+export function renameProject(request: RenameProjectRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      // Checked against the draft rather than the cache, for the same reason
+      // `addProject` is: the file on disk can be newer than the snapshot.
+      if (!entries.some((entry) => idOf(entry) === request.id)) {
+        throw new WriteRefused(`no project with id "${request.id}"`);
+      }
+
+      return {
+        ...draft,
+        projects: entries.map((entry) =>
+          idOf(entry) === request.id
+            ? { ...(entry as Record<string, unknown>), name: request.name }
+            : entry,
+        ),
       };
     }),
   );

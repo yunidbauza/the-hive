@@ -656,3 +656,83 @@ describe('mutation against a file edited since load', () => {
     expect(JSON.parse(readFileSync(path, 'utf8')).projects).toHaveLength(1);
   });
 });
+
+/**
+ * Story 103's mutating verbs.
+ *
+ * Same harness as `addProject` above: a real temporary config, the module
+ * imported fresh so its cache starts empty, and every assertion checked against
+ * the file on disk as well as the returned snapshot — a verb that updated the
+ * cache but not the file would otherwise pass.
+ */
+describe('renameProject', () => {
+  it('writes the new name and leaves the id and path alone', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      projects: [{ id: 'repo', name: 'repo', path: repo, icon: 'ph-folder' }],
+    });
+    const module = await mutable();
+
+    const snapshot = module.renameProject({ id: 'repo', name: 'My Repo' });
+
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.projects[0]?.name).toBe('My Repo');
+    // The id is machinery: sessions reference it, so it must never drift.
+    expect(snapshot.projects[0]?.id).toBe('repo');
+    const written = JSON.parse(readFileSync(path, 'utf8')).projects[0];
+    expect(written.name).toBe('My Repo');
+    expect(written.id).toBe('repo');
+    expect(written.path).toBe(repo);
+    expect(module.getConfig().projects[0]?.name).toBe('My Repo');
+  });
+
+  it('preserves per-entry keys it does not own', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        { id: 'repo', name: 'repo', path: repo, origin: 'cloned', note: 'keep me' },
+      ],
+    });
+    const module = await mutable();
+
+    module.renameProject({ id: 'repo', name: 'Renamed' });
+
+    // The entry is spread, never rebuilt — which is the only reason a key this
+    // build has never heard of survives the round trip.
+    const written = JSON.parse(readFileSync(path, 'utf8')).projects[0];
+    expect(written.origin).toBe('cloned');
+    expect(written.note).toBe('keep me');
+  });
+
+  it('refuses an id that is not in the file, writing nothing', async () => {
+    const path = writeConfig({ version: 2, projects: [] });
+    const module = await mutable();
+
+    const snapshot = module.renameProject({ id: 'ghost', name: 'Ghost' });
+
+    expect(snapshot.errors[0]).toMatch(/no project with id "ghost"/);
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects).toEqual([]);
+  });
+
+  it('upgrades a v1 file to v2 on the first rename, keeping its comments', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 1,
+      '// note': 'hand written',
+      projects: [{ id: 'repo', path: repo }],
+    });
+    const module = await mutable();
+
+    module.renameProject({ id: 'repo', name: 'Upgraded' });
+
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    expect(written.version).toBe(2);
+    expect(written['// note']).toBe('hand written');
+    expect(written.projects[0].name).toBe('Upgraded');
+  });
+});
