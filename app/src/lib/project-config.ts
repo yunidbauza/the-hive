@@ -107,6 +107,20 @@ export const chooseProjectDirectory = async (): Promise<string | null> => {
   return bridge.config.chooseDirectory();
 };
 
+/**
+ * Install a snapshot main pushed with an event (story 102).
+ *
+ * The mutating *verbs* return their snapshot and `read` installs it, which is
+ * what stops the renderer rendering a list a write already invalidated. A clone
+ * concludes on an **event** instead — it finishes long after the call that
+ * started it returned — so its snapshot needs the same treatment, or the
+ * project list stays exactly as stale as it would have been without the rule.
+ */
+export function installProjectConfig(next: ConfigSnapshot): void {
+  snapshot = next;
+  emit();
+}
+
 /** Test-only: drop the snapshot and every subscriber. */
 export function resetProjectConfig(): void {
   snapshot = null;

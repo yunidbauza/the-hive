@@ -115,12 +115,22 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * in main from scratch — `chooseDirectory` is a UX step, not a capability
    * grant.
    */
+  /**
+   * Story 102 adds three clone verbs, and they do not widen what the bound
+   * above says. `startClone` takes a URL and a **parent** directory — main
+   * derives the folder name from the URL itself — so still no verb accepts a
+   * destination, and the only directory main will remove is one it computed and
+   * created within a single clone.
+   */
   expect(surface.config).toEqual([
     'addProject',
+    'cancelClone',
     'chooseDirectory',
     'get',
+    'onCloneDone',
     'reload',
     'removeProject',
+    'startClone',
   ]);
   /**
    * Story 096 added `session`, and it is a listener only. Main derives status

@@ -1,8 +1,11 @@
+import { installProjectConfig } from '@/lib/project-config';
+
 import type {
   CloneDoneEvent,
   CloneRequest,
   CloneStartResult,
 } from '@shared/config-contract';
+
 
 /**
  * Cloning a repository, as the renderer sees it (story 102).
@@ -45,11 +48,22 @@ export async function cancelClone(): Promise<void> {
   await window.hive?.config.cancelClone();
 }
 
-/** Subscribe to the outcome. Returns its own unsubscribe. */
+/**
+ * Subscribe to the outcome. Returns its own unsubscribe.
+ *
+ * The event's snapshot is installed **before** the caller sees the event, so a
+ * subscriber that navigates back to the project list on success finds it
+ * already current. Doing this here rather than at the call site keeps the
+ * epic's rule — the renderer never follows a write with a reload — in one
+ * place, next to the other verbs that honour it.
+ */
 export function onCloneDone(
   callback: (event: CloneDoneEvent) => void,
 ): () => void {
   const bridge = window.hive;
   if (!bridge) return () => {};
-  return bridge.config.onCloneDone(callback);
+  return bridge.config.onCloneDone((event) => {
+    installProjectConfig(event.snapshot);
+    callback(event);
+  });
 }

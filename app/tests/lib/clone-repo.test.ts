@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cancelClone, onCloneDone, startClone } from '@lib/clone-repo';
 
-import type { CloneRequest } from '@shared/config-contract';
+import { emptySnapshot, type CloneRequest } from '@shared/config-contract';
+
+import {
+  projectConfigSnapshot,
+  resetProjectConfig,
+} from '@lib/project-config';
 
 /**
  * The renderer's half of the clone flow (story 102).
@@ -26,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as { hive?: unknown }).hive;
+  resetProjectConfig();
   vi.clearAllMocks();
 });
 
@@ -96,11 +102,61 @@ describe('onCloneDone', () => {
       config: { onCloneDone: subscribe },
     };
 
-    const callback = vi.fn();
-    const unsubscribe = onCloneDone(callback);
+    const unsubscribe = onCloneDone(vi.fn());
 
-    expect(subscribe).toHaveBeenCalledWith(callback);
+    expect(subscribe).toHaveBeenCalledOnce();
     unsubscribe();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The bug this test exists for: a clone concludes on an *event*, long after
+   * the call that started it returned, so nothing installs its snapshot unless
+   * this does. Without it the project list is still empty after a successful
+   * clone — which is exactly what the end-to-end run caught.
+   */
+  it('installs the event snapshot before the caller sees it', () => {
+    // An array rather than a `let`: assigning inside the closure narrows a
+    // nullable binding to `never`, and the call below stops type-checking.
+    const delivered: ((event: unknown) => void)[] = [];
+    (window as { hive?: unknown }).hive = {
+      config: {
+        onCloneDone: (cb: (event: unknown) => void) => {
+          delivered.push(cb);
+          return () => {};
+        },
+      },
+    };
+
+    const cloned = {
+      ...emptySnapshot('/tmp/config.json'),
+      projects: [
+        {
+          id: 'the-hive',
+          name: 'the-hive',
+          path: '/repos/the-hive',
+          icon: 'ph-folder',
+          origin: 'cloned' as const,
+          status: 'ok' as const,
+          isRepo: true,
+        },
+      ],
+    };
+
+    const callback = vi.fn(() => {
+      // Already current by the time the subscriber runs, not after it.
+      expect(projectConfigSnapshot()?.projects).toHaveLength(1);
+    });
+    onCloneDone(callback);
+
+    delivered[0]?.({
+      ok: true,
+      targetPath: '/repos/the-hive',
+      reason: null,
+      snapshot: cloned,
+    });
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(projectConfigSnapshot()?.projects[0]?.origin).toBe('cloned');
   });
 });
