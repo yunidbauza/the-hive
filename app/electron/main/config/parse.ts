@@ -281,6 +281,23 @@ function optionalNotifications(
   }
 
   const at = `${label}.notifications`;
+
+  /**
+   * Checked here rather than through `checkKeys`, for the message.
+   *
+   * `checkKeys` says "ignoring the whole file", which is true where it is used —
+   * a forbidden key at the top level or on a project entry abandons the
+   * document. It is not true here: a poisoned block costs the block and nothing
+   * else, and telling the user their whole config was discarded would send them
+   * looking for a problem that is not there.
+   */
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — notifications ignored`);
+      return undefined;
+    }
+  }
+
   if (!checkKeys(value, NOTIFICATION_KEYS, at, errors)) return undefined;
 
   const prefs: Partial<NotificationPrefs> = {};

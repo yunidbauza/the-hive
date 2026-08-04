@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -140,6 +140,27 @@ describe('IntegrationsSection — the token source', () => {
     expect(await screen.findByText(/GH_TOKEN/)).toBeInTheDocument();
   });
 
+  it('does not tell you to run gh auth login when gh is not installed', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        gh: gh({
+          installed: false,
+          resolved: null,
+          version: null,
+          authenticated: false,
+          account: null,
+          tokenSource: 'none',
+        }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(await screen.findByText(/No token source/i)).toBeInTheDocument();
+    // Advising a command the machine does not have is worse than saying nothing.
+    expect(screen.queryByText(/gh auth login/)).toBeNull();
+  });
+
   it('reports the keyring when gh holds the credential itself', async () => {
     render(<IntegrationsSection />);
 
@@ -181,6 +202,25 @@ describe('IntegrationsSection — notifications', () => {
     );
 
     expect(setNotificationPrefs).toHaveBeenCalledWith({ sessionDone: false });
+  });
+
+  it('does not re-run the gh probe when a switch is toggled', async () => {
+    /**
+     * Every mutating verb installs a *fresh* snapshot object, so an effect keyed
+     * on the snapshot re-runs on each save. That would put two `gh` subprocess
+     * spawns behind every click of a switch — for an answer that cannot have
+     * changed, since nothing here installs or signs into `gh`.
+     */
+    render(<IntegrationsSection />);
+    await screen.findAllByRole('switch');
+
+    // What a real save does: main returns a fresh snapshot and it is installed.
+    act(() => {
+      install({ sessionDone: false });
+    });
+    await screen.findByRole('switch', { name: /session finishes/i });
+
+    expect(readIntegrationsStatus).toHaveBeenCalledTimes(1);
   });
 
   it('replaces the switches with an explanation when the OS cannot show them', async () => {

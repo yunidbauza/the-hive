@@ -113,13 +113,30 @@ describe('parseConfig — notifications', () => {
     expect(parsed.notifications).toBeUndefined();
   });
 
-  it('rejects the whole file for a forbidden key inside the block', () => {
+  it('drops the block for a forbidden key, and says only that', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":' + JSON.stringify(JSON.parse('{"__proto__":{"x":1}}')) + '}',
+      '{"version":2,"notifications":{"__proto__":{"x":1},"cloneDone":false}}',
       LABEL,
     );
 
     expect(parsed.notifications).toBeUndefined();
+    // Not "ignoring the whole file": a poisoned block costs the block, and
+    // telling the user otherwise sends them hunting for a problem that is not
+    // there.
+    expect(parsed.errors).toContain(
+      'config.notifications: forbidden key "__proto__" — notifications ignored',
+    );
+    expect(parsed.errors.join('\n')).not.toMatch(/whole file/);
+  });
+
+  it('keeps the rest of the file when the block is poisoned', () => {
+    const parsed = parseConfig(
+      '{"version":2,"shell":"/bin/zsh","notifications":{"__proto__":{"x":1}}}',
+      LABEL,
+    );
+
+    expect(parsed.shell).toBe('/bin/zsh');
+    expect(parsed.fatal).toBe(false);
   });
 
   it('is advisory, never fatal — a bad block still lets the app launch', () => {

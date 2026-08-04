@@ -74,6 +74,19 @@ function TokenSourceLine({ gh }: { gh: GhStatus }) {
     );
   }
 
+  // Advising `gh auth login` to someone who does not have `gh` would send them
+  // to a command that does not exist. The group above already says it is
+  // missing; this says what the remaining option is.
+  if (!gh.installed) {
+    return (
+      <p className="text-[12.5px] text-amber">
+        No token source. Without <code className="font-mono">gh</code>, the only
+        one left is <code className="font-mono">GH_TOKEN</code> in this
+        app&rsquo;s environment.
+      </p>
+    );
+  }
+
   return (
     <p className="text-[12.5px] text-amber">
       No token source. Run <code className="font-mono">gh auth login</code>, or set{' '}
@@ -141,14 +154,21 @@ export function IntegrationsSection() {
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
 
   /**
-   * Asked once, when the pane opens.
+   * Asked once, when the pane opens — and keyed on *whether* there is a
+   * snapshot, never on the snapshot itself.
    *
-   * Not polled: `gh` being installed is not a thing that changes while a
-   * settings pane is open, and re-running a subprocess on a timer to discover
-   * that would be a cost paid for nothing.
+   * That distinction is load-bearing. Every mutating verb installs a fresh
+   * `ConfigSnapshot` object, so an effect depending on `snapshot` would re-run
+   * on each save, and each re-run spawns two `gh` subprocesses from main. Every
+   * click of a switch would pay for an answer that cannot have changed —
+   * nothing in this pane installs `gh` or signs into it.
+   *
+   * Not polled either, for the same reason.
    */
+  const hasSnapshot = snapshot !== null;
+
   useEffect(() => {
-    if (!snapshot) return;
+    if (!hasSnapshot) return;
 
     let cancelled = false;
     void readIntegrationsStatus().then((next) => {
@@ -158,7 +178,7 @@ export function IntegrationsSection() {
     return () => {
       cancelled = true;
     };
-  }, [snapshot]);
+  }, [hasSnapshot]);
 
   if (!snapshot) {
     return (
