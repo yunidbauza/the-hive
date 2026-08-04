@@ -4,6 +4,7 @@ import { useState, type ComponentType } from 'react';
 
 import { cn } from '@/lib/utils';
 
+import { AdvancedSection } from '@features/settings/components/advanced-section';
 import { AppearanceSection } from '@features/settings/components/appearance-section';
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
@@ -38,16 +39,24 @@ import { useSettingsActions } from '@stores/ui-store';
  * Story 101 shipped Projects alone; story 105 adds Appearance and, with it, the
  * switching this nav only ever described. Stories 104 and 106 cost exactly what
  * that promised — a row here and an entry in `PANES`, nothing else — and 107
- * fills the last slot the same way.
+ * filled the last slot the same way: five rows, five entries, and no control
+ * flow anywhere in this file.
  *
  * Sections stay **absent rather than disabled** until they exist: a nav full of
- * dead items teaches the user that settings are broken.
+ * dead items teaches the user that settings are broken. Every section the epic
+ * named now exists, so the rule is currently unexercised — it applies to
+ * whatever comes next.
+ *
+ * Advanced sits last deliberately. It is the only section that answers
+ * questions about the app rather than setting anything in it, and the
+ * destructive verb in the product lives there.
  */
 const SECTIONS = [
   { id: 'projects', label: 'Projects' },
   { id: 'runtime', label: 'Runtime' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'advanced', label: 'Advanced' },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]['id'];
@@ -63,6 +72,7 @@ const PANES: Record<SectionId, ComponentType> = {
   runtime: RuntimeSection,
   appearance: AppearanceSection,
   integrations: IntegrationsSection,
+  advanced: AdvancedSection,
 };
 
 export function SettingsOverlay() {

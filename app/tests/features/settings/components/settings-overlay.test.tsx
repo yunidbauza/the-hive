@@ -45,15 +45,38 @@ describe('SettingsOverlay', () => {
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
 
     expect(nav).toBeInTheDocument();
-    for (const present of ['Projects', 'Runtime', 'Appearance', 'Integrations']) {
+
+    /*
+      Story 107 fills the last slot, so every section the epic named now exists
+      and there is nothing left to be absent. The rule that produced the old
+      "and no placeholders" half of this test still stands for whatever comes
+      next: a section stays out of this list until it exists, because a nav full
+      of dead items teaches the user that settings are broken.
+    */
+    for (const present of [
+      'Projects',
+      'Runtime',
+      'Appearance',
+      'Integrations',
+      'Advanced',
+    ]) {
       expect(within(nav).getByRole('button', { name: present })).toBeInTheDocument();
     }
+  });
 
-    // Story 107 fills the last slot. Rendering it now as a disabled item would
-    // teach the user that settings are broken.
-    for (const absent of ['Advanced']) {
-      expect(screen.queryByText(absent)).not.toBeInTheDocument();
-    }
+  it('switches to Advanced (story 107)', async () => {
+    const user = userEvent.setup();
+    render(<SettingsOverlay />);
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const advanced = within(nav).getByRole('button', { name: 'Advanced' });
+
+    await user.click(advanced);
+
+    expect(advanced).toHaveAttribute('aria-current', 'page');
+    expect(
+      screen.getByRole('heading', { name: 'Advanced', level: 2 }),
+    ).toBeInTheDocument();
   });
 
   it('opens on Projects and switches panes on click', async () => {
