@@ -4,6 +4,7 @@ import {
   app,
   dialog,
   ipcMain,
+  shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from 'electron';
@@ -40,12 +41,14 @@ import {
 import { createCloneFlow, type CloneFlow } from '../clone';
 import {
   addProject,
+  configPath,
   getConfig,
   reloadConfig,
   removeProject,
   renameProject,
   reorderProjects,
   repointProject,
+  resetConfig,
   setNotifications,
   setProjectRuntime,
   setRuntime,
@@ -212,6 +215,8 @@ export function registerIpcHandlers(): void {
       chrome: chrome ?? 'unknown',
       node: node ?? 'unknown',
       platform: process.platform,
+      // Reported, never written to — this app logs to stdout. See `AppInfo`.
+      logPath: app.getPath('logs'),
       // Omitted rather than empty when nothing has run, so the field's presence
       // means something.
       ...(diagnostics.length > 0 ? { pty: diagnostics } : {}),
@@ -350,6 +355,25 @@ export function registerIpcHandlers(): void {
     (_event, payload): ConfigSnapshot =>
       setNotifications(parseSetNotificationsRequest(payload)),
   );
+
+  /**
+   * Story 107's two verbs. **Neither takes a payload**, so — exactly like
+   * `config:get` and `config:reload` — the sender check `handle` applies is
+   * their whole validation. There is no guard to write because there is no
+   * input: main reveals and rewrites the file *it* resolved from
+   * `configPath()`, which is what keeps the epic's "no verb takes a destination
+   * path" rule true by construction rather than by a check that could be
+   * forgotten.
+   *
+   * `showItemInFolder` rather than `openPath`: it selects the file in a folder
+   * window instead of handing it to whatever application claims `.json`, and
+   * it is the one of the two that cannot launch a program.
+   */
+  handle(CH.configReveal, (): void => {
+    shell.showItemInFolder(configPath());
+  });
+
+  handle(CH.configReset, (): ConfigSnapshot => resetConfig());
 
   /**
    * Integrations status (story 106) — read-only, and **takes no payload**.

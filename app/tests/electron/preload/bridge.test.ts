@@ -153,6 +153,30 @@ describe('exposed surface', () => {
   });
 
   /**
+   * Story 107's two verbs, and the assertion that matters about them.
+   *
+   * Both take **no payload at all**, which is their whole security design
+   * rather than an omission — the same one `integrations:status` uses. So the
+   * test is not just that they reach their channels, but that a caller who
+   * tried to smuggle an argument gets it dropped: main reveals and rewrites the
+   * file *it* resolved from `configPath()`, and nothing from the renderer can
+   * redirect either.
+   */
+  it('routes the advanced verbs, passing no payload (story 107)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await (config().revealConfig as (...args: unknown[]) => unknown)({
+      path: '/etc/passwd',
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configReveal);
+
+    await (config().resetConfig as (...args: unknown[]) => unknown)({
+      path: '/etc/passwd',
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configReset);
+  });
+
+  /**
    * Story 101 makes the config writable, and this is what bounds the widening.
    *
    * Story 090's comment here said the config was read-only "because a settings

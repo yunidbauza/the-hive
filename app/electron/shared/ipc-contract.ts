@@ -79,6 +79,23 @@ export const CH = {
    * session a clicked notification was about.
    */
   configSetNotifications: 'config:set-notifications',
+  /**
+   * Story 107's two verbs. Both `invoke`, and both take **no payload at all**.
+   *
+   * That is the whole security design rather than an omission, and it is the
+   * same one story 106's `integrations:status` uses: with nothing arriving from
+   * the renderer there is no payload guard to write and nothing to inject into.
+   * Main resolves the target from its own `configPath()` in both cases, so a
+   * compromised renderer cannot aim either verb at a file main did not choose.
+   * The epic's rule is that no verb takes a destination path; taking no
+   * argument at all is strictly stronger.
+   *
+   * `reveal` returns nothing — showing a file in the OS file manager has no
+   * verdict to report. `reset` returns the fresh snapshot, like every other
+   * mutating verb.
+   */
+  configReveal: 'config:reveal',
+  configReset: 'config:reset',
   integrationsStatus: 'integrations:status',
   notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
@@ -312,6 +329,23 @@ export interface AppInfo {
   /** `process.platform`, so the renderer can reason about chrome differences. */
   platform: string;
   /**
+   * Electron's log directory (story 107).
+   *
+   * Reported, **not written to**. This app writes no log file — main logs to
+   * stdout with a `[hive]` prefix — and the Advanced pane says exactly that
+   * next to this path. It lives here rather than behind a verb of its own
+   * because `AppInfo` already exists "for the About box and bug reports", and
+   * this is the same kind of fact as {@link AppInfo.electron}.
+   *
+   * A real log file — a sink, rotation, a decision about what every
+   * `console.error` in main becomes — is a logging feature that a diagnostics
+   * pane would then report on, and it is deliberately out of story 107. A
+   * "Reveal logs" button that opened an empty directory while implying the app
+   * had written to it would answer the user's question wrongly rather than not
+   * answering it, so no such button ships and this stays text.
+   */
+  logPath: string;
+  /**
    * Per-session flow-control counters (story 093).
    *
    * Flow-control bugs are otherwise diagnosed by staring at a slow terminal
@@ -428,6 +462,24 @@ export interface HiveBridge {
      * from.
      */
     setNotifications(request: SetNotificationsRequest): Promise<ConfigSnapshot>;
+    /**
+     * Show the config file in the OS file manager (story 107).
+     *
+     * Takes no argument: main reveals its own `configPath()`. *Reveal* rather
+     * than *open* — it selects the file in a folder window instead of launching
+     * whatever application has claimed `.json`, which on a developer's machine
+     * is as likely to be a browser as an editor.
+     */
+    revealConfig(): Promise<void>;
+    /**
+     * Put the config file back to the first-run template (story 107).
+     *
+     * The one write that does not preserve unknown keys or the user's comments,
+     * which is what "reset" means. Takes no argument; the confirmation is the
+     * renderer's, and main refuses if there is no file to read rather than
+     * recreating one.
+     */
+    resetConfig(): Promise<ConfigSnapshot>;
     /**
      * Start a clone (story 102).
      *
@@ -564,6 +616,16 @@ export const BRIDGE_CONFIG_KEYS = [
   'diagnoseCommand',
   // Story 106.
   'setNotifications',
+  /**
+   * Story 107. Two verbs, and what makes widening the surface here acceptable
+   * is that **neither takes an argument**: `revealConfig` shows main's own
+   * `configPath()` in the file manager, and `resetConfig` rewrites that same
+   * file through the one guarded write path. Nothing arrives from the renderer,
+   * so there is nothing to guard and no way to aim either at a file main did
+   * not choose.
+   */
+  'revealConfig',
+  'resetConfig',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */

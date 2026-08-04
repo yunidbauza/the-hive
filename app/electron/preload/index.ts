@@ -126,6 +126,15 @@ const bridge: HiveBridge = {
       request: SetNotificationsRequest,
     ): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetNotifications, request),
+    /*
+      Story 107. Neither takes an argument — see the contract for why that is
+      the security design and not an oversight. Written with no parameter list
+      at all rather than one that is ignored, so a caller that tried to smuggle
+      a path in cannot have it forwarded by a later careless edit.
+    */
+    revealConfig: (): Promise<void> => ipcRenderer.invoke(CH.configReveal),
+    resetConfig: (): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configReset),
     // Story 102. `startClone` resolves on the pre-flight verdict, not on the
     // clone — the terminal streams in between and `onCloneDone` concludes it.
     startClone: (request: CloneRequest): Promise<CloneStartResult> =>
