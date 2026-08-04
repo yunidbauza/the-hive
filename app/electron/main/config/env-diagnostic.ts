@@ -49,7 +49,22 @@ const execFileAsync = promisify(execFile);
 /** How long the probe shell gets before it is considered hung. */
 const TIMEOUT_MS = 5_000;
 
-/** 512 KiB. A `printenv` transcript of even a few hundred variables is tiny. */
+/**
+ * 512 KiB. A `printenv` transcript of even a few hundred variables is tiny.
+ *
+ * This bounds **both** stdout and stderr — unlike the `spawnSync` version,
+ * where stderr was piped to `/dev/null` and never buffered at all,
+ * `execFile` buffers both streams against the same `maxBuffer` and rejects
+ * if either is exceeded (there is no `execFile` option to discard a stream
+ * the way `stdio: [..., 'ignore']` could). Decided not to special-case this:
+ * a chatty rc file that overruns 512 KiB of stderr now fails the probe
+ * instead of being silently ignored, but a failed probe is already reported
+ * as a failed *observation* rather than a bad verdict — the same "fails
+ * safely" property every other probe failure has — and discarding stderr
+ * properly would mean giving up `execFile`'s built-in buffering for a
+ * hand-rolled `spawn` wrapper, more surgery than this fix round should carry
+ * for a genuinely rare case.
+ */
 const MAX_BUFFER = 512 * 1024;
 
 /**
@@ -164,7 +179,7 @@ export async function diagnoseEnv(
   timeoutMs: number = TIMEOUT_MS,
 ): Promise<EnvDiagnostic> {
   try {
-    const { stdout } = await execFileAsync(runtime.shell, [...ENV_PROBE_ARGS], {
+    const probe = execFileAsync(runtime.shell, [...ENV_PROBE_ARGS], {
       // The merged env this session would actually spawn with, not the
       // process's own — a project that overrides a variable must be
       // diagnosed against *its* value, or this describes a session nobody is
@@ -182,6 +197,26 @@ export async function diagnoseEnv(
       maxBuffer: MAX_BUFFER,
       shell: false,
     });
+
+    /**
+     * Close stdin immediately, restoring the EOF `spawnSync`'s
+     * `stdio: ['ignore', ...]` used to give for free.
+     *
+     * `execFile` does not accept `stdio` as an option — passing one is
+     * silently not forwarded to the underlying `spawn` (measured) — so
+     * `child.stdin.end()` on the promise's attached `.child` is the only way
+     * to get the same effect. Without it, stdin is an open pipe that never
+     * EOFs, and a `read` in an rc file blocks until this probe's own
+     * timeout kills it. This is more reachable than it sounds: `-i` (added
+     * for the interactive-sourcing fix) is exactly what makes an rc file
+     * take its interactive branch, where prompts and `read` live — so a
+     * probe that used to resolve instantly could otherwise turn into a
+     * multi-second "did not finish … and was killed" for a shell whose real
+     * sessions never had a problem.
+     */
+    probe.child?.stdin?.end();
+
+    const { stdout } = await probe;
 
     return {
       projectId,

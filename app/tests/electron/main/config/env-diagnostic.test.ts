@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -229,40 +229,102 @@ describe('diagnoseEnv — does not block on, and is bounded against, a hostile s
   });
 });
 
-describe('diagnoseEnv — the interactive flag is load-bearing', () => {
+describe('diagnoseEnv — stdin is closed, not left open', () => {
   /**
-   * The regression guard for the second defect review caught: the probe was
-   * specced as `-l -c`, which is *non-interactive*, and zsh sources
-   * `.zshrc` only for interactive shells. A real session's `<shell> -l` on a
-   * PTY is interactive, so a non-interactive probe would report a variable
-   * as "kept" in exactly the case a real session would have gotten the rc
-   * file's value — the canonical case this whole diagnostic exists for.
+   * The regression guard for the second round-2 finding: `execFile` does not
+   * forward a `stdio` option to the underlying `spawn` (measured — passing
+   * one has no effect), so stdin is an open pipe that never EOFs unless this
+   * module closes it itself. Without the `child.stdin.end()` fix, a `read`
+   * in an rc file blocks until the probe's own timeout kills it — the same
+   * multi-second "did not finish … and was killed" a hung shell produces,
+   * except triggered by something as ordinary as an interactive-mode prompt.
+   * This is more reachable than it sounds because `-i` (the fix for the
+   * *other* round-1 finding) is exactly what makes an rc file take its
+   * interactive branch, where prompts and `read` live.
    *
-   * This test deliberately runs a real `/bin/zsh` rather than a fake shell
-   * script: the thing under test is real rc-sourcing behaviour, which a
-   * fixture that ignores its argv cannot exercise. `ZDOTDIR` (not `HOME`)
-   * isolates zsh's dotfile lookup to a disposable directory, so this does
-   * not depend on — or risk touching — the machine's real `.zshrc`.
+   * Proven by timing: without the fix this fixture would run out the full
+   * timeout and report a `killed` error (verified by hand while writing this
+   * fix — see the fix report); with it, it resolves in well under a second.
    */
-  it('sees a variable set only in .zshrc, proving the probe actually ran interactively', async () => {
-    writeFileSync(join(dir, '.zshrc'), 'export FOO=from_zshrc\n');
-    // An empty `.zprofile` keeps the login half deterministic without
-    // depending on whatever the real machine's profile happens to set.
-    writeFileSync(join(dir, '.zprofile'), '');
+  it('resolves promptly rather than timing out when the shell reads stdin', async () => {
+    const shell = fakeShell('read x\nprintenv');
 
+    const start = Date.now();
     const result = await diagnoseEnv(
-      runtime({ shell: '/bin/zsh', env: { FOO: 'configured-value' } }),
+      runtime({ shell, env: { A: '1' } }),
       null,
-      { ...baseEnv, ZDOTDIR: dir },
+      baseEnv,
+      // Generous relative to how fast this should actually resolve (well
+      // under a second), but still far short of a real timeout — if the fix
+      // regresses, this test fails on the assertion below rather than
+      // hanging the suite for the full production TIMEOUT_MS.
+      2_000,
     );
+    const elapsed = Date.now() - start;
 
     expect(result.error).toBeNull();
-    // A regression to non-interactive would report `actual: null` (zsh never
-    // sources .zshrc, so FOO is simply absent) rather than this.
-    expect(result.vars[0]).toMatchObject({
-      key: 'FOO',
-      actual: 'from_zshrc',
-      overridden: true,
-    });
+    expect(result.vars).toEqual([{ key: 'A', configured: '1', actual: '1', overridden: false }]);
+    // The actual regression guard: a shell blocked on `read` with an open
+    // stdin would consume the whole timeout above and report `killed`,
+    // rather than resolving fast with a clean verdict.
+    expect(elapsed).toBeLessThan(1_500);
   });
 });
+
+/**
+ * Whether `/bin/zsh` exists on this machine.
+ *
+ * The interactive-sourcing test below needs a *real* zsh — the thing under
+ * test is real rc-sourcing behaviour, which a portable `#!/bin/sh` fixture
+ * cannot exercise. Every other test in this file uses one specifically to
+ * avoid this kind of environmental dependency; this is the one deliberate
+ * exception, and it earns the guard the rest of the file doesn't need. There
+ * is no CI config in this repo today, so this is a latent risk rather than a
+ * live one — but a test whose entire value is being trusted when it goes red
+ * must not be able to go red for an environmental reason instead of a real
+ * regression, on a Linux CI runner or minimal container that has no zsh.
+ */
+const hasZsh = existsSync('/bin/zsh');
+
+describe.skipIf(!hasZsh)(
+  'diagnoseEnv — the interactive flag is load-bearing (skipped: no /bin/zsh on this machine)',
+  () => {
+    /**
+     * The regression guard for the second defect review caught: the probe
+     * was specced as `-l -c`, which is *non-interactive*, and zsh sources
+     * `.zshrc` only for interactive shells. A real session's `<shell> -l` on
+     * a PTY is interactive, so a non-interactive probe would report a
+     * variable as "kept" in exactly the case a real session would have
+     * gotten the rc file's value — the canonical case this whole diagnostic
+     * exists for.
+     *
+     * This test deliberately runs a real `/bin/zsh` rather than a fake
+     * shell script: the thing under test is real rc-sourcing behaviour,
+     * which a fixture that ignores its argv cannot exercise. `ZDOTDIR` (not
+     * `HOME`) isolates zsh's dotfile lookup to a disposable directory, so
+     * this does not depend on — or risk touching — the machine's real
+     * `.zshrc`.
+     */
+    it('sees a variable set only in .zshrc, proving the probe actually ran interactively', async () => {
+      writeFileSync(join(dir, '.zshrc'), 'export FOO=from_zshrc\n');
+      // An empty `.zprofile` keeps the login half deterministic without
+      // depending on whatever the real machine's profile happens to set.
+      writeFileSync(join(dir, '.zprofile'), '');
+
+      const result = await diagnoseEnv(
+        runtime({ shell: '/bin/zsh', env: { FOO: 'configured-value' } }),
+        null,
+        { ...baseEnv, ZDOTDIR: dir },
+      );
+
+      expect(result.error).toBeNull();
+      // A regression to non-interactive would report `actual: null` (zsh
+      // never sources .zshrc, so FOO is simply absent) rather than this.
+      expect(result.vars[0]).toMatchObject({
+        key: 'FOO',
+        actual: 'from_zshrc',
+        overridden: true,
+      });
+    });
+  },
+);
