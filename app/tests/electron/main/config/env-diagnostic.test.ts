@@ -1,5 +1,11 @@
 // @vitest-environment node
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,6 +35,14 @@ import {
  * that traps `SIGTERM` (measured: 20+ seconds against a 2-second timeout).
  * The "does not block, and is bounded by `SIGKILL`" tests below are the
  * regression guard for that specific defect.
+ *
+ * Two more describe blocks below ("matches the real session's environment")
+ * are the regression guard for a second-round finding: the probe used to
+ * build its own environment by hand (`{ ...baseEnv, ...runtime.env }`) and
+ * never touch `cwd` at all, so it observed `TERM` and the working directory
+ * main happened to have rather than what a real session actually gets. Both
+ * can make an rc file take a different branch than it would for a real
+ * session, producing a false "kept" verdict.
  */
 
 describe('compareEnv', () => {
@@ -107,11 +121,19 @@ const runtime = (over: Partial<EffectiveRuntime> = {}): EffectiveRuntime => ({
  */
 const baseEnv = { PATH: process.env.PATH ?? '/usr/bin:/bin' };
 
+/**
+ * `diagnoseEnv` now requires a `cwd` (story 108's second fix round) — no
+ * test below cares what it is except the two "matches the real session's
+ * environment" blocks, so this is just a valid, disposable directory to pass
+ * everywhere else.
+ */
+const cwd = () => dir;
+
 describe('diagnoseEnv', () => {
   it('reports a variable the shell kept, end to end', async () => {
     const shell = fakeShell('printenv');
 
-    const result = await diagnoseEnv(runtime({ shell, env: { A: '1' } }), null, baseEnv);
+    const result = await diagnoseEnv(runtime({ shell, env: { A: '1' } }), null, cwd(), baseEnv);
 
     expect(result.error).toBeNull();
     expect(result.shell).toBe(shell);
@@ -127,6 +149,7 @@ describe('diagnoseEnv', () => {
     const result = await diagnoseEnv(
       runtime({ shell, env: { AWS_PROFILE: 'hive' } }),
       'apfm-web',
+      cwd(),
       baseEnv,
     );
 
@@ -137,7 +160,12 @@ describe('diagnoseEnv', () => {
   it('reports a probe that could not even start as a failed observation, not a bad setting', async () => {
     const missing = join(dir, 'does-not-exist');
 
-    const result = await diagnoseEnv(runtime({ shell: missing, env: { A: '1' } }), null, baseEnv);
+    const result = await diagnoseEnv(
+      runtime({ shell: missing, env: { A: '1' } }),
+      null,
+      cwd(),
+      baseEnv,
+    );
 
     // `vars` is empty rather than a verdict list containing a guess — a
     // diagnostic that never ran has nothing to report about the setting.
@@ -148,10 +176,123 @@ describe('diagnoseEnv', () => {
   it('reports a shell that did not exit cleanly as a failed observation', async () => {
     const shell = fakeShell('exit 3');
 
-    const result = await diagnoseEnv(runtime({ shell, env: { A: '1' } }), null, baseEnv);
+    const result = await diagnoseEnv(runtime({ shell, env: { A: '1' } }), null, cwd(), baseEnv);
 
     expect(result.error).toMatch(/status 3/);
     expect(result.vars).toEqual([]);
+  });
+});
+
+describe('diagnoseEnv — matches what a real session gets (story 108, fix round 2)', () => {
+  /**
+   * Finding 1's regression guard. Before this fix, the probe's environment
+   * was `{ ...baseEnv, ...runtime.env }` — nothing forced `TERM`, so a
+   * `baseEnv` with no `TERM` at all (exactly what a packaged app launched
+   * from Finder has — `TERM` is unset in launchd's environment) produced a
+   * probe with no `TERM` either, while every real session gets
+   * `TERM=xterm-256color` forced on it by `buildSessionEnv`. An rc file that
+   * branches on `TERM` (`[[ $TERM == dumb ]] && return`, which oh-my-zsh and
+   * powerlevel10k both do) would take a different path under the probe than
+   * under a real session.
+   *
+   * Proven the same way the rest of this file proves things: configure a
+   * value for `TERM` (bypassing the UI-layer guard that normally refuses
+   * it, since `diagnoseEnv` itself takes whatever `runtime.env` it is
+   * given) and prove the shell reports back the *forced* value rather than
+   * either the configured one or nothing — and prove it even when the base
+   * environment the probe inherits has no `TERM` at all.
+   */
+  it('forces TERM to xterm-256color even when the base environment has none', async () => {
+    const shell = fakeShell('printenv');
+    const baseEnvWithoutTerm: NodeJS.ProcessEnv = { PATH: baseEnv.PATH };
+    expect(baseEnvWithoutTerm.TERM).toBeUndefined();
+
+    const result = await diagnoseEnv(
+      runtime({ shell, env: { TERM: 'whatever-was-configured' } }),
+      null,
+      cwd(),
+      baseEnvWithoutTerm,
+    );
+
+    expect(result.error).toBeNull();
+    expect(result.vars).toEqual([
+      {
+        key: 'TERM',
+        configured: 'whatever-was-configured',
+        actual: 'xterm-256color',
+        overridden: true,
+      },
+    ]);
+  });
+
+  /**
+   * Finding 2's regression guard. Before this fix, `diagnoseEnv` never
+   * received a `cwd` at all and the probe inherited main's own working
+   * directory (`/` in a typical packaged build) — never `project.path`, the
+   * directory a real session for that project actually runs in
+   * (`sessions/index.ts`). Anything an rc file keys on the directory —
+   * direnv's `.envrc`, `asdf`/`nodenv`/`pyenv` version files — would diverge.
+   *
+   * Proven with a marker file that only exists in the directory passed as
+   * `cwd`, and an `export` that runs *inside* the probed shell — mirroring
+   * how the "simulated rc file overrides" test above proves an override,
+   * rather than echoing a value that `printenv`'s own dump could stomp on:
+   * the fixture asks the OS for its actual working directory (`pwd`, not the
+   * `$PWD` environment variable — that would only prove the env var was set,
+   * not that the process actually started there) and re-exports `MARKER`
+   * based on whether the marker is visible from it. If `cwd` never reached
+   * the child, the probe would run wherever this test process happens to be
+   * (this repo's `app/` directory), which does not contain the marker, and
+   * `MARKER` would keep the injected value instead of being overridden.
+   */
+  it('runs the probe in the resolved project directory, not wherever the caller happens to be', async () => {
+    const shell = fakeShell(
+      'export MARKER=$([ -f "$(pwd)/marker" ] && echo yes || echo no)\nprintenv',
+    );
+    const projectDir = mkdtempSync(join(tmpdir(), 'hive-env-diagnostic-cwd-'));
+    writeFileSync(join(projectDir, 'marker'), '');
+
+    try {
+      const result = await diagnoseEnv(
+        runtime({ shell, env: { MARKER: 'no' } }),
+        'apfm-web',
+        projectDir,
+        baseEnv,
+      );
+
+      expect(result.error).toBeNull();
+      expect(result.vars).toEqual([
+        { key: 'MARKER', configured: 'no', actual: 'yes', overridden: true },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('forces PWD to match the cwd it was given', async () => {
+    const shell = fakeShell('printenv');
+    const projectDir = mkdtempSync(join(tmpdir(), 'hive-env-diagnostic-pwd-'));
+
+    try {
+      const result = await diagnoseEnv(
+        runtime({ shell, env: { PWD: 'whatever-was-configured' } }),
+        null,
+        projectDir,
+        baseEnv,
+      );
+
+      expect(result.error).toBeNull();
+      expect(result.vars).toEqual([
+        {
+          key: 'PWD',
+          configured: 'whatever-was-configured',
+          actual: projectDir,
+          overridden: true,
+        },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -183,6 +324,7 @@ describe('diagnoseEnv — does not block on, and is bounded against, a hostile s
     const result = await diagnoseEnv(
       runtime({ shell, env: { A: '1' } }),
       null,
+      cwd(),
       baseEnv,
       // A short timeout so this test does not itself take 5+ seconds to
       // prove the point — see `diagnoseEnv`'s `timeoutMs` doc comment.
@@ -219,6 +361,7 @@ describe('diagnoseEnv — does not block on, and is bounded against, a hostile s
     const result = await diagnoseEnv(
       runtime({ shell, env: { A: '1' } }),
       null,
+      cwd(),
       baseEnv,
       300,
     );
@@ -253,6 +396,7 @@ describe('diagnoseEnv — stdin is closed, not left open', () => {
     const result = await diagnoseEnv(
       runtime({ shell, env: { A: '1' } }),
       null,
+      cwd(),
       baseEnv,
       // Generous relative to how fast this should actually resolve (well
       // under a second), but still far short of a real timeout — if the fix
@@ -314,6 +458,7 @@ describe.skipIf(!hasZsh)(
       const result = await diagnoseEnv(
         runtime({ shell: '/bin/zsh', env: { FOO: 'configured-value' } }),
         null,
+        cwd(),
         { ...baseEnv, ZDOTDIR: dir },
       );
 

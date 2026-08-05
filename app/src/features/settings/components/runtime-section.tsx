@@ -205,6 +205,15 @@ export function RuntimeSection() {
            */}
           <span className="text-[12.5px] text-muted">Environment variables</span>
           <EnvEditor
+            // `EnvEditor` seeds its rows once, from a lazy initializer with
+            // no effect and no key of its own (see its doc comment). `shell`
+            // and `command` above are re-seeded from every fresh snapshot via
+            // the `useEffect` at the top of this component, and the
+            // per-project editor gets the same property for free through
+            // `key={project.id}` on `ProjectOverrides` — this is the
+            // workspace editor's equivalent, so a stale value cannot sit in
+            // an input a fresh snapshot has already superseded.
+            key={JSON.stringify(snapshot.env)}
             value={snapshot.env}
             onSave={(env) => void setRuntimeConfig({ env })}
           />

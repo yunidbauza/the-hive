@@ -356,6 +356,102 @@ export const UNSAFE_ENV_KEYS: readonly string[] = [
  */
 export const RESERVED_ENV_KEYS: readonly string[] = ['TERM', 'COLORTERM', 'PWD'];
 
+/**
+ * The one definition of "what a spawned session's environment looks like"
+ * (story 092, extended by story 108's fix round).
+ *
+ * Originally lived only in `electron/pty-host/env.ts`, which is fine for the
+ * pty-host itself but was wrong for the env diagnostic
+ * (`electron/main/config/env-diagnostic.ts`): main may not import
+ * `electron/pty-host/**` (the process-boundary zone in `eslint.config.mjs`
+ * only grants it `electron/shared/**`), so the diagnostic had been building
+ * its own, slightly different environment by hand — `{ ...baseEnv,
+ * ...runtime.env }`, with none of what follows applied.
+ *
+ * That divergence was not cosmetic. A packaged app launched from Finder has
+ * no `TERM` in main's own environment (the same launch mode `shell.ts`
+ * already distrusts `$SHELL` for), while every real session gets
+ * `TERM=xterm-256color` forced on it below. An rc file that branches on
+ * `TERM` — `[[ $TERM == dumb ]] && return`, which oh-my-zsh and
+ * powerlevel10k both do — would take a different branch under the probe than
+ * under a real session, and the diagnostic would report a variable as "kept"
+ * that a real session would actually see overridden. Living here and being
+ * called by both `buildEnv` (pty-host) and `diagnoseEnv` (main) is what
+ * makes that impossible: there is exactly one place this logic can drift.
+ */
+export const TERM = 'xterm-256color';
+
+/** See {@link TERM} — advertises 24-bit colour so tools do not quantise to 256. */
+export const COLORTERM = 'truecolor';
+
+/**
+ * Variables stripped by exact name before a session's environment is built.
+ *
+ * `ELECTRON_RUN_AS_NODE` is Electron's own leakage — a child that itself
+ * launches Electron would silently become a Node process instead.
+ * `NODE_OPTIONS` and `NODE_PATH` point a `node` the user runs at Electron's
+ * own bundled runtime and `node_modules` rather than their project's.
+ */
+export const SESSION_ENV_DENY_EXACT: readonly string[] = [
+  'ELECTRON_RUN_AS_NODE',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+];
+
+/**
+ * Variables stripped by prefix before a session's environment is built.
+ *
+ * `ELECTRON_*` is internal wiring never meaningful to a user shell;
+ * `GDK_PIXBUF_*` and `CHROME_*` are Chromium sandbox/runtime leakage.
+ */
+export const SESSION_ENV_DENY_PREFIXES: readonly string[] = [
+  'ELECTRON_',
+  'GDK_PIXBUF_',
+  'CHROME_',
+];
+
+function isSessionEnvDenied(key: string): boolean {
+  return (
+    SESSION_ENV_DENY_EXACT.includes(key) ||
+    SESSION_ENV_DENY_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
+
+/**
+ * Build the environment a spawned session ends up with — and, since story
+ * 108's fix round, the environment the env diagnostic probes, so the two can
+ * never quietly diverge again.
+ *
+ * Start from a copy of the base environment, delete the deny-list, apply
+ * whatever was injected explicitly, then force `TERM`, `COLORTERM` and `PWD`.
+ * Those three are last on purpose: they are the terminal's identity, and an
+ * injected override of `TERM` is far more likely to be a mistake than an
+ * intention.
+ */
+export function buildSessionEnv(
+  base: NodeJS.ProcessEnv,
+  cwd: string,
+  injected: Record<string, string> = {},
+): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || isSessionEnvDenied(key)) continue;
+    env[key] = value;
+  }
+
+  for (const [key, value] of Object.entries(injected)) {
+    if (isSessionEnvDenied(key)) continue;
+    env[key] = value;
+  }
+
+  env.TERM = TERM;
+  env.COLORTERM = COLORTERM;
+  env.PWD = cwd;
+
+  return env;
+}
+
 /** Why an environment variable name was refused, or `null` if it is fine. */
 export function unsafeEnvReason(key: string): string | null {
   if (RESERVED_ENV_KEYS.includes(key)) {

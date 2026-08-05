@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { expect, test, type Page } from '@playwright/test';
@@ -29,7 +29,7 @@ const openRuntime = async (page: Page): Promise<void> => {
 };
 
 /** A config with one real project directory, and a comment the UI must not eat. */
-function seed(outputPath: (name: string) => string) {
+function seed(outputPath: (name: string) => string, shell = '/bin/sh') {
   const repoDir = outputPath('scratch-repo');
   mkdirSync(join(repoDir, '.git'), { recursive: true });
 
@@ -40,7 +40,7 @@ function seed(outputPath: (name: string) => string) {
       {
         '//': 'a comment the UI must not eat',
         version: 2,
-        shell: '/bin/sh',
+        shell,
         claudeCommand: 'claude',
         projects: [
           { id: 'scratch-repo', name: 'scratch-repo', path: repoDir, icon: 'ph-folder' },
@@ -53,6 +53,21 @@ function seed(outputPath: (name: string) => string) {
 
   return { configPath, repoDir };
 }
+
+/**
+ * Whether `/bin/bash` exists on this machine.
+ *
+ * Only the precedence test below actually spawns the seeded shell (through
+ * the env diagnostic) and needs the probe args (`-l -i -c`, `config-
+ * contract.ts`'s `ENV_PROBE_ARGS`) to be accepted for real, rather than just
+ * written to a config file. `/bin/sh` fails that on Debian and Ubuntu, where
+ * it is dash — dash has no `-l` option, so the probe would fail, `vars`
+ * would come back empty, and the assertion that a value rendered would go
+ * red for an environmental reason having nothing to do with a regression.
+ * `env-diagnostic.test.ts` guards its own real-shell dependency (`/bin/zsh`)
+ * the same way, for the identical reason.
+ */
+const hasBash = existsSync('/bin/bash');
 
 const read = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
 
@@ -196,7 +211,13 @@ test('adds a workspace environment variable and writes a top-level env block', a
 });
 
 test('a per-project override wins over the workspace value for the same key', async ({}, testInfo) => {
-  const { configPath } = seed((name) => testInfo.outputPath(name));
+  // The only assertion in this file that depends on the seeded shell actually
+  // running the probe args for real (see `hasBash`'s doc comment) — skipped
+  // with a named reason rather than failing red for an environmental cause
+  // on a machine/CI image with no `/bin/bash`.
+  test.skip(!hasBash, 'no /bin/bash on this machine to run the env probe with');
+
+  const { configPath } = seed((name) => testInfo.outputPath(name), '/bin/bash');
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
     configPath,

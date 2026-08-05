@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 
 import {
   ENV_PROBE_ARGS,
+  buildSessionEnv,
   type EffectiveRuntime,
   type EnvDiagnostic,
   type EnvVarVerdict,
@@ -165,6 +166,19 @@ function describeProbeFailure(cause: unknown, timeoutMs: number): string {
 export async function diagnoseEnv(
   runtime: EffectiveRuntime,
   projectId: string | null,
+  /**
+   * Where the probe runs — the same directory a real session for this
+   * project would spawn in (`project.path`), or the caller's chosen fallback
+   * when there is no such directory (see `ipc/index.ts`'s handler for what it
+   * picks and why). Required rather than defaulted here: the whole point of
+   * story 108's second fix round is that this must never be silently left as
+   * whatever main's own `cwd` happens to be — that was the bug.
+   *
+   * Anything an rc file keys on the working directory — direnv's `.envrc`,
+   * `asdf`/`nodenv`/`pyenv` version files — depends on this matching the real
+   * session, exactly like `TERM` does below.
+   */
+  cwd: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
   /**
    * How long the probe gets before it is killed.
@@ -180,11 +194,23 @@ export async function diagnoseEnv(
 ): Promise<EnvDiagnostic> {
   try {
     const probe = execFileAsync(runtime.shell, [...ENV_PROBE_ARGS], {
-      // The merged env this session would actually spawn with, not the
-      // process's own — a project that overrides a variable must be
-      // diagnosed against *its* value, or this describes a session nobody is
-      // running.
-      env: { ...baseEnv, ...runtime.env },
+      // The real session's directory, not wherever main happens to be
+      // running from — a packaged app's cwd is unrelated to any project
+      // (`/` is typical) and an rc file that keys off the directory (direnv,
+      // asdf/nodenv/pyenv version files) would diverge otherwise. See the
+      // `cwd` parameter doc above.
+      cwd,
+      // The environment this session would actually spawn with, built the
+      // *same way* the pty-host builds a real session's — merged env,
+      // deny-list stripped, then `TERM`/`COLORTERM`/`PWD` forced last. Before
+      // story 108's fix round this was `{ ...baseEnv, ...runtime.env }` by
+      // hand, which left `TERM` however main's own process happened to have
+      // it (unset in a packaged app launched from Finder) instead of the
+      // `xterm-256color` every real session gets — an rc file that branches
+      // on `TERM` would take a different path here than it would for a real
+      // session, and silently report a variable as "kept" that a session
+      // would actually see overridden.
+      env: buildSessionEnv(baseEnv, cwd, runtime.env),
       encoding: 'utf8',
       timeout: timeoutMs,
       // A signal that cannot be trapped or ignored. `SIGTERM` (the default)
