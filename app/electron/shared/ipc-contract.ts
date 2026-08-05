@@ -37,6 +37,7 @@ import type {
 import type {
   SessionEffort,
   SessionModel,
+  SessionNameEvent,
   SessionStatusEvent,
 } from './session-contract';
 
@@ -144,6 +145,15 @@ export const CH = {
    * `idle` two seconds after the output stops.
    */
   sessionStatus: 'session:status', // main → renderer
+  /**
+   * What a session now calls itself (HIVE-61).
+   *
+   * Separate from `session:status` because the two are independent: a rename is
+   * rare and user-driven, a status change is frequent and machine-driven, and
+   * folding them together would make every status tick carry a name main did
+   * not observe on that tick.
+   */
+  sessionName: 'session:name', // main → renderer
   appInfo: 'app:info',
 } as const;
 
@@ -161,6 +171,7 @@ export const EVENT_CHANNELS = [
   CH.ptyExit,
   CH.ptyLost,
   CH.sessionStatus,
+  CH.sessionName,
   CH.configCloneDone,
   CH.notificationsActivate,
 ] as const;
@@ -559,6 +570,8 @@ export interface HiveBridge {
   /** Real session lifecycle, derived in main (story 096). */
   session: {
     onStatus(callback: (event: SessionStatusEvent) => void): () => void;
+    /** A session reported a new display name (HIVE-61). */
+    onName(callback: (event: SessionNameEvent) => void): () => void;
   };
 }
 
@@ -608,7 +621,7 @@ export const BRIDGE_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.session`. */
-export const BRIDGE_SESSION_KEYS = ['onStatus'] as const;
+export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName'] as const;
 
 /** The exact key set of `window.hive.integrations`. */
 export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;

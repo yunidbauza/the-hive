@@ -1,4 +1,4 @@
-import { isSession } from '@/types/entity';
+import { entityLabel, isSession } from '@/types/entity';
 
 import { StatusDot } from '@components/ui/status-dot';
 import { useEntity, useOpenEntity } from '@stores/hive-store';
@@ -33,10 +33,10 @@ export function TicketSessionRow({ id }: TicketSessionRowProps) {
         Labelled, unlike the projects panel: this row has no visible status
         text, so without it the dot would carry status by colour alone.
       */}
-      <StatusDot status={entity.status} label={`${entity.id} status`} />
+      <StatusDot status={entity.status} label={`${entityLabel(entity)} status`} />
 
       <span className="flex-1 truncate text-left font-mono text-[12px] text-muted">
-        {entity.id}
+        {entityLabel(entity)}
       </span>
 
       <span className="shrink-0 font-mono text-[10px] text-subtle">

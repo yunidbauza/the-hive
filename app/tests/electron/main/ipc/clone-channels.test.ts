@@ -18,7 +18,7 @@ const handlers = new Map<
 const shutdownHooks: (() => void)[] = [];
 
 vi.mock('electron', () => ({
-  app: { getVersion: () => '0.0.0', on: vi.fn() },
+  app: { getVersion: () => '0.0.0', on: vi.fn(), getPath: () => '/tmp/hive-test' },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
   ipcMain: {

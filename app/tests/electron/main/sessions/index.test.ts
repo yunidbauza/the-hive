@@ -108,6 +108,22 @@ function fakeSupervisor(): PtyHostSupervisor {
 
 const OPEN = { entityId: 'hero-refresh', projectId: 'apfm-web', cols: 80, rows: 24 };
 
+/** Pinned so the command line is a constant rather than a moving target. */
+const TEST_UUID = '00000000-0000-4000-8000-000000000000';
+
+/**
+ * The bootstrap command line a plain spawn produces.
+ *
+ * `--name` is the entity id (HIVE-61), so the agent's prompt box and `/resume`
+ * entry agree with the rail. `--session-id` is pinned so the transcript path is
+ * deterministic. No `--settings`, because this harness passes no hook runtime —
+ * which is itself the "hooks unavailable" case, and it must still spawn.
+ */
+const BOOT = `claude --name hero-refresh --session-id ${TEST_UUID} && exit`;
+
+/** How long after a stage's text its submitting `\r` follows (HIVE-63). */
+const SUBMIT = 300;
+
 /** The pty session id main minted for the current generation of an entity. */
 const mintedFor = (entityId: string) =>
   spawned.filter((call) => call.sessionId.startsWith(entityId)).at(-1)!.sessionId;
@@ -144,6 +160,12 @@ beforeEach(() => {
     supervisor,
     send: (channel, payload) => sent.push({ channel, payload: payload as Record<string, unknown> }),
     config: () => CONFIG,
+    /**
+     * Pinned so the bootstrap command line is assertable (HIVE-61). A real
+     * spawn generates a fresh uuid; what matters here is that one is passed,
+     * and where.
+     */
+    newSessionUuid: () => TEST_UUID,
   });
 });
 
@@ -183,7 +205,9 @@ describe('what a session runs', () => {
     vi.advanceTimersByTime(8); // the batch flush
     vi.advanceTimersByTime(150); // the settling debounce
 
-    expect(supervisor.write).toHaveBeenCalledWith(sessionId, 'claude && exit\r');
+    vi.advanceTimersByTime(SUBMIT);
+    expect(supervisor.write).toHaveBeenCalledWith(sessionId, BOOT);
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
   });
 
   it('delivers a spawn task as the session’s first message', () => {
@@ -198,16 +222,15 @@ describe('what a session runs', () => {
     emitData({ sessionId, chunk: '$ ' });
     vi.advanceTimersByTime(8);
     vi.advanceTimersByTime(150);
-    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'claude && exit\r');
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, BOOT);
 
     emitData({ sessionId, chunk: '╭─ claude ─╮' });
     vi.advanceTimersByTime(8);
     vi.advanceTimersByTime(150);
 
-    expect(supervisor.write).toHaveBeenLastCalledWith(
-      sessionId,
-      'fix the hero\r',
-    );
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'fix the hero');
+    vi.advanceTimersByTime(SUBMIT);
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
   });
 
   it('does not deliver the task again when a surface reattaches', () => {
@@ -225,7 +248,7 @@ describe('what a session runs', () => {
 
     expect(
       vi.mocked(supervisor.write).mock.calls.filter(
-        (call) => call[1] === 'fix the hero\r',
+        (call) => call[1] === 'fix the hero',
       ),
     ).toHaveLength(1);
   });
@@ -247,10 +270,12 @@ describe('what a session runs', () => {
     emitData({ sessionId, chunk: '$ ' });
     vi.advanceTimersByTime(8);
     vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(SUBMIT);
 
     // The bootstrap first, then the held input — in that order.
     expect(vi.mocked(supervisor.write).mock.calls).toEqual([
-      [sessionId, 'claude && exit\r'],
+      [sessionId, BOOT],
+      [sessionId, '\r'],
       [sessionId, 'y\r'],
     ]);
   });
@@ -265,8 +290,16 @@ describe('what a session runs', () => {
     emitData({ sessionId, chunk: '$ ' });
     vi.advanceTimersByTime(158);
 
+    vi.advanceTimersByTime(SUBMIT);
+
+    /**
+     * The held input follows the bootstrap's **carriage return**, not merely
+     * its text (HIVE-63). Releasing it between the two would append the user's
+     * keystrokes to the command line itself and the session would never start.
+     */
     expect(vi.mocked(supervisor.write).mock.calls.map((call) => call[1])).toEqual([
-      'claude && exit\r',
+      BOOT,
+      '\r',
       'first\r',
       'second\r',
     ]);
@@ -308,7 +341,8 @@ describe('what a session runs', () => {
       vi.advanceTimersByTime(200);
     }
 
-    expect(vi.mocked(supervisor.write).mock.calls).toHaveLength(1);
+    // Two writes, one stage: the command text and the `\r` that submits it.
+    expect(vi.mocked(supervisor.write).mock.calls).toHaveLength(2);
   });
 });
 

@@ -1,6 +1,6 @@
 import { ArrowLeft, GitBranch, GitPullRequest, Robot } from '@phosphor-icons/react';
 
-import { type Entity, isSession } from '@/types/entity';
+import { type Entity, entityLabel, isSession } from '@/types/entity';
 
 import { Chip } from '@components/ui/chip';
 import { StatusDot, STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
@@ -46,7 +46,7 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
       </button>
 
       <span className="shrink-0 font-mono text-[13px] font-semibold text-ink">
-        {entity.id}
+        {entityLabel(entity)}
       </span>
 
       {/*

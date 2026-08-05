@@ -54,6 +54,7 @@ import {
   setRuntime,
 } from '../config';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
+import { createHookRuntime } from '../hooks';
 import { readGhStatus, runCommand } from '../integrations/gh';
 import { createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
@@ -178,7 +179,24 @@ export function registerIpcHandlers(): void {
     },
   });
 
-  sessions = createSessions({ supervisor, config: getConfig, send });
+  /**
+   * The hook pipeline is constructed here and started by `createSessions`
+   * (HIVE-62).
+   *
+   * Constructed rather than started, because starting it needs two things only
+   * the session layer has: whether an entity is a live session, and where a
+   * status event should go. Handing it over unstarted keeps that knowledge in
+   * one place instead of duplicating a registry lookup here.
+   *
+   * `app.getPath('userData')` is the app's own directory. Nothing about this
+   * touches `~/.claude`.
+   */
+  sessions = createSessions({
+    supervisor,
+    config: getConfig,
+    send,
+    hooks: createHookRuntime({ userDataPath: app.getPath('userData') }),
+  });
 
   cloneFlow = createCloneFlow({
     sessions,

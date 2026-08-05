@@ -38,7 +38,7 @@ import { useUiStore } from '@stores/ui-store';
  * The actions mirror what the future orchestrator daemon will do, so panels
  * stay pure views and swapping in a real backend later replaces this store's
  * internals rather than the component tree. That seam is the point; see
- * `stories/000-overview.md` → Decision record.
+ * the HIVE project in Jira → Decision record.
  */
 
 /**
@@ -113,6 +113,8 @@ interface HiveState {
     status?: SessionStatus,
   ) => void;
   setSessionStatus: (id: string, status: SessionStatus) => void;
+  /** The agent reported a new display name (HIVE-61). */
+  renameSession: (id: string, name: string) => void;
   reset: () => void;
 }
 
@@ -623,6 +625,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       };
     }),
 
+  /**
+   * The agent reported a new display name (HIVE-61).
+   *
+   * The same shape and the same guards as `setSessionStatus`, and for the same
+   * reasons: agents are ignored rather than rejected, and an unchanged value is
+   * dropped so a session repeating its title — which Claude does on every
+   * repaint — cannot produce a store write, and a re-render, per repaint.
+   *
+   * The name is **not** validated against the pattern `--name` is filtered by.
+   * That pattern governs what the app is willing to put on a command line; this
+   * value came off a terminal title and is only ever rendered, so restricting it
+   * would reject the perfectly good "fix the login bug" a user just typed into
+   * `/rename`.
+   */
+  renameSession: (id, name) =>
+    set((state) => {
+      const entity = state.entities[id];
+      if (!entity || !isSession(entity) || entity.name === name) return state;
+      return {
+        entities: { ...state.entities, [id]: { ...entity, name } },
+      };
+    }),
+
   reset: () => {
     spawnCounter = 0;
     resetClock();
@@ -734,6 +759,9 @@ export const useAgentOrder = () =>
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
 
 /** Story 096: main pushes a real session's derived status through this. */
+export const useRenameSession = () =>
+  useHiveStore((state) => state.renameSession);
+
 export const useSetSessionStatus = () =>
   useHiveStore((state) => state.setSessionStatus);
 

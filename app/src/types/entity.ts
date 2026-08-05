@@ -46,6 +46,21 @@ export type PrState = 'open' | 'merged' | 'draft';
 export interface Session {
   kind: 'session';
   id: string; // 'hero-refresh'
+  /**
+   * What the *agent* calls itself (HIVE-61).
+   *
+   * Optional, and absent is the normal state for a fixture and for any session
+   * whose agent has not reported one. Every surface renders `name ?? id`, which
+   * is what lets this be additive: nothing that reads a session had to learn a
+   * new required field.
+   *
+   * Deliberately **not** the `id`. The id is the entities-map key, it is in
+   * `branch`, and it is what every feed line and orchestrator row already
+   * spells — rekeying the map on a rename would turn a cosmetic event into a
+   * graph rewrite. A name is a label; an id is an identity, and Claude renames
+   * only the former.
+   */
+  name?: string;
   project: string; // 'apfm-web'
   branch: string; // 'feat/hero-refresh'
   status: SessionStatus;
@@ -126,3 +141,18 @@ export const isSession = (entity: Entity): entity is Session =>
 
 export const isAgent = (entity: Entity): entity is Agent =>
   entity.kind === 'agent';
+
+/**
+ * What to call an entity on screen (HIVE-61).
+ *
+ * One function rather than `entity.name ?? entity.id` at each site, because the
+ * fallback is the whole contract: a session whose agent has never reported a
+ * name — every fixture, every session in its first second, every session whose
+ * agent is not Claude — must read exactly as it always did. Spelling that at
+ * five call sites is five chances for one of them to render `undefined`.
+ *
+ * Agents have no `name` field and fall through to their id, which is what they
+ * have always shown.
+ */
+export const entityLabel = (entity: Entity): string =>
+  (isSession(entity) ? entity.name : undefined) ?? entity.id;

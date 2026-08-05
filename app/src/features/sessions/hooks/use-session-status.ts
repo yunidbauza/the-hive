@@ -1,27 +1,40 @@
 import { useEffect } from 'react';
 
-import { useSetSessionStatus } from '@stores/hive-store';
+import { useRenameSession, useSetSessionStatus } from '@stores/hive-store';
 
 /**
- * Keep real sessions' status in sync with their processes (story 096).
+ * Keep real sessions' status and name in sync with their processes (story 096,
+ * HIVE-61, HIVE-62).
  *
- * Main derives `working | idle | done` from pty output and pushes it here; this
- * is the whole renderer half. Note what does **not** come through: the
- * transcript. That goes straight to xterm through the transport and never
- * touches a store, which is what keeps a build log from re-rendering the shell.
+ * Main pushes both here; this is the whole renderer half. Note what does **not**
+ * come through: the transcript. That goes straight to xterm through the
+ * transport and never touches a store, which is what keeps a build log from
+ * re-rendering the shell.
  *
- * `waiting` never arrives, and cannot — the type main sends does not contain it.
- * A TUI that has asked a question and a TUI that is thinking both produce no
- * output, so a pty cannot tell them apart, and the app's attention model is too
- * important to build on a heuristic that fails silently. Fixture sessions still
- * show `waiting`; no real one enters it. The gap is real and is named in the
- * story as the next epic's work — a Claude Code notification hook.
+ * ## `waiting` now arrives
+ *
+ * It did not, and could not, while status was derived from pty output — a TUI
+ * that has asked a question and a TUI that is thinking both produce nothing, and
+ * the attention model is too important to build on a heuristic that fails
+ * silently. HIVE-62 replaced the guess with a report: Claude Code's
+ * `PermissionRequest` and `Elicitation` hooks say so directly, and the type main
+ * sends now contains `waiting` because a hook is a different observer than a
+ * pty. Sessions with no hooks — the user disabled them, the receiver could not
+ * bind — still run on the old inference and still never enter `waiting`.
+ *
+ * ## The name
+ *
+ * A session's display name comes from the *agent*, not from the app: Claude
+ * writes it into the terminal title and rewrites it on `/rename`. So a user who
+ * renames a session inside Claude renames its row in the fleet view, which is
+ * the only place the two identities were ever visibly different.
  *
  * Mounted once, at the composition root. A per-session subscription would mean
- * thirteen listeners for one broadcast channel.
+ * thirteen listeners for two broadcast channels.
  */
 export function useSessionStatus(): void {
   const setSessionStatus = useSetSessionStatus();
+  const renameSession = useRenameSession();
 
   useEffect(() => {
     // No bridge is the browser demo, where every transcript is a recording and
@@ -29,8 +42,16 @@ export function useSessionStatus(): void {
     const bridge = window.hive;
     if (!bridge) return;
 
-    return bridge.session.onStatus(({ entityId, status }) => {
+    const disposeStatus = bridge.session.onStatus(({ entityId, status }) => {
       setSessionStatus(entityId, status);
     });
-  }, [setSessionStatus]);
+    const disposeName = bridge.session.onName(({ entityId, name }) => {
+      renameSession(entityId, name);
+    });
+
+    return () => {
+      disposeStatus();
+      disposeName();
+    };
+  }, [setSessionStatus, renameSession]);
 }

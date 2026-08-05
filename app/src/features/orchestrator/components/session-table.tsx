@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { isSession } from '@/types/entity';
+import { entityLabel, isSession } from '@/types/entity';
 
 import { STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
@@ -98,7 +98,7 @@ function SessionTableRow({ id }: { id: string }) {
     <button
       type="button"
       disabled={terminated}
-      title={terminated ? `${entity.id} has terminated — its process is gone` : undefined}
+      title={terminated ? `${entityLabel(entity)} has terminated — its process is gone` : undefined}
       onClick={() => {
         // Click both selects and opens: the caret should follow the user's
         // last action, or the keyboard and the mouse end up disagreeing about
@@ -120,7 +120,7 @@ function SessionTableRow({ id }: { id: string }) {
         ▸
       </span>
       <span className="min-w-[70px] shrink basis-[130px] truncate text-ink">
-        {entity.id}
+        {entityLabel(entity)}
       </span>
       <span className={cn('w-[90px] shrink-0 truncate', STATUS_TEXT[entity.status])}>
         {STATUS_LABEL[entity.status]}

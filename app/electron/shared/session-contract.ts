@@ -1,3 +1,5 @@
+import type { ObservedStatus } from './hook-contract';
+
 /**
  * The session lifecycle contract (story 096).
  *
@@ -31,11 +33,70 @@
  */
 export type DerivedStatus = 'working' | 'idle' | 'terminated';
 
-/** Main telling the renderer what a real session is doing. */
+/**
+ * Main telling the renderer what a real session is doing.
+ *
+ * Carries {@link ObservedStatus}, which is wider than {@link DerivedStatus} by
+ * one member (HIVE-62). The narrower type still governs `activity.ts`, whose
+ * reasoning about what a *pty* can show is unchanged; `waiting` reaches this
+ * event only from a Claude Code hook, which is a different observer with a
+ * vantage point a pty does not have.
+ */
 export interface SessionStatusEvent {
   /** The *entity* id — the renderer never sees a pty session id. */
   entityId: string;
-  status: DerivedStatus;
+  status: ObservedStatus;
+}
+
+/**
+ * What a session may be named on the command line (HIVE-61).
+ *
+ * `claude --name <name>` is interpolated into a string a login shell parses, and
+ * unlike `--model` and `--effort` a name has **no closed list** behind it — the
+ * argument `bootstrap.ts` uses to justify not quoting those two does not reach
+ * this one. So the vocabulary is restricted here instead, to characters no shell
+ * assigns meaning to: no space, quote, backtick, `$`, `;`, `&`, `|`, `<`, `>`,
+ * `(`, `)`, `\` or newline survives this pattern.
+ *
+ * That is deliberately narrower than the names Claude Code itself accepts. A
+ * session *renamed inside Claude* to "fix the login bug" is read back through
+ * the terminal title, never written to a command line, and is not filtered by
+ * this — see {@link SessionNameEvent}. This pattern governs only what the Hive
+ * is willing to **send**, which is its own generated ids.
+ */
+export const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+/**
+ * The longest name worth sending.
+ *
+ * Claude renders the name into a terminal title and its prompt box; past this
+ * it is truncated for display anyway, and a long argument on the bootstrap line
+ * only makes the command harder to read when a session fails to start.
+ */
+export const SESSION_NAME_MAX = 64;
+
+/** Whether a name may be sent as `--name` on the bootstrap command line. */
+export const isSendableSessionName = (name: string): boolean =>
+  name.length > 0 && name.length <= SESSION_NAME_MAX && SESSION_NAME_PATTERN.test(name);
+
+/**
+ * Main telling the renderer what a session now calls itself (HIVE-61).
+ *
+ * The name arrives from the *agent*, not from the app: Claude Code writes its
+ * display name into the pty as an OSC 0 terminal-title sequence, and re-writes
+ * it whenever `/rename` changes it. So this event is the answer to "what does
+ * this session think it is?", which is not something the Hive can know from the
+ * id it generated.
+ *
+ * Separate from {@link SessionStatusEvent} rather than a field on it: a rename
+ * and a status change are independent, arrive at completely different rates,
+ * and a combined event would force every status tick to carry a name it did not
+ * observe.
+ */
+export interface SessionNameEvent {
+  entityId: string;
+  /** Already stripped of the leading activity glyph. Never empty. */
+  name: string;
 }
 
 /**
@@ -86,6 +147,35 @@ export const BOOTSTRAP_DEBOUNCE_MS = 150;
  * permanently empty, so the bootstrap goes in anyway and the fact is recorded.
  */
 export const BOOTSTRAP_FALLBACK_MS = 5_000;
+
+/**
+ * How long to wait between writing a stage's text and writing its `\r` (HIVE-63).
+ *
+ * The bug this fixes: a stage used to go in as a **single** write,
+ * `` `${command}\r` ``, and Claude Code's TUI applies paste detection to input
+ * that arrives in one fast chunk. Above a size threshold the whole write is
+ * treated as a paste, and the trailing carriage return is inserted as a literal
+ * newline inside the input box instead of submitting it. The session then sits
+ * there looking idle, holding a task nobody can see it was given.
+ *
+ * Stage one never hit it — `claude --model … && exit` is short and fixed. Stage
+ * two writes the **task**, which is arbitrary-length user text, so the defect
+ * only ever appeared on the stage where it is hardest to notice.
+ *
+ * The boundary was measured against `claude` 2.1.222 by bisection, submitting a
+ * single write and watching the title glyph for the spinner that means the turn
+ * started: **submits at ≤62 characters, swallowed at ≥65** — a 64-byte chunk
+ * heuristic. The number is recorded because it explains the bug, not because
+ * anything depends on it: the fix splits *every* stage's write rather than
+ * branching on a length, since a threshold read off one release is exactly the
+ * kind of constant that goes stale without anyone noticing.
+ *
+ * Splitting the write is what fixes it: the text arrives as a paste (which is
+ * fine — that is what it is), and the `\r` arrives separately as a keystroke,
+ * which is unambiguously "submit". The delay only has to outlast the TUI's own
+ * paste-coalescing window, not any model work, which is why it is short.
+ */
+export const SUBMIT_DELAY_MS = 300;
 
 /** How long every session's process group gets to exit on quit. */
 export const QUIT_GRACE_MS = 3_000;

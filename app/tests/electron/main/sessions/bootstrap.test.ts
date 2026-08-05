@@ -5,6 +5,7 @@ import {
   createBootstrap,
   sessionCommand,
 } from '../../../../electron/main/sessions/bootstrap';
+import { SUBMIT_DELAY_MS } from '../../../../electron/shared/session-contract';
 
 /**
  * When `claude` is written into a freshly spawned shell (story 096).
@@ -24,6 +25,26 @@ function bootstrap(options: { debounceMs?: number; fallbackMs?: number } = {}) {
     onSilentStart: (entityId) => silent.push(entityId),
     ...options,
   });
+}
+
+/**
+ * What each stage submitted, as one line per stage.
+ *
+ * A stage now goes in as **two** writes — its text, then its `\r` after
+ * {@link SUBMIT_DELAY_MS} (HIVE-63) — so this drops the carriage returns and
+ * puts them back on the text. The timing rules these tests exist for are about
+ * when a stage *fires*, and one line per stage keeps them readable; the split
+ * itself is asserted directly in `the submit split` below.
+ *
+ * Deliberately **does not advance timers**. These tests interleave assertions
+ * with `advanceTimersByTime` at debounce granularity, and a helper that moved
+ * the clock as a side effect of being read would fire the next stage early —
+ * turning the assertion into a measurement of the assertion.
+ */
+function submitted() {
+  return written
+    .filter((entry) => entry.data !== '\r')
+    .map((entry) => ({ entityId: entry.entityId, data: `${entry.data}\r` }));
 }
 
 beforeEach(() => {
@@ -61,7 +82,7 @@ describe('bootstrap timing', () => {
     expect(written).toEqual([]);
 
     vi.advanceTimersByTime(1);
-    expect(written).toEqual([{ entityId: 'sess', data: 'claude\r' }]);
+    expect(submitted()).toEqual([{ entityId: 'sess', data: 'claude\r' }]);
   });
 
   it('submits with a carriage return, not a newline', () => {
@@ -75,9 +96,55 @@ describe('bootstrap timing', () => {
     boot.arm('sess', 'claude');
     boot.sawOutput('sess');
     vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS);
 
-    expect(written[0]!.data.endsWith('\r')).toBe(true);
-    expect(written[0]!.data).not.toContain('\n');
+    expect(written.map((entry) => entry.data).join('')).toBe('claude\r');
+    expect(written.some((entry) => entry.data.includes('\n'))).toBe(false);
+  });
+
+  it('sends the text and its carriage return as two writes', () => {
+    /**
+     * HIVE-63. Sent as one write, a stage longer than ~64 characters is treated
+     * by Claude Code's TUI as a **paste**, and the trailing `\r` is inserted
+     * into the input box rather than submitting it — so the session sits there
+     * holding a task nobody can see it was given. Splitting them makes the text
+     * a paste, which it is, and the `\r` a keystroke, which is unambiguous.
+     *
+     * Measured against `claude` 2.1.222: a single write submits at ≤62
+     * characters and is swallowed at ≥65.
+     */
+    const boot = bootstrap();
+    boot.arm('sess', 'claude');
+    boot.sawOutput('sess');
+    vi.advanceTimersByTime(150);
+
+    // The text goes in on its own, with no carriage return attached.
+    expect(written).toEqual([{ entityId: 'sess', data: 'claude' }]);
+
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS);
+    expect(written).toEqual([
+      { entityId: 'sess', data: 'claude' },
+      { entityId: 'sess', data: '\r' },
+    ]);
+  });
+
+  it('does not submit a stage whose session died in the split', () => {
+    /**
+     * The window the split opens: `fire` has already dropped the pending entry
+     * by the time it writes, so a session killed between the text and its `\r`
+     * has nothing in `pending` and a live timer waiting to write into a pty
+     * that is gone.
+     */
+    const boot = bootstrap();
+    boot.arm('sess', 'claude');
+    boot.sawOutput('sess');
+    vi.advanceTimersByTime(150);
+    expect(written).toHaveLength(1);
+
+    boot.cancel('sess');
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS * 10);
+
+    expect(written).toHaveLength(1);
   });
 
   it('does not restart the debounce on every chunk', () => {
@@ -92,7 +159,7 @@ describe('bootstrap timing', () => {
     boot.sawOutput('sess');
     vi.advanceTimersByTime(50);
 
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
   });
 
   it('writes exactly once, however much output arrives afterwards', () => {
@@ -104,7 +171,7 @@ describe('bootstrap timing', () => {
     boot.sawOutput('sess');
     vi.advanceTimersByTime(1_000);
 
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
   });
 
   it('writes anyway after the fallback window, and records that it did', () => {
@@ -118,7 +185,7 @@ describe('bootstrap timing', () => {
 
     vi.advanceTimersByTime(5_000);
 
-    expect(written).toEqual([{ entityId: 'sess', data: 'claude\r' }]);
+    expect(submitted()).toEqual([{ entityId: 'sess', data: 'claude\r' }]);
     // Flagged, because if the command also fails to take, this is the fact that
     // explains it.
     expect(silent).toEqual(['sess']);
@@ -141,7 +208,7 @@ describe('bootstrap timing', () => {
     boot.sawOutput('sess');
     vi.advanceTimersByTime(150);
 
-    expect(written[0]!.data).toBe('/opt/bin/claude-wrapper\r');
+    expect(written[0]!.data).toBe('/opt/bin/claude-wrapper');
   });
 });
 
@@ -155,7 +222,7 @@ describe('bootstrap lifecycle', () => {
     boot.sawOutput('sess');
     vi.advanceTimersByTime(5_000);
 
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
   });
 
   it('drops a pending bootstrap when the session dies first', () => {
@@ -184,7 +251,7 @@ describe('bootstrap lifecycle', () => {
     boot.sawOutput('a');
     vi.advanceTimersByTime(150);
 
-    expect(written).toEqual([{ entityId: 'a', data: 'claude\r' }]);
+    expect(submitted()).toEqual([{ entityId: 'a', data: 'claude\r' }]);
     expect(boot.isPending('b')).toBe(true);
   });
 
@@ -220,12 +287,12 @@ describe('the task stage', () => {
 
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
-    expect(written).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
+    expect(submitted()).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
 
     // The TUI paints; that is the signal the second stage waits for.
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
-    expect(written).toEqual([
+    expect(submitted()).toEqual([
       { entityId: 'sess-a', data: 'claude\r' },
       { entityId: 'sess-a', data: 'fix the hero\r' },
     ]);
@@ -239,8 +306,9 @@ describe('the task stage', () => {
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
 
-    expect(written.at(-1)?.data.endsWith('\r')).toBe(true);
-    expect(written.at(-1)?.data).not.toContain('\n');
+    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS);
+    expect(written.at(-1)?.data).toBe('\r');
   });
 
   it('writes the task exactly once, however much the TUI paints', () => {
@@ -255,7 +323,7 @@ describe('the task stage', () => {
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(FALLBACK * 2);
 
-    expect(written).toHaveLength(2);
+    expect(submitted()).toHaveLength(2);
   });
 
   it('writes the task even if the TUI prints nothing at all', () => {
@@ -266,7 +334,7 @@ describe('the task stage', () => {
 
     vi.advanceTimersByTime(FALLBACK);
 
-    expect(written.at(-1)?.data).toBe('fix the hero\r');
+    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
   });
 
   it('drops a pending task when the session dies between the stages', () => {
@@ -280,7 +348,7 @@ describe('the task stage', () => {
 
     // Only the command went in. `cancel` reaches the second stage for free,
     // which is the reason it is a re-arm rather than a chained timer.
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
   });
 
   it('reports the task as still pending until it has been written', () => {
@@ -305,7 +373,7 @@ describe('the task stage', () => {
     boot.dispose();
     vi.advanceTimersByTime(FALLBACK * 2);
 
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
   });
 
   it('waits for the TUI to go quiet, not for its echo of the command', () => {
@@ -320,18 +388,18 @@ describe('the task stage', () => {
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
 
     // The echo, then a TUI that keeps painting for a while.
     for (let i = 0; i < 8; i += 1) {
       boot.sawOutput('sess-a');
       vi.advanceTimersByTime(DEBOUNCE - 20);
     }
-    expect(written).toHaveLength(1);
+    expect(submitted()).toHaveLength(1);
 
     // It goes quiet — now, and only now, the task goes in.
     vi.advanceTimersByTime(DEBOUNCE);
-    expect(written.at(-1)?.data).toBe('fix the hero\r');
+    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
   });
 
   it('caps the wait, so a TUI that never stops painting still gets its task', () => {
@@ -345,8 +413,8 @@ describe('the task stage', () => {
       vi.advanceTimersByTime(DEBOUNCE - 20);
     }
 
-    expect(written).toHaveLength(2);
-    expect(written.at(-1)?.data).toBe('fix the hero\r');
+    expect(submitted()).toHaveLength(2);
+    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
   });
 
   it('reports completion once, after the last stage', () => {
@@ -383,6 +451,15 @@ describe('the task stage', () => {
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
 
+    /**
+     * Not yet — the text has gone in but the `\r` has not (HIVE-63).
+     * Completion releases held input, and releasing it here would append the
+     * user's keystrokes to the command line rather than sending them to the
+     * agent.
+     */
+    expect(done).toEqual([]);
+
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS);
     expect(done).toEqual(['sess-a']);
   });
 
@@ -392,7 +469,7 @@ describe('the task stage', () => {
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(FALLBACK * 2);
 
-    expect(written).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
+    expect(submitted()).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
   });
 
   it('keeps two sessions’ task stages independent', () => {
@@ -407,8 +484,8 @@ describe('the task stage', () => {
       vi.advanceTimersByTime(DEBOUNCE);
     }
 
-    expect(written.filter((entry) => entry.data === 'first\r')).toHaveLength(1);
-    expect(written.filter((entry) => entry.data === 'second\r')).toHaveLength(1);
+    expect(submitted().filter((entry) => entry.data === 'first\r')).toHaveLength(1);
+    expect(submitted().filter((entry) => entry.data === 'second\r')).toHaveLength(1);
   });
 });
 

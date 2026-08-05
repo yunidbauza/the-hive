@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { isSession } from '@/types/entity';
+import { entityLabel, isSession } from '@/types/entity';
 
 import {
   STATUS_LABEL,
@@ -47,7 +47,7 @@ export function SessionRow({ id }: SessionRowProps) {
         {/* No `label`: the status label sits right beside it. */}
         <StatusDot status={entity.status} />
         <span className="flex-1 truncate text-left font-mono text-[12.5px]">
-          {entity.id}
+          {entityLabel(entity)}
         </span>
         <span
           className={cn(

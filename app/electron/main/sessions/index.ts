@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto';
+
 import type { ConfigSnapshot } from '@shared/config-contract';
+import type { ObservedStatus } from '@shared/hook-contract';
 import {
   CH,
   type DataEvent,
@@ -9,19 +12,21 @@ import {
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import {
   spawnRefusal,
-  type DerivedStatus,
   type SessionEffort,
   type SessionModel,
+  type SessionNameEvent,
   type SessionStatusEvent,
 } from '@shared/session-contract';
 
 import { effectiveRuntime } from '../config/runtime';
+import type { HookRuntime } from '../hooks';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
 import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createSessionRegistry, type SessionRegistry } from './registry';
+import { createTitleReader, type TitleReader } from './title';
 
 /**
  * Sessions: what a terminal actually *is* in this app (story 096).
@@ -46,6 +51,23 @@ export interface SessionsOptions {
   /** The workspace config, read per call so a reload is picked up. */
   config: () => ConfigSnapshot;
   maxSessions?: number;
+  /**
+   * The hook pipeline, when the app has one (HIVE-62).
+   *
+   * Optional, and absent is a supported state rather than a degraded one: the
+   * browser build has no main process at all, and a desktop build whose
+   * receiver could not bind runs on `activity.ts` alone. Everything downstream
+   * treats "no hooks" and "hooks not started yet" identically.
+   */
+  hooks?: HookRuntime;
+  /**
+   * The uuid pinned as `--session-id` on a spawn (HIVE-61).
+   *
+   * Injected for the same reason `send` and `config` are: a random value
+   * generated in here makes the command line this module builds unassertable,
+   * and the command line is the whole observable behaviour of the spawn path.
+   */
+  newSessionUuid?: () => string;
 }
 
 export interface OpenRequest {
@@ -154,7 +176,14 @@ const LOGIN_SHELL_ARGS = ['-l'];
 const RESTART_EXIT_TIMEOUT_MS = 10_000;
 
 export function createSessions(options: SessionsOptions): Sessions {
-  const { supervisor, send, config, maxSessions = MAX_SESSIONS } = options;
+  const {
+    supervisor,
+    send,
+    config,
+    maxSessions = MAX_SESSIONS,
+    hooks,
+    newSessionUuid = randomUUID,
+  } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
   /** Resolvers waiting for a specific entity's process to exit. */
@@ -241,6 +270,8 @@ export function createSessions(options: SessionsOptions): Sessions {
         if (!commandEntities.has(entityId)) {
           activity.sawOutput(entityId);
           bootstrap.sawOutput(entityId);
+          // A command has no agent, so it has no name to report either.
+          readTitle(entityId, data.chunk);
         }
         send(channel, { ...data, sessionId: entityId } satisfies DataEvent);
         return;
@@ -272,8 +303,32 @@ export function createSessions(options: SessionsOptions): Sessions {
     }
   }
 
+  /**
+   * Sessions whose status a hook has spoken for (HIVE-62).
+   *
+   * Once a session's own agent has reported, the pty-activity inference stops
+   * being an *estimate of the same thing* and becomes a contradiction of it: a
+   * session parked on a permission prompt produces no output, so `activity.ts`
+   * calls it `idle` two seconds later and overwrites the `waiting` the hook just
+   * delivered. The set is what makes the better observer win.
+   */
+  const hookDriven = new Set<string>();
+
+  /** One OSC-0 reader per session — a partial sequence is per-stream state. */
+  const titles = new Map<string, TitleReader>();
+
   const activity: ActivityTracker = createActivityTracker({
-    onStatus: (entityId, status) => publishStatus(entityId, status),
+    onStatus: (entityId, status) => {
+      /**
+       * `terminated` is forwarded even for a hook-driven session.
+       *
+       * It is not an inference: the process is gone, main watched it go, and no
+       * hook can report a session's own death reliably — `SessionEnd` races the
+       * exit and loses whenever the agent is killed rather than quitting.
+       */
+      if (status !== 'terminated' && hookDriven.has(entityId)) return;
+      publishStatus(entityId, status);
+    },
   });
 
   const bootstrap: Bootstrap = createBootstrap({
@@ -301,6 +356,24 @@ export function createSessions(options: SessionsOptions): Sessions {
   const ptyIpc: PtyIpc = createPtyIpc({ supervisor, send: forward });
 
   /**
+   * Start reporting (HIVE-62).
+   *
+   * Fire-and-forget, and it has to be: `createSessions` is called during app
+   * startup and cannot become async without making every caller async too. A
+   * session spawned in the window before this resolves gets no `--settings`
+   * flag and runs on activity inference — the same state as a build with no
+   * hooks at all, which is a state everything downstream already handles.
+   *
+   * `knowsSession` is the registry rather than a set of ids this module keeps:
+   * a hook for a session that has already exited must be refused, and the
+   * registry is the thing that already knows.
+   */
+  void hooks?.start(
+    (entityId) => registry.sessionFor(entityId) !== undefined,
+    (event) => publishHookStatus(event.entityId, event.status),
+  );
+
+  /**
    * A host error for a command session is that command's ending (story 102).
    *
    * `node-pty` failing to spawn emits `{ type: 'error' }` and **no exit**, so
@@ -324,8 +397,37 @@ export function createSessions(options: SessionsOptions): Sessions {
     settleExit(entityId);
   });
 
-  function publishStatus(entityId: string, status: DerivedStatus): void {
+  function publishStatus(entityId: string, status: ObservedStatus): void {
     send(CH.sessionStatus, { entityId, status } satisfies SessionStatusEvent);
+  }
+
+  /**
+   * A hook reported. Its verdict is authoritative from here on.
+   *
+   * Registered as hook-driven *before* publishing, so the activity tracker's
+   * next tick — which may already be scheduled — is suppressed rather than
+   * racing this event.
+   */
+  function publishHookStatus(entityId: string, status: ObservedStatus): void {
+    hookDriven.add(entityId);
+    publishStatus(entityId, status);
+  }
+
+  /**
+   * Read any renamed session out of a chunk and tell the renderer (HIVE-61).
+   *
+   * Called on the raw chunk before batching, because the title sequence is a
+   * property of the byte stream and the batcher is free to reshape it.
+   */
+  function readTitle(entityId: string, chunk: string): void {
+    let reader = titles.get(entityId);
+    if (reader === undefined) {
+      reader = createTitleReader();
+      titles.set(entityId, reader);
+    }
+    for (const name of reader.read(chunk)) {
+      send(CH.sessionName, { entityId, name } satisfies SessionNameEvent);
+    }
   }
 
   /**
@@ -338,6 +440,16 @@ export function createSessions(options: SessionsOptions): Sessions {
   function settleExit(entityId: string): void {
     bootstrap.cancel(entityId);
     heldInput.delete(entityId);
+    /**
+     * Both are per-*generation* state, and a restart reuses the entity id.
+     *
+     * A retained title reader would carry a half-parsed sequence from the dead
+     * process into the new one; a retained `hookDriven` mark would suppress the
+     * new generation's activity status before its first hook ever arrives,
+     * leaving a freshly restarted session showing nothing.
+     */
+    titles.delete(entityId);
+    hookDriven.delete(entityId);
     // Same reason as the data path: a command's ending is not a session's.
     if (commandEntities.delete(entityId)) {
       // Nothing to tell the store about.
@@ -510,7 +622,20 @@ export function createSessions(options: SessionsOptions): Sessions {
       args: LOGIN_SHELL_ARGS,
       cols: request.cols,
       rows: request.rows,
-      env: runtime.env,
+      /**
+       * The hook environment is merged **over** the project's (HIVE-62).
+       *
+       * Project env is the user's to control and wins everywhere else, but not
+       * here: these two variables are how a hook proves which row it speaks
+       * for, so a project able to set `HIVE_SESSION_ID` could point another
+       * session's status at a row of its choosing. Attribution is the app's
+       * claim about its own sessions, not a value under configuration.
+       *
+       * `config-contract.ts` already refuses a project env that names reserved
+       * variables; this is the same rule enforced at the point of use, because
+       * a list of banned names is one edit away from missing an entry.
+       */
+      env: { ...runtime.env, ...hooks?.envFor(request.entityId) },
     });
 
     /**
@@ -530,6 +655,19 @@ export function createSessions(options: SessionsOptions): Sessions {
       sessionCommand(runtime.claudeCommand, {
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
+        /**
+         * The session is named after the row it belongs to (HIVE-61), so the
+         * agent's own prompt box, `/resume` picker and terminal title all agree
+         * with the rail instead of inventing an auto-title from whatever the
+         * first message happened to be.
+         *
+         * A rename *inside* Claude is not a conflict with this: the new name
+         * comes straight back out on the title stream and becomes the row's
+         * name. This only decides what the session is called to begin with.
+         */
+        name: request.entityId,
+        sessionUuid: newSessionUuid(),
+        ...(hooks?.settingsPath == null ? {} : { settingsPath: hooks.settingsPath }),
       }),
       request.task,
     );
@@ -649,6 +787,16 @@ export function createSessions(options: SessionsOptions): Sessions {
       activity.dispose();
       ptyIpc.dispose();
       disposeErrors();
+      /**
+       * The socket goes down with everything else.
+       *
+       * Awaiting it would make `dispose` async for a close that has nothing
+       * left to deliver — every session's process is already being torn down,
+       * so any hook still in flight is about a session that no longer exists.
+       */
+      void hooks?.stop();
+      titles.clear();
+      hookDriven.clear();
       heldInput.clear();
       registry.clear();
       restarting.clear();

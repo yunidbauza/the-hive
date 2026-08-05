@@ -30,7 +30,7 @@ import {
   type SpawnRequest,
   type WriteRequest,
 } from '@shared/ipc-contract';
-import type { SessionStatusEvent } from '@shared/session-contract';
+import type { SessionNameEvent, SessionStatusEvent } from '@shared/session-contract';
 
 /**
  * The bridge (story 082).
@@ -179,6 +179,8 @@ const bridge: HiveBridge = {
   session: {
     onStatus: (callback: (event: SessionStatusEvent) => void) =>
       subscribe<SessionStatusEvent>(CH.sessionStatus, callback),
+    onName: (callback: (event: SessionNameEvent) => void) =>
+      subscribe<SessionNameEvent>(CH.sessionName, callback),
   },
 };
 
