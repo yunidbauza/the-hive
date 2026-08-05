@@ -207,7 +207,7 @@ instead.
 The authority for that is the **UPDATED SPECS block on Jira ticket HIVE-20**
 ("mount feature panels directly from this region's component in
 `src/components/layout/` … no composition module inside a feature slice"). Note
-that block exists only in Jira — `stories/040-center-stage.md` in this repo has
+that block exists only in Jira — story 040 in this repo had
 not been synced with it, so do not go looking for it there.
 
 ### Send is one action with an origin

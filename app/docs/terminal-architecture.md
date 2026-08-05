@@ -3,7 +3,7 @@
 **Scope:** the terminal surface, the transport seam, ANSI colour handling, xterm
 configuration, and how live instances are kept alive across tab switches.
 
-**Owned by story 042** (`../../stories/042-terminal-surface.md`).
+**Owned by story 042** (HIVE, Jira).
 
 ## The seam
 

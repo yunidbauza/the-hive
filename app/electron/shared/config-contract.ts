@@ -466,7 +466,7 @@ export const CLONE_ENTITY_ID = 'hive.clone';
  * Note what is **absent**: a destination. The renderer supplies the *parent*
  * directory and the URL; main derives the final path segment from the URL
  * itself. That is how this story keeps the epic's rule that no verb takes a
- * destination path (`stories/100-settings-epic.md:86`) while still writing a
+ * destination path (the settings epic, HIVE-51) while still writing a
  * directory tree.
  *
  * `parentPath` is re-validated in main from scratch — expanded, made absolute,

@@ -2,7 +2,7 @@
 
 **Scope:** store shape, actions, selector hooks, and the fixture dataset.
 
-**Owned by story 012** (`../../stories/012-mock-data-layer.md`).
+**Owned by story 012** (HIVE, Jira).
 
 ## Stores
 

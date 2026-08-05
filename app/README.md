@@ -5,9 +5,9 @@ This package is the **static React prototype**: real xterm.js terminal surfaces 
 an in-memory mock data layer, with no backend. The terminal transport is the designed
 seam for the future local-PTY daemon.
 
-Context, decision record, and scope boundary: [`../stories/000-overview.md`](../stories/000-overview.md).
-Full backlog: [`../stories/`](../stories/). The visual source of truth is
-[`../concept/`](../concept/) — stories quote its exact colors, sizes, and copy.
+Context, decision record, scope boundary and full backlog: the **HIVE project in
+Jira**. The visual source of truth is [`../concept/`](../concept/) — tickets quote
+its exact colors, sizes, and copy.
 
 ## Requirements
 

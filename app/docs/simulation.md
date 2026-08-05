@@ -3,7 +3,7 @@
 **Scope:** the scripted event replay that makes the prototype feel alive, and the
 fake clock it runs on.
 
-**Owned by story 061** (`../../stories/061-simulation-mode.md`). This file is a
+**Owned by story 061** (HIVE, Jira). This file is a
 placeholder until that story lands; it exists now so the routing table in
 `../AGENTS.md` never points at a missing file.
 

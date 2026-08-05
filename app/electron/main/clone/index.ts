@@ -26,7 +26,7 @@ import { parseCloneUrl } from './parse-url';
  * renderer would make a config write depend on a process that may have been
  * closed, and letting it name a directory would hand it the one capability the
  * epic's "no verb takes a destination path" rule exists to withhold
- * (`stories/100-settings-epic.md:86`).
+ * (the settings epic, HIVE-51).
  *
  * What main derives, and the renderer never sends:
  *

@@ -19,7 +19,9 @@ terminal at the right moment.
 Current phase: **static prototype**. No backend. All data comes from an in-memory
 mock layer, terminal content is canned ANSI fed into real xterm.js instances, and
 state-mutating interactions mutate store state only. Full context, decision record,
-and scope boundary: [`../stories/000-overview.md`](../stories/000-overview.md).
+and scope boundary: the **HIVE project in Jira**, which is the single backlog.
+(A `stories` directory used to hold the same specs in-repo; it was retired once
+Jira became the only place they were maintained, and the history is in git.)
 
 Stack: React 19 · TypeScript (strict) · Vite · xterm.js · Zustand · Tailwind v4 ·
 shadcn/ui · pnpm.
