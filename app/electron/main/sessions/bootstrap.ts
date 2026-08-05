@@ -29,6 +29,44 @@ import {
  * write anyway and record it — a genuinely silent startup is unusual but real.
  */
 
+/**
+ * The command line a session is bootstrapped with.
+ *
+ * ## Why `&& exit` — and why this reverses story 096
+ *
+ * Story 096 chose `$SHELL -l` with `claude` typed into it *specifically* so the
+ * shell would outlive the agent: quitting Claude dropped the user into a live
+ * shell in the right repository on the right branch, where they could run
+ * `git diff` or rerun the tests without starting a new session. That was a
+ * deliberate decision and this deliberately undoes it.
+ *
+ * The reason is that The Hive is a fleet view. A session whose agent has quit
+ * is finished work, and leaving thirteen idle login shells in the rail — each
+ * indistinguishable from a session that is merely quiet — makes the one list
+ * the app exists to render steadily less true. `/exit` should retire the row.
+ *
+ * ## Why `&&` and not `;`
+ *
+ * `;` would exit the shell however `claude` ended, which includes the two
+ * endings the user most needs to see:
+ *
+ * - `claude: command not found` (127) — a mistyped `claudeCommand` (story 090)
+ *   would make every new session vanish the instant it opened, with the error
+ *   scrolling past inside a pty that is already closing.
+ * - a crash — the stack trace would go with it.
+ *
+ * `&&` exits only on a **clean** exit, which is what `/exit` and `Ctrl-D`
+ * produce. Anything else leaves the login shell up with the wreckage on screen.
+ * The session then stays open, which is the correct outcome for a session that
+ * did not finish so much as fail.
+ *
+ * There is no new status. Story 096 already maps a pty exit to `done`, exactly,
+ * and its "keep the transcript readable" rule keeps the tab and its scrollback
+ * in place afterwards.
+ */
+export const sessionCommand = (claudeCommand: string): string =>
+  `${claudeCommand} && exit`;
+
 export interface BootstrapOptions {
   /** Send the command to a session's pty. */
   write: (entityId: string, data: string) => void;

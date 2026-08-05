@@ -48,7 +48,17 @@ function writeConfig(path: string, bootstrapMarker: string): void {
       version: 1,
       // `sh`, so this holds wherever CI runs it.
       shell: '/bin/sh',
-      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'`,
+      /**
+       * `; false` is not decoration. The bootstrap is `claude && exit`
+       * (`sessionCommand`), so a stub that ends cleanly takes the login shell
+       * with it and there is no shell left for this spec to type into. Ending
+       * badly short-circuits the `&&` and keeps the session open — the same
+       * state a crashed agent leaves behind.
+       *
+       * `false` rather than `exit 1`: the stub is interpolated into a command
+       * line, where `exit` would run in the session's own shell and close it.
+       */
+      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'; false`,
       projects: [{ id: PROJECT, path: REAL_DIRECTORY }],
     }),
   );
@@ -289,6 +299,71 @@ test('the escape chord leaves a focused terminal for the orchestrator', async ({
      * An escape hatch that only works when focus is *outside* the terminal is
      * not an escape hatch. The terminal's key handler declines this chord so it
      * keeps bubbling and reaches the stage — the mechanism under test.
+     */
+    await expect(terminal).toBeHidden({ timeout: 5_000 });
+  } finally {
+    await app.close();
+  }
+});
+
+test('bare ← at an empty Claude prompt returns to the orchestrator', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    const terminal = await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
+
+    /**
+     * Claude's input frame, drawn by the shell rather than by Claude.
+     *
+     * The rule this exercises is a rule about **what is on screen**, so the
+     * honest end-to-end test is to put that on screen — a rule, a `❯ ` row, a
+     * rule — and park the caret in it. Requiring a real `claude` on the machine
+     * would make the suite depend on an install, a login, and a network, none
+     * of which this is testing. The exact rendering being imitated came from a
+     * real pty capture and is pinned in `tests/lib/terminal/keymap.test.ts`.
+     *
+     * `sleep` keeps the shell from printing a prompt underneath and moving the
+     * caret back out of the frame.
+     */
+    const rule = '─'.repeat(96);
+    const staged = testInfo.outputPath('frame-staged.txt');
+    await page.keyboard.type(
+      // `\033[2J\033[H` rather than `clear(1)`, which needs a terminfo entry and
+      // a binary this spec should not depend on. `\033[2;3H` then parks the
+      // caret in the frame's input row, immediately after the `❯ `. The marker
+      // is a *redirect*, so it prints nothing and leaves the caret where it is.
+      `printf '\\033[2J\\033[H%s\\n❯ \\n%s\\n\\033[2;3H' '${rule}' '${rule}'; printf staged > '${staged}'; sleep 30`,
+    );
+    await page.keyboard.press('Enter');
+
+    /**
+     * Readiness comes from the file system, not from the screen. This story's
+     * WebGL renderer paints into a canvas and takes the transcript out of the
+     * DOM — the note at the top of this file — so `toContainText` sees an empty
+     * string however long it waits.
+     */
+    await expectMarker(staged, 'staged');
+    // The frame has left the shell; give xterm a moment to parse it into the
+    // buffer the key handler reads.
+    await page.waitForTimeout(1_000);
+
+    await page.keyboard.press('ArrowLeft');
+
+    /**
+     * The whole point of the story: `←` here would have opened Claude Code's
+     * own agent list inside the session. It goes to The Hive's orchestrator
+     * instead, and the pty never sees the key.
      */
     await expect(terminal).toBeHidden({ timeout: 5_000 });
   } finally {

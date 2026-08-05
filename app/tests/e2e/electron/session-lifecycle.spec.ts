@@ -26,11 +26,40 @@ const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 const SESSION = 'hero-refresh';
 const PROJECT = 'apfm-web';
 
-/** A stand-in for `claude`: records that it ran, with its cwd, then exits. */
-function writeStubCommand(path: string, marker: string): void {
+/**
+ * A stand-in for `claude`: records that it ran, with its cwd, then exits.
+ *
+ * **The exit code is load-bearing now.** The bootstrap is `claude && exit`
+ * (`sessionCommand`), so a stub that ends cleanly takes the login shell with it
+ * and there is no shell left for a spec to type into. Every spec below that
+ * needs a live shell therefore uses a stub that ends **badly** — which is not a
+ * fudge but the real state it is modelling: an agent that crashed, leaving the
+ * session open so the user can see why.
+ *
+ * `writeCleanStub` is the other half, and the two together are the contract.
+ */
+function writeStubCommand(path: string, marker: string, exitCode = 1): void {
   writeFileSync(
     path,
-    `#!/bin/sh\nprintf 'stub-claude-started\\n'\npwd > '${marker}'\n`,
+    `#!/bin/sh\nprintf 'stub-claude-started\\n'\npwd > '${marker}'\nexit ${exitCode}\n`,
+    { encoding: 'utf8' },
+  );
+  chmodSync(path, 0o755);
+}
+
+/**
+ * The same stub, ending cleanly — what `/exit` does — and recording the pid of
+ * the login shell that ran it.
+ *
+ * `$PPID` inside the stub *is* that shell, which is the process the `&& exit`
+ * is supposed to take with it. Capturing it from in there is the only way to
+ * name it: by the time the assertion runs there is deliberately nothing left to
+ * ask.
+ */
+function writeCleanStub(path: string, marker: string, shellPid: string): void {
+  writeFileSync(
+    path,
+    `#!/bin/sh\nprintf 'stub-claude-started\\n'\npwd > '${marker}'\necho $PPID > '${shellPid}'\nexit 0\n`,
     { encoding: 'utf8' },
   );
   chmodSync(path, 0o755);
@@ -93,7 +122,71 @@ test('a session runs the configured command in the project directory', async ({}
   }
 });
 
-test('the shell outlives the command it bootstrapped', async ({}, testInfo) => {
+test('a clean exit from the agent ends the whole session', async ({}, testInfo) => {
+  /**
+   * `/exit` retires the row.
+   *
+   * Story 096 originally chose the opposite — a login shell underneath so the
+   * user was left somewhere useful — and `sessionCommand` records why that was
+   * reversed: a fleet view whose rail fills with idle shells stops being a
+   * fleet view. The mechanism is `&&`, and this is the half of it that closes.
+   */
+  const configPath = testInfo.outputPath('hive-config.json');
+  const stub = testInfo.outputPath('claude-stub.sh');
+  const ranIn = testInfo.outputPath('ran-in.txt');
+  const shellPid = testInfo.outputPath('shell-pid.txt');
+  const after = testInfo.outputPath('after.txt');
+  writeCleanStub(stub, ranIn, shellPid);
+  writeConfig(configPath, { claudeCommand: stub });
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    await openSession(page);
+    await expectFile(ranIn, REAL_DIRECTORY);
+    await expect.poll(() => read(shellPid), { timeout: 20_000 }).not.toBeNull();
+
+    /**
+     * Asserted on the *process*, not on a rendered badge. A session showing
+     * `done` with a live shell still behind it would pass a UI assertion and
+     * still leak — which is the whole failure mode story 096's teardown exists
+     * to prevent, and this change adds a new way to reach it.
+     */
+    await expect
+      .poll(() => isAlive(Number(read(shellPid))), { timeout: 20_000 })
+      .toBe(false);
+
+    // And nothing was respawned in its place: a write into a session with no
+    // shell reaches nothing, so the marker never appears.
+    await page.evaluate(
+      ([sessionId, path]) => {
+        window.hive!.pty.write({
+          sessionId: sessionId!,
+          data: `echo still-here > '${path}'\n`,
+        });
+      },
+      [SESSION, after],
+    );
+    await page.waitForTimeout(1_000);
+    expect(read(after)).toBeNull();
+  } finally {
+    await app.close();
+  }
+});
+
+test('an agent that fails leaves the shell alive so the error is visible', async ({}, testInfo) => {
+  /**
+   * The other half of `&&`, and the reason it is not `;`.
+   *
+   * A mistyped `claudeCommand` (story 090) exits 127. With `;` that would close
+   * every new session the instant it opened, with `command not found` scrolling
+   * past inside a pty that was already going away — the worst failure this
+   * change could have. `&&` short-circuits, so the login shell stays up.
+   */
   const configPath = testInfo.outputPath('hive-config.json');
   const stub = testInfo.outputPath('claude-stub.sh');
   const after = testInfo.outputPath('after.txt');
@@ -110,12 +203,6 @@ test('the shell outlives the command it bootstrapped', async ({}, testInfo) => {
     await openSession(page);
     await expectFile(testInfo.outputPath('ran-in.txt'), REAL_DIRECTORY);
 
-    /**
-     * The reason the bootstrap is written as *input* rather than passed as
-     * `$SHELL -l -c claude`: with `-c`, the shell exits when the command does
-     * and the user is left looking at a corpse in the middle of a repository
-     * they were working in, unable to run `git diff` or start another turn.
-     */
     await page.evaluate(
       ([sessionId, marker]) => {
         window.hive!.pty.write({

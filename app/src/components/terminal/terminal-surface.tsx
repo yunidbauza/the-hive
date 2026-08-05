@@ -4,12 +4,13 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
 
+import { isMacPlatform } from '@lib/platform';
 import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
   TERMINAL_CHORD_EVENT,
   decideTerminalKey,
-  isMacPlatform,
+  type CursorContext,
   type TerminalChordDetail,
 } from '@lib/terminal/keymap';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
@@ -65,6 +66,36 @@ interface Instance {
 /** Whether the viewport is parked at the end of the transcript. */
 const atBottom = (terminal: Terminal) =>
   shouldAutoScroll(terminal.buffer.active.viewportY, terminal.buffer.active.baseY);
+
+/**
+ * The two rows the bare-`←` decision needs, read straight out of the buffer.
+ *
+ * This is the closest this component comes to knowing what is *running* inside
+ * it, and the line it does not cross is worth being explicit about: it reports
+ * **text and a caret position**, exactly what a terminal has. Whether those
+ * rows mean "Claude is waiting for a message" is decided in
+ * `lib/terminal/keymap.ts`, which is where a rule about a program belongs and
+ * where it can be tested without a DOM. The seam is what makes the terminal
+ * swappable, and reading its own buffer does not breach it — importing a store
+ * to ask which session this is would.
+ *
+ * Returns `null` when the row cannot be read, and the decision then falls back
+ * to chord-only. Absent information is never treated as a match.
+ */
+function readCursorContext(terminal: Terminal): CursorContext | null {
+  const buffer = terminal.buffer.active;
+  const row = buffer.baseY + buffer.cursorY;
+  const line = buffer.getLine(row);
+  if (!line) return null;
+
+  const below = buffer.getLine(row + 1);
+  return {
+    // Untrimmed: the caret's column is the endpoint, so trailing spaces before
+    // it are part of the answer rather than noise.
+    before: line.translateToString(false, 0, buffer.cursorX),
+    below: below?.translateToString(true) ?? '',
+  };
+}
 
 /**
  * Copy the selection, then drop it.
@@ -192,6 +223,12 @@ export function TerminalSurface({
         switch (decideTerminalKey(event, {
           isMac,
           hasSelection: terminal.hasSelection(),
+          /**
+           * Read per keystroke rather than cached. The buffer moves under us
+           * constantly — every chunk of agent output rewrites these rows — and
+           * a cached answer would decide the *previous* screen's question.
+           */
+          cursor: readCursorContext(terminal),
         })) {
           case 'copy':
             copySelection(terminal);

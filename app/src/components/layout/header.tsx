@@ -51,9 +51,11 @@ import { usePickerActions, useSettingsActions } from '@stores/ui-store';
  *
  * - **browser**: the `demo` chip, so the fixtures-only surface is never
  *   mistaken for the real thing.
- * - **desktop**: a 78px inset clearing the traffic lights that
- *   `titleBarStyle: 'hiddenInset'` (story 081) floats over this bar, plus the
- *   drag region that replaces the title bar we removed.
+ * - **desktop**: the drag region that replaces the title bar we removed.
+ *
+ * The traffic lights used to be a third entry here, as a 78px inset on the
+ * brand block. They now have their own row — see `title-bar.tsx` — so this bar
+ * holds nothing of the OS's and the wordmark starts at the header's own `px-4`.
  */
 export function Header() {
   const theme = useTheme();
@@ -94,17 +96,21 @@ export function Header() {
         */}
         <div
           /*
-           * The traffic-light inset lives INSIDE this fixed width, not on the
-           * zone around it. Electron floats the lights over our header at
-           * `{ x: 16, y: 20 }` (story 081), and 78px clears them — but padding
-           * the outer zone would push the whole cluster 78px right and land the
-           * chips at 346 instead of the rail's 268. Absorbed here, the wrapper
-           * still spans 16 → 268 on both targets and only the wordmark moves.
+           * No traffic-light inset any more.
+           *
+           * This used to carry `pl-[78px]` on desktop, because `hiddenInset`
+           * floated the lights over this bar and the wordmark started
+           * underneath them. The inset was absorbed *inside* the fixed width
+           * rather than applied to the zone around it, so that the chip cluster
+           * still landed on the rail's edge instead of 78px past it.
+           *
+           * `title-bar.tsx` gives the lights their own row above, so there is
+           * nothing left to clear and the brand starts at the header's own
+           * `px-4` — the same 16px the lights sit at one row up. The width
+           * stays, because it is what puts the chips on the rail's edge, and
+           * that was never about the lights.
            */
-          className={cn(
-            'flex w-[252px] shrink-0 items-center',
-            desktop && 'pl-[78px]',
-          )}
+          className="flex w-[252px] shrink-0 items-center"
         >
           <BrandBlock />
         </div>

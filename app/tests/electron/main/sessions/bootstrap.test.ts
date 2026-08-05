@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createBootstrap } from '../../../../electron/main/sessions/bootstrap';
+import {
+  createBootstrap,
+  sessionCommand,
+} from '../../../../electron/main/sessions/bootstrap';
 
 /**
  * When `claude` is written into a freshly spawned shell (story 096).
@@ -406,5 +409,35 @@ describe('the task stage', () => {
 
     expect(written.filter((entry) => entry.data === 'first\r')).toHaveLength(1);
     expect(written.filter((entry) => entry.data === 'second\r')).toHaveLength(1);
+  });
+});
+
+describe('sessionCommand', () => {
+  it('exits the shell after a clean claude exit', () => {
+    /**
+     * The whole of "`/exit` retires the session": the login shell goes with the
+     * agent, the pty exits, and story 096's existing `exit → done` mapping does
+     * the rest. No new status, no process-tree watching.
+     */
+    expect(sessionCommand('claude')).toBe('claude && exit');
+  });
+
+  it('wraps whatever claudeCommand is configured, not a hard-coded binary', () => {
+    // Story 090 lets a user point at a wrapper or an alternate build; the exit
+    // behaviour has to follow it rather than only applying to the default.
+    expect(sessionCommand('/opt/bin/claude --verbose')).toBe(
+      '/opt/bin/claude --verbose && exit',
+    );
+  });
+
+  it('is `&&`, so a failed start leaves the shell alive to show the error', () => {
+    /**
+     * Asserted as the operator rather than as behaviour, because the behaviour
+     * is the shell's. `;` here would make a mistyped `claudeCommand` close every
+     * new session instantly, with `command not found` scrolling past inside a
+     * pty that is already going away — the single worst failure this could have.
+     */
+    expect(sessionCommand('claude')).not.toContain(';');
+    expect(sessionCommand('claude')).toContain('&&');
   });
 });

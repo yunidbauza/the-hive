@@ -4,6 +4,7 @@ import { ActivityRail } from '@components/layout/activity-rail';
 import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
+import { TitleBar } from '@components/layout/title-bar';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
 import { watchSystemTheme } from '@stores/appearance-store';
@@ -63,6 +64,12 @@ export function AppShell() {
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
+      {/*
+        The window-controls row, above the app's own bar. Renders nothing off
+        macOS and nothing in the browser, so the three-region layout below is
+        unchanged on every target that does not have floating traffic lights.
+      */}
+      <TitleBar />
       <Header />
 
       <div className="flex min-h-0 flex-1">

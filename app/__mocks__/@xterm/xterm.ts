@@ -30,7 +30,37 @@ export class MockTerminal {
   cols = 80;
   rows = 24;
 
-  readonly buffer = { active: { viewportY: 0, baseY: 0, cursorY: 0 } };
+  /**
+   * Rows a test can stage, indexed from `baseY`. Empty by default, so a buffer
+   * that was never set up reports no line and the surface falls back to
+   * chord-only — the same "absent information is not a match" default the real
+   * read has.
+   */
+  bufferLines: string[] = [];
+
+  readonly buffer = {
+    active: {
+      viewportY: 0,
+      baseY: 0,
+      cursorY: 0,
+      cursorX: 0,
+      /**
+       * Enough of xterm's `IBufferLine` for the bare-`←` decision (story 095):
+       * `translateToString(trimRight, start, end)`. Returns `undefined` for a
+       * row that was never staged, exactly as xterm does past the buffer's end.
+       */
+      getLine: (row: number) => {
+        const text = this.bufferLines[row];
+        if (text === undefined) return undefined;
+        return {
+          translateToString: (trimRight?: boolean, start?: number, end?: number) => {
+            const slice = text.slice(start ?? 0, end);
+            return trimRight === true ? slice.replace(/\s+$/u, '') : slice;
+          },
+        };
+      },
+    },
+  };
 
   readonly loadAddon = vi.fn();
   readonly focus = vi.fn();

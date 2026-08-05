@@ -72,7 +72,17 @@ function writeConfig(path: string, bootstrapMarker: string): void {
        * machine is worthless.
        */
       shell: '/bin/sh',
-      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'`,
+      /**
+       * `; false` is not decoration. The bootstrap is `claude && exit`
+       * (`sessionCommand`), so a stub that ends cleanly takes the login shell
+       * with it and there is no shell left for this spec to type into. Ending
+       * badly short-circuits the `&&` and keeps the session open — the same
+       * state a crashed agent leaves behind.
+       *
+       * `false` rather than `exit 1`: the stub is interpolated into a command
+       * line, where `exit` would run in the session's own shell and close it.
+       */
+      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'; false`,
       projects: [{ id: PROJECT, path: REAL_DIRECTORY }],
     }),
   );

@@ -170,9 +170,11 @@ describe('what a session runs', () => {
 
   it('writes the bootstrap as input after the shell speaks', () => {
     /**
-     * Not `$SHELL -l -c claude`, which would run `claude` as the shell's only
-     * job and exit with it — leaving the user looking at a corpse in the middle
-     * of a repository they were working in.
+     * Still input rather than `$SHELL -l -c claude`, and the `&& exit` does not
+     * make those equivalent. `-c` exits the shell however `claude` ends, which
+     * includes `command not found`; `&&` exits only on a clean one, so a
+     * misconfigured `claudeCommand` still leaves a live shell with the error on
+     * screen instead of a session that vanishes. See `sessionCommand`.
      */
     sessions.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
@@ -181,7 +183,7 @@ describe('what a session runs', () => {
     vi.advanceTimersByTime(8); // the batch flush
     vi.advanceTimersByTime(150); // the settling debounce
 
-    expect(supervisor.write).toHaveBeenCalledWith(sessionId, 'claude\r');
+    expect(supervisor.write).toHaveBeenCalledWith(sessionId, 'claude && exit\r');
   });
 
   it('delivers a spawn task as the session’s first message', () => {
@@ -196,7 +198,7 @@ describe('what a session runs', () => {
     emitData({ sessionId, chunk: '$ ' });
     vi.advanceTimersByTime(8);
     vi.advanceTimersByTime(150);
-    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'claude\r');
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'claude && exit\r');
 
     emitData({ sessionId, chunk: '╭─ claude ─╮' });
     vi.advanceTimersByTime(8);
@@ -248,7 +250,7 @@ describe('what a session runs', () => {
 
     // The bootstrap first, then the held input — in that order.
     expect(vi.mocked(supervisor.write).mock.calls).toEqual([
-      [sessionId, 'claude\r'],
+      [sessionId, 'claude && exit\r'],
       [sessionId, 'y\r'],
     ]);
   });
@@ -264,7 +266,7 @@ describe('what a session runs', () => {
     vi.advanceTimersByTime(158);
 
     expect(vi.mocked(supervisor.write).mock.calls.map((call) => call[1])).toEqual([
-      'claude\r',
+      'claude && exit\r',
       'first\r',
       'second\r',
     ]);

@@ -18,7 +18,7 @@ import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
 import { createActivityTracker, type ActivityTracker } from './activity';
-import { createBootstrap, type Bootstrap } from './bootstrap';
+import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 
 /**
@@ -500,7 +500,16 @@ export function createSessions(options: SessionsOptions): Sessions {
       env: runtime.env,
     });
 
-    bootstrap.arm(request.entityId, runtime.claudeCommand, request.task);
+    /**
+     * `sessionCommand` wraps the configured binary so a clean `/exit` takes the
+     * login shell with it and the session settles to `done`. See its own
+     * comment for why that reverses story 096, and why it is `&&`.
+     */
+    bootstrap.arm(
+      request.entityId,
+      sessionCommand(runtime.claudeCommand),
+      request.task,
+    );
   }
 
   return {

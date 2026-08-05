@@ -38,23 +38,6 @@ export interface KeyEventLike {
 }
 
 /**
- * macOS, by the only signal available in a sandboxed renderer.
- *
- * Not `window.hive.appInfo()`, which knows `process.platform` exactly but is
- * asynchronous and desktop-only — a key handler cannot await, and the browser
- * target needs an answer too. `navigator.platform` is deprecated and still
- * universally implemented; `userAgentData` is Chromium-only, which is fine for
- * Electron and not for the demo surface, so it is tried first and fallen back
- * from.
- */
-export function isMacPlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const data = (navigator as { userAgentData?: { platform?: string } }).userAgentData;
-  if (data?.platform) return data.platform.toLowerCase().startsWith('mac');
-  return /mac/i.test(navigator.platform || navigator.userAgent);
-}
-
-/**
  * The chord that leaves a focused terminal and returns to the orchestrator.
  *
  * `←` alone is what the message row uses (story 043), and inside a live
@@ -79,6 +62,91 @@ export function isBackChord(event: KeyEventLike, isMac: boolean): boolean {
     ? event.metaKey && !event.ctrlKey && !event.shiftKey
     : event.ctrlKey && event.shiftKey;
 }
+
+/**
+ * What the terminal can say about the two rows the `←` decision needs.
+ *
+ * Deliberately two strings and nothing else. The surface reads them out of
+ * xterm's buffer and hands them over; this module never sees a `Terminal`, so
+ * the decision stays a pure function of text and the seam holds.
+ */
+export interface CursorContext {
+  /** The cursor row, from column 0 up to — not including — the cursor. */
+  before: string;
+  /** The whole row directly below the cursor row. */
+  below: string;
+}
+
+/**
+ * Prompt markers that may precede an empty input.
+ *
+ * `❯` is what Claude Code draws today (verified against a real pty capture at
+ * 100 columns). The others cost nothing and cover the box-drawn variants — a
+ * left border, or the plain `>` older revisions used.
+ */
+const PROMPT_PREFIX = /^[\s│┃]*[❯>›»]?\s*/u;
+
+/** Horizontal rule characters, light and heavy. */
+const RULE = /[─━]/gu;
+
+/**
+ * How much rule has to be there before it counts as Claude's input frame.
+ *
+ * Claude draws the rule the full width of the terminal, so at any usable size
+ * this is ~80–200 characters. Twenty is far below that and far above anything
+ * that turns up by accident in a diff, a table, or a box-drawn TUI *row* — the
+ * point is to be unmistakable, not to be tight.
+ */
+const MIN_RULE_WIDTH = 20;
+
+/**
+ * Is the caret sitting in Claude Code's input with nothing typed?
+ *
+ * **This is the whole of the bare-`←` decision, and it is deliberately narrow.**
+ *
+ * Two conditions, and both are needed:
+ *
+ * 1. **Nothing to the left of the caret** once a prompt marker is stripped.
+ *    This is what keeps `←` working while a message is being edited, and it is
+ *    not a guess about Claude's internals — Claude itself only offers the
+ *    binding when the input is empty. Its own footer proves it: at an empty
+ *    prompt it reads `⏸ manual mode on · ← 2 agents`, and the `← 2 agents`
+ *    affordance disappears the moment a character is typed. Intercepting on
+ *    exactly that condition means we take the key precisely when Claude would
+ *    have navigated, and never when it would have moved the caret.
+ *
+ * 2. **The row below is a horizontal rule** — the bottom edge of Claude's input
+ *    frame. This is what makes the rule *Claude-specific* rather than
+ *    prompt-shaped. A login shell survives `claude` exiting (story 096), and
+ *    plenty of shell prompts are a bare `❯` or `>`; without this condition a
+ *    user who quit Claude and went back to their shell would find `←` silently
+ *    stolen. There is no rule under a shell prompt.
+ *
+ * Failure is **open**: anything unrecognised returns `false` and the key goes
+ * to the pty, which is exactly the behaviour before this existed. The opposite
+ * default — swallow when unsure — would break line editing in every TUI the app
+ * has never seen, and would do it silently.
+ */
+export function isEmptyClaudePrompt({ before, below }: CursorContext): boolean {
+  const rule = below.match(RULE)?.length ?? 0;
+  if (rule < MIN_RULE_WIDTH) return false;
+  return before.replace(PROMPT_PREFIX, '') === '';
+}
+
+/**
+ * `←` with no modifiers at all.
+ *
+ * Every modifier is excluded rather than merely the ones with a meaning here.
+ * `Shift+←` extends a selection, `Alt+←` is "back one word", and `⌘←`/`Ctrl+Shift+←`
+ * are the explicit chord below — none of them is the key Claude binds, and a
+ * looser test would swallow all four.
+ */
+export const isBareBack = (event: KeyEventLike): boolean =>
+  event.key === 'ArrowLeft' &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey &&
+  !event.altKey;
 
 /**
  * The DOM event a terminal fires when it declines an app chord.
@@ -111,6 +179,14 @@ export interface KeyContext {
   isMac: boolean;
   /** Whether the terminal currently holds a selection. */
   hasSelection: boolean;
+  /**
+   * The rows around the caret, or `null` when the terminal cannot report them.
+   *
+   * Optional and null-tolerant on purpose: a caller that does not supply it
+   * gets the pre-existing behaviour, chord-only, rather than a crash or a
+   * swallowed arrow key.
+   */
+  cursor?: CursorContext | null;
 }
 
 /**
@@ -122,9 +198,28 @@ export interface KeyContext {
  */
 export function decideTerminalKey(
   event: KeyEventLike,
-  { isMac, hasSelection }: KeyContext,
+  { isMac, hasSelection, cursor }: KeyContext,
 ): TerminalKeyAction {
   if (isBackChord(event, isMac)) return 'app-chord';
+
+  /**
+   * Bare `←` at an empty Claude prompt belongs to the app, not to the pty.
+   *
+   * The governing rule at the top of this file — *a focused interactive
+   * terminal wins every bare key* — has exactly one exception, and this is it.
+   * It earns the exception by being narrower than the rule it breaks: the key
+   * is taken only in the state where the child process would have used it to
+   * navigate away rather than to move the caret, so nothing that `←` does for
+   * a line editor is lost. See {@link isEmptyClaudePrompt} for why both halves
+   * of that test are load-bearing.
+   *
+   * Without it, `←` opens Claude Code's *own* agent list inside a session — a
+   * second, competing fleet view in an app whose entire purpose is being the
+   * fleet view.
+   */
+  if (isBareBack(event) && cursor && isEmptyClaudePrompt(cursor)) {
+    return 'app-chord';
+  }
 
   /**
    * AltGr is not a modifier here, it is part of the character.

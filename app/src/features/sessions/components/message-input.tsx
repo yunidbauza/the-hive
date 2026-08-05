@@ -2,11 +2,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { KeyHint } from '@components/ui/key-hint';
 import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
-import {
-  backChordLabel,
-  isBackChord,
-  isMacPlatform,
-} from '@lib/terminal/keymap';
+import { isMacPlatform } from '@lib/platform';
+import { backChordLabel, isBackChord } from '@lib/terminal/keymap';
 import { isLiveTerminal } from '@lib/terminal/resolve-transport';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';

@@ -4,7 +4,8 @@ import {
   backChordLabel,
   decideTerminalKey,
   isBackChord,
-  isMacPlatform,
+  isBareBack,
+  isEmptyClaudePrompt,
   type KeyEventLike,
 } from '@lib/terminal/keymap';
 
@@ -191,27 +192,128 @@ describe('the back chord', () => {
   });
 });
 
-describe('isMacPlatform', () => {
-  it('prefers userAgentData when the runtime provides it', () => {
-    vi.stubGlobal('navigator', { userAgentData: { platform: 'macOS' } });
-    expect(isMacPlatform()).toBe(true);
+/**
+ * The bare-`←` rule.
+ *
+ * Every fixture here comes from a real `claude` session driven through a real
+ * pty at 96 columns, not from a guess about how Claude Code renders. Two frames
+ * were captured, empty and with `hello` typed, and the difference between them
+ * is the whole rule: Claude's own footer reads `⏸ manual mode on · ← 2 agents`
+ * at an empty prompt and drops the `← 2 agents` affordance the moment a
+ * character is typed. Claude binds `←` exactly when the input is empty, so this
+ * fires exactly then too.
+ */
 
-    vi.stubGlobal('navigator', { userAgentData: { platform: 'Windows' } });
-    expect(isMacPlatform()).toBe(false);
+/** The bottom edge of Claude's input frame, as captured. */
+const RULE = '─'.repeat(96);
+
+/** The captured input row, empty. Two cells: the marker and one space. */
+const CLAUDE_EMPTY = { before: '❯ ', below: RULE };
+
+/** The same row with `hello` typed into it. */
+const CLAUDE_TYPED = { before: '❯ hello', below: RULE };
+
+describe('isEmptyClaudePrompt', () => {
+  it('matches an empty prompt inside the rule frame', () => {
+    expect(isEmptyClaudePrompt(CLAUDE_EMPTY)).toBe(true);
   });
 
-  it('falls back to platform for runtimes without it', () => {
-    // Deprecated and still universally implemented — `userAgentData` is
-    // Chromium-only, which is fine for Electron and not for the demo surface.
-    vi.stubGlobal('navigator', { platform: 'MacIntel', userAgent: '' });
-    expect(isMacPlatform()).toBe(true);
-
-    vi.stubGlobal('navigator', { platform: 'Linux x86_64', userAgent: '' });
-    expect(isMacPlatform()).toBe(false);
+  it('does not match once anything has been typed', () => {
+    // The case that would break line editing. `←` here means "move the caret",
+    // and Claude has already withdrawn the navigation affordance.
+    expect(isEmptyClaudePrompt(CLAUDE_TYPED)).toBe(false);
   });
 
-  it('falls back again to the user agent when platform is empty', () => {
-    vi.stubGlobal('navigator', { platform: '', userAgent: 'Mozilla (Macintosh)' });
-    expect(isMacPlatform()).toBe(true);
+  it('does not match a bare shell prompt, however prompt-shaped', () => {
+    /**
+     * The login shell survives `claude` ending badly (story 096 and
+     * `sessionCommand`), and plenty of shells prompt with `❯` — starship and
+     * pure both do. The rule below the caret is what separates the two; without
+     * it the app would silently steal `←` from a plain terminal.
+     */
+    expect(isEmptyClaudePrompt({ before: 'app % ', below: '' })).toBe(false);
+    expect(isEmptyClaudePrompt({ before: '❯ ', below: '' })).toBe(false);
+    expect(isEmptyClaudePrompt({ before: '❯ ', below: 'total 48' })).toBe(false);
+  });
+
+  it('tolerates a box-drawn left border and a plain > marker', () => {
+    // Not the current rendering, but cheap, and older revisions drew both.
+    expect(isEmptyClaudePrompt({ before: '│ > ', below: RULE })).toBe(true);
+    expect(isEmptyClaudePrompt({ before: '│ > x', below: RULE })).toBe(false);
+  });
+
+  it('wants a real rule, not a stray dash or two', () => {
+    // A box-drawn TUI row is not an input frame. Twenty is far below the full
+    // terminal width Claude actually draws and far above incidental matches.
+    expect(isEmptyClaudePrompt({ before: '❯ ', below: '─'.repeat(19) })).toBe(false);
+    expect(isEmptyClaudePrompt({ before: '❯ ', below: '─'.repeat(20) })).toBe(true);
+  });
+});
+
+describe('isBareBack', () => {
+  it('is ArrowLeft with no modifier at all', () => {
+    expect(isBareBack(key({ key: 'ArrowLeft' }))).toBe(true);
+  });
+
+  it('rejects every modified form', () => {
+    /**
+     * `Shift+←` extends a selection and `Alt+←` is "back one word"; both belong
+     * to the child process. `⌘←` and `Ctrl+Shift+←` are the explicit chord,
+     * handled before this, and must not fall through to it.
+     */
+    expect(isBareBack(key({ key: 'ArrowLeft', shiftKey: true }))).toBe(false);
+    expect(isBareBack(key({ key: 'ArrowLeft', altKey: true }))).toBe(false);
+    expect(isBareBack(key({ key: 'ArrowLeft', metaKey: true }))).toBe(false);
+    expect(isBareBack(key({ key: 'ArrowLeft', ctrlKey: true }))).toBe(false);
+  });
+
+  it('is not any other arrow', () => {
+    expect(isBareBack(key({ key: 'ArrowRight' }))).toBe(false);
+  });
+});
+
+describe('decideTerminalKey — bare ← at an empty Claude prompt', () => {
+  it('takes the key for the app', () => {
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), { ...MAC, cursor: CLAUDE_EMPTY }),
+    ).toBe('app-chord');
+  });
+
+  it('gives it back to the pty the moment something is typed', () => {
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), { ...MAC, cursor: CLAUDE_TYPED }),
+    ).toBe('to-pty');
+  });
+
+  it('gives it to the pty in a plain shell', () => {
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), {
+        ...PC,
+        cursor: { before: 'app % ', below: '' },
+      }),
+    ).toBe('to-pty');
+  });
+
+  it('fails open when the terminal cannot report its rows', () => {
+    /**
+     * Absent information is never a match. A caller that supplies no cursor —
+     * or a buffer that cannot be read — gets the pre-existing chord-only
+     * behaviour rather than a swallowed arrow key.
+     */
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), { ...MAC, cursor: null }),
+    ).toBe('to-pty');
+    expect(decideTerminalKey(key({ key: 'ArrowLeft' }), MAC)).toBe('to-pty');
+  });
+
+  it('still honours the explicit chord while typing', () => {
+    // The escape hatch the guarded rule deliberately does not replace:
+    // mid-message, with the bare key correctly going to the pty, `⌘←` leaves.
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true }), {
+        ...MAC,
+        cursor: CLAUDE_TYPED,
+      }),
+    ).toBe('app-chord');
   });
 });

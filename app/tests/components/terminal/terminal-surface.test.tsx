@@ -613,6 +613,63 @@ describe('TerminalSurface', () => {
       expect(press({ key: 'Tab' })).toBe(true);
     });
 
+    /**
+     * The bare-`←` rule needs two rows of the buffer, and what is asserted here
+     * is only that the surface reads and forwards them. *Whether* those rows
+     * mean "Claude is waiting" is `isEmptyClaudePrompt`'s question and is
+     * tested against real captures in `tests/lib/terminal/keymap.test.ts` — the
+     * seam is exactly that split, and duplicating the rule here would let the
+     * two drift.
+     */
+    describe('the rows it reads for the bare ← decision', () => {
+      /** Stage a cursor row and the row below it, as xterm would report them. */
+      function stageRows(rows: string[], cursorX: number) {
+        const mock = terminal();
+        mock.bufferLines = rows;
+        mock.buffer.active.baseY = 0;
+        mock.buffer.active.cursorY = 0;
+        mock.buffer.active.cursorX = cursorX;
+      }
+
+      it('takes bare ← when the buffer shows an empty Claude prompt', () => {
+        renderInteractive();
+        stageRows(['❯ ', '─'.repeat(96)], 2);
+
+        // Handled here, not sent on: the pty must not also see the arrow.
+        expect(press({ key: 'ArrowLeft' })).toBe(false);
+      });
+
+      it('reads up to the caret, so typed text still reaches the pty', () => {
+        /**
+         * The regression this guards is subtle: reading the *whole* row rather
+         * than the part before the caret would work at an empty prompt and fail
+         * the moment anything was typed, because the row would still start with
+         * the marker. Cursor at column 7 of `❯ hello`.
+         */
+        renderInteractive();
+        stageRows(['❯ hello', '─'.repeat(96)], 7);
+
+        expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+
+      it('falls back to chord-only when the row cannot be read', () => {
+        // No rows staged at all — `getLine` reports nothing, as it does past
+        // the end of a real buffer. Absent information is never a match.
+        renderInteractive();
+
+        expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+
+      it('reports the row below the caret, not the caret’s own', () => {
+        // A rule *on* the cursor row is not the frame's bottom edge. If the
+        // surface read the wrong row this would swallow the key.
+        renderInteractive();
+        stageRows(['─'.repeat(96), 'not a rule'], 0);
+
+        expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+    });
+
     it('announces the app chord rather than letting the key bubble', () => {
       /**
        * The terminal reports that a chord happened *here* and nothing more — it
