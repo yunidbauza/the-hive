@@ -90,9 +90,13 @@ function readCursorContext(terminal: Terminal): CursorContext | null {
 
   const below = buffer.getLine(row + 1);
   return {
-    // Untrimmed: the caret's column is the endpoint, so trailing spaces before
-    // it are part of the answer rather than noise.
-    before: line.translateToString(false, 0, buffer.cursorX),
+    /**
+     * The whole row, not the part before the caret. A caret sent back to the
+     * start of a half-typed message with `Ctrl-A` has nothing to its left while
+     * the message is still very much there — see {@link isEmptyClaudePrompt}.
+     * Right-trimmed, because a terminal row is padded to the full width.
+     */
+    line: line.translateToString(true),
     below: below?.translateToString(true) ?? '',
   };
 }

@@ -208,10 +208,10 @@ describe('the back chord', () => {
 const RULE = '─'.repeat(96);
 
 /** The captured input row, empty. Two cells: the marker and one space. */
-const CLAUDE_EMPTY = { before: '❯ ', below: RULE };
+const CLAUDE_EMPTY = { line: '❯ ', below: RULE };
 
 /** The same row with `hello` typed into it. */
-const CLAUDE_TYPED = { before: '❯ hello', below: RULE };
+const CLAUDE_TYPED = { line: '❯ hello', below: RULE };
 
 describe('isEmptyClaudePrompt', () => {
   it('matches an empty prompt inside the rule frame', () => {
@@ -224,6 +224,20 @@ describe('isEmptyClaudePrompt', () => {
     expect(isEmptyClaudePrompt(CLAUDE_TYPED)).toBe(false);
   });
 
+  it('does not match a typed message whose caret was sent back to the start', () => {
+    /**
+     * `Ctrl-A` / `Home` in a half-written message. There is nothing to the
+     * caret's *left*, so a rule that read only the left-hand side would fire
+     * and throw the user out of a session they were mid-sentence in — while
+     * Claude, which still has text in its input, would not have navigated at
+     * all. Judging the whole row is what closes that gap.
+     */
+    expect(isEmptyClaudePrompt(CLAUDE_TYPED)).toBe(false);
+    expect(isEmptyClaudePrompt({ line: '❯ half a message', below: RULE })).toBe(
+      false,
+    );
+  });
+
   it('does not match a bare shell prompt, however prompt-shaped', () => {
     /**
      * The login shell survives `claude` ending badly (story 096 and
@@ -231,22 +245,22 @@ describe('isEmptyClaudePrompt', () => {
      * pure both do. The rule below the caret is what separates the two; without
      * it the app would silently steal `←` from a plain terminal.
      */
-    expect(isEmptyClaudePrompt({ before: 'app % ', below: '' })).toBe(false);
-    expect(isEmptyClaudePrompt({ before: '❯ ', below: '' })).toBe(false);
-    expect(isEmptyClaudePrompt({ before: '❯ ', below: 'total 48' })).toBe(false);
+    expect(isEmptyClaudePrompt({ line: 'app % ', below: '' })).toBe(false);
+    expect(isEmptyClaudePrompt({ line: '❯ ', below: '' })).toBe(false);
+    expect(isEmptyClaudePrompt({ line: '❯ ', below: 'total 48' })).toBe(false);
   });
 
   it('tolerates a box-drawn left border and a plain > marker', () => {
     // Not the current rendering, but cheap, and older revisions drew both.
-    expect(isEmptyClaudePrompt({ before: '│ > ', below: RULE })).toBe(true);
-    expect(isEmptyClaudePrompt({ before: '│ > x', below: RULE })).toBe(false);
+    expect(isEmptyClaudePrompt({ line: '│ > ', below: RULE })).toBe(true);
+    expect(isEmptyClaudePrompt({ line: '│ > x', below: RULE })).toBe(false);
   });
 
   it('wants a real rule, not a stray dash or two', () => {
     // A box-drawn TUI row is not an input frame. Twenty is far below the full
     // terminal width Claude actually draws and far above incidental matches.
-    expect(isEmptyClaudePrompt({ before: '❯ ', below: '─'.repeat(19) })).toBe(false);
-    expect(isEmptyClaudePrompt({ before: '❯ ', below: '─'.repeat(20) })).toBe(true);
+    expect(isEmptyClaudePrompt({ line: '❯ ', below: '─'.repeat(19) })).toBe(false);
+    expect(isEmptyClaudePrompt({ line: '❯ ', below: '─'.repeat(20) })).toBe(true);
   });
 });
 
@@ -289,7 +303,7 @@ describe('decideTerminalKey — bare ← at an empty Claude prompt', () => {
     expect(
       decideTerminalKey(key({ key: 'ArrowLeft' }), {
         ...PC,
-        cursor: { before: 'app % ', below: '' },
+        cursor: { line: 'app % ', below: '' },
       }),
     ).toBe('to-pty');
   });

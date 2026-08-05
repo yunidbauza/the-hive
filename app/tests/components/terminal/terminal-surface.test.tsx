@@ -639,15 +639,22 @@ describe('TerminalSurface', () => {
         expect(press({ key: 'ArrowLeft' })).toBe(false);
       });
 
-      it('reads up to the caret, so typed text still reaches the pty', () => {
-        /**
-         * The regression this guards is subtle: reading the *whole* row rather
-         * than the part before the caret would work at an empty prompt and fail
-         * the moment anything was typed, because the row would still start with
-         * the marker. Cursor at column 7 of `❯ hello`.
-         */
+      it('gives the key back to the pty once something is typed', () => {
         renderInteractive();
         stageRows(['❯ hello', '─'.repeat(96)], 7);
+
+        expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+
+      it('reads the whole row, not just the part before the caret', () => {
+        /**
+         * The caret sent back to the start of a half-typed message with
+         * `Ctrl-A`. Reading only the left-hand side would see an empty prompt
+         * and navigate away mid-sentence; reading the row sees the message.
+         * Same staged row as above, caret at column 2 instead of 7.
+         */
+        renderInteractive();
+        stageRows(['❯ hello', '─'.repeat(96)], 2);
 
         expect(press({ key: 'ArrowLeft' })).toBe(true);
       });

@@ -43,8 +43,14 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
    * Over a recorded transcript, `←` from an empty prompt goes back — the row
    * owns the keyboard because nothing else wants it. Over a live terminal the
    * user's focus is usually in the terminal, where `←` is a cursor key the
-   * child process needs, so the way back is a chord (story 095). Showing `←`
-   * there would document a binding that does nothing where they are looking.
+   * child process needs, so the way back is a chord (story 095).
+   *
+   * Bare `←` *does* now go back from inside a live terminal, but only at an
+   * empty Claude prompt (`isEmptyClaudePrompt`), and the hint still names the
+   * chord rather than the arrow. The chord is the binding that always works —
+   * mid-message, in a shell, in `vim` — and a hint that advertised `←` would be
+   * wrong in every one of those places. Claude draws its own `← 2 agents`
+   * affordance when the arrow is live, which is the right surface for it.
    */
   const live = isLiveTerminal(entityId);
   const hints = live

@@ -71,9 +71,9 @@ export function isBackChord(event: KeyEventLike, isMac: boolean): boolean {
  * the decision stays a pure function of text and the seam holds.
  */
 export interface CursorContext {
-  /** The cursor row, from column 0 up to — not including — the cursor. */
-  before: string;
-  /** The whole row directly below the cursor row. */
+  /** The whole row the caret is on, right-trimmed. */
+  line: string;
+  /** The whole row directly below it, right-trimmed. */
   below: string;
 }
 
@@ -106,14 +106,21 @@ const MIN_RULE_WIDTH = 20;
  *
  * Two conditions, and both are needed:
  *
- * 1. **Nothing to the left of the caret** once a prompt marker is stripped.
- *    This is what keeps `←` working while a message is being edited, and it is
- *    not a guess about Claude's internals — Claude itself only offers the
- *    binding when the input is empty. Its own footer proves it: at an empty
- *    prompt it reads `⏸ manual mode on · ← 2 agents`, and the `← 2 agents`
- *    affordance disappears the moment a character is typed. Intercepting on
- *    exactly that condition means we take the key precisely when Claude would
- *    have navigated, and never when it would have moved the caret.
+ * 1. **The whole input row is empty** once a prompt marker is stripped. This is
+ *    what keeps `←` working while a message is being edited, and it is not a
+ *    guess about Claude's internals — Claude itself only offers the binding
+ *    when the input is empty. Its own footer proves it: at an empty prompt it
+ *    reads `⏸ manual mode on · ← 2 agents`, and the `← 2 agents` affordance
+ *    disappears the moment a character is typed. Intercepting on exactly that
+ *    condition means we take the key precisely when Claude would have
+ *    navigated, and never when it would have moved the caret.
+ *
+ *    The **whole row**, deliberately, rather than the part before the caret.
+ *    Those differ in one case that matters: a half-typed message whose caret
+ *    has been sent back to the start with `Ctrl-A` or `Home`. There is nothing
+ *    to the caret's left, but the message is still there and Claude would not
+ *    navigate — so reading only the left-hand side would throw the user out of
+ *    a session they were mid-sentence in.
  *
  * 2. **The row below is a horizontal rule** — the bottom edge of Claude's input
  *    frame. This is what makes the rule *Claude-specific* rather than
@@ -127,10 +134,10 @@ const MIN_RULE_WIDTH = 20;
  * default — swallow when unsure — would break line editing in every TUI the app
  * has never seen, and would do it silently.
  */
-export function isEmptyClaudePrompt({ before, below }: CursorContext): boolean {
+export function isEmptyClaudePrompt({ line, below }: CursorContext): boolean {
   const rule = below.match(RULE)?.length ?? 0;
   if (rule < MIN_RULE_WIDTH) return false;
-  return before.replace(PROMPT_PREFIX, '') === '';
+  return line.replace(PROMPT_PREFIX, '') === '';
 }
 
 /**
