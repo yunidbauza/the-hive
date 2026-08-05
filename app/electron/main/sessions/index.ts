@@ -14,6 +14,7 @@ import {
   spawnRefusal,
   type SessionEffort,
   type SessionModel,
+  SESSION_NAME_DISPLAY_MAX,
   type SessionNameEvent,
   type SessionStatusEvent,
 } from '@shared/session-contract';
@@ -420,12 +421,34 @@ export function createSessions(options: SessionsOptions): Sessions {
    * property of the byte stream and the batcher is free to reshape it.
    */
   function readTitle(entityId: string, chunk: string): void {
+    /**
+     * **Only once the agent is up.** A session's pty is a login shell first,
+     * and shells set titles too — `zsh` writes `user@host:~/repo`, and so do
+     * `vim`, `ssh`, `tmux` and `htop`. Reading titles from spawn onward meant
+     * the prompt renamed the row before `claude` had even started, and
+     * `renameSession` deliberately does not validate, so nothing downstream
+     * caught it.
+     *
+     * `bootstrap.isPending` is exactly the window in which the shell is the
+     * only thing running, which makes it the gate. A session whose `claude`
+     * exits non-zero leaves the shell up and can still rename its row — that is
+     * a session already visibly broken, and inferring "the agent died" from a
+     * title is precisely the guesswork this change removed.
+     */
+    if (bootstrap.isPending(entityId)) return;
+
     let reader = titles.get(entityId);
     if (reader === undefined) {
       reader = createTitleReader();
       titles.set(entityId, reader);
     }
     for (const name of reader.read(chunk)) {
+      /**
+       * Capped, because nothing upstream caps it. The reader abandons a
+       * sequence at 2048 characters, which is a bound on memory rather than on
+       * what belongs in a rail 130px wide.
+       */
+      if (name.length > SESSION_NAME_DISPLAY_MAX) continue;
       send(CH.sessionName, { entityId, name } satisfies SessionNameEvent);
     }
   }
@@ -631,9 +654,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        * session's status at a row of its choosing. Attribution is the app's
        * claim about its own sessions, not a value under configuration.
        *
-       * `config-contract.ts` already refuses a project env that names reserved
-       * variables; this is the same rule enforced at the point of use, because
-       * a list of banned names is one edit away from missing an entry.
+       * This is the *only* thing enforcing it. `config-contract.ts` has
+       * `RESERVED_ENV_KEYS` and `UNSAFE_ENV_KEYS`, and neither lists the two
+       * Hive variables — so the spread order here is the whole guarantee rather
+       * than a second layer behind a list. Adding them to that list as well
+       * would be belt and braces; leaving this comment claiming a protection
+       * that does not exist would not.
        */
       env: { ...runtime.env, ...hooks?.envFor(request.entityId) },
     });

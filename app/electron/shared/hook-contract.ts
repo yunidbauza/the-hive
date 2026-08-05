@@ -33,6 +33,26 @@
  * Deliberately a small subset. Claude Code emits far more, and every extra event
  * is another POST per session per turn on a channel whose only job is to keep a
  * status dot honest.
+ *
+ * ## Why `SessionEnd` is absent, and `terminated` comes from the pty
+ *
+ * It looks like the obvious source for "this session is over" and it is the
+ * wrong one. Claude Code fires `SessionEnd` with a `reason` of
+ * `clear | logout | prompt_input_exit | other`, and only some of those mean the
+ * process ended — `/clear` fires it on a session that is alive and sitting at
+ * its prompt.
+ *
+ * Subscribing it and mapping it to `terminated` regardless, which is what this
+ * shipped as first, made `/clear` lock the user out of a working session:
+ * `isTerminated` closes the tab to new visits and disables its input, and
+ * because a hook event outranks the activity inference nothing could correct
+ * it.
+ *
+ * Reading `reason` would fix that case and still leave a hook asserting a
+ * process death it cannot observe. Main *can* observe it — the pty exits, and
+ * `activity.ts` reports `terminated` for every session including hook-driven
+ * ones. So the division stands: hooks report what the agent is *doing*, the pty
+ * reports whether it is still *there*.
  */
 export const HOOK_EVENTS = [
   'SessionStart',
@@ -40,7 +60,6 @@ export const HOOK_EVENTS = [
   'PermissionRequest',
   'Elicitation',
   'Stop',
-  'SessionEnd',
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];
@@ -76,8 +95,8 @@ export const HOOK_STATUS: Record<HookEvent, ObservedStatus> = {
   PermissionRequest: 'waiting',
   Elicitation: 'waiting',
   Stop: 'idle',
-  SessionEnd: 'terminated',
 };
+
 
 /**
  * The header carrying the Hive's own session id.

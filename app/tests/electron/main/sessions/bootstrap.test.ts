@@ -30,11 +30,17 @@ function bootstrap(options: { debounceMs?: number; fallbackMs?: number } = {}) {
 /**
  * What each stage submitted, as one line per stage.
  *
- * A stage now goes in as **two** writes — its text, then its `\r` after
+ * A stage goes in as **two** writes — its text, then its `\r` after
  * {@link SUBMIT_DELAY_MS} (HIVE-63) — so this drops the carriage returns and
- * puts them back on the text. The timing rules these tests exist for are about
- * when a stage *fires*, and one line per stage keeps them readable; the split
- * itself is asserted directly in `the submit split` below.
+ * puts them back on the text. The timing rules most of these tests exist for
+ * are about when a stage *fires*, and one line per stage keeps them readable.
+ *
+ * **This helper cannot see ordering, and that is a real limitation.** By
+ * filtering every `\r` and re-attaching one, it reports the same thing whether
+ * a stage's carriage return preceded the next stage's text or followed it —
+ * which is exactly the defect that shipped in the first version of the split
+ * and passed this suite. Anything about the *sequence* of bytes must assert on
+ * `written` directly; see `byte order across stages` below, which does.
  *
  * Deliberately **does not advance timers**. These tests interleave assertions
  * with `advanceTimersByTime` at debounce granularity, and a helper that moved
@@ -46,6 +52,13 @@ function submitted() {
     .filter((entry) => entry.data !== '\r')
     .map((entry) => ({ entityId: entry.entityId, data: `${entry.data}\r` }));
 }
+
+/** Every write for one entity, concatenated — the bytes the pty actually saw. */
+const stream = (entityId: string) =>
+  written
+    .filter((entry) => entry.entityId === entityId)
+    .map((entry) => entry.data)
+    .join('');
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -278,6 +291,14 @@ describe('bootstrap lifecycle', () => {
 describe('the task stage', () => {
   const DEBOUNCE = 150;
   const FALLBACK = 5_000;
+  /**
+   * Settle a stage *and* send its carriage return.
+   *
+   * Stage two is armed inside the submit timer, after the `\r` — nothing
+   * follows a stage until that stage has actually been submitted (HIVE-63) —
+   * so a bare debounce no longer reaches the next stage.
+   */
+  const SETTLE = DEBOUNCE + SUBMIT_DELAY_MS;
   const armed = () =>
     bootstrap({ debounceMs: DEBOUNCE, fallbackMs: FALLBACK });
 
@@ -286,12 +307,12 @@ describe('the task stage', () => {
     boot.arm('sess-a', 'claude', 'fix the hero');
 
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     expect(submitted()).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
 
     // The TUI paints; that is the signal the second stage waits for.
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     expect(submitted()).toEqual([
       { entityId: 'sess-a', data: 'claude\r' },
       { entityId: 'sess-a', data: 'fix the hero\r' },
@@ -302,9 +323,9 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     expect(submitted().at(-1)?.data).toBe('fix the hero\r');
     vi.advanceTimersByTime(SUBMIT_DELAY_MS);
@@ -315,9 +336,9 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     boot.sawOutput('sess-a');
     boot.sawOutput('sess-a');
@@ -330,7 +351,7 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     vi.advanceTimersByTime(FALLBACK);
 
@@ -341,7 +362,7 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     boot.cancel('sess-a');
     vi.advanceTimersByTime(FALLBACK * 2);
@@ -355,12 +376,12 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     expect(boot.isPending('sess-a')).toBe(true);
 
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     expect(boot.isPending('sess-a')).toBe(false);
   });
 
@@ -368,7 +389,7 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     boot.dispose();
     vi.advanceTimersByTime(FALLBACK * 2);
@@ -387,7 +408,7 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     expect(submitted()).toHaveLength(1);
 
     // The echo, then a TUI that keeps painting for a while.
@@ -398,7 +419,7 @@ describe('the task stage', () => {
     expect(submitted()).toHaveLength(1);
 
     // It goes quiet — now, and only now, the task goes in.
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     expect(submitted().at(-1)?.data).toBe('fix the hero\r');
   });
 
@@ -406,7 +427,7 @@ describe('the task stage', () => {
     const boot = armed();
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
 
     for (let i = 0; i < 200; i += 1) {
       boot.sawOutput('sess-a');
@@ -428,7 +449,7 @@ describe('the task stage', () => {
 
     boot.arm('sess-a', 'claude', 'fix the hero');
     boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(DEBOUNCE);
+    vi.advanceTimersByTime(SETTLE);
     // Stage one is done but the task is still pending — not complete yet.
     expect(done).toEqual([]);
 
@@ -479,13 +500,66 @@ describe('the task stage', () => {
 
     for (const id of ['sess-a', 'sess-b']) {
       boot.sawOutput(id);
-      vi.advanceTimersByTime(DEBOUNCE);
+      vi.advanceTimersByTime(SETTLE);
       boot.sawOutput(id);
-      vi.advanceTimersByTime(DEBOUNCE);
+      vi.advanceTimersByTime(SETTLE);
     }
 
     expect(submitted().filter((entry) => entry.data === 'first\r')).toHaveLength(1);
     expect(submitted().filter((entry) => entry.data === 'second\r')).toHaveLength(1);
+  });
+});
+
+describe('byte order across stages (HIVE-63)', () => {
+  const DEBOUNCE = 150;
+  const FALLBACK = 5_000;
+
+  it('never writes a stage before the previous one has been submitted', () => {
+    /**
+     * The regression this file previously could not see.
+     *
+     * `SUBMIT_DELAY_MS` (300) is longer than `BOOTSTRAP_DEBOUNCE_MS` (150), and
+     * the pty echoes the text just written — which is output, which starts the
+     * next stage's clock. Arming stage two beside the *text* therefore fired it
+     * inside the gap before stage one's `\r`, and the shell received
+     * `…&& exitfix the hero`: the command corrupted and the task lost.
+     *
+     * Asserted on the concatenated byte stream rather than on write counts,
+     * because the whole failure is an ordering one.
+     */
+    const boot = bootstrap({ debounceMs: DEBOUNCE, fallbackMs: FALLBACK });
+    boot.arm('sess-a', 'claude --name sess-a && exit', 'fix the hero');
+
+    // The shell speaks; stage one settles and its text goes in.
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    // The echo of that text arrives while the `\r` is still pending — this is
+    // the exact window the bug lived in.
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS * 4);
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS * 4);
+
+    expect(stream('sess-a')).toBe('claude --name sess-a && exit\rfix the hero\r');
+  });
+
+  it('holds a stage as pending until its carriage return has gone', () => {
+    /**
+     * `sessions.write` gates held input on `isPending`. `fire` deletes the
+     * pending entry before it writes, so without counting the submit window a
+     * keystroke arriving in those 300ms went straight to the pty and was
+     * appended to the command line.
+     */
+    const boot = bootstrap({ debounceMs: DEBOUNCE, fallbackMs: FALLBACK });
+    boot.arm('sess-a', 'claude');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(DEBOUNCE);
+
+    expect(boot.isPending('sess-a')).toBe(true);
+
+    vi.advanceTimersByTime(SUBMIT_DELAY_MS);
+    expect(boot.isPending('sess-a')).toBe(false);
   });
 });
 
@@ -498,10 +572,27 @@ describe('sessionCommand identity flags (HIVE-61)', () => {
     );
   });
 
-  it('passes a settings path for the hook pipeline', () => {
+  it('quotes the settings path, which contains a space on every Mac', () => {
+    /**
+     * `app.getPath('userData')` is `~/Library/Application Support/the-hive/…`.
+     * Unquoted, the shell split it and `claude` got `--settings
+     * /Users/…/Application` plus a stray positional argument it read as an
+     * initial prompt — so hook status never worked on macOS at all.
+     */
     expect(
-      sessionCommand('claude', { settingsPath: '/Users/x/Library/hive/hooks.json' }),
-    ).toBe('claude --settings /Users/x/Library/hive/hooks.json && exit');
+      sessionCommand('claude', {
+        settingsPath: '/Users/x/Library/Application Support/the-hive/hooks.json',
+      }),
+    ).toBe(
+      "claude --settings '/Users/x/Library/Application Support/the-hive/hooks.json' && exit",
+    );
+  });
+
+  it('escapes a single quote in the settings path', () => {
+    // A home directory can contain one; `'\''` closes, escapes and reopens.
+    expect(sessionCommand('claude', { settingsPath: "/Users/o'brien/hooks.json" })).toBe(
+      "claude --settings '/Users/o'\\''brien/hooks.json' && exit",
+    );
   });
 
   it('keeps the flags in a stable order alongside model and effort', () => {

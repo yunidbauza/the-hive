@@ -154,5 +154,15 @@ export const isAgent = (entity: Entity): entity is Agent =>
  * Agents have no `name` field and fall through to their id, which is what they
  * have always shown.
  */
-export const entityLabel = (entity: Entity): string =>
-  (isSession(entity) ? entity.name : undefined) ?? entity.id;
+export const entityLabel = (entity: Entity): string => {
+  const name = isSession(entity) ? entity.name : undefined;
+  /**
+   * An **empty** name falls back too, which `??` alone does not do.
+   *
+   * The parser already drops empty titles and the store already ignores an
+   * unchanged value, so this should be unreachable — but the failure it guards
+   * is a session row rendering nothing at all, and "should be unreachable" is a
+   * weaker guarantee than one line here.
+   */
+  return name === undefined || name === '' ? entity.id : name;
+};

@@ -61,7 +61,6 @@ describe('hook receiver', () => {
     ['PermissionRequest', 'waiting'],
     ['Elicitation', 'waiting'],
     ['Stop', 'idle'],
-    ['SessionEnd', 'terminated'],
   ])('maps %s to %s', async (event, status) => {
     const response = await post({ hook_event_name: event, session_id: 'uuid' });
     expect(response.status).toBe(204);
@@ -125,13 +124,33 @@ describe('hook receiver', () => {
     expect(events).toEqual([]);
   });
 
-  it('declines a body past the cap instead of buffering it', async () => {
-    // A hook payload can carry a whole file in `tool_input`; none of it is read.
+  it('still acts on an oversized body instead of rejecting it', async () => {
+    /**
+     * The biggest payloads belong to `PermissionRequest`, whose `tool_input`
+     * for a Write or an Edit is a whole file — so refusing them with 413 meant
+     * a large edit never raised `waiting`, the one state the attention model
+     * exists for. The body is drained past the cap; only the prefix is kept,
+     * and `hook_event_name` lives there.
+     */
     const response = await post({
-      hook_event_name: 'Stop',
-      tool_input: 'x'.repeat(128 * 1024),
+      hook_event_name: 'PermissionRequest',
+      tool_input: 'x'.repeat(256 * 1024),
     });
-    expect(response.status).toBe(413);
+
+    expect(response.status).toBe(204);
+    expect(events).toEqual([
+      { entityId: 'sess-01', event: 'PermissionRequest', status: 'waiting' },
+    ]);
+  });
+
+  it('ignores an oversized body whose event name is past the cap', async () => {
+    // Nothing to act on, and still not an error the user's session must show.
+    const response = await post({
+      tool_input: 'x'.repeat(256 * 1024),
+      hook_event_name: 'Stop',
+    });
+
+    expect(response.status).toBe(204);
     expect(events).toEqual([]);
   });
 

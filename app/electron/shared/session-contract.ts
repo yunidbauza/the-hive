@@ -75,6 +75,18 @@ export const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
  */
 export const SESSION_NAME_MAX = 64;
 
+/**
+ * The longest name the app will *display*.
+ *
+ * Separate from {@link SESSION_NAME_MAX}, which governs what may be **sent**.
+ * A name read back off a terminal title is not filtered — that is deliberate,
+ * so a sentence typed into `/rename` survives — but it is not unbounded either:
+ * the title reader's own limit is 2048 characters, which bounds memory rather
+ * than what belongs in a session rail. Anything longer is ignored rather than
+ * truncated, because a name cut mid-word is a worse label than the id.
+ */
+export const SESSION_NAME_DISPLAY_MAX = 120;
+
 /** Whether a name may be sent as `--name` on the bootstrap command line. */
 export const isSendableSessionName = (name: string): boolean =>
   name.length > 0 && name.length <= SESSION_NAME_MAX && SESSION_NAME_PATTERN.test(name);

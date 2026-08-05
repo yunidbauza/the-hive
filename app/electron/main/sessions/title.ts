@@ -64,8 +64,12 @@ const MAX_SEQUENCE_LENGTH = 2_048;
  *
  * The trailing `\s*` is what separates glyph from name, so a name is never
  * returned with a leading space.
+ *
+ * `*` and `·` are deliberately **not** in the class. Both are plausible
+ * spinner characters and both are also ordinary text, so stripping them would
+ * silently mangle a session someone renamed to `*scratch*`.
  */
-const LEADING_GLYPH = /^[⠀-⣿✠-❏·*]+\s*/u;
+const LEADING_GLYPH = /^[⠀-⣿✠-❏]+\s*/u;
 
 /** Strip the activity glyph and surrounding whitespace from a raw title. */
 export function nameFromTitle(title: string): string {

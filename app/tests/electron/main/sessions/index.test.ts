@@ -138,7 +138,7 @@ const registryReachable = () => {
    * measures the hold rather than the registry.
    */
   emitData({ sessionId: latest, chunk: '$ ' });
-  vi.advanceTimersByTime(158);
+  vi.advanceTimersByTime(158 + SUBMIT);
 
   sessions.write('hero-refresh', 'probe');
   return vi.mocked(supervisor.write).mock.calls.some(
@@ -224,6 +224,14 @@ describe('what a session runs', () => {
     vi.advanceTimersByTime(150);
     expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, BOOT);
 
+    /**
+     * Stage one's `\r` first. Stage two is armed inside the submit timer, so
+     * until this elapses there is no second stage to settle — the ordering that
+     * keeps the task off the command line (HIVE-63).
+     */
+    vi.advanceTimersByTime(SUBMIT);
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
+
     emitData({ sessionId, chunk: '╭─ claude ─╮' });
     vi.advanceTimersByTime(8);
     vi.advanceTimersByTime(150);
@@ -231,6 +239,11 @@ describe('what a session runs', () => {
     expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'fix the hero');
     vi.advanceTimersByTime(SUBMIT);
     expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
+
+    // And the whole exchange, in order.
+    expect(vi.mocked(supervisor.write).mock.calls.map((call) => call[1]).join('')).toBe(
+      `${BOOT}\rfix the hero\r`,
+    );
   });
 
   it('does not deliver the task again when a surface reattaches', () => {
@@ -238,9 +251,9 @@ describe('what a session runs', () => {
     const sessionId = mintedFor('hero-refresh');
 
     emitData({ sessionId, chunk: '$ ' });
-    vi.advanceTimersByTime(158);
+    vi.advanceTimersByTime(158 + SUBMIT);
     emitData({ sessionId, chunk: 'ready' });
-    vi.advanceTimersByTime(158);
+    vi.advanceTimersByTime(158 + SUBMIT);
 
     // Attach-never-respawn: every tab switch re-subscribes a transport.
     sessions.open({ ...OPEN, task: 'fix the hero' });
@@ -288,7 +301,7 @@ describe('what a session runs', () => {
     sessions.write('hero-refresh', 'second\r');
 
     emitData({ sessionId, chunk: '$ ' });
-    vi.advanceTimersByTime(158);
+    vi.advanceTimersByTime(158 + SUBMIT);
 
     vi.advanceTimersByTime(SUBMIT);
 
@@ -309,7 +322,7 @@ describe('what a session runs', () => {
     sessions.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
     emitData({ sessionId, chunk: '$ ' });
-    vi.advanceTimersByTime(158);
+    vi.advanceTimersByTime(158 + SUBMIT);
 
     sessions.write('hero-refresh', 'later\r');
 
@@ -410,7 +423,7 @@ describe('lifecycle', () => {
 
     const second = spawned[1]!.sessionId;
     emitData({ sessionId: second, chunk: '$ ' });
-    vi.advanceTimersByTime(158);
+    vi.advanceTimersByTime(158 + SUBMIT);
     emitData({ sessionId: second, chunk: 'ready' });
     vi.advanceTimersByTime(6_000);
 
@@ -485,7 +498,7 @@ describe('identity: the renderer only ever sees entity ids', () => {
     // Past the bootstrap first: input written before it has run is held on
     // purpose (story 097). The translation is the subject here, not the timing.
     emitData({ sessionId, chunk: '$ ' });
-    vi.advanceTimersByTime(158);
+    vi.advanceTimersByTime(158 + SUBMIT);
 
     sessions.write('hero-refresh', 'ls\n');
     sessions.resize('hero-refresh', 120, 40);

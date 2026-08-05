@@ -14,7 +14,8 @@ import { expect, test, type Page } from '@playwright/test';
  * would be to expose the store on `window` or to give a fixture a name — both
  * production changes made solely to satisfy a test, and the second one would
  * change what the public demo shows. The named case is covered where it can be
- * driven honestly: `entityLabel` and the store action in Vitest, the two-way
+ * driven honestly: `entityLabel` in `tests/types/entity.test.ts`, `renameSession`
+ * in `tests/features/sessions/hooks/use-session-status.test.ts`, and the two-way
  * path against real `claude` in the HIVE-61 verification transcript.
  */
 

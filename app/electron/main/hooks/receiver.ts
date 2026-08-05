@@ -81,9 +81,19 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   let server: Server | null = null;
   let url: string | null = null;
 
+  /**
+   * Pull the event name out of a body too large to have been kept whole.
+   *
+   * `JSON.parse` cannot help on a truncated prefix, and the field is a fixed,
+   * unambiguous shape near the front of every payload, so a direct match is
+   * both sufficient and honest about what it is doing.
+   */
+  const EVENT_IN_PREFIX = /"hook_event_name"\s*:\s*"([A-Za-z]+)"/;
+
   function handle(
     headers: Record<string, string | string[] | undefined>,
     body: string,
+    truncated = false,
   ): number {
     /**
      * Compared before anything else is read.
@@ -106,17 +116,23 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      */
     if (!knowsSession(entityId)) return 404;
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      return 400;
-    }
+    let event: unknown;
 
-    const event =
-      typeof parsed === 'object' && parsed !== null
-        ? (parsed as { hook_event_name?: unknown }).hook_event_name
-        : undefined;
+    if (truncated) {
+      // The prefix is all there is; see EVENT_IN_PREFIX.
+      event = EVENT_IN_PREFIX.exec(body)?.[1];
+    } else {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return 400;
+      }
+      event =
+        typeof parsed === 'object' && parsed !== null
+          ? (parsed as { hook_event_name?: unknown }).hook_event_name
+          : undefined;
+    }
 
     /**
      * An event outside the subscribed set is a success, not an error.
@@ -148,31 +164,36 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
           let body = '';
           let bytes = 0;
-          let aborted = false;
+          let truncated = false;
 
           req.on('data', (chunk: Buffer) => {
-            if (aborted) return;
             bytes += chunk.length;
             /**
-             * Capped, and the connection is closed rather than drained. A hook
-             * payload carrying a large `tool_input` is legitimate and useless
-             * here — only `hook_event_name` is read — so refusing early costs
-             * nothing and keeps a file-sized body off the heap.
+             * Past the cap the body is **drained, not refused**.
+             *
+             * Refusing with 413 was wrong in the one case that matters most.
+             * A `PermissionRequest` carries `tool_input`, which for a Write or
+             * an Edit is a whole file — so the biggest payloads belong to
+             * exactly the event that produces `waiting`, the state the entire
+             * attention model exists for. Rejecting it meant a large edit never
+             * raised the flag and printed a hook failure in the user's session
+             * instead.
+             *
+             * Only `hook_event_name` is ever read, and it sits in the first few
+             * hundred bytes, so the prefix is kept and the rest is discarded as
+             * it arrives. The heap cost is the cap, not the payload.
              */
             if (bytes > HOOK_MAX_BODY_BYTES) {
-              aborted = true;
-              res.writeHead(413).end();
-              req.destroy();
+              truncated = true;
               return;
             }
             body += chunk.toString('utf8');
           });
 
           req.on('end', () => {
-            if (aborted) return;
             let status: number;
             try {
-              status = handle(req.headers, body);
+              status = handle(req.headers, body, truncated);
             } catch {
               /**
                * A throw here must not take the app down. An uncaught exception
@@ -187,10 +208,18 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         });
 
         created.on('error', () => {
-          // See the module comment: a bind failure degrades status, never spawns.
-          server = null;
-          url = null;
-          resolve(null);
+          /**
+           * Only a *bind* failure clears the handles.
+           *
+           * `error` also fires on a live server, and clearing `server` there
+           * would leave `stop()` with nothing to close and the socket listening
+           * for the rest of the process's life. `resolve` is idempotent, so a
+           * later error simply does nothing.
+           */
+          if (server === null) {
+            url = null;
+            resolve(null);
+          }
         });
 
         created.listen(port, '127.0.0.1', () => {

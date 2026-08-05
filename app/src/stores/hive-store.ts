@@ -758,10 +758,11 @@ export const useAgentOrder = () =>
 /** Create a session on a project (stories 041, 044). */
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
 
-/** Story 096: main pushes a real session's derived status through this. */
+/** HIVE-61: main pushes the name the agent gave itself through this. */
 export const useRenameSession = () =>
   useHiveStore((state) => state.renameSession);
 
+/** Story 096: main pushes a real session's derived status through this. */
 export const useSetSessionStatus = () =>
   useHiveStore((state) => state.setSessionStatus);
 
