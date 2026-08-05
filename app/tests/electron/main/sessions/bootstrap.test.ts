@@ -440,4 +440,45 @@ describe('sessionCommand', () => {
     expect(sessionCommand('claude')).not.toContain(';');
     expect(sessionCommand('claude')).toContain('&&');
   });
+
+  describe('the picker’s choice reaches the command line (story 109)', () => {
+    it('appends both flags, before the `&&`', () => {
+      /**
+       * The defect: model and effort were recorded on the entity and rendered
+       * on its chip from the story that introduced the picker, and reached the
+       * process in no story at all. A session started as Haiku with low effort
+       * opened as Opus and its own meta bar agreed.
+       *
+       * Position matters — they are arguments to `claude`, so binding them to
+       * `exit` instead would both lose them and break the short-circuit.
+       */
+      expect(sessionCommand('claude', { model: 'haiku', effort: 'low' })).toBe(
+        'claude --model haiku --effort low && exit',
+      );
+    });
+
+    it('omits the flag it was not given, rather than inventing a default', () => {
+      /**
+       * A default here would silently override the user's own `claude`
+       * configuration for every session nobody picked a model for.
+       */
+      expect(sessionCommand('claude', { model: 'opus' })).toBe(
+        'claude --model opus && exit',
+      );
+      expect(sessionCommand('claude', { effort: 'max' })).toBe(
+        'claude --effort max && exit',
+      );
+      expect(sessionCommand('claude', {})).toBe('claude && exit');
+    });
+
+    it('appends to a wrapper command, which is the real configuration', () => {
+      /**
+       * `claudeCommand` is routinely a shell function or script that forwards
+       * its arguments — the flags have to land after it, not inside it.
+       */
+      expect(sessionCommand('clauded', { model: 'sonnet', effort: 'high' })).toBe(
+        'clauded --model sonnet --effort high && exit',
+      );
+    });
+  });
 });

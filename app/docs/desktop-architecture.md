@@ -227,6 +227,26 @@ deliberate:
   middle of a repository they were working in. Written as input it is an ordinary
   interactive command and the shell survives it.
 
+### The picker's choice becomes flags (109)
+
+`sessionCommand` appends `--model <alias> --effort <level>` before the `&&`, so
+they bind to `claude` and not to `exit`. Both are optional and **absent means say
+nothing** — a session nobody picked a model for gets the bare command and keeps
+whatever the user configured in `claude` itself.
+
+These two values are the only thing the renderer contributes to a command line
+main writes into a shell, so the IPC guard validates them against a **closed set**
+(`SESSION_MODELS` / `SESSION_EFFORTS` in `shared/session-contract.ts`) rather than
+as bounded text. `opus; rm -rf /` is perfectly well-formed printable text. An
+enum is what lets `sessionCommand` interpolate them unquoted.
+
+`src/types/entity.ts` aliases those two sets rather than declaring its own: a
+picker offering a value the guard rejects is a session that fails to start for a
+reason neither side can see.
+
+`restart` forwards them and still drops the `task` — a task is an instruction the
+previous generation may have acted on; a model is what the session *is*.
+
 The write waits for the shell's first output plus a ~150 ms settle, because
 characters written before the line discipline is installed land in a buffer the
 shell may discard — the session then sits at a bare prompt having silently

@@ -570,7 +570,36 @@ describe('hive-store', () => {
           expect(requestSpawn).toHaveBeenCalledWith(
             expect.any(String),
             'apfm-web',
-            'tidy the footer',
+            expect.objectContaining({ task: 'tidy the footer' }),
+          );
+        });
+
+        it('carries the resolved model and effort too (story 109)', () => {
+          /**
+           * A console `spawn` names neither, so the store's defaults are what
+           * the new row records and what its chip renders — and therefore what
+           * the process must actually be started as. Sending nothing here would
+           * leave the chip claiming opus/high over a session running under
+           * whatever `claude` happened to default to.
+           */
+          run('spawn apfm-web tidy the footer');
+
+          expect(requestSpawn).toHaveBeenCalledWith(
+            expect.any(String),
+            'apfm-web',
+            expect.objectContaining({ model: 'opus', effort: 'high' }),
+          );
+        });
+
+        it('sends the picker’s choice, not the defaults', () => {
+          useHiveStore
+            .getState()
+            .spawnSession('apfm-web', 'tidy the footer', 'haiku', 'low');
+
+          expect(requestSpawn).toHaveBeenCalledWith(
+            expect.any(String),
+            'apfm-web',
+            expect.objectContaining({ model: 'haiku', effort: 'low' }),
           );
         });
 

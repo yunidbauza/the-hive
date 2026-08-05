@@ -525,7 +525,7 @@ describe('requestSpawn', () => {
   });
 
   it('carries the task on the spawn request', async () => {
-    await requestSpawn('sess-a', 'apfm-web', 'fix the hero');
+    await requestSpawn('sess-a', 'apfm-web', { task: 'fix the hero' });
 
     expect(bridge.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ task: 'fix the hero' }),
@@ -538,13 +538,13 @@ describe('requestSpawn', () => {
      * message gives it its job (story 044). Sent on the wire, main's guard
      * rejects it and every picker-started session fails to spawn.
      */
-    await requestSpawn('sess-a', 'apfm-web', '');
+    await requestSpawn('sess-a', 'apfm-web', { task: '' });
 
     expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
   });
 
   it('omits a whitespace-only task for the same reason', async () => {
-    await requestSpawn('sess-a', 'apfm-web', '   ');
+    await requestSpawn('sess-a', 'apfm-web', { task: '   ' });
 
     expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
   });

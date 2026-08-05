@@ -276,7 +276,21 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * attach-never-respawn regardless.
      */
     if (isDesktop()) {
-      void requestSpawn(id, repo, task).then((outcome) => {
+      /**
+       * The **resolved** model and effort, not the arguments (story 109).
+       *
+       * `resolvedModel`/`resolvedEffort` are what the entity records and what
+       * the meta bar chip renders, so sending them is what makes the chip true:
+       * a console `spawn` that named neither now starts explicitly as opus/high
+       * because that is what the row it just created claims. Sending the raw
+       * arguments would leave those two disagreeing for exactly the sessions
+       * nobody chose for.
+       */
+      void requestSpawn(id, repo, {
+        ...(task === undefined ? {} : { task }),
+        model: resolvedModel,
+        effort: resolvedEffort,
+      }).then((outcome) => {
         if (outcome.ok) return;
         set((state) => ({
           orchLines: capLines([

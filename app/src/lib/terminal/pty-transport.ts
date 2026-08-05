@@ -1,6 +1,7 @@
 
 import type { TermColor } from '@/types/terminal';
 
+
 import { colorize } from '@lib/terminal/ansi';
 import { signalName } from '@lib/terminal/signals';
 import type {
@@ -8,6 +9,7 @@ import type {
   TerminalTransport,
 } from '@lib/terminal/terminal-transport';
 import { CLONE_ENTITY_ID } from '@shared/config-contract';
+import type { SessionEffort, SessionModel } from '@shared/session-contract';
 
 /**
  * The desktop transport: a real PTY, behind the same three methods (story 094).
@@ -286,6 +288,25 @@ export function sessionChannelState(entityId: string): ChannelState {
 export type SpawnOutcome = { ok: true } | { ok: false; reason: string };
 
 /**
+ * What a spawn asks for beyond a process (story 109).
+ *
+ * An options object rather than three more positional parameters, because
+ * `requestSpawn(id, project, task, model, effort)` is a call site where two
+ * adjacent strings mean entirely different things and nothing catches them
+ * being swapped.
+ *
+ * Every field is optional and every one means "say nothing" when absent — this
+ * module never substitutes a default. A default belongs to whoever *has* the
+ * user's choice, which is the store; inventing one here would quietly override
+ * a setting the user made in `claude` itself.
+ */
+export interface SpawnOptions {
+  task?: string;
+  model?: SessionModel;
+  effort?: SessionEffort;
+}
+
+/**
  * Request a process for this entity, at most once, and report the outcome.
  *
  * Two callers with two different needs, and one request between them: the
@@ -301,7 +322,7 @@ export type SpawnOutcome = { ok: true } | { ok: false; reason: string };
 export function requestSpawn(
   entityId: string,
   projectId: string,
-  task?: string,
+  { task, model, effort }: SpawnOptions = {},
 ): Promise<SpawnOutcome> {
   /**
    * The bridge is read inside the try, not before it.
@@ -343,6 +364,15 @@ export function requestSpawn(
        * one place every spawn passes through.
        */
       ...(task === undefined || task.trim() === '' ? {} : { task }),
+      /**
+       * Same conditional spread, same reason (story 109): the guard rejects
+       * unexpected keys, and an own property whose value is `undefined`
+       * survives the structured clone as a key that is present. Unlike `task`
+       * there is no empty case to normalise — these are closed-set literals, so
+       * a value is either one of them or the guard's problem.
+       */
+      ...(model === undefined ? {} : { model }),
+      ...(effort === undefined ? {} : { effort }),
     })
     .then((): SpawnOutcome => ({ ok: true }))
     .catch((cause: unknown): SpawnOutcome => {
@@ -382,9 +412,10 @@ function ensureSpawned(
   channel: EntityChannel,
   entityId: string,
   projectId: string,
+  options: SpawnOptions,
 ): void {
   if (channel.spawnRequested) return;
-  void requestSpawn(entityId, projectId);
+  void requestSpawn(entityId, projectId, options);
 }
 
 /**
@@ -448,13 +479,23 @@ function createTransport(
   };
 }
 
-/** A live session's transport: mounting a surface is what starts the process. */
+/**
+ * A live session's transport: mounting a surface is what starts the process.
+ *
+ * `options` covers the sessions the picker never touched (story 109) — a
+ * fixture opened for the first time carries a model on its entity and reaches
+ * this path, not the store's eager `requestSpawn`. Resolved by
+ * `resolve-transport.ts`, which is the store-aware half of the seam and already
+ * turns an entity into a project id for exactly this reason; this module still
+ * takes everything as arguments and reads nothing.
+ */
 export function createPtyTransport(
   entityId: string,
   projectId: string,
+  options: SpawnOptions = {},
 ): TerminalTransport {
   return createTransport(entityId, (channel) =>
-    ensureSpawned(channel, entityId, projectId),
+    ensureSpawned(channel, entityId, projectId, options),
   );
 }
 

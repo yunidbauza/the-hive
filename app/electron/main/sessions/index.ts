@@ -10,6 +10,8 @@ import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import {
   spawnRefusal,
   type DerivedStatus,
+  type SessionEffort,
+  type SessionModel,
   type SessionStatusEvent,
 } from '@shared/session-contract';
 
@@ -58,6 +60,17 @@ export interface OpenRequest {
    * the note on `restartOnce`.
    */
   task?: string;
+  /**
+   * What to start `claude` as (story 109).
+   *
+   * Present on `restart` precisely where {@link OpenRequest.task} is not: an
+   * instruction is something the previous generation may already have acted on,
+   * while the model is a property of the session itself. A restart that
+   * silently dropped it would relaunch the session as a different model than
+   * the one its own row advertises.
+   */
+  model?: SessionModel;
+  effort?: SessionEffort;
 }
 
 /**
@@ -507,7 +520,17 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     bootstrap.arm(
       request.entityId,
-      sessionCommand(runtime.claudeCommand),
+      /**
+       * The picker's model and effort become flags on that command
+       * (story 109). They were recorded on the entity and shown on its chip
+       * from the first story that offered them, and reached the process in no
+       * story at all — so a session started as Haiku with low effort opened as
+       * Opus and said so on the meta bar.
+       */
+      sessionCommand(runtime.claudeCommand, {
+        ...(request.model === undefined ? {} : { model: request.model }),
+        ...(request.effort === undefined ? {} : { effort: request.effort }),
+      }),
       request.task,
     );
   }

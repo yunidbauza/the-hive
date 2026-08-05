@@ -38,6 +38,33 @@ export interface SessionStatusEvent {
   status: DerivedStatus;
 }
 
+/**
+ * The model and thinking effort a session may be started with (story 109).
+ *
+ * **Closed sets, and they live here rather than in `src/types/entity.ts`
+ * because they are now wire values.** These two strings are the only thing the
+ * renderer contributes to a command line the main process assembles and writes
+ * into a shell — so the boundary that validates them has to be able to name
+ * every acceptable value, and `electron/shared/**` is the only module both
+ * processes can read. `src/types/entity.ts` aliases these rather than declaring
+ * its own copy: a picker offering a model the guard rejects is a session that
+ * fails to start for a reason nobody can see from either side.
+ *
+ * The values are **passed to `claude` verbatim** — `--model opus`,
+ * `--effort high` — which is why they are spelled exactly as the CLI spells
+ * them. That is a real coupling and it is deliberate: a translation table would
+ * be a second place to get this wrong, and the vocabularies already agree.
+ *
+ * `claude --effort` also accepts `xhigh`, which the picker does not offer. The
+ * omission is the picker's to fix if it ever wants it; a value main would
+ * accept but nothing can send costs nothing.
+ */
+export const SESSION_MODELS = ['haiku', 'sonnet', 'opus', 'fable'] as const;
+export type SessionModel = (typeof SESSION_MODELS)[number];
+
+export const SESSION_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
+export type SessionEffort = (typeof SESSION_EFFORTS)[number];
+
 /** Silence for this long means idle. */
 export const ACTIVITY_IDLE_MS = 2_000;
 

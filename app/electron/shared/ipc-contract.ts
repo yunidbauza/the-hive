@@ -34,7 +34,11 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
-import type { SessionStatusEvent } from './session-contract';
+import type {
+  SessionEffort,
+  SessionModel,
+  SessionStatusEvent,
+} from './session-contract';
 
 export const CH = {
   configGet: 'config:get',
@@ -177,6 +181,23 @@ export interface SpawnRequest {
    * `working | idle | done` and nothing finer.
    */
   task?: string;
+  /**
+   * What to start `claude` *as* (story 109).
+   *
+   * Both optional, and absent means "say nothing" rather than "use the
+   * default": a spawn that names neither produces the bare command it always
+   * did, and `claude` applies whatever the user's own configuration says. That
+   * matters for the sessions nobody picked a model for — a fixture opened for
+   * the first time, a `spawn` typed into the console — where inventing a flag
+   * would silently override a setting the user made outside this app.
+   *
+   * Unlike {@link SpawnRequest.task} these **are** forwarded on a restart. A
+   * task is an instruction the previous generation may already have acted on;
+   * a model is a property of the session itself, and restarting a session as a
+   * different model than the one its row advertises is not a restart.
+   */
+  model?: SessionModel;
+  effort?: SessionEffort;
 }
 
 export interface WriteRequest {

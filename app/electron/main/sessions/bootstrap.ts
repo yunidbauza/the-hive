@@ -1,6 +1,8 @@
 import {
   BOOTSTRAP_DEBOUNCE_MS,
   BOOTSTRAP_FALLBACK_MS,
+  type SessionEffort,
+  type SessionModel,
 } from '@shared/session-contract';
 
 /**
@@ -28,6 +30,20 @@ import {
  * settle, then write. If nothing arrives at all within the fallback window,
  * write anyway and record it — a genuinely silent startup is unusual but real.
  */
+
+/**
+ * What the session was started *as* (story 109).
+ *
+ * Both optional, and omitting one omits its flag rather than substituting a
+ * default. A spawn that names neither produces exactly the command line this
+ * module has always produced, which is what keeps a fixture opened for the
+ * first time — or a `spawn` typed into the console — running under whatever the
+ * user's own `claude` configuration says.
+ */
+export interface SessionOptions {
+  model?: SessionModel;
+  effort?: SessionEffort;
+}
 
 /**
  * The command line a session is bootstrapped with.
@@ -66,9 +82,42 @@ import {
  * observation about a *process*. `/exit` now yields `terminated`. The rest of
  * the reasoning above stands unchanged, including the "keep the transcript
  * readable" rule that keeps the tab and its scrollback in place afterwards.
+ *
+ * ## Why the flags are not quoted (story 109)
+ *
+ * `--model opus --effort high` is interpolated into a string a login shell will
+ * parse, which is normally exactly where a value needs quoting or escaping.
+ * These do not, and the reason is upstream: both are validated at the IPC
+ * boundary against a closed list of literals (`assertOneOf` in
+ * `shared/guards.ts`), so by the time either arrives here it is one of eight
+ * known words with no shell metacharacter in any of them.
+ *
+ * That is a **guarantee about the guard**, not an observation about today's
+ * values, and it is why the sets live in `shared/session-contract.ts` where
+ * both processes read them. Widening either list to something a shell could
+ * interpret would need quoting here — obvious while writing the list, invisible
+ * six months later. If a value with a space, a quote or a `$` is ever added,
+ * this is the line that breaks.
+ *
+ * ## Why the flags go *before* `&&`, and nothing goes after
+ *
+ * They are arguments to `claude`, so they bind to it and not to `exit`. The
+ * short-circuit still measures what it always measured: `claude` ending
+ * cleanly. A session started with a bad flag exits non-zero, `&&` does not
+ * fire, and the login shell stays up with the CLI's own complaint on screen —
+ * which is the right outcome for a mistyped model and the same failure mode a
+ * mistyped `claudeCommand` already has.
  */
-export const sessionCommand = (claudeCommand: string): string =>
-  `${claudeCommand} && exit`;
+export const sessionCommand = (
+  claudeCommand: string,
+  { model, effort }: SessionOptions = {},
+): string => {
+  const flags = [
+    ...(model === undefined ? [] : ['--model', model]),
+    ...(effort === undefined ? [] : ['--effort', effort]),
+  ];
+  return `${[claudeCommand, ...flags].join(' ')} && exit`;
+};
 
 export interface BootstrapOptions {
   /** Send the command to a session's pty. */

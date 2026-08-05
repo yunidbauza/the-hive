@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
+import { useHiveStore } from '@stores/hive-store';
 
 /**
  * The PTY transport is mocked here so the *routing* is assertable without a
@@ -13,6 +14,12 @@ import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 const ptyMarker = { write: vi.fn(), resize: vi.fn(), onData: vi.fn(() => vi.fn()) };
 vi.mock('@lib/terminal/pty-transport', () => ({
   createPtyTransport: vi.fn(() => ptyMarker),
+  /**
+   * The store's *eager* spawn path, which `spawnSession` calls fire-and-forget.
+   * Stubbed for the same reason as the transport: creating a session to test
+   * how it resolves must not start a process.
+   */
+  requestSpawn: vi.fn(() => Promise.resolve({ ok: true })),
 }));
 
 const { createPtyTransport } = await import('@lib/terminal/pty-transport');
@@ -40,7 +47,39 @@ describe('resolveTransport', () => {
      * lookup lives in `resolveTransport` and not in `PtyTransport`: a PTY needs
      * a `cwd`, and the transport is not allowed to read a store to find one.
      */
-    expect(createPtyTransport).toHaveBeenCalledWith(SESSION_ID, SESSION_PROJECT);
+    expect(createPtyTransport).toHaveBeenCalledWith(
+      SESSION_ID,
+      SESSION_PROJECT,
+      // No fixture records a model, so nothing is claimed and the session gets
+      // the bare `claude` command (story 109).
+      {},
+    );
+  });
+
+  it('carries a recorded model and effort to the lazy spawn (story 109)', () => {
+    /**
+     * The path the picker does **not** take. A session created by the picker is
+     * spawned eagerly by the store, which already has the choice in hand; this
+     * one is spawned because its surface mounted, and the entity is the only
+     * place the choice still exists. Missing it is how a session opened from
+     * the rail comes up as the wrong model while its own chip says otherwise.
+     */
+    withBridge();
+    /**
+     * Spawned through the store rather than hand-poked, so what is asserted is
+     * the value `spawnSession` actually records — the same one the meta bar
+     * chip renders.
+     */
+    const id = useHiveStore
+      .getState()
+      .spawnSession(SESSION_PROJECT, 'a task', 'haiku', 'low');
+
+    resolveTransport(id);
+
+    expect(createPtyTransport).toHaveBeenCalledWith(id, SESSION_PROJECT, {
+      model: 'haiku',
+      effort: 'low',
+    });
   });
 
   it('keeps an agent on its recorded transcript, even on desktop', () => {

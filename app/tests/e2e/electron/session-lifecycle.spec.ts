@@ -65,6 +65,25 @@ function writeCleanStub(path: string, marker: string, shellPid: string): void {
   chmodSync(path, 0o755);
 }
 
+/**
+ * A stub that records the arguments it was handed (story 109).
+ *
+ * `"$*"` rather than a marker file's contents, because what is being proved is
+ * the *shell's* view of the command line — that `--model haiku` arrived as two
+ * arguments to `claude` and not as part of its name, and that nothing was
+ * swallowed by `&&`. A unit test can prove the string was assembled; only a
+ * real shell can prove it was assembled into the right words.
+ *
+ * Exits non-zero so the login shell survives, leaving the app in a state the
+ * test can keep inspecting.
+ */
+function writeArgsStub(path: string, argsFile: string): void {
+  writeFileSync(path, `#!/bin/sh\nprintf '%s' "$*" > '${argsFile}'\nexit 1\n`, {
+    encoding: 'utf8',
+  });
+  chmodSync(path, 0o755);
+}
+
 function writeConfig(
   path: string,
   options: { claudeCommand: string; projects?: { id: string; path: string }[] },
@@ -373,6 +392,99 @@ test('quitting the app leaves zero descendant processes', async ({}, testInfo) =
   await app.close();
 
   await expect.poll(() => isAlive(descendant), { timeout: 20_000 }).toBe(false);
+});
+
+test('a session starts as the model and effort it was spawned with', async ({}, testInfo) => {
+  /**
+   * The story-109 defect, end to end.
+   *
+   * The picker offered a model and a thinking effort, recorded both on the
+   * entity, and rendered them on the session's chip — and sent neither to the
+   * process. Every session opened as whatever `claude` defaults to while the
+   * app confidently said otherwise.
+   *
+   * Driven through `pty.spawn` rather than the picker UI on purpose: what needs
+   * proving here is the chain the unit tests each see only one link of — the
+   * IPC guard, main's command assembly, and a real `/bin/sh` parsing the
+   * result. The picker's end of it is covered where the picker is.
+   */
+  const configPath = testInfo.outputPath('hive-config.json');
+  const stub = testInfo.outputPath('claude-stub.sh');
+  const argsFile = testInfo.outputPath('args.txt');
+  writeArgsStub(stub, argsFile);
+  writeConfig(configPath, { claudeCommand: stub });
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('header');
+
+    await page.evaluate(
+      ([sessionId, projectId]) =>
+        window.hive!.pty.spawn({
+          sessionId: sessionId!,
+          projectId: projectId!,
+          cols: 80,
+          rows: 24,
+          model: 'haiku',
+          effort: 'low',
+        }),
+      [SESSION, PROJECT],
+    );
+
+    // Two flags, four words, in the order `claude` documents them — and
+    // crucially nothing else, so `&& exit` did not leak into the argument list.
+    await expectFile(argsFile, '--model haiku --effort low');
+  } finally {
+    await app.close();
+  }
+});
+
+test('a session spawned without a model gets the bare command', async ({}, testInfo) => {
+  /**
+   * The other half, and the one that protects a setting this app does not own.
+   *
+   * A fixture opened for the first time, or a `spawn` typed into the console
+   * before the picker existed, names no model. Substituting a default here
+   * would silently override whatever the user configured in `claude` itself —
+   * so absent means *say nothing*, not *say the default out loud*.
+   */
+  const configPath = testInfo.outputPath('hive-config.json');
+  const stub = testInfo.outputPath('claude-stub.sh');
+  const argsFile = testInfo.outputPath('args.txt');
+  writeArgsStub(stub, argsFile);
+  writeConfig(configPath, { claudeCommand: stub });
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('header');
+
+    await page.evaluate(
+      ([sessionId, projectId]) =>
+        window.hive!.pty.spawn({
+          sessionId: sessionId!,
+          projectId: projectId!,
+          cols: 80,
+          rows: 24,
+        }),
+      [SESSION, PROJECT],
+    );
+
+    await expectFile(argsFile, '');
+  } finally {
+    await app.close();
+  }
 });
 
 test('an unmapped project is refused by name, with the file to edit', async ({}, testInfo) => {

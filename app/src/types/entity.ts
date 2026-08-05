@@ -1,5 +1,7 @@
 import type { TermLine } from '@/types/terminal';
 
+import type { SessionEffort, SessionModel } from '@shared/session-contract';
+
 /**
  * Session lifecycle. Agents are always `online` and are tracked separately.
  *
@@ -21,8 +23,22 @@ export type SessionStatus =
   | 'done'
   | 'terminated';
 
-export type Model = 'haiku' | 'sonnet' | 'opus' | 'fable';
-export type Effort = 'low' | 'medium' | 'high' | 'max';
+/**
+ * Aliases, not declarations (story 109).
+ *
+ * These used to be their own unions here, which was right while they were
+ * decoration — a chip on a meta bar. They are now **wire values**: the picker's
+ * choice becomes `--model opus --effort high` on the command line main writes
+ * into a session's shell, and the IPC guard validates it against a closed list.
+ * Two independent copies of that list is how a picker comes to offer a model
+ * the guard rejects, which presents as a session that silently fails to start.
+ *
+ * So `electron/shared/session-contract.ts` owns them, because it is the one
+ * module both processes read, and this file points at it. Type-only, as the
+ * fence requires.
+ */
+export type Model = SessionModel;
+export type Effort = SessionEffort;
 
 export type PrState = 'open' | 'merged' | 'draft';
 

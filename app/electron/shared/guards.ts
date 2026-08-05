@@ -17,6 +17,7 @@ import type {
   SpawnRequest,
   WriteRequest,
 } from './ipc-contract';
+import { SESSION_EFFORTS, SESSION_MODELS } from './session-contract';
 
 /**
  * Payload guards (story 082).
@@ -169,12 +170,39 @@ function assertText(value: unknown, label: string): string {
   return text;
 }
 
+/**
+ * One of a closed set of literals, or a refusal naming what was allowed.
+ *
+ * **The only guard in this file whose output reaches a command line**
+ * (story 109). `model` and `effort` are interpolated into the string main
+ * writes into a login shell, so `assertText` — bounded, printable, no control
+ * characters — would not be enough: a space is printable, and
+ * `opus --dangerously-skip-permissions` is a perfectly well-formed piece of
+ * free text. Membership of a fixed list is what makes the value unquotable
+ * rather than merely quoted, which is the difference between a guard that has
+ * to be right and one that cannot be wrong.
+ *
+ * The message lists the permitted values, because the realistic reader of it is
+ * whoever added a model to the picker and not to the contract.
+ */
+function assertOneOf<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  label: string,
+): T[number] {
+  const text = assertString(value, label);
+  if (!allowed.includes(text)) {
+    return fail(`${label}: expected one of ${allowed.join(', ')}`);
+  }
+  return text as T[number];
+}
+
 export function parseSpawnRequest(input: unknown): SpawnRequest {
   const raw = assertShape(
     input,
     ['sessionId', 'projectId', 'cols', 'rows'],
     'spawn',
-    ['task'],
+    ['task', 'model', 'effort'],
   );
   return {
     sessionId: assertId(raw.sessionId, 'spawn.sessionId'),
@@ -190,6 +218,12 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     ...(raw.task === undefined
       ? {}
       : { task: assertText(raw.task, 'spawn.task') }),
+    ...(raw.model === undefined
+      ? {}
+      : { model: assertOneOf(raw.model, SESSION_MODELS, 'spawn.model') }),
+    ...(raw.effort === undefined
+      ? {}
+      : { effort: assertOneOf(raw.effort, SESSION_EFFORTS, 'spawn.effort') }),
   };
 }
 

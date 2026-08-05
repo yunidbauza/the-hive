@@ -78,5 +78,21 @@ export const isLiveTerminal = (entityId: string): boolean =>
 export function resolveTransport(entityId: string): TerminalTransport {
   const session = liveSession(entityId);
   if (!session) return createStaticTransport(entityId);
-  return createPtyTransport(entityId, session.project);
+  /**
+   * The model and effort travel with the project, for the same reason and by
+   * the same route (story 109).
+   *
+   * This is the lazy spawn path — a session whose surface mounts before anyone
+   * asked for a process, which is every session the picker did not create. The
+   * entity is where the choice was recorded, this module is the only half of
+   * the seam allowed to read it, and passing it as arguments is what lets
+   * `pty-transport.ts` go on knowing nothing about a store.
+   *
+   * Spread rather than assigning `undefined`, so a session with no recorded
+   * model sends no key and gets the bare command.
+   */
+  return createPtyTransport(entityId, session.project, {
+    ...(session.model === undefined ? {} : { model: session.model }),
+    ...(session.effort === undefined ? {} : { effort: session.effort }),
+  });
 }

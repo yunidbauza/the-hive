@@ -1,3 +1,5 @@
+import type { Effort, Model } from '@/types/entity';
+
 import { isDesktop } from '@config/runtime';
 import { reopenChannel } from '@lib/terminal/pty-transport';
 import type { SpawnRefusal } from '@shared/session-contract';
@@ -45,6 +47,16 @@ export interface RestartRequest {
   projectId: string;
   cols: number;
   rows: number;
+  /**
+   * Carried across the restart (story 109).
+   *
+   * A restart deliberately drops the session's *task* — the previous generation
+   * may already have acted on it — and just as deliberately keeps these. The
+   * task is an instruction; the model is what the session **is**, and a row
+   * that says Haiku must not come back as something else.
+   */
+  model?: Model;
+  effort?: Effort;
 }
 
 /**
@@ -72,6 +84,10 @@ export async function restartSession(request: RestartRequest): Promise<void> {
     projectId: request.projectId,
     cols: request.cols,
     rows: request.rows,
+    // Spread, not `undefined`: the IPC guard rejects unexpected keys, and an
+    // own property set to undefined is still a key after a structured clone.
+    ...(request.model === undefined ? {} : { model: request.model }),
+    ...(request.effort === undefined ? {} : { effort: request.effort }),
   });
 
   /**

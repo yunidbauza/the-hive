@@ -447,6 +447,8 @@ export function registerIpcHandlers(): void {
       cols: request.cols,
       rows: request.rows,
       task: request.task,
+      model: request.model,
+      effort: request.effort,
     });
   });
 
@@ -459,12 +461,19 @@ export function registerIpcHandlers(): void {
      * Re-delivering an instruction the previous generation may already have
      * acted on — edited files, opened a PR — is worse than delivering nothing:
      * the user asked for a clean slate, not for the work to be redone.
+     *
+     * `model` and `effort` **are** forwarded, and the asymmetry is the point
+     * (story 109): they describe the session, not the turn. Dropping them would
+     * restart a Haiku session as whatever `claude` defaults to while its row
+     * went on saying Haiku.
      */
     await sessions?.restart({
       entityId: request.sessionId,
       projectId: request.projectId,
       cols: request.cols,
       rows: request.rows,
+      model: request.model,
+      effort: request.effort,
     });
   });
 
