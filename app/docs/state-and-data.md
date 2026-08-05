@@ -62,9 +62,11 @@ Components never read a store object directly and never call `getState()`.
 | Hook | Returns |
 | --- | --- |
 | `useEntity(id)` | one entity, or `undefined` |
-| `useCounts()` | `{ working, waiting, idle, done }` |
-| `useNavOrder()` | active session ids, then done ones |
-| `useProjectSessions(projectId)` | a project's non-done sessions |
+| `useCounts()` | `{ working, waiting, idle, done, terminated }` |
+| `useNavOrder()` | active session ids, then ended ones |
+| `useActiveSessions()` / `useEndedSessions()` | the two sides of the table's divider |
+| `useProjectSessions(projectId)` | a project's sessions that have not ended |
+| `useOpenEntity()` | open an entity's tab, refusing a `terminated` one (108) |
 | `useTicketPrs(ticketKey)` | PRs reachable from a ticket's sessions |
 | `useUnreadCount()` | inbox unread count |
 | `useNotifs()` | the inbox, newest first (051) |

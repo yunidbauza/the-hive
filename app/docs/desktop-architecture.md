@@ -248,8 +248,16 @@ the tail of the conversation the user restarted to be rid of.
 | Quit | the host SIGTERMs every process group, waits 3 s, force-kills the rest |
 
 **Status is derived in main**, debounced: output → `working`, 2 s of silence →
-`idle`, exit → `done`. In main rather than the renderer because a per-chunk store
-write at firehose rates would re-render the shell continuously.
+`idle`, exit → `terminated`. In main rather than the renderer because a per-chunk
+store write at firehose rates would re-render the shell continuously.
+
+`terminated`, not `done` (story 108), and the distinction is the same discipline
+`waiting` gets below. An exit is an *observation* — the process is gone. "Done"
+is a claim about the work, and main has no way to evaluate it: `/exit` after an
+abandoned attempt and `/exit` after a merged PR produce byte-identical evidence.
+`DerivedStatus` no longer contains `done` at all, so main cannot make that claim
+by accident. A `terminated` session's tab is also closed to new visits — its pty
+is gone — which is enforced once, in `hive-store`'s `openEntity`.
 
 `waiting` is **not derived, and the type main sends cannot express it.** A TUI
 that has asked a question and one that is thinking both produce no output;

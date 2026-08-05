@@ -543,6 +543,54 @@ describe('TerminalSurface', () => {
       expect(fitAddon.fit.mock.calls.length).toBeGreaterThan(fitsWhileHidden);
     });
 
+    /**
+     * The story-108 regression, and the most destructive bug the surface has
+     * had.
+     *
+     * Hiding a kept-alive terminal fires its observer with a zero box. An
+     * element in a `display: none` subtree has no used values, so the fit addon
+     * reads back the *specified* `100%` as the number 100 — its `isNaN` guard
+     * passes — and proposes roughly 11×5. `fit()` then reflows the buffer to
+     * eleven columns and the new size goes to the pty, so the child process
+     * repaints its whole TUI that narrow. Coming back refits to the real width
+     * and restores nothing: the wide rows were overwritten while nobody was
+     * watching, and the user finds their transcript shredded into a ribbon.
+     */
+    it('does not fit or report a resize while it is hidden', () => {
+      let trigger = () => {};
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: () => void) {
+            trigger = cb;
+          }
+          observe = vi.fn();
+          unobserve = vi.fn();
+          disconnect = vi.fn();
+        },
+      );
+
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" visible />,
+      );
+      const [fitAddon] = fitAddonInstances as MockFitAddon[];
+
+      rerender(
+        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+      );
+      const fitsBefore = fitAddon.fit.mock.calls.length;
+      (transport.resize as ReturnType<typeof vi.fn>).mockClear();
+
+      // Exactly what the browser does when the surface is hidden.
+      trigger();
+
+      expect(fitAddon.fit.mock.calls.length).toBe(fitsBefore);
+      expect(transport.resize).not.toHaveBeenCalled();
+
+      vi.unstubAllGlobals();
+    });
+
     it('hides rather than unmounts when not visible', () => {
       const { transport } = fakeTransport();
       const { container } = render(
@@ -552,6 +600,37 @@ describe('TerminalSurface', () => {
       // Kept alive: this is what preserves scrollback across tab switches.
       expect(container.firstChild).toHaveStyle({ display: 'none' });
       expect(terminalInstances).toHaveLength(1);
+    });
+
+    it('takes the keyboard when it becomes visible', () => {
+      /**
+       * Opening a session and finding the keyboard pointed at nothing means the
+       * first thing every new session asks of its user is a click (story 108).
+       * Focus follows the reveal rather than the mount, because instances are
+       * created lazily and kept alive hidden — the two coincide only once.
+       */
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+      );
+
+      expect(terminal().focus).not.toHaveBeenCalled();
+
+      rerender(<TerminalSurface transport={transport} theme="dark" visible />);
+
+      expect(terminal().focus).toHaveBeenCalled();
+    });
+
+    it('leaves the keyboard alone when the visible surface is read-only', () => {
+      /**
+       * The orchestrator console is read-only and owns a *separate* command row
+       * that autofocuses itself. Focusing its transcript would take the caret
+       * out of the input the whole console is driven from.
+       */
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly visible />);
+
+      expect(terminal().focus).not.toHaveBeenCalled();
     });
 
     it('disconnects its observer and disposes the terminal on unmount', () => {
@@ -674,6 +753,70 @@ describe('TerminalSurface', () => {
         stageRows(['─'.repeat(96), 'not a rule'], 0);
 
         expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+    });
+
+    describe('once the process has ended (story 108)', () => {
+      function renderEnded() {
+        const { transport } = fakeTransport();
+        const result = render(
+          <TerminalSurface transport={transport} theme="dark" ended />,
+        );
+        return { ...result, transport };
+      }
+
+      it('stops accepting input and stills the cursor', () => {
+        /**
+         * A blinking caret over a dead pty is an invitation, and every
+         * character typed into it vanishes without a trace — the experience of
+         * a hung session, produced by one that finished cleanly.
+         */
+        renderEnded();
+
+        expect(terminal().options).toMatchObject({
+          disableStdin: true,
+          cursorBlink: false,
+        });
+      });
+
+      it('applies to a terminal that was live when it mounted', () => {
+        // The realistic path: the session ends while the user is watching it.
+        // Both options are live, which is what lets this be an effect rather
+        // than the rebuild `readOnly` needs — and a rebuild would throw away the
+        // exit notice, the most useful thing on the screen.
+        const { transport } = fakeTransport();
+        const { rerender } = render(
+          <TerminalSurface transport={transport} theme="dark" />,
+        );
+        expect(terminal().options).toMatchObject({ disableStdin: false });
+
+        rerender(<TerminalSurface transport={transport} theme="dark" ended />);
+
+        expect(terminal().options).toMatchObject({
+          disableStdin: true,
+          cursorBlink: false,
+        });
+      });
+
+      it('hands bare ← back to the app', () => {
+        /**
+         * The one way out of a finished session. Nothing is staged in the
+         * buffer, so `isEmptyClaudePrompt` cannot match — after `/exit` the last
+         * rows are a shell's `logout` and an exit notice, which is prompt-shaped
+         * for no test at all. Without this the key went to a pty that will never
+         * answer and the user was stranded on the mouse.
+         */
+        renderEnded();
+
+        expect(press({ key: 'ArrowLeft' })).toBe(false);
+      });
+
+      it('still gives every other key to the terminal', () => {
+        // Narrow on purpose: this widens the app's claim to exactly one key.
+        renderEnded();
+
+        expect(press({ key: 'ArrowRight' })).toBe(true);
+        expect(press({ key: 'a' })).toBe(true);
       });
     });
 

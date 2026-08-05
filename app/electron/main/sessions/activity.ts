@@ -4,20 +4,29 @@ import { ACTIVITY_IDLE_MS, type DerivedStatus } from '@shared/session-contract';
  * Session status, derived from the only thing main can actually observe
  * (story 096).
  *
- * The fixture model is `working | waiting | idle | done`, and `waiting` — the
- * state the whole inbox and attention model is built around — is **not
- * derivable from a pty**. A TUI that has asked a question and a TUI that is
- * thinking both produce no output. The only way to tell them apart from here
+ * The fixture model is `working | waiting | idle | done | terminated`, and
+ * `waiting` — the state the whole inbox and attention model is built around — is
+ * **not derivable from a pty**. A TUI that has asked a question and a TUI that
+ * is thinking both produce no output. The only way to tell them apart from here
  * would be to scrape rendered text for question marks, a heuristic that fails
  * silently and constantly; an attention model built on it would be worse than
  * no attention model.
  *
- * So this derives three states and refuses to guess the fourth. Sessions still
- * show `waiting` where a fixture says so, and no real session ever enters it on
- * its own. The real mechanism is a Claude Code hook — a `Notification`/`Stop`
- * hook writing a structured event the app watches — which is a first-class
- * integration with its own design, named here so the gap is recorded rather
- * than discovered.
+ * So this derives three states and refuses to guess the ones it cannot see.
+ * Sessions still show `waiting` where a fixture says so, and no real session
+ * ever enters it on its own. The real mechanism is a Claude Code hook — a
+ * `Notification`/`Stop` hook writing a structured event the app watches — which
+ * is a first-class integration with its own design, named here so the gap is
+ * recorded rather than discovered.
+ *
+ * ## Exit is `terminated`, not `done` (story 108)
+ *
+ * The same discipline, applied to the ending. A pty exit is an observation: the
+ * process is gone. "Done" is a claim about the work, and this module has no way
+ * to evaluate it — `/exit` after an abandoned attempt and `/exit` after a merged
+ * PR produce byte-identical evidence. Reporting both as `done` made the fleet
+ * view assert something it had not observed, and left the user unable to tell a
+ * finished session from a quit one.
  *
  * ## Why this lives in main
  *
@@ -82,7 +91,7 @@ export function createActivityTracker(options: ActivityOptions): ActivityTracker
        * session permanently claiming to be busy — the status would never
        * correct itself, because nothing more is coming.
        */
-      if (entry.status === 'done') return;
+      if (entry.status === 'terminated') return;
 
       set(entityId, entry, 'working');
 
@@ -97,7 +106,7 @@ export function createActivityTracker(options: ActivityOptions): ActivityTracker
       const entry = entries.get(entityId) ?? { status: 'idle', timer: null };
       entries.set(entityId, entry);
       clearTimer(entry);
-      set(entityId, entry, 'done');
+      set(entityId, entry, 'terminated');
     },
 
     forget(entityId) {

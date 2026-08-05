@@ -128,7 +128,10 @@ Three surfaces stacked inside the orchestrator view, in this order:
 
 1. **`SessionTable`** — the fleet, as **DOM, not xterm**. Rows have to stay
    clickable and focusable, which terminal text cannot be. Eight active
-   sessions, a `COMPLETED` divider, then the done ones.
+   sessions, an `ENDED` divider, then the ones that have finished or
+   terminated. A `terminated` row is `disabled`: it still reads and still
+   selects, but its pty is gone and entering it would show a dead rectangle
+   (story 108).
 2. **The transcript** — an ordinary `TerminalSurface` bound to the `'orch'`
    pseudo-entity, so the console gets real ANSI colour and selection for free.
 3. **`ConsoleInput`** — the command row and the hint bar beneath it.
@@ -175,10 +178,26 @@ another.
 
 ## The session / agent view (043)
 
-Meta bar, terminal, message row. The row is `MessageInput`, mounted by
-`CenterStage` and **keyed by entity id** — switching sessions remounts it, which
-both clears a half-typed message meant for somebody else and re-runs its
-autofocus.
+Meta bar, terminal, and — over a **recording** — a message row. The row is
+`MessageInput`, mounted by `CenterStage` and **keyed by entity id** — switching
+sessions remounts it, which both clears a half-typed message meant for somebody
+else and re-runs its autofocus.
+
+### A live session has no message row (108)
+
+The row is mounted only where the surface above it cannot be typed into: the
+browser demo and the agent tabs, both replays. A live desktop session already
+*is* Claude Code's prompt, and a second text box beneath it gives one session two
+places to type, with different keybindings and no way to tell from the caret
+which will receive the next character. The two autofocuses were also racing on
+every newly opened session, which is how a brand-new session came to swallow what
+was typed into it.
+
+The keyboard goes to the terminal instead: `TerminalSurface` focuses itself when
+it **becomes visible** and is interactive — reveal rather than mount, because
+instances are created lazily and kept alive hidden, so the two coincide only
+once. Read-only surfaces are excluded, which is what keeps the orchestrator
+console's own command row focused.
 
 There is no `session-view.tsx` wrapper, though story 043 names one. The terminal
 belongs to the shared `TerminalHost`, so a component wrapping meta bar +
@@ -207,7 +226,9 @@ to sessions, so agents stay `online` with no branch at the call site.
 Clicking the terminal focuses the message row — but only when
 `window.getSelection()` is empty. Moving focus collapses the document selection,
 so an unconditional focus-on-click would delete the highlight the user's drag had
-only just made.
+only just made. Over a live terminal the stage steps aside entirely and the
+surface focuses itself, which is the same guard duplicated rather than assumed:
+it is the same bug in both places.
 
 ## The new-session picker (044)
 

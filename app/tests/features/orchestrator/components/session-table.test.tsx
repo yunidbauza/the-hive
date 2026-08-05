@@ -15,12 +15,12 @@ describe('SessionTable', () => {
     useUiStore.getState().reset();
   });
 
-  it('partitions the fixtures into 8 active and 2 completed', () => {
+  it('partitions the fixtures into 8 active and 2 ended', () => {
     render(<SessionTable />);
 
     // The exact split the story's acceptance criteria name.
     expect(rows()).toHaveLength(10);
-    expect(screen.getByText('COMPLETED')).toBeInTheDocument();
+    expect(screen.getByText('ENDED')).toBeInTheDocument();
   });
 
   it('lists active sessions before the divider and done ones after', () => {
@@ -83,6 +83,69 @@ describe('SessionTable', () => {
     // keyboard and the mouse disagree about where "here" is.
     expect(useUiStore.getState().activeTab).toBe('webhooks');
     expect(useUiStore.getState().selIdx).toBe(2);
+  });
+
+  describe('a terminated session (story 108)', () => {
+    const webhooks = () =>
+      rows().find((row) => row.textContent?.includes('webhooks'))!;
+
+    const terminate = () =>
+      act(() =>
+        useHiveStore.getState().setSessionStatus('webhooks', 'terminated'),
+      );
+
+    it('says so in the status column', () => {
+      render(<SessionTable />);
+      terminate();
+
+      // Its own word, not `done`. One finished; the other quit, and the fleet
+      // view is where that difference is decided upon.
+      expect(within(webhooks()).getByText('terminated')).toBeInTheDocument();
+    });
+
+    it('moves under the divider with the other endings', () => {
+      render(<SessionTable />);
+      terminate();
+
+      const labels = rows().map((row) => row.textContent ?? '');
+      expect(labels.slice(0, 7).join(' ')).not.toContain('webhooks');
+      expect(labels.slice(7).join(' ')).toContain('webhooks');
+    });
+
+    it('cannot be entered, and says why', async () => {
+      /**
+       * `disabled`, not a silently ignored click. The row's job on this screen
+       * is to say what happened to a session, so it stays legible and stays in
+       * the list — but a button that looks live and does nothing is worse than
+       * one that says it is spent, and `disabled` is the only version of that a
+       * screen reader hears too.
+       */
+      const user = userEvent.setup();
+      render(<SessionTable />);
+      terminate();
+
+      expect(webhooks()).toBeDisabled();
+      expect(webhooks()).toHaveAttribute(
+        'title',
+        'webhooks has terminated — its process is gone',
+      );
+
+      await user.click(webhooks());
+      expect(useUiStore.getState().activeTab).toBe('orch');
+    });
+
+    it('leaves every other row clickable', async () => {
+      const user = userEvent.setup();
+      render(<SessionTable />);
+      terminate();
+
+      const heroRefresh = rows().find((row) =>
+        row.textContent?.includes('hero-refresh'),
+      );
+      await user.click(heroRefresh!);
+
+      expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+    });
   });
 
   it('shows a newly spawned session immediately', () => {

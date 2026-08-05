@@ -4,7 +4,7 @@ import type { Pr } from '@/types/pull-request';
 import { Icon } from '@components/ui/icon';
 import { Tag } from '@components/ui/tag';
 import { composeBadges, prStateText } from '@features/shared/pr-presentation';
-import { useOpenTab } from '@stores/ui-store';
+import { useOpenEntity } from '@stores/hive-store';
 
 interface PrCardProps {
   pr: Pr;
@@ -22,13 +22,13 @@ interface PrCardProps {
  * (032) paints the same PRs with.
  */
 export function PrCard({ pr }: PrCardProps) {
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
   const badges = composeBadges(pr);
 
   return (
     <button
       type="button"
-      onClick={() => openTab(pr.session)}
+      onClick={() => openEntity(pr.session)}
       className="flex items-start gap-2.5 rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)] text-left hover:bg-hover"
     >
       <Icon

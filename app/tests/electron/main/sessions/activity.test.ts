@@ -70,13 +70,19 @@ describe('derived status', () => {
     expect(seen).toHaveLength(after);
   });
 
-  it('reports done when the process exits', () => {
+  it('reports terminated when the process exits', () => {
+    /**
+     * `terminated`, not `done` (story 108). An exit is an observation — the
+     * process is gone. Whether the *work* finished is a judgement no pty can
+     * make: `/exit` after an abandoned attempt and `/exit` after a merged PR
+     * produce byte-identical evidence.
+     */
     const activity = tracker();
     activity.sawOutput('sess');
     activity.exited('sess');
 
-    expect(seen.at(-1)).toEqual({ entityId: 'sess', status: 'done' });
-    expect(activity.statusOf('sess')).toBe('done');
+    expect(seen.at(-1)).toEqual({ entityId: 'sess', status: 'terminated' });
+    expect(activity.statusOf('sess')).toBe('terminated');
   });
 
   it('never leaves a dead session claiming to be working', () => {
@@ -89,7 +95,7 @@ describe('derived status', () => {
     activity.exited('sess');
     activity.sawOutput('sess');
 
-    expect(activity.statusOf('sess')).toBe('done');
+    expect(activity.statusOf('sess')).toBe('terminated');
     vi.advanceTimersByTime(10_000);
     expect(seen.filter((entry) => entry.status === 'working')).toEqual([]);
   });
@@ -110,7 +116,11 @@ describe('derived status', () => {
     vi.advanceTimersByTime(10_000);
     activity.exited('sess');
 
-    expect(seen.map((entry) => entry.status)).toEqual(['working', 'idle', 'done']);
+    expect(seen.map((entry) => entry.status)).toEqual([
+      'working',
+      'idle',
+      'terminated',
+    ]);
     expect(seen.some((entry) => entry.status === 'waiting')).toBe(false);
   });
 

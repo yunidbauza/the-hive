@@ -13,6 +13,13 @@ describe('StatusDot', () => {
     ['waiting', 'bg-amber'],
     ['idle', 'bg-subtle'],
     ['done', 'bg-brand'],
+    /**
+     * Muted, not `bg-subtle` (story 108). `idle` owns subtle, and idle and
+     * terminated are the two states most easily confused — both quiet, one
+     * still alive. Sharing a dot would erase the only distinction that matters
+     * when deciding whether to go and look.
+     */
+    ['terminated', 'bg-muted'],
     ['online', 'bg-green'],
   ] as const)('paints %s with %s', (status, expected) => {
     const { container } = render(<StatusDot status={status} />);
@@ -24,7 +31,13 @@ describe('StatusDot', () => {
     const { container, rerender } = render(<StatusDot status="working" />);
     expect(container.firstChild).toHaveClass('animate-ccpulse');
 
-    for (const status of ['waiting', 'idle', 'done', 'online'] as const) {
+    for (const status of [
+      'waiting',
+      'idle',
+      'done',
+      'terminated',
+      'online',
+    ] as const) {
       rerender(<StatusDot status={status} />);
       expect(container.firstChild).not.toHaveClass('animate-ccpulse');
     }
@@ -94,6 +107,7 @@ describe('StatusDot', () => {
       'waiting',
       'idle',
       'done',
+      'terminated',
       'online',
     ] as const) {
       const { container } = render(<StatusDot status={status} />);
@@ -110,6 +124,9 @@ describe('StatusDot', () => {
     expect(STATUS_LABEL.working).toBe('working');
     expect(STATUS_LABEL.idle).toBe('idle');
     expect(STATUS_LABEL.done).toBe('done');
+    // Its own word, and the reason the state exists: `done` is a claim about
+    // the work, `terminated` an observation about the process (story 108).
+    expect(STATUS_LABEL.terminated).toBe('terminated');
     expect(STATUS_LABEL.online).toBe('online');
   });
 });

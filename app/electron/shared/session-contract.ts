@@ -12,16 +12,24 @@
 /**
  * What main can honestly derive about a session from its pty.
  *
- * Deliberately **not** the full `SessionStatus`. The fixture model includes
- * `waiting` — blocked on the user — and it is not derivable here: a TUI that has
- * asked a question and a TUI that is thinking both produce no output.
- * Distinguishing them by scraping rendered text would be a heuristic that fails
- * silently, and the app's whole attention model is built on this field.
+ * Deliberately **not** the full `SessionStatus`, and the two omissions are for
+ * opposite reasons.
  *
- * The type is what enforces that. A `waiting` main could never produce cannot be
- * accidentally produced by a later edit.
+ * `waiting` — blocked on the user — is missing because it is not derivable here:
+ * a TUI that has asked a question and a TUI that is thinking both produce no
+ * output. Distinguishing them by scraping rendered text would be a heuristic
+ * that fails silently, and the app's whole attention model is built on this
+ * field.
+ *
+ * `done` is missing because it is not main's to say (story 108). Main sees a
+ * process exit and nothing more, which is `terminated`; whether the *work* was
+ * finished is a judgement no pty can make. Reporting an exit as `done`, which is
+ * what shipped before, quietly asserted that judgement on every `/exit`.
+ *
+ * The type is what enforces both. A status main could never honestly produce
+ * cannot be produced by a later edit either.
  */
-export type DerivedStatus = 'working' | 'idle' | 'done';
+export type DerivedStatus = 'working' | 'idle' | 'terminated';
 
 /** Main telling the renderer what a real session is doing. */
 export interface SessionStatusEvent {

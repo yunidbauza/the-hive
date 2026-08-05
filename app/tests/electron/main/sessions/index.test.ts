@@ -469,7 +469,7 @@ describe('identity: the renderer only ever sees entity ids', () => {
 });
 
 describe('status', () => {
-  it('reports working, then idle, then done', () => {
+  it('reports working, then idle, then terminated', () => {
     sessions.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
 
@@ -485,7 +485,7 @@ describe('status', () => {
 
     emitExit({ sessionId, exitCode: 0 });
     vi.advanceTimersByTime(8);
-    expect(on(CH.sessionStatus).at(-1)!.payload.status).toBe('done');
+    expect(on(CH.sessionStatus).at(-1)!.payload.status).toBe('terminated');
   });
 
   it('never sends waiting', () => {
@@ -570,7 +570,7 @@ describe('restart: the defects the self review found', () => {
      * output after an exit must not resurrect a dead session — but that guard
      * is keyed on the *entity*, and a restart gives the same entity a new
      * process. Without forgetting the old generation, the fresh shell's output
-     * hits the guard, the status never leaves `done`, and the entity drops out
+     * hits the guard, the status never leaves `terminated`, and the entity drops out
      * of the attention model for the rest of the app's life.
      */
     sessions.open(OPEN);
@@ -578,7 +578,7 @@ describe('restart: the defects the self review found', () => {
 
     emitExit({ sessionId: first, exitCode: 0 });
     vi.advanceTimersByTime(8);
-    expect(on(CH.sessionStatus).at(-1)!.payload.status).toBe('done');
+    expect(on(CH.sessionStatus).at(-1)!.payload.status).toBe('terminated');
 
     await sessions.restart(OPEN);
     emitData({ sessionId: mintedFor('hero-refresh'), chunk: 'alive again' });

@@ -15,6 +15,16 @@ interface TerminalHostProps {
   entries: TerminalHostEntry[];
   /** Which entry is on screen. `null` shows nothing. */
   activeId: string | null;
+  /**
+   * The entry whose process has ended, if any (story 108).
+   *
+   * One id rather than a flag per entry, because the caller knows the status of
+   * the entity it is *showing* and would have to subscribe to all thirteen to
+   * fill in the rest — which is exactly the whole-shell re-render the store
+   * split exists to prevent. Nothing is lost: `ended` only changes how keys and
+   * stdin are handled, and only the visible surface has focus.
+   */
+  endedId?: string | null;
   theme: TerminalTheme;
   /** Appearance, already resolved (story 105). Forwarded verbatim. */
   fontFamily?: string;
@@ -38,6 +48,7 @@ interface TerminalHostProps {
 export function TerminalHost({
   entries,
   activeId,
+  endedId = null,
   theme,
   fontFamily,
   fontSize,
@@ -75,6 +86,7 @@ export function TerminalHost({
           scrollback={scrollback}
           readOnly={entry.readOnly}
           visible={entry.id === activeId}
+          ended={entry.id === endedId}
         />
       ))}
     </>

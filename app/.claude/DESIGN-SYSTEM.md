@@ -130,8 +130,17 @@ with `--cc-red`.
 | `working` | working | `--cc-green` | dot pulses (`ccpulse`) |
 | `waiting` | needs input | `--cc-amber` | blocked on user answer/permission |
 | `idle` | idle | `--cc-subtle` | context saved, resumable |
-| `done` | done | `--cc-brand` | listed under COMPLETED |
+| `done` | done | `--cc-brand` | the *work* finished; listed under ENDED |
+| `terminated` | terminated | `--cc-muted` | the *process* is gone; listed under ENDED, not re-enterable |
 | `online` | online | `--cc-green` | agents only |
+
+`done` and `terminated` are two different endings and are coloured apart on
+purpose (story 108). `done` keeps brand blue because a finished session still has
+something to go and look at — a PR, a diff. `terminated` is a row explaining an
+absence, so it takes neutral grey. It is deliberately **not** `--cc-subtle`,
+which `idle` owns: idle and terminated are the two states most easily confused,
+both quiet with only one still alive, and a shared dot would erase the
+distinction that decides whether the user goes and looks.
 
 Status is never carried by colour alone — every status also has a label, so the
 model survives colour-blindness and reduced-motion.

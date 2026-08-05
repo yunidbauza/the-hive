@@ -1,19 +1,31 @@
 import { cn } from '@/lib/utils';
 import type { SessionStatus } from '@/types/entity';
 
-/** Sessions have four states; agents are always `online`. */
+/** Sessions have five states; agents are always `online`. */
 export type DotStatus = SessionStatus | 'online';
 
+/**
+ * `terminated` is muted, not blue, and not `subtle` either (story 108).
+ *
+ * Blue is `done` — this palette's "there is something here" colour, and a
+ * finished session is something: a PR to read, a diff to merge. A terminated one
+ * is a row explaining an absence, so it takes the neutral grey. It is
+ * deliberately *not* `subtle`, which `idle` already owns: idle and terminated
+ * are the two states most easily confused — both quiet, one still alive — and
+ * giving them the same dot would erase the only distinction that matters when
+ * deciding whether to go look.
+ */
 const STATUS_FILL: Record<DotStatus, string> = {
   working: 'bg-green',
   waiting: 'bg-amber',
   idle: 'bg-subtle',
   done: 'bg-brand',
+  terminated: 'bg-muted',
   online: 'bg-green',
 };
 
 /**
- * The same five colours as text, for the label beside the dot.
+ * The same six colours as text, for the label beside the dot.
  *
  * Paired with `STATUS_FILL` deliberately: a dot and its label drifting to
  * different colours is the exact bug this file exists to prevent. Stories 031
@@ -24,6 +36,7 @@ export const STATUS_TEXT: Record<DotStatus, string> = {
   waiting: 'text-amber',
   idle: 'text-subtle',
   done: 'text-brand',
+  terminated: 'text-muted',
   online: 'text-green',
 };
 
@@ -40,6 +53,7 @@ export const STATUS_LABEL: Record<DotStatus, string> = {
   waiting: 'needs input',
   idle: 'idle',
   done: 'done',
+  terminated: 'terminated',
   online: 'online',
 };
 

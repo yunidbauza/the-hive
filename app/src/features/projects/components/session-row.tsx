@@ -6,8 +6,8 @@ import {
   STATUS_TEXT,
   StatusDot,
 } from '@components/ui/status-dot';
-import { useEntity } from '@stores/hive-store';
-import { useActiveTab, useOpenTab } from '@stores/ui-store';
+import { useEntity, useOpenEntity } from '@stores/hive-store';
+import { useActiveTab } from '@stores/ui-store';
 
 interface SessionRowProps {
   id: string;
@@ -27,7 +27,7 @@ interface SessionRowProps {
 export function SessionRow({ id }: SessionRowProps) {
   const entity = useEntity(id);
   const activeTab = useActiveTab();
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
 
   if (!entity || !isSession(entity)) return null;
 
@@ -36,7 +36,7 @@ export function SessionRow({ id }: SessionRowProps) {
   return (
     <button
       type="button"
-      onClick={() => openTab(id)}
+      onClick={() => openEntity(id)}
       aria-current={active ? 'true' : undefined}
       className={cn(
         'flex flex-col rounded-lg py-[3px] pr-2.5 pl-[26px] leading-[1.35]',

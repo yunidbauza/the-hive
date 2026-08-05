@@ -76,36 +76,18 @@ describe('MessageInput', () => {
     }
   });
 
-  it('advertises the chord, not the bare arrow, beneath a live terminal', () => {
+  it('advertises the bare arrow — the only binding this row has', () => {
     /**
-     * Over a recording, `←` from an empty prompt goes back and the row owns the
-     * keyboard. Over a live shell the user's focus is usually *in* the terminal,
-     * where `←` is a cursor key the child process needs — so the way back is a
-     * chord (story 095), and showing `←` there would document a binding that
-     * does nothing where they are looking.
+     * The row exists only beneath a **recording** now (story 108): a live
+     * session has Claude's own prompt, and a second text box beside it is two
+     * places to type with no way to tell which owns the keyboard. So there is no
+     * live variant of this hint left to pick between, and `←` is simply true.
      */
-    (window as { hive?: unknown }).hive = {
-      pty: {
-        spawn: vi.fn(() => Promise.resolve()),
-        write: vi.fn(),
-        resize: vi.fn(),
-        kill: vi.fn(() => Promise.resolve()),
-        ack: vi.fn(),
-        onData: vi.fn(() => vi.fn()),
-        onExit: vi.fn(() => vi.fn()),
-        onLost: vi.fn(() => vi.fn()),
-      },
-    };
-    try {
-      render(<MessageInput entityId="hero-refresh" />);
+    render(<MessageInput entityId="lead-form" />);
 
-      const hint = screen.getByTestId('key-hint').textContent ?? '';
-      expect(hint).toContain('back to list');
-      expect(hint).toContain('↵ send');
-      expect(hint).not.toMatch(/(^|\s)← back to list/);
-    } finally {
-      delete (window as { hive?: unknown }).hive;
-    }
+    const hint = screen.getByTestId('key-hint').textContent ?? '';
+    expect(hint).toContain('← back to list');
+    expect(hint).toContain('↵ send');
   });
 
   it('autofocuses when the view opens', () => {

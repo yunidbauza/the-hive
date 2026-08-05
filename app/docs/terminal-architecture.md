@@ -74,7 +74,8 @@ that could produce it. The fence held; the contract was one signal short.
 
 `src/lib/terminal/session-input.ts` is the whole coordination layer (story 097).
 Both call sites that mean "say something to a session" — the console's
-`send <id> <msg>` and the message row under a session terminal — collapse to:
+`send <id> <msg>` and, over a recorded transcript, the message row under a
+terminal — collapse to:
 
 ```ts
 pty.write(sessionId, text + '\r')
@@ -204,6 +205,39 @@ be fitted twice.
 
 Ancestors need `min-width: 0` / `min-height: 0` (story 020) or a long line
 widens the column and the fit addon grows into it.
+
+### Never fit a hidden surface (108)
+
+**A hidden terminal must not be fitted, and its size must not be reported.** Both
+halves are load-bearing, and getting this wrong destroyed transcripts.
+
+Hiding a kept-alive instance fires its `ResizeObserver` with a zero box. An
+element in a `display: none` subtree has no used values, so `getComputedStyle`
+hands the fit addon back the *specified* `height: 100%` / `width: 100%` — which
+it parses as the number `100`. That is not `NaN`, so the addon's own guard
+passes, and it proposes roughly **11×5**. `fit()` then reflows the buffer to
+eleven columns, and the new size goes on to the pty, so the child process
+repaints its entire TUI that narrow. Returning to the session refits to the real
+width and restores nothing: the wide rows were overwritten while nobody was
+looking. The user sees their transcript shredded into a ribbon.
+
+The guard is the `visible` prop, read through a ref **written during render**.
+An effect-updated ref loses the race: React commits `display: none` → the browser
+lays out → the observer fires → *then* passive effects run, so `visible` would
+still be `true` at the moment the zero-box notification arrives.
+
+A `clientWidth` check on the container would be synchronous too, and is the wrong
+guard for a different reason: a visible surface briefly measuring zero mid-layout
+would skip its fit and never get another, because no further resize is coming.
+Visibility is the condition with a guaranteed follow-up — the visibility effect.
+
+### The keyboard follows the fit
+
+The same effect focuses the terminal when it becomes visible, if it is
+interactive. A live session is the only input on its screen (story 108), so a
+reveal that did not take the keyboard would make every newly opened session
+demand a click first. Read-only surfaces are excluded: the orchestrator console
+owns a separate command row that autofocuses itself.
 
 ## The bottom-stick rule
 

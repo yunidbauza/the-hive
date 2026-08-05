@@ -14,7 +14,7 @@ import type {
   Session,
   SessionStatus,
 } from '@/types/entity';
-import { isSession } from '@/types/entity';
+import { isEnded, isSession, isTerminated } from '@/types/entity';
 import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
@@ -101,6 +101,7 @@ interface HiveState {
     msg: string,
     origin?: MessageOrigin,
   ) => SendOutcome | null;
+  openEntity: (id: string) => boolean;
   runOrchCommand: (command: ParsedCommand) => void;
   markAllRead: () => void;
   markRead: (index: number) => void;
@@ -159,6 +160,7 @@ const STATUS_WORD: Record<SessionStatus, string> = {
   waiting: 'needs input',
   idle: 'idle',
   done: 'done',
+  terminated: 'terminated',
 };
 
 const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
@@ -166,6 +168,13 @@ const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
   waiting: 'amber',
   idle: 'dim',
   done: 'blue',
+  /**
+   * Dim, like `idle`, and unlike `done`'s blue. Blue is this palette's "there is
+   * something here" colour and a terminated row is the one thing on the list
+   * with nothing behind it — the word carries the distinction, the colour
+   * carries the priority.
+   */
+  terminated: 'dim',
 };
 
 let spawnCounter = 0;
@@ -375,6 +384,52 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   },
 
   /**
+   * Open an entity's tab — unless its process is gone (story 108).
+   *
+   * **The single gate every "show me this session" path goes through.** Six
+   * components used to call `ui-store`'s `openTab` directly, which is fine while
+   * every entity is openable and becomes six independent bugs the moment one is
+   * not. Whether a session can be entered is a fact about the *domain*, so the
+   * domain store is where it is decided, and the view store keeps its one job:
+   * recording what is on screen.
+   *
+   * A terminated session is refused rather than opened-and-empty. Its pty is
+   * gone; entering it shows a dead rectangle that swallows keystrokes and offers
+   * no way back except the mouse — which is precisely the trap this replaces.
+   * The user is sent to the orchestrator instead, where the row still exists,
+   * still readable, still explaining itself.
+   *
+   * Refusing is **not** the same as hiding. A session that ends while the user
+   * is watching it stays on screen: the exit notice is the most useful thing in
+   * the transcript, and yanking the view out from under someone the instant
+   * their agent quits would make the ending impossible to read. This gate is
+   * about coming *back*.
+   *
+   * Returns whether the tab was opened, so a caller with a transcript to write —
+   * the console's `open` — can say what happened.
+   */
+  openEntity: (id) => {
+    /**
+     * An id this store has never heard of is **passed through**, not refused.
+     *
+     * The gate exists to stop one specific thing — entering a session whose
+     * process is gone — and widening it into a general existence check would
+     * change behaviour nobody asked to change: `resolve-view` already sends an
+     * unknown `activeTab` to the orchestrator, deliberately, so that a session
+     * removed while its tab is open leaves the user somewhere rather than on a
+     * blank stage. Duplicating that decision here would put two answers to one
+     * question in two files.
+     */
+    if (!isTerminated(get().entities[id])) {
+      useUiStore.getState().openTab(id);
+      return true;
+    }
+
+    useUiStore.getState().backToOrch();
+    return false;
+  },
+
+  /**
    * Execute an already-parsed orchestrator console command (story 041).
    *
    * Takes a `ParsedCommand`, not a string. Parsing is pure and lives in
@@ -430,7 +485,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           pushOrch(`  no such session: ${command.target}`, 'red');
           return;
         }
-        useUiStore.getState().openTab(command.target);
+        /**
+         * The refusal is printed, not swallowed (story 108). A console that
+         * answered `opened sess-02` and then did not open it would be worse
+         * than one that said nothing at all.
+         */
+        if (!get().openEntity(command.target)) {
+          pushOrch(
+            `  ${command.target} has terminated — its process is gone`,
+            'red',
+          );
+          return;
+        }
         pushOrch(`  opened ${command.target}`, 'dim');
         return;
       }
@@ -566,7 +632,22 @@ export const useEntity = (id: string) =>
 export const useCounts = () =>
   useHiveStore(
     useShallow((state) => {
-      const counts = { working: 0, waiting: 0, idle: 0, done: 0 };
+      /**
+       * Every member of `SessionStatus`, spelled out and typed as such.
+       *
+       * The literal used to list four of five, so a session in the missing
+       * state incremented `undefined` and put a `NaN` in the header — a whole
+       * count silently reading "NaN done" the first time any session ended.
+       * `Record<SessionStatus, number>` is what makes the next status a compile
+       * error instead of that.
+       */
+      const counts: Record<SessionStatus, number> = {
+        working: 0,
+        waiting: 0,
+        idle: 0,
+        done: 0,
+        terminated: 0,
+      };
       for (const id of state.order) {
         const entity = state.entities[id];
         if (entity && isSession(entity)) counts[entity.status] += 1;
@@ -575,18 +656,18 @@ export const useCounts = () =>
     }),
   );
 
-/** Active sessions first, then done ones — the keyboard nav order (041, 060). */
+/** Active sessions first, then ended ones — the keyboard nav order (041, 060). */
 export const useNavOrder = () =>
   useHiveStore(
     useShallow((state) => {
       const active: string[] = [];
-      const done: string[] = [];
+      const ended: string[] = [];
       for (const id of state.order) {
         const entity = state.entities[id];
         if (!entity || !isSession(entity)) continue;
-        (entity.status === 'done' ? done : active).push(id);
+        (isEnded(entity.status) ? ended : active).push(id);
       }
-      return [...active, ...done];
+      return [...active, ...ended];
     }),
   );
 
@@ -603,7 +684,7 @@ export const useNavOrder = () =>
  * `useNavOrder()`, which flattens the same partition into the keyboard order.
  */
 const isActiveSession = (entity: Entity | undefined) =>
-  entity !== undefined && isSession(entity) && entity.status !== 'done';
+  entity !== undefined && isSession(entity) && !isEnded(entity.status);
 
 export const useActiveSessions = () =>
   useHiveStore(
@@ -612,13 +693,20 @@ export const useActiveSessions = () =>
     ),
   );
 
-export const useDoneSessions = () =>
+/**
+ * The other side of the divider: finished *and* terminated (story 108).
+ *
+ * One group rather than two, because the divider answers "is this still going?"
+ * and both answers are no. The row itself says which kind of ended it is, which
+ * is where that distinction is actually useful.
+ */
+export const useEndedSessions = () =>
   useHiveStore(
     useShallow((state) =>
       state.order.filter((id) => {
         const entity = state.entities[id];
         return (
-          entity !== undefined && isSession(entity) && entity.status === 'done'
+          entity !== undefined && isSession(entity) && isEnded(entity.status)
         );
       }),
     ),
@@ -634,6 +722,16 @@ export const useSpawnSession = () => useHiveStore((state) => state.spawnSession)
 /** Story 096: main pushes a real session's derived status through this. */
 export const useSetSessionStatus = () =>
   useHiveStore((state) => state.setSessionStatus);
+
+/**
+ * Open an entity's tab, honouring the terminated gate (story 108).
+ *
+ * **Every list row that navigates to a terminal uses this, not `useOpenTab`.**
+ * The ui-store's action is now the low-level one: it records what is on screen
+ * and asks no questions, which is right for the orchestrator tab and wrong for
+ * anything that names an entity.
+ */
+export const useOpenEntity = () => useHiveStore((state) => state.openEntity);
 
 /** Route a message to a session or agent (stories 041, 043). */
 export const useSendToEntity = () => useHiveStore((state) => state.sendToEntity);
@@ -653,12 +751,12 @@ const projectsOwningSessions = (state: HiveState): string[] => {
   return ids;
 };
 
-/** Ids of projects owning a session that is not done (story 101). */
+/** Ids of projects owning a session that has not ended (story 101). */
 const projectsOwningLiveSessions = (state: HiveState): string[] => {
   const ids: string[] = [];
   for (const id of state.order) {
     const entity = state.entities[id];
-    if (!entity || !isSession(entity) || entity.status === 'done') continue;
+    if (!entity || !isSession(entity) || isEnded(entity.status)) continue;
     if (!ids.includes(entity.project)) ids.push(entity.project);
   }
   return ids;
@@ -676,12 +774,12 @@ const projectsOwningLiveSessions = (state: HiveState): string[] => {
 export const useProjectsOwningLiveSessions = () =>
   useHiveStore(useShallow(projectsOwningLiveSessions));
 
-/** How many not-done sessions each project owns (story 103). */
+/** How many still-running sessions each project owns (story 103). */
 const liveSessionCounts = (state: HiveState): Record<string, number> => {
   const counts: Record<string, number> = {};
   for (const id of state.order) {
     const entity = state.entities[id];
-    if (!entity || !isSession(entity) || entity.status === 'done') continue;
+    if (!entity || !isSession(entity) || isEnded(entity.status)) continue;
     counts[entity.project] = (counts[entity.project] ?? 0) + 1;
   }
   return counts;
@@ -758,7 +856,7 @@ export const useProjects = (): ProjectRow[] => {
   }, [fixtures, owning, snapshot]);
 };
 
-/** Non-done sessions for a project (story 031). */
+/** Sessions for a project that have not ended (story 031). */
 export const useProjectSessions = (projectId: string) =>
   useHiveStore(
     useShallow((state) =>
@@ -768,7 +866,7 @@ export const useProjectSessions = (projectId: string) =>
           entity !== undefined &&
           isSession(entity) &&
           entity.project === projectId &&
-          entity.status !== 'done'
+          !isEnded(entity.status)
         );
       }),
     ),

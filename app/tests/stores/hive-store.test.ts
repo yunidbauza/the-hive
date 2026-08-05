@@ -399,6 +399,62 @@ describe('hive-store', () => {
           color: 'red',
         });
       });
+
+      it('refuses a terminated session, out loud (story 108)', () => {
+        /**
+         * Printed rather than swallowed: a console that answered
+         * `opened webhooks` and then did not open it would be worse than one
+         * that said nothing.
+         */
+        useHiveStore.getState().setSessionStatus('webhooks', 'terminated');
+
+        run('open webhooks');
+
+        expect(useUiStore.getState().activeTab).toBe('orch');
+        expect(lastLine()).toMatchObject({
+          text: '  webhooks has terminated — its process is gone',
+          color: 'red',
+        });
+      });
+    });
+
+    describe('openEntity — the gate every navigation path goes through', () => {
+      it('opens an entity that is still running', () => {
+        expect(useHiveStore.getState().openEntity('webhooks')).toBe(true);
+        expect(useUiStore.getState().activeTab).toBe('webhooks');
+      });
+
+      it('refuses a terminated session and sends the user home', () => {
+        /**
+         * Its pty is gone. Entering it shows a dead rectangle that swallows
+         * keystrokes and offers no way back except the mouse — the trap this
+         * gate replaces. The orchestrator still lists the row.
+         */
+        useHiveStore.getState().setSessionStatus('webhooks', 'terminated');
+
+        expect(useHiveStore.getState().openEntity('webhooks')).toBe(false);
+        expect(useUiStore.getState().activeTab).toBe('orch');
+      });
+
+      it('still opens a session that is merely done', () => {
+        // `done` is a fixture's judgement about the *work*, not an observation
+        // about a process. Its transcript is a recording and reads fine.
+        useHiveStore.getState().setSessionStatus('webhooks', 'done');
+
+        expect(useHiveStore.getState().openEntity('webhooks')).toBe(true);
+        expect(useUiStore.getState().activeTab).toBe('webhooks');
+      });
+
+      it('passes an unknown id through rather than inventing an answer', () => {
+        /**
+         * `resolve-view` already sends an unknown `activeTab` to the
+         * orchestrator, deliberately, so a session removed while its tab is open
+         * leaves the user somewhere. Duplicating that decision here would put
+         * two answers to one question in two files.
+         */
+        expect(useHiveStore.getState().openEntity('nope')).toBe(true);
+        expect(useUiStore.getState().activeTab).toBe('nope');
+      });
     });
 
     describe('send', () => {

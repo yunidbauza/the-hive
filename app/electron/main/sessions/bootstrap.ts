@@ -60,9 +60,12 @@ import {
  * The session then stays open, which is the correct outcome for a session that
  * did not finish so much as fail.
  *
- * There is no new status. Story 096 already maps a pty exit to `done`, exactly,
- * and its "keep the transcript readable" rule keeps the tab and its scrollback
- * in place afterwards.
+ * Story 108 revisited the status this produces. This story said "there is no new
+ * status" and mapped the exit onto `done`, which turned out to be the wrong
+ * word: `done` is a fixture's judgement about the *work*, and a pty exit is an
+ * observation about a *process*. `/exit` now yields `terminated`. The rest of
+ * the reasoning above stands unchanged, including the "keep the transcript
+ * readable" rule that keeps the tab and its scrollback in place afterwards.
  */
 export const sessionCommand = (claudeCommand: string): string =>
   `${claudeCommand} && exit`;

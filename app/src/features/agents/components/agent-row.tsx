@@ -2,8 +2,8 @@ import { cn } from '@/lib/utils';
 import { isAgent } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
-import { useEntity } from '@stores/hive-store';
-import { useActiveTab, useOpenTab } from '@stores/ui-store';
+import { useEntity, useOpenEntity } from '@stores/hive-store';
+import { useActiveTab } from '@stores/ui-store';
 
 interface AgentRowProps {
   id: string;
@@ -19,7 +19,7 @@ interface AgentRowProps {
 export function AgentRow({ id }: AgentRowProps) {
   const entity = useEntity(id);
   const activeTab = useActiveTab();
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
 
   if (!entity || !isAgent(entity)) return null;
 
@@ -28,7 +28,7 @@ export function AgentRow({ id }: AgentRowProps) {
   return (
     <button
       type="button"
-      onClick={() => openTab(id)}
+      onClick={() => openEntity(id)}
       aria-current={active ? 'true' : undefined}
       className={cn(
         'flex items-center gap-2.5 rounded-lg px-2.5 py-[var(--cc-row-py)]',

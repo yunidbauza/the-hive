@@ -7,7 +7,13 @@ import { useCounts } from '@stores/hive-store';
  * The numbers are derived in the `useCounts()` selector, never stored, so a
  * status change anywhere updates this and nothing else re-renders. Working and
  * waiting are coloured because they are the two that want the user's attention;
- * idle and done stay muted on purpose.
+ * idle and ended stay muted on purpose.
+ *
+ * `done` and `terminated` are summed into one **ended** number (story 108). The
+ * two are worth telling apart on a row, where the user is deciding what to do
+ * about one session; in a fleet-wide tally they answer the same question — how
+ * much of the hive is no longer running — and a fifth number would cost the
+ * header width it does not have (see below).
  *
  * `truncate` (with the `min-w-0` that actually lets a flex item shrink) is what
  * keeps this to one line, and it is load-bearing for the header's centred model
@@ -20,13 +26,13 @@ import { useCounts } from '@stores/hive-store';
  * full string stays in the tooltip.
  */
 export function StatusCounts() {
-  const { working, waiting, idle, done } = useCounts();
+  const { working, waiting, idle, done, terminated } = useCounts();
 
   // Built once and reused for both the spans and the tooltip: two copies of the
   // same sentence drift the moment a separator changes on one of them.
   const workingText = `${working} working`;
   const waitingText = `${waiting} waiting`;
-  const restText = `${idle} idle · ${done} done`;
+  const restText = `${idle} idle · ${done + terminated} ended`;
 
   return (
     <p

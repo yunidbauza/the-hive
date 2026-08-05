@@ -60,9 +60,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** The two session statuses that are event classes. `working` is not one. */
+/**
+ * The two session statuses that are event classes. `working` is not one.
+ *
+ * The **preference key stays `sessionDone`** while the status it answers to is
+ * now `terminated` (story 108). That asymmetry is deliberate: the key is written
+ * into the user's config file, and renaming it would silently reset the
+ * preference of everyone who had already turned it off. The status is an
+ * in-memory observation and cost nothing to correct.
+ */
 const SESSION_CLASS: Partial<Record<DerivedStatus, keyof NotificationPrefs>> = {
-  done: 'sessionDone',
+  terminated: 'sessionDone',
   idle: 'sessionIdle',
 };
 
@@ -76,12 +84,17 @@ export function createNotifier(options: NotifierOptions): Notifier {
     const key = SESSION_CLASS[status as DerivedStatus];
     if (key === undefined || !prefs()[key]) return;
 
+    const terminated = status === 'terminated';
     present({
-      title: status === 'done' ? 'Session finished' : 'Session idle',
-      body:
-        status === 'done'
-          ? `${entityId} has finished.`
-          : `${entityId} has gone quiet.`,
+      /**
+       * "Ended", not "finished". The notification reports what main saw — the
+       * process is gone — and claiming the *work* finished is the judgement
+       * story 108 took out of this path.
+       */
+      title: terminated ? 'Session ended' : 'Session idle',
+      body: terminated
+        ? `${entityId} has exited.`
+        : `${entityId} has gone quiet.`,
       onClick: () => activate(entityId),
     });
   };

@@ -33,8 +33,10 @@ test('renders the fleet table with its two groups', async ({ page }) => {
     stage(page).getByText('PROJECT · BRANCH', { exact: true }),
   ).toBeVisible();
 
-  // 8 active + 2 completed, the fixture split the story names.
-  await expect(stage(page).getByText('COMPLETED')).toBeVisible();
+  // 8 active + 2 ended, the fixture split the story names. The divider says
+  // ENDED rather than COMPLETED because the group now holds two different
+  // endings — work that finished, and a process that quit (story 108).
+  await expect(stage(page).getByText('ENDED')).toBeVisible();
   await expect(stage(page).getByText('apfm-web · feat/hero-refresh')).toBeVisible();
 });
 

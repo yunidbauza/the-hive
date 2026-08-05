@@ -2,8 +2,7 @@ import { cn } from '@/lib/utils';
 import type { Notification, Tone } from '@/types/notification';
 
 import { Icon } from '@components/ui/icon';
-import { useMarkRead } from '@stores/hive-store';
-import { useOpenTab } from '@stores/ui-store';
+import { useMarkRead, useOpenEntity } from '@stores/hive-store';
 
 const TONE_TEXT: Record<Tone, string> = {
   amber: 'text-amber',
@@ -31,14 +30,14 @@ interface NotificationCardProps {
  * count is the whole point of the red badge on the tab.
  */
 export function NotificationCard({ notif, index }: NotificationCardProps) {
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
   const markRead = useMarkRead();
 
   return (
     <button
       type="button"
       onClick={() => {
-        openTab(notif.target);
+        openEntity(notif.target);
         markRead(index);
       }}
       className={cn(

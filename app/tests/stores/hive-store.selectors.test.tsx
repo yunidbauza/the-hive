@@ -58,12 +58,14 @@ describe('hive-store selectors', () => {
     it('splits the fixture sessions by status', () => {
       const { result } = renderHook(() => useCounts());
 
-      // 4 working, 2 waiting, 2 idle, 2 done — 8 active and 2 done overall.
+      // 4 working, 2 waiting, 2 idle, 2 done — 8 active and 2 ended overall.
+      // No fixture is `terminated`: only a real pty exit produces one.
       expect(result.current).toEqual({
         working: 4,
         waiting: 2,
         idle: 2,
         done: 2,
+        terminated: 0,
       });
     });
 
@@ -88,6 +90,7 @@ describe('hive-store selectors', () => {
         waiting: 2,
         idle: 2,
         done: 3,
+        terminated: 0,
       });
     });
   });
@@ -114,6 +117,29 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useNavOrder());
       expect(result.current).not.toContain('slack-agent');
     });
+
+    it('sinks a terminated session to the bottom, like a done one', () => {
+      /**
+       * The four selectors that partition the fleet used to spell
+       * `status === 'done'` independently, which is exactly how a fifth state
+       * gets silently forgotten in three of them. `isEnded` is one predicate so
+       * they cannot disagree (story 108).
+       */
+      const { result } = renderHook(() => useNavOrder());
+
+      act(() =>
+        useHiveStore.getState().setSessionStatus('hero-refresh', 'terminated'),
+      );
+
+      // Seven still running, then the three that have ended — hero-refresh
+      // keeps its place *within* that group, which is fixture order.
+      expect(result.current.slice(7)).toEqual([
+        'hero-refresh',
+        'tz-fix',
+        'ecs-scaling',
+      ]);
+      expect(result.current[0]).toBe('lead-form');
+    });
   });
 
   describe('useProjectSessions', () => {
@@ -138,6 +164,17 @@ describe('hive-store selectors', () => {
     it('returns nothing for an unknown project', () => {
       const { result } = renderHook(() => useProjectSessions('nope'));
       expect(result.current).toEqual([]);
+    });
+
+    it('omits terminated sessions too (story 108)', () => {
+      // The left rail lists what is *running* in a project. A dead pty is not.
+      const { result } = renderHook(() => useProjectSessions('apfm-web'));
+
+      act(() =>
+        useHiveStore.getState().setSessionStatus('lead-form', 'terminated'),
+      );
+
+      expect(result.current).toEqual(['hero-refresh', 'e2e-quote']);
     });
   });
 

@@ -55,6 +55,17 @@ export interface TerminalSurfaceProps {
    * trigger a refit.
    */
   visible?: boolean;
+  /**
+   * The process behind this surface has ended (story 108).
+   *
+   * A *fact about the backend*, not a domain concept: this component still has
+   * no idea what a session is. What it does with the fact is stop pretending to
+   * be typable — stdin off, cursor still — and hand bare `←` to the app, which
+   * is the one way out of a terminal that will never answer another keystroke.
+   * Without it a finished session is a black rectangle that swallows every key,
+   * including the one the user presses to leave.
+   */
+  ended?: boolean;
 }
 
 /** What the mount effect builds, held together so dependents can re-run. */
@@ -142,6 +153,9 @@ function pasteFromClipboard(terminal: Terminal): void {
  *
  * Same rule as new output, for the same reason: follow the end only for a
  * reader who was already there.
+ *
+ * **Every caller must have established that the surface is visible.** See
+ * {@link visibleRef} for what fitting a hidden one does.
  */
 function fitPreservingBottom({ terminal, fitAddon }: Instance) {
   const stick = atBottom(terminal);
@@ -165,6 +179,7 @@ export function TerminalSurface({
   scrollback = DEFAULT_SCROLLBACK,
   readOnly = false,
   visible = true,
+  ended = false,
 }: TerminalSurfaceProps) {
   /**
    * Container and instance both live in state behind callback refs rather than
@@ -190,6 +205,56 @@ export function TerminalSurface({
   useEffect(() => {
     transportRef.current = transport;
   }, [transport]);
+
+  /**
+   * Same reason as `transportRef`, one story later: the custom key handler is
+   * installed once, in the mount effect, and a captured `ended` would pin it to
+   * whatever was true when the terminal was constructed — which is always
+   * `false`, since a surface mounts long before its process ends. The handler
+   * has to ask at keystroke time or the escape hatch never opens.
+   */
+  const endedRef = useRef(ended);
+  useEffect(() => {
+    endedRef.current = ended;
+  }, [ended]);
+
+  /**
+   * Whether this surface is on screen, readable from the resize observer.
+   *
+   * ## What fitting a hidden surface does
+   *
+   * A kept-alive instance is hidden with `display: none`, and hiding it fires
+   * the observer with a zero box. An element in a `display: none` subtree has no
+   * used values, so `getComputedStyle` hands the fit addon back the *specified*
+   * `height: 100%` / `width: 100%` — which it parses as the number `100`. Not
+   * `NaN`, so its own guard passes; not the real size either, so it proposes
+   * roughly **11×5**.
+   *
+   * That is not a cosmetic error, because two things then happen. `fit()`
+   * reflows the buffer to eleven columns, and the new size is forwarded to the
+   * pty — so the child process repaints its entire TUI at eleven columns.
+   * Returning to the session refits to the real width, but there is nothing left
+   * to restore: the wide rows were overwritten while nobody was looking. The
+   * user sees a transcript shredded into a narrow ribbon.
+   *
+   * ## Why a ref written during render
+   *
+   * The obvious version — an effect, like {@link transportRef} above — loses a
+   * race it cannot afford. Hiding a surface goes: React commits `display: none`
+   * → the browser lays out → the observer fires → *then* passive effects run.
+   * A `visible` updated in an effect is still `true` at the moment the zero-box
+   * notification arrives, which is precisely the notification that has to be
+   * ignored. Written during render, it is correct before the DOM change it
+   * describes is even painted.
+   *
+   * Deliberately **not** a `clientWidth` check on the container. That would be
+   * synchronous too, and it would be wrong in the other direction: a visible
+   * surface briefly measuring zero mid-layout would skip its fit and never get
+   * another, because no further resize is coming. Visibility is the condition
+   * that has a guaranteed follow-up — the reveal effect below.
+   */
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   useEffect(() => {
     if (!container) return;
@@ -227,6 +292,8 @@ export function TerminalSurface({
         switch (decideTerminalKey(event, {
           isMac,
           hasSelection: terminal.hasSelection(),
+          /** Read per keystroke, not captured. See {@link endedRef}. */
+          ended: endedRef.current,
           /**
            * Read per keystroke rather than cached. The buffer moves under us
            * constantly — every chunk of agent output rewrites these rows — and
@@ -269,7 +336,17 @@ export function TerminalSurface({
     // below owns every fit, so a surface that mounts hidden is not measured
     // against a zero-height box and a visible one is not fitted twice.
 
+    /**
+     * Hidden surfaces are not measured, and are not reported (story 108).
+     *
+     * Hiding one fires this observer with a zero box; acting on that is what
+     * corrupts a backgrounded session, and telling the pty about it is what
+     * makes the corruption survive coming back. See {@link visibleRef}. The
+     * backgrounded terminal keeps the size it was last actually shown at, and
+     * the reveal effect below re-fits it when there is something to measure.
+     */
     const resizeObserver = new ResizeObserver(() => {
+      if (!visibleRef.current) return;
       fitPreservingBottom({ terminal, fitAddon });
       transportRef.current.resize(terminal.cols, terminal.rows);
     });
@@ -323,12 +400,10 @@ export function TerminalSurface({
    *
    * **The options are applied to every instance; only the fit waits for
    * visibility.** Appearance is forwarded to all kept-alive surfaces, not just
-   * the active one, so this effect runs on hidden terminals too — and a hidden
-   * surface is `display: none`, whose `h-full` resolves to 0px rather than
-   * `auto`. The fit addon's `isNaN` guard does not catch that, so it would
-   * resize a background terminal to the 2×1 floor and reflow its buffer at two
-   * columns. The visibility effect already re-fits on reveal, which is where
-   * the geometry actually exists to measure.
+   * the active one, so this effect runs on hidden terminals too, where there is
+   * no box to measure and fitting would shred the buffer ({@link visibleRef}).
+   * The visibility effect already re-fits on reveal, which is where the geometry
+   * actually exists to measure.
    */
   const appearanceRef = useRef({ fontFamily, fontSize, scrollback });
   useEffect(() => {
@@ -407,11 +482,46 @@ export function TerminalSurface({
    * Covers both the first paint and every later reveal: a hidden surface has no
    * geometry to measure, so a terminal fitted while hidden would render at the
    * wrong size for the rest of its life.
+   *
+   * ## And the keyboard follows the fit (story 108)
+   *
+   * Becoming visible is exactly the moment a live terminal should be typable:
+   * opening a session and finding the keyboard pointed at nothing means the
+   * first thing every new session asks of its user is a click, and the app's one
+   * claim is that it puts you *in* the terminal. Focus is taken here rather than
+   * on mount because `TerminalHost` mounts instances lazily and keeps them alive
+   * hidden — mount and reveal are the same event only the first time.
+   *
+   * Read-only surfaces are excluded, and that exclusion is load-bearing rather
+   * than tidy: the orchestrator console is read-only and owns a *separate*
+   * command row (story 041) that autofocuses itself. Focusing its transcript
+   * would take the caret out of the input the whole console is driven from.
    */
   useEffect(() => {
     if (!instance || !visible) return;
     fitPreservingBottom(instance);
-  }, [instance, visible]);
+    if (!readOnly) instance.terminal.focus();
+  }, [instance, visible, readOnly]);
+
+  /**
+   * A finished process stops pretending to accept input (story 108).
+   *
+   * Both options are live — xterm reads them per keystroke and per blink rather
+   * than at construction — which is what lets this be an effect instead of the
+   * terminal rebuild that `readOnly` requires. A rebuild would dispose the
+   * buffer, and the transcript of a session that just ended is the single most
+   * interesting thing on the screen.
+   *
+   * The cursor matters as much as stdin here. A blinking caret over a dead pty
+   * is an invitation, and every character typed into it disappears without a
+   * trace — the exact experience of a hung session, produced by one that
+   * finished cleanly.
+   */
+  useEffect(() => {
+    if (!instance || readOnly) return;
+    instance.terminal.options.disableStdin = ended;
+    instance.terminal.options.cursorBlink = !ended;
+  }, [instance, readOnly, ended]);
 
   /**
    * The WebGL renderer, attached to the visible interactive terminal only.

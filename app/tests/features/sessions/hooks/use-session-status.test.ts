@@ -55,9 +55,13 @@ describe('useSessionStatus', () => {
     withBridge();
     renderHook(() => useSessionStatus());
 
-    emit({ entityId: 'hero-refresh', status: 'done' });
+    // `terminated` is the ending main can actually observe — a pty exited.
+    // `done` is a judgement about the work and is not main's to make (108).
+    emit({ entityId: 'hero-refresh', status: 'terminated' });
 
-    expect(useHiveStore.getState().entities['hero-refresh']!.status).toBe('done');
+    expect(useHiveStore.getState().entities['hero-refresh']!.status).toBe(
+      'terminated',
+    );
   });
 
   it('subscribes exactly once', () => {

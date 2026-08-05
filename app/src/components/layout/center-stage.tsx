@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { isEntityView, resolveView } from '@/lib/resolve-view';
 import { cn } from '@/lib/utils';
+import { isTerminated } from '@/types/entity';
 
 import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { TerminalHost } from '@components/terminal/terminal-host';
@@ -112,6 +113,16 @@ export function CenterStage() {
     entries.find((entry) => entry.id === activeTab)?.readOnly === false;
 
   /**
+   * The one surface that may be looking at a dead pty (story 108).
+   *
+   * Derived from `entity`, which this component already subscribes to, so
+   * knowing it costs nothing. Only the visible terminal can hold focus, and
+   * `ended` only affects keys and stdin, so the visible one is the only one that
+   * needs to know.
+   */
+  const endedId = isTerminated(entity ?? undefined) ? activeTab : null;
+
+  /**
    * Focus the message row when the terminal area is clicked — unless the user
    * just finished selecting text.
    *
@@ -198,6 +209,7 @@ export function CenterStage() {
              * triggers its refit through the machinery story 042 already has.
              */
             activeId={showingOverlay ? null : activeTab}
+            endedId={endedId}
             theme={theme}
             fontFamily={terminalAppearance.fontFamily}
             fontSize={terminalAppearance.fontSize}
@@ -207,7 +219,23 @@ export function CenterStage() {
 
         {view === 'orchestrator' ? <ConsoleInput /> : null}
 
-        {isEntityView(view) && entity ? (
+        {/*
+          The message row exists for surfaces that cannot be typed into
+          (story 108).
+
+          A live session **is** Claude Code's own prompt, and stacking a second
+          text box beneath it gives one session two places to type — with
+          different keybindings, different history, and no way to tell from the
+          caret which one will receive the next character. Worse, this row's
+          autofocus was fighting the terminal's for every newly opened session,
+          which is the bug that made a brand-new session ignore what was typed
+          into it. There is one input on this screen now, and it is the terminal.
+
+          Recorded transcripts keep the row, because they have no prompt of their
+          own: the browser demo and the agent tabs are replays, and the row is
+          the only way to speak to them.
+        */}
+        {isEntityView(view) && entity && !activeIsLive ? (
           /*
            * Keyed by entity: switching sessions remounts the row, which clears
            * a half-typed message meant for somebody else and re-runs its

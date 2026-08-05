@@ -266,6 +266,75 @@ describe('CenterStage — interactive terminals', () => {
 
     expect(optionsFor(1).disableStdin).toBe(true);
   });
+
+  describe('the message row (story 108)', () => {
+    const messageRow = () => screen.queryByLabelText(/^Message /);
+
+    it('is absent over a live session — the terminal is the input', () => {
+      /**
+       * A live session **is** Claude Code's own prompt. A second text box under
+       * it gives one session two places to type, with different keybindings and
+       * no way to tell from the caret which will receive the next character —
+       * and its autofocus was competing with the terminal's for every newly
+       * opened session, which is how a brand-new session came to ignore what
+       * was typed into it.
+       */
+      withBridge();
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      expect(messageRow()).not.toBeInTheDocument();
+    });
+
+    it('stays over a recorded transcript, which has no prompt of its own', () => {
+      // The browser demo. Without the row there is no way to speak to it at all.
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      expect(messageRow()).toBeInTheDocument();
+    });
+
+    it('stays over an agent, whose transcript is a replay on desktop too', () => {
+      withBridge();
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('slack-agent'));
+
+      expect(messageRow()).toBeInTheDocument();
+    });
+  });
+
+  describe('a session that ends while it is on screen (story 108)', () => {
+    it('tells its surface, so the terminal stops taking input', () => {
+      withBridge();
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+      expect(optionsFor(1).disableStdin).toBe(false);
+
+      act(() =>
+        useHiveStore.getState().setSessionStatus('hero-refresh', 'terminated'),
+      );
+
+      expect(optionsFor(1).disableStdin).toBe(true);
+      expect(optionsFor(1).cursorBlink).toBe(false);
+    });
+
+    it('does not navigate away — the exit notice is the point', () => {
+      /**
+       * Terminated sessions cannot be *re-entered*, but yanking the view out
+       * from under someone the instant their agent quits would make the ending
+       * impossible to read. The gate is about coming back, not about leaving.
+       */
+      withBridge();
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      act(() =>
+        useHiveStore.getState().setSessionStatus('hero-refresh', 'terminated'),
+      );
+
+      expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+    });
+  });
 });
 
 describe('CenterStage — the escape chord', () => {

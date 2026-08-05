@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { useOpenTab } from '@stores/ui-store';
+import { useOpenEntity } from '@stores/hive-store';
 
 /**
  * Open the session a clicked notification was about (story 106).
@@ -17,15 +17,23 @@ import { useOpenTab } from '@stores/ui-store';
  * subscription would mean thirteen listeners on one broadcast channel.
  */
 export function useNotificationActivate(): void {
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
 
   useEffect(() => {
     // No bridge is the browser demo, where there is no OS to notify.
     const bridge = window.hive;
     if (!bridge) return;
 
+    /**
+     * Through the domain gate, not straight to the tab (story 108).
+     *
+     * This path is the most likely one to name a session that has since ended —
+     * "Session ended" is itself one of the notifications main raises, and the
+     * user may click it minutes later. Opening the tab anyway would put them
+     * inside a dead terminal; the gate sends them to the fleet view instead.
+     */
     return bridge.notifications.onActivate(({ entityId }) => {
-      openTab(entityId);
+      openEntity(entityId);
     });
-  }, [openTab]);
+  }, [openEntity]);
 }

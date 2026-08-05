@@ -1,8 +1,7 @@
 import { isSession } from '@/types/entity';
 
 import { StatusDot } from '@components/ui/status-dot';
-import { useEntity } from '@stores/hive-store';
-import { useOpenTab } from '@stores/ui-store';
+import { useEntity, useOpenEntity } from '@stores/hive-store';
 
 interface TicketSessionRowProps {
   id: string;
@@ -20,14 +19,14 @@ interface TicketSessionRowProps {
  */
 export function TicketSessionRow({ id }: TicketSessionRowProps) {
   const entity = useEntity(id);
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
 
   if (!entity || !isSession(entity)) return null;
 
   return (
     <button
       type="button"
-      onClick={() => openTab(id)}
+      onClick={() => openEntity(id)}
       className="-mx-1.5 flex items-center gap-2 rounded-md px-1.5 py-[3px] hover:bg-hover"
     >
       {/*

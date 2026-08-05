@@ -5,11 +5,12 @@ import { STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
 import {
   useActiveSessions,
-  useDoneSessions,
+  useEndedSessions,
   useEntity,
   useNavOrder,
+  useOpenEntity,
 } from '@stores/hive-store';
-import { useActiveTab, useOpenTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
+import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
 /**
  * The orchestrator's fleet table (story 041).
@@ -24,7 +25,7 @@ import { useActiveTab, useOpenTab, useSelIdx, useSetSelIdx } from '@stores/ui-st
  */
 export function SessionTable() {
   const active = useActiveSessions();
-  const done = useDoneSessions();
+  const ended = useEndedSessions();
 
   return (
     <div className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]">
@@ -40,15 +41,20 @@ export function SessionTable() {
         <SessionTableRow key={id} id={id} />
       ))}
 
-      {done.length > 0 ? (
+      {/*
+        "ENDED", not "COMPLETED" (story 108). The group now holds two different
+        endings — work that finished and a process that quit — and only one of
+        them was ever completed. The row's own status word says which.
+      */}
+      {ended.length > 0 ? (
         <>
           <div className="flex items-center gap-2 px-2 pt-3.5 pb-1.5">
             <span className="shrink-0 text-[11px] tracking-[0.06em] text-term-head">
-              COMPLETED
+              ENDED
             </span>
             <span className="flex-1 border-t border-border" />
           </div>
-          {done.map((id) => (
+          {ended.map((id) => (
             <SessionTableRow key={id} id={id} />
           ))}
         </>
@@ -69,28 +75,42 @@ function SessionTableRow({ id }: { id: string }) {
   const navOrder = useNavOrder();
   const selIdx = useSelIdx();
   const setSelIdx = useSetSelIdx();
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
   const activeTab = useActiveTab();
 
   if (!entity || !isSession(entity)) return null;
 
   const index = navOrder.indexOf(id);
   const selected = index === selIdx;
+  /**
+   * A terminated row still reads, still selects, and does not open (story 108).
+   *
+   * `disabled` rather than a silently ignored click. The row's whole job on this
+   * screen is to say what happened to a session, so it stays legible and stays
+   * in the list — but a button that looks live and does nothing is worse than
+   * one that says it is spent, and `disabled` is the only version of that a
+   * screen reader hears too. The `title` supplies the *why*, which the status
+   * word alone does not.
+   */
+  const terminated = entity.status === 'terminated';
 
   return (
     <button
       type="button"
+      disabled={terminated}
+      title={terminated ? `${entity.id} has terminated — its process is gone` : undefined}
       onClick={() => {
         // Click both selects and opens: the caret should follow the user's
         // last action, or the keyboard and the mouse end up disagreeing about
         // where "here" is.
         setSelIdx(index);
-        openTab(id);
+        openEntity(id);
       }}
       aria-current={activeTab === id ? 'true' : undefined}
       className={cn(
         'flex w-full items-center gap-2.5 rounded px-2 py-[3px] text-left',
         selected ? 'bg-term-row-active' : 'hover:bg-term-row-hover',
+        terminated && 'opacity-60',
       )}
     >
       <span

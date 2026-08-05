@@ -331,3 +331,54 @@ describe('decideTerminalKey — bare ← at an empty Claude prompt', () => {
     ).toBe('app-chord');
   });
 });
+
+describe('decideTerminalKey — after the process has ended (story 108)', () => {
+  it('hands bare ← to the app with no cursor context at all', () => {
+    /**
+     * The `/exit` case. The last rows are a shell's `logout` and an exit
+     * notice, which is prompt-shaped for neither `isEmptyClaudePrompt` nor
+     * anything else — so the empty-prompt rule cannot fire, and before this the
+     * key went to a pty that would never answer. The user was left with no
+     * keyboard route back to the orchestrator at all.
+     */
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), { ...MAC, ended: true }),
+    ).toBe('app-chord');
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), { ...PC, ended: true }),
+    ).toBe('app-chord');
+  });
+
+  it('takes only that one key — everything else still belongs to the terminal', () => {
+    /**
+     * A dead terminal is still a *readable* one, and reading it is why the tab
+     * stays open. Widening this into "the app owns the keyboard now" would
+     * break scrolling through the transcript the user stayed for.
+     */
+    expect(
+      decideTerminalKey(key({ key: 'ArrowRight' }), { ...MAC, ended: true }),
+    ).toBe('to-pty');
+    expect(decideTerminalKey(key({ key: 'a' }), { ...MAC, ended: true })).toBe(
+      'to-pty',
+    );
+  });
+
+  it('does not fire while the process is still running', () => {
+    // The default is `false`, and a live terminal keeps every bare key — the
+    // governing rule this rule is a narrow exception to.
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), { ...MAC, ended: false }),
+    ).toBe('to-pty');
+    expect(decideTerminalKey(key({ key: 'ArrowLeft' }), MAC)).toBe('to-pty');
+  });
+
+  it('leaves copy alone', () => {
+    expect(
+      decideTerminalKey(key({ key: 'c', metaKey: true }), {
+        isMac: true,
+        hasSelection: true,
+        ended: true,
+      }),
+    ).toBe('copy');
+  });
+});

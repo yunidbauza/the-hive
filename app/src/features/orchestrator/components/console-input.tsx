@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
-import { useNavOrder, useRunOrchCommand } from '@stores/hive-store';
-import { useOpenTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
+import {
+  useNavOrder,
+  useOpenEntity,
+  useRunOrchCommand,
+} from '@stores/hive-store';
+import { useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
 const PLACEHOLDER = 'help · status · send <session> <message> · spawn <repo> <task>';
 const KEY_HINT = '↑↓ select · → open · ↵ run';
@@ -22,7 +26,7 @@ export function ConsoleInput() {
   const navOrder = useNavOrder();
   const selIdx = useSelIdx();
   const setSelIdx = useSetSelIdx();
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
 
   /**
    * Focus on mount so the arrow keys work without a click first. Story 060
@@ -42,9 +46,13 @@ export function ConsoleInput() {
     setSelIdx(next);
   };
 
+  /**
+   * `→` and `↵` open the selected row — through the domain gate, so a
+   * terminated session is declined here exactly as it is on click (story 108).
+   */
   const openSelected = () => {
     const id = navOrder[selIdx];
-    if (id) openTab(id);
+    if (id) openEntity(id);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {

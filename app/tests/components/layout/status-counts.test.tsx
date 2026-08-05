@@ -15,7 +15,7 @@ describe('StatusCounts', () => {
 
     expect(screen.getByText('4 working')).toBeInTheDocument();
     expect(screen.getByText('2 waiting')).toBeInTheDocument();
-    expect(screen.getByText(/2 idle · 2 done/)).toBeInTheDocument();
+    expect(screen.getByText(/2 idle · 2 ended/)).toBeInTheDocument();
   });
 
   it('colours only the two statuses that want attention', () => {
@@ -54,13 +54,13 @@ describe('StatusCounts', () => {
   it('truncates on one line rather than wrapping, and keeps the full string in its tooltip', () => {
     render(<StatusCounts />);
 
-    const counts = screen.getByText(/2 idle · 2 done/);
+    const counts = screen.getByText(/2 idle · 2 ended/);
     // `min-w-0` is not decoration — without it a flex item refuses to shrink
     // below its content and `truncate` never fires.
     expect(counts).toHaveClass('min-w-0', 'truncate');
     expect(counts).toHaveAttribute(
       'title',
-      '4 working · 2 waiting · 2 idle · 2 done',
+      '4 working · 2 waiting · 2 idle · 2 ended',
     );
   });
 

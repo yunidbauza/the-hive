@@ -152,7 +152,7 @@ test('a clean exit from the agent ends the whole session', async ({}, testInfo) 
 
     /**
      * Asserted on the *process*, not on a rendered badge. A session showing
-     * `done` with a live shell still behind it would pass a UI assertion and
+     * `terminated` with a live shell still behind it would pass a UI assertion and
      * still leak — which is the whole failure mode story 096's teardown exists
      * to prevent, and this change adds a new way to reach it.
      */

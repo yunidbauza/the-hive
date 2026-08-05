@@ -7,7 +7,7 @@ import {
   findingsLabel,
   prStateText,
 } from '@features/shared/pr-presentation';
-import { useOpenTab } from '@stores/ui-store';
+import { useOpenEntity } from '@stores/hive-store';
 
 interface TicketPrRowProps {
   pr: TicketPr;
@@ -20,7 +20,7 @@ interface TicketPrRowProps {
  * no tab of its own in this app; the session that produced it does.
  */
 export function TicketPrRow({ pr }: TicketPrRowProps) {
-  const openTab = useOpenTab();
+  const openEntity = useOpenEntity();
 
   const stateText = prStateText(pr.state);
   const findings = findingsLabel(pr.findings);
@@ -29,7 +29,7 @@ export function TicketPrRow({ pr }: TicketPrRowProps) {
   return (
     <button
       type="button"
-      onClick={() => openTab(pr.session)}
+      onClick={() => openEntity(pr.session)}
       className="-mx-1.5 flex items-center gap-[7px] rounded-md px-1.5 py-[3px] hover:bg-hover"
     >
       <Icon

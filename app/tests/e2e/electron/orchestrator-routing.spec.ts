@@ -169,34 +169,29 @@ test('sending to a session with no process refuses, and says why', async () => {
   expect(await consoleText()).not.toContain(`routed → ${UNOPENED}`);
 });
 
-test('a message typed into the row reaches the prompt and submits', async () => {
+test('a live session has no message row — the terminal is the input', async () => {
+  /**
+   * Story 108 removed the row from live sessions, and this is where that is
+   * worth asserting rather than in a unit test: on desktop the surface above it
+   * is a real pty running Claude Code, which has a prompt of its own. Two text
+   * boxes for one session means two sets of keybindings and no way to tell from
+   * the caret which will receive the next character — and the row's autofocus
+   * was actively competing with the terminal's, which is how a freshly opened
+   * session came to ignore what was typed into it.
+   *
+   * The row is *not* gone from the app: the browser demo and the agent tabs are
+   * recordings with no prompt to speak into, and they keep it. `picker.spec.ts`
+   * and `waiting-session.spec.ts` cover that side.
+   *
+   * What the row used to prove here — that a message reaches the prompt and is
+   * submitted with `\r` rather than `\n` — is proved by the console send below,
+   * which goes through the same `sendToSession`. Multi-line normalisation is no
+   * longer reachable from any surface (a single-line `<input>` cannot hold a
+   * newline) and is covered by `tests/lib/terminal/session-input.test.ts`.
+   */
   await openSession(SESSION);
-  const marker = out('row.txt');
 
-  await messageInput(SESSION).fill(`echo row-ok > '${marker}'`);
-  await messageInput(SESSION).press('Enter');
-
-  /**
-   * `\r` is what submits. With `\n` the text would land at the prompt and
-   * never run, so asserting that the command *executed* — rather than that it
-   * appeared — is the whole point of this test.
-   */
-  await expectMarker(marker, 'row-ok');
-  await expect(messageInput(SESSION)).toHaveValue('');
-});
-
-test('a multi-line message submits once, as a single line', async () => {
-  const marker = out('multiline.txt');
-
-  /**
-   * `fill` puts a real newline in the input. Unnormalised, the shell would run
-   * the first line and leave the rest half-typed at the prompt; normalised, it
-   * is one command whose argument happens to contain a space.
-   */
-  await messageInput(SESSION).fill(`echo one\ntwo > '${marker}'`);
-  await messageInput(SESSION).press('Enter');
-
-  await expectMarker(marker, 'one two');
+  await expect(messageInput(SESSION)).toHaveCount(0);
 });
 
 test('a console send reaches that session’s terminal', async () => {

@@ -1,7 +1,25 @@
 import type { TermLine } from '@/types/terminal';
 
-/** Session lifecycle. Agents are always `online` and are tracked separately. */
-export type SessionStatus = 'working' | 'waiting' | 'idle' | 'done';
+/**
+ * Session lifecycle. Agents are always `online` and are tracked separately.
+ *
+ * `done` and `terminated` are both endings and are **not** the same ending
+ * (story 108). `done` is a fixture's *judgement* — this work finished — and says
+ * nothing about a process. `terminated` is an observation: the pty is gone.
+ * A real session can only ever reach the second, because a pty exiting is the
+ * only ending main can see; a fixture only ever shows the first, because it has
+ * no process to lose.
+ *
+ * Collapsing them, which is what shipped before this story, made a session that
+ * had merely quit indistinguishable from one that had delivered — and made the
+ * app offer to reopen a terminal with nothing behind it.
+ */
+export type SessionStatus =
+  | 'working'
+  | 'waiting'
+  | 'idle'
+  | 'done'
+  | 'terminated';
 
 export type Model = 'haiku' | 'sonnet' | 'opus' | 'fable';
 export type Effort = 'low' | 'medium' | 'high' | 'max';
@@ -61,6 +79,30 @@ export interface ProjectRow extends Project {
   name: string;
   source: 'config' | 'demo';
 }
+
+/**
+ * Whether a session has ended, however it ended (story 108).
+ *
+ * The distinction between `done` and `terminated` matters to the *user* — one
+ * finished, the other quit — and to almost nothing else. Every list that
+ * partitions the fleet into "still going" and "over" wants both, and the four
+ * selectors that used to spell `status === 'done'` are exactly the places a
+ * fifth state would have been silently forgotten. One predicate is what stops
+ * `terminated` sessions quietly reappearing in the active list.
+ */
+export const isEnded = (status: SessionStatus): boolean =>
+  status === 'done' || status === 'terminated';
+
+/**
+ * Whether this session's process is gone and cannot be typed into.
+ *
+ * Narrower than {@link isEnded}, and the two are not interchangeable: a `done`
+ * fixture is a *recording* whose terminal has always been read-only and works
+ * fine, while a `terminated` session has a real, dead pty behind it. Only the
+ * second one closes its tab to new visits.
+ */
+export const isTerminated = (entity: Entity | undefined): boolean =>
+  entity !== undefined && entity.kind === 'session' && entity.status === 'terminated';
 
 /** Narrowing helpers — cheaper to read than repeating the discriminant. */
 export const isSession = (entity: Entity): entity is Session =>

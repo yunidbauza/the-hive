@@ -43,10 +43,13 @@ const cloneEvent = (ok: boolean) => ({
 });
 
 describe('sessions', () => {
-  it('notifies when a session finishes', () => {
+  it('notifies when a session ends', () => {
     const { notifier, shown } = harness();
 
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'done' });
+    notifier.observe(CH.sessionStatus, {
+      entityId: 'apfm-web',
+      status: 'terminated',
+    });
 
     expect(shown).toHaveLength(1);
     expect(shown[0]?.body).toContain('apfm-web');
@@ -82,7 +85,7 @@ describe('sessions', () => {
   it('respects a class the user switched off', () => {
     const { notifier, shown } = harness({ sessionDone: false });
 
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'done' });
+    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'terminated' });
 
     expect(shown).toEqual([]);
   });
@@ -99,7 +102,7 @@ describe('sessions', () => {
     });
 
     prefs = { ...prefs, sessionDone: false };
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'done' });
+    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'terminated' });
 
     expect(shown).toEqual([]);
   });
@@ -145,7 +148,10 @@ describe('clicking', () => {
   it('asks the renderer to open the session the notification was about', () => {
     const { notifier, shown, activated } = harness();
 
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'done' });
+    notifier.observe(CH.sessionStatus, {
+      entityId: 'apfm-web',
+      status: 'terminated',
+    });
     shown[0]?.onClick();
 
     expect(activated).toEqual(['apfm-web']);
@@ -166,8 +172,8 @@ describe('other channels and bad payloads', () => {
     const { notifier, shown } = harness();
 
     notifier.observe(CH.sessionStatus, null);
-    notifier.observe(CH.sessionStatus, 'done');
-    notifier.observe(CH.sessionStatus, { entityId: 42, status: 'done' });
+    notifier.observe(CH.sessionStatus, 'terminated');
+    notifier.observe(CH.sessionStatus, { entityId: 42, status: 'terminated' });
     notifier.observe(CH.sessionStatus, { entityId: 'a' });
     notifier.observe(CH.configCloneDone, { ok: 'yes' });
 
@@ -184,7 +190,7 @@ describe('other channels and bad payloads', () => {
     });
 
     expect(() =>
-      notifier.observe(CH.sessionStatus, { entityId: 'a', status: 'done' }),
+      notifier.observe(CH.sessionStatus, { entityId: 'a', status: 'terminated' }),
     ).not.toThrow();
   });
 });

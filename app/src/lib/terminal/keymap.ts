@@ -194,6 +194,14 @@ export interface KeyContext {
    * swallowed arrow key.
    */
   cursor?: CursorContext | null;
+  /**
+   * The process behind this terminal has ended (story 108).
+   *
+   * Defaults to `false`, so a caller that does not know keeps the old
+   * behaviour. See {@link decideTerminalKey} for why this is the one condition
+   * that widens the app's claim on a key rather than narrowing it.
+   */
+  ended?: boolean;
 }
 
 /**
@@ -205,9 +213,28 @@ export interface KeyContext {
  */
 export function decideTerminalKey(
   event: KeyEventLike,
-  { isMac, hasSelection, cursor }: KeyContext,
+  { isMac, hasSelection, cursor, ended = false }: KeyContext,
 ): TerminalKeyAction {
   if (isBackChord(event, isMac)) return 'app-chord';
+
+  /**
+   * A terminal whose process has ended gives `←` back to the app (story 108).
+   *
+   * The governing rule — *a focused interactive terminal wins every bare key* —
+   * is a rule about **live** terminals, and it earns its strictness from the
+   * child process needing those keys. There is no child process here. Every
+   * keystroke lands in a pty that will never answer, so the rule protects
+   * nothing and costs the user the only key they are likely to press: `←` is how
+   * you leave a session everywhere else in the app, and after `/exit` it was the
+   * one place it silently did nothing.
+   *
+   * Checked **before** {@link isEmptyClaudePrompt} rather than folded into it,
+   * because the two ask unrelated questions. That one asks whether Claude would
+   * have navigated; this one applies when Claude is gone — the last thing on
+   * screen is a shell's `logout` and an exit notice, which is prompt-shaped for
+   * neither test.
+   */
+  if (ended && isBareBack(event)) return 'app-chord';
 
   /**
    * Bare `←` at an empty Claude prompt belongs to the app, not to the pty.
