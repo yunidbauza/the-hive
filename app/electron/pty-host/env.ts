@@ -33,6 +33,14 @@ const DENY_EXACT = new Set([
    * up the first time a real shell was spawned and its environment read back.
    */
   'NODE_PATH',
+  /**
+   * `CLAUDECODE` marks a process as running *inside* a Claude Code session.
+   *
+   * Named as well as covered by the `CLAUDE_` prefix below, because it is the
+   * one that does not match that prefix — and it is the flag several tools key
+   * their behaviour off.
+   */
+  'CLAUDECODE',
 ]);
 
 /**
@@ -40,8 +48,43 @@ const DENY_EXACT = new Set([
  *
  * - `ELECTRON_*` — internal wiring, never meaningful to a user shell.
  * - `GDK_PIXBUF_*`, `CHROME_*` — Chromium sandbox/runtime leakage.
+ * - `CLAUDE_*` — see below. The most consequential entry on this list for this
+ *   app in particular.
  */
-const DENY_PREFIX = ['ELECTRON_', 'GDK_PIXBUF_', 'CHROME_'];
+const DENY_PREFIX = ['ELECTRON_', 'GDK_PIXBUF_', 'CHROME_', 'CLAUDE_'];
+
+/**
+ * Why `CLAUDE_*` is stripped, and why it matters more here than anywhere else.
+ *
+ * Launch The Hive from a terminal that is *itself* inside a Claude Code session
+ * — `pnpm desktop:dev` typed into one, which is exactly how it gets developed —
+ * and Electron inherits that session's variables: `CLAUDE_CODE_SESSION_ID`,
+ * `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDECODE=1`, and the rest. Every pty then
+ * hands them to `claude`, and every agent The Hive spawns **joins the launching
+ * session instead of starting its own**.
+ *
+ * The symptoms are bizarre until the cause is known, and were all observed:
+ *
+ * - Every new session opened already carrying the launching session's display
+ *   name, ignoring the `--name` the app passed it.
+ * - Renaming any one session renamed *all* of them, and the developer's own
+ *   outer session along with them, because there was only ever one session.
+ * - `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker`
+ *   in sessions nobody had configured that way.
+ *
+ * This is the same bug class the module comment above describes — "it works in
+ * my terminal but not in the app" — but inverted and much worse: it works in a
+ * plain terminal and breaks only when launched from the environment its own
+ * developers use. Nothing about the app's own behaviour is wrong; it is asking
+ * a `claude` that has already been told it is part of somebody else's
+ * conversation to be a session of its own.
+ *
+ * Stripping here is the right layer and is not lossy. `buildEnv` seeds from the
+ * *ambient* environment, and sessions run a **login shell**, so any `CLAUDE_*`
+ * the user genuinely exports from their own profile is re-established by that
+ * shell. What is removed is only the leakage from however the app happened to
+ * be started.
+ */
 
 /**
  * The single most consequential option in the whole story.

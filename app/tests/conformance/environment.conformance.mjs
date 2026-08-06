@@ -40,6 +40,39 @@ describe('environment', () => {
     await session.waitForOutput('ELECTRON-COUNT-0');
   });
 
+  it('no CLAUDE_* variable leaks into a session (HIVE-64)', async (context) => {
+    /**
+     * The most consequential entry on the deny list for *this* app.
+     *
+     * Launch The Hive from a terminal that is itself inside a Claude Code
+     * session — which is how it gets developed — and every pty would hand
+     * `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_CHILD_SESSION` to the `claude`
+     * it starts. That agent then joins the launching session instead of
+     * starting its own: every session opened under the launcher's name, and
+     * renaming any one of them renamed all of them at once.
+     *
+     * Injected explicitly rather than relying on the runner's own environment,
+     * so the assertion holds whether or not the suite was started from inside
+     * a session. That is the difference between this and the
+     * `ELECTRON_RUN_AS_NODE` row above, which can lean on the runner.
+     */
+    const session = await context.ready(
+      context.open({
+        env: {
+          CLAUDE_CODE_SESSION_ID: 'leaked-session-id',
+          CLAUDE_CODE_CHILD_SESSION: '1',
+          CLAUDECODE: '1',
+        },
+      }),
+    );
+
+    session.send('echo "CS=[$CLAUDE_CODE_SESSION_ID] CC=[$CLAUDECODE]"');
+    await session.waitForOutput('CS=[] CC=[]');
+
+    session.send('env | grep -c "^CLAUDE" || echo CLAUDE-COUNT-0');
+    await session.waitForOutput('CLAUDE-COUNT-0');
+  });
+
   it('NODE_OPTIONS is not inherited', async (context) => {
     const session = await context.ready(
       context.open({ env: {} }),
