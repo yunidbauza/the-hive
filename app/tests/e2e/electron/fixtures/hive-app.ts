@@ -132,6 +132,50 @@ export async function waitForTerminalText(
 }
 
 /**
+ * A stub that stands in for the agent, and never for a moment the real one.
+ *
+ * `claudeCommand` defaults to `'claude'` (`config-contract.ts`), and
+ * `sessionCommand` bootstraps it as `claude … && exit` **in the mapped
+ * directory**. A config that omits it therefore starts a real agent session in
+ * whatever directory the spec mapped — which for `chrome.spec.ts` is this
+ * repository. That would consume tokens and touch the working tree, which is
+ * why every hand-written spec config already stubs it.
+ *
+ * `; false` is not decoration. The bootstrap is `claude && exit`, so a stub that
+ * ends cleanly takes the login shell with it and leaves no shell to type into.
+ * Ending badly short-circuits the `&&` and keeps the session open.
+ */
+const STUB_CLAUDE_COMMAND = 'true; false';
+
+/**
+ * Write a config declaring one project, mapped to a directory that exists.
+ *
+ * The companion to {@link startSession}: a session can only be started on a
+ * *mapped* project, and the app no longer arrives with any. Specs that only
+ * need "somewhere spawnable" say so with this rather than hand-rolling a
+ * config-file literal apiece.
+ *
+ * `shell` and `claudeCommand` are pinned rather than left to defaults, for the
+ * reason {@link STUB_CLAUDE_COMMAND} gives — and `sh`, not the user's `$SHELL`,
+ * because zsh and bash differ in prompt behaviour and a suite that passes only
+ * on the author's machine is worthless.
+ */
+export function writeProjectConfig(
+  configPath: string,
+  { id, path }: { id: string; path: string },
+): void {
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      version: 2,
+      shell: '/bin/sh',
+      claudeCommand: STUB_CLAUDE_COMMAND,
+      projects: [{ id, name: id, path, icon: 'ph-cube' }],
+    }),
+  );
+}
+
+/**
  * Start a real session on a mapped project, through the picker, and answer with
  * its id.
  *
@@ -153,27 +197,6 @@ export async function waitForTerminalText(
  * the first call in a test is always `sess-01` — but the id is returned rather
  * than assumed, so a spec that starts two sessions need not know the format.
  */
-/**
- * Write a config declaring one project, mapped to a directory that exists.
- *
- * The companion to {@link startSession}: a session can only be started on a
- * *mapped* project, and the app no longer arrives with any. Specs that only
- * need "somewhere spawnable" say so with this rather than hand-rolling a
- * config-file literal apiece.
- */
-export function writeProjectConfig(
-  configPath: string,
-  { id, path }: { id: string; path: string },
-): void {
-  writeFileSync(
-    configPath,
-    JSON.stringify({
-      version: 2,
-      projects: [{ id, name: id, path, icon: 'ph-cube' }],
-    }),
-  );
-}
-
 export async function startSession(
   page: Page,
   projectQuery: string,

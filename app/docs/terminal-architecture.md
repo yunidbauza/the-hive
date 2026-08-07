@@ -262,9 +262,11 @@ Split by what each tool can actually prove.
 construction, options, subscription, refit calls, teardown, and the pure
 predicates in `lib/terminal/`.
 
-**Playwright** (`tests/e2e/terminal.spec.ts`) owns everything that needs a
-rendered terminal: palette colours on screen, selection, scroll position across
-tab switches, refit on resize, and re-theming.
+**Playwright** owns everything that needs a rendered terminal: palette colours on
+screen, selection, scroll position across tab switches, refit on resize, and
+re-theming. That lives in `tests/e2e/electron/`, against real PTYs — the web
+project's `terminal.spec.ts` covered it while the store booted with a seeded
+fleet, and went with the seed. A browser has no way to open a session to render.
 
 Two gotchas worth knowing before writing a spec:
 

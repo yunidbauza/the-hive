@@ -180,21 +180,11 @@ describe('ProjectsPanel', () => {
     expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
   });
 
-  /**
-   * The store's `projects` slice no longer reaches the screen at all.
-   *
-   * It is what sessions name through `entity.project`, not a list the rail
-   * draws. Writing to it must change nothing here — that separation is what
-   * stopped five unmapped repositories appearing in a fresh install.
+  /*
+   * There was a test here asserting the panel ignored the store's `projects`
+   * slice — the thing that used to put five unmapped repositories in a fresh
+   * install. The slice itself is gone now, so the compiler enforces what this
+   * asserted at runtime: `useHiveStore.setState({ projects: … })` no longer
+   * type-checks. A test that cannot express its own failure case is not a test.
    */
-  it('ignores the store projects slice entirely', () => {
-    render(<ProjectsPanel />);
-
-    act(() => {
-      useHiveStore.setState({ projects: [{ id: 'ghost', icon: 'ph-cube' }] });
-    });
-
-    expect(screen.queryByText('ghost')).not.toBeInTheDocument();
-    expect(projectToggle('apfm-web')).toBeInTheDocument();
-  });
 });

@@ -100,6 +100,34 @@ describe('on desktop', () => {
     });
   });
 
+  /**
+   * A settled `live` result does not flash back to the skeleton on reopen.
+   *
+   * The guard keyed on `tickets.length === 0` at first, which reads a successful
+   * read that matched nothing as "nothing yet". Reopening the WORK tab then
+   * replaced "No issues matched your query." — a real answer — with three
+   * pulsing placeholders for the length of a round trip. It keys on the source
+   * now, so `live` stays `live` while the next read is in flight.
+   */
+  it('stays live across a refresh that returns nothing', async () => {
+    searchJiraIssues.mockResolvedValue({
+      ok: true,
+      value: { issues: [], capped: false },
+    });
+    await state().refreshTickets();
+    expect(state().tickets).toEqual([]);
+    expect(state().ticketSource).toEqual({
+      kind: 'live',
+      stale: false,
+      capped: false,
+    });
+
+    // The reopen. An empty live list must not be mistaken for "not read yet".
+    const refresh = state().refreshTickets();
+    expect(state().ticketSource).not.toEqual({ kind: 'loading' });
+    await refresh;
+  });
+
   it('sends no jql — the override is applied in main', async () => {
     await state().refreshTickets();
 

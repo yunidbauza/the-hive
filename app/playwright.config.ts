@@ -9,9 +9,16 @@ import { defineConfig, devices } from '@playwright/test';
  * library away entirely (`__mocks__/@xterm/`) and assert plumbing only. A real
  * browser is the only place the core promise gets checked.
  *
- * Today this runs a smoke spec against the shell. The suite story 070
- * specifies — terminal, keyboard, waiting-session, picker, simulation — lands
- * as the surfaces it drives are built (stories 040–061).
+ * **The two projects now own different halves of that claim.** `electron` drives
+ * real PTYs and is where terminal rendering, keyboard flow, session lifecycle
+ * and the model chip are asserted. `web` is the shell with nothing behind it —
+ * chrome, layout, theming and the empty states — because the browser target has
+ * no bridge, so no sessions, no config and no Jira.
+ *
+ * Story 070's original list (terminal, keyboard, waiting-session, picker) lived
+ * in `web` while the store booted pre-seeded with a demo fleet. Those specs were
+ * removed with the seed: their subject was ten sessions the browser can no
+ * longer produce, and the coverage moved to `electron`, where sessions are real.
  */
 
 /**

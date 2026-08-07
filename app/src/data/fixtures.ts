@@ -21,11 +21,19 @@ import type { Pr } from '@/types/pull-request';
  * panels permanently blank with no path to filling them, which is a worse lie
  * than stale sample rows.
  *
- * They are **knowingly stale**. Their `session` and `target` fields name
- * sessions (`hero-refresh`, `lead-form`) that no longer exist in any store, so
- * clicking a notification targets nothing. That is accepted for now and is the
- * signal that these three are next: each one dies the day something real feeds
- * it, and this file dies with the last of them.
+ * They are **knowingly stale**, and the consequence is precise enough to write
+ * down. Their `session` and `target` fields name sessions (`hero-refresh`,
+ * `lead-form`) that no longer exist in any store. `openEntity` passes an unknown
+ * id through by design — it refuses only *terminated* sessions — so clicking one
+ * of these rows sets `activeTab` to a phantom id, `resolve-view` routes back to
+ * the orchestrator, and `markRead` still fires: the badge drops and nothing
+ * opens.
+ *
+ * That was an explicit call, not an oversight. The alternative — making the rows
+ * non-interactive — would freeze a panel that is due to become real, and the
+ * click still does the one useful thing it can, which is dismiss the row. Each
+ * of these three dies the day something real feeds it, and this file dies with
+ * the last of them.
  *
  * Nothing outside `src/stores/` may import this module — enforced by an import
  * zone (story 014), not by review. Panels read derived state through selector

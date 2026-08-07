@@ -9,7 +9,6 @@ import type {
   Effort,
   Entity,
   Model,
-  Project,
   ProjectRow,
   Session,
   SessionStatus,
@@ -109,7 +108,13 @@ interface HiveState {
   entities: Record<string, Entity>;
   order: string[];
   agentOrder: string[];
-  projects: Project[];
+  /*
+   * No `projects` slice. It held the five seeded projects and was what
+   * `useProjects()` fell back to; both the seed and the fallback are gone, and
+   * a slice nothing reads is a slice that drifts. The project list is the
+   * config file's, read through `projectConfigSnapshot()`. Sessions still name
+   * a project through `entity.project` — that string needs no table here.
+   */
   tickets: Ticket[];
   /** Where {@link HiveState.tickets} came from (HIVE-69). */
   ticketSource: TicketSource;
@@ -251,12 +256,11 @@ const line = (text: string, color: TermLine['color'] = 'ink'): TermLine => ({
  */
 const emptySeeds = (): Pick<
   HiveState,
-  'entities' | 'order' | 'agentOrder' | 'projects' | 'tickets' | 'orchLines'
+  'entities' | 'order' | 'agentOrder' | 'tickets' | 'orchLines'
 > => ({
   entities: {},
   order: [],
   agentOrder: [],
-  projects: [],
   tickets: [],
   orchLines: [],
 });
@@ -627,10 +631,21 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * Emptying the seed left it always empty, so every `spawn` answered
          * "unknown repo" for projects sitting right there in the Projects
          * panel. One source for "which projects exist", and it is the config.
+         *
+         * **No snapshot means permissive, not empty.** `main.tsx` fires
+         * `loadProjectConfig()` without awaiting, and `project-config.ts` leaves
+         * the snapshot `null` when that read throws — deliberately, so a broken
+         * IPC hop degrades rather than locks the app. Treating `null` as "no
+         * projects" would make this verb refuse every repo during the first
+         * frames of launch, and refuse them *permanently* after a failed read.
+         * `can.spawnSessionIn` already answers `true` with no snapshot; this
+         * agrees with it, and lets main — which has the file in front of it —
+         * give the refusal if there is one.
          */
-        const known = (projectConfigSnapshot()?.projects ?? []).some(
-          (project) => project.id === command.repo,
-        );
+        const snapshot = projectConfigSnapshot();
+        const known =
+          snapshot === null ||
+          snapshot.projects.some((project) => project.id === command.repo);
         if (!known) {
           pushOrch(
             `  unknown repo: ${command.repo} — try one from the Projects panel`,
@@ -852,8 +867,15 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * by reading the source it is replacing — so moving an already-live source
      * to `loading` here would turn every "could not reach Jira, these may be out
      * of date" into a bare failure with the tickets thrown away.
+     *
+     * Keyed on the *source*, not on `tickets.length`. A successful read that
+     * matched nothing is `live` with an empty array, and the panel says "No
+     * issues matched your query." — a real answer. Counting rows would treat
+     * that answer as "nothing yet" and replace it with three pulsing
+     * placeholders on every reopen, which is the same content-for-placeholder
+     * swap the paragraph above rejects.
      */
-    if (get().tickets.length === 0) {
+    if (get().ticketSource.kind !== 'live') {
       set({ ticketSource: { kind: 'loading' } });
     }
 
@@ -1115,7 +1137,6 @@ export const useProjects = (): ProjectRow[] => {
         id: entry.id,
         name: entry.name,
         icon: entry.icon,
-        source: 'config' as const,
       })),
     [snapshot],
   );

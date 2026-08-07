@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isSession } from '@/types/entity';
 import { isDesktop } from '@config/runtime';
 import { peek } from '@lib/fake-clock';
+import { resetProjectConfig } from '@lib/project-config';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 
@@ -68,7 +69,6 @@ describe('hive-store', () => {
 
       expect(state.order).toHaveLength(10);
       expect(state.agentOrder).toHaveLength(3);
-      expect(state.projects).toHaveLength(5);
       expect(state.tickets).toHaveLength(8);
       expect(state.prs).toHaveLength(4);
       expect(state.notifs).toHaveLength(5);
@@ -573,9 +573,26 @@ describe('hive-store', () => {
        * every project the user could see in the Projects panel — a verb that
        * refused everything, on a screen listing the things it was refusing.
        */
-      it('accepts a project the config declares but the store slice does not', () => {
-        // The config still declares apfm-web; the store's slice knows nothing.
-        useHiveStore.setState({ projects: [] });
+      it('accepts a project the config declares', () => {
+        const before = useHiveStore.getState().order.length;
+
+        run('spawn apfm-web do things');
+
+        expect(useHiveStore.getState().order).toHaveLength(before + 1);
+        expect(lastLine()?.text).not.toContain('unknown repo');
+      });
+
+      /**
+       * No snapshot means permissive, not empty.
+       *
+       * `loadProjectConfig()` is fired without awaiting and leaves the snapshot
+       * `null` when the IPC read throws — deliberately, so a broken hop
+       * degrades rather than locks the app. Reading `null` as "no projects"
+       * would make this verb refuse every repo for the first frames of a
+       * launch, and refuse them permanently after a failed read.
+       */
+      it('does not refuse every repo when the config has not been read', () => {
+        resetProjectConfig();
         const before = useHiveStore.getState().order.length;
 
         run('spawn apfm-web do things');

@@ -83,10 +83,10 @@ test('terminal text can be selected, which is what Cmd+C then acts on', async ({
   await page.mouse.up();
 
   /**
-   * Accept either signal, exactly as the web suite does
-   * (`tests/e2e/web/terminal.spec.ts`): xterm's own selection lives in an
-   * overlay, and `window.getSelection()` can be empty even when the terminal
-   * has a live one.
+   * Accept either signal: xterm's own selection lives in an overlay, and
+   * `window.getSelection()` can be empty even when the terminal has a live one.
+   * (The web suite's `terminal.spec.ts` made the same allowance; it drove
+   * seeded sessions and was removed with the seed.)
    */
   const selected = await page.evaluate(
     () => window.getSelection()?.toString() ?? '',

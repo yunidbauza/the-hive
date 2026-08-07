@@ -208,9 +208,9 @@ acknowledgement timer**, because status now comes from the process itself
 
 Everything else keeps the prototype's round-trip: the browser target, which has
 no bridge to ask, and agents, which have no project and no pty this epic. That
-is why the timer still exists. Deleting it, as story 097's text asks, would take
-the browser demo and its Playwright suite with it — `waiting-session.spec.ts`
-asserts the acknowledgement directly.
+is why the timer still exists. It is covered by `tests/stores/` rather than by a
+browser spec — `waiting-session.spec.ts` asserted the acknowledgement directly,
+and was removed along with the seeded fleet it drove.
 
 The action returns a `SendOutcome` rather than a bare timer handle:
 

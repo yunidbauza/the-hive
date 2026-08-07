@@ -218,9 +218,12 @@ test('a live session has no message row — the terminal is the input', async ()
    * was actively competing with the terminal's, which is how a freshly opened
    * session came to ignore what was typed into it.
    *
-   * The row is *not* gone from the app: the browser demo and the agent tabs are
-   * recordings with no prompt to speak into, and they keep it. `picker.spec.ts`
-   * and `waiting-session.spec.ts` cover that side.
+   * The row is *not* gone from the app: agent tabs are recordings with no
+   * prompt to speak into, and they keep it. That side used to be covered by
+   * `picker.spec.ts` and `waiting-session.spec.ts` in the web suite; both drove
+   * seeded sessions and went with the seed. `message-input.test.tsx` covers the
+   * row's own behaviour, and no browser-level replacement exists — an agent tab
+   * needs an agent, and nothing creates one yet.
    *
    * What the row used to prove here — that a message reaches the prompt and is
    * submitted with `\r` rather than `\n` — is proved by the console send below,

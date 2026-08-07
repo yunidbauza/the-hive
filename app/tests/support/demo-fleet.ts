@@ -437,8 +437,15 @@ export function createDemoFleet(): DemoFleet {
  */
 export function seedDemoFleet(): DemoFleet {
   const fleet = createDemoFleet();
+  /**
+   * `projects` is destructured out rather than spread in: the store has no such
+   * slice any more. The fleet still carries the list because
+   * {@link seedDemoProjectConfig} declares those same projects in the *config*,
+   * which is the only thing `useProjects()` reads.
+   */
+  const { projects: _projects, ...storeSlices } = fleet;
   useHiveStore.setState({
-    ...fleet,
+    ...storeSlices,
     ticketSource: { kind: 'live', stale: false, capped: false },
   });
   return fleet;

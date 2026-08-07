@@ -293,9 +293,19 @@ test('opening a session twice attaches to the same process', async ({}, testInfo
     await expect.poll(() => read(pidFile), { timeout: 20_000 }).not.toBeNull();
     const before = read(pidFile);
 
-    // Navigate away and back — the journey that must never respawn.
+    /**
+     * Navigate away and back — the journey that must never respawn.
+     *
+     * The *return* has to be a click on the first session's row, not another
+     * spawn. Two `startSession` calls create `sess-02` and `sess-03` and never
+     * come back to `sess-01`, which leaves this asserting only "sess-01 survives
+     * while other sessions start" — something `pty-transport.spec.ts` already
+     * covers, and which a regression that respawned the PTY on tab re-entry
+     * would sail straight through.
+     */
     await startSession(page, PROJECT);
-    await startSession(page, PROJECT);
+    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+    await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
 
     const second = testInfo.outputPath('pid-2.txt');
     await recordPid(second);

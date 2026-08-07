@@ -367,30 +367,13 @@ describe('hive-store selectors', () => {
       expect(result.current).toEqual([]);
     });
 
-    /**
-     * The regression guard for the bug this all started with.
-     *
-     * The store's `projects` slice is what sessions name through
-     * `entity.project`; it is not a list the rail may draw. When those two were
-     * conflated, five repositories nobody had mapped appeared in a fresh
-     * install.
+    /*
+     * The guard against the bug this all started with — five repositories
+     * nobody had mapped appearing in a fresh install — used to be a test here
+     * that filled the store's `projects` slice and asserted the rail ignored
+     * it. That slice no longer exists, so the guard moved into the type system:
+     * `useHiveStore.setState({ projects: … })` does not compile.
      */
-    it('ignores the store projects slice, however full it is', () => {
-      setProjectConfigForTest(configured([]));
-
-      act(() => {
-        useHiveStore.setState({
-          projects: [
-            { id: 'apfm-web', icon: 'ph-globe-hemisphere-west' },
-            { id: 'referral-api', icon: 'ph-cube' },
-          ],
-        });
-      });
-
-      const { result } = renderHook(() => useProjects());
-
-      expect(result.current).toEqual([]);
-    });
 
     it('returns the configured projects, with their names and icons', () => {
       setProjectConfigForTest(configured([{ id: 'the-hive', name: 'The Hive' }]));
@@ -398,21 +381,8 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useProjects());
 
       expect(result.current).toEqual([
-        {
-          id: 'the-hive',
-          name: 'The Hive',
-          icon: 'ph-folder',
-          source: 'config',
-        },
+        { id: 'the-hive', name: 'The Hive', icon: 'ph-folder' },
       ]);
-    });
-
-    it('marks every row as coming from the config', () => {
-      setProjectConfigForTest(configured([{ id: 'one' }, { id: 'two' }]));
-
-      const { result } = renderHook(() => useProjects());
-
-      expect(result.current.every((row) => row.source === 'config')).toBe(true);
     });
 
     it('preserves config file order and never sorts', () => {

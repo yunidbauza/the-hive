@@ -95,12 +95,12 @@ export interface Project {
  * A row in the rail's project list (story 101).
  *
  * The config file is the only source. This used to be a *merged* row type,
- * where `source: 'config' | 'demo'` told a user-mapped project apart from a
- * seeded one that was kept in the list because it still owned live seeded
- * sessions. Both the seed and the merge are gone, so every row is now a project
- * the user mapped and the discriminant had one inhabitant left.
+ * carrying `source: 'config' | 'demo'` to tell a user-mapped project apart from
+ * a seeded one kept in the list because it still owned live seeded sessions.
+ * Both the seed and the merge are gone; `source` went with them rather than
+ * lingering as a discriminant with one inhabitant and no readers.
  *
- * Still a **separate type** rather than two more fields on {@link Project}:
+ * Still a **separate type** rather than one more field on {@link Project}:
  * `Project` is the shape the rail needs to *draw* one, and `name` is a display
  * concern the config supplies. Keeping them apart is what stops a display name
  * leaking into the places that key on `entity.project`.
@@ -108,8 +108,6 @@ export interface Project {
 export interface ProjectRow extends Project {
   /** Display name, as the config declares it. */
   name: string;
-  /** Where the row came from. Only the config declares projects. */
-  source: 'config';
 }
 
 /**

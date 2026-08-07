@@ -191,7 +191,9 @@ test('lays out at desktop width without overflowing horizontally', async ({ page
  * side is asserted in `tests/e2e/electron/interactive-terminal.spec.ts`.
  *
  * Depth beyond "it booted" — colours, selection, scrollback, refit, re-theming
- * — lives in `terminal.spec.ts`.
+ * — lives in the electron suite, against real PTYs. It used to live in this
+ * project's `terminal.spec.ts`, which drove seeded sessions and went with the
+ * seed; a browser has no way to open a session to render.
  */
 test('mounts a live xterm instance that has measured its container', async ({ page }) => {
   const terminal = page.getByRole('main').locator('.xterm');
