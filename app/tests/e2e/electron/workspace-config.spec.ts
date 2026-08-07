@@ -37,14 +37,27 @@ async function launchWithConfig(
   return { app, page, configPath };
 }
 
-test('a valid mapping makes its project spawnable and leaves the others unmapped', async ({}, testInfo) => {
+/**
+ * "Unmapped" means *declared but unresolvable*, not *absent from the config*.
+ *
+ * This test used to declare one project and assert that a second — one of five
+ * seeded into the store — still appeared in the rail marked `unmapped`. That
+ * only worked because the rail merged seeded projects into the config's list.
+ * With the config as the sole source, a project it never declares is not in the
+ * rail to be marked anything, so both are declared here and one is pointed at a
+ * path that does not exist.
+ */
+test('a valid mapping makes its project spawnable and an unresolvable one unmapped', async ({}, testInfo) => {
   // A real directory that certainly exists: the repo this suite is running in.
   const realDirectory = join(import.meta.dirname, '../../..');
   const { app, page } = await launchWithConfig(
     (name) => testInfo.outputPath(name),
     JSON.stringify({
       version: 1,
-      projects: [{ id: 'apfm-web', path: realDirectory }],
+      projects: [
+        { id: 'apfm-web', path: realDirectory },
+        { id: 'referral-api', path: '/nowhere/that/exists' },
+      ],
     }),
   );
 
@@ -54,7 +67,7 @@ test('a valid mapping makes its project spawnable and leaves the others unmapped
     await expect(mapped).toBeVisible();
     await expect(mapped).not.toContainText('unmapped');
 
-    // Every other fixture project has no entry, so it says so.
+    // Declared, but its path is not there — so the rail says so.
     await expect(
       page.getByRole('button', { name: /^referral-api/ }),
     ).toContainText('unmapped');
@@ -105,9 +118,18 @@ test('a malformed file still launches the app, with nothing spawnable', async ({
 
   try {
     await expect(page.locator('header')).toContainText('The Hive');
-    await expect(
-      page.getByRole('button', { name: /^apfm-web/ }),
-    ).toContainText('unmapped');
+
+    /**
+     * An unreadable config declares nothing, so the rail lists nothing — and
+     * says why rather than sitting blank.
+     *
+     * It used to assert `apfm-web` was present and marked `unmapped`, because
+     * five projects were seeded into the store and the rail merged them in
+     * whatever the config said. That merge is what made a broken config look
+     * like a working app with five repositories in it.
+     */
+    await expect(page.getByText(/No projects mapped/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: /^apfm-web/ })).toHaveCount(0);
   } finally {
     await app.close();
   }

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { LeftRail } from '@components/layout/left-rail';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const panel = (container: HTMLElement, name: string) =>
   container.querySelector(`[data-panel="${name}"]`);
@@ -16,6 +17,7 @@ describe('LeftRail', () => {
   beforeEach(() => {
     useUiStore.getState().reset();
     useHiveStore.getState().reset();
+    seedDemoFleet();
   });
 
   it('opens on the projects panel', () => {

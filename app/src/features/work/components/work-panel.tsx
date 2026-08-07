@@ -2,6 +2,7 @@ import { ArrowClockwise } from '@phosphor-icons/react';
 import { useEffect } from 'react';
 
 import { TicketCard } from '@features/work/components/ticket-card';
+import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
 import {
   useRefreshTickets,
   useTicketSource,
@@ -17,13 +18,20 @@ import {
  *
  * ## Where the tickets come from (HIVE-69)
  *
- * This file still does one thing — map over `useTickets()`. What changed is the
- * *source*, which is the payoff of the store's rule that fixtures are store-only
- * consumers: on desktop the array is real Jira issues, in the browser demo it is
- * still the eight fixtures, and nothing here has to know which.
+ * This file still does one thing — map over `useTickets()`. Every ticket in that
+ * array is a real Jira issue; there is no seeded alternative any more, which is
+ * what lets the panel treat "nothing yet" as *loading* rather than as data.
  *
  * What this file did gain is the notice above the list, because four of the five
  * source states have something to say and an empty panel says none of it.
+ *
+ * ## The flash this fixed
+ *
+ * The store used to boot with eight seeded tickets and a `fixtures` source, so
+ * opening the tab painted sample rows for a frame and then swapped them for the
+ * real answer. The seed is gone and `loading` took its place: the panel now
+ * shows a skeleton until the read resolves, and never shows an issue it did not
+ * get from Jira.
  *
  * ## Refreshed on open, and not otherwise
  *
@@ -43,8 +51,8 @@ function SourceNotice({
   source: TicketSource;
   onRetry: () => void;
 }) {
-  // The demo. Fixtures are its data, not a degraded mode, so it says nothing.
-  if (source.kind === 'fixtures') return null;
+  // The skeleton below is the whole message while a read is in flight.
+  if (source.kind === 'loading') return null;
 
   if (source.kind === 'unconfigured') {
     return (
@@ -117,6 +125,22 @@ export function WorkPanel() {
   const retry = () => {
     void refresh();
   };
+
+  /*
+    The skeleton *replaces* the list rather than sitting above it.
+
+    On the first read there is nothing to sit above, and on a retry the list is
+    whatever the last read returned — showing both would mean stale rows and a
+    loading state claiming different things at once. This panel shows one
+    answer at a time.
+  */
+  if (source.kind === 'loading') {
+    return (
+      <div data-panel="work" className="flex flex-col gap-[var(--cc-list-gap)]">
+        <TicketListSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div data-panel="work" className="flex flex-col gap-[var(--cc-list-gap)]">

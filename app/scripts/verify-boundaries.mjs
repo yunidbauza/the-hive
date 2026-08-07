@@ -154,6 +154,32 @@ const CASES = [
         "import { fixture } from '@/data/probe-target';\nexport const probe = fixture;\n",
     },
   },
+  /**
+   * Test scaffolding never ships.
+   *
+   * `tests/support/demo-fleet.ts` holds the sample fleet the store used to seed
+   * itself with at boot. Moving it out of `src/data/` is what made the app open
+   * empty instead of claiming ten sessions nobody started — and this fence is
+   * what stops it walking back in one convenient import at a time.
+   */
+  {
+    name: 'zone: src/ may not import tests/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'tests/support/probe-target.ts': 'export const scaffolding = 1;\n',
+      'src/features/work/probe.ts':
+        "import { scaffolding } from '@tests/support/probe-target';\nexport const probe = scaffolding;\n",
+    },
+  },
+  {
+    name: 'zone: electron/ may not import tests/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'tests/support/probe-target.ts': 'export const scaffolding = 1;\n',
+      'electron/main/probe.ts':
+        "import { scaffolding } from '@tests/support/probe-target';\nexport const probe = scaffolding;\n",
+    },
+  },
   {
     name: 'zone: electron/main/ may not import src/',
     rule: 'import/no-restricted-paths',

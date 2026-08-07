@@ -1,12 +1,15 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ProjectsPanel } from '@features/projects/components/projects-panel';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
+import { emptySnapshot } from '@shared/config-contract';
 
-/** The five fixture projects, in fixture order, with their live-session counts. */
+/** The five demo projects, in config order, with their live-session counts. */
 const FIXTURE_PROJECTS = [
   ['apfm-web', 3],
   ['referral-api', 3],
@@ -21,10 +24,39 @@ const projectToggle = (id: string) =>
 describe('ProjectsPanel', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
+    /**
+     * The panel lists the *config's* projects and nothing else now. The store's
+     * `projects` slice used to double as a fallback whenever the config was
+     * empty, which is why this test never had to declare one; that fallback was
+     * the seeded demo data and it is gone.
+     */
+    seedDemoProjectConfig();
     useUiStore.getState().reset();
   });
 
-  it('renders every fixture project, in fixture order', () => {
+  afterEach(() => {
+    resetProjectConfig();
+  });
+
+  /**
+   * The state a fresh install actually opens in — no config, so no projects.
+   *
+   * Unaskable before: the store seeded five projects and fell back to them
+   * whenever the config had none, so this panel was never empty and the copy
+   * below could not have existed.
+   */
+  it('says why it is empty when the config declares no projects', () => {
+    setProjectConfigForTest(emptySnapshot('/tmp/hive/config.json'));
+
+    render(<ProjectsPanel />);
+
+    expect(screen.getByText(/No projects mapped/i)).toBeInTheDocument();
+    expect(screen.getByText('Settings → Projects')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders every configured project, in config order', () => {
     render(<ProjectsPanel />);
 
     const names = screen
@@ -115,17 +147,54 @@ describe('ProjectsPanel', () => {
   });
 
   /**
-   * Story 014 fences this at lint time; asserting it here makes the intent
-   * explicit — the panel reads derived state through selectors only.
+   * The panel follows the config, and only the config.
+   *
+   * This used to write to the store's `projects` slice and assert the row
+   * appeared, because that slice was what the rail fell back to. It is the
+   * config that decides now, so the assertion moved with the authority — and
+   * the second half is the one that matters: replacing the config replaces the
+   * list, with nothing lingering from the old one.
    */
-  it('reads the store, never the fixtures', () => {
+  it('follows the config, and drops projects it no longer declares', () => {
     render(<ProjectsPanel />);
+    expect(projectToggle('apfm-web')).toBeInTheDocument();
 
     act(() => {
-      useHiveStore.setState({ projects: [{ id: 'solo', icon: 'ph-cube' }] });
+      setProjectConfigForTest({
+        ...emptySnapshot('/tmp/hive/config.json'),
+        projects: [
+          {
+            id: 'solo',
+            name: 'solo',
+            path: '/repos/solo',
+            icon: 'ph-cube',
+            origin: 'local',
+            status: 'ok',
+            isRepo: true,
+          },
+        ],
+      });
     });
 
     expect(projectToggle('solo')).toBeInTheDocument();
     expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The store's `projects` slice no longer reaches the screen at all.
+   *
+   * It is what sessions name through `entity.project`, not a list the rail
+   * draws. Writing to it must change nothing here — that separation is what
+   * stopped five unmapped repositories appearing in a fresh install.
+   */
+  it('ignores the store projects slice entirely', () => {
+    render(<ProjectsPanel />);
+
+    act(() => {
+      useHiveStore.setState({ projects: [{ id: 'ghost', icon: 'ph-cube' }] });
+    });
+
+    expect(screen.queryByText('ghost')).not.toBeInTheDocument();
+    expect(projectToggle('apfm-web')).toBeInTheDocument();
   });
 });

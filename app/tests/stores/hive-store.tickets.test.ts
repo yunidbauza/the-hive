@@ -35,18 +35,37 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * The store boots with no tickets and no conclusion about why.
+ *
+ * It used to boot `fixtures` with eight seeded tickets, which is the state that
+ * produced the flash: they were on screen before the first read, and the read
+ * replaced them. `loading` is the honest version — nothing to show, and a
+ * reason.
+ */
 describe('the initial source', () => {
-  it('is fixtures, with the eight fixture tickets', () => {
-    expect(state().ticketSource).toEqual({ kind: 'fixtures' });
-    expect(state().tickets).toHaveLength(8);
+  it('is loading, with no tickets', () => {
+    expect(state().ticketSource).toEqual({ kind: 'loading' });
+    expect(state().tickets).toEqual([]);
   });
 
-  it('goes back to fixtures on reset', () => {
+  it('goes back to loading on reset', () => {
     state().hydrateTickets([issue()], false);
     state().reset();
 
-    expect(state().ticketSource).toEqual({ kind: 'fixtures' });
-    expect(state().tickets).toHaveLength(8);
+    expect(state().ticketSource).toEqual({ kind: 'loading' });
+    expect(state().tickets).toEqual([]);
+  });
+
+  /**
+   * `loading` is not `unconfigured`.
+   *
+   * Booting straight to `unconfigured` would be the mirror-image bug: a panel
+   * telling a correctly configured user they have no Jira connection, every
+   * launch, for as long as the status read takes.
+   */
+  it('does not claim Jira is unconfigured before asking', () => {
+    expect(state().ticketSource).not.toEqual({ kind: 'unconfigured' });
   });
 });
 

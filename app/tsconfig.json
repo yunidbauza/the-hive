@@ -44,7 +44,10 @@
       "@config/*": ["./src/config/*"],
       /* Types only. A value import from here would pull main-process code into
          the renderer bundle and trip the ESLint zone (story 083). */
-      "@shared/*": ["./electron/shared/*"]
+      "@shared/*": ["./electron/shared/*"],
+      /* Shared test scaffolding. Test code only — an import from `src/` or
+         `electron/` through this trips the ESLint zone. */
+      "@tests/*": ["./tests/*"]
     }
   },
   "include": ["src", "tests", "__mocks__"]

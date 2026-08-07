@@ -204,6 +204,22 @@ export default tseslint.config(
             },
 
             /**
+             * Test scaffolding never ships.
+             *
+             * `tests/support/` holds the sample fleet the store used to seed
+             * itself with. Moving it there is what made the app boot empty, and
+             * this fence is what stops it moving back one convenient import at a
+             * time — a panel reaching for `@tests/support/demo-fleet` would put
+             * ten fake sessions on screen again, which is the whole bug.
+             */
+            {
+              target: ['./src/**/*', './electron/**/*'],
+              from: './tests/**/*',
+              message:
+                'tests/ is test scaffolding and never ships. Production code may not import it — that is how the seeded demo fleet got into the app in the first place.',
+            },
+
+            /**
              * Fixtures are store-only consumers (story 012). Everything that
              * renders reads through a selector hook, never the raw data.
              */

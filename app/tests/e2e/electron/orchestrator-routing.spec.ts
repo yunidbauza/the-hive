@@ -42,8 +42,8 @@ import { launchHive } from './fixtures/hive-app';
 test.describe.configure({ mode: 'serial' });
 
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
-const SESSION = 'hero-refresh';
-const UNOPENED = 'lead-form';
+const SESSION = 'sess-01';
+const UNOPENED = 'sess-02';
 const PROJECT = 'apfm-web';
 /** A fixture project the scratch config deliberately does not map. */
 const UNMAPPED = 'referral-api';
@@ -83,7 +83,21 @@ function writeConfig(path: string, bootstrapMarker: string): void {
        * line, where `exit` would run in the session's own shell and close it.
        */
       claudeCommand: `printf bootstrapped > '${bootstrapMarker}'; false`,
-      projects: [{ id: PROJECT, path: REAL_DIRECTORY }],
+      projects: [
+        { id: PROJECT, path: REAL_DIRECTORY },
+        /**
+         * Declared, but pointed at nothing — which is now the only way to reach
+         * main's `unmapped` refusal from the console.
+         *
+         * `referral-api` used to be absent from this file entirely: it was one
+         * of five projects seeded into the store, so the renderer thought it
+         * existed, let the spawn through, and main refused it. Both sides read
+         * the config now, so a project the config never mentions is refused by
+         * the renderer before main is asked — and the gap that made main's
+         * refusal reachable has to be opened deliberately.
+         */
+        { id: UNMAPPED, path: '/nowhere/that/exists' },
+      ],
     }),
   );
 }
@@ -145,27 +159,52 @@ async function backToOrchestrator(): Promise<void> {
   await expect(terminalRows('orch')).toBeVisible();
 }
 
-/** Open a session and wait until its shell is genuinely ready for input. */
+/**
+ * Start a session and wait until its shell is genuinely ready for input.
+ *
+ * This used to *click* one: `hero-refresh` was seeded into the store at boot,
+ * so a rail row for it already existed. Nothing is seeded now, so the session
+ * has to be created — through the console's own `spawn` verb, which is the
+ * surface this file is about anyway, and which opens the tab as part of
+ * spawning.
+ */
 async function openSession(id: string): Promise<void> {
-  await page.getByRole('button', { name: new RegExp(id) }).first().click();
+  // A task, because the grammar is `spawn <repo> <task>` — a bare repo is a
+  // usage error, not a spawn.
+  await run(`spawn ${PROJECT} true`);
   await expect(page.locator(`[data-terminal-id="${id}"]`)).toBeVisible();
   await expectMarker(out('bootstrapped.txt'), 'bootstrapped');
 }
 
-test('sending to a session with no process refuses, and says why', async () => {
-  /**
-   * First, deliberately: nothing has asked for a process for this entity yet,
-   * and opening its terminal anywhere above would spawn one.
-   *
-   * The failure this guards is silence. Main's `write` returns early for an
-   * entity with no live session, so without the refusal the console would
-   * cheerfully print `routed →` and nothing at all would happen.
-   */
+/**
+ * Sending to a session that is not there refuses, rather than reporting success.
+ *
+ * ## Why the refusal being asserted changed
+ *
+ * This used to send to `lead-form` — a seeded entity that existed in the store
+ * but had never been opened, and therefore had no pty. It asserted
+ * `has no live session`, the refusal `session-input.ts` gives for an entity with
+ * no channel.
+ *
+ * That state is no longer reachable from the UI. Every session is created by
+ * spawning one, and spawning requests a process and opens the tab, so a session
+ * that exists but has no channel cannot be produced by driving the app. The
+ * branch itself is unchanged and still covered, at
+ * `tests/lib/terminal/session-input.test.ts` — which is the right level for it,
+ * since what is being tested is a pure function of the channel state.
+ *
+ * What the console can still be driven into, and what this now pins, is the
+ * refusal one layer earlier: an id the store has never heard of. The failure
+ * guarded is the same and it is the important one — **silence**. Main's `write`
+ * returns early for an unknown entity, so without a refusal the console would
+ * print `routed →` and nothing at all would happen.
+ */
+test('sending to a session that does not exist refuses, and says why', async () => {
   await run(`send ${UNOPENED} y`);
 
   await expect
     .poll(consoleText, { timeout: 15_000 })
-    .toContain('has no live session');
+    .toContain(`no such session: ${UNOPENED}`);
   expect(await consoleText()).not.toContain(`routed → ${UNOPENED}`);
 });
 

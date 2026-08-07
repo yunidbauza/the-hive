@@ -89,8 +89,15 @@ export type SendOutcome =
  * want five different things on screen and only one of them is an error.
  */
 export type TicketSource =
-  /** The browser demo. Fixtures are its data, not a degraded mode. */
-  | { kind: 'fixtures' }
+  /**
+   * A read is in flight and there is nothing yet.
+   *
+   * The boot state, and the state every refresh returns to. It replaced a
+   * `fixtures` variant that meant "these eight are sample data" — which is what
+   * made real issues arrive *behind* fake ones for a frame. There is nothing to
+   * show before the answer comes back, and saying so is the whole fix.
+   */
+  | { kind: 'loading' }
   /** Desktop with nothing configured. The panel explains rather than sits empty. */
   | { kind: 'unconfigured' }
   /** Desktop, at least one successful read. */
@@ -102,8 +109,8 @@ interface HiveState {
   entities: Record<string, Entity>;
   order: string[];
   agentOrder: string[];
-  projects: ReturnType<typeof createInitialState>['projects'];
-  tickets: ReturnType<typeof createInitialState>['tickets'];
+  projects: Project[];
+  tickets: Ticket[];
   /** Where {@link HiveState.tickets} came from (HIVE-69). */
   ticketSource: TicketSource;
   prs: ReturnType<typeof createInitialState>['prs'];
@@ -224,16 +231,49 @@ const line = (text: string, color: TermLine['color'] = 'ink'): TermLine => ({
   color,
 });
 
+/**
+ * The six slices that boot empty, because each now has a real producer.
+ *
+ * Sessions and agents arrive from PTYs the user starts, projects from the
+ * config file, tickets from Jira, and the console transcript from what the
+ * orchestrator actually does. Seeding any of them meant the app opened already
+ * claiming a fleet that was not running — the header counted ten sessions on a
+ * machine with none, and the WORK tab painted eight sample tickets that a real
+ * Jira read then replaced a frame later.
+ *
+ * Spelled out here rather than left to `createInitialState()` so the empty state
+ * is a deliberate, typed object instead of an absence: adding a slice to
+ * {@link HiveState} without deciding where it comes from will fail to compile.
+ *
+ * A factory, for the same reason `createInitialState()` is one — a shared
+ * constant would hand every store and every `reset()` the *same* arrays, so one
+ * test appending a session would leak into the next.
+ */
+const emptySeeds = (): Pick<
+  HiveState,
+  'entities' | 'order' | 'agentOrder' | 'projects' | 'tickets' | 'orchLines'
+> => ({
+  entities: {},
+  order: [],
+  agentOrder: [],
+  projects: [],
+  tickets: [],
+  orchLines: [],
+});
+
 export const useHiveStore = create<HiveState>()((set, get) => ({
+  ...emptySeeds(),
   ...createInitialState(),
   /**
-   * Fixtures until something says otherwise.
+   * Loading until the first read answers.
    *
-   * The browser target never leaves this state, which is the point: `pnpm dev`
-   * has no main process, so the fixtures are its data rather than a fallback
-   * from a read that failed.
+   * Not `unconfigured`, which is a *conclusion* — it would flash "no Jira
+   * connection" at every launch on a perfectly configured machine before the
+   * status read came back. The browser target reaches `unconfigured` a tick
+   * later, from {@link HiveState.refreshTickets}, because a browser genuinely
+   * has no bridge to Jira.
    */
-  ticketSource: { kind: 'fixtures' } as TicketSource,
+  ticketSource: { kind: 'loading' } as TicketSource,
 
   /**
    * Create a session and open its tab.
@@ -579,7 +619,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       }
 
       case 'spawn': {
-        const known = get().projects.some(
+        /**
+         * The config decides what exists, exactly as the rail and picker do.
+         *
+         * This read `state.projects` — the store's own slice — which worked
+         * only because that slice was seeded with five demo projects at boot.
+         * Emptying the seed left it always empty, so every `spawn` answered
+         * "unknown repo" for projects sitting right there in the Projects
+         * panel. One source for "which projects exist", and it is the config.
+         */
+        const known = (projectConfigSnapshot()?.projects ?? []).some(
           (project) => project.id === command.repo,
         );
         if (!known) {
@@ -779,8 +828,34 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * rather than an exception a panel would have to catch.
    */
   refreshTickets: async () => {
-    // The browser demo keeps its fixtures. Nothing to read, nothing to fail.
-    if (!isDesktop()) return;
+    /**
+     * A browser has no bridge, so it has no Jira — and that is a
+     * configuration answer, not a failure. It settles here rather than sitting
+     * on `loading` forever, which is what an early `return` would now mean.
+     */
+    if (!isDesktop()) {
+      get().reportTicketsUnconfigured();
+      return;
+    }
+
+    /**
+     * Announce the read — but only when there is nothing on screen to announce
+     * it *over*.
+     *
+     * A refresh with tickets already listed keeps them listed. Blanking a good
+     * list to a skeleton on every reopen would be the original bug wearing the
+     * opposite mask: content the user was reading, replaced by a placeholder,
+     * for the duration of a network round trip.
+     *
+     * It is also what keeps `reportTicketFailure` able to do its job. That
+     * action marks a *live* list stale rather than discarding it, and it decides
+     * by reading the source it is replacing — so moving an already-live source
+     * to `loading` here would turn every "could not reach Jira, these may be out
+     * of date" into a bare failure with the tickets thrown away.
+     */
+    if (get().tickets.length === 0) {
+      set({ ticketSource: { kind: 'loading' } });
+    }
 
     const status = await readJiraStatus();
     if (status === null) {
@@ -820,7 +895,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   reset: () => {
     spawnCounter = 0;
     resetClock();
-    set({ ...createInitialState(), ticketSource: { kind: 'fixtures' } });
+    set({
+      ...emptySeeds(),
+      ...createInitialState(),
+      ticketSource: { kind: 'loading' },
+    });
   },
 }));
 
@@ -952,16 +1031,14 @@ export const useSendToEntity = () => useHiveStore((state) => state.sendToEntity)
 export const useRunOrchCommand = () =>
   useHiveStore((state) => state.runOrchCommand);
 
-/** Ids of projects that still own at least one session (story 101). */
-const projectsOwningSessions = (state: HiveState): string[] => {
-  const ids: string[] = [];
-  for (const id of state.order) {
-    const entity = state.entities[id];
-    if (!entity || !isSession(entity)) continue;
-    if (!ids.includes(entity.project)) ids.push(entity.project);
-  }
-  return ids;
-};
+/*
+ * `projectsOwningSessions` used to live here — every project id owning at least
+ * one session, ended or not. Its only caller was the project-list merge, which
+ * needed it to decide whether a seeded project had earned its place in the rail.
+ * With no seeded projects there is nothing to decide, and a selector nobody
+ * reads is a selector that drifts. `projectsOwningLiveSessions` below is the one
+ * that survives, because the remove confirmation still has a number to state.
+ */
 
 /** Ids of projects owning a session that has not ended (story 101). */
 const projectsOwningLiveSessions = (state: HiveState): string[] => {
@@ -1009,63 +1086,39 @@ export const useLiveSessionCounts = () =>
   useHiveStore(useShallow(liveSessionCounts));
 
 /**
- * The project list: the config's, merged with the fixtures (stories 031, 101).
+ * The project list: the config file's, and only the config file's (story 031).
  *
- * | Situation | The list is |
- * |---|---|
- * | No snapshot — browser demo, first frames of launch | fixtures, unchanged |
- * | Snapshot with zero projects | fixtures, unchanged |
- * | Snapshot with projects | the config's, **plus** fixture projects that still own live sessions, marked `demo` |
+ * This used to be a merge. There were five seeded projects, so the rule was
+ * "config's, plus any fixture project that still owns a live session, marked
+ * `demo`" — three table rows of precedence to stop the demo's sessions being
+ * stranded by the first real project a user added.
  *
- * The third row is the load-bearing one. The work panel, the orchestrator
- * table and its console `ls`, and `lib/terminal/resolve-transport` all reach
- * sessions through `entity.project`; dropping fixture projects the moment a
- * real one is added would strand every one of them. Marking them `demo` is
- * honest and costs one field.
- *
- * A config project and a fixture project sharing an id collapse to a single
- * row and **config wins** — that is the upgrade path for anyone who already
- * mapped `apfm-web` under story 090.
+ * With no seeded projects there is nothing to merge and no precedence to
+ * resolve: a project exists because the user mapped it. An empty config means
+ * an empty list, which `projects-panel.tsx` says out loud rather than rendering
+ * as a blank column.
  *
  * **Config order is the file's order and is never sorted.** Story 103's
  * drag-reorder works by rewriting that array, and the left rail reads it
  * positionally, so sorting here would silently make 103 unimplementable.
  */
 export const useProjects = (): ProjectRow[] => {
-  const fixtures = useHiveStore(useShallow((state) => state.projects));
-  const owning = useHiveStore(useShallow(projectsOwningSessions));
   const snapshot = useSyncExternalStore(
     subscribeProjectConfig,
     projectConfigSnapshot,
     projectConfigSnapshot,
   );
 
-  return useMemo(() => {
-    const asDemo = (project: Project): ProjectRow => ({
-      ...project,
-      name: project.id,
-      source: 'demo',
-    });
-
-    const configured = snapshot?.projects ?? [];
-    if (configured.length === 0) return fixtures.map(asDemo);
-
-    const rows: ProjectRow[] = configured.map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      icon: entry.icon,
-      source: 'config',
-    }));
-    const claimed = new Set(rows.map((row) => row.id));
-
-    for (const fixture of fixtures) {
-      if (claimed.has(fixture.id)) continue; // config wins
-      if (!owning.includes(fixture.id)) continue; // no live sessions, drop it
-      rows.push(asDemo(fixture));
-    }
-
-    return rows;
-  }, [fixtures, owning, snapshot]);
+  return useMemo(
+    () =>
+      (snapshot?.projects ?? []).map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        icon: entry.icon,
+        source: 'config' as const,
+      })),
+    [snapshot],
+  );
 };
 
 /** Sessions for a project that have not ended (story 031). */

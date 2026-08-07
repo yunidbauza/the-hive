@@ -16,10 +16,9 @@ sessions. **The most important component is the embedded terminal at the center 
 the screen** — everything else exists to route the user's attention to the right
 terminal at the right moment.
 
-Current phase: **static prototype**. No backend. All data comes from an in-memory
-mock layer, terminal content is canned ANSI fed into real xterm.js instances, and
-state-mutating interactions mutate store state only. Full context, decision record,
-and scope boundary: the **HIVE project in Jira**, the single backlog.
+Current phase: terminals are **real PTYs**, projects come from a config file and
+tickets from **Jira**; PRs, notifications and the feed are the last seeded
+surfaces. Full context and scope: the **HIVE project in Jira**, the backlog.
 
 Stack: React 19 · TypeScript (strict) · Vite · xterm.js · Zustand · Tailwind v4 ·
 shadcn/ui · pnpm.
@@ -28,7 +27,7 @@ shadcn/ui · pnpm.
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Vite dev server — the **browser** target (a fixtures-only demo) |
+| `pnpm dev` | Vite dev server — the **browser** target (chrome only: no PTYs, no Jira, no config) |
 | `pnpm build` | Type-check, then production build of the browser target |
 | `pnpm desktop:dev` | electron-vite: the Electron app, renderer HMR included |
 | `pnpm desktop:build` | Type-check, then build `out/{main,preload,renderer}/` |
@@ -38,7 +37,7 @@ shadcn/ui · pnpm.
 | `pnpm test` | Vitest, single run |
 | `pnpm test:coverage` | Vitest with the 80% coverage gate |
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
-| `pnpm test:e2e:web` | The six browser specs (story 070) |
+| `pnpm test:e2e:web` | The browser specs — chrome, layout and empty states (story 070) |
 | `pnpm test:e2e:electron` | The built desktop app (story 085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
@@ -79,6 +78,7 @@ one still fires.
 | `src/hooks/**` | `src/features/**` |
 | `src/stores/**` | `src/features/**`, `src/components/**` |
 | everything except `src/stores/**` | `src/data/**` |
+| `src/**`, `electron/**` | `tests/**` (test scaffolding never ships) |
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
 | **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
@@ -160,8 +160,8 @@ source of truth for every number on screen.
 Cross-store effects call the other store's action explicitly. No store subscribes
 to another.
 
-Fixtures (`src/data/`) are **store-only consumers**. Nothing that renders may
-import them; read derived state through a hook.
+Fixtures (`src/data/`) are **store-only**, seed only `prs`/`notifs`/`feed`, and
+never gain a slice back — **the app boots empty**. Tests: `tests/support/`.
 
 ## Styling
 

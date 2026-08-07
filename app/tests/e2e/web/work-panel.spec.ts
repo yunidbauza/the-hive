@@ -1,84 +1,80 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * The WORK tab in the browser target (HIVE-69).
+ * The WORK tab with nothing behind it, in a real browser.
  *
- * ## Why this spec is new
+ * ## What this spec used to assert, and why it inverted
  *
- * HIVE-69's ticket asserts that deleting the fixtures would break
- * `pnpm test:e2e:web`. Reconciling that against the suite found it was not
- * true — **no e2e spec touched the WORK panel at all**, so the claim rested on
- * coverage that did not exist. The conclusion was right for a different reason
- * (`hive-store.ts` imports `createInitialState` unconditionally, and three unit
- * suites assert fixture ticket data), so rather than delete the claim this
- * story supplies the coverage it assumed.
+ * It pinned the opposite: eight seeded tickets rendering in a target with no
+ * Electron, no main process and no Jira, on the reasoning that fixtures *were*
+ * the browser demo's data rather than a degraded mode.
  *
- * What it pins: the browser demo has no Electron, no main process, and no Jira,
- * and it must still render a populated WORK tab. Every ticket in this epic
- * widens something the desktop path uses — the type, the store, the panel — and
- * this is the spec that fails if one of those widenings quietly makes the demo
- * depend on a bridge that is not there.
+ * That framing is what produced the bug on the desktop side. The same seed
+ * loaded there too, so the WORK tab painted eight sample tickets at boot and a
+ * real Jira read replaced them a frame later — the user watched somebody else's
+ * backlog turn into their own. The seed is gone from both targets, so the
+ * browser's WORK tab is now honestly empty and says why.
+ *
+ * The load-bearing assertion is the negative one: no `GRAC-` key reaches the
+ * DOM, in any state. A unit test can assert the store is empty; only this can
+ * prove nothing paints it.
  */
 
 const APP_URL = '/?sim=0';
 
+const workTab = (page: import('@playwright/test').Page) =>
+  page
+    .getByRole('navigation', { name: 'Projects, work, and agents' })
+    .getByRole('tab', { name: /^Work/ });
+
 test.beforeEach(async ({ page }) => {
   await page.goto(APP_URL);
   await page.waitForSelector('header');
-  await page
-    .getByRole('navigation', { name: 'Projects, work, and agents' })
-    .getByRole('tab', { name: /^Work/ })
-    .click();
+  await workTab(page).click();
 });
 
-test('renders fixture tickets with no Jira and no bridge', async ({ page }) => {
-  const work = page.locator('[data-panel="work"]');
-  await expect(work).toBeVisible();
-
-  // The eight fixtures, still the browser target's data.
-  await expect(work.getByText('GRAC-3018')).toBeVisible();
-  await expect(
-    work.getByText('Hero refresh: migrate to semantic tokens'),
-  ).toBeVisible();
-  await expect(work.locator('article')).toHaveCount(8);
-});
-
-test('shows no desktop-only notice in the demo', async ({ page }) => {
-  const work = page.locator('[data-panel="work"]');
-
-  // Fixtures are the demo's data, not a degraded mode. A "configure Jira"
-  // line here would be telling a browser user to fix something that is not
-  // broken and that they could not fix anyway.
-  await expect(work.getByText(/No Jira connection yet/i)).toHaveCount(0);
-  await expect(work.getByText(/may be out of date/i)).toHaveCount(0);
-  await expect(work.getByText(/No issues matched/i)).toHaveCount(0);
-});
-
-test('renders the status name, coloured by category', async ({ page }) => {
-  const work = page.locator('[data-panel="work"]');
-
-  // The name is Jira's, displayed verbatim; the colour comes from the
-  // category, which is why "In Review" and "In Progress" now match.
-  await expect(work.getByText('In Progress').first()).toBeVisible();
-  await expect(work.getByText('In Review').first()).toBeVisible();
-  await expect(work.getByText('Done').first()).toBeVisible();
-});
-
-test('a fixture ticket does not link out — there is nowhere to go', async ({
+test('says there is no Jira connection instead of showing sample tickets', async ({
   page,
 }) => {
   const work = page.locator('[data-panel="work"]');
+  await expect(work).toBeVisible();
 
-  // `url` is absent for fixtures, so the key is plain text. A link to a Jira
-  // that was never configured would 404 into somebody else's site.
-  await expect(work.getByRole('link', { name: 'GRAC-3018' })).toHaveCount(0);
-  await expect(work.getByText('GRAC-3018')).toBeVisible();
+  // A browser has no bridge, therefore no Jira. That is a configuration
+  // answer, and the panel gives it rather than sitting blank.
+  await expect(work.getByText(/No Jira connection yet/i)).toBeVisible();
+  await expect(work.getByText('Settings → Integrations')).toBeVisible();
 });
 
-test('the Work tab badge still counts every ticket', async ({ page }) => {
+test('paints no ticket at all', async ({ page }) => {
+  const work = page.locator('[data-panel="work"]');
+
+  await expect(work.locator('article')).toHaveCount(0);
+});
+
+/**
+ * The regression guard for the whole change. If a seeded ticket ever finds its
+ * way back into the store, this is what catches it — including the one-frame
+ * flash, since a key that appears and vanishes still appears.
+ */
+test('never renders a seeded ticket key', async ({ page }) => {
+  await expect(page.getByText(/GRAC-\d+/)).toHaveCount(0);
   await expect(
-    page
-      .getByRole('navigation', { name: 'Projects, work, and agents' })
-      .getByRole('tab', { name: /^Work/ }),
-  ).toContainText('8');
+    page.getByText('Hero refresh: migrate to semantic tokens'),
+  ).toHaveCount(0);
+});
+
+test('the Work tab badge counts nothing', async ({ page }) => {
+  await expect(workTab(page)).not.toContainText('8');
+});
+
+/**
+ * The states that belong to a *desktop* read must not leak into a browser,
+ * where they would name a failure that did not happen.
+ */
+test('claims neither staleness nor an empty query result', async ({ page }) => {
+  const work = page.locator('[data-panel="work"]');
+
+  await expect(work.getByText(/may be out of date/i)).toHaveCount(0);
+  await expect(work.getByText(/No issues matched/i)).toHaveCount(0);
+  await expect(work.getByRole('button', { name: /try again/i })).toHaveCount(0);
 });

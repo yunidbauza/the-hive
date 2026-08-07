@@ -6,6 +6,7 @@ import type { ProjectConfig } from '@shared/config-contract';
 
 import { ProjectsList } from '@features/settings/components/projects-list';
 import { useHiveStore } from '@stores/hive-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const chooseProjectDirectory = vi.fn();
 const removeProjectFromConfig = vi.fn();
@@ -62,6 +63,7 @@ const choose = (label: RegExp) =>
 describe('ProjectsList', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     vi.clearAllMocks();
     chooseProjectDirectory.mockResolvedValue('/repos/moved');
     removeProjectFromConfig.mockResolvedValue(undefined);

@@ -92,23 +92,24 @@ export interface Project {
 }
 
 /**
- * A row in the merged project list (story 101).
+ * A row in the rail's project list (story 101).
  *
- * Config is the source of truth for the project list, but fixture projects
- * that still own live fixture sessions stay in it — the work panel, the
- * orchestrator table, and `resolve-transport` all reach sessions through
- * `entity.project`, so dropping one would strand every session that named it.
+ * The config file is the only source. This used to be a *merged* row type,
+ * where `source: 'config' | 'demo'` told a user-mapped project apart from a
+ * seeded one that was kept in the list because it still owned live seeded
+ * sessions. Both the seed and the merge are gone, so every row is now a project
+ * the user mapped and the discriminant had one inhabitant left.
  *
- * Deliberately a **separate type** rather than two more fields on
- * {@link Project}. A fixture genuinely has no display name and no origin —
- * `src/data/fixtures.ts` is a store-only consumer that this story leaves
- * byte-identical — so widening `Project` would mean writing values into the
- * fixtures that only the merge knows how to supply.
+ * Still a **separate type** rather than two more fields on {@link Project}:
+ * `Project` is the shape the rail needs to *draw* one, and `name` is a display
+ * concern the config supplies. Keeping them apart is what stops a display name
+ * leaking into the places that key on `entity.project`.
  */
 export interface ProjectRow extends Project {
-  /** Display name. A demo row uses its id, which is what it has always shown. */
+  /** Display name, as the config declares it. */
   name: string;
-  source: 'config' | 'demo';
+  /** Where the row came from. Only the config declares projects. */
+  source: 'config';
 }
 
 /**

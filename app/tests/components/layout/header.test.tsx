@@ -6,6 +6,7 @@ import { Header } from '@components/layout/header';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * The header only composes — the three sub-components are asserted in their own
@@ -17,6 +18,7 @@ describe('Header', () => {
     document.body.removeAttribute('data-theme');
     localStorage.clear();
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     /**
      * Pinned to dark rather than left on the story-105 default of `system`.

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { WorkPanel } from '@features/work/components/work-panel';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const card = (key: string) =>
   screen.getByText(key).closest('article') as HTMLElement;
@@ -12,10 +13,21 @@ const card = (key: string) =>
 describe('WorkPanel', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
+    /**
+     * Stub the mount-time read.
+     *
+     * The panel refreshes when it mounts, and the real action settles on
+     * `unconfigured` in a test environment — no bridge, therefore no Jira —
+     * which would wipe the seeded tickets before a single assertion ran. These
+     * cases are about how a ticket *renders*, not where it came from;
+     * `work-panel.states.test.tsx` owns the source states.
+     */
+    useHiveStore.setState({ refreshTickets: () => Promise.resolve() });
     useUiStore.getState().reset();
   });
 
-  it('renders all eight fixture tickets, in fixture order', () => {
+  it('renders all eight seeded tickets, in order', () => {
     render(<WorkPanel />);
 
     const keys = screen

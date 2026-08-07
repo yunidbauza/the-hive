@@ -12,6 +12,7 @@ import { ProjectRow } from '@features/projects/components/project-row';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * The unmapped badge (story 090).
@@ -48,6 +49,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
 
 beforeEach(() => {
   useHiveStore.getState().reset();
+    seedDemoFleet();
   useUiStore.getState().reset();
   resetProjectConfig();
 });

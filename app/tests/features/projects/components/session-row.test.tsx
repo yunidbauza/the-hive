@@ -5,12 +5,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { SessionRow } from '@features/projects/components/session-row';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const row = () => screen.getByRole('button');
 
 describe('SessionRow', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 

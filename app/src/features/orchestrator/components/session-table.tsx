@@ -22,10 +22,24 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  *
  * Column widths mirror the concept: a fixed caret and status, a fixed-ish
  * session name, and `project · branch` taking whatever is left.
+ *
+ * ## The empty fleet
+ *
+ * This table used to open showing ten seeded sessions, so the orchestrator
+ * always looked busy on a machine where nothing was running. With the seed gone
+ * a fresh launch has no sessions at all, and the table says so in its own
+ * register — monospace, `text-term-head`, inside the terminal surface — rather
+ * than borrowing the rail's empty-state styling, which would read as a panel
+ * dropped into a console.
+ *
+ * The header row stays. It is what makes the empty area legible as a table
+ * awaiting rows instead of dead space, and it is where the eye returns to when
+ * the first session arrives.
  */
 export function SessionTable() {
   const active = useActiveSessions();
   const ended = useEndedSessions();
+  const empty = active.length === 0 && ended.length === 0;
 
   return (
     <div className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]">
@@ -36,6 +50,15 @@ export function SessionTable() {
         <span className="min-w-0 flex-1 truncate">PROJECT · BRANCH</span>
         <span className="w-[34px] shrink-0">PR</span>
       </div>
+
+      {empty ? (
+        <p
+          data-testid="session-table-empty"
+          className="px-2 py-[3px] text-term-head"
+        >
+          No sessions running — start one with New session.
+        </p>
+      ) : null}
 
       {active.map((id) => (
         <SessionTableRow key={id} id={id} />

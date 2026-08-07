@@ -1,13 +1,32 @@
 import { describe, expect, it } from 'vitest';
 
 import { createInitialState } from '@/data/fixtures';
-import { isAgent, isSession } from '@/types/entity';
 
+/**
+ * What the app still seeds, and — mostly — what it must not.
+ *
+ * This file used to assert the integrity of a nine-slice demo dataset: that
+ * every ticket named a session that existed, every notification pointed at a
+ * real entity, every session's PR agreed with the PR list. Those invariants
+ * mattered because the dataset was loaded into the store at boot and was
+ * therefore what the user saw.
+ *
+ * Six of those slices are gone. Sessions, agents, projects, tickets and the
+ * orchestrator banner now come from PTYs, the config file and Jira, so the
+ * cross-references that held the dataset together no longer have two ends: the
+ * PRs and notifications below name sessions that will not exist until a user
+ * starts one. That is accepted and deliberate — those three slices have no live
+ * producer yet, and an empty PR panel with no path to filling it would be a
+ * worse lie than a stale sample row.
+ *
+ * So the assertions changed shape. What is tested now is the *boundary*: three
+ * slices, no more, and no seeded fleet hiding behind them.
+ */
 describe('createInitialState', () => {
   /**
    * The factory exists so every test starts from a clean copy. If it returned a
-   * shared object, one test mutating a transcript would leak into the next and
-   * the failure would surface somewhere unrelated.
+   * shared object, one test mutating a list would leak into the next and the
+   * failure would surface somewhere unrelated.
    */
   it('returns a fresh copy each call', () => {
     const first = createInitialState();
@@ -15,88 +34,50 @@ describe('createInitialState', () => {
 
     expect(first).toEqual(second);
     expect(first).not.toBe(second);
-    expect(first.entities).not.toBe(second.entities);
-    expect(first.entities['hero-refresh']).not.toBe(
-      second.entities['hero-refresh'],
-    );
+    expect(first.prs).not.toBe(second.prs);
+    expect(first.prs[0]).not.toBe(second.prs[0]);
   });
 
   it('does not share nested arrays between calls', () => {
     const first = createInitialState();
-    first.entities['hero-refresh'].lines.push({ text: 'leak', color: 'red' });
-    first.tickets.push({
-      key: 'X-1',
-      status: 'To Do',
-      statusCategory: 'todo',
-      title: 'x',
-      sessions: [],
+    first.notifs.push({
+      icon: 'ph-hand-palm',
+      tone: 'amber',
+      title: 'leak',
+      sub: 'leak',
+      time: '0m',
+      unread: true,
+      target: 'nobody',
     });
 
     const second = createInitialState();
 
-    expect(
-      second.entities['hero-refresh'].lines.some((l) => l.text === 'leak'),
-    ).toBe(false);
-    expect(second.tickets).toHaveLength(8);
+    expect(second.notifs.some((notif) => notif.title === 'leak')).toBe(false);
   });
 
-  it('registers every session and agent in entities', () => {
+  /**
+   * The regression guard, and the reason this file still exists.
+   *
+   * Adding any of these six back here puts them straight into the store at
+   * boot — which is precisely the bug: a header counting sessions nobody
+   * started, a projects tree listing repositories nobody mapped, and eight
+   * sample tickets painted for a frame before the real Jira read replaced them.
+   */
+  it('seeds exactly three slices, and no fleet', () => {
     const state = createInitialState();
 
-    for (const id of state.order) {
-      expect(isSession(state.entities[id])).toBe(true);
-    }
-    for (const id of state.agentOrder) {
-      expect(isAgent(state.entities[id])).toBe(true);
-    }
-  });
+    expect(Object.keys(state).sort()).toEqual(['feed', 'notifs', 'prs']);
 
-  it('gives every agent the online status', () => {
-    const state = createInitialState();
-
-    for (const id of state.agentOrder) {
-      expect(state.entities[id].status).toBe('online');
+    for (const slice of ['entities', 'order', 'agentOrder', 'projects', 'tickets', 'orchLines']) {
+      expect(state).not.toHaveProperty(slice);
     }
   });
 
-  it('points every PR at a session that exists', () => {
+  it('still supplies the three panels that have no live producer', () => {
     const state = createInitialState();
 
-    for (const pr of state.prs) {
-      expect(state.entities[pr.session]).toBeDefined();
-    }
-  });
-
-  it('points every ticket at sessions that exist', () => {
-    const state = createInitialState();
-
-    for (const ticket of state.tickets) {
-      for (const sessionId of ticket.sessions) {
-        expect(state.entities[sessionId]).toBeDefined();
-      }
-    }
-  });
-
-  it('points every notification at an entity that exists', () => {
-    const state = createInitialState();
-
-    for (const notif of state.notifs) {
-      expect(state.entities[notif.target]).toBeDefined();
-    }
-  });
-
-  it('keeps a session PR consistent with the PR list', () => {
-    const state = createInitialState();
-
-    for (const id of state.order) {
-      const session = state.entities[id];
-      if (!isSession(session) || !session.pr) continue;
-
-      const listed = state.prs.find((pr) => pr.n === session.pr!.n);
-      // #31 is referenced by ecs-scaling but is not one of the four PRs the
-      // concept surfaces in the PRs panel, so absence is allowed — presence
-      // must agree.
-      if (listed) expect(listed.session).toBe(id);
-    }
+    expect(state.prs.length).toBeGreaterThan(0);
+    expect(state.notifs.length).toBeGreaterThan(0);
+    expect(state.feed.length).toBeGreaterThan(0);
   });
 });

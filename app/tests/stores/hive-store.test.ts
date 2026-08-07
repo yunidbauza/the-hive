@@ -9,6 +9,7 @@ import { sendToSession } from '@lib/terminal/session-input';
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
 
 /**
  * The desktop half of the store is mocked at the module edge, not stubbed
@@ -44,6 +45,14 @@ vi.mock('@lib/terminal/pty-transport', () => ({
 describe('hive-store', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
+    /**
+     * The console's `spawn` verb validates its repo against the *config* now,
+     * not the store's `projects` slice — that slice was only ever authoritative
+     * because it arrived pre-seeded, and emptying it made every spawn answer
+     * "unknown repo" for a project sitting in the Projects panel.
+     */
+    seedDemoProjectConfig();
     useUiStore.getState().reset();
     // Call history as well as return values: "was the pty asked at all?" is
     // half the assertions below, and it is meaningless if it accumulates.
@@ -555,6 +564,27 @@ describe('hive-store', () => {
       });
 
       /**
+       * The verb reads the config, not the store's `projects` slice.
+       *
+       * A regression guard with a real failure behind it. `spawn` used to
+       * validate against `state.projects`, which was authoritative only because
+       * it booted pre-seeded with five demo projects. Emptying that seed left
+       * the slice permanently empty, so the console answered "unknown repo" for
+       * every project the user could see in the Projects panel — a verb that
+       * refused everything, on a screen listing the things it was refusing.
+       */
+      it('accepts a project the config declares but the store slice does not', () => {
+        // The config still declares apfm-web; the store's slice knows nothing.
+        useHiveStore.setState({ projects: [] });
+        const before = useHiveStore.getState().order.length;
+
+        run('spawn apfm-web do things');
+
+        expect(useHiveStore.getState().order).toHaveLength(before + 1);
+        expect(lastLine()?.text).not.toContain('unknown repo');
+      });
+
+      /**
        * The desktop half (097): a spawn is a real process, so it can be
        * refused for reasons only main knows. The console prints those
        * reasons rather than a generic failure.
@@ -778,6 +808,7 @@ describe('hive-store', () => {
     it('rewinds the clock on reset', () => {
       useHiveStore.getState().spawnSession('apfm-web', 'a task');
       useHiveStore.getState().reset();
+    seedDemoFleet();
 
       expect(peek()).toBe('14:38');
     });

@@ -7,6 +7,7 @@ import type { Entity } from '@/types/entity';
 import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const entity = (id: string): Entity => {
   const found = useHiveStore.getState().entities[id];
@@ -22,6 +23,7 @@ const entity = (id: string): Entity => {
 describe('SessionMetaBar', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 

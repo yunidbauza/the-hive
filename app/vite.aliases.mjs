@@ -34,5 +34,22 @@ export const aliases = {
    * process, which the ESLint zones forbid outright.
    */
   '@shared': fileURLToPath(new URL('./electron/shared', import.meta.url)),
+  /**
+   * Shared test scaffolding — `tests/support/`, and nothing the app ships.
+   *
+   * It exists because the suite now has to build its own preconditions. The
+   * store used to boot pre-populated with a sample fleet, so panel tests got
+   * their entities for free from a module they never imported; the app boots
+   * empty now, and those tests seed themselves from `@tests/support/demo-fleet`.
+   *
+   * An alias rather than `../../../support/…` because the depth of that climb
+   * depends on where in the mirrored tree the test happens to sit, and a path
+   * that changes when a file moves is a path that will be wrong.
+   *
+   * Nothing under `src/` or `electron/` may import through it — those are
+   * production bundles, and this resolves to test code. Listed before the bare
+   * `@` entry for the same reason `@shared` is: insertion order decides.
+   */
+  '@tests': fileURLToPath(new URL('./tests', import.meta.url)),
   '@': srcPath(),
 };

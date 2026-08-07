@@ -8,6 +8,7 @@ import { isSession } from '@/types/entity';
 
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useHiveStore } from '@stores/hive-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * The renderer half of story 096's status path.
@@ -56,6 +57,7 @@ beforeEach(() => {
   nameListeners = [];
   disposals = 0;
   useHiveStore.getState().reset();
+    seedDemoFleet();
 });
 
 afterEach(() => {

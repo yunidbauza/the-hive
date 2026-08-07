@@ -68,13 +68,21 @@ afterEach(() => {
 });
 
 describe('the browser target', () => {
-  it('keeps its fixtures and asks nothing', async () => {
-    // No bridge: this is the demo, and fixtures are its data.
+  /**
+   * A browser has no bridge, so it has no Jira — which is a configuration
+   * answer, not a failure and not a demo.
+   *
+   * This used to assert the opposite: the read returned early and left the
+   * eight seeded tickets in place, because in the browser they *were* the data.
+   * With no seed, an early return would strand the panel on `loading` forever,
+   * spinning for a read that is never going to happen.
+   */
+  it('settles on unconfigured without asking', async () => {
     await state().refreshTickets();
 
     expect(readJiraStatus).not.toHaveBeenCalled();
-    expect(state().ticketSource).toEqual({ kind: 'fixtures' });
-    expect(state().tickets).toHaveLength(8);
+    expect(state().ticketSource).toEqual({ kind: 'unconfigured' });
+    expect(state().tickets).toEqual([]);
   });
 });
 

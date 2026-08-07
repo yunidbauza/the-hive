@@ -13,6 +13,7 @@ import { NewSessionPicker } from '@features/sessions/components/new-session-pick
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
 
 const search = () => screen.getByRole('textbox', { name: 'Search all projects' });
 const rowsFor = (name: RegExp) => screen.getAllByRole('button', { name });
@@ -24,9 +25,20 @@ const rowsFor = (name: RegExp) => screen.getAllByRole('button', { name });
 describe('NewSessionPicker', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     useUiStore.getState().openPicker();
+    /**
+     * The picker lists `useProjects()`, which reads the config and nothing else.
+     *
+     * This block used to end at `resetProjectConfig()` — no config, and the
+     * picker still had five projects to show, because the store seeded them and
+     * the selector fell back to that seed. Both are gone, so an unconfigured
+     * picker is now correctly empty and every test below has to declare the
+     * projects it means to pick from.
+     */
     resetProjectConfig();
+    seedDemoProjectConfig();
   });
 
   afterEach(() => {
@@ -303,6 +315,7 @@ describe('NewSessionPicker · unmapped projects', () => {
 
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     useUiStore.getState().openPicker();
     resetProjectConfig();
@@ -312,8 +325,25 @@ describe('NewSessionPicker · unmapped projects', () => {
     resetProjectConfig();
   });
 
-  it('disables a pinned project that is not mapped, and says why', () => {
-    setProjectConfigForTest(snapshot([{ id: 'referral-api', status: 'ok' }]));
+  /**
+   * "Unmapped" now means *declared but unresolvable*, not *absent from the
+   * config*.
+   *
+   * This used to declare only `referral-api` and assert that `apfm-web` was
+   * still listed — pinned, disabled, explained. It could be listed because the
+   * seeded projects were merged into `useProjects()` whatever the config said.
+   * With the config as the only source, a project the picker lists is by
+   * definition one the config declares, so the unreachable half of that premise
+   * is gone and the case that survives is a declared project whose path is not
+   * there: `status: 'missing'`.
+   */
+  it('disables a pinned project whose path is missing, and says why', () => {
+    setProjectConfigForTest(
+      snapshot([
+        { id: 'apfm-web', status: 'missing' },
+        { id: 'referral-api', status: 'ok' },
+      ]),
+    );
     render(<NewSessionPicker />);
 
     const pinned = screen.getByRole('button', { name: 'apfm-web' });
@@ -323,6 +353,18 @@ describe('NewSessionPicker · unmapped projects', () => {
       'title',
       expect.stringContaining(CONFIG_PATH),
     );
+    expect(screen.getByRole('button', { name: 'referral-api' })).toBeEnabled();
+  });
+
+  /**
+   * The other half of the same rule, stated directly: a project the config does
+   * not declare is not offered at all — not disabled, not greyed, absent.
+   */
+  it('does not list a project the config never declared', () => {
+    setProjectConfigForTest(snapshot([{ id: 'referral-api', status: 'ok' }]));
+    render(<NewSessionPicker />);
+
+    expect(screen.queryByRole('button', { name: 'apfm-web' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'referral-api' })).toBeEnabled();
   });
 

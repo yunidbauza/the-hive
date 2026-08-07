@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { expect, test, type Page } from '@playwright/test';
 
-import { launchHive } from './fixtures/hive-app';
+import { launchHive, startSession } from './fixtures/hive-app';
 
 /**
  * The seam, cashed in (story 094).
@@ -30,7 +30,7 @@ import { launchHive } from './fixtures/hive-app';
 /** A directory that certainly exists on any machine running this. */
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
-const SESSION = 'hero-refresh';
+const SESSION = 'sess-01';
 const PROJECT = 'apfm-web';
 
 /**
@@ -101,7 +101,7 @@ test('opening a session runs a real shell in the mapped project', async ({}, tes
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('header');
 
-    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+    await startSession(page, PROJECT);
     await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
     // The bootstrap has run, so the shell is idle and the next command is ours.
     await expectFile(bootstrapped, 'bootstrapped');
@@ -133,7 +133,7 @@ test('a session keeps running while the user looks at something else', async ({}
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('header');
 
-    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+    await startSession(page, PROJECT);
     await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
     // The bootstrap has run, so the shell is idle and the next command is ours.
     await expectFile(bootstrapped, 'bootstrapped');
@@ -143,7 +143,7 @@ test('a session keeps running while the user looks at something else', async ({}
     await shell(page, `echo up > '${before}'`);
     await expectFile(before, 'up');
 
-    await page.getByRole('button', { name: /lead-form/ }).first().click();
+    await startSession(page, PROJECT);
 
     /**
      * The disposer contract under test: unmounting a surface happens on every
@@ -172,7 +172,7 @@ test('an exit reports its code, and signal 0 rather than no signal', async ({}, 
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('header');
 
-    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+    await startSession(page, PROJECT);
     await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
     // The bootstrap has run, so the shell is idle and the next command is ours.
     await expectFile(bootstrapped, 'bootstrapped');

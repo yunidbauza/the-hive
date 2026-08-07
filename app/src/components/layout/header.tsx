@@ -49,7 +49,7 @@ import { usePickerActions, useSettingsActions } from '@stores/ui-store';
  *
  * ## Target-specific additions, both on the left
  *
- * - **browser**: the `demo` chip, so the fixtures-only surface is never
+ * - **browser**: the `demo` chip, so a build with no PTYs behind it is never
  *   mistaken for the real thing.
  * - **desktop**: the drag region that replaces the title bar we removed.
  *

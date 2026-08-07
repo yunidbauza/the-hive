@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ActivityFeedPanel } from '@features/activity-feed/components/activity-feed-panel';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 beforeEach(() => {
   useHiveStore.getState().reset();
+    seedDemoFleet();
   useUiStore.getState().reset();
 });
 

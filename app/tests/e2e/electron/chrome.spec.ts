@@ -1,6 +1,18 @@
+import { join } from 'node:path';
+
 import { TITLEBAR_HEIGHT } from '../../../electron/shared/window';
 
-import { expect, test } from './fixtures/hive-app';
+import {
+  expect,
+  launchHive,
+  startSession,
+  test,
+  writeProjectConfig,
+} from './fixtures/hive-app';
+
+/** A project id, and a directory that certainly exists on any machine here. */
+const PROJECT = 'apfm-web';
+const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
 /**
  * Window chrome (story 085).
@@ -62,32 +74,54 @@ test('the New session button actually responds to a click', async ({ page }) => 
   await expect(page.getByText('Start a new session')).toBeVisible();
 });
 
-test('the model chip starts on the left rail edge, not the header midpoint', async ({
-  page,
-}) => {
-  // The chip is conditional on a session; the app boots into the orchestrator,
-  // which deliberately has no model of its own.
-  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
+/**
+ * This one launches its own app rather than taking the shared fixture.
+ *
+ * The chip is conditional on an active session, and the app boots into the
+ * orchestrator, which deliberately has no model of its own. It used to get a
+ * session by clicking `hero-refresh` — one of ten seeded into the store at
+ * boot. Nothing is seeded now, so the session has to be started, and starting
+ * one needs a *mapped* project, which needs a config the shared fixture does
+ * not write.
+ */
+test('the model chip starts on the left rail edge, not the header midpoint', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  writeProjectConfig(configPath, { id: PROJECT, path: REAL_DIRECTORY });
 
-  const chip = page.getByRole('banner').getByTitle(/\(1M\)/);
-  await expect(chip).toBeVisible();
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
 
-  const railWidth = await page
-    .locator('nav')
-    .first()
-    .evaluate((element) => element.getBoundingClientRect().width);
-  const chipBox = await chip.boundingBox();
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('header');
 
-  /**
-   * Desktop has no `demo` chip, so the model chip is first in the cluster and
-   * lands on the rail's edge itself — the assertion the web suite cannot make,
-   * because there the `demo` chip owns that line.
-   */
-  expect(Math.round(chipBox!.x)).toBe(Math.round(railWidth));
+    await startSession(page, PROJECT);
 
-  const headerBox = await page.getByRole('banner').boundingBox();
-  const headerMid = headerBox!.x + headerBox!.width / 2;
-  expect(Math.abs(chipBox!.x + chipBox!.width / 2 - headerMid)).toBeGreaterThan(2);
+    const chip = page.getByRole('banner').getByTitle(/\(1M\)/);
+    await expect(chip).toBeVisible();
+
+    const railWidth = await page
+      .locator('nav')
+      .first()
+      .evaluate((element) => element.getBoundingClientRect().width);
+    const chipBox = await chip.boundingBox();
+
+    /**
+     * Desktop has no `demo` chip, so the model chip is first in the cluster and
+     * lands on the rail's edge itself — the assertion the web suite cannot
+     * make, because there the `demo` chip owns that line.
+     */
+    expect(Math.round(chipBox!.x)).toBe(Math.round(railWidth));
+
+    const headerBox = await page.getByRole('banner').boundingBox();
+    const headerMid = headerBox!.x + headerBox!.width / 2;
+    expect(Math.abs(chipBox!.x + chipBox!.width / 2 - headerMid)).toBeGreaterThan(2);
+  } finally {
+    await app.close();
+  }
 });
 
 test('the traffic lights get their own row above the header', async ({ page }) => {

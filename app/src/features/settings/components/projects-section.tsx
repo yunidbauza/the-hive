@@ -6,34 +6,28 @@ import { addProjectToConfig, chooseProjectDirectory } from '@/lib/project-config
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
 import { ProjectsList } from '@features/settings/components/projects-list';
 import { useProjectConfig } from '@hooks/use-project-config';
-import { useProjects } from '@stores/hive-store';
 
 /**
  * The Projects section of settings (story 101).
  *
- * ## What this lists, and what it deliberately does not
+ * ## What this lists
  *
- * **The user's own projects — the ones the config declares.** Not the merged
- * list `useProjects()` returns.
+ * **The user's own projects — the ones the config declares**, which is now the
+ * same set the rails show.
  *
- * The merge rule exists so the *rails and the picker* keep working: a fixture
- * project that still owns live sessions stays in that list, because the work
- * panel, the orchestrator table and `resolve-transport` all reach sessions
- * through `entity.project`. That is right for the rails and wrong here.
- * Fixture projects always own sessions in this phase, so listing them would
- * mean a fresh install opens Settings on five rows the user did not add,
- * cannot remove, and did not come here for — and the empty state, which is the
- * screen this whole story exists to produce, would never appear at all.
- *
- * They are accounted for instead by one muted line beneath the list, so the
- * user can still tell where the rail's projects come from.
+ * This used to draw a distinction it no longer has to. `useProjects()` returned
+ * a *merge* — the config's projects plus any seeded project still owning a live
+ * seeded session — so this section read the config directly to avoid opening on
+ * five rows the user never added and could not remove, and accounted for them in
+ * one muted line beneath the list. With the seed gone the merge is gone: a
+ * project exists because the user mapped it, both lists agree, and that line had
+ * nothing left to count.
  *
  * The list is a bordered card in **both** states. A bordered box saying "No
  * projects yet" reads as a furnished, empty place; a bare heading above a
  * button reads as a broken render.
  */
 export function ProjectsSection() {
-  const merged = useProjects();
   const snapshot = useProjectConfig();
 
   /**
@@ -57,9 +51,6 @@ export function ProjectsSection() {
   const [view, setView] = useState<'list' | 'clone'>('list');
 
   const declared = snapshot?.projects ?? [];
-
-  /** Demo projects still on screen elsewhere, counted rather than listed. */
-  const demoCount = merged.filter((project) => project.source === 'demo').length;
 
   const onAdd = async () => {
     if (choosing) return;
@@ -138,14 +129,6 @@ export function ProjectsSection() {
           Clone from URL
         </button>
       </div>
-
-      {demoCount > 0 ? (
-        <p className="text-[11px] text-subtle">
-          {demoCount === 1
-            ? '1 demo project from the sample data also appears in the rail.'
-            : `${demoCount} demo projects from the sample data also appear in the rail.`}
-        </p>
-      ) : null}
 
       {snapshot ? (
         <p className="mt-auto pt-2 text-[11px] text-subtle">

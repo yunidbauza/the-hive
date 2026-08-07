@@ -3,16 +3,25 @@ import { projectAccess } from '@lib/project-config';
 /**
  * Which runtime is this (story 083)?
  *
- * **Electron is the product. The browser build is a fixtures-only demo
- * surface.** It survives because the transport seam (story 042) already makes
- * it a branch on one factory, and it buys three real things: the six existing
- * Playwright web specs keep passing unchanged, a demo needs no install, and the
- * whole coordination UI stays developable without spawning processes.
+ * **Electron is the product. The browser build is a chrome-only shell.**
+ *
+ * It used to be a *demo*: the store booted with ten seeded sessions, five
+ * projects and eight tickets, so `pnpm dev` opened on something that looked like
+ * a working command center. That seed loaded on the desktop too, which is what
+ * made the real app count a fleet nobody had started, and removing it took the
+ * demo with it. A browser has no bridge, so it has no PTYs, no config file and
+ * no Jira — and now nothing pretending otherwise.
+ *
+ * What it still buys is real: the shell, the rails, the theme, the layout and
+ * every empty state are developable and testable without spawning a process, and
+ * `tests/e2e/web/` covers exactly that. Anything involving a session belongs in
+ * `tests/e2e/electron/`, where sessions exist.
  *
  * It survives on one condition — **it must degrade visibly.** A browser build
  * that looks identical to the desktop build while its terminals are recordings
  * is a trap, first for the user and then for us, the moment someone files a bug
- * against a transcript.
+ * against a transcript. That is what {@link DEMO_PLACEHOLDER} and the `demo`
+ * chip are for, and why they stayed when the fixtures went.
  */
 
 /**
@@ -46,12 +55,11 @@ export const isDesktop = (): boolean =>
  * real sessions (097).
  *
  * They are explicitly **not** wired to the new-session picker or the console's
- * `spawn` verb today, which story 083's degradation table proposed. In this
- * prototype "starting a session" adds a fixture entity with a recorded
- * transcript — it does not start a process — so gating it would remove the
- * demo surface's main flow while protecting nothing. It would also break five
- * of the six Playwright web specs, and story 083 names that as the signal that
- * the story is wrong rather than the specs.
+ * `spawn` verb today, which story 083's degradation table proposed. Gating those
+ * would protect nothing that is not already protected: both go through
+ * `useProjects()`, which reads the config, and a browser has no config — so the
+ * picker there is empty and the console's `spawn` refuses by name, without a
+ * capability check being consulted at all.
  *
  * The degradation that *is* real — the terminals are recordings — is carried
  * by {@link DEMO_PLACEHOLDER} and the `demo` chip, where a user actually
@@ -66,13 +74,13 @@ export const can = {
    * resolvable.
    *
    * It is the one capability wired to a real surface today, because it gates
-   * something that genuinely cannot work — a PTY with no `cwd` — rather than
-   * gating the demo's fixture flow.
+   * something that genuinely cannot work — a PTY with no `cwd`.
    *
-   * With no config snapshot it answers `true`, which is what keeps the browser
-   * demo and the first frames of a desktop launch fully usable. The reasoning
-   * is in {@link projectAccess}; the short version is that the browser build
-   * has no config to consult and no process to protect.
+   * With no config snapshot it answers `true`, which is what keeps the first
+   * frames of a desktop launch usable before the config has been read. The
+   * reasoning is in {@link projectAccess}; the short version is that "not read
+   * yet" is not "not mapped", and refusing on the difference would flash a
+   * refusal at every launch.
    */
   spawnSessionIn: (projectId: string): boolean =>
     projectAccess(projectId).spawnable,

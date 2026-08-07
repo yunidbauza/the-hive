@@ -5,6 +5,7 @@ import { ModelChip } from '@components/layout/model-chip';
 import { contextMeter, contextPct } from '@/lib/session-metrics';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * The chip is conditional on *what kind of thing* the active tab is — the
@@ -14,6 +15,7 @@ import { useUiStore } from '@stores/ui-store';
 describe('ModelChip', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 

@@ -12,6 +12,7 @@ import { ProjectsSection } from '@features/settings/components/projects-section'
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
@@ -58,6 +59,7 @@ const seed = (projects: ProjectConfig[], errors: string[] = []): void => {
 describe('ProjectsSection', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     resetProjectConfig();
     vi.clearAllMocks();
@@ -80,31 +82,30 @@ describe('ProjectsSection', () => {
   });
 
   /**
-   * Settings lists what the user owns, not the merged list the rails use.
+   * Settings lists the config, and so does the rail — they cannot disagree.
    *
-   * The merge rule keeps fixture projects alive for the rails, because the work
-   * panel and `resolve-transport` reach sessions through `entity.project`.
-   * Listing them *here* would open a fresh install on five rows the user did
-   * not add and cannot remove, and would make the empty state unreachable.
+   * This used to be two tests: one asserting seeded projects were kept *out* of
+   * this list, and one asserting the muted line that counted them instead. Both
+   * existed because `useProjects()` returned a merge, so the rail could show
+   * five repositories the user never mapped and Settings had to explain them
+   * without offering rows nobody could remove.
+   *
+   * There is no merge and no seed now. A store full of sessions naming
+   * `apfm-web` must still not put `apfm-web` in this list — only the config
+   * does that — which is what the seeded fleet below is here to prove.
    */
-  it('does not list demo projects as rows', () => {
+  it('lists the config and nothing the sessions merely name', () => {
     seed([entry({ id: 'the-hive', name: 'The Hive' })]);
 
     render(<ProjectsSection />);
 
-    expect(screen.queryByText('demo')).not.toBeInTheDocument();
+    expect(screen.getByText('The Hive')).toBeInTheDocument();
+    // Seeded sessions name apfm-web. The config does not declare it.
     expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
-  });
-
-  it('accounts for the demo projects in one line instead', () => {
-    seed([entry({ id: 'the-hive' })]);
-
-    render(<ProjectsSection />);
-
-    // The user can still tell where the rail's other projects come from.
+    // And the muted "N demo projects also appear in the rail" line is gone.
     expect(
-      screen.getByText(/demo projects from the sample data also appear/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/demo projects from the sample data/i),
+    ).not.toBeInTheDocument();
   });
 
   it('names the config file', () => {

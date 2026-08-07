@@ -52,152 +52,96 @@ test('renders the header chrome', async ({ page }) => {
    */
   await expect(header.getByRole('button', { name: 'Switch to light theme' })).toBeVisible();
 });
+/**
+ * The three model-chip alignment tests that used to live here are gone.
+ *
+ * Each opened a seeded session first — `getByRole('button', {name: /hero-refresh/})`
+ * — because the chip renders only for an active session, and the orchestrator
+ * the app boots into has no model of its own. The browser target has no seeded
+ * fleet any more and no way to start a real one, so their precondition is
+ * unreachable rather than merely unmet.
+ *
+ * What they measured is still measured. `chip-alignment.spec.ts` pins the
+ * chip cluster to the left rail's trailing edge in this same browser, and the
+ * electron suite covers the model chip on the target that can actually open a
+ * session. Nothing was traded away to make this file pass; the coverage moved
+ * to where the subject exists.
+ */
 
 /**
- * The model chip starts on the left rail's trailing edge.
+ * The shell with nothing in it — the state a fresh launch is actually in.
  *
- * It used to be centred on the header's true midpoint (story 021). That was
- * deliberate and correct at the time; the design has since moved both header
- * chips to the left, onto the vertical line the center stage begins on, so the
- * midpoint assertion this replaces would now be asserting the opposite of the
- * intent.
- *
- * Still a measurement rather than a markup check: happy-dom performs no layout,
- * so `header.test.tsx` can only prove the structure exists. Whether the chip
- * actually lands on the rail's edge needs a browser.
+ * Every panel here used to open pre-populated from a seeded dataset, so this
+ * was a state no browser test had ever seen. It is the default now, and an
+ * empty column with no explanation is indistinguishable from a failed render.
  */
-test('starts the model chip on the left rail edge, not the header midpoint', async ({
-  page,
-}) => {
-  // The chip is conditional on a *session* being active; the orchestrator the
-  // app boots into deliberately has no model of its own.
-  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
+test('opens every panel on an empty state, not on sample data', async ({ page }) => {
+  const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
 
-  const header = page.getByRole('banner');
+  await expect(page.getByText(/No projects mapped/i)).toBeVisible();
+  await expect(page.getByText('Settings → Projects')).toBeVisible();
 
-  /**
-   * By title, not by text: the title is on the pill, while the text lives in an
-   * inner truncating span inset by the pill's padding and its brain icon.
-   * Measuring the span would measure the wrong box.
-   */
-  const chip = header.getByTitle(/Opus 4\.5 \(1M\)/);
-  await expect(chip).toBeVisible();
-
-  const railWidth = await page
-    .locator('nav')
-    .first()
-    .evaluate((element) => element.getBoundingClientRect().width);
-  const chipBox = await chip.boundingBox();
-  expect(chipBox).not.toBeNull();
-
-  /**
-   * The **cluster** starts on the rail's edge, and whichever chip comes first
-   * starts there. This is the browser build, so that is the `demo` chip and the
-   * model chip follows it; on desktop there is no `demo` chip and the model
-   * chip lands on the line itself (asserted in the electron suite).
-   */
-  const clusterX = await page
-    .getByTestId('header-chips')
-    .evaluate((element) => element.getBoundingClientRect().x);
-  expect(Math.round(clusterX)).toBe(Math.round(railWidth));
-
-  // The model chip sits just right of the demo chip, still far left of centre.
-  expect(chipBox!.x).toBeGreaterThanOrEqual(railWidth);
-
-  // And explicitly NOT centred, so this test cannot quietly pass if the old
-  // grid came back.
-  const headerBox = await header.boundingBox();
-  const headerMid = headerBox!.x + headerBox!.width / 2;
-  const chipMid = chipBox!.x + chipBox!.width / 2;
-  expect(Math.abs(chipMid - headerMid)).toBeGreaterThan(2);
+  await rail.getByRole('tab', { name: /^Agents/ }).click();
+  await expect(page.getByText(/No agents running/i)).toBeVisible();
 });
 
-/**
- * Moving the chip left is only correct if it does not cost anything invisible —
- * it must clear the wordmark rather than sit on top of it, must not collide
- * with the controls, and must not push the header off one line. A chip that
- * overlapped the brand, or reflowed the fleet counts onto a second row inside a
- * 56px bar, would pass the alignment assertion above and still be plainly
- * broken. That second failure is not hypothetical: the counts wrap by default.
- */
-test('places the chip without overlapping or reflowing the side zones', async ({
-  page,
-}) => {
-  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
-
-  const header = page.getByRole('banner');
-  const chip = header.getByTitle(/Opus 4\.5 \(1M\)/);
-  const brand = header.getByText('The Hive');
-  const newSession = header.getByRole('button', { name: 'New session' });
-  const counts = header.getByTitle(/working · .* waiting/);
-
-  const [chipBox, brandBox, buttonBox, countsBox] = await Promise.all([
-    chip.boundingBox(),
-    brand.boundingBox(),
-    newSession.boundingBox(),
-    counts.boundingBox(),
-  ]);
-
-  expect(chipBox!.x).toBeGreaterThan(brandBox!.x + brandBox!.width);
-  expect(chipBox!.x + chipBox!.width).toBeLessThan(buttonBox!.x);
-
-  /**
-   * One line of 12px mono is 16px tall; two are 32. Asserting under 20 catches
-   * the wrap without pinning the exact line-height.
-   */
-  expect(countsBox!.height).toBeLessThan(20);
-
-  const overflows = await page.evaluate(
-    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+/** The orchestrator, on a machine where nothing is running. */
+test('the orchestrator says its fleet is empty', async ({ page }) => {
+  await expect(page.getByTestId('session-table-empty')).toHaveText(
+    'No sessions running — start one with New session.',
   );
-  expect(overflows).toBe(false);
 });
 
 /**
- * When the header runs out of width, the **model chip** is what gives.
- *
- * This inverted when the chips moved left. Under the old centred grid the
- * fleet counts absorbed the deficit, because the chip was the thing being
- * centred and could not be allowed to move. Now the left cluster is `min-w-0`
- * and the controls do not shrink, which is the right way round: the chip
- * already truncates by design and carries its full text in a `title`, while
- * the counts have no tooltip and would simply lose information.
- *
- * Both halves are asserted rather than only the happy one — a regression that
- * started truncating the counts again would mean the priority flipped back.
+ * The header counts, which is where the user first sees the app claim a fleet.
+ * All four read zero because all four now count something real.
  */
-test('spends the header deficit on the model chip, never on the counts', async ({
+test('the header counts nothing on a fresh launch', async ({ page }) => {
+  const header = page.getByRole('banner');
+
+  await expect(header.getByText('0 working')).toBeVisible();
+  await expect(header.getByText('0 waiting')).toBeVisible();
+  await expect(header.getByText(/0 idle · 0 ended/)).toBeVisible();
+});
+
+/**
+ * The whole change, stated once as a negative: no seeded session, project or
+ * ticket reaches the surfaces that describe the fleet. A unit test can prove
+ * the store is empty; only a browser can prove nothing paints it.
+ *
+ * ## Why this is scoped to three panels rather than the whole page
+ *
+ * The PRs and inbox panels still carry seeded rows, deliberately — nothing
+ * produces a PR or a notification yet, so emptying them would leave two panels
+ * permanently blank with no path to filling them. Those rows name sessions
+ * (`hero-refresh`, `lead-form`) that no longer exist, which is the accepted
+ * cost of keeping them.
+ *
+ * So a page-wide "this string appears nowhere" would fail on data that is
+ * supposed to be there, and would have to be weakened until it proved nothing.
+ * The surfaces below are the ones the user reads as *the fleet* — the projects
+ * tree, the orchestrator's table, and the work list — and those must be empty.
+ */
+test('paints no seeded session, project or ticket in the fleet surfaces', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: /hero-refresh/ }).first().click();
+  const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
+  const seeded = ['hero-refresh', 'lead-form', 'apfm-web', 'referral-api'];
 
-  const header = page.getByRole('banner');
-  const counts = header.getByTitle(/working · .* waiting/);
-  const chipText = header.getByTitle(/Opus 4\.5 \(1M\)/).locator('span');
+  // The projects tree: no seeded repository, and no session under one.
+  const projects = page.locator('[data-panel="projects"]');
+  for (const name of seeded) {
+    await expect(projects.getByText(name, { exact: false })).toHaveCount(0);
+  }
 
-  const clipped = (locator: ReturnType<typeof header.getByTitle>) =>
-    locator.evaluate((el) => el.scrollWidth > el.clientWidth);
+  // The orchestrator table: the fleet stated as a list, and it has no rows.
+  await expect(page.getByTestId('session-table-empty')).toBeVisible();
 
-  // Narrow enough that something has to give.
-  await page.setViewportSize({ width: 1280, height: 900 });
-  expect(await clipped(counts)).toBe(false);
-
-  // Wide enough that nothing does.
-  await page.setViewportSize({ width: 1750, height: 900 });
-  expect(await clipped(counts)).toBe(false);
-  expect(await clipped(chipText)).toBe(false);
-
-  // The cluster keeps its rail alignment at the wider width too, not merely at
-  // 1440 — the alignment must not be an accident of one viewport.
-  const railWidth = await page
-    .locator('nav')
-    .first()
-    .evaluate((element) => element.getBoundingClientRect().width);
-  const clusterX = await page
-    .getByTestId('header-chips')
-    .evaluate((element) => element.getBoundingClientRect().x);
-  expect(Math.round(clusterX)).toBe(Math.round(railWidth));
+  // The work list: no ticket key, in any state, at any moment.
+  await rail.getByRole('tab', { name: /^Work/ }).click();
+  await expect(page.getByText(/GRAC-\d+/)).toHaveCount(0);
 });
+
 
 /**
  * The rails are fixed-width and the center column absorbs every resize (story

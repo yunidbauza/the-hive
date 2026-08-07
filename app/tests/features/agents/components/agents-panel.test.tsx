@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentsPanel } from '@features/agents/components/agents-panel';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /** The three fixture agents, in `agentOrder`, with their subtitles. */
 const FIXTURE_AGENTS = [
@@ -19,10 +20,31 @@ const agentRow = (id: string) =>
 describe('AgentsPanel', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 
-  it('renders every fixture agent, in agentOrder', () => {
+  /**
+   * The state a fresh launch is actually in.
+   *
+   * Three agents used to be seeded into the store at boot — a Slack watcher, a
+   * PR reviewer, a standup writer — none of which anything could start or stop.
+   * Nothing creates a background agent yet, so the panel says that instead of
+   * listing three that do not exist.
+   */
+  it('says why it is empty when no agents are running', () => {
+    useHiveStore.getState().reset();
+
+    render(<AgentsPanel />);
+
+    expect(screen.getByText(/No agents running/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Background agents are not available yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders every seeded agent, in agentOrder', () => {
     render(<AgentsPanel />);
 
     const ids = screen

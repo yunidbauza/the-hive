@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { useHiveStore, useNavOrder } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const input = () => screen.getByRole('textbox', { name: 'Orchestrator command' });
 
@@ -22,6 +23,7 @@ const transcript = () =>
 describe('ConsoleInput', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 

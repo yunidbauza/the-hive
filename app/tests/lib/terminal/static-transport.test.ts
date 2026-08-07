@@ -6,6 +6,7 @@ import {
   createStaticTransport,
 } from '@lib/terminal/static-transport';
 import { useHiveStore } from '@stores/hive-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * The store-facing half of the seam (story 042). It is allowed to know about
@@ -14,6 +15,7 @@ import { useHiveStore } from '@stores/hive-store';
 describe('StaticTransport', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
   });
 
   it('replays the whole transcript to a new subscriber', () => {
@@ -120,12 +122,30 @@ describe('StaticTransport', () => {
       .appendEntityLines('hero-refresh', [{ text: 'extra', color: 'ink' }]);
     received.mockClear();
 
+    /**
+     * Two emissions now, and they say different things.
+     *
+     * `reset()` used to put the seeded transcript back in a single step, so the
+     * wipe and the replay arrived together in one chunk. `reset()` empties the
+     * store today and the transcript comes back from `seedDemoFleet()`, so the
+     * wipe is the first chunk and the replay is the second — and only the first
+     * carries the clear, because growing a transcript from empty is an append,
+     * not a shortening.
+     */
     useHiveStore.getState().reset();
 
     // A diff is meaningless against a shorter transcript; without the clear the
     // surface would keep lines the store no longer has.
+    const wipe = received.mock.calls[0][0] as string;
+    expect(wipe.startsWith('\u001b[2J\u001b[H')).toBe(true);
+    expect(wipe).not.toContain('claude --resume feat/hero-refresh');
+
+    received.mockClear();
+    seedDemoFleet();
+
+    // Seeding the transcript back is an append from empty, so it replays the
+    // lines without a second clear.
     const chunk = received.mock.calls[0][0] as string;
-    expect(chunk.startsWith('\u001b[2J\u001b[H')).toBe(true);
     expect(chunk).toContain('claude --resume feat/hero-refresh');
   });
 

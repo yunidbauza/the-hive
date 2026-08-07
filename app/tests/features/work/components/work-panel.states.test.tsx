@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,9 +10,9 @@ import type { JiraIssue } from '@shared/jira-contract';
  * One case per `TicketSource` (HIVE-69).
  *
  * The panel's whole job beyond mapping over tickets is saying *which* of the
- * five states it is in, and four of them have something to say. Kept separate
- * from `work-panel.test.tsx`, which covers the fixture rendering the browser
- * target still relies on.
+ * five states it is in, and every one of them has something to say — including
+ * `loading`, which says it with a skeleton. Kept separate from
+ * `work-panel.test.tsx`, which covers how a ticket renders once it is there.
  */
 
 const refreshTickets = vi.fn(() => Promise.resolve());
@@ -44,13 +44,57 @@ afterEach(() => {
   state().reset();
 });
 
-describe('the fixtures state', () => {
-  it('says nothing — the demo is not a degraded mode', () => {
+/**
+ * The state this whole change exists to produce.
+ *
+ * There used to be a `fixtures` state here, asserting the panel said nothing
+ * because eight seeded tickets were already on screen — which is exactly the
+ * bug: a real read then replaced them a frame later, so the user watched sample
+ * data turn into their backlog. The store boots `loading` now and has nothing
+ * to show until Jira answers.
+ */
+describe('the loading state', () => {
+  it('is where the panel starts, before any read has answered', () => {
+    expect(state().ticketSource).toEqual({ kind: 'loading' });
+  });
+
+  it('shows a skeleton instead of tickets it does not have yet', () => {
+    render(<WorkPanel />);
+
+    expect(screen.getByRole('status', { name: 'Loading tickets' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+  });
+
+  it('says none of the things the settled states say', () => {
     render(<WorkPanel />);
 
     expect(screen.queryByText(/out of date/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Settings/)).not.toBeInTheDocument();
-    expect(screen.getByText('GRAC-3018')).toBeInTheDocument();
+    expect(screen.queryByText(/No Jira connection yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No issues matched/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The load-bearing assertion, stated as a negative because that is what the
+   * bug was: no seeded ticket key can reach the screen, in any state, because
+   * no seeded ticket exists to reach it.
+   */
+  it('never paints a seeded ticket key', () => {
+    render(<WorkPanel />);
+
+    expect(screen.queryByText(/^GRAC-/)).not.toBeInTheDocument();
+  });
+
+  it('leaves loading once a read resolves', () => {
+    render(<WorkPanel />);
+    expect(screen.getByRole('status', { name: 'Loading tickets' })).toBeInTheDocument();
+
+    act(() => {
+      state().hydrateTickets([issue()], false);
+    });
+
+    expect(screen.queryByRole('status', { name: 'Loading tickets' })).not.toBeInTheDocument();
+    expect(screen.getByText('HIVE-1')).toBeInTheDocument();
   });
 });
 

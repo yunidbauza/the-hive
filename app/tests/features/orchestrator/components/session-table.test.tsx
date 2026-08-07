@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const rows = () => screen.getAllByRole('button');
 
@@ -12,10 +13,55 @@ const rows = () => screen.getAllByRole('button');
 describe('SessionTable', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 
-  it('partitions the fixtures into 8 active and 2 ended', () => {
+  /**
+   * The orchestrator on a machine where nothing is running.
+   *
+   * Ten sessions used to be seeded at boot, so this screen always looked busy
+   * — the fleet it displayed was the demo's, not the user's. It opens empty
+   * now, and the table has to say so rather than showing a header over a void.
+   */
+  describe('with no sessions', () => {
+    beforeEach(() => {
+      useHiveStore.getState().reset();
+    });
+
+    it('says the fleet is empty, and how to change that', () => {
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('session-table-empty')).toHaveTextContent(
+        'No sessions running — start one with New session.',
+      );
+    });
+
+    it('keeps the column header, so the empty area reads as a table', () => {
+      render(<SessionTable />);
+
+      expect(screen.getByText('SESSION')).toBeInTheDocument();
+      expect(screen.getByText('PROJECT · BRANCH')).toBeInTheDocument();
+      // `rows()` uses getAllByRole, which throws on an empty fleet — the very
+      // case under test.
+      expect(screen.queryAllByRole('button')).toHaveLength(0);
+    });
+
+    /** An ENDED divider with nothing under it reads as a rendering bug. */
+    it('shows no ENDED group', () => {
+      render(<SessionTable />);
+
+      expect(screen.queryByText('ENDED')).not.toBeInTheDocument();
+    });
+  });
+
+  it('drops the empty notice as soon as a session exists', () => {
+    render(<SessionTable />);
+
+    expect(screen.queryByTestId('session-table-empty')).not.toBeInTheDocument();
+  });
+
+  it('partitions the seeded fleet into 8 active and 2 ended', () => {
     render(<SessionTable />);
 
     // The exact split the story's acceptance criteria name.

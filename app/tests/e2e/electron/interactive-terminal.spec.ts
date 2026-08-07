@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { launchHive } from './fixtures/hive-app';
+import { launchHive, startSession } from './fixtures/hive-app';
 
 /**
  * Typing into a real terminal (story 095).
@@ -25,7 +25,7 @@ import { launchHive } from './fixtures/hive-app';
 /** A directory that certainly exists on any machine running this. */
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
-const SESSION = 'hero-refresh';
+const SESSION = 'sess-01';
 const PROJECT = 'apfm-web';
 
 /**
@@ -84,7 +84,7 @@ async function openLiveSession(
 ): Promise<Locator> {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForSelector('header');
-  await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+  await startSession(page, PROJECT);
 
   const terminal = page.locator(`[data-terminal-id="${SESSION}"]`);
   await expect(terminal).toBeVisible();
@@ -439,7 +439,7 @@ test('the interactive terminal takes a GPU context; the console does not', async
     await expect(orchestrator).toBeVisible();
     await expect(orchestrator.locator('canvas')).toHaveCount(0);
 
-    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+    await startSession(page, PROJECT);
     const terminal = page.locator(`[data-terminal-id="${SESSION}"]`);
 
     /**
@@ -471,13 +471,22 @@ test('a hidden terminal gives its GPU context back and takes one again on return
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('header');
 
-    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
-    const terminal = page.locator(`[data-terminal-id="${SESSION}"]`);
+    /**
+     * Two sessions, then switch between them.
+     *
+     * This used to click two seeded rail rows — `hero-refresh`, then
+     * `lead-form`, then back. Nothing is seeded now, so the second session has
+     * to be started rather than clicked; only the *return* is a tab switch, and
+     * it is a click on the first session's row.
+     */
+    const first = await startSession(page, PROJECT);
+    const terminal = page.locator(`[data-terminal-id="${first}"]`);
     await expect(terminal.locator('canvas').first()).toBeAttached({
       timeout: 10_000,
     });
 
-    await page.getByRole('button', { name: /lead-form/ }).first().click();
+    // A second session takes the stage, so the first is hidden but kept alive.
+    await startSession(page, PROJECT);
 
     /**
      * Contexts are a capped, process-wide resource — browsers commonly allow
@@ -488,7 +497,8 @@ test('a hidden terminal gives its GPU context back and takes one again on return
      */
     await expect(terminal.locator('canvas')).toHaveCount(0, { timeout: 10_000 });
 
-    await page.getByRole('button', { name: new RegExp(SESSION) }).first().click();
+    // Back to the first: a tab switch, not a new session.
+    await page.getByRole('button', { name: new RegExp(first) }).first().click();
     await expect(terminal.locator('canvas').first()).toBeAttached({
       timeout: 10_000,
     });

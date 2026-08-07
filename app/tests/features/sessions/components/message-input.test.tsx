@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const input = (id = 'lead-form') =>
   screen.getByRole('textbox', { name: `Message ${id}` });
@@ -33,6 +34,7 @@ const submit = (field: HTMLElement, text: string) => {
 describe('MessageInput', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 

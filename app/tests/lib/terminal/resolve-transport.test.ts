@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import { useHiveStore } from '@stores/hive-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * The PTY transport is mocked here so the *routing* is assertable without a
@@ -28,12 +29,27 @@ function withBridge() {
   (window as { hive?: unknown }).hive = { appInfo: () => Promise.resolve({}) };
 }
 
+/**
+ * The entities have to be put there now.
+ *
+ * They used to arrive with the store: it booted seeded, so `hero-refresh` and
+ * `slack-agent` simply existed and this file never said where from. The app
+ * boots empty, so the fleet is seeded here — deliberately without a project
+ * config, since `projectAccess()` answers `spawnable` for an unmapped project
+ * when there is no config to consult, which is the case every assertion below
+ * was written against.
+ */
+beforeEach(() => {
+  useHiveStore.getState().reset();
+  seedDemoFleet();
+});
+
 afterEach(() => {
   delete (window as { hive?: unknown }).hive;
   vi.clearAllMocks();
 });
 
-/** A real fixture session, because the project id now has to resolve. */
+/** A session from the demo fleet, because the project id has to resolve. */
 const SESSION_ID = 'hero-refresh';
 const SESSION_PROJECT = 'apfm-web';
 

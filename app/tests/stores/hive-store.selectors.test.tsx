@@ -29,6 +29,7 @@ import {
   useUnreadCount,
 } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
  * Every selector hook is asserted against the fixtures. Derived values are
@@ -39,6 +40,7 @@ import { useUiStore } from '@stores/ui-store';
 describe('hive-store selectors', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
   });
 
@@ -339,104 +341,88 @@ describe('hive-store selectors', () => {
       resetProjectConfig();
     });
 
-    it('returns the five fixture projects in fixture order', () => {
+    /**
+     * The config decides, and nothing else does.
+     *
+     * This block used to describe a *merge*: config projects, plus any seeded
+     * project that still owned a live seeded session, marked `source: 'demo'`,
+     * with a precedence rule for a shared id. Every one of those cases existed
+     * to stop the demo dataset stranding its own sessions. Both the dataset and
+     * the merge are gone, and what is left is a much shorter contract — which is
+     * the point of having removed it.
+     */
+    it('is empty when the config declares no projects', () => {
+      setProjectConfigForTest(configured([]));
+
       const { result } = renderHook(() => useProjects());
 
-      expect(result.current.map((project) => project.id)).toEqual([
-        'apfm-web',
-        'referral-api',
-        'advisor-portal',
-        'design-system',
-        'infra-terraform',
+      expect(result.current).toEqual([]);
+    });
+
+    it('is empty when there is no snapshot at all', () => {
+      setProjectConfigForTest(null);
+
+      const { result } = renderHook(() => useProjects());
+
+      expect(result.current).toEqual([]);
+    });
+
+    /**
+     * The regression guard for the bug this all started with.
+     *
+     * The store's `projects` slice is what sessions name through
+     * `entity.project`; it is not a list the rail may draw. When those two were
+     * conflated, five repositories nobody had mapped appeared in a fresh
+     * install.
+     */
+    it('ignores the store projects slice, however full it is', () => {
+      setProjectConfigForTest(configured([]));
+
+      act(() => {
+        useHiveStore.setState({
+          projects: [
+            { id: 'apfm-web', icon: 'ph-globe-hemisphere-west' },
+            { id: 'referral-api', icon: 'ph-cube' },
+          ],
+        });
+      });
+
+      const { result } = renderHook(() => useProjects());
+
+      expect(result.current).toEqual([]);
+    });
+
+    it('returns the configured projects, with their names and icons', () => {
+      setProjectConfigForTest(configured([{ id: 'the-hive', name: 'The Hive' }]));
+
+      const { result } = renderHook(() => useProjects());
+
+      expect(result.current).toEqual([
+        {
+          id: 'the-hive',
+          name: 'The Hive',
+          icon: 'ph-folder',
+          source: 'config',
+        },
       ]);
     });
 
-    it('carries each project’s icon name', () => {
+    it('marks every row as coming from the config', () => {
+      setProjectConfigForTest(configured([{ id: 'one' }, { id: 'two' }]));
+
       const { result } = renderHook(() => useProjects());
 
-      expect(result.current[0].icon).toBe('ph-globe-hemisphere-west');
+      expect(result.current.every((row) => row.source === 'config')).toBe(true);
     });
 
-    describe('the merge rule (story 101)', () => {
-      it('returns the fixtures unchanged when there is no snapshot', () => {
-        setProjectConfigForTest(null);
+    it('preserves config file order and never sorts', () => {
+      setProjectConfigForTest(configured([{ id: 'zeta' }, { id: 'alpha' }]));
 
-        const { result } = renderHook(() => useProjects());
+      const { result } = renderHook(() => useProjects());
 
-        expect(result.current).toHaveLength(5);
-        expect(result.current.every((row) => row.source === 'demo')).toBe(true);
-      });
-
-      it('returns the fixtures unchanged when the snapshot declares no projects', () => {
-        setProjectConfigForTest(configured([]));
-
-        const { result } = renderHook(() => useProjects());
-
-        expect(result.current).toHaveLength(5);
-        expect(result.current.every((row) => row.source === 'demo')).toBe(true);
-      });
-
-      it('names a demo row by its id, which is what it has always shown', () => {
-        setProjectConfigForTest(null);
-
-        const { result } = renderHook(() => useProjects());
-
-        expect(result.current[0].name).toBe('apfm-web');
-      });
-
-      it('returns config projects plus fixture projects that still own sessions', () => {
-        setProjectConfigForTest(configured([{ id: 'the-hive', name: 'The Hive' }]));
-
-        const { result } = renderHook(() => useProjects());
-        const rows = result.current;
-
-        expect(rows[0]).toMatchObject({
-          id: 'the-hive',
-          name: 'The Hive',
-          source: 'config',
-        });
-        // apfm-web owns fixture sessions, so dropping it would strand them.
-        expect(rows.find((row) => row.id === 'apfm-web')?.source).toBe('demo');
-      });
-
-      it('drops fixture projects that own no sessions', () => {
-        setProjectConfigForTest(configured([{ id: 'the-hive' }]));
-
-        const { result } = renderHook(() => useProjects());
-        const owning = new Set(
-          Object.values(useHiveStore.getState().entities)
-            .filter((entity) => entity.kind === 'session')
-            .map((entity) => (entity as { project: string }).project),
-        );
-
-        for (const row of result.current.filter((r) => r.source === 'demo')) {
-          expect(owning.has(row.id)).toBe(true);
-        }
-      });
-
-      it('collapses a shared id to one row, config winning', () => {
-        setProjectConfigForTest(configured([{ id: 'apfm-web', name: 'My APFM' }]));
-
-        const { result } = renderHook(() => useProjects());
-        const rows = result.current.filter((row) => row.id === 'apfm-web');
-
-        // The upgrade path for anyone who already mapped apfm-web under 090.
-        expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ source: 'config', name: 'My APFM' });
-      });
-
-      it('preserves config file order and never sorts', () => {
-        setProjectConfigForTest(configured([{ id: 'zeta' }, { id: 'alpha' }]));
-
-        const { result } = renderHook(() => useProjects());
-        const ids = result.current
-          .filter((row) => row.source === 'config')
-          .map((row) => row.id);
-
-        // Story 103's drag-reorder rewrites this array and the left rail reads
-        // it positionally. Sorting here would make that story unimplementable.
-        expect(ids).toEqual(['zeta', 'alpha']);
-      });
+      // Story 103's drag-reorder rewrites this array and the left rail reads
+      // it positionally. Sorting here would make that story unimplementable.
+      expect(result.current.map((row) => row.id)).toEqual(['zeta', 'alpha']);
     });
   });
 

@@ -14,6 +14,7 @@ import { CenterStage } from '@components/layout/center-stage';
 import { useHiveStore } from '@stores/hive-store';
 import { TERMINAL_CHORD_EVENT } from '@lib/terminal/keymap';
 import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
@@ -35,6 +36,7 @@ const visibleSurfaces = () =>
 describe('CenterStage', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     resetTerminalInstances();
     resetFitAddonInstances();
@@ -210,6 +212,7 @@ describe('CenterStage — interactive terminals', () => {
 
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     resetTerminalInstances();
     resetFitAddonInstances();
@@ -340,6 +343,7 @@ describe('CenterStage — interactive terminals', () => {
 describe('CenterStage — the escape chord', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     resetTerminalInstances();
     resetFitAddonInstances();
@@ -411,6 +415,7 @@ describe('CenterStage — the escape chord', () => {
 describe('CenterStage — text fields keep their native bindings', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
     useUiStore.getState().reset();
     resetTerminalInstances();
     resetFitAddonInstances();

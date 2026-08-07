@@ -4,13 +4,33 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { StatusCounts } from '@components/layout/status-counts';
 import { useHiveStore } from '@stores/hive-store';
+import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 describe('StatusCounts', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    seedDemoFleet();
   });
 
-  it('renders the fixture counts', () => {
+  /**
+   * What the header reads on a fresh launch.
+   *
+   * It used to open at `4 working · 2 waiting · 2 idle · 2 ended` on a machine
+   * with nothing running, because ten sessions were seeded into the store at
+   * boot. Every one of these numbers now counts a real session, so all four
+   * start at zero — and the zeros are the assertion, not an absence of one.
+   */
+  it('counts nothing when nothing is running', () => {
+    useHiveStore.getState().reset();
+
+    render(<StatusCounts />);
+
+    expect(screen.getByText('0 working')).toBeInTheDocument();
+    expect(screen.getByText('0 waiting')).toBeInTheDocument();
+    expect(screen.getByText(/0 idle · 0 ended/)).toBeInTheDocument();
+  });
+
+  it('renders the seeded counts', () => {
     render(<StatusCounts />);
 
     expect(screen.getByText('4 working')).toBeInTheDocument();

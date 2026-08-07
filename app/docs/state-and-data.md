@@ -111,11 +111,28 @@ should not say so (the seeded feed ends at 14:37, and the story continues from
   explicit reset rather than a module-level counter.
 - `peek()` reads the current time without advancing it.
 
-## Fixtures
+## What the store seeds, and what it no longer does
 
-`src/data/fixtures.ts` ports the concept's dataset verbatim: 10 sessions, 3
-agents, 5 projects, 8 tickets, 4 PRs, 5 notifications, 7 feed items, and the
-orchestrator boot banner. Change values here only alongside `../../concept/`.
+**The app boots with an empty fleet.** Six slices that used to arrive
+pre-populated now start empty in both targets, because each has a real producer:
+
+| Slice | Comes from |
+| --- | --- |
+| `entities`, `order`, `agentOrder` | sessions the user starts (PTYs) |
+| `projects` | the config file, read through `useProjects()` |
+| `tickets` | Jira, via `refreshTickets()` |
+| `orchLines` | what the orchestrator actually does |
+
+`src/data/fixtures.ts` used to hold the concept's whole dataset — 10 sessions, 3
+agents, 5 projects, 8 tickets and the orchestrator boot banner — and the store
+loaded it at launch. That is what made the header count a fleet that was not
+running, the projects tree list repositories nobody had mapped, and the WORK tab
+paint eight sample tickets for a frame before the real Jira read replaced them.
+
+What remains in `fixtures.ts` is `prs`, `notifs` and `feed`: the three slices
+with no live producer yet. They are **knowingly stale** — their `session` and
+`target` fields name sessions that no longer exist — and each dies the day
+something real feeds it.
 
 `createInitialState()` is a factory, not a frozen object, so every test starts
 from a clean copy and one test's mutation cannot leak into the next.
@@ -123,24 +140,37 @@ from a clean copy and one test's mutation cannot leak into the next.
 **Fixtures are store-only consumers.** Nothing that renders may import them —
 enforced by an import zone, not by review.
 
-### Tickets have two possible sources (HIVE-69)
+### The sample fleet lives in `tests/`
 
-The WORK tab's tickets are fixtures in the browser target and real Jira issues on
-the desktop, and `ticketSource` on `hive-store` says which:
+`tests/support/demo-fleet.ts` holds the dataset that was removed, for the tests
+that need entities to assert against. Call `seedDemoFleet()` after `reset()`;
+`seedDemoProjectConfig()` declares the same projects in the config, which is what
+`useProjects()` reads. An import zone stops `src/` and `electron/` reaching it.
+
+### Tickets have one source, and a state before it answers (HIVE-69)
+
+Every ticket is a real Jira issue. `ticketSource` says where the read has got to:
 
 ```typescript
 type TicketSource =
-  | { kind: 'fixtures' }                              // the browser demo
-  | { kind: 'unconfigured' }                          // desktop, no credential
+  | { kind: 'loading' }                               // boot, and every refresh
+  | { kind: 'unconfigured' }                          // no credential — or a browser
   | { kind: 'live'; stale: boolean; capped: boolean }
   | { kind: 'failed'; message: string };
 ```
 
-This is the payoff of the store-only rule rather than an exception to it:
-`work-panel.tsx` still maps over `useTickets()` and never learns where the array
-came from. `refreshTickets()` gates on `isDesktop()` — feature-detecting the
-bridge, never the user agent — so the demo pays nothing and keeps its eight
-tickets.
+`loading` replaced a `fixtures` variant that meant "these eight are samples",
+which is precisely what made real issues arrive *behind* fake ones. The panel
+renders a skeleton for it — see `ticket-card-skeleton.tsx`.
+
+Two subtleties in `refreshTickets()`:
+
+- **It only enters `loading` when the list is empty.** A refresh over tickets
+  already on screen keeps them there; blanking a good list to a placeholder for
+  the length of a round trip is the original bug wearing the opposite mask.
+- **The browser reports `unconfigured` rather than returning early.** A browser
+  has no bridge and therefore no Jira, which is an answer. An early return would
+  now strand the panel on `loading` forever.
 
 Two properties worth not breaking:
 
