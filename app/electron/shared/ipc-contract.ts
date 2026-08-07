@@ -30,10 +30,17 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetJiraRequest,
+  SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
+import type {
+  JiraIdentity,
+  JiraResult,
+  JiraStatus,
+} from './jira-contract';
 import type {
   SessionEffort,
   SessionModel,
@@ -102,6 +109,26 @@ export const CH = {
   configReveal: 'config:reveal',
   configReset: 'config:reset',
   integrationsStatus: 'integrations:status',
+  /**
+   * The Jira connection settings (HIVE-67).
+   *
+   * A `config:` channel rather than a `jira:` one because it writes the config
+   * file and returns the fresh snapshot, exactly like every other settings
+   * verb. Only the *credential* needs a namespace of its own, because it is the
+   * one part that does not live in that file.
+   */
+  configSetJira: 'config:set-jira',
+  /**
+   * The Jira credential and the connection test (HIVE-67).
+   *
+   * Four verbs, and the count is the security design: the renderer may write a
+   * token and clear one, and there is **no verb that returns one**. A user who
+   * wants to read their token looks at Atlassian, which is correct.
+   */
+  jiraStatus: 'jira:status',
+  jiraSetToken: 'jira:set-token',
+  jiraClearToken: 'jira:clear-token',
+  jiraTest: 'jira:test',
   notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
@@ -495,6 +522,16 @@ export interface HiveBridge {
      */
     setNotifications(request: SetNotificationsRequest): Promise<ConfigSnapshot>;
     /**
+     * Change the Jira site and account email (HIVE-67).
+     *
+     * `null` clears a field; an absent field is untouched. The API token is
+     * deliberately **not** here — it is a secret, and it goes through
+     * {@link HiveBridge.jira.setToken} into `safeStorage`. Keeping the two on
+     * separate verbs is what stops a credential from ever having a path into a
+     * file the product invites the user to hand-edit.
+     */
+    setJira(request: SetJiraRequest): Promise<ConfigSnapshot>;
+    /**
      * Show the config file in the OS file manager (story 107).
      *
      * Takes no argument: main reveals its own `configPath()`. *Reveal* rather
@@ -557,6 +594,24 @@ export interface HiveBridge {
   integrations: {
     status(): Promise<IntegrationsStatus>;
   };
+  /**
+   * Jira (HIVE-67).
+   *
+   * Read the credential *state*, write a token, clear one, and test the
+   * connection. **There is no verb that returns a token**, and adding one would
+   * be a deliberate widening of what a web page can extract from this machine
+   * rather than an incremental convenience.
+   *
+   * `test` is the only verb here that causes a network request, and it takes no
+   * argument: the host comes from the config, so a renderer cannot aim an
+   * authenticated request at a server of its choosing.
+   */
+  jira: {
+    status(): Promise<JiraStatus>;
+    setToken(request: SetJiraTokenRequest): Promise<JiraStatus>;
+    clearToken(): Promise<JiraStatus>;
+    test(): Promise<JiraResult<JiraIdentity>>;
+  };
   /** OS notifications raised by main (story 106). */
   notifications: {
     /**
@@ -610,11 +665,20 @@ export const RESIZE_THROTTLE_MS = 50;
  * (`notifications.onActivate`, main → renderer only). Neither widens what the
  * renderer can *change*; the one new mutating verb is `config.setNotifications`,
  * which goes through the same guarded write path as every other.
+ *
+ * HIVE-67 adds `jira`, and it is the first namespace that touches a secret, so
+ * the same alarm is worth ringing again. What a web page can now do that it
+ * could not before: learn *whether* a Jira credential exists and which source
+ * it comes from, store one, clear one, and cause exactly one authenticated
+ * request to the configured site. What it still cannot do: read a token back —
+ * there is no verb for it — or choose the host, which comes from the config and
+ * never from a payload.
  */
 export const BRIDGE_KEYS = [
   'appInfo',
   'config',
   'integrations',
+  'jira',
   'notifications',
   'pty',
   'session',
@@ -625,6 +689,19 @@ export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName'] as const;
 
 /** The exact key set of `window.hive.integrations`. */
 export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
+
+/**
+ * The exact key set of `window.hive.jira` (HIVE-67).
+ *
+ * Four. A fifth that read the token back would be the one addition this list
+ * exists to make impossible to add quietly.
+ */
+export const BRIDGE_JIRA_KEYS = [
+  'status',
+  'setToken',
+  'clearToken',
+  'test',
+] as const;
 
 /** The exact key set of `window.hive.notifications`. */
 export const BRIDGE_NOTIFICATIONS_KEYS = ['onActivate'] as const;
@@ -660,6 +737,12 @@ export const BRIDGE_CONFIG_KEYS = [
    */
   'revealConfig',
   'resetConfig',
+  /**
+   * HIVE-67. The Jira site and account email — ordinary settings, written
+   * through the same guarded path as every other. The token is not here; it has
+   * its own namespace because it is not config.
+   */
+  'setJira',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BRIDGE_CONFIG_KEYS,
   BRIDGE_INTEGRATIONS_KEYS,
+  BRIDGE_JIRA_KEYS,
   BRIDGE_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
@@ -61,6 +62,8 @@ const integrations = () =>
   exposed.integrations as Record<string, (...args: unknown[]) => unknown>;
 const notifications = () =>
   exposed.notifications as Record<string, (...args: unknown[]) => unknown>;
+const jira = () =>
+  exposed.jira as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
@@ -73,6 +76,41 @@ describe('exposed surface', () => {
     expect(Object.keys(notifications()).sort()).toEqual([
       ...BRIDGE_NOTIFICATIONS_KEYS,
     ].sort());
+    expect(Object.keys(jira()).sort()).toEqual([...BRIDGE_JIRA_KEYS].sort());
+  });
+
+  /**
+   * HIVE-67's namespace, asserted for what it cannot do.
+   *
+   * The renderer can write a token and clear one. There is **no verb that
+   * returns one**, and this is where a future addition would have to announce
+   * itself: a fifth key fails the surface assertion above, and a `getToken`
+   * would have to be added to `BRIDGE_JIRA_KEYS` by hand to get past it.
+   *
+   * `test` takes no argument either, which is what stops a renderer from
+   * aiming an authenticated request at a host of its choosing — the site comes
+   * from the config file, in main.
+   */
+  it('exposes no verb that reads a token back (HIVE-67)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    expect(Object.keys(jira())).not.toContain('token');
+    expect(Object.keys(jira())).not.toContain('getToken');
+    expect(Object.keys(jira())).not.toContain('readToken');
+
+    await jira().status();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraStatus);
+
+    await jira().clearToken();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraClearToken);
+
+    await jira().test();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraTest);
+
+    await jira().setToken({ token: 'ATATT-x' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraSetToken, {
+      token: 'ATATT-x',
+    });
   });
 
   /**

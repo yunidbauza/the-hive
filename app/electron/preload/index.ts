@@ -12,6 +12,8 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetJiraRequest,
+  SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
@@ -30,6 +32,11 @@ import {
   type SpawnRequest,
   type WriteRequest,
 } from '@shared/ipc-contract';
+import type {
+  JiraIdentity,
+  JiraResult,
+  JiraStatus,
+} from '@shared/jira-contract';
 import type { SessionNameEvent, SessionStatusEvent } from '@shared/session-contract';
 
 /**
@@ -126,6 +133,10 @@ const bridge: HiveBridge = {
       request: SetNotificationsRequest,
     ): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetNotifications, request),
+    // HIVE-67. The site and the account email. The token is not a config value
+    // and is deliberately on its own namespace below.
+    setJira: (request: SetJiraRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetJira, request),
     /*
       Story 107. Neither takes an argument — see the contract for why that is
       the security design and not an oversight. Written with no parameter list
@@ -171,6 +182,20 @@ const bridge: HiveBridge = {
   integrations: {
     status: (): Promise<IntegrationsStatus> =>
       ipcRenderer.invoke(CH.integrationsStatus),
+  },
+  /*
+    HIVE-67. Four verbs, and none of them returns a token — see the contract for
+    why the count is the security design. `status`, `clearToken` and `test` take
+    no argument at all; `setToken` takes the one payload in the whole bridge
+    that carries a secret, and it only travels toward main.
+  */
+  jira: {
+    status: (): Promise<JiraStatus> => ipcRenderer.invoke(CH.jiraStatus),
+    setToken: (request: SetJiraTokenRequest): Promise<JiraStatus> =>
+      ipcRenderer.invoke(CH.jiraSetToken, request),
+    clearToken: (): Promise<JiraStatus> => ipcRenderer.invoke(CH.jiraClearToken),
+    test: (): Promise<JiraResult<JiraIdentity>> =>
+      ipcRenderer.invoke(CH.jiraTest),
   },
   notifications: {
     onActivate: (callback: (event: NotificationActivateEvent) => void) =>

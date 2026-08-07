@@ -1,9 +1,12 @@
+import { join } from 'node:path';
+
 import {
   BrowserWindow,
   Notification,
   app,
   dialog,
   ipcMain,
+  safeStorage,
   shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -26,6 +29,8 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseSetJiraRequest,
+  parseSetJiraTokenRequest,
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
@@ -37,6 +42,11 @@ import {
   type IntegrationsStatus,
   type NotificationActivateEvent,
 } from '@shared/ipc-contract';
+import type {
+  JiraIdentity,
+  JiraResult,
+  JiraStatus,
+} from '@shared/jira-contract';
 
 import { createCloneFlow, type CloneFlow } from '../clone';
 import {
@@ -49,6 +59,7 @@ import {
   reorderProjects,
   repointProject,
   resetConfig,
+  setJira,
   setNotifications,
   setProjectRuntime,
   setRuntime,
@@ -56,6 +67,8 @@ import {
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { createHookRuntime } from '../hooks';
 import { readGhStatus, runCommand } from '../integrations/gh';
+import { createJira } from '../integrations/jira';
+import { credentialFile } from '../integrations/jira/auth';
 import { createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
@@ -418,6 +431,41 @@ export function registerIpcHandlers(): void {
       notificationsSupported: Notification.isSupported(),
     };
   });
+
+  /**
+   * Jira (HIVE-67) — the app's first stored credential, and its first outbound
+   * HTTP request.
+   *
+   * Built once, here, because this is the composition root: `auth.ts` and
+   * `client.ts` take every dependency by injection so their unit tests can
+   * answer without a keychain or a network, which means somebody has to supply
+   * the real ones exactly once, and that somebody is this file.
+   *
+   * `safeStorage` is passed rather than imported inside `auth.ts` for the same
+   * reason `gh.ts` takes its `RunCommand`: a module that reaches for an Electron
+   * global is a module no unit test can answer for.
+   *
+   * `globalThis.fetch` rather than a dependency — Node is pinned `>=22` and
+   * Electron is 43, so it is there. Wrapped rather than passed by reference so
+   * `this` cannot matter and the seam stays a plain function.
+   */
+  const jira = createJira({
+    store: safeStorage,
+    file: credentialFile(join(app.getPath('userData'), 'jira-credential.bin')),
+    env: process.env,
+    config: getConfig,
+    fetch: (url, init) => globalThis.fetch(url, init),
+  });
+
+  handle(CH.jiraStatus, (): JiraStatus => jira.status());
+  handle(CH.jiraSetToken, (_event, payload): JiraStatus =>
+    jira.setToken(parseSetJiraTokenRequest(payload)),
+  );
+  handle(CH.jiraClearToken, (): JiraStatus => jira.clearToken());
+  handle(CH.jiraTest, (): Promise<JiraResult<JiraIdentity>> => jira.test());
+  handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
+    setJira(parseSetJiraRequest(payload)),
+  );
 
   /**
    * Cloning a repository (story 102).

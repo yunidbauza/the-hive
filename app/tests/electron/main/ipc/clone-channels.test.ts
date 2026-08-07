@@ -21,6 +21,17 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.0.0', on: vi.fn(), getPath: () => '/tmp/hive-test' },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
+  /**
+   * HIVE-67. `ipc/index.ts` builds the Jira integration at registration time
+   * and hands it `safeStorage`, so the mock has to answer for it. Encryption
+   * reports as unavailable, which is the state that stores nothing — a test of
+   * the config channels must not write a credential file.
+   */
+  safeStorage: {
+    isEncryptionAvailable: () => false,
+    encryptString: () => Buffer.alloc(0),
+    decryptString: () => '',
+  },
   ipcMain: {
     handle: (
       channel: string,
