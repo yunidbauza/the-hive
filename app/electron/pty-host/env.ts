@@ -13,6 +13,11 @@
  * assertion in story 098.
  */
 
+import {
+  SESSION_ENV_KEYS,
+  SESSION_ENV_PREFIXES,
+} from '@shared/config-contract';
+
 /**
  * Variables removed by exact name.
  *
@@ -36,11 +41,16 @@ const DENY_EXACT = new Set([
   /**
    * `CLAUDECODE` marks a process as running *inside* a Claude Code session.
    *
-   * Named as well as covered by the `CLAUDE_` prefix below, because it is the
-   * one that does not match that prefix — and it is the flag several tools key
-   * their behaviour off.
+   * It is the one session marker the `CLAUDE_` prefix below cannot catch —
+   * there is no underscore in it — so this entry is load-bearing rather than
+   * belt-and-braces, and removing it as redundant would reopen the leak.
+   *
+   * Spread from the shared list rather than spelled out here: the config layer
+   * refuses these names and this layer strips them, and two hand-maintained
+   * copies of the same list is how the message row and the terminal drifted
+   * apart in HIVE-65.
    */
-  'CLAUDECODE',
+  ...SESSION_ENV_KEYS,
 ]);
 
 /**
@@ -48,13 +58,10 @@ const DENY_EXACT = new Set([
  *
  * - `ELECTRON_*` — internal wiring, never meaningful to a user shell.
  * - `GDK_PIXBUF_*`, `CHROME_*` — Chromium sandbox/runtime leakage.
- * - `CLAUDE_*` — see below. The most consequential entry on this list for this
- *   app in particular.
- */
-const DENY_PREFIX = ['ELECTRON_', 'GDK_PIXBUF_', 'CHROME_', 'CLAUDE_'];
-
-/**
- * Why `CLAUDE_*` is stripped, and why it matters more here than anywhere else.
+ * - `CLAUDE_*` — the most consequential entry on this list for this app in
+ *   particular, for the reason the rest of this comment gives.
+ *
+ * ## Why `CLAUDE_*` is stripped, and why it matters more here than anywhere else
  *
  * Launch The Hive from a terminal that is *itself* inside a Claude Code session
  * — `pnpm desktop:dev` typed into one, which is exactly how it gets developed —
@@ -84,7 +91,21 @@ const DENY_PREFIX = ['ELECTRON_', 'GDK_PIXBUF_', 'CHROME_', 'CLAUDE_'];
  * the user genuinely exports from their own profile is re-established by that
  * shell. What is removed is only the leakage from however the app happened to
  * be started.
+ *
+ * The one thing this layer must not do alone is swallow a value the user set
+ * *deliberately*. `buildEnv` applies the deny-list to `injected` as well as to
+ * the ambient copy, so a `CLAUDE_*` entry in a project's runtime settings would
+ * be discarded on every spawn with nothing said. That is why the names live in
+ * `@shared/config-contract` and `unsafeEnvReason` refuses them at the point
+ * they are typed: stripped here, but never *silently* — a setting that vanishes
+ * is worse than one that names itself.
  */
+const DENY_PREFIX = [
+  'ELECTRON_',
+  'GDK_PIXBUF_',
+  'CHROME_',
+  ...SESSION_ENV_PREFIXES,
+];
 
 /**
  * The single most consequential option in the whole story.

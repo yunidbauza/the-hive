@@ -1,4 +1,4 @@
-import { assert, describe, it } from './harness.mjs';
+import { assert, describe, emitSentinel, it } from './harness.mjs';
 
 /**
  * Environment hygiene (story 098).
@@ -36,7 +36,18 @@ describe('environment', () => {
   it('no ELECTRON_* variable leaks', async (context) => {
     const session = await context.ready(context.open());
 
-    session.send('env | grep -c "^ELECTRON_" || echo ELECTRON-COUNT-0');
+    /**
+     * `emitSentinel`, not a bare `echo` — the sweep is worthless without it.
+     *
+     * A pty echoes what is typed into it, so `echo ELECTRON-COUNT-0` puts that
+     * token in the transcript *as part of the command line*, before the command
+     * has run. `waitForOutput` then resolves on the echo whatever `grep` goes on
+     * to find, and the assertion can never fail. `emitSentinel` splits the token
+     * across a quote boundary so only the shell's own output spells it whole.
+     */
+    session.send(
+      `env | grep -c "^ELECTRON_" || ${emitSentinel('ELECTRON-COUNT-0')}`,
+    );
     await session.waitForOutput('ELECTRON-COUNT-0');
   });
 
@@ -69,7 +80,9 @@ describe('environment', () => {
     session.send('echo "CS=[$CLAUDE_CODE_SESSION_ID] CC=[$CLAUDECODE]"');
     await session.waitForOutput('CS=[] CC=[]');
 
-    session.send('env | grep -c "^CLAUDE" || echo CLAUDE-COUNT-0');
+    // Split token, for the echo reason spelled out on the ELECTRON_ sweep above.
+    // Without it this line passes even if every CLAUDE_* variable leaks.
+    session.send(`env | grep -c "^CLAUDE" || ${emitSentinel('CLAUDE-COUNT-0')}`);
     await session.waitForOutput('CLAUDE-COUNT-0');
   });
 

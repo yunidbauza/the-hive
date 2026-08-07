@@ -105,6 +105,35 @@ describe('parseSetProjectRuntimeRequest', () => {
   });
 
   /**
+   * The same rule, applied to the names HIVE-64 added to the pty-host deny-list.
+   *
+   * `buildEnv` filters `injected` as well as the ambient copy, so without this
+   * guard a `CLAUDE_*` entry would save, render as set in the runtime pane, and
+   * then be dropped on every spawn — the user watching `claude` ignore a setting
+   * the UI insists is applied. Stripped there, refused here, one list shared.
+   */
+  it('refuses the variables that identify a Claude session (HIVE-64)', () => {
+    for (const identity of [
+      'CLAUDECODE',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_CODE_CHILD_SESSION',
+      'CLAUDE_CONFIG_DIR',
+    ]) {
+      expect(() =>
+        parseSetProjectRuntimeRequest({ id: 'a', env: { [identity]: 'x' } }),
+      ).toThrow(/identifies a Claude session/);
+    }
+  });
+
+  it('leaves a name that merely starts with CLAUDE alone', () => {
+    // `CLAUDE_` is a prefix, not a substring match, and `CLAUDECODE` is exact.
+    // A user variable like `CLAUDEISH` is neither and must still be settable.
+    expect(
+      parseSetProjectRuntimeRequest({ id: 'a', env: { CLAUDEISH: 'x' } }).env,
+    ).toEqual({ CLAUDEISH: 'x' });
+  });
+
+  /**
    * The finding that mattered most in review.
    *
    * Per-project env is the first user-reachable path into `buildEnv`'s

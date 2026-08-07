@@ -276,6 +276,40 @@ export const UNSAFE_ENV_KEYS: readonly string[] = [
  */
 export const RESERVED_ENV_KEYS: readonly string[] = ['TERM', 'COLORTERM', 'PWD'];
 
+/**
+ * The variables that identify a **Claude session** (HIVE-64).
+ *
+ * A third group, refused for a third reason. The two lists above are security
+ * boundaries; this one is an identity boundary. `claude` reads these to decide
+ * which conversation it belongs to, so a session that inherits them joins the
+ * launching session instead of starting its own — every new session opening
+ * under somebody else's name, and renaming one renaming all of them.
+ *
+ * `pty-host/env.ts` strips these from the inherited environment, and **imports
+ * these constants rather than restating them**. Two lists that must agree is
+ * exactly how the message row and the terminal drifted apart in HIVE-65; one
+ * definition with two consumers cannot.
+ *
+ * Refused here as well as stripped there, for the reason the loader list
+ * already gives: *a setting that vanishes is worse than one that names
+ * itself.* Without this, `CLAUDE_CONFIG_DIR` typed into a project's runtime
+ * settings would save, display as set, and then be silently discarded on every
+ * spawn — the user watching `claude` ignore a setting the UI says is applied.
+ *
+ * The cost is real and is the point: a project cannot set any `CLAUDE_*`
+ * variable. Anything the user exports from their own shell profile still
+ * arrives, because sessions run a login shell.
+ */
+export const SESSION_ENV_PREFIXES: readonly string[] = ['CLAUDE_'];
+
+/**
+ * The session marker with no underscore, which no prefix above can catch.
+ *
+ * Separate from {@link SESSION_ENV_PREFIXES} because `'CLAUDECODE'` does not
+ * start with `'CLAUDE_'`. Dropping it would reopen the leak on its own.
+ */
+export const SESSION_ENV_KEYS: readonly string[] = ['CLAUDECODE'];
+
 /** Why an environment variable name was refused, or `null` if it is fine. */
 export function unsafeEnvReason(key: string): string | null {
   if (RESERVED_ENV_KEYS.includes(key)) {
@@ -286,6 +320,12 @@ export function unsafeEnvReason(key: string): string | null {
   }
   if (UNSAFE_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
     return `"${key}" controls the dynamic loader and cannot be set here`;
+  }
+  if (
+    SESSION_ENV_KEYS.includes(key) ||
+    SESSION_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+  ) {
+    return `"${key}" identifies a Claude session and is set per session, not per project`;
   }
   return null;
 }
