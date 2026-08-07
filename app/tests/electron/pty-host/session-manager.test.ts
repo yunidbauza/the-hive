@@ -9,6 +9,7 @@ import {
   ptyInstances,
 } from '../../../__mocks__/node-pty';
 import { TERM } from '../../../electron/pty-host/env';
+import type { Descendant } from '../../../electron/pty-host/process-tree';
 import {
   createSessionManager,
   type SessionManager,
@@ -47,7 +48,21 @@ const SPAWN: SpawnCommand = {
 
 let manager: SessionManager;
 let sent: HostMessage[];
-let killGroup: Mock<(pid: number, signal: NodeJS.Signals) => void>;
+let control: {
+  signalGroup: Mock<(pgid: number, signal: NodeJS.Signals) => void>;
+  signalPid: Mock<(pid: number, signal: NodeJS.Signals) => void>;
+  isAlive: Mock<(pid: number) => boolean>;
+  descendants: Mock<(roots: readonly number[]) => Promise<Descendant[]>>;
+};
+
+/**
+ * Every signal, in order.
+ *
+ * Recorded as strings rather than asserted per-mock because the *ordering* is
+ * what HIVE-72 turns on: the process table has to be read before anything is
+ * signalled, and a count cannot express that.
+ */
+let signals: string[];
 let emit: (message: HostMessage) => void;
 
 /** A base environment carrying one of everything the deny-list cares about. */
@@ -67,7 +82,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
 function build(overrides: Parameters<typeof createSessionManager>[0] = {}) {
   return createSessionManager({
     baseEnv: BASE_ENV,
-    killGroup,
+    control,
     spawn: mockSpawn as never,
     ...overrides,
   });
@@ -90,7 +105,20 @@ beforeEach(() => {
   resetPtyMock();
   sent = [];
   emit = (message) => sent.push(message);
-  killGroup = vi.fn<(pid: number, signal: NodeJS.Signals) => void>();
+  signals = [];
+  control = {
+    signalGroup: vi.fn((pgid: number, signal: NodeJS.Signals) => {
+      signals.push(`group ${pgid} ${signal}`);
+    }),
+    signalPid: vi.fn((pid: number, signal: NodeJS.Signals) => {
+      signals.push(`pid ${pid} ${signal}`);
+    }),
+    isAlive: vi.fn((_pid: number) => false),
+    descendants: vi.fn((_roots: readonly number[]) => {
+      signals.push('descendants');
+      return Promise.resolve([] as Descendant[]);
+    }),
+  };
   manager = build();
 });
 
@@ -407,80 +435,213 @@ describe('resize', () => {
 });
 
 describe('kill', () => {
-  it('signals the process group, not just the shell', () => {
+  it('hangs the group up rather than terminating it', async () => {
     vi.useFakeTimers();
     manager.spawn(SPAWN, emit);
 
     manager.kill('hero-refresh');
+    await vi.advanceTimersByTimeAsync(0);
 
-    // SIGTERM to the shell alone leaves `claude` — and anything it spawned —
-    // running with a dangling pty. The negative pid is the group.
-    expect(killGroup).toHaveBeenCalledWith(4242, 'SIGTERM');
+    /**
+     * SIGHUP, not SIGTERM — HIVE-72.
+     *
+     * An interactive shell *ignores* SIGTERM, so the old escalation always
+     * reached SIGKILL, and a SIGKILLed shell cannot hang up its own jobs. That
+     * is precisely how a backgrounded `claude` was left running. SIGHUP is what
+     * a closing terminal sends, and the shell answers it by hanging up every
+     * job it owns.
+     */
+    expect(control.signalGroup).toHaveBeenCalledWith(4242, 'SIGHUP');
   });
 
-  it('escalates to SIGKILL when the grace period expires', () => {
+  it('escalates to SIGKILL when the grace period expires', async () => {
     vi.useFakeTimers();
     manager.spawn(SPAWN, emit);
 
     manager.kill('hero-refresh');
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(killGroup).toHaveBeenNthCalledWith(2, 4242, 'SIGKILL');
+    expect(signals).toEqual([
+      'descendants',
+      'group 4242 SIGHUP',
+      'group 4242 SIGKILL',
+    ]);
   });
 
-  it('does not escalate against a process that already died', () => {
+  it('does not escalate against a process that already died', async () => {
     vi.useFakeTimers();
     manager.spawn(SPAWN, emit);
 
     manager.kill('hero-refresh');
+    await vi.advanceTimersByTimeAsync(0);
     pty().emitExit(0, 15);
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(killGroup).toHaveBeenCalledTimes(1);
+    expect(signals).toEqual(['descendants', 'group 4242 SIGHUP']);
   });
 
-  it('honours an explicit signal', () => {
+  it('honours an explicit signal', async () => {
     vi.useFakeTimers();
     manager.spawn(SPAWN, emit);
 
-    manager.kill('hero-refresh', 'SIGHUP');
+    manager.kill('hero-refresh', 'SIGTERM');
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(killGroup).toHaveBeenCalledWith(4242, 'SIGHUP');
+    expect(control.signalGroup).toHaveBeenCalledWith(4242, 'SIGTERM');
   });
 
-  it('survives a process that vanished between the decision and the signal', () => {
+  it('survives a process that vanished between the decision and the signal', async () => {
     vi.useFakeTimers();
-    killGroup.mockImplementation(() => {
+    control.signalGroup.mockImplementation(() => {
       throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
     });
     manager.spawn(SPAWN, emit);
 
     // ESRCH is the ordinary race, not a failure worth taking the app down for.
     expect(() => manager.kill('hero-refresh')).not.toThrow();
+
+    // `kill` is fire-and-forget, so a throw inside teardown would surface as an
+    // unhandled rejection rather than here. Driving the whole grace and sweep
+    // through is what proves it was swallowed.
+    await vi.advanceTimersByTimeAsync(2_250);
+
+    expect(control.signalGroup).toHaveBeenCalledWith(4242, 'SIGHUP');
+  });
+});
+
+describe('descendant teardown', () => {
+  /** A job an interactive shell backgrounded, so it leads a group of its own. */
+  const JOB: Descendant = { pid: 5150, pgid: 5150 };
+
+  it('reads the tree before it signals anything', async () => {
+    vi.useFakeTimers();
+    manager.spawn(SPAWN, emit);
+
+    manager.kill('hero-refresh');
+    await vi.advanceTimersByTimeAsync(0);
+
+    /**
+     * The ordering *is* the fix.
+     *
+     * Once the shell dies its children are reparented to launchd/init and the
+     * `ppid` linkage that identifies them is gone permanently. Snapshot first
+     * or do not snapshot at all — and without this assertion a later refactor
+     * can reintroduce the bug with every other test in this file still green.
+     */
+    expect(signals[0]).toBe('descendants');
+  });
+
+  it('kills a descendant that outlived the hangup, by group then pid', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([JOB]);
+    control.isAlive.mockReturnValue(true);
+    manager.spawn(SPAWN, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(0);
+    pty().emitExit(0);
+    await vi.advanceTimersByTimeAsync(250);
+    await pending;
+
+    // The group first: it reaches whatever the job spawned after the snapshot
+    // was taken, which by definition is not in the snapshot.
+    expect(signals).toContain('group 5150 SIGKILL');
+    expect(signals).toContain('pid 5150 SIGKILL');
+  });
+
+  it('sweeps even when every shell exited promptly', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([JOB]);
+    control.isAlive.mockReturnValue(true);
+    manager.spawn(SPAWN, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(0);
+    // The shell takes SIGHUP and goes at once — the ordinary case, and exactly
+    // where stopping here would leave a hangup-proof descendant running.
+    pty().emitExit(0);
+    await vi.advanceTimersByTimeAsync(250);
+    await pending;
+
+    expect(signals).toContain('pid 5150 SIGKILL');
+  });
+
+  it('leaves a descendant that already died alone', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([JOB]);
+    control.isAlive.mockReturnValue(false);
+    manager.spawn(SPAWN, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(0);
+    pty().emitExit(0);
+    await vi.advanceTimersByTimeAsync(250);
+    await pending;
+
+    expect(signals).not.toContain('pid 5150 SIGKILL');
+    expect(signals).not.toContain('group 5150 SIGKILL');
+  });
+
+  it('still kills the session group when the tree cannot be read', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([]);
+    manager.spawn(SPAWN, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(2_250);
+    await pending;
+
+    // Degrading to the old behaviour is acceptable. Blocking quit is not.
+    expect(control.signalGroup).toHaveBeenCalledWith(4242, 'SIGKILL');
+  });
+
+  it('reads no process table with nothing running', async () => {
+    await manager.killAll();
+
+    expect(control.descendants).not.toHaveBeenCalled();
+  });
+
+  it('hands every live shell to one read, not one read per session', async () => {
+    vi.useFakeTimers();
+    manager.spawn(SPAWN, emit);
+    manager.spawn({ ...SPAWN, sessionId: 'lead-form' }, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(2_250);
+    await pending;
+
+    expect(control.descendants).toHaveBeenCalledTimes(1);
+    expect(control.descendants).toHaveBeenCalledWith([4242, 4242]);
   });
 });
 
 describe('killAll', () => {
   it('resolves immediately with nothing running', async () => {
     await expect(manager.killAll()).resolves.toBeUndefined();
-    expect(killGroup).not.toHaveBeenCalled();
+    expect(control.signalGroup).not.toHaveBeenCalled();
   });
 
-  it('terminates every live group and waits for them to go', async () => {
+  it('hangs every live group up and waits for them to go', async () => {
+    vi.useFakeTimers();
     manager.spawn(SPAWN, emit);
     const first = pty();
     manager.spawn({ ...SPAWN, sessionId: 'lead-form' }, emit);
     const second = pty();
 
     const pending = manager.killAll();
-    expect(killGroup).toHaveBeenCalledTimes(2);
+    // The snapshot is awaited first, so the signals land a microtask later.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(control.signalGroup).toHaveBeenCalledTimes(2);
 
     first.emitExit(0);
     second.emitExit(0);
+    await vi.advanceTimersByTimeAsync(250);
     await pending;
 
     // Both left on request, so neither needed SIGKILL.
-    expect(killGroup.mock.calls.every(([, sig]) => sig === 'SIGTERM')).toBe(true);
+    expect(
+      control.signalGroup.mock.calls.every(([, sig]) => sig === 'SIGHUP'),
+    ).toBe(true);
   });
 
   it('SIGKILLs whatever is still alive when the grace expires', async () => {
@@ -488,12 +649,12 @@ describe('killAll', () => {
     manager.spawn(SPAWN, emit);
 
     const pending = manager.killAll();
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(2_250);
     await pending;
 
     // Orphan-freedom is the point: the app must not quit while a `claude` it
     // started is still running.
-    expect(killGroup).toHaveBeenCalledWith(4242, 'SIGKILL');
+    expect(control.signalGroup).toHaveBeenCalledWith(4242, 'SIGKILL');
   });
 
   it('ignores sessions that already exited', async () => {
@@ -502,7 +663,8 @@ describe('killAll', () => {
 
     await manager.killAll();
 
-    expect(killGroup).not.toHaveBeenCalled();
+    expect(control.signalGroup).not.toHaveBeenCalled();
+    expect(control.descendants).not.toHaveBeenCalled();
   });
 });
 
