@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { KeyHint } from '@components/ui/key-hint';
 import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
+import { isBareBack } from '@lib/terminal/keymap';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
@@ -78,8 +79,21 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
       return;
     }
 
-    // Only with an empty prompt — otherwise this would hijack ordinary editing.
-    if (event.key === 'ArrowLeft' && value === '') {
+    /**
+     * Only a **bare** `←`, and only with an empty prompt (HIVE-65).
+     *
+     * The empty-prompt half was always here; the modifier half was not, and its
+     * absence meant `⌘←`, `⌥←` and `⇧←` all navigated away from an empty row.
+     * Those are text-editing keys — start of line, back one word, extend
+     * selection — and a field that answers them by changing screen is a field
+     * that punishes muscle memory.
+     *
+     * Story 110 fixed the same class of bug one surface over, giving `⌘←`/`⌘→`
+     * back to the pty as `Home`/`End`; it did not touch this row, which has its
+     * own copy of the decision. `isBareBack` is that story's predicate, reused
+     * here rather than re-spelled, so the two surfaces cannot drift again.
+     */
+    if (isBareBack(event) && value === '') {
       event.preventDefault();
       backToOrch();
     }

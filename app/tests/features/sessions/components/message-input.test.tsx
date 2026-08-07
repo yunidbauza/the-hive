@@ -220,5 +220,25 @@ describe('MessageInput', () => {
       expect(useUiStore.getState().activeTab).toBe('lead-form');
       expect(input()).toHaveValue('draft');
     });
+
+    it.each([
+      ['⌘← — start of line', '{Meta>}{ArrowLeft}{/Meta}'],
+      ['⌥← — back one word', '{Alt>}{ArrowLeft}{/Alt}'],
+      ['⇧← — extend selection', '{Shift>}{ArrowLeft}{/Shift}'],
+    ])('stays put for %s, even on an empty prompt (HIVE-65)', async (_label, keys) => {
+      /**
+       * The empty-prompt guard was here from the start; the modifier guard was
+       * not, so every one of these navigated away from an empty row. They are
+       * text-editing keys, and a field that answers them by changing screen
+       * punishes muscle memory — the same mistake the terminal made with `⌘←`.
+       */
+      const user = userEvent.setup();
+      useUiStore.getState().openTab('lead-form');
+      render(<MessageInput entityId="lead-form" />);
+
+      await user.keyboard(keys);
+
+      expect(useUiStore.getState().activeTab).toBe('lead-form');
+    });
   });
 });
