@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  LINE_MOTION_SEQUENCE,
   backChordLabel,
   decideTerminalKey,
   isBackChord,
   isBareBack,
   isEmptyClaudePrompt,
+  lineMotion,
   type KeyEventLike,
 } from '@lib/terminal/keymap';
 
@@ -145,11 +147,38 @@ describe('decideTerminalKey — Linux and Windows', () => {
 });
 
 describe('the back chord', () => {
-  it('is Cmd+← on macOS, where Cmd never reaches a pty', () => {
-    expect(decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true }), MAC)).toBe(
+  it('is Cmd+[ on macOS, the system-wide Back binding', () => {
+    expect(decideTerminalKey(key({ key: '[', metaKey: true }), MAC)).toBe(
       'app-chord',
     );
-    expect(backChordLabel(true)).toBe('⌘←');
+    expect(backChordLabel(true)).toBe('⌘[');
+  });
+
+  it('is no longer Cmd+←, which macOS spends on beginning-of-line', () => {
+    /**
+     * The story-110 regression. `Cmd+←` fired the chord regardless of what was
+     * on the prompt, so pressing it to jump to the start of a half-typed
+     * message threw the user out of the session and lost the message.
+     */
+    expect(isBackChord(key({ key: 'ArrowLeft', metaKey: true }), true)).toBe(false);
+    expect(decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true }), MAC)).toBe(
+      'line-start',
+    );
+  });
+
+  it('leaves Cmd+Shift+[ and Cmd+Alt+[ alone on macOS', () => {
+    // "Previous tab" and an editor bracket motion respectively. Neither is this
+    // chord, and a test that only checked `metaKey` would eat both.
+    expect(isBackChord(key({ key: '[', metaKey: true, shiftKey: true }), true)).toBe(
+      false,
+    );
+    expect(isBackChord(key({ key: '[', metaKey: true, altKey: true }), true)).toBe(
+      false,
+    );
+  });
+
+  it('is not Cmd+[ off macOS, where there is no Cmd key', () => {
+    expect(isBackChord(key({ key: '[', metaKey: true }), false)).toBe(false);
   });
 
   it('is Ctrl+Shift+← elsewhere, because Ctrl+← is a readline binding', () => {
@@ -171,24 +200,79 @@ describe('the back chord', () => {
     expect(isBackChord(key({ key: 'ArrowLeft' }), false)).toBe(false);
   });
 
-  it('leaves Cmd+Shift+← to native text selection on macOS', () => {
-    /**
-     * "Select to start of line" in every native text field. A chord that ate it
-     * would break ordinary editing in the message row and the picker — the same
-     * mistake as taking `Ctrl+←` on Linux, and the reason this rule excludes
-     * Shift rather than ignoring it.
-     */
-    expect(
-      isBackChord(key({ key: 'ArrowLeft', metaKey: true, shiftKey: true }), true),
-    ).toBe(false);
-  });
-
   it('is checked before the copy rules it shares a prefix with', () => {
     // On Linux the chord and the copy binding both start Ctrl+Shift. A looser
     // ordering would have the copy rule swallow the navigation chord.
     expect(
       decideTerminalKey(key({ key: 'ArrowLeft', ctrlKey: true, shiftKey: true }), PC),
     ).toBe('app-chord');
+  });
+});
+
+/**
+ * `Cmd`+arrow on macOS (story 110).
+ *
+ * Two separate defects, one cause. `Cmd+←` was the back chord, so it navigated
+ * instead of moving the caret; `Cmd+→` was nothing at all, and xterm encodes no
+ * sequence for it, so the key was silently swallowed. Both are now translated to
+ * the `Home`/`End` a macOS terminal emulator sends for these chords.
+ */
+describe('decideTerminalKey — Cmd+arrow line motions on macOS', () => {
+  it('translates Cmd+← and Cmd+→ to beginning and end of line', () => {
+    expect(decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true }), MAC)).toBe(
+      'line-start',
+    );
+    expect(decideTerminalKey(key({ key: 'ArrowRight', metaKey: true }), MAC)).toBe(
+      'line-end',
+    );
+  });
+
+  it('carries the sequences the child actually parses as Home and End', () => {
+    /**
+     * Not arbitrary bytes: these are xterm's normal-mode encodings for the
+     * physical keys, and they are in `claude`'s own key table — `[H` → `home`,
+     * `[F` → `end`. Asserted here so a well-meant "tidy-up" to `Ctrl+A`/`Ctrl+E`
+     * (which mean something else entirely inside vim) fails loudly.
+     */
+    expect(LINE_MOTION_SEQUENCE['line-start']).toBe('\x1b[H');
+    expect(LINE_MOTION_SEQUENCE['line-end']).toBe('\x1b[F');
+  });
+
+  it('leaves Alt+← and Alt+→ to the pty as word motions', () => {
+    // The keys that already worked, and the reason the bug was noticeable: word
+    // movement was fine while line movement was not.
+    expect(decideTerminalKey(key({ key: 'ArrowLeft', altKey: true }), MAC)).toBe(
+      'to-pty',
+    );
+    expect(decideTerminalKey(key({ key: 'ArrowRight', altKey: true }), MAC)).toBe(
+      'to-pty',
+    );
+  });
+
+  it('leaves bare and Shift-ed arrows alone', () => {
+    expect(decideTerminalKey(key({ key: 'ArrowLeft' }), MAC)).toBe('to-pty');
+    expect(decideTerminalKey(key({ key: 'ArrowRight' }), MAC)).toBe('to-pty');
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true, shiftKey: true }), MAC),
+    ).toBe('to-pty');
+  });
+
+  it('does not fire off macOS, where Home and End are real keys', () => {
+    expect(lineMotion(key({ key: 'ArrowLeft', metaKey: true }), false)).toBeNull();
+    expect(decideTerminalKey(key({ key: 'ArrowRight', metaKey: true }), PC)).toBe(
+      'to-pty',
+    );
+  });
+
+  it('beats the empty-prompt rule, which only claims a bare ←', () => {
+    // A user at an empty prompt pressing Cmd+← wants the caret moved, not the
+    // session left — and `←` alone is still there for leaving.
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true }), {
+        ...MAC,
+        cursor: CLAUDE_EMPTY,
+      }),
+    ).toBe('line-start');
   });
 });
 
@@ -322,13 +406,26 @@ describe('decideTerminalKey — bare ← at an empty Claude prompt', () => {
 
   it('still honours the explicit chord while typing', () => {
     // The escape hatch the guarded rule deliberately does not replace:
-    // mid-message, with the bare key correctly going to the pty, `⌘←` leaves.
+    // mid-message, with the bare key correctly going to the pty, `⌘[` leaves.
+    expect(
+      decideTerminalKey(key({ key: '[', metaKey: true }), {
+        ...MAC,
+        cursor: CLAUDE_TYPED,
+      }),
+    ).toBe('app-chord');
+  });
+
+  it('moves the caret rather than leaving when Cmd+← is pressed mid-message', () => {
+    /**
+     * The story-110 regression, stated where it hurt most: a user with a
+     * half-typed message reaching for beginning-of-line used to lose it.
+     */
     expect(
       decideTerminalKey(key({ key: 'ArrowLeft', metaKey: true }), {
         ...MAC,
         cursor: CLAUDE_TYPED,
       }),
-    ).toBe('app-chord');
+    ).toBe('line-start');
   });
 });
 

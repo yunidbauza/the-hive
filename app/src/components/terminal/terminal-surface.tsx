@@ -8,6 +8,7 @@ import { isMacPlatform } from '@lib/platform';
 import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
+  LINE_MOTION_SEQUENCE,
   TERMINAL_CHORD_EVENT,
   decideTerminalKey,
   type CursorContext,
@@ -289,7 +290,7 @@ export function TerminalSurface({
         // would run the copy twice and fight the pty for the same chord.
         if (event.type !== 'keydown') return true;
 
-        switch (decideTerminalKey(event, {
+        const action = decideTerminalKey(event, {
           isMac,
           hasSelection: terminal.hasSelection(),
           /** Read per keystroke, not captured. See {@link endedRef}. */
@@ -300,12 +301,26 @@ export function TerminalSurface({
            * a cached answer would decide the *previous* screen's question.
            */
           cursor: readCursorContext(terminal),
-        })) {
+        });
+
+        switch (action) {
           case 'copy':
             copySelection(terminal);
             return false;
           case 'paste':
             pasteFromClipboard(terminal);
+            return false;
+          /**
+           * Written to the transport rather than declined, because xterm
+           * encodes nothing at all for `Cmd`+arrow — declining would leave the
+           * keystroke silently doing nothing, which is the defect (story 110).
+           * The surface stays ignorant of *why*: it is told which sequence the
+           * chord means and puts it on stdin.
+           */
+          case 'line-start':
+          case 'line-end':
+            transportRef.current.write(LINE_MOTION_SEQUENCE[action]);
+            event.preventDefault();
             return false;
           /**
            * Announced, not merely declined.

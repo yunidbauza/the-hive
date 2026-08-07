@@ -293,7 +293,7 @@ test('the escape chord leaves a focused terminal for the orchestrator', async ({
     });
 
     const isMac = process.platform === 'darwin';
-    await page.keyboard.press(isMac ? 'Meta+ArrowLeft' : 'Control+Shift+ArrowLeft');
+    await page.keyboard.press(isMac ? 'Meta+BracketLeft' : 'Control+Shift+ArrowLeft');
 
     /**
      * An escape hatch that only works when focus is *outside* the terminal is
@@ -301,6 +301,53 @@ test('the escape chord leaves a focused terminal for the orchestrator', async ({
      * keeps bubbling and reaches the stage — the mechanism under test.
      */
     await expect(terminal).toBeHidden({ timeout: 5_000 });
+  } finally {
+    await app.close();
+  }
+});
+
+test('Cmd+← edits the line instead of leaving the session', async ({}, testInfo) => {
+  /**
+   * The story-110 defect, driven the way it was reported. `Cmd+←` was the
+   * escape chord, so reaching for beginning-of-line mid-command threw the user
+   * out of the session and lost what they had typed.
+   *
+   * What is asserted is that the session is *still there* afterwards — the
+   * navigation that must not happen. Which bytes go to the pty is pinned in
+   * `tests/lib/terminal/keymap.test.ts` and `terminal-surface.test.tsx`;
+   * asserting the caret really moved would mean depending on the host shell's
+   * readline binding for `Home`, which varies by inputrc and terminfo and would
+   * make this a test of the CI image rather than of the app.
+   */
+  test.skip(process.platform !== 'darwin', 'Cmd is a macOS-only modifier');
+
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    const terminal = await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
+
+    await page.keyboard.type('echo half-typed');
+    await page.keyboard.press('Meta+ArrowLeft');
+    await page.keyboard.press('Meta+ArrowRight');
+
+    /**
+     * Given a whole second to navigate away before the claim is made. Asserting
+     * visibility immediately would pass even if the chord still fired, since
+     * the store update and the re-render are a tick behind the keystroke.
+     */
+    await page.waitForTimeout(1_000);
+    await expect(terminal).toBeVisible();
   } finally {
     await app.close();
   }

@@ -385,6 +385,7 @@ describe('CenterStage — the escape chord', () => {
     act(() => useUiStore.getState().openTab('hero-refresh'));
 
     for (const init of [
+      { key: '[', metaKey: true },
       { key: 'ArrowLeft', metaKey: true },
       { key: 'ArrowLeft', ctrlKey: true, shiftKey: true },
     ]) {
