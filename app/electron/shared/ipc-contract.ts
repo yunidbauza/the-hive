@@ -603,8 +603,12 @@ export interface HiveBridge {
    * rather than an incremental convenience.
    *
    * `test` is the only verb here that causes a network request, and it takes no
-   * argument: the host comes from the config, so a renderer cannot aim an
-   * authenticated request at a server of its choosing.
+   * argument: the host comes from the config. That bounds *this* verb, not the
+   * renderer — `config.setJira` is how the settings pane sets the site, so the
+   * renderer can still change which host the next `test` reaches. It is not a
+   * new capability (the same bridge already grants a login shell through
+   * `pty.write`), and it is the feature: a user has to be able to type their
+   * own site.
    */
   jira: {
     status(): Promise<JiraStatus>;

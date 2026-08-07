@@ -14,10 +14,21 @@ import type {
  * integration whose job is to run the user's query, so it is replaced by four
  * rules that can:
  *
- * 1. **The host is fixed from the configured site**, passed once at
- *    construction and never taken from a call. A renderer cannot aim this
- *    client at a different server, which is what would turn it into a
- *    credential-exfiltration primitive.
+ * 1. **The host comes from the configured site**, passed once at construction
+ *    and never taken from a call. So no *call* can redirect a request that is
+ *    already going out, and no path or query fragment can smuggle a new
+ *    authority past `assertJiraSite`.
+ *
+ *    Be precise about what that does and does not buy, because the obvious
+ *    stronger reading is false: the site is an ordinary setting, the settings
+ *    pane writes it through `config:set-jira`, and the renderer therefore *can*
+ *    change which host the next call reaches. That is the feature — a user has
+ *    to be able to type their own site — and it is not a new capability: the
+ *    same bridge already exposes `config.setRuntime` and `pty.write`, so a
+ *    renderer able to abuse this one already has a login shell. What rule 1
+ *    actually guarantees is that the host is always a value that went through
+ *    the guard and through the config write path, never a string that arrived
+ *    on the same call as the request.
  * 2. **The path is a literal from this codebase.** Callers pass a constant, and
  *    anything interpolated into one is validated by the guards first.
  * 3. **Bounded**, like every external call in this app: an abort signal and a

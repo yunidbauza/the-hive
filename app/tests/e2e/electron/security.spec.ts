@@ -97,9 +97,11 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *   be added here by hand — which is the whole point of asserting the exact
    *   set rather than a subset.
    * - **`test` takes no argument.** The host it reaches comes from
-   *   `~/.hive/config.json`, read in main. A renderer cannot aim an
-   *   authenticated request at a server of its choosing, which is the failure
-   *   that would turn this from an integration into an exfiltration primitive.
+   *   `~/.hive/config.json`, read in main, so nothing on the call can redirect
+   *   a request already going out. The renderer can still *change* the site
+   *   through `config.setJira` — that is the settings pane's whole job, and it
+   *   grants nothing the bridge does not already grant far more of through
+   *   `setRuntime` and `pty.write`.
    * - **The credential never lives in the config file.** `config.setJira`
    *   carries a site and an email; the token goes to `safeStorage` on its own
    *   channel.

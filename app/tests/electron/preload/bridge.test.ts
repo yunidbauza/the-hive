@@ -87,9 +87,11 @@ describe('exposed surface', () => {
    * itself: a fifth key fails the surface assertion above, and a `getToken`
    * would have to be added to `BRIDGE_JIRA_KEYS` by hand to get past it.
    *
-   * `test` takes no argument either, which is what stops a renderer from
-   * aiming an authenticated request at a host of its choosing — the site comes
-   * from the config file, in main.
+   * `test` takes no argument either. That stops a *call* from carrying a host,
+   * not the renderer from having one — `config.setJira` writes the site, which
+   * is what the settings pane is for. The property being pinned here is the
+   * shape of the namespace, not an authority boundary the bridge does not
+   * claim.
    */
   it('exposes no verb that reads a token back (HIVE-67)', async () => {
     const { ipcRenderer } = await import('electron');
