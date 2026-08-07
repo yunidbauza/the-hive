@@ -68,6 +68,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     session: Object.keys(window.hive!.session).sort(),
     integrations: Object.keys(window.hive!.integrations).sort(),
     notifications: Object.keys(window.hive!.notifications).sort(),
+    jira: Object.keys(window.hive!.jira).sort(),
   }));
 
   // Widening any of these lists is the alarm this test exists to raise.
@@ -85,16 +86,36 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * `notifications.onActivate` is a listener, not a capability: main → renderer
    * only, and it grants the page nothing it could not already be told.
    */
+  /**
+   * HIVE-67 adds `jira`, and it is the first namespace that touches a secret.
+   *
+   * What keeps it inside story 082's posture, and what a reviewer should check
+   * any future verb here against:
+   *
+   * - **No verb returns a token.** The renderer can write one and clear one.
+   *   The list below is four long, and a fifth that read one back would have to
+   *   be added here by hand — which is the whole point of asserting the exact
+   *   set rather than a subset.
+   * - **`test` takes no argument.** The host it reaches comes from
+   *   `~/.hive/config.json`, read in main. A renderer cannot aim an
+   *   authenticated request at a server of its choosing, which is the failure
+   *   that would turn this from an integration into an exfiltration primitive.
+   * - **The credential never lives in the config file.** `config.setJira`
+   *   carries a site and an email; the token goes to `safeStorage` on its own
+   *   channel.
+   */
   expect(surface.top).toEqual([
     'appInfo',
     'config',
     'integrations',
+    'jira',
     'notifications',
     'pty',
     'session',
   ]);
   expect(surface.integrations).toEqual(['status']);
   expect(surface.notifications).toEqual(['onActivate']);
+  expect(surface.jira).toEqual(['clearToken', 'setToken', 'status', 'test']);
   expect(surface.pty).toEqual([
     // Story 093 added `ack` — the renderer reporting what it has parsed, which
     // is what lets main apply backpressure.
@@ -193,6 +214,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'resetConfig',
     'revealConfig',
     /**
+     * HIVE-67's connection settings — the site and the account email.
+     *
+     * Ordinary settings, written through the same guarded path as every other,
+     * and notable here for what the payload does *not* carry: there is no
+     * `token` key, and `parseSetJiraRequest` refuses one as an unexpected key.
+     * A credential has no route into the file this verb writes.
+     */
+    'setJira',
+    /**
      * Story 104's two mutating verbs, and they *are* capabilities — the kind
      * this test exists to make deliberate rather than accidental.
      *
@@ -217,8 +247,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   /**
    * Story 096 added `session`, and it is a listener only. Main derives status
    * from pty output and pushes it; the renderer cannot ask for anything here.
+   *
+   * HIVE-61 added `onName` beside it — also main → renderer, also a thing the
+   * page can be *told* rather than a thing it can do. It updated
+   * `BRIDGE_SESSION_KEYS` and the preload surface test but not this list, so
+   * this assertion has been failing since that commit. Corrected here rather
+   * than left red: an assertion nobody believes is worse than no assertion,
+   * because the next real widening would land in an already-failing test.
    */
-  expect(surface.session).toEqual(['onStatus']);
+  expect(surface.session).toEqual(['onName', 'onStatus']);
 });
 
 test('ipcRenderer is not reachable through the bridge at any depth', async ({

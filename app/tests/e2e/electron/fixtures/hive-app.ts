@@ -34,9 +34,20 @@ const MAIN_ENTRY = join(APP_ROOT, 'out/main/index.js');
 export async function launchHive({
   userDataDir,
   configPath,
+  env: extraEnv,
 }: {
   userDataDir: string;
   configPath: string;
+  /**
+   * Extra environment for the launched app (HIVE-67).
+   *
+   * `jira-settings.spec.ts` needs a launch with `JIRA_API_KEY` set, because the
+   * `env` credential state is only reachable through the real process
+   * environment. Merged last, so a spec can override anything below it, and
+   * kept here rather than in the spec so every Electron-specific call stays in
+   * this file.
+   */
+  env?: Record<string, string>;
 }): Promise<ElectronApplication> {
   return electron.launch({
     args: [
@@ -66,6 +77,7 @@ export async function launchHive({
        * to it.
        */
       HIVE_CONFIG_PATH: configPath,
+      ...extraEnv,
     },
   });
 }

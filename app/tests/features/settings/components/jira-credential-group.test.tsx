@@ -20,7 +20,7 @@ import type {
  * spec covers the two that are reachable there.
  */
 
-const saveJiraToken = vi.fn(() => Promise.resolve(null));
+const saveJiraToken = vi.fn((_token: string) => Promise.resolve(null));
 const clearJiraToken = vi.fn(() => Promise.resolve(null));
 const testJiraConnection = vi.fn<() => Promise<JiraResult<JiraIdentity> | null>>(
   () => Promise.resolve(null),

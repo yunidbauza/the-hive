@@ -15,7 +15,7 @@ import type { JiraStatus } from '@shared/jira-contract';
  * tabbed through it.
  */
 
-const setJiraConnection = vi.fn(() => Promise.resolve());
+const setJiraConnection = vi.fn((_request: unknown) => Promise.resolve());
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();

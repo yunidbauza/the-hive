@@ -106,6 +106,28 @@ async function expectFile(path: string, contents: string): Promise<void> {
   await expect.poll(() => read(path), { timeout: 20_000 }).toBe(contents);
 }
 
+/**
+ * The session-identity flags HIVE-61 appends to every spawn.
+ *
+ * `--session-id` is a fresh uuid and `--settings` is a per-test temp path, so
+ * neither can be matched literally. Stripping them keeps what the two argv
+ * tests are really asserting — that nothing *else* reached the argument list,
+ * `&& exit` included — without freezing a value that changes per run.
+ *
+ * These two tests have been failing since HIVE-61 landed, which updated the
+ * unit tests for the new flags and not this file.
+ */
+const IDENTITY_FLAGS = /\s*--(?:name|session-id|settings)\s+\S+/g;
+
+/** Assert the argv the stub recorded, ignoring the identity flags. */
+async function expectArgs(path: string, contents: string): Promise<void> {
+  await expect
+    .poll(() => read(path)?.replace(IDENTITY_FLAGS, '').trim() ?? null, {
+      timeout: 20_000,
+    })
+    .toBe(contents);
+}
+
 async function openSession(page: Page): Promise<void> {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForSelector('header');
@@ -438,8 +460,13 @@ test('a session starts as the model and effort it was spawned with', async ({}, 
     );
 
     // Two flags, four words, in the order `claude` documents them — and
-    // crucially nothing else, so `&& exit` did not leak into the argument list.
-    await expectFile(argsFile, '--model haiku --effort low');
+    // crucially nothing else beyond the identity flags, so `&& exit` did not
+    // leak into the argument list.
+    await expectArgs(argsFile, '--model haiku --effort low');
+
+    // The identity flags are still asserted, just not by literal value: the
+    // point of stripping them is to tolerate a uuid, not to stop covering them.
+    expect(read(argsFile)).toContain('--session-id ');
   } finally {
     await app.close();
   }
@@ -481,7 +508,7 @@ test('a session spawned without a model gets the bare command', async ({}, testI
       [SESSION, PROJECT],
     );
 
-    await expectFile(argsFile, '');
+    await expectArgs(argsFile, '');
   } finally {
     await app.close();
   }
