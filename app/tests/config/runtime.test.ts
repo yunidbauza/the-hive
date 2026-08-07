@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { can, isDesktop } from '@config/runtime';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
-import { DEFAULT_NOTIFICATIONS } from '@shared/config-contract';
+import { DEFAULT_JIRA, DEFAULT_NOTIFICATIONS } from '@shared/config-contract';
 
 /**
  * Install a fake bridge. Shape does not matter — `isDesktop` is a *presence*
@@ -98,6 +98,7 @@ describe('can', () => {
           },
         ],
         notifications: { ...DEFAULT_NOTIFICATIONS },
+        jira: { ...DEFAULT_JIRA },
         errors: [],
       });
 

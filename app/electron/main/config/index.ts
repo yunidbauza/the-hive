@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_PROJECT_ICON,
   DEFAULT_SHELL,
@@ -14,6 +15,7 @@ import {
   type RenameProjectRequest,
   type ReorderProjectsRequest,
   type RepointProjectRequest,
+  type SetJiraRequest,
   type SetNotificationsRequest,
   type SetProjectRuntimeRequest,
   type SetRuntimeRequest,
@@ -108,6 +110,9 @@ export function loadConfig(): ConfigSnapshot {
     // Defaults *under* whatever the file named, so a file declaring one switch
     // still answers for all three (story 106).
     notifications: { ...DEFAULT_NOTIFICATIONS, ...parsed.notifications },
+    // Defaults *under* whatever the file named, so a file declaring only a site
+    // still answers for both fields (HIVE-67).
+    jira: { ...DEFAULT_JIRA, ...parsed.jira },
     errors: parsed.errors,
   };
 }
@@ -543,6 +548,43 @@ export function setNotifications(
 }
 
 /**
+ * Change the Jira connection (HIVE-67).
+ *
+ * What this writes is the site and the account email. **The API token is not
+ * here and never will be** — it is a secret, and it goes to `safeStorage`
+ * through `jira:set-token`. That separation is the whole reason this verb exists
+ * rather than a single "save Jira settings" call: a credential must not have a
+ * path into a file the product invites the user to hand-edit.
+ *
+ * The block is spread, never rebuilt, for the same reason every other verb
+ * spreads its target: a key this build has not heard of — `jql`, which HIVE-69
+ * adds, hand-written in the meantime — must survive a save made by this one.
+ *
+ * `null` removes a field rather than storing `""`, which would be a site named
+ * "" and a request to `https:///rest/api/3/myself`.
+ */
+export function setJira(request: SetJiraRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      // A non-object block is replaced rather than merged into. The reader has
+      // already reported it, and merging onto a string would produce something
+      // neither the user nor the parser meant.
+      const current =
+        typeof draft.jira === 'object' &&
+        draft.jira !== null &&
+        !Array.isArray(draft.jira)
+          ? { ...(draft.jira as Record<string, unknown>) }
+          : {};
+
+      applyOverride(current, 'site', request.site);
+      applyOverride(current, 'email', request.email);
+
+      return { ...draft, jira: current };
+    }),
+  );
+}
+
+/**
  * Put the config file back to the first-run template (story 107).
  *
  * The one mutation that deliberately **discards** user data, and so the one
@@ -577,16 +619,20 @@ export function resetConfig(): ConfigSnapshot {
 }
 
 /**
- * Apply one three-state override onto a draft entry, in place.
+ * Apply one three-state override onto a draft object, in place.
  *
  * `delete` rather than writing `undefined`: a key whose value is `undefined`
  * disappears from `JSON.stringify` anyway, but leaving it on the object means
  * every later reader has to know that. Removing it keeps the draft honest about
  * what is going to be written.
+ *
+ * Shared by story 104's per-project runtime overrides and HIVE-67's Jira block,
+ * which want identical semantics: absent leaves the key alone, `null` removes
+ * it, and a value replaces it.
  */
 function applyOverride(
   entry: Record<string, unknown>,
-  key: 'shell' | 'claudeCommand' | 'env',
+  key: 'shell' | 'claudeCommand' | 'env' | 'site' | 'email',
   value: string | Record<string, string> | null | undefined,
 ): void {
   if (value === undefined) return;

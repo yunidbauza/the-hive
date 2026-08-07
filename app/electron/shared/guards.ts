@@ -6,6 +6,8 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetJiraRequest,
+  SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
@@ -547,6 +549,146 @@ export function parseSetNotificationsRequest(
   }
 
   return request;
+}
+
+/** RFC-1123 label. No leading or trailing hyphen. */
+const HOST_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+
+/** The DNS limit. Generous for an Atlassian host, and finite, which is the point. */
+const MAX_HOST = 253;
+
+/**
+ * The Atlassian host, as a bare hostname (HIVE-67).
+ *
+ * **The only guard in this file whose output is interpolated into a URL that a
+ * credential is attached to.** A host taken from a payload unchecked is the
+ * difference between an integration and a credential-exfiltration primitive, so
+ * this rejects rather than encodes: no scheme survives, no path, no port, no
+ * userinfo, no whitespace.
+ *
+ * A pasted `https://…/` is stripped rather than refused, because copying the
+ * URL out of the browser is what everyone will actually do and refusing it
+ * teaches nothing. `http://` is refused outright — silently upgrading it would
+ * accept a request the user did not make, and honouring it would downgrade the
+ * transport a credential rides on.
+ *
+ * The result is lower-cased. Hostnames are case-insensitive, and normalising
+ * here means two configs cannot differ only by case.
+ */
+export function assertJiraSite(value: unknown, label: string): string {
+  const raw = assertString(value, label).trim();
+  if (raw.length === 0) return fail(`${label}: must not be empty`);
+  if (/^http:\/\//i.test(raw)) {
+    return fail(`${label}: must be https — drop the http:// prefix`);
+  }
+
+  const stripped = raw.replace(/^https:\/\//i, '').replace(/\/+$/, '');
+  if (stripped.length === 0 || stripped.length > MAX_HOST) {
+    return fail(`${label}: expected a hostname`);
+  }
+
+  const labels = stripped.split('.');
+  if (labels.length < 2) {
+    return fail(`${label}: expected a hostname like example.atlassian.net`);
+  }
+  for (const part of labels) {
+    if (!HOST_LABEL.test(part)) {
+      return fail(
+        `${label}: expected a hostname — no scheme, path, port or credentials`,
+      );
+    }
+  }
+  return stripped.toLowerCase();
+}
+
+/** The address half of a Basic credential. The RFC-5321 maximum. */
+const MAX_EMAIL = 320;
+
+/**
+ * The account email (HIVE-67).
+ *
+ * Deliberately not an RFC-5322 parser — this checks the properties that matter
+ * *where the value is used*, and lets Jira be the authority on whether the
+ * address exists. A **colon is refused** because this string appears before the
+ * separator in `email:token`, and one inside it would silently move the
+ * boundary of the credential.
+ */
+export function assertJiraEmail(value: unknown, label: string): string {
+  const email = assertText(value, label);
+  if (email.length > MAX_EMAIL) return fail(`${label}: too long`);
+  if (email.includes(':')) return fail(`${label}: must not contain a colon`);
+  if (/\s/.test(email)) return fail(`${label}: must not contain whitespace`);
+
+  const parts = email.split('@');
+  if (parts.length !== 2 || parts[0] === '' || parts[1] === '') {
+    return fail(`${label}: expected an address like you@example.com`);
+  }
+  return email;
+}
+
+/** Atlassian tokens are around 192 characters. Generous, and finite. */
+const MAX_TOKEN = 1024;
+
+/**
+ * The API token (HIVE-67).
+ *
+ * Printable ASCII with no space, which is what a base64-ish Atlassian token is.
+ * The refusal names the field and **never echoes the value** — a guard whose
+ * error message contains the secret it rejected has leaked that secret into
+ * every log that catches the throw.
+ */
+export function assertJiraToken(value: unknown, label: string): string {
+  const token = assertString(value, label);
+  if (token.length === 0) return fail(`${label}: must not be empty`);
+  if (token.length > MAX_TOKEN) return fail(`${label}: too long`);
+  for (const char of token) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x21 || code > 0x7e) {
+      return fail(`${label}: expected printable ASCII with no spaces`);
+    }
+  }
+  return token;
+}
+
+/**
+ * The Jira connection settings (HIVE-67).
+ *
+ * `null` is accepted and distinct from absent — it clears the field — the same
+ * three-state shape {@link parseSetProjectRuntimeRequest} uses and for the same
+ * reason. There is no `token` key: the token is a secret and arrives on its own
+ * channel, so a guard that accepted one here would be letting a credential into
+ * the config write path.
+ */
+export function parseSetJiraRequest(input: unknown): SetJiraRequest {
+  const raw = assertShape(input, [], 'setJira', ['site', 'email']);
+
+  const request: SetJiraRequest = {
+    ...(raw.site !== undefined
+      ? {
+          site:
+            raw.site === null ? null : assertJiraSite(raw.site, 'setJira.site'),
+        }
+      : {}),
+    ...(raw.email !== undefined
+      ? {
+          email:
+            raw.email === null
+              ? null
+              : assertJiraEmail(raw.email, 'setJira.email'),
+        }
+      : {}),
+  };
+
+  if (Object.keys(request).length === 0) {
+    return fail('setJira: nothing to change');
+  }
+  return request;
+}
+
+/** The token, on its way to `safeStorage`. The only payload carrying a secret. */
+export function parseSetJiraTokenRequest(input: unknown): SetJiraTokenRequest {
+  const raw = assertShape(input, ['token'], 'setJiraToken');
+  return { token: assertJiraToken(raw.token, 'setJiraToken.token') };
 }
 
 /**

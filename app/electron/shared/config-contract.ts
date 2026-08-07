@@ -168,6 +168,33 @@ export const NOTIFICATION_KEYS: readonly (keyof NotificationPrefs)[] = [
 ];
 
 /**
+ * The Jira connection, as the config file declares it (HIVE-67).
+ *
+ * Site and email only. The API token is a secret and lives in `safeStorage`
+ * under `userData` — this file is deliberately hand-editable, which is exactly
+ * what makes it the wrong home for a credential.
+ */
+export interface JiraConfig {
+  /**
+   * The Atlassian host, e.g. `behiques.atlassian.net`.
+   *
+   * A bare hostname, never a URL. `integrations/jira/client.ts` builds
+   * `https://<site>/…` and nothing else, so a scheme or a path stored here
+   * would produce a malformed request rather than a cleverer one. `assertJiraSite`
+   * strips a pasted `https://` and refuses everything else.
+   */
+  site: string | null;
+  /** The account the API token belongs to. Half of the Basic credential. */
+  email: string | null;
+}
+
+/** Nothing configured. Both halves are needed before a request can be made. */
+export const DEFAULT_JIRA: JiraConfig = { site: null, email: null };
+
+/** The block's keys, for the parser's exact-key check. */
+export const JIRA_KEYS: readonly (keyof JiraConfig)[] = ['site', 'email'];
+
+/**
  * What `window.hive.config.get()` answers with.
  *
  * Note there is no `ok` / `valid` flag. A snapshot is always returned, even for
@@ -200,6 +227,14 @@ export interface ConfigSnapshot {
    * eventually forget on one branch.
    */
   notifications: NotificationPrefs;
+  /**
+   * The Jira connection, always fully resolved (HIVE-67).
+   *
+   * Defaulted here for the same reason `notifications` is: main reads it on
+   * every Jira verb, and a consumer that had to remember to apply defaults is
+   * one that will eventually forget on one branch.
+   */
+  jira: JiraConfig;
   /**
    * Human-readable problems, in the order they were found.
    *
@@ -357,6 +392,7 @@ export function emptySnapshot(
     claudeCommand: DEFAULT_CLAUDE_COMMAND,
     projects: [],
     notifications: { ...DEFAULT_NOTIFICATIONS },
+    jira: { ...DEFAULT_JIRA },
     errors: [],
   };
 }
@@ -449,6 +485,27 @@ export interface SetNotificationsRequest {
   sessionDone?: boolean;
   sessionIdle?: boolean;
   cloneDone?: boolean;
+}
+
+/**
+ * Change the Jira site and account email (HIVE-67).
+ *
+ * `null` clears a field and is distinct from absent, following
+ * {@link SetProjectRuntimeRequest}: without it the UI could set a site but
+ * never take it back, and an emptied field would have to be stored as `""`.
+ *
+ * There is deliberately no `token` here. The token is a secret and does not go
+ * in the config file — it reaches `safeStorage` through `jira:set-token`, which
+ * is a different channel with a different payload for exactly that reason.
+ */
+export interface SetJiraRequest {
+  site?: string | null;
+  email?: string | null;
+}
+
+/** Payload of `jira:set-token` (HIVE-67). The one payload carrying a secret. */
+export interface SetJiraTokenRequest {
+  token: string;
 }
 
 /**

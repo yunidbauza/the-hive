@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
   type ProjectStatus,
@@ -52,6 +53,7 @@ function snapshot(
       isRepo: true,
     })),
     notifications: { ...DEFAULT_NOTIFICATIONS },
+    jira: { ...DEFAULT_JIRA },
     errors: [],
     ...overrides,
   };

@@ -1,7 +1,9 @@
 import {
+  JIRA_KEYS,
   NOTIFICATION_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
   unsafeEnvReason,
+  type JiraConfig,
   type NotificationPrefs,
   type ProjectOrigin,
 } from '@shared/config-contract';
@@ -52,6 +54,17 @@ export interface ParsedConfig {
    * it never asked for.
    */
   notifications?: Partial<NotificationPrefs>;
+  /**
+   * HIVE-67's Jira block, exactly as the file declared it.
+   *
+   * `undefined` when the file has none — which every config written before this
+   * story does. Partial when it names only one field; the caller merges
+   * `DEFAULT_JIRA` under it. Kept partial here rather than defaulted so the
+   * write path can tell "the user chose this" from "the file said nothing",
+   * which is what keeps an untouched file from growing a block it never asked
+   * for.
+   */
+  jira?: Partial<JiraConfig>;
   errors: string[];
   /** The version the file declared, or `null` when it was unreadable. */
   version: number | null;
@@ -91,6 +104,9 @@ const TOP_LEVEL_KEYS = [
   // an unknown key — the same courtesy story 104 extended to the per-project
   // runtime overrides below.
   'notifications',
+  // HIVE-67, for the same reason. The block holds the site and the account
+  // email; the API token is a secret and is deliberately not in this file.
+  'jira',
 ];
 /**
  * `shell`, `claudeCommand` and `env` are story 104's per-project overrides.
@@ -313,6 +329,54 @@ function optionalNotifications(
   return prefs;
 }
 
+/**
+ * The `jira` block (HIVE-67).
+ *
+ * Structurally identical to {@link optionalNotifications}, including its
+ * narrower forbidden-key message and for the same reason: a poisoned block
+ * costs the block and nothing else, and telling the user their whole config was
+ * discarded would send them looking for a problem that is not there.
+ *
+ * A field that is present but not a string is reported and skipped, rather than
+ * costing the block. Someone who typed a number for `site` has one thing wrong,
+ * and losing their email as well would be a second surprise.
+ */
+function optionalJira(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<JiraConfig> | undefined {
+  const value = record.jira;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.jira: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.jira`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — jira ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, JIRA_KEYS, at, errors)) return undefined;
+
+  const jira: Partial<JiraConfig> = {};
+  for (const key of JIRA_KEYS) {
+    const raw = value[key];
+    if (raw === undefined) continue;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      errors.push(`${at}.${key}: expected a non-empty string — ignored`);
+      continue;
+    }
+    jira[key] = raw;
+  }
+  return jira;
+}
+
 export function parseConfig(text: string, label: string): ParsedConfig {
   const errors: string[] = [];
   // Every `return empty` below is a wholesale rejection, so `fatal` is set
@@ -359,6 +423,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const shell = optionalString(document, 'shell', label, errors);
   const claudeCommand = optionalString(document, 'claudeCommand', label, errors);
   const notifications = optionalNotifications(document, label, errors);
+  const jira = optionalJira(document, label, errors);
 
   const raw = document.projects;
   if (raw === undefined) {
@@ -366,6 +431,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       shell,
       claudeCommand,
       notifications,
+      jira,
       projects: [],
       errors,
       version,
@@ -378,6 +444,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       shell,
       claudeCommand,
       notifications,
+      jira,
       projects: [],
       errors,
       version,
@@ -465,6 +532,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     shell,
     claudeCommand,
     notifications,
+    jira,
     projects,
     errors,
     version,

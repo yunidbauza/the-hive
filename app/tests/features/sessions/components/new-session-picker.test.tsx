@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
   type ProjectStatus,
@@ -294,6 +295,7 @@ describe('NewSessionPicker · unmapped projects', () => {
         isRepo: true,
       })),
       notifications: { ...DEFAULT_NOTIFICATIONS },
+      jira: { ...DEFAULT_JIRA },
       errors: [],
       ...overrides,
     };

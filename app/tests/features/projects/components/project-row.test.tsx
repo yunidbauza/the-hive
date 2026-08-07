@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
   type ProjectStatus,
@@ -40,6 +41,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
       isRepo: true,
     })),
     notifications: { ...DEFAULT_NOTIFICATIONS },
+    jira: { ...DEFAULT_JIRA },
     errors: [],
   };
 }

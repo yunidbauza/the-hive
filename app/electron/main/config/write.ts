@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
@@ -224,6 +225,7 @@ export function writeConfig(mutate: Mutation): WriteResult {
       // to describe the file on disk, including a block a concurrent hand-edit
       // changed (story 106).
       notifications: { ...DEFAULT_NOTIFICATIONS, ...validated.notifications },
+      jira: { ...DEFAULT_JIRA, ...validated.jira },
       errors: validated.errors,
     },
   };

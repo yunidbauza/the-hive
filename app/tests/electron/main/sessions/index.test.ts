@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
 } from '../../../../electron/shared/config-contract';
@@ -69,6 +70,7 @@ const CONFIG: ConfigSnapshot = {
     },
   ],
   notifications: { ...DEFAULT_NOTIFICATIONS },
+  jira: { ...DEFAULT_JIRA },
   errors: [],
 };
 

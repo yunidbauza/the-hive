@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
@@ -34,6 +35,7 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   claudeCommand: DEFAULT_CLAUDE_COMMAND,
   projects: [],
   notifications: { ...DEFAULT_NOTIFICATIONS },
+  jira: { ...DEFAULT_JIRA },
   errors: [],
   ...over,
 });
