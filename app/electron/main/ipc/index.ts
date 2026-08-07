@@ -29,8 +29,10 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseApplyJiraTransitionRequest,
   parseJiraIssueRequest,
   parseJiraSearchRequest,
+  parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
   parseSetNotificationsRequest,
@@ -50,6 +52,7 @@ import type {
   JiraResult,
   JiraSearchResult,
   JiraStatus,
+  JiraTransition,
 } from '@shared/jira-contract';
 
 import { createCloneFlow, type CloneFlow } from '../clone';
@@ -476,6 +479,16 @@ export function registerIpcHandlers(): void {
     CH.jiraIssue,
     (_event, payload): Promise<JiraResult<JiraIssue>> =>
       jira.issue(parseJiraIssueRequest(payload)),
+  );
+  handle(
+    CH.jiraTransitions,
+    (_event, payload): Promise<JiraResult<JiraTransition[]>> =>
+      jira.transitions(parseJiraTransitionsRequest(payload)),
+  );
+  handle(
+    CH.jiraApplyTransition,
+    (_event, payload): Promise<JiraResult<JiraIssue>> =>
+      jira.applyTransition(parseApplyJiraTransitionRequest(payload)),
   );
   handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
     setJira(parseSetJiraRequest(payload)),

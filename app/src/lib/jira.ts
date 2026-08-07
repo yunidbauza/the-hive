@@ -1,6 +1,8 @@
 import type {
+  ApplyJiraTransitionRequest,
   JiraIssueRequest,
   JiraSearchRequest,
+  JiraTransitionsRequest,
 } from '@shared/config-contract';
 import type {
   JiraIdentity,
@@ -8,6 +10,7 @@ import type {
   JiraResult,
   JiraSearchResult,
   JiraStatus,
+  JiraTransition,
 } from '@shared/jira-contract';
 
 /**
@@ -91,3 +94,20 @@ export const readJiraIssue = (
   request: JiraIssueRequest,
 ): Promise<JiraResult<JiraIssue> | null> =>
   call('issue', (bridge) => bridge.jira.issue(request));
+
+/** What an issue can become right now (HIVE-70). Read per issue, never cached. */
+export const readJiraTransitions = (
+  request: JiraTransitionsRequest,
+): Promise<JiraResult<JiraTransition[]> | null> =>
+  call('transitions', (bridge) => bridge.jira.transitions(request));
+
+/**
+ * Move an issue (HIVE-70).
+ *
+ * Answers with the re-read issue, so a caller has no reason to guess the new
+ * status and nothing to reconcile if the workflow landed it somewhere else.
+ */
+export const applyJiraTransition = (
+  request: ApplyJiraTransitionRequest,
+): Promise<JiraResult<JiraIssue> | null> =>
+  call('applyTransition', (bridge) => bridge.jira.applyTransition(request));

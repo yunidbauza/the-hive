@@ -415,3 +415,170 @@ describe('one automatic retry (HIVE-68)', () => {
     expect(seen[0]).toContain('jql=project+%3D+HIVE');
   });
 });
+
+describe('post (HIVE-70)', () => {
+  it('sends the body as JSON with a content-type', async () => {
+    const seen: Seen[] = [];
+    await client(responder(new Response(null, { status: 204 }), seen)).post(
+      '/rest/api/3/issue/HIVE-70/transitions',
+      { transition: { id: '31' } },
+    );
+
+    expect(seen[0]?.init.method).toBe('POST');
+    expect(seen[0]?.init.body).toBe('{"transition":{"id":"31"}}');
+    expect(new Headers(seen[0]?.init.headers).get('content-type')).toBe(
+      'application/json',
+    );
+  });
+
+  it('carries the same credential and timeout as a read', async () => {
+    const seen: Seen[] = [];
+    await client(responder(new Response(null, { status: 204 }), seen)).post(
+      '/rest/api/3/issue/HIVE-70/transitions',
+      {},
+    );
+
+    const headers = new Headers(seen[0]?.init.headers);
+    expect(headers.get('authorization')).toBe(
+      `Basic ${Buffer.from(`${CREDENTIAL.email}:${TOKEN}`).toString('base64')}`,
+    );
+    expect(seen[0]?.init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('treats 204 No Content as success, not as a parse failure', async () => {
+    const result = await client(
+      responder(new Response(null, { status: 204 })),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    // Without this the one verb that writes would report "not JSON" every time
+    // it worked.
+    expect(result.ok).toBe(true);
+  });
+
+  /**
+   * The rule HIVE-68's client header wrote down for whoever added the first
+   * POST. This is that POST.
+   */
+  for (const status of [429, 500, 502, 503]) {
+    it(`does NOT retry ${status} — a transition may already have applied`, async () => {
+      const seen: string[] = [];
+      const result = await client(
+        sequence([new Response('no', { status })], seen),
+      ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+      expect(result.ok).toBe(false);
+      expect(seen).toHaveLength(1);
+      expect(waits).toEqual([]);
+    });
+  }
+
+  it('reports a 429 with its Retry-After rather than waiting', async () => {
+    const result = await client(
+      responder(
+        new Response('slow', { status: 429, headers: { 'retry-after': '4' } }),
+      ),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    expect(!result.ok && result.error.kind).toBe('rate-limited');
+    expect(!result.ok && result.error.retryAfter).toBe(4);
+    expect(waits).toEqual([]);
+  });
+});
+
+describe('400 details (HIVE-70)', () => {
+  const badRequest = (body: unknown): Response =>
+    new Response(JSON.stringify(body), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  it('names the field Jira asked for', async () => {
+    const result = await client(
+      responder(
+        badRequest({
+          errorMessages: [],
+          errors: { resolution: 'Field \'resolution\' is required' },
+        }),
+      ),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    expect(!result.ok && result.error.kind).toBe('bad-query');
+    expect(!result.ok && result.error.details).toEqual([
+      "resolution: Field 'resolution' is required",
+    ]);
+  });
+
+  it('carries errorMessages too', async () => {
+    const result = await client(
+      responder(badRequest({ errorMessages: ['Transition is not valid.'] })),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    expect(!result.ok && result.error.details).toEqual([
+      'Transition is not valid.',
+    ]);
+  });
+
+  it('reads nothing but those two keys', async () => {
+    const result = await client(
+      responder(
+        badRequest({
+          errorMessages: ['One'],
+          errors: { field: 'Two' },
+          warningMessages: ['SHOULD NOT APPEAR'],
+          somethingElse: 'ALSO NOT',
+        }),
+      ),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    const serialised = JSON.stringify(result);
+    expect(serialised).not.toContain('SHOULD NOT APPEAR');
+    expect(serialised).not.toContain('ALSO NOT');
+    expect(serialised).not.toContain('warningMessages');
+  });
+
+  it('bounds the count and the length', async () => {
+    const result = await client(
+      responder(
+        badRequest({
+          errorMessages: Array.from({ length: 40 }, (_, i) => `msg ${i}`),
+          errors: { long: 'x'.repeat(1000) },
+        }),
+      ),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    const details = (!result.ok && result.error.details) || [];
+    expect(details.length).toBeLessThanOrEqual(10);
+    for (const detail of details) expect(detail.length).toBeLessThanOrEqual(310);
+  });
+
+  it('strips control characters rather than dropping the message', async () => {
+    const result = await client(
+      responder(badRequest({ errorMessages: ['a\u0007b\u001bc'] })),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    expect(!result.ok && result.error.details).toEqual(['abc']);
+  });
+
+  it('leaves details absent when the body is not Jira-shaped', async () => {
+    const result = await client(
+      responder(new Response('<html>nope</html>', { status: 400 })),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    expect(!result.ok && result.error.details).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('html');
+  });
+
+  it('reads no body on any status but 400', async () => {
+    const result = await client(
+      responder(
+        new Response(JSON.stringify({ errorMessages: ['LEAK'] }), {
+          status: 403,
+        }),
+      ),
+    ).post('/rest/api/3/issue/HIVE-70/transitions', {});
+
+    expect(!result.ok && result.error.kind).toBe('forbidden');
+    expect(JSON.stringify(result)).not.toContain('LEAK');
+  });
+
+});

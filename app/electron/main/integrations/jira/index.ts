@@ -1,7 +1,9 @@
 import type {
+  ApplyJiraTransitionRequest,
   ConfigSnapshot,
   JiraIssueRequest,
   JiraSearchRequest,
+  JiraTransitionsRequest,
   SetJiraTokenRequest,
 } from '../../../shared/config-contract';
 import {
@@ -14,6 +16,7 @@ import {
   type JiraResult,
   type JiraSearchResult,
   type JiraStatus,
+  type JiraTransition,
 } from '../../../shared/jira-contract';
 
 import {
@@ -23,7 +26,7 @@ import {
   type SecretStore,
 } from './auth';
 import { createJiraClient, type FetchLike, type JiraClient, type Sleep } from './client';
-import { toIssue } from './mapping';
+import { toIssue, toTransition } from './mapping';
 
 /**
  * The verbs main exposes for Jira (HIVE-67).
@@ -52,6 +55,20 @@ export interface Jira {
   search(request: JiraSearchRequest): Promise<JiraResult<JiraSearchResult>>;
   /** Read one issue by key (HIVE-68). */
   issue(request: JiraIssueRequest): Promise<JiraResult<JiraIssue>>;
+  /** The transitions available from this issue's current status (HIVE-70). */
+  transitions(
+    request: JiraTransitionsRequest,
+  ): Promise<JiraResult<JiraTransition[]>>;
+  /**
+   * Apply one, and answer with the **re-read** issue (HIVE-70).
+   *
+   * Returning the issue rather than `void` is what makes an optimistic guess
+   * impossible: a caller that wanted to assume the new status would have to
+   * ignore a value it was handed.
+   */
+  applyTransition(
+    request: ApplyJiraTransitionRequest,
+  ): Promise<JiraResult<JiraIssue>>;
 }
 
 /**
@@ -156,6 +173,38 @@ export function createJira(deps: {
         ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
       }),
     };
+  };
+
+  /**
+   * Read one issue and map it.
+   *
+   * A local function rather than a method, so `applyTransition` can re-read
+   * without reaching through `this` — an object literal's `this` is the kind of
+   * binding that survives every refactor until the one where it does not.
+   */
+  const readIssue = async (
+    request: JiraIssueRequest,
+  ): Promise<JiraResult<JiraIssue>> => {
+    const connection = connect();
+    if (!connection.ok) return connection.error;
+
+    const result = await connection.client.get<unknown>(
+      `${ISSUE}/${request.key}`,
+      { fields: JIRA_FIELDS },
+    );
+    if (!result.ok) return result;
+
+    const mapped = toIssue(result.value, connection.site);
+    if (mapped === null) {
+      return {
+        ok: false,
+        error: {
+          kind: 'unknown',
+          message: `Jira's answer for ${request.key} could not be read.`,
+        },
+      };
+    }
+    return { ok: true, value: mapped };
   };
 
   return {
@@ -297,27 +346,96 @@ export function createJira(deps: {
      * that rule and not a substitute for it: nothing in this function would stop
      * a path segment, which is why the guard matches rather than escapes.
      */
-    async issue(request) {
+    issue: readIssue,
+
+    /**
+     * What this issue can become, right now (HIVE-70).
+     *
+     * Read per issue, never cached across issues. Jira does not let you set a
+     * status: you fetch the transitions available *from the issue's current
+     * status in its workflow* and apply one by id, and those ids are
+     * per-workflow — an id from one issue means nothing on another.
+     */
+    async transitions(request) {
       const connection = connect();
       if (!connection.ok) return connection.error;
 
-      const result = await connection.client.get<unknown>(
-        `${ISSUE}/${request.key}`,
-        { fields: JIRA_FIELDS },
+      const result = await connection.client.get<{ transitions?: unknown }>(
+        `${ISSUE}/${request.key}/transitions`,
       );
       if (!result.ok) return result;
 
-      const mapped = toIssue(result.value, connection.site);
-      if (mapped === null) {
-        return {
-          ok: false,
-          error: {
-            kind: 'unknown',
-            message: `Jira's answer for ${request.key} could not be read.`,
-          },
-        };
+      const raw = Array.isArray(result.value.transitions)
+        ? result.value.transitions
+        : [];
+      const mapped: JiraTransition[] = [];
+      for (const entry of raw) {
+        // One malformed transition costs itself: a workflow with a bad entry
+        // should still offer the others rather than refuse to open a menu.
+        const one = toTransition(entry);
+        if (one !== null) mapped.push(one);
       }
       return { ok: true, value: mapped };
+    },
+
+    /**
+     * Apply a transition, then re-read the issue (HIVE-70).
+     *
+     * ## Telling a stale id from a missing field
+     *
+     * Both are `400`, and Jira's prose is the only thing that distinguishes
+     * them — which would break on the first non-English instance. So the
+     * distinction is made **by asking again**: on any 400, re-read the
+     * transitions. If the id that was sent is no longer among them, the issue
+     * moved underneath us. If it is still there, the request itself was
+     * rejected, and `details` carries the field Jira named.
+     *
+     * Deterministic, locale-independent, and it costs one extra GET on a path
+     * that has already failed.
+     */
+    async applyTransition(request) {
+      const connection = connect();
+      if (!connection.ok) return connection.error;
+
+      const applied = await connection.client.post<void>(
+        `${ISSUE}/${request.key}/transitions`,
+        { transition: { id: request.transitionId } },
+      );
+
+      if (!applied.ok) {
+        if (applied.error.kind !== 'bad-query') return applied;
+
+        const fresh = await connection.client.get<{ transitions?: unknown }>(
+          `${ISSUE}/${request.key}/transitions`,
+        );
+        const still =
+          fresh.ok &&
+          Array.isArray(fresh.value.transitions) &&
+          fresh.value.transitions.some(
+            (entry) => toTransition(entry)?.id === request.transitionId,
+          );
+
+        if (!still) {
+          return {
+            ok: false,
+            error: {
+              kind: 'stale',
+              message:
+                'This issue has moved since its transitions were read. They have been read again.',
+            },
+          };
+        }
+        return applied;
+      }
+
+      /**
+       * Re-read rather than guess.
+       *
+       * A transition can land the issue somewhere the menu did not predict —
+       * a post-function, a workflow condition, another transition firing — so
+       * the only honest answer to "what is it now" is to ask.
+       */
+      return readIssue({ key: request.key });
     },
   };
 }

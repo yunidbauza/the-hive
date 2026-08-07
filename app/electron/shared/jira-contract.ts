@@ -64,6 +64,17 @@ export type JiraErrorKind =
   | 'offline'
   | 'timeout'
   | 'bad-query'
+  /**
+   * The issue moved underneath us (HIVE-70).
+   *
+   * The epic's error table is about HTTP conditions and has no row for this,
+   * because it is not one: a stale transition id and a missing required field
+   * are both `400`, and they are told apart by re-reading the transitions
+   * rather than by matching Jira's prose, which would break on the first
+   * non-English instance. It reads differently in the UI from a validation
+   * failure, so it is its own kind.
+   */
+  | 'stale'
   | 'unknown';
 
 export interface JiraError {
@@ -72,6 +83,22 @@ export interface JiraError {
   message: string;
   /** Seconds, from `Retry-After`. Only on `rate-limited`. */
   retryAfter?: number;
+  /**
+   * Jira's own explanation, parsed into named fields (HIVE-70).
+   *
+   * Sits carefully *alongside* "no raw response body escapes" rather than
+   * against it. Jira's error body is **structured** — `errorMessages`, and a
+   * field-keyed `errors` map — so this is read from exactly those two, bounded
+   * to {@link JIRA_MAX_DETAILS} entries of {@link JIRA_MAX_DETAIL_LENGTH}
+   * characters with control characters stripped, and nothing else in the body
+   * is looked at. The same discipline `mapping.ts` applies to an issue, not an
+   * exception to it.
+   *
+   * Populated only where a 400 body parsed. It exists so a transition that
+   * needs a resolution can name the field, which is the one thing the user has
+   * to know in order to fix it.
+   */
+  details?: string[];
 }
 
 /**
@@ -164,3 +191,27 @@ export const JIRA_PAGE_SIZE = 100;
  * Reaching it sets {@link JiraSearchResult.capped}; it never truncates silently.
  */
 export const JIRA_MAX_ISSUES = 200;
+
+/**
+ * One transition available from an issue's *current* status (HIVE-70).
+ *
+ * Read per issue, always. Transition ids are per-workflow and not stable across
+ * projects, so an id cached from one issue is meaningless on another and a
+ * hard-coded one is meaningless everywhere.
+ */
+export interface JiraTransition {
+  id: string;
+  /** The label, as Jira names it — "Start progress", "Done". */
+  name: string;
+  /** Where it lands, so the menu shows a destination and not just a verb. */
+  to: {
+    name: string;
+    statusCategory: JiraStatusCategory;
+  };
+}
+
+/** How many of Jira's own error strings are carried across IPC (HIVE-70). */
+export const JIRA_MAX_DETAILS = 10;
+
+/** And how long each may be. Bounded, because it came from a server. */
+export const JIRA_MAX_DETAIL_LENGTH = 300;

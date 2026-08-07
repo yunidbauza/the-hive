@@ -542,6 +542,23 @@ export interface JiraIssueRequest {
   key: string;
 }
 
+/** Payload of `jira:transitions` (HIVE-70). Read per issue, always. */
+export interface JiraTransitionsRequest {
+  key: string;
+}
+
+/**
+ * Payload of `jira:apply-transition` (HIVE-70).
+ *
+ * The id came from a `jira:transitions` read for this same key. It is validated
+ * again here anyway: main does not trust that the renderer round-tripped a value
+ * it was handed, and the id reaches a request body.
+ */
+export interface ApplyJiraTransitionRequest {
+  key: string;
+  transitionId: string;
+}
+
 /**
  * Change one project's runtime overrides (story 104).
  *

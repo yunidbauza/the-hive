@@ -5,8 +5,10 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  ApplyJiraTransitionRequest,
   JiraIssueRequest,
   JiraSearchRequest,
+  JiraTransitionsRequest,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -743,6 +745,47 @@ export function parseJiraSearchRequest(input: unknown): JiraSearchRequest {
 export function parseJiraIssueRequest(input: unknown): JiraIssueRequest {
   const raw = assertShape(input, ['key'], 'jiraIssue');
   return { key: assertJiraIssueKey(raw.key, 'jiraIssue.key') };
+}
+
+/**
+ * A Jira transition id (HIVE-70).
+ *
+ * Numeric, and bounded. Jira's own ids are small integers as strings; matching
+ * that shape means nothing arriving here can carry a path segment or a JSON
+ * fragment into the request body, whatever a caller intended.
+ *
+ * Validated even though the id was handed to the renderer by a `jira:transitions`
+ * read moments earlier: main does not trust that a value it gave out came back
+ * unchanged, and this one reaches a body that moves an issue.
+ */
+const TRANSITION_ID = /^[0-9]{1,10}$/;
+
+export function assertJiraTransitionId(value: unknown, label: string): string {
+  const id = assertString(value, label);
+  if (!TRANSITION_ID.test(id)) {
+    return fail(`${label}: expected a numeric transition id`);
+  }
+  return id;
+}
+
+export function parseJiraTransitionsRequest(
+  input: unknown,
+): JiraTransitionsRequest {
+  const raw = assertShape(input, ['key'], 'jiraTransitions');
+  return { key: assertJiraIssueKey(raw.key, 'jiraTransitions.key') };
+}
+
+export function parseApplyJiraTransitionRequest(
+  input: unknown,
+): ApplyJiraTransitionRequest {
+  const raw = assertShape(input, ['key', 'transitionId'], 'applyJiraTransition');
+  return {
+    key: assertJiraIssueKey(raw.key, 'applyJiraTransition.key'),
+    transitionId: assertJiraTransitionId(
+      raw.transitionId,
+      'applyJiraTransition.transitionId',
+    ),
+  };
 }
 
 /**

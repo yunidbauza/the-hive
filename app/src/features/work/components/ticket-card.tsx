@@ -3,6 +3,7 @@ import type { Ticket } from '@/types/ticket';
 
 import { TicketPrRow } from '@features/work/components/ticket-pr-row';
 import { TicketSessionRow } from '@features/work/components/ticket-session-row';
+import { TicketTransitionMenu } from '@features/work/components/ticket-transition-menu';
 import { useTicketPrs } from '@stores/hive-store';
 
 /**
@@ -63,6 +64,16 @@ export function TicketCard({ ticket }: TicketCardProps) {
         )}
 
         <span className="flex-1" />
+
+        {/*
+          Only on a real issue (HIVE-70). A fixture has no Jira behind it, so a
+          transition control on the browser demo would be a button that cannot
+          work — the same "absent rather than disabled" rule the notification
+          switches follow when the OS cannot show one.
+        */}
+        {ticket.url === undefined ? null : (
+          <TicketTransitionMenu issueKey={ticket.key} />
+        )}
 
         <span
           className={cn(

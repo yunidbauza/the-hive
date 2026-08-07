@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   toIssue,
   toStatusCategory,
+  toTransition,
 } from '../../../../../electron/main/integrations/jira/mapping';
 
 /**
@@ -254,5 +255,65 @@ describe('no raw payload survives', () => {
       'updated',
       'url',
     ]);
+  });
+});
+
+describe('toTransition (HIVE-70)', () => {
+  const raw = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: '31',
+    name: 'Start progress',
+    hasScreen: false,
+    isGlobal: true,
+    to: {
+      self: `https://${SITE}/rest/api/3/status/10108`,
+      name: 'In Progress',
+      id: '10108',
+      statusCategory: { id: 4, key: 'indeterminate', colorName: 'yellow' },
+    },
+    ...over,
+  });
+
+  it('maps id, name and destination', () => {
+    expect(toTransition(raw())).toEqual({
+      id: '31',
+      name: 'Start progress',
+      to: { name: 'In Progress', statusCategory: 'in-progress' },
+    });
+  });
+
+  it('keeps the destination, because a transition name is a verb', () => {
+    // "Done" the transition can land on "Closed" the status. A menu that showed
+    // only the verb would make the user click to find out.
+    const mapped = toTransition(
+      raw({
+        name: 'Done',
+        to: { name: 'Closed', statusCategory: { key: 'done' } },
+      }),
+    );
+    expect(mapped?.name).toBe('Done');
+    expect(mapped?.to.name).toBe('Closed');
+    expect(mapped?.to.statusCategory).toBe('done');
+  });
+
+  it('answers null for an entry it cannot read', () => {
+    expect(toTransition(null)).toBeNull();
+    expect(toTransition({})).toBeNull();
+    expect(toTransition(raw({ id: undefined }))).toBeNull();
+    expect(toTransition(raw({ name: '' }))).toBeNull();
+    expect(toTransition(raw({ to: undefined }))).toBeNull();
+    expect(toTransition(raw({ to: { statusCategory: { key: 'done' } } }))).toBeNull();
+  });
+
+  it('drops the fields the app did not ask for', () => {
+    const serialised = JSON.stringify(toTransition(raw()));
+    for (const leaked of ['hasScreen', 'isGlobal', 'self', 'colorName']) {
+      expect(serialised).not.toContain(leaked);
+    }
+  });
+
+  it('never throws', () => {
+    for (const nasty of [7, [], 'x', { id: 1, name: 2, to: 3 }]) {
+      expect(() => toTransition(nasty)).not.toThrow();
+    }
   });
 });

@@ -1,6 +1,7 @@
 import type {
   JiraIssue,
   JiraStatusCategory,
+  JiraTransition,
 } from '../../../shared/jira-contract';
 
 /**
@@ -100,5 +101,38 @@ export function toIssue(raw: unknown, site: string): JiraIssue | null {
     // The one field Jira did not send. `key` is already validated by the guard
     // on the way in and by the `text` check above on the way out.
     url: `https://${site}/browse/${key}`,
+  };
+}
+
+/**
+ * One transition, or `null` if it cannot be read (HIVE-70).
+ *
+ * Same contract as {@link toIssue} and for the same reason: a workflow with one
+ * malformed transition should offer the others, not refuse to open a menu.
+ *
+ * `to` is kept because a menu item reading "Done" is a verb, and one reading
+ * "Done → Closed" is an answer. Jira's own transition names are frequently not
+ * the destination status, and a user who cannot see where a button leads has to
+ * click it to find out.
+ */
+export function toTransition(raw: unknown): JiraTransition | null {
+  if (!isRecord(raw)) return null;
+
+  const id = text(raw.id);
+  const name = text(raw.name);
+  if (id === null || name === null) return null;
+
+  const to = isRecord(raw.to) ? raw.to : null;
+  const toName = to === null ? null : text(to.name);
+  if (toName === null) return null;
+
+  const category = isRecord(to?.statusCategory)
+    ? to.statusCategory.key
+    : undefined;
+
+  return {
+    id,
+    name,
+    to: { name: toName, statusCategory: toStatusCategory(category) },
   };
 }

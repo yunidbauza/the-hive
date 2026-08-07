@@ -612,3 +612,235 @@ describe('issue', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+/** A transitions payload, with the noise Jira actually sends. */
+const transitionsBody = (ids: string[]): Record<string, unknown> => ({
+  expand: 'transitions',
+  transitions: ids.map((id) => ({
+    id,
+    name: `Move ${id}`,
+    hasScreen: false,
+    isGlobal: true,
+    to: {
+      self: `https://${CONFIGURED.site}/rest/api/3/status/1`,
+      name: 'In Progress',
+      statusCategory: { key: 'indeterminate', colorName: 'yellow' },
+    },
+  })),
+});
+
+/** Answer each call from a queue of [status, body] pairs, recording requests. */
+function replies(
+  answers: [number, unknown][],
+  seen: { url: string; method: string }[] = [],
+): FetchLike {
+  let at = 0;
+  return (url, init) => {
+    seen.push({ url, method: String(init.method) });
+    const [status, body] = answers[Math.min(at, answers.length - 1)] ?? [200, {}];
+    at += 1;
+    return Promise.resolve(
+      new Response(body === undefined ? null : JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+  };
+}
+
+describe('transitions (HIVE-70)', () => {
+  it('reads them per issue, from the issue endpoint', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[200, transitionsBody(['21', '31'])]], seen),
+    }).transitions({ key: 'HIVE-70' });
+
+    expect(new URL(seen[0]?.url ?? '').pathname).toBe(
+      '/rest/api/3/issue/HIVE-70/transitions',
+    );
+    expect(seen[0]?.method).toBe('GET');
+    expect(result.ok && result.value.map((t) => t.id)).toEqual(['21', '31']);
+  });
+
+  it('maps to named fields only', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[200, transitionsBody(['31'])]]),
+    }).transitions({ key: 'HIVE-70' });
+
+    expect(result.ok && result.value[0]).toEqual({
+      id: '31',
+      name: 'Move 31',
+      to: { name: 'In Progress', statusCategory: 'in-progress' },
+    });
+    expect(JSON.stringify(result)).not.toContain('hasScreen');
+  });
+
+  it('skips a malformed entry rather than refusing the menu', async () => {
+    const body = transitionsBody(['21', '31']);
+    (body.transitions as unknown[])[0] = { id: '21' }; // no name, no `to`
+
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[200, body]]),
+    }).transitions({ key: 'HIVE-70' });
+
+    expect(result.ok && result.value.map((t) => t.id)).toEqual(['31']);
+  });
+
+  it('answers an empty list when the workflow offers nothing', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[200, { transitions: [] }]]),
+    }).transitions({ key: 'HIVE-70' });
+
+    expect(result).toEqual({ ok: true, value: [] });
+  });
+
+  it('refuses before configuration, without asking', async () => {
+    const result = await build({ jira: { site: null, email: null, jql: null } })
+      .transitions({ key: 'HIVE-70' });
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('applyTransition (HIVE-70)', () => {
+  const issueBody = (status: string): Record<string, unknown> => ({
+    key: 'HIVE-70',
+    fields: {
+      summary: 'Transitions from the ticket card',
+      status: { name: status, statusCategory: { key: 'done' } },
+      issuetype: { name: 'Story' },
+      updated: '2026-08-07T00:00:00.000-0400',
+    },
+  });
+
+  it('POSTs the id, then re-reads the issue and answers with it', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies(
+        [
+          [204, undefined],
+          [200, issueBody('Done')],
+        ],
+        seen,
+      ),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(seen[0]?.method).toBe('POST');
+    expect(new URL(seen[0]?.url ?? '').pathname).toBe(
+      '/rest/api/3/issue/HIVE-70/transitions',
+    );
+    // Re-read rather than guessed: a post-function can land the issue somewhere
+    // the menu did not predict.
+    expect(seen[1]?.method).toBe('GET');
+    expect(result.ok && result.value.status).toBe('Done');
+    expect(result.ok && result.value.statusCategory).toBe('done');
+  });
+
+  it('reports 403 as a permission problem, distinct from a validation failure', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[403, { errorMessages: ['nope'] }]]),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(!result.ok && result.error.kind).toBe('forbidden');
+  });
+
+  /**
+   * The two 400s, told apart by asking again rather than by matching prose.
+   */
+  it('surfaces the field Jira named when the id is still valid', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies(
+        [
+          [400, { errors: { resolution: 'Field required' } }],
+          // The id is still on offer, so the request itself was rejected.
+          [200, transitionsBody(['41'])],
+        ],
+        seen,
+      ),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(!result.ok && result.error.kind).toBe('bad-query');
+    expect(!result.ok && result.error.details).toEqual([
+      'resolution: Field required',
+    ]);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('reports stale when the id has gone from the fresh list', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([
+        [400, { errorMessages: ['not valid'] }],
+        // A different workflow position: the issue moved underneath us.
+        [200, transitionsBody(['21'])],
+      ]),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(!result.ok && result.error.kind).toBe('stale');
+    expect(!result.ok && result.error.message).toMatch(/moved/i);
+  });
+
+  it('treats an unreadable re-read as stale rather than guessing', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([
+        [400, { errorMessages: ['not valid'] }],
+        [500, {}],
+      ]),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(!result.ok && result.error.kind).toBe('stale');
+  });
+
+  it('does not re-read the transitions on a non-400 failure', async () => {
+    const seen: { url: string; method: string }[] = [];
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[401, {}]], seen),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    // Only the POST. A 401 needs no second opinion.
+    expect(seen).toHaveLength(1);
+  });
+
+  it('refuses before configuration, without writing anything', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const result = await build({
+      jira: { site: null, email: null, jql: null },
+      fetch: replies([[204, undefined]], seen),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(result.ok).toBe(false);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('never contains the token', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([
+        [204, undefined],
+        [200, issueBody('Done')],
+      ]),
+    }).applyTransition({ key: 'HIVE-70', transitionId: '41' });
+
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+});

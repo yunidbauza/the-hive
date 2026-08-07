@@ -29,8 +29,10 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  ApplyJiraTransitionRequest,
   JiraIssueRequest,
   JiraSearchRequest,
+  JiraTransitionsRequest,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -44,6 +46,7 @@ import type {
   JiraResult,
   JiraSearchResult,
   JiraStatus,
+  JiraTransition,
 } from './jira-contract';
 import type {
   SessionEffort,
@@ -144,6 +147,15 @@ export const CH = {
    */
   jiraSearch: 'jira:search',
   jiraIssue: 'jira:issue',
+  /**
+   * Transitions (HIVE-70) — the epic's first **write** to Jira.
+   *
+   * Two channels rather than one, because reading what is possible and doing
+   * one of those things are separate decisions with separate failure modes, and
+   * a card has to render the first before it can offer the second.
+   */
+  jiraTransitions: 'jira:transitions',
+  jiraApplyTransition: 'jira:apply-transition',
   notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
@@ -640,6 +652,32 @@ export interface HiveBridge {
     search(request: JiraSearchRequest): Promise<JiraResult<JiraSearchResult>>;
     /** Read one issue by key (HIVE-68). The key is pattern-matched in main. */
     issue(request: JiraIssueRequest): Promise<JiraResult<JiraIssue>>;
+    /**
+     * What this issue can become right now (HIVE-70).
+     *
+     * Read per issue. Transition ids are per-workflow, so one read's ids mean
+     * nothing on another issue and caching them across issues would offer
+     * buttons that cannot work.
+     */
+    transitions(
+      request: JiraTransitionsRequest,
+    ): Promise<JiraResult<JiraTransition[]>>;
+    /**
+     * Apply one (HIVE-70) — **the first verb in this bridge that changes
+     * anything outside this machine.**
+     *
+     * What bounds it: the issue key and the transition id are both
+     * pattern-matched in main, the id must have come from a `transitions` read
+     * for the same issue to be valid at all, and the request is attempted
+     * exactly once — never retried, because a transition that may already have
+     * applied must not be applied twice.
+     *
+     * Answers with the re-read issue, so the card cannot show an optimistic
+     * guess.
+     */
+    applyTransition(
+      request: ApplyJiraTransitionRequest,
+    ): Promise<JiraResult<JiraIssue>>;
   };
   /** OS notifications raised by main (story 106). */
   notifications: {
@@ -734,6 +772,15 @@ export const BRIDGE_JIRA_KEYS = [
   // host — the site still comes from the config, in main.
   'search',
   'issue',
+  /**
+   * HIVE-70. `transitions` is another read; `applyTransition` is the **first
+   * verb anywhere in this bridge that writes to something outside this
+   * machine**, and it is the one on this list a reviewer should look hardest
+   * at. It cannot name a host, cannot name an arbitrary endpoint, and cannot be
+   * retried into applying twice.
+   */
+  'transitions',
+  'applyTransition',
 ] as const;
 
 /** The exact key set of `window.hive.notifications`. */

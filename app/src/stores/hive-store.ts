@@ -117,6 +117,8 @@ interface HiveState {
   reportTicketFailure: (message: string) => void;
   /** Desktop, but no Jira credential is configured (HIVE-69). */
   reportTicketsUnconfigured: () => void;
+  /** Replace one ticket after a transition moved it (HIVE-70). */
+  updateTicket: (issue: JiraIssue) => void;
   /** Read the configured query and install the answer (HIVE-69). */
   refreshTickets: () => Promise<void>;
 
@@ -733,6 +735,39 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     set({ tickets: [], ticketSource: { kind: 'unconfigured' } }),
 
   /**
+   * Replace one ticket, in place (HIVE-70).
+   *
+   * Not `hydrateTickets`. Re-running the whole query after moving one issue
+   * would reorder the panel under the user's cursor — the default query sorts
+   * by `updated`, and the issue they just transitioned is now the most recently
+   * updated one, so it would jump to the top the instant they clicked.
+   *
+   * An unknown key is a no-op rather than an append: a transition can only be
+   * applied to a ticket that is on screen, so a key that is not in the list
+   * means the list changed underneath and the next refresh is the right fix —
+   * not an orphan row nothing else knows about.
+   *
+   * `sessions` is carried over rather than emptied, so this survives whatever
+   * links a later story adds.
+   */
+  updateTicket: (issue) =>
+    set((state) => {
+      const at = state.tickets.findIndex((ticket) => ticket.key === issue.key);
+      if (at === -1) return state;
+
+      const next = [...state.tickets];
+      next[at] = {
+        key: issue.key,
+        status: issue.status,
+        statusCategory: issue.statusCategory,
+        title: issue.summary,
+        sessions: state.tickets[at]?.sessions ?? [],
+        url: issue.url,
+      };
+      return { tickets: next };
+    }),
+
+  /**
    * Read the configured query and install the answer (HIVE-69).
    *
    * Lives on the store rather than in a hook for the same reason `sendToEntity`
@@ -1060,6 +1095,10 @@ export const useTicketSource = (): TicketSource =>
 /** The refresh action, for the panel's mount effect and its retry (HIVE-69). */
 export const useRefreshTickets = (): (() => Promise<void>) =>
   useHiveStore((state) => state.refreshTickets);
+
+/** Install one re-read issue after a transition (HIVE-70). */
+export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
+  useHiveStore((state) => state.updateTicket);
 
 /**
  * PRs reachable from a ticket's sessions, with their state resolved (story 032).

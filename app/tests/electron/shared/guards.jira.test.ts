@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   IpcValidationError,
+  parseApplyJiraTransitionRequest,
   parseJiraIssueRequest,
   parseJiraSearchRequest,
+  parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
 } from '../../../electron/shared/guards';
@@ -274,5 +276,72 @@ describe('parseJiraSearchRequest', () => {
 
   it('refuses an unknown key', () => {
     refuses(() => parseJiraSearchRequest({ key: 'HIVE-1' }), /unexpected key/);
+  });
+});
+
+describe('parseJiraTransitionsRequest', () => {
+  it('accepts a well-formed key', () => {
+    expect(parseJiraTransitionsRequest({ key: 'HIVE-70' })).toEqual({
+      key: 'HIVE-70',
+    });
+  });
+
+  it('refuses a malformed key, like every other verb', () => {
+    refuses(() => parseJiraTransitionsRequest({ key: 'nope' }), /key/);
+  });
+});
+
+describe('parseApplyJiraTransitionRequest', () => {
+  it('accepts a key and a numeric id', () => {
+    expect(
+      parseApplyJiraTransitionRequest({ key: 'HIVE-70', transitionId: '31' }),
+    ).toEqual({ key: 'HIVE-70', transitionId: '31' });
+  });
+
+  it('refuses a non-numeric transition id', () => {
+    // Validated even though main handed the renderer this value moments ago:
+    // main does not trust that what it gave out came back unchanged.
+    refuses(
+      () =>
+        parseApplyJiraTransitionRequest({ key: 'HIVE-70', transitionId: '31; DROP' }),
+      /transitionId/,
+    );
+    refuses(
+      () =>
+        parseApplyJiraTransitionRequest({ key: 'HIVE-70', transitionId: 'done' }),
+      /transitionId/,
+    );
+  });
+
+  it('refuses an empty or over-long id', () => {
+    refuses(
+      () => parseApplyJiraTransitionRequest({ key: 'HIVE-70', transitionId: '' }),
+      /transitionId/,
+    );
+    refuses(
+      () =>
+        parseApplyJiraTransitionRequest({
+          key: 'HIVE-70',
+          transitionId: '1'.repeat(11),
+        }),
+      /transitionId/,
+    );
+  });
+
+  it('requires both keys, and refuses an unknown one', () => {
+    refuses(() => parseApplyJiraTransitionRequest({ key: 'HIVE-70' }), /missing key/);
+    refuses(
+      () => parseApplyJiraTransitionRequest({ transitionId: '31' }),
+      /missing key/,
+    );
+    refuses(
+      () =>
+        parseApplyJiraTransitionRequest({
+          key: 'HIVE-70',
+          transitionId: '31',
+          fields: {},
+        }),
+      /unexpected key/,
+    );
   });
 });

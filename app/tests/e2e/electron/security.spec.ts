@@ -118,6 +118,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   expect(surface.integrations).toEqual(['status']);
   expect(surface.notifications).toEqual(['onActivate']);
   expect(surface.jira).toEqual([
+    /**
+     * HIVE-70's `applyTransition` is the **first verb in this bridge that
+     * writes to something outside this machine**, and it is the entry on this
+     * list to look hardest at. What bounds it: the issue key and the transition
+     * id are both pattern-matched in main, the endpoint is composed there and
+     * cannot be named by the caller, and the request is attempted exactly once
+     * — never retried, because a transition that may already have applied must
+     * not be applied twice.
+     */
+    'applyTransition',
     'clearToken',
     // HIVE-68's two reads. Both answer with mapped, named fields; neither
     // returns a token and neither takes a host.
@@ -126,6 +136,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'setToken',
     'status',
     'test',
+    'transitions',
   ]);
   expect(surface.pty).toEqual([
     // Story 093 added `ack` — the renderer reporting what it has parsed, which

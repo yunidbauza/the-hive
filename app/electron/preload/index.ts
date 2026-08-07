@@ -11,8 +11,10 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  ApplyJiraTransitionRequest,
   JiraIssueRequest,
   JiraSearchRequest,
+  JiraTransitionsRequest,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -40,6 +42,7 @@ import type {
   JiraResult,
   JiraSearchResult,
   JiraStatus,
+  JiraTransition,
 } from '@shared/jira-contract';
 import type { SessionNameEvent, SessionStatusEvent } from '@shared/session-contract';
 
@@ -208,6 +211,15 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.jiraSearch, request),
     issue: (request: JiraIssueRequest): Promise<JiraResult<JiraIssue>> =>
       ipcRenderer.invoke(CH.jiraIssue, request),
+    // HIVE-70. The read, and the epic's one write.
+    transitions: (
+      request: JiraTransitionsRequest,
+    ): Promise<JiraResult<JiraTransition[]>> =>
+      ipcRenderer.invoke(CH.jiraTransitions, request),
+    applyTransition: (
+      request: ApplyJiraTransitionRequest,
+    ): Promise<JiraResult<JiraIssue>> =>
+      ipcRenderer.invoke(CH.jiraApplyTransition, request),
   },
   notifications: {
     onActivate: (callback: (event: NotificationActivateEvent) => void) =>

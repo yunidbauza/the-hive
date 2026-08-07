@@ -185,3 +185,68 @@ describe('reportTicketsUnconfigured', () => {
     expect(state().ticketSource).toEqual({ kind: 'unconfigured' });
   });
 });
+
+describe('updateTicket (HIVE-70)', () => {
+  it('replaces one ticket and leaves the rest alone', () => {
+    state().hydrateTickets(
+      [issue(), issue({ key: 'HIVE-2' }), issue({ key: 'HIVE-3' })],
+      false,
+    );
+
+    state().updateTicket(
+      issue({ key: 'HIVE-2', status: 'Done', statusCategory: 'done' }),
+    );
+
+    expect(state().tickets.map((t) => t.key)).toEqual([
+      'HIVE-1',
+      'HIVE-2',
+      'HIVE-3',
+    ]);
+    expect(state().tickets[1]?.status).toBe('Done');
+    expect(state().tickets[0]?.status).toBe('In Progress');
+  });
+
+  it('keeps the position, so the panel does not reorder under the cursor', () => {
+    state().hydrateTickets([issue(), issue({ key: 'HIVE-2' })], false);
+
+    state().updateTicket(issue({ key: 'HIVE-2', status: 'Done' }));
+
+    // The default query sorts by `updated`, so a full re-read would jump the
+    // just-transitioned issue to the top the instant the user clicked it.
+    expect(state().tickets[1]?.key).toBe('HIVE-2');
+  });
+
+  it('carries the existing sessions over', () => {
+    state().hydrateTickets([issue()], false);
+    // A later story may link sessions to real tickets; this must survive it.
+    useHiveStore.setState((current) => ({
+      tickets: current.tickets.map((t) => ({ ...t, sessions: ['hero-refresh'] })),
+    }));
+
+    state().updateTicket(issue({ status: 'Done' }));
+
+    expect(state().tickets[0]?.sessions).toEqual(['hero-refresh']);
+  });
+
+  it('is a no-op for a key that is not on screen', () => {
+    state().hydrateTickets([issue()], false);
+
+    state().updateTicket(issue({ key: 'OTHER-9' }));
+
+    // Not an append: an unknown key means the list changed underneath, and the
+    // next refresh is the right fix rather than an orphan row.
+    expect(state().tickets.map((t) => t.key)).toEqual(['HIVE-1']);
+  });
+
+  it('leaves the source alone', () => {
+    state().hydrateTickets([issue()], true);
+
+    state().updateTicket(issue({ status: 'Done' }));
+
+    expect(state().ticketSource).toEqual({
+      kind: 'live',
+      stale: false,
+      capped: true,
+    });
+  });
+});

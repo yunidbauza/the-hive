@@ -1,6 +1,8 @@
-import type {
-  JiraErrorKind,
-  JiraResult,
+import {
+  JIRA_MAX_DETAILS,
+  JIRA_MAX_DETAIL_LENGTH,
+  type JiraErrorKind,
+  type JiraResult,
 } from '../../../shared/jira-contract';
 
 /**
@@ -84,6 +86,62 @@ export interface JiraCredential {
   token: string;
 }
 
+/**
+ * Jira's own explanation of a 400, read from named fields (HIVE-70).
+ *
+ * The epic's rule is that no raw response body escapes, and this does not break
+ * it: Jira's error body is **structured**, so exactly two keys are read —
+ * `errorMessages`, an array of strings, and the *values* of `errors`, a
+ * field-keyed map. Nothing else in the body is looked at, each string is capped,
+ * control characters are stripped, and the list is bounded.
+ *
+ * Without this a transition that needs a resolution would report "Jira could not
+ * understand the request", which tells the user nothing they can act on. Naming
+ * the field is the entire difference between a dead end and a fix.
+ */
+function readDetails(text: string): string[] | undefined {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return undefined;
+  }
+
+  const record = body as Record<string, unknown>;
+  const found: string[] = [];
+
+  const take = (value: unknown): void => {
+    if (typeof value !== 'string' || value.trim() === '') return;
+    if (found.length >= JIRA_MAX_DETAILS) return;
+    // Control characters stripped rather than the string rejected: this is a
+    // server's prose, and losing a stray byte is better than losing the message
+    // that names the field.
+    const clean = [...value.slice(0, JIRA_MAX_DETAIL_LENGTH)]
+      .filter((char) => {
+        const code = char.codePointAt(0) ?? 0;
+        return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
+      })
+      .join('');
+    if (clean !== '') found.push(clean);
+  };
+
+  if (Array.isArray(record.errorMessages)) {
+    for (const entry of record.errorMessages) take(entry);
+  }
+  const errors = record.errors;
+  if (typeof errors === 'object' && errors !== null && !Array.isArray(errors)) {
+    for (const [field, value] of Object.entries(errors)) {
+      // The field name is the useful half, so it is kept beside the message.
+      if (typeof value === 'string') take(`${field}: ${value}`);
+    }
+  }
+
+  return found.length === 0 ? undefined : found;
+}
+
 export interface JiraClient {
   /**
    * `path` is a literal from this codebase; `params` are URL-encoded.
@@ -94,6 +152,20 @@ export interface JiraClient {
    * spaces is a value rather than a chance to add a parameter.
    */
   get<T>(path: string, params?: Record<string, string>): Promise<JiraResult<T>>;
+  /**
+   * A write. **Never retried** (HIVE-70).
+   *
+   * HIVE-68's `get` retries 429 and 5xx once, and its header wrote down that
+   * the first POST does not get to inherit that. This is that POST, and the
+   * reason holds: retrying a transition that may already have applied is how an
+   * issue moves twice, and a duplicated workflow transition can fire automation
+   * — a Slack message, a deploy — that cannot be taken back. A 429 here is
+   * reported with its `retryAfter` and the user decides.
+   *
+   * `T` is `void` for an endpoint that answers 204, which the transition POST
+   * does.
+   */
+  post<T>(path: string, body: unknown): Promise<JiraResult<T>>;
 }
 
 const error = (
@@ -207,13 +279,27 @@ export function createJiraClient(deps: {
     return `https://${site}${path}${query}`;
   };
 
-  /** One attempt. The retry policy lives in `get`, so this stays readable. */
-  async function attempt<T>(target: string): Promise<Attempt<T>> {
+  /**
+   * One attempt. The retry policy lives in `get`, so this stays readable —
+   * and `post` deliberately has none.
+   */
+  async function attempt<T>(
+    target: string,
+    method: 'GET' | 'POST',
+    body?: unknown,
+  ): Promise<Attempt<T>> {
       let response: Response;
       try {
         response = await fetch(target, {
-          method: 'GET',
-          headers: { authorization, accept: 'application/json' },
+          method,
+          headers: {
+            authorization,
+            accept: 'application/json',
+            ...(body === undefined
+              ? {}
+              : { 'content-type': 'application/json' }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           signal: AbortSignal.timeout(JIRA_TIMEOUT_MS),
         });
       } catch (cause) {
@@ -237,9 +323,27 @@ export function createJiraClient(deps: {
       }
 
       if (!response.ok) {
+        /**
+         * A 400's body is read, and only a 400's.
+         *
+         * Every other status has a message this file already composed from the
+         * code alone. A 400 is the one case where Jira knows something the app
+         * cannot infer — *which field* it wanted — and {@link readDetails}
+         * takes that from named keys rather than quoting the body.
+         */
+        let details: string[] | undefined;
+        if (response.status === 400) {
+          const raw = await response.text();
+          if (raw.length <= MAX_RESPONSE_BYTES) details = readDetails(raw);
+        }
+
+        const failure = fromStatus(response.status, retryAfterSeconds(response));
         return {
           status: response.status,
-          result: fromStatus(response.status, retryAfterSeconds(response)),
+          result:
+            details === undefined || failure.ok
+              ? failure
+              : { ok: false, error: { ...failure.error, details } },
         };
       }
 
@@ -262,6 +366,21 @@ export function createJiraClient(deps: {
         return {
           status: 0,
           result: error('unknown', "Jira's answer was too large to read."),
+        };
+      }
+
+      /**
+       * An empty body is a success, not a parse failure.
+       *
+       * `POST /transitions` answers `204 No Content` — there is nothing to
+       * return and Jira does not pretend otherwise. Without this the one verb
+       * that writes would report "Jira answered with something that was not
+       * JSON" every time it worked.
+       */
+      if (text.trim() === '') {
+        return {
+          status: response.status,
+          result: { ok: true, value: undefined as T },
         };
       }
 
@@ -298,7 +417,7 @@ export function createJiraClient(deps: {
       params?: Record<string, string>,
     ): Promise<JiraResult<T>> {
       const target = url(path, params);
-      const first = await attempt<T>(target);
+      const first = await attempt<T>(target, 'GET');
       if (first.result.ok || !retryable(first.status)) return first.result;
 
       const retryAfter = first.result.ok ? undefined : first.result.error.retryAfter;
@@ -315,7 +434,23 @@ export function createJiraClient(deps: {
       if (wait > JIRA_MAX_RETRY_DELAY_MS) return first.result;
 
       await sleep(wait);
-      return (await attempt<T>(target)).result;
+      return (await attempt<T>(target, 'GET')).result;
+    },
+
+    /**
+     * A write, attempted exactly once (HIVE-70).
+     *
+     * No retry, and that is the whole design rather than an omission. A
+     * transition POST that timed out may already have applied — Jira does not
+     * offer an idempotency key here — so a second attempt can move the issue
+     * twice and fire whatever automation the workflow hangs off that
+     * transition. A duplicate Slack message is recoverable; a duplicate deploy
+     * is not, and neither is worth saving the user one click.
+     *
+     * A 429 is therefore reported with its `retryAfter` and the user decides.
+     */
+    async post<T>(path: string, body: unknown): Promise<JiraResult<T>> {
+      return (await attempt<T>(url(path), 'POST', body)).result;
     },
   };
 }

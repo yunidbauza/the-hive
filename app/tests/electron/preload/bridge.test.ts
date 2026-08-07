@@ -136,6 +136,27 @@ describe('exposed surface', () => {
   });
 
   /**
+   * HIVE-70 adds the first verb in this whole bridge that **writes to something
+   * outside this machine**, so it is worth naming what still bounds it: the key
+   * and the id are pattern-matched in main, the endpoint is composed there, and
+   * the request is attempted exactly once.
+   */
+  it('routes the transition read and the one write (HIVE-70)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await jira().transitions({ key: 'HIVE-70' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraTransitions, {
+      key: 'HIVE-70',
+    });
+
+    await jira().applyTransition({ key: 'HIVE-70', transitionId: '31' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraApplyTransition, {
+      key: 'HIVE-70',
+      transitionId: '31',
+    });
+  });
+
+  /**
    * Story 106's two additions, asserted for what they can and cannot do.
    *
    * `integrations.status` is the first verb behind which main executes another
