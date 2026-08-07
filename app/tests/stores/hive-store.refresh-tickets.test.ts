@@ -27,6 +27,8 @@ vi.mock('@/lib/jira', () => ({
 const status = (over: Partial<JiraStatus> = {}): JiraStatus => ({
   site: 'behiques.atlassian.net',
   email: 'me@example.com',
+  siteSource: 'config',
+  emailSource: 'config',
   credential: { kind: 'stored', email: 'me@example.com' },
   encryptionAvailable: true,
   ...over,

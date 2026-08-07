@@ -25,6 +25,8 @@ import type { JiraStatus } from '@shared/jira-contract';
 const STATUS: JiraStatus = {
   site: 'behiques.atlassian.net',
   email: 'me@example.com',
+  siteSource: 'config',
+  emailSource: 'config',
   credential: { kind: 'none' },
   encryptionAvailable: true,
 };

@@ -14,6 +14,8 @@ import {
   JIRA_MAX_COMMENTS,
   JIRA_MAX_ISSUES,
   JIRA_PAGE_SIZE,
+  JIRA_SITE_ENV,
+  JIRA_TOKEN_ENV,
   type JiraIdentity,
   type JiraIssue,
   type JiraResult,
@@ -33,6 +35,7 @@ import {
   type SecretStore,
 } from './auth';
 import { createJiraClient, type FetchLike, type JiraClient, type Sleep } from './client';
+import { readEnvSite } from './env';
 import {
   toComment,
   toIssue,
@@ -124,11 +127,46 @@ export function createJira(deps: {
     env: deps.env,
   });
 
+  /**
+   * What a request would actually use, and where each part came from.
+   *
+   * Config always wins; the environment fills the gaps. Resolved in one place
+   * so `status` and `connect` cannot disagree — a pane that says "connected as
+   * you@example.com" while the next request refuses for want of an email is the
+   * failure this exists to prevent.
+   */
+  const resolved = () => {
+    const { site: configSite, email: configEmail } = config().jira;
+    const credential = auth.credential();
+    const envSite = readEnvSite(deps.env);
+    const credentialEmail = credential?.email ?? null;
+
+    return {
+      credential,
+      site: configSite ?? envSite,
+      email: configEmail ?? credentialEmail,
+      siteSource:
+        configSite !== null
+          ? ('config' as const)
+          : envSite !== null
+            ? ('environment' as const)
+            : null,
+      emailSource:
+        configEmail !== null
+          ? ('config' as const)
+          : credentialEmail !== null
+            ? ('credential' as const)
+            : null,
+    };
+  };
+
   const status = (): JiraStatus => {
-    const { site, email } = config().jira;
+    const { site, email, siteSource, emailSource } = resolved();
     return {
       site,
       email,
+      siteSource,
+      emailSource,
       credential: auth.state(email),
       encryptionAvailable: auth.encryptionAvailable(),
     };
@@ -145,13 +183,16 @@ export function createJira(deps: {
    * next request without a restart.
    */
   const connect = (): Connection => {
-    const { site, email } = config().jira;
+    const { site, email, credential } = resolved();
     if (site === null) {
       return {
         ok: false,
         error: {
           ok: false,
-          error: { kind: 'bad-query', message: 'No Jira site is configured yet.' },
+          error: {
+            kind: 'bad-query',
+            message: `No Jira site is configured yet, and ${JIRA_SITE_ENV} is not set.`,
+          },
         },
       };
     }
@@ -168,15 +209,14 @@ export function createJira(deps: {
       };
     }
 
-    const token = auth.token();
-    if (token === null) {
+    if (credential === null) {
       return {
         ok: false,
         error: {
           ok: false,
           error: {
             kind: 'unauthorized',
-            message: 'No API token is stored, and JIRA_API_KEY is not set.',
+            message: `No API token is stored, and ${JIRA_TOKEN_ENV} is not set.`,
           },
         },
       };
@@ -188,7 +228,7 @@ export function createJira(deps: {
       client: createJiraClient({
         fetch,
         site,
-        credential: { email, token },
+        credential: { email, token: credential.token },
         ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
       }),
     };

@@ -70,6 +70,8 @@ beforeEach(() => {
   readJiraStatus.mockResolvedValue({
     site: null,
     email: null,
+    siteSource: null,
+    emailSource: null,
     credential: { kind: 'none' },
     encryptionAvailable: true,
   });

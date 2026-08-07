@@ -88,9 +88,45 @@ describe('status', () => {
     expect(build({ jira: CONFIGURED }).status()).toEqual({
       site: 'behiques.atlassian.net',
       email: 'me@example.com',
+      siteSource: 'config',
+      emailSource: 'config',
       credential: { kind: 'none' },
       encryptionAvailable: true,
     });
+  });
+
+  it('falls back to JIRA_DOMAIN and the address the token carried', () => {
+    const status = build({
+      env: {
+        JIRA_DOMAIN: 'behiques.atlassian.net',
+        JIRA_API_KEY: `me@example.com:${TOKEN}`,
+      },
+    }).status();
+
+    // Nothing configured, yet the pane has both facts — which is the point:
+    // asking the user to retype what the app is already holding is a worse
+    // first run than reading it.
+    expect(status.site).toBe('behiques.atlassian.net');
+    expect(status.email).toBe('me@example.com');
+    expect(status.siteSource).toBe('environment');
+    expect(status.emailSource).toBe('credential');
+  });
+
+  it('lets the configured values win over the environment', () => {
+    const status = build({
+      jira: CONFIGURED,
+      env: {
+        JIRA_DOMAIN: 'other.atlassian.net',
+        JIRA_API_KEY: 'someone@else.com:x',
+      },
+    }).status();
+
+    // Typing a value in the pane is the deliberate act; the environment is the
+    // default it overrides.
+    expect(status.site).toBe('behiques.atlassian.net');
+    expect(status.email).toBe('me@example.com');
+    expect(status.siteSource).toBe('config');
+    expect(status.emailSource).toBe('config');
   });
 
   it('reports encryptionAvailable false beside an env credential', () => {
@@ -103,6 +139,46 @@ describe('status', () => {
       variable: 'JIRA_API_KEY',
     });
     expect(status.encryptionAvailable).toBe(false);
+  });
+
+  it('builds the Basic header from the halves, not from the joined value', async () => {
+    /**
+     * The regression this suite exists for.
+     *
+     * `jira-writer` documents `JIRA_API_KEY` as `email:token`, and this app used
+     * to treat the whole value as the token — producing
+     * `base64(email:email:token)` and a 401 that reads as a bad token. The
+     * header is asserted by decoding it, because that is the only place the
+     * mistake was visible.
+     */
+    let authorization = '';
+    const jira = build({
+      env: {
+        JIRA_DOMAIN: 'behiques.atlassian.net',
+        JIRA_API_KEY: `me@example.com:${TOKEN}`,
+      },
+      fetch: (_url, init) => {
+        authorization = String(
+          (init?.headers as Record<string, string>).authorization,
+        );
+        return Promise.resolve(
+          new Response(JSON.stringify({ displayName: 'Me', accountId: '1' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      },
+    });
+
+    await jira.test();
+
+    const decoded = Buffer.from(
+      authorization.replace(/^Basic /, ''),
+      'base64',
+    ).toString('utf8');
+    expect(decoded).toBe(`me@example.com:${TOKEN}`);
+    // The shape of the old bug, named so a regression is unmistakable.
+    expect(decoded).not.toBe(`me@example.com:me@example.com:${TOKEN}`);
   });
 
   it('never contains the token, in any state', () => {

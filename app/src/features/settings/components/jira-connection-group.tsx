@@ -3,7 +3,11 @@ import { useState } from 'react';
 import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { setJiraConnection } from '@lib/project-config';
-import type { JiraStatus } from '@shared/jira-contract';
+import {
+  JIRA_SITE_ENV,
+  JIRA_TOKEN_ENV,
+  type JiraStatus,
+} from '@shared/jira-contract';
 
 /**
  * Which Atlassian instance, and as whom (HIVE-67).
@@ -53,6 +57,25 @@ export function JiraConnectionGroup({
     void setJiraConnection({ [field]: next }).then(onChanged);
   };
 
+  /**
+   * Say where a value came from when it was not typed here.
+   *
+   * Both fields show the value a request would *actually* use, which on a
+   * machine set up for Atlassian is often one nobody typed — `JIRA_DOMAIN`, or
+   * the address `JIRA_API_KEY` carries in its `email:token` form. Showing it
+   * without saying so would look like a stored setting, and the user would go
+   * looking in `~/.hive/config.json` for a line that is not there.
+   */
+  const siteHint =
+    status.siteSource === 'environment'
+      ? `From ${JIRA_SITE_ENV} in this app’s environment. Typing here overrides it.`
+      : 'The host only — a pasted https:// address is trimmed to it.';
+
+  const emailHint =
+    status.emailSource === 'credential'
+      ? `From ${JIRA_TOKEN_ENV}, which carries it as email:token. Typing here overrides it.`
+      : 'Both are ordinary settings and live in ~/.hive/config.json.';
+
   return (
     <SettingsGroup
       title="Jira site"
@@ -65,7 +88,7 @@ export function JiraConnectionGroup({
           onChange={setSite}
           onCommit={() => commit('site', site, status.site)}
           placeholder="your-team.atlassian.net"
-          hint="The host only — a pasted https:// address is trimmed to it."
+          hint={siteHint}
         />
         <TextField
           label="Account email"
@@ -73,7 +96,7 @@ export function JiraConnectionGroup({
           onChange={setEmail}
           onCommit={() => commit('email', email, status.email)}
           placeholder="you@example.com"
-          hint="Both are ordinary settings and live in ~/.hive/config.json."
+          hint={emailHint}
         />
       </div>
     </SettingsGroup>

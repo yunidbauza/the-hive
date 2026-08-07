@@ -19,6 +19,27 @@
 export const JIRA_TOKEN_ENV = 'JIRA_API_KEY';
 
 /**
+ * The site, when the environment already knows it.
+ *
+ * Same name the `jira-writer` tooling uses, and for the same reason as
+ * {@link JIRA_TOKEN_ENV}: a machine set up to talk to Atlassian usually has
+ * this exported already, and asking the user to retype what the app can read is
+ * a worse first run.
+ */
+export const JIRA_SITE_ENV = 'JIRA_DOMAIN';
+
+/** Where an effective setting came from, for copy that has to explain itself. */
+export type JiraSiteSource = 'config' | 'environment';
+
+/**
+ * Where the account email came from.
+ *
+ * `credential` means the token value carried it — `JIRA_API_KEY` in its
+ * `email:token` form, which is how the `jira-writer` tooling writes it.
+ */
+export type JiraEmailSource = 'config' | 'credential';
+
+/**
  * Where the credential comes from — never what it is.
  *
  * A discriminated union rather than a bag of booleans because the four cases
@@ -34,9 +55,23 @@ export type JiraCredentialState =
 
 /** What `jira:status` answers with. Contains no secret, by construction. */
 export interface JiraStatus {
-  /** The configured host, or `null`. A bare hostname, never a URL. */
+  /**
+   * The host a request would actually use, or `null`. A bare hostname, never a
+   * URL.
+   *
+   * **Effective, not configured.** Config wins; `JIRA_DOMAIN` fills in when it
+   * is silent. Reporting only the configured value would mean a pane showing
+   * two empty fields beside a connection that works, and — worse — a "not
+   * configured yet" refusal the user cannot act on because the setting they
+   * would type is the one already in effect.
+   */
   site: string | null;
+  /** Effective too: config, else the address the credential carried. */
   email: string | null;
+  /** Where {@link site} came from, or `null` when there is none. */
+  siteSource: JiraSiteSource | null;
+  /** Where {@link email} came from, or `null` when there is none. */
+  emailSource: JiraEmailSource | null;
   credential: JiraCredentialState;
   /**
    * Whether this machine can encrypt at all.

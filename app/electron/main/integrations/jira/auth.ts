@@ -5,6 +5,8 @@ import {
   type JiraCredentialState,
 } from '../../../shared/jira-contract';
 
+import { parseCredential, readEnvToken, type ParsedCredential } from './env';
+
 /**
  * The Jira credential (HIVE-67) — the only module in the app that ever sees a
  * token.
@@ -59,8 +61,13 @@ export interface JiraAuth {
   state(email: string | null): JiraCredentialState;
   /** Whether this machine can encrypt at all. Distinct from the state. */
   encryptionAvailable(): boolean;
-  /** **Main-internal.** There is no IPC verb that reaches this. */
-  token(): string | null;
+  /**
+   * **Main-internal.** There is no IPC verb that reaches this.
+   *
+   * Parsed, not raw: the value may be `email:token` from either source, and the
+   * caller needs the halves apart to build a Basic header. See `env.ts`.
+   */
+  credential(): ParsedCredential | null;
   /** Throws when encryption is unavailable, rather than writing plaintext. */
   save(token: string): void;
   clear(): void;
@@ -91,10 +98,7 @@ export function createJiraAuth(deps: {
    * `gh.ts:96-107` avoids on a very common shell-profile pattern, where a
    * profile exports a variable it never assigns.
    */
-  const envToken = (): string | null => {
-    const value = env[JIRA_TOKEN_ENV];
-    return typeof value === 'string' && value.trim() !== '' ? value : null;
-  };
+  const envToken = (): string | null => readEnvToken(env);
 
   const stored = (): string | null => {
     const bytes = file.read();
@@ -118,7 +122,18 @@ export function createJiraAuth(deps: {
   return {
     encryptionAvailable: () => store.isEncryptionAvailable(),
 
-    token: () => stored() ?? envToken(),
+    /**
+     * Parsed at read time rather than at save time, and for both sources.
+     *
+     * The `email:token` form is what a user has on their clipboard, so it will
+     * be pasted into the field as often as it is exported — normalising here
+     * means the field and the variable behave the same way, and that what is
+     * stored stays byte-identical to what the user gave us.
+     */
+    credential() {
+      const raw = stored() ?? envToken();
+      return raw === null ? null : parseCredential(raw);
+    },
 
     state(email) {
       if (stored() !== null) {

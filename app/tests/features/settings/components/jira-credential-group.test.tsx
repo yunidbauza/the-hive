@@ -39,6 +39,8 @@ const status = (
 ): JiraStatus => ({
   site: 'behiques.atlassian.net',
   email: 'me@example.com',
+  siteSource: 'config',
+  emailSource: 'config',
   credential,
   encryptionAvailable: true,
   ...over,

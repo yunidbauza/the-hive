@@ -28,6 +28,8 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
 const status = (over: Partial<JiraStatus> = {}): JiraStatus => ({
   site: 'behiques.atlassian.net',
   email: 'me@example.com',
+  siteSource: 'config',
+  emailSource: 'config',
   credential: { kind: 'none' },
   encryptionAvailable: true,
   ...over,
@@ -146,5 +148,64 @@ describe('committing', () => {
     await user.tab();
 
     expect(setJiraConnection).not.toHaveBeenCalled();
+  });
+
+  describe('values the environment supplied', () => {
+    it('shows them in the fields rather than leaving them blank', () => {
+      draw(
+        status({
+          site: 'behiques.atlassian.net',
+          email: 'me@example.com',
+          siteSource: 'environment',
+          emailSource: 'credential',
+        }),
+      );
+
+      expect(screen.getByLabelText('Site')).toHaveValue(
+        'behiques.atlassian.net',
+      );
+      expect(screen.getByLabelText('Account email')).toHaveValue(
+        'me@example.com',
+      );
+    });
+
+    it('says where each one came from', () => {
+      /**
+       * Without this the values look like stored settings, and the user goes
+       * looking in ~/.hive/config.json for lines that are not there.
+       */
+      draw(
+        status({
+          siteSource: 'environment',
+          emailSource: 'credential',
+        }),
+      );
+
+      expect(screen.getByText(/From JIRA_DOMAIN/)).toBeInTheDocument();
+      expect(screen.getByText(/From JIRA_API_KEY/)).toBeInTheDocument();
+    });
+
+    it('keeps the ordinary hints when both were configured here', () => {
+      draw(status());
+
+      expect(screen.getByText(/pasted https:\/\//)).toBeInTheDocument();
+      expect(screen.getByText(/~\/\.hive\/config\.json/)).toBeInTheDocument();
+    });
+
+    it('writes an edit to config, which then overrides the environment', async () => {
+      const user = userEvent.setup();
+      draw(
+        status({ site: 'from-env.atlassian.net', siteSource: 'environment' }),
+      );
+
+      const field = screen.getByLabelText('Site');
+      await user.clear(field);
+      await user.type(field, 'typed.atlassian.net');
+      await user.tab();
+
+      expect(setJiraConnection).toHaveBeenCalledWith({
+        site: 'typed.atlassian.net',
+      });
+    });
   });
 });

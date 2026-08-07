@@ -51,7 +51,9 @@ function CredentialLine({ credential }: { credential: JiraCredentialState }) {
         <CheckCircle size={14} className="mt-px shrink-0 text-green" />
         <span className="text-ink">
           <code className="font-mono">{credential.variable}</code> is set in this
-          app&rsquo;s environment, so that is the token being used.
+          app&rsquo;s environment, so that is the token being used. Either a bare
+          token or <code className="font-mono">email:token</code> works; saving
+          one below overrides it.
         </span>
       </p>
     );

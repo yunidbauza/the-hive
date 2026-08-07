@@ -93,7 +93,7 @@ describe('credential state', () => {
       env: { JIRA_API_KEY: '   ' },
     });
     expect(auth.state(null)).toEqual({ kind: 'none' });
-    expect(auth.token()).toBeNull();
+    expect(auth.credential()).toBeNull();
   });
 
   it('prefers a stored token over the environment', () => {
@@ -104,7 +104,7 @@ describe('credential state', () => {
     });
     auth.save(TOKEN);
     expect(auth.state('me@example.com').kind).toBe('stored');
-    expect(auth.token()).toBe(TOKEN);
+    expect(auth.credential()?.token).toBe(TOKEN);
   });
 
   it('is unavailable, with a reason, when encryption is off and no env var is set', () => {
@@ -126,7 +126,7 @@ describe('credential state', () => {
     });
     expect(auth.state(null)).toEqual({ kind: 'env', variable: 'JIRA_API_KEY' });
     expect(auth.encryptionAvailable()).toBe(false);
-    expect(auth.token()).toBe(TOKEN);
+    expect(auth.credential()?.token).toBe(TOKEN);
   });
 
   it('is none, not stored, when the ciphertext will not decrypt', () => {
@@ -136,7 +136,7 @@ describe('credential state', () => {
       env: {},
     });
     expect(auth.state('me@example.com')).toEqual({ kind: 'none' });
-    expect(auth.token()).toBeNull();
+    expect(auth.credential()).toBeNull();
   });
 });
 
@@ -161,7 +161,7 @@ describe('writing and clearing', () => {
     const auth = createJiraAuth({ store: store(), file: seam, env: {} });
     auth.save('first');
     auth.save('second');
-    expect(auth.token()).toBe('second');
+    expect(auth.credential()?.token).toBe('second');
   });
 
   it('clear removes the file and drops back to none', () => {
