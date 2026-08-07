@@ -22,19 +22,24 @@ import { launchHive } from './fixtures/hive-app';
  * `tests/features/settings/components/jira-credential-group.test.tsx`, where
  * the store is injected and the assertion is exact.
  *
- * ## Why every launch below names JIRA_API_KEY
+ * ## Why every launch below clears the Jira variables
  *
  * `launchHive` spreads `process.env`, so the app inherits the shell it was
  * started from — and whoever is working on a Jira integration is exactly the
- * person who has `JIRA_API_KEY` exported. Without {@link CLEAN}, the
- * "nothing is configured" tests pass on CI and fail on the machine of the
- * person writing the feature, which is the worst place for a suite to disagree
- * with itself. An empty value reads as unset by design (`auth.ts`), so this
- * clears the variable rather than merely overwriting it.
+ * person who has these exported. Without {@link CLEAN}, the "nothing is
+ * configured" tests pass on CI and fail on the machine of the person writing
+ * the feature, which is the worst place for a suite to disagree with itself. An
+ * empty value reads as unset by design (`env.ts`), so this clears each variable
+ * rather than merely overwriting it.
+ *
+ * **Both** variables have to be listed, and the list has to grow whenever the
+ * app learns to read another one. `JIRA_DOMAIN` was added after `JIRA_API_KEY`
+ * and immediately turned three of these tests red on a developer machine while
+ * staying green on CI — the same trap, one variable wider.
  */
 
-/** A launch environment with no ambient Jira credential. */
-const CLEAN = { JIRA_API_KEY: '' };
+/** A launch environment with no ambient Jira settings at all. */
+const CLEAN = { JIRA_API_KEY: '', JIRA_DOMAIN: '' };
 
 const openIntegrations = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'Settings' }).click();
@@ -161,12 +166,50 @@ test('an emptied field clears the key rather than storing an empty string', asyn
   await app.close();
 });
 
+test('fills both fields from the environment, and says where they came from', async ({}, testInfo) => {
+  /**
+   * The `email:token` shape and `JIRA_DOMAIN`, end to end.
+   *
+   * `jira-writer` documents `JIRA_API_KEY` as `email:token`, and the app used to
+   * read the whole value as the token — producing `base64(email:email:token)`
+   * and a 401 that reads as a bad token. Nothing is configured in the file here,
+   * so every value on screen came out of the environment.
+   */
+  const configPath = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+    env: {
+      JIRA_DOMAIN: 'behiques.atlassian.net',
+      JIRA_API_KEY: 'me@example.com:ATATT-not-a-real-token',
+    },
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openIntegrations(page);
+
+  await expect(page.getByLabel('Site')).toHaveValue('behiques.atlassian.net');
+  await expect(page.getByLabel('Account email')).toHaveValue('me@example.com');
+
+  // Said out loud, or the values look like stored settings and the user goes
+  // looking in ~/.hive/config.json for lines that are not there.
+  await expect(page.getByText(/From JIRA_DOMAIN/)).toBeVisible();
+  await expect(page.getByText(/From JIRA_API_KEY/)).toBeVisible();
+
+  // Read, not written: the file still has no jira block.
+  expect(read(configPath).jira).toBeUndefined();
+
+  await app.close();
+});
+
 test('names JIRA_API_KEY when the app was launched with one', async ({}, testInfo) => {
   const configPath = seed((name) => testInfo.outputPath(name));
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
     configPath,
-    env: { JIRA_API_KEY: 'ATATT-not-a-real-token' },
+    // Built on CLEAN so the ambient JIRA_DOMAIN cannot reach this one either.
+    env: { ...CLEAN, JIRA_API_KEY: 'ATATT-not-a-real-token' },
   });
   const page = await app.firstWindow();
   await page.waitForSelector('header');
