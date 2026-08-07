@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -409,6 +408,52 @@ test('quitting the app leaves zero descendant processes', async ({}, testInfo) =
   await expect.poll(() => read(pidFile), { timeout: 20_000 }).not.toBeNull();
 
   const descendant = Number(read(pidFile));
+  strays.push(descendant);
+  expect(isAlive(descendant)).toBe(true);
+
+  await app.close();
+
+  await expect.poll(() => isAlive(descendant), { timeout: 20_000 }).toBe(false);
+});
+
+test('quitting the app kills a descendant that ignores hangup', async ({}, testInfo) => {
+  /**
+   * The other half of HIVE-72.
+   *
+   * SIGHUP alone reaps an ordinary `&` job, because the shell hangs up the jobs
+   * it owns. It does nothing to one that ignores hangup — and a long-running
+   * agent is exactly the process that might. Measured against the pre-fix code:
+   * this shape leaked where the plain one, under SIGHUP, did not. So the sweep
+   * over the enumerated descendants is what this test is really covering.
+   */
+  const configPath = testInfo.outputPath('hive-config.json');
+  const stub = testInfo.outputPath('claude-stub.sh');
+  const pidFile = testInfo.outputPath('pid.txt');
+  writeStubCommand(stub, testInfo.outputPath('ran-in.txt'));
+  writeConfig(configPath, { claudeCommand: stub });
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  const page = await app.firstWindow();
+  await openSession(page);
+  await expectFile(testInfo.outputPath('ran-in.txt'), REAL_DIRECTORY);
+
+  await page.evaluate(
+    ([sessionId, path]) => {
+      window.hive!.pty.write({
+        sessionId: sessionId!,
+        data: `sh -c 'trap "" HUP; echo $$ > "${path}"; sleep 300' &\n`,
+      });
+    },
+    [SESSION, pidFile],
+  );
+  await expect.poll(() => read(pidFile), { timeout: 20_000 }).not.toBeNull();
+
+  const descendant = Number(read(pidFile));
+  strays.push(descendant);
   expect(isAlive(descendant)).toBe(true);
 
   await app.close();
@@ -553,11 +598,32 @@ test('an unmapped project is refused by name, with the file to edit', async ({},
   }
 });
 
-/** Kept so a stray `sleep` from a failed run cannot outlive the suite. */
+/**
+ * Kept so a stray job from a failed run cannot outlive the suite — but scoped
+ * to pids **this worker started**, which the previous version was not.
+ *
+ * It used to be `pkill -f 'sleep 300'`, matching by pattern across the whole
+ * machine. With `fullyParallel` the spec file is split across workers, each
+ * running its own `afterAll`, so a sibling worker finishing mid-poll would kill
+ * the descendant *for* the app and flip a genuine failure green. That is what
+ * hid HIVE-72: the test passed at 22.9s, byte-identical to the sibling's
+ * duration. An assertion another worker can decide is not an assertion.
+ */
+const strays: number[] = [];
+
 test.afterAll(() => {
-  try {
-    execFileSync('pkill', ['-f', 'sleep 300'], { stdio: 'ignore' });
-  } catch {
-    // Nothing matched, which is the expected outcome.
+  for (const pid of strays) {
+    // The group first — a recorded pid leads its own group, so this reaps the
+    // `sleep` it started as well.
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      // Already gone, which is the expected outcome.
+    }
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // As above.
+    }
   }
 });
