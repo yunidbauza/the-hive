@@ -21,8 +21,30 @@ export type TerminalKeyAction =
   | 'copy'
   /** Paste the clipboard into the pty as if typed. */
   | 'paste'
+  /** Send `Home` to the pty. See {@link LINE_MOTION_SEQUENCE}. */
+  | 'line-start'
+  /** Send `End` to the pty. See {@link LINE_MOTION_SEQUENCE}. */
+  | 'line-end'
   /** An app navigation chord: not xterm's, not the pty's. Let it bubble. */
   | 'app-chord';
+
+/**
+ * The bytes `Home` and `End` put on a pty's stdin.
+ *
+ * These are xterm's normal-mode encodings — exactly what the surface would send
+ * had the user pressed the physical keys — so the translation is honest: the
+ * chord is renamed, not reinterpreted. Verified against the key table inside the
+ * `claude` binary, which maps `\x1b[H` to `home` and `\x1b[F` to `end` (it also
+ * accepts the `\x1bO…` application-mode and `\x1b[1~`/`\x1b[4~` keypad forms, so
+ * a child in either mode understands these).
+ *
+ * Sent through the transport rather than `terminal.input()` because stdin is the
+ * transport's job — the same path `terminal.onData` already uses.
+ */
+export const LINE_MOTION_SEQUENCE: Record<'line-start' | 'line-end', string> = {
+  'line-start': '\x1b[H',
+  'line-end': '\x1b[F',
+};
 
 /** The fields of a `KeyboardEvent` this decision reads. */
 export interface KeyEventLike {
@@ -44,23 +66,64 @@ export interface KeyEventLike {
  * terminal it is a cursor key that belongs to the child process — readline,
  * vim and every TUI depend on it. So the app's version takes a modifier.
  *
- * The modifier differs by platform for a concrete reason rather than taste. On
- * macOS `Cmd` is never sent to a pty, so `Cmd+←` is free. On Linux and Windows
- * there is no such spare modifier: `Ctrl+←` is "move back one word" in readline
- * and hijacking it would break ordinary line editing, so the chord joins the
- * `Ctrl+Shift+…` family those platforms already use for terminal-level actions.
+ * The chord differs by platform for a concrete reason rather than taste.
+ *
+ * On macOS it is **`Cmd+[`**, the system-wide Back binding — Safari, Finder,
+ * Xcode and System Settings all use it. It was `Cmd+←` until story 110, on the
+ * premise that "`Cmd` is never sent to a pty, so `Cmd+←` is free". The premise
+ * held; the conclusion did not. `Cmd+←` is *beginning of line* in every macOS
+ * text field, and Claude Code's prompt is a text field — so the chord fired
+ * while a user was editing a half-typed message and threw them out of the
+ * session, losing it. A chord may only claim a key the child process has no use
+ * for, and this one had a use. `Cmd+←`/`Cmd+→` now reach the pty as `Home`/`End`
+ * (see {@link LINE_MOTION_SEQUENCE}).
+ *
+ * On Linux and Windows there is no spare modifier of that kind: `Ctrl+←` is
+ * "move back one word" in readline and hijacking it would break ordinary line
+ * editing, so the chord joins the `Ctrl+Shift+…` family those platforms already
+ * use for terminal-level actions. `Cmd+[` has no equivalent there — `Alt+←` is
+ * the platform Back, but Alt belongs to the pty (see the AltGr note in
+ * {@link decideTerminalKey}) — so that platform keeps `Ctrl+Shift+←`.
  */
 export function isBackChord(event: KeyEventLike, isMac: boolean): boolean {
-  if (event.key !== 'ArrowLeft') return false;
   /**
-   * `Shift` is excluded on macOS deliberately. `Cmd+Shift+←` is "select to
-   * start of line" in every native text field, and a chord that ate it would
-   * break ordinary editing in the message row and the picker — the same class
-   * of mistake as taking `Ctrl+←` on Linux.
+   * Every other modifier is excluded on both platforms. `Cmd+Shift+[` is
+   * "previous tab" in most macOS apps and `Cmd+Alt+[` is a bracket motion in
+   * several editors; neither is this chord, and a looser test would eat both.
    */
-  return isMac
-    ? event.metaKey && !event.ctrlKey && !event.shiftKey
-    : event.ctrlKey && event.shiftKey;
+  if (isMac) {
+    return (
+      event.key === '[' &&
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey
+    );
+  }
+  return event.key === 'ArrowLeft' && event.ctrlKey && event.shiftKey;
+}
+
+/**
+ * `Cmd+←`/`Cmd+→` on macOS: beginning and end of line.
+ *
+ * The reason this needs a rule at all is that xterm encodes nothing for
+ * `Cmd`+arrow — it is not a sequence any terminal defines — so without this the
+ * key is simply swallowed and the user sees *nothing happen*, which is exactly
+ * what was reported for `Cmd+→`. Translating to `Home`/`End` is what a macOS
+ * terminal emulator does with these chords, and what every native text field
+ * does with them.
+ *
+ * macOS only. Elsewhere the physical `Home`/`End` keys already exist and xterm
+ * encodes them itself; there is nothing to translate.
+ */
+export function lineMotion(
+  event: KeyEventLike,
+  isMac: boolean,
+): 'line-start' | 'line-end' | null {
+  if (!isMac || !event.metaKey || event.ctrlKey || event.shiftKey) return null;
+  if (event.key === 'ArrowLeft') return 'line-start';
+  if (event.key === 'ArrowRight') return 'line-end';
+  return null;
 }
 
 /**
@@ -144,9 +207,9 @@ export function isEmptyClaudePrompt({ line, below }: CursorContext): boolean {
  * `←` with no modifiers at all.
  *
  * Every modifier is excluded rather than merely the ones with a meaning here.
- * `Shift+←` extends a selection, `Alt+←` is "back one word", and `⌘←`/`Ctrl+Shift+←`
- * are the explicit chord below — none of them is the key Claude binds, and a
- * looser test would swallow all four.
+ * `Shift+←` extends a selection, `Alt+←` is "back one word", `⌘←` is beginning
+ * of line and `Ctrl+Shift+←` is the explicit chord above — none of them is the
+ * key Claude binds, and a looser test would swallow all four.
  */
 export const isBareBack = (event: KeyEventLike): boolean =>
   event.key === 'ArrowLeft' &&
@@ -159,12 +222,18 @@ export const isBareBack = (event: KeyEventLike): boolean =>
  * The DOM event a terminal fires when it declines an app chord.
  *
  * The alternative — a `keydown` listener on `window` — was implemented first and
- * is wrong, for a reason worth recording: `Cmd+←` is "move caret to start of
- * line" in every native text field, and `Ctrl+Shift+←` is "extend selection by
- * a word". A listener that matches on the key combination alone fires for
- * keystrokes originating anywhere, so typing in the new-session picker and
- * pressing `Cmd+←` closed the picker and discarded the query instead of moving
- * the caret.
+ * is wrong, for a reason worth recording: `Ctrl+Shift+←` is "extend selection by
+ * a word" in every native text field, and `Cmd+←` — the macOS chord until story
+ * 110 — is "move caret to start of line". A listener that matches on the key
+ * combination alone fires for keystrokes originating anywhere, so typing in the
+ * new-session picker and pressing `Cmd+←` closed the picker and discarded the
+ * query instead of moving the caret.
+ *
+ * That history is worth keeping even though the macOS chord has moved to
+ * `Cmd+[`: it is the same mistake story 110 fixes one layer down. A chord that
+ * matches on the key combination alone eats the key wherever it is pressed —
+ * from a text field, in the first case; from inside a live child process, in
+ * the second.
  *
  * Announcing it from the terminal inverts that: the chord exists only where it
  * was declined. `components/terminal/` still learns nothing about what the app
@@ -180,7 +249,7 @@ export interface TerminalChordDetail {
 
 /** How that chord is written in the key-hint row. */
 export const backChordLabel = (isMac: boolean): string =>
-  isMac ? '⌘←' : 'Ctrl+Shift+←';
+  isMac ? '⌘[' : 'Ctrl+Shift+←';
 
 export interface KeyContext {
   isMac: boolean;
@@ -270,6 +339,14 @@ export function decideTerminalKey(
   const key = event.key.toLowerCase();
 
   if (isMac) {
+    /**
+     * Checked before the copy rules only for readability — `Cmd`+arrow and
+     * `Cmd+C`/`Cmd+V` cannot collide. See {@link lineMotion} for why the
+     * translation is needed at all.
+     */
+    const motion = lineMotion(event, isMac);
+    if (motion) return motion;
+
     /**
      * Copy is `Cmd+C` here, which leaves `Ctrl+C` unambiguously the terminal's.
      * It goes to the pty **always** — even with a selection — because

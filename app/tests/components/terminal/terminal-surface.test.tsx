@@ -825,8 +825,8 @@ describe('TerminalSurface', () => {
        * The terminal reports that a chord happened *here* and nothing more — it
        * does not know the app will navigate. Firing a specific event instead of
        * letting the keystroke bubble is what stops the app from listening for
-       * the raw combination on `window`, where `Cmd+←` is "move caret to start
-       * of line" in every text field.
+       * the raw combination on `window`, where `Ctrl+Shift+←` is "extend
+       * selection by a word" in every text field.
        */
       const seen: string[] = [];
       const onChord = (event: Event) => {
@@ -840,7 +840,7 @@ describe('TerminalSurface', () => {
 
         const handled = press(
           mac
-            ? { key: 'ArrowLeft', metaKey: true }
+            ? { key: '[', metaKey: true }
             : { key: 'ArrowLeft', ctrlKey: true, shiftKey: true },
         );
 
@@ -862,6 +862,33 @@ describe('TerminalSurface', () => {
         expect(seen).toEqual([]);
       } finally {
         window.removeEventListener(TERMINAL_CHORD_EVENT, onChord);
+      }
+    });
+
+    it('writes Home and End to the pty for Cmd+arrow on macOS (story 110)', () => {
+      /**
+       * The other half of the fix, and the half a keymap test cannot cover:
+       * `decideTerminalKey` can only *say* `line-start`, and xterm encodes
+       * nothing for `Cmd`+arrow, so if the surface merely declined the key the
+       * user would still see nothing happen. What is asserted is that the
+       * sequence reaches the transport — the pty's stdin — and that the pty is
+       * not also sent the raw keystroke.
+       */
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        userAgentData: { platform: 'macOS' },
+      });
+
+      try {
+        const { transport } = renderInteractive();
+
+        expect(press({ key: 'ArrowLeft', metaKey: true })).toBe(false);
+        expect(press({ key: 'ArrowRight', metaKey: true })).toBe(false);
+
+        expect(transport.write).toHaveBeenNthCalledWith(1, '\x1b[H');
+        expect(transport.write).toHaveBeenNthCalledWith(2, '\x1b[F');
+      } finally {
+        vi.unstubAllGlobals();
       }
     });
 
