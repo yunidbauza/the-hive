@@ -5,6 +5,8 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  JiraIssueRequest,
+  JiraSearchRequest,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -689,6 +691,53 @@ export function parseSetJiraRequest(input: unknown): SetJiraRequest {
 export function parseSetJiraTokenRequest(input: unknown): SetJiraTokenRequest {
   const raw = assertShape(input, ['token'], 'setJiraToken');
   return { token: assertJiraToken(raw.token, 'setJiraToken.token') };
+}
+
+/**
+ * A Jira issue key (HIVE-68).
+ *
+ * The epic's replacement for `gh.ts`'s "argv is a constant", finally applied to
+ * something: this value is interpolated into a URL path, so the pattern *is* the
+ * defence. A key is an uppercase project prefix, a hyphen, and digits — nothing
+ * in that shape can carry a path segment, a query, or a fragment, which is why
+ * it is **matched rather than escaped**. Encoding a bad key and sending it
+ * anyway is exactly what this refuses to do.
+ */
+const ISSUE_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
+
+export function assertJiraIssueKey(value: unknown, label: string): string {
+  const key = assertString(value, label);
+  if (!ISSUE_KEY.test(key)) {
+    return fail(`${label}: expected an issue key like HIVE-68`);
+  }
+  return key;
+}
+
+/**
+ * A JQL query (HIVE-68).
+ *
+ * Bounded and control-character-free, and that is deliberately all it checks.
+ * JQL is not parsed here and never will be: a client-side parser would be a
+ * thing to maintain forever and would be wrong more often than Jira is.
+ *
+ * What makes that safe rather than lazy: the string goes into **one**
+ * URL-encoded parameter with no larger query built around it, and it runs under
+ * the user's own credential and their own Jira permissions. So the failure mode
+ * is a query broader than the user intended — not a query that reaches data the
+ * account could not already read.
+ */
+export function parseJiraSearchRequest(input: unknown): JiraSearchRequest {
+  const raw = assertShape(input, [], 'jiraSearch', ['jql']);
+  return {
+    ...(raw.jql !== undefined
+      ? { jql: assertText(raw.jql, 'jiraSearch.jql') }
+      : {}),
+  };
+}
+
+export function parseJiraIssueRequest(input: unknown): JiraIssueRequest {
+  const raw = assertShape(input, ['key'], 'jiraIssue');
+  return { key: assertJiraIssueKey(raw.key, 'jiraIssue.key') };
 }
 
 /**

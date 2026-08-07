@@ -116,6 +116,26 @@ describe('exposed surface', () => {
   });
 
   /**
+   * HIVE-68's two reads.
+   *
+   * They widen the surface to six, and the widening is a *read* one: both
+   * return mapped fields, neither can name a host, and neither returns a token.
+   */
+  it('routes the two read verbs, passing their payloads (HIVE-68)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await jira().search({ jql: 'project = HIVE' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraSearch, {
+      jql: 'project = HIVE',
+    });
+
+    await jira().issue({ key: 'HIVE-68' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraIssue, {
+      key: 'HIVE-68',
+    });
+  });
+
+  /**
    * Story 106's two additions, asserted for what they can and cannot do.
    *
    * `integrations.status` is the first verb behind which main executes another

@@ -46,11 +46,38 @@ import type {
 /** Matching `gh.ts`'s posture of bounding every external call. */
 export const JIRA_TIMEOUT_MS = 10_000;
 
-/** 256 KiB. `/myself` is a few hundred bytes; this is already generous. */
+/** 256 KiB. A 100-issue page of six narrow fields is well inside this. */
 export const MAX_RESPONSE_BYTES = 256 * 1024;
+
+/**
+ * How long a `Retry-After` this client is willing to actually wait (HIVE-68).
+ *
+ * Jira can answer 429 with a much larger number. Blocking an IPC call for three
+ * minutes is worse than reporting: past this cap the client returns immediately
+ * with `retryAfter` set, so the pane can say *when* rather than making the user
+ * wait inside a verb with no way to cancel.
+ */
+export const JIRA_MAX_RETRY_DELAY_MS = 5_000;
+
+/** The backoff before the single 5xx retry. */
+export const JIRA_BACKOFF_MS = 500;
 
 /** Injected so no test touches the network. */
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * Injected so no test waits (HIVE-68).
+ *
+ * `CLAUDE.md` requires fake timers rather than real waits, and a retry test that
+ * genuinely sleeps makes the suite slower every time someone adds a case. Tests
+ * pass a no-op that records what it was asked to wait for.
+ */
+export type Sleep = (ms: number) => Promise<void>;
+
+const realSleep: Sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 export interface JiraCredential {
   email: string;
@@ -58,7 +85,15 @@ export interface JiraCredential {
 }
 
 export interface JiraClient {
-  get<T>(path: string): Promise<JiraResult<T>>;
+  /**
+   * `path` is a literal from this codebase; `params` are URL-encoded.
+   *
+   * A `Record<string, string>` fed to `URLSearchParams` rather than a string
+   * appended to a path, and the difference is the whole point: there is no
+   * syntax for a caller to escape from, so a JQL string full of `&`, `=` and
+   * spaces is a value rather than a chance to add a parameter.
+   */
+  get<T>(path: string, params?: Record<string, string>): Promise<JiraResult<T>>;
 }
 
 const error = (
@@ -120,13 +155,41 @@ function retryAfterSeconds(response: Response): number | undefined {
   return Number.isFinite(seconds) ? seconds : undefined;
 }
 
+/**
+ * One attempt's outcome, plus the fact `get` needs to decide about a retry.
+ *
+ * The HTTP status is carried separately rather than inferred from
+ * {@link JiraError.kind}, because `unknown` covers three different things — a
+ * 5xx, a body past the cap, and a response that was not JSON. Only the first is
+ * worth a second request, and a `kind` alone cannot tell them apart.
+ */
+interface Attempt<T> {
+  result: JiraResult<T>;
+  /** The HTTP status, or `0` when the request never produced one. */
+  status: number;
+}
+
+/**
+ * Which failures are worth one automatic retry (HIVE-68).
+ *
+ * 429 and 5xx only. A 401 will be a 401 again, a 404 will still be missing, and
+ * a 400 is a query Jira already told us it cannot parse — retrying any of them
+ * is a second request that can only produce the same answer more slowly. A
+ * status of `0` is a network failure or a body this client refused; neither
+ * becomes true on a second try inside the same verb.
+ */
+const retryable = (status: number): boolean => status === 429 || status >= 500;
+
 export function createJiraClient(deps: {
   fetch: FetchLike;
   /** A bare hostname, already validated by `assertJiraSite`. */
   site: string;
   credential: JiraCredential;
+  /** Injected so no test waits. Defaults to a real `setTimeout`. */
+  sleep?: Sleep;
 }): JiraClient {
   const { fetch, site, credential } = deps;
+  const sleep = deps.sleep ?? realSleep;
 
   // Built once, here and nowhere else — the only place the two halves of the
   // credential are ever joined.
@@ -135,11 +198,20 @@ export function createJiraClient(deps: {
     'utf8',
   ).toString('base64')}`;
 
-  return {
-    async get<T>(path: string): Promise<JiraResult<T>> {
+  const url = (path: string, params?: Record<string, string>): string => {
+    // `URLSearchParams` rather than string concatenation: a JQL query is full of
+    // `&`, `=` and spaces, and this is what makes those a *value* rather than a
+    // chance to append a parameter the caller did not intend.
+    const query =
+      params === undefined ? '' : `?${new URLSearchParams(params).toString()}`;
+    return `https://${site}${path}${query}`;
+  };
+
+  /** One attempt. The retry policy lives in `get`, so this stays readable. */
+  async function attempt<T>(target: string): Promise<Attempt<T>> {
       let response: Response;
       try {
-        response = await fetch(`https://${site}${path}`, {
+        response = await fetch(target, {
           method: 'GET',
           headers: { authorization, accept: 'application/json' },
           signal: AbortSignal.timeout(JIRA_TIMEOUT_MS),
@@ -156,13 +228,19 @@ export function createJiraClient(deps: {
         const aborted =
           cause instanceof Error &&
           (cause.name === 'TimeoutError' || cause.name === 'AbortError');
-        return aborted
-          ? error('timeout', 'Jira did not answer within ten seconds.')
-          : error('offline', 'Could not reach Jira. The network may be down.');
+        return {
+          status: 0,
+          result: aborted
+            ? error('timeout', 'Jira did not answer within ten seconds.')
+            : error('offline', 'Could not reach Jira. The network may be down.'),
+        };
       }
 
       if (!response.ok) {
-        return fromStatus(response.status, retryAfterSeconds(response));
+        return {
+          status: response.status,
+          result: fromStatus(response.status, retryAfterSeconds(response)),
+        };
       }
 
       // Checked before reading, so a server that declares a huge body costs one
@@ -172,24 +250,72 @@ export function createJiraClient(deps: {
         10,
       );
       if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-        return error('unknown', "Jira's answer was too large to read.");
+        // Status 0: a body this client refused is not worth asking for twice.
+        return {
+          status: 0,
+          result: error('unknown', "Jira's answer was too large to read."),
+        };
       }
 
       const text = await response.text();
       if (text.length > MAX_RESPONSE_BYTES) {
-        return error('unknown', "Jira's answer was too large to read.");
+        return {
+          status: 0,
+          result: error('unknown', "Jira's answer was too large to read."),
+        };
       }
 
       try {
-        return { ok: true, value: JSON.parse(text) as T };
+        return { status: response.status, result: { ok: true, value: JSON.parse(text) as T } };
       } catch {
         // The body is not quoted. A proxy's HTML error page is the common case
-        // here, and pasting it into the settings pane helps nobody.
-        return error(
-          'unknown',
-          'Jira answered with something that was not JSON.',
-        );
+        // here, and pasting it into the settings pane helps nobody. Status 0 —
+        // a server answering HTML will answer HTML again.
+        return {
+          status: 0,
+          result: error(
+            'unknown',
+            'Jira answered with something that was not JSON.',
+          ),
+        };
       }
+  }
+
+  return {
+    /**
+     * One request, with **one** automatic retry for 429 and 5xx.
+     *
+     * One, not a policy. This is a read refreshed on pane open and on user
+     * action, so the user's next click already is the retry loop. What a single
+     * automatic attempt buys is surviving the one transient 502 that would
+     * otherwise put an error in front of something already fixed — and it costs
+     * one request rather than a backoff schedule nobody can predict the end of.
+     *
+     * A second failure is reported, not retried again.
+     */
+    async get<T>(
+      path: string,
+      params?: Record<string, string>,
+    ): Promise<JiraResult<T>> {
+      const target = url(path, params);
+      const first = await attempt<T>(target);
+      if (first.result.ok || !retryable(first.status)) return first.result;
+
+      const retryAfter = first.result.ok ? undefined : first.result.error.retryAfter;
+
+      /**
+       * `Retry-After` is honoured, but only up to the cap.
+       *
+       * Past it the client returns *now*, with `retryAfter` still on the error,
+       * so the pane can say when to try again instead of holding an IPC call
+       * open for minutes with no way for the user to cancel it.
+       */
+      const wait =
+        retryAfter === undefined ? JIRA_BACKOFF_MS : retryAfter * 1000;
+      if (wait > JIRA_MAX_RETRY_DELAY_MS) return first.result;
+
+      await sleep(wait);
+      return (await attempt<T>(target)).result;
     },
   };
 }

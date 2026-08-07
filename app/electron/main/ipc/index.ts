@@ -29,6 +29,8 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseJiraIssueRequest,
+  parseJiraSearchRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
   parseSetNotificationsRequest,
@@ -44,7 +46,9 @@ import {
 } from '@shared/ipc-contract';
 import type {
   JiraIdentity,
+  JiraIssue,
   JiraResult,
+  JiraSearchResult,
   JiraStatus,
 } from '@shared/jira-contract';
 
@@ -463,6 +467,16 @@ export function registerIpcHandlers(): void {
   );
   handle(CH.jiraClearToken, (): JiraStatus => jira.clearToken());
   handle(CH.jiraTest, (): Promise<JiraResult<JiraIdentity>> => jira.test());
+  handle(
+    CH.jiraSearch,
+    (_event, payload): Promise<JiraResult<JiraSearchResult>> =>
+      jira.search(parseJiraSearchRequest(payload)),
+  );
+  handle(
+    CH.jiraIssue,
+    (_event, payload): Promise<JiraResult<JiraIssue>> =>
+      jira.issue(parseJiraIssueRequest(payload)),
+  );
   handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
     setJira(parseSetJiraRequest(payload)),
   );

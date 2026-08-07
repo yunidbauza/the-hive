@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clearJiraToken,
+  readJiraIssue,
   readJiraStatus,
   saveJiraToken,
+  searchJiraIssues,
   testJiraConnection,
 } from '@lib/jira';
 import type { JiraStatus } from '@shared/jira-contract';
@@ -42,6 +44,8 @@ describe('with no bridge', () => {
     await expect(saveJiraToken('t')).resolves.toBeNull();
     await expect(clearJiraToken()).resolves.toBeNull();
     await expect(testJiraConnection()).resolves.toBeNull();
+    await expect(searchJiraIssues()).resolves.toBeNull();
+    await expect(readJiraIssue({ key: 'HIVE-1' })).resolves.toBeNull();
   });
 
   it('logs nothing — the browser demo is not a failure', async () => {
@@ -105,5 +109,66 @@ describe('with a bridge', () => {
     bridge({ test: () => Promise.reject(new Error('boom')) });
     await testJiraConnection();
     expect(spy.mock.calls[0]?.[0]).toContain('jira.test');
+  });
+});
+
+describe('the read verbs (HIVE-68)', () => {
+  it('defaults to an empty request, meaning the default query', async () => {
+    const search = vi.fn(() =>
+      Promise.resolve({ ok: true as const, value: { issues: [], capped: false } }),
+    );
+    bridge({ search });
+
+    await searchJiraIssues();
+
+    expect(search).toHaveBeenCalledWith({});
+  });
+
+  it('passes a jql through unchanged', async () => {
+    const search = vi.fn(() =>
+      Promise.resolve({ ok: true as const, value: { issues: [], capped: false } }),
+    );
+    bridge({ search });
+
+    await searchJiraIssues({ jql: 'project = HIVE' });
+
+    expect(search).toHaveBeenCalledWith({ jql: 'project = HIVE' });
+  });
+
+  it('returns a refusal as an answer, not as null', async () => {
+    bridge({
+      search: () =>
+        Promise.resolve({
+          ok: false as const,
+          error: { kind: 'bad-query' as const, message: "Jira could not parse that." },
+        }),
+    });
+
+    await expect(searchJiraIssues()).resolves.toEqual({
+      ok: false,
+      error: { kind: 'bad-query', message: "Jira could not parse that." },
+    });
+  });
+
+  it('passes an issue key through', async () => {
+    const issue = vi.fn(() =>
+      Promise.resolve({
+        ok: false as const,
+        error: { kind: 'not-found' as const, message: 'gone' },
+      }),
+    );
+    bridge({ issue });
+
+    await readJiraIssue({ key: 'HIVE-68' });
+
+    expect(issue).toHaveBeenCalledWith({ key: 'HIVE-68' });
+  });
+
+  it('reports a rejected read channel as null, naming the verb', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bridge({ search: () => Promise.reject(new Error('channel down')) });
+
+    await expect(searchJiraIssues()).resolves.toBeNull();
+    expect(spy.mock.calls[0]?.[0]).toContain('jira.search');
   });
 });

@@ -1,9 +1,10 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createJiraClient,
   type FetchLike,
+  type Sleep,
 } from '../../../../../electron/main/integrations/jira/client';
 
 /**
@@ -35,18 +36,49 @@ function responder(answer: Response | Error, seen: Seen[] = []): FetchLike {
   };
 }
 
+/** A fetch that answers each call from a queue, and records the URLs it saw. */
+function sequence(answers: (Response | Error)[], seen: string[] = []): FetchLike {
+  let at = 0;
+  return (url) => {
+    seen.push(url);
+    const answer = answers[Math.min(at, answers.length - 1)];
+    at += 1;
+    return answer instanceof Error
+      ? Promise.reject(answer)
+      : Promise.resolve(answer);
+  };
+}
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   });
 
-const client = (fetch: FetchLike) =>
+/**
+ * Every client here gets a no-op `sleep`.
+ *
+ * `CLAUDE.md` forbids real waits in unit tests, and the retry path would
+ * otherwise add half a second per 429 or 5xx case — a cost that grows every
+ * time someone adds a row to the error table.
+ */
+const waits: number[] = [];
+const noSleep: Sleep = (ms) => {
+  waits.push(ms);
+  return Promise.resolve();
+};
+
+const client = (fetch: FetchLike, sleep: Sleep = noSleep) =>
   createJiraClient({
     fetch,
     site: 'behiques.atlassian.net',
     credential: CREDENTIAL,
+    sleep,
   });
+
+beforeEach(() => {
+  waits.length = 0;
+});
 
 describe('the request', () => {
   it('builds the URL from the configured host and the caller path', async () => {
@@ -223,5 +255,163 @@ describe('success', () => {
       ),
     ).get<{ pad: string }>('/rest/api/3/myself');
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('query parameters (HIVE-68)', () => {
+  it('URL-encodes them rather than appending a string', async () => {
+    const seen: Seen[] = [];
+    await client(responder(json({}), seen)).get('/rest/api/3/search/jql', {
+      jql: 'assignee = currentUser() AND statusCategory != Done',
+      fields: 'summary,status',
+      maxResults: '100',
+    });
+
+    const url = new URL(seen[0]?.url ?? '');
+    expect(url.origin).toBe('https://behiques.atlassian.net');
+    expect(url.pathname).toBe('/rest/api/3/search/jql');
+    expect(url.searchParams.get('jql')).toBe(
+      'assignee = currentUser() AND statusCategory != Done',
+    );
+    expect(url.searchParams.get('fields')).toBe('summary,status');
+    expect(url.searchParams.get('maxResults')).toBe('100');
+  });
+
+  it('treats & and = inside a query as a value, not as more parameters', async () => {
+    const seen: Seen[] = [];
+    // The whole reason params are a record rather than a string: this must be
+    // one parameter, not three.
+    await client(responder(json({}), seen)).get('/rest/api/3/search/jql', {
+      jql: 'summary ~ "a&b=c" AND project = HIVE',
+    });
+
+    const url = new URL(seen[0]?.url ?? '');
+    expect([...url.searchParams.keys()]).toEqual(['jql']);
+    expect(url.searchParams.get('jql')).toBe('summary ~ "a&b=c" AND project = HIVE');
+  });
+
+  it('omits the query string entirely when there are no params', async () => {
+    const seen: Seen[] = [];
+    await client(responder(json({}), seen)).get('/rest/api/3/myself');
+    expect(seen[0]?.url).toBe('https://behiques.atlassian.net/rest/api/3/myself');
+  });
+});
+
+describe('one automatic retry (HIVE-68)', () => {
+  it('retries a 429 once and succeeds', async () => {
+    const seen: string[] = [];
+    const result = await client(
+      sequence(
+        [new Response('slow', { status: 429 }), json({ displayName: 'Y' })],
+        seen,
+      ),
+    ).get<{ displayName: string }>('/rest/api/3/myself');
+
+    expect(result).toEqual({ ok: true, value: { displayName: 'Y' } });
+    expect(seen).toHaveLength(2);
+    expect(waits).toEqual([500]);
+  });
+
+  it('honours Retry-After when it is inside the cap', async () => {
+    const seen: string[] = [];
+    await client(
+      sequence(
+        [
+          new Response('slow', {
+            status: 429,
+            headers: { 'retry-after': '3' },
+          }),
+          json({}),
+        ],
+        seen,
+      ),
+    ).get('/rest/api/3/myself');
+
+    expect(waits).toEqual([3000]);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('reports immediately rather than waiting past the cap', async () => {
+    const seen: string[] = [];
+    const result = await client(
+      sequence(
+        [
+          new Response('slow', {
+            status: 429,
+            headers: { 'retry-after': '180' },
+          }),
+        ],
+        seen,
+      ),
+    ).get('/rest/api/3/myself');
+
+    // Blocking an IPC call for three minutes is worse than reporting. The
+    // number still reaches the pane, so it can say *when*.
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.retryAfter).toBe(180);
+    expect(waits).toEqual([]);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('retries a 5xx once, with a backoff', async () => {
+    const seen: string[] = [];
+    const result = await client(
+      sequence([new Response('boom', { status: 502 }), json({ ok: 1 })], seen),
+    ).get('/rest/api/3/myself');
+
+    expect(result.ok).toBe(true);
+    expect(waits).toEqual([500]);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('reports a second failure rather than retrying again', async () => {
+    const seen: string[] = [];
+    const result = await client(
+      sequence([new Response('boom', { status: 503 })], seen),
+    ).get('/rest/api/3/myself');
+
+    expect(!result.ok && result.error.kind).toBe('unknown');
+    expect(seen).toHaveLength(2);
+    expect(waits).toEqual([500]);
+  });
+
+  for (const status of [400, 401, 403, 404]) {
+    it(`does not retry ${status}`, async () => {
+      const seen: string[] = [];
+      await client(sequence([new Response('no', { status })], seen)).get(
+        '/rest/api/3/myself',
+      );
+      expect(seen).toHaveLength(1);
+      expect(waits).toEqual([]);
+    });
+  }
+
+  it('does not retry a rejected fetch', async () => {
+    const seen: string[] = [];
+    await client(sequence([new TypeError('fetch failed')], seen)).get(
+      '/rest/api/3/myself',
+    );
+    expect(seen).toHaveLength(1);
+    expect(waits).toEqual([]);
+  });
+
+  it('does not retry a body it refused, or one that was not JSON', async () => {
+    const tooBig = new Response('x'.repeat(300_000), { status: 200 });
+    await client(sequence([tooBig])).get('/rest/api/3/myself');
+    expect(waits).toEqual([]);
+
+    const html = new Response('<html>nginx</html>', { status: 200 });
+    await client(sequence([html])).get('/rest/api/3/myself');
+    expect(waits).toEqual([]);
+  });
+
+  it('retries the same URL, params and all', async () => {
+    const seen: string[] = [];
+    await client(
+      sequence([new Response('boom', { status: 500 }), json({})], seen),
+    ).get('/rest/api/3/search/jql', { jql: 'project = HIVE' });
+
+    expect(seen[0]).toBe(seen[1]);
+    expect(seen[0]).toContain('jql=project+%3D+HIVE');
   });
 });

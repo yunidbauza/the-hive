@@ -1,6 +1,12 @@
 import type {
+  JiraIssueRequest,
+  JiraSearchRequest,
+} from '@shared/config-contract';
+import type {
   JiraIdentity,
+  JiraIssue,
   JiraResult,
+  JiraSearchResult,
   JiraStatus,
 } from '@shared/jira-contract';
 
@@ -66,3 +72,22 @@ export const clearJiraToken = (): Promise<JiraStatus | null> =>
  */
 export const testJiraConnection = (): Promise<JiraResult<JiraIdentity> | null> =>
   call('test', (bridge) => bridge.jira.test());
+
+/**
+ * Run a JQL query (HIVE-68).
+ *
+ * Named for what it searches rather than just `search`, because a bare `search`
+ * in `src/lib/` says nothing about what is being searched. Resolves `null` only
+ * when the channel itself failed — a Jira that refused is a `JiraResult` whose
+ * `ok` is false, and that is an answer the panel shows.
+ */
+export const searchJiraIssues = (
+  request: JiraSearchRequest = {},
+): Promise<JiraResult<JiraSearchResult> | null> =>
+  call('search', (bridge) => bridge.jira.search(request));
+
+/** Read one issue by key (HIVE-68). */
+export const readJiraIssue = (
+  request: JiraIssueRequest,
+): Promise<JiraResult<JiraIssue> | null> =>
+  call('issue', (bridge) => bridge.jira.issue(request));

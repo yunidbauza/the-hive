@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   IpcValidationError,
+  parseJiraIssueRequest,
+  parseJiraSearchRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
 } from '../../../electron/shared/guards';
@@ -198,5 +200,79 @@ describe('parseSetJiraTokenRequest', () => {
       () => parseSetJiraTokenRequest({ token: 'ok', site: 'a.b.co' }),
       /unexpected key/,
     );
+  });
+});
+
+describe('parseJiraIssueRequest', () => {
+  it('accepts a well-formed key', () => {
+    expect(parseJiraIssueRequest({ key: 'HIVE-68' })).toEqual({
+      key: 'HIVE-68',
+    });
+  });
+
+  it('accepts digits in the project part', () => {
+    expect(parseJiraIssueRequest({ key: 'AB2C-1' })).toEqual({ key: 'AB2C-1' });
+  });
+
+  it('refuses lower case, which Jira keys never are', () => {
+    refuses(() => parseJiraIssueRequest({ key: 'hive-68' }), /key/);
+  });
+
+  it('refuses a key that starts with a digit', () => {
+    refuses(() => parseJiraIssueRequest({ key: '1AB-2' }), /key/);
+  });
+
+  it('refuses path separators, which is the whole point of the pattern', () => {
+    refuses(() => parseJiraIssueRequest({ key: 'HIVE-68/nope' }), /key/);
+    refuses(() => parseJiraIssueRequest({ key: 'HIVE-68%2Fnope' }), /key/);
+  });
+
+  it('refuses a query fragment appended to a valid key', () => {
+    refuses(() => parseJiraIssueRequest({ key: 'HIVE-68?expand=all' }), /key/);
+    refuses(() => parseJiraIssueRequest({ key: 'HIVE-68#frag' }), /key/);
+  });
+
+  it('refuses a missing number, and a missing project', () => {
+    refuses(() => parseJiraIssueRequest({ key: 'HIVE-' }), /key/);
+    refuses(() => parseJiraIssueRequest({ key: '-68' }), /key/);
+  });
+
+  it('refuses whitespace inside the key', () => {
+    refuses(() => parseJiraIssueRequest({ key: 'HIVE 68' }), /key/);
+  });
+
+  it('refuses a missing key and an unknown sibling', () => {
+    refuses(() => parseJiraIssueRequest({}), /missing key/);
+    refuses(
+      () => parseJiraIssueRequest({ key: 'HIVE-68', jql: 'x' }),
+      /unexpected key/,
+    );
+  });
+});
+
+describe('parseJiraSearchRequest', () => {
+  it('accepts an absent jql — meaning the default query', () => {
+    expect(parseJiraSearchRequest({})).toEqual({});
+  });
+
+  it('accepts a jql string verbatim, operators and all', () => {
+    const jql = 'project = HIVE AND status != Done ORDER BY updated DESC';
+    expect(parseJiraSearchRequest({ jql })).toEqual({ jql });
+  });
+
+  it('refuses control characters, which no JQL needs', () => {
+    refuses(() => parseJiraSearchRequest({ jql: 'a\nb' }), /jql/);
+  });
+
+  it('refuses an empty query — absent is how you ask for the default', () => {
+    refuses(() => parseJiraSearchRequest({ jql: '' }), /jql/);
+  });
+
+  it('refuses an over-long query', () => {
+    refuses(() => parseJiraSearchRequest({ jql: 'x'.repeat(4097) }), /jql/);
+  });
+
+  it('refuses an unknown key', () => {
+    refuses(() => parseJiraSearchRequest({ key: 'HIVE-1' }), /unexpected key/);
   });
 });

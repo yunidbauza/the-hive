@@ -117,7 +117,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   ]);
   expect(surface.integrations).toEqual(['status']);
   expect(surface.notifications).toEqual(['onActivate']);
-  expect(surface.jira).toEqual(['clearToken', 'setToken', 'status', 'test']);
+  expect(surface.jira).toEqual([
+    'clearToken',
+    // HIVE-68's two reads. Both answer with mapped, named fields; neither
+    // returns a token and neither takes a host.
+    'issue',
+    'search',
+    'setToken',
+    'status',
+    'test',
+  ]);
   expect(surface.pty).toEqual([
     // Story 093 added `ack` — the renderer reporting what it has parsed, which
     // is what lets main apply backpressure.

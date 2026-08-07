@@ -29,6 +29,8 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  JiraIssueRequest,
+  JiraSearchRequest,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -38,7 +40,9 @@ import type {
 } from './config-contract';
 import type {
   JiraIdentity,
+  JiraIssue,
   JiraResult,
+  JiraSearchResult,
   JiraStatus,
 } from './jira-contract';
 import type {
@@ -129,6 +133,17 @@ export const CH = {
   jiraSetToken: 'jira:set-token',
   jiraClearToken: 'jira:clear-token',
   jiraTest: 'jira:test',
+  /**
+   * The Jira read verbs (HIVE-68).
+   *
+   * Both take a payload, which is what makes them the first Jira channels with
+   * anything to guard: a JQL string and an issue key both arrive from the
+   * renderer. `jiraSearch`'s query goes into one URL-encoded parameter and is
+   * never parsed; `jiraIssue`'s key is matched against a pattern before it
+   * reaches a URL path, because that one is interpolated.
+   */
+  jiraSearch: 'jira:search',
+  jiraIssue: 'jira:issue',
   notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
@@ -615,6 +630,16 @@ export interface HiveBridge {
     setToken(request: SetJiraTokenRequest): Promise<JiraStatus>;
     clearToken(): Promise<JiraStatus>;
     test(): Promise<JiraResult<JiraIdentity>>;
+    /**
+     * Run a JQL query (HIVE-68).
+     *
+     * `jql` is optional; absent means the default query. The result carries
+     * only mapped, named fields — never a raw Jira payload — and `capped` says
+     * when the 200-issue limit stopped paging while Jira still had more.
+     */
+    search(request: JiraSearchRequest): Promise<JiraResult<JiraSearchResult>>;
+    /** Read one issue by key (HIVE-68). The key is pattern-matched in main. */
+    issue(request: JiraIssueRequest): Promise<JiraResult<JiraIssue>>;
   };
   /** OS notifications raised by main (story 106). */
   notifications: {
@@ -705,6 +730,10 @@ export const BRIDGE_JIRA_KEYS = [
   'setToken',
   'clearToken',
   'test',
+  // HIVE-68. Two reads. Both return mapped fields only, and neither can name a
+  // host — the site still comes from the config, in main.
+  'search',
+  'issue',
 ] as const;
 
 /** The exact key set of `window.hive.notifications`. */

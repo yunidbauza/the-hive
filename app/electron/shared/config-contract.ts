@@ -509,6 +509,22 @@ export interface SetJiraTokenRequest {
 }
 
 /**
+ * Payload of `jira:search` (HIVE-68).
+ *
+ * `jql` is optional, and absent means {@link JIRA_DEFAULT_JQL} rather than an
+ * empty query. Optional now so HIVE-69 wires a configured override into an
+ * existing parameter instead of changing a signature.
+ */
+export interface JiraSearchRequest {
+  jql?: string;
+}
+
+/** Payload of `jira:issue` (HIVE-68). */
+export interface JiraIssueRequest {
+  key: string;
+}
+
+/**
  * Change one project's runtime overrides (story 104).
  *
  * Here `null` is meaningful and distinct from absent: **absent leaves the

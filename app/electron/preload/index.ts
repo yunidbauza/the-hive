@@ -11,6 +11,8 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  JiraIssueRequest,
+  JiraSearchRequest,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -34,7 +36,9 @@ import {
 } from '@shared/ipc-contract';
 import type {
   JiraIdentity,
+  JiraIssue,
   JiraResult,
+  JiraSearchResult,
   JiraStatus,
 } from '@shared/jira-contract';
 import type { SessionNameEvent, SessionStatusEvent } from '@shared/session-contract';
@@ -196,6 +200,14 @@ const bridge: HiveBridge = {
     clearToken: (): Promise<JiraStatus> => ipcRenderer.invoke(CH.jiraClearToken),
     test: (): Promise<JiraResult<JiraIdentity>> =>
       ipcRenderer.invoke(CH.jiraTest),
+    // HIVE-68. The first Jira verbs that carry a payload — a JQL string and an
+    // issue key, both guarded in main before they reach a URL.
+    search: (
+      request: JiraSearchRequest,
+    ): Promise<JiraResult<JiraSearchResult>> =>
+      ipcRenderer.invoke(CH.jiraSearch, request),
+    issue: (request: JiraIssueRequest): Promise<JiraResult<JiraIssue>> =>
+      ipcRenderer.invoke(CH.jiraIssue, request),
   },
   notifications: {
     onActivate: (callback: (event: NotificationActivateEvent) => void) =>

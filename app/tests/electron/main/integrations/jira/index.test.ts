@@ -6,7 +6,10 @@ import type {
   SecretFile,
   SecretStore,
 } from '../../../../../electron/main/integrations/jira/auth';
-import type { FetchLike } from '../../../../../electron/main/integrations/jira/client';
+import type {
+  FetchLike,
+  Sleep,
+} from '../../../../../electron/main/integrations/jira/client';
 import {
   DEFAULT_JIRA,
   emptySnapshot,
@@ -53,6 +56,9 @@ const never: FetchLike = () => {
   throw new Error('fetch must not be called');
 };
 
+/** No real waits: the retry path would otherwise cost half a second a case. */
+const noSleep: Sleep = () => Promise.resolve();
+
 const build = (options: {
   jira?: JiraConfig;
   env?: NodeJS.ProcessEnv;
@@ -68,6 +74,7 @@ const build = (options: {
       jira: options.jira ?? DEFAULT_JIRA,
     }),
     fetch: options.fetch ?? never,
+    sleep: noSleep,
   });
 
 const CONFIGURED: JiraConfig = {
@@ -256,5 +263,343 @@ describe('test', () => {
 
     expect(seen[0]).toContain('first.atlassian.net');
     expect(seen[1]).toContain('second.atlassian.net');
+  });
+});
+
+/**
+ * A realistic search page. Carries the fields Jira sends that the app does not
+ * ask for, so the deep scan below has something to fail on.
+ */
+const page = (
+  keys: string[],
+  nextPageToken?: string,
+): Record<string, unknown> => ({
+  ...(nextPageToken === undefined ? {} : { nextPageToken }),
+  issues: keys.map((key) => ({
+    id: '1',
+    self: `https://${CONFIGURED.site}/rest/api/3/issue/1`,
+    key,
+    fields: {
+      summary: `Summary for ${key}`,
+      status: {
+        name: 'In Progress',
+        statusCategory: { key: 'indeterminate', colorName: 'yellow' },
+      },
+      issuetype: { name: 'Story' },
+      priority: { name: 'Medium' },
+      updated: '2026-08-07T00:00:00.000-0400',
+      assignee: {
+        displayName: 'Yunid Bauza',
+        emailAddress: 'private@example.com',
+        avatarUrls: { '48x48': 'https://example.invalid/a.png' },
+      },
+    },
+  })),
+});
+
+const jsonOf = (body: unknown): Response =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+
+/** A fetch that answers from a queue and records every URL it was given. */
+function pages(bodies: unknown[], seen: string[] = []): FetchLike {
+  let at = 0;
+  return (url) => {
+    seen.push(url);
+    const body = bodies[Math.min(at, bodies.length - 1)];
+    at += 1;
+    return Promise.resolve(jsonOf(body));
+  };
+}
+
+const hundred = (prefix: string): string[] =>
+  Array.from({ length: 100 }, (_, i) => `${prefix}-${i + 1}`);
+
+describe('search - the query', () => {
+  it('uses the epic default when none is given', async () => {
+    const seen: string[] = [];
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page(['HIVE-1'])], seen),
+    }).search({});
+
+    const url = new URL(seen[0] ?? '');
+    expect(url.pathname).toBe('/rest/api/3/search/jql');
+    expect(url.searchParams.get('jql')).toBe(
+      'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC',
+    );
+  });
+
+  it('replaces the default wholesale rather than appending to it', async () => {
+    const seen: string[] = [];
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page(['HIVE-1'])], seen),
+    }).search({ jql: 'project = HIVE' });
+
+    // A user who writes JQL expects their query to be *the* query.
+    expect(new URL(seen[0] ?? '').searchParams.get('jql')).toBe(
+      'project = HIVE',
+    );
+  });
+
+  it('always asks for the six fields the card renders', async () => {
+    const seen: string[] = [];
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page([])], seen),
+    }).search({});
+
+    expect(new URL(seen[0] ?? '').searchParams.get('fields')).toBe(
+      'summary,status,issuetype,priority,updated,assignee',
+    );
+  });
+
+  it('refuses before a site is configured, without calling fetch', async () => {
+    const result = await build({
+      jira: { site: null, email: 'me@example.com' },
+    }).search({});
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.message).toMatch(/site/i);
+  });
+
+  it('refuses with no credential, without calling fetch', async () => {
+    const result = await build({ jira: CONFIGURED }).search({});
+    expect(!result.ok && result.error.kind).toBe('unauthorized');
+  });
+});
+
+describe('search - paging', () => {
+  it('follows nextPageToken until it is absent', async () => {
+    const seen: string[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages(
+        [page(['A-1', 'A-2'], 'tok-1'), page(['B-1'], 'tok-2'), page(['C-1'])],
+        seen,
+      ),
+    }).search({});
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.value.issues.map((i) => i.key)).toEqual([
+      'A-1',
+      'A-2',
+      'B-1',
+      'C-1',
+    ]);
+    expect(result.ok && result.value.capped).toBe(false);
+    expect(seen).toHaveLength(3);
+    expect(new URL(seen[1] ?? '').searchParams.get('nextPageToken')).toBe(
+      'tok-1',
+    );
+    expect(new URL(seen[2] ?? '').searchParams.get('nextPageToken')).toBe(
+      'tok-2',
+    );
+  });
+
+  it('sends no nextPageToken on the first request', async () => {
+    const seen: string[] = [];
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page(['A-1'])], seen),
+    }).search({});
+
+    expect(new URL(seen[0] ?? '').searchParams.has('nextPageToken')).toBe(
+      false,
+    );
+  });
+
+  it('stops at the 200 cap and says that it did', async () => {
+    const seen: string[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      // Three pages available; the cap stops us after two.
+      fetch: pages(
+        [
+          page(hundred('A'), 'tok-1'),
+          page(hundred('B'), 'tok-2'),
+          page(hundred('C'), 'tok-3'),
+        ],
+        seen,
+      ),
+    }).search({});
+
+    expect(result.ok && result.value.issues).toHaveLength(200);
+    expect(result.ok && result.value.capped).toBe(true);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('leaves capped false when Jira ran out exactly at the cap', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      // The second page carries no token: that was all of them.
+      fetch: pages([page(hundred('A'), 'tok-1'), page(hundred('B'))]),
+    }).search({});
+
+    expect(result.ok && result.value.issues).toHaveLength(200);
+    // Not capped: the cap did not stop anything, Jira simply ended.
+    expect(result.ok && result.value.capped).toBe(false);
+  });
+
+  it('never asks for more than the remaining budget', async () => {
+    const seen: string[] = [];
+    const fifty = Array.from({ length: 50 }, (_, i) => `B-${i + 1}`);
+
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page(hundred('A'), 't1'), page(fifty, 't2'), page([])], seen),
+    }).search({});
+
+    expect(new URL(seen[0] ?? '').searchParams.get('maxResults')).toBe('100');
+    expect(new URL(seen[1] ?? '').searchParams.get('maxResults')).toBe('100');
+    // 150 collected, 50 of the budget left.
+    expect(new URL(seen[2] ?? '').searchParams.get('maxResults')).toBe('50');
+  });
+
+  it('treats a missing issues array as an empty page rather than failing', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([{}]),
+    }).search({});
+
+    expect(result).toEqual({ ok: true, value: { issues: [], capped: false } });
+  });
+
+  it('skips a malformed entry rather than losing the page', async () => {
+    const good = page(['A-1', 'A-2']);
+    (good.issues as unknown[])[1] = { key: 'A-2' }; // no fields
+
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([good]),
+    }).search({});
+
+    expect(result.ok && result.value.issues.map((i) => i.key)).toEqual(['A-1']);
+  });
+
+  it('reports a mid-paging failure rather than a partial result', async () => {
+    let at = 0;
+    const fetch: FetchLike = () => {
+      at += 1;
+      return Promise.resolve(
+        at === 1
+          ? jsonOf(page(['A-1'], 'tok-1'))
+          : new Response('no', { status: 401 }),
+      );
+    };
+
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch,
+    }).search({});
+
+    // A half-read backlog presented as complete is worse than an error.
+    expect(!result.ok && result.error.kind).toBe('unauthorized');
+  });
+});
+
+describe('search - nothing raw crosses', () => {
+  it('drops every Jira field the app did not ask for', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page(['A-1'])]),
+    }).search({});
+
+    const serialised = JSON.stringify(result);
+    for (const leaked of [
+      'avatarUrls',
+      'emailAddress',
+      'private@example.com',
+      'colorName',
+    ]) {
+      expect(serialised).not.toContain(leaked);
+    }
+  });
+
+  it('never contains the token', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([page(['A-1'])]),
+    }).search({});
+
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+});
+
+describe('issue', () => {
+  const one = (): unknown => (page(['HIVE-68']).issues as unknown[])[0];
+
+  it('reads one issue by key and maps it', async () => {
+    const seen: string[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([one()], seen),
+    }).issue({ key: 'HIVE-68' });
+
+    expect(new URL(seen[0] ?? '').pathname).toBe('/rest/api/3/issue/HIVE-68');
+    expect(result.ok && result.value.key).toBe('HIVE-68');
+    expect(result.ok && result.value.url).toBe(
+      `https://${CONFIGURED.site}/browse/HIVE-68`,
+    );
+  });
+
+  it('asks for the same six fields', async () => {
+    const seen: string[] = [];
+    await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([one()], seen),
+    }).issue({ key: 'HIVE-68' });
+
+    expect(new URL(seen[0] ?? '').searchParams.get('fields')).toBe(
+      'summary,status,issuetype,priority,updated,assignee',
+    );
+  });
+
+  it('reports an answer it cannot read, naming the key', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages([{ nothing: true }]),
+    }).issue({ key: 'HIVE-68' });
+
+    expect(!result.ok && result.error.kind).toBe('unknown');
+    expect(!result.ok && result.error.message).toContain('HIVE-68');
+  });
+
+  it('passes a 404 through as not-found', async () => {
+    const fetch: FetchLike = () =>
+      Promise.resolve(new Response('gone', { status: 404 }));
+
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch,
+    }).issue({ key: 'HIVE-99999' });
+
+    expect(!result.ok && result.error.kind).toBe('not-found');
+  });
+
+  it('refuses before configuration, without calling fetch', async () => {
+    const result = await build({ jira: { site: null, email: null } }).issue({
+      key: 'HIVE-68',
+    });
+    expect(result.ok).toBe(false);
   });
 });
