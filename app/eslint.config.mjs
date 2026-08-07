@@ -101,6 +101,17 @@ export default tseslint.config(
       // Lint scope excludes tests/, matching incorpx. Type-checking still
       // covers them — tsconfig.json includes `tests`.
       'tests/**',
+      /**
+       * Vendored third-party bundles (HIVE-71).
+       *
+       * `marked` is copied verbatim so the ADF pipeline needs no runtime
+       * dependency — the same property the epic was protecting when it rejected
+       * the bash client. Linting somebody else's minified-ish bundle reports
+       * their style choices as our errors, and reformatting it would destroy
+       * the one thing that makes a vendored copy auditable: that it is
+       * byte-identical to upstream.
+       */
+      'electron/main/integrations/jira/adf/vendor/**',
     ],
   },
   js.configs.recommended,

@@ -215,3 +215,117 @@ export const JIRA_MAX_DETAILS = 10;
 
 /** And how long each may be. Bounded, because it came from a server. */
 export const JIRA_MAX_DETAIL_LENGTH = 300;
+
+/**
+ * Atlassian Document Format, as much of it as this app builds or reads
+ * (HIVE-71).
+ *
+ * Structural, not exhaustive. ADF has dozens of node types; this describes the
+ * ones the markdown converter emits and the validator checks, and treats
+ * everything else as an unknown node with a `type` — which is exactly how
+ * `adf-to-blocks.ts` handles one it has never seen.
+ */
+export interface AdfMark {
+  type: 'strong' | 'em' | 'code' | 'strike' | 'link';
+  attrs?: { href?: string };
+}
+
+export interface AdfNode {
+  type: string;
+  text?: string;
+  marks?: AdfMark[];
+  content?: AdfNode[];
+  attrs?: {
+    level?: number;
+    language?: string;
+    localId?: string;
+    state?: string;
+    href?: string;
+    isNumberColumnEnabled?: boolean;
+    layout?: string;
+  };
+}
+
+export interface AdfDoc {
+  type: 'doc';
+  version: number;
+  content: AdfNode[];
+}
+
+/**
+ * One run of text inside a rendered block (HIVE-71).
+ *
+ * ADF is rendered into this rather than into HTML, and that is a security
+ * decision as much as an architectural one: a comment is arbitrary text written
+ * by anyone with access to the issue, and handing the renderer markup to inject
+ * would make every Jira project a path into this app. The renderer maps runs to
+ * elements it owns.
+ */
+export interface AdfRun {
+  text: string;
+  /** Subset of marks the app renders. Anything else is dropped, not shown raw. */
+  marks: ('strong' | 'em' | 'code' | 'strike')[];
+  /** Present when the run is a link. */
+  href?: string;
+}
+
+/**
+ * One displayable block (HIVE-71).
+ *
+ * `unknown` is the fallback for a node type this app has never met — a panel, a
+ * media group, a status lozenge. Its runs carry whatever text was inside, so an
+ * unrecognised node renders as plain text rather than breaking the comment,
+ * which is the acceptance criterion and also just the right behaviour: a
+ * comment the app cannot fully render is still a comment the user needs to read.
+ */
+export interface AdfBlock {
+  kind:
+    | 'paragraph'
+    | 'heading'
+    | 'code'
+    | 'quote'
+    | 'bullet'
+    | 'ordered'
+    | 'rule'
+    | 'unknown';
+  runs: AdfRun[];
+  /** `heading` only, 1-6. */
+  level?: number;
+  /** `code` only, when the fence was labelled. */
+  language?: string;
+  /** List items only — how deeply nested, from 0. */
+  depth?: number;
+}
+
+/** One comment on an issue (HIVE-71). */
+export interface JiraComment {
+  id: string;
+  author: string;
+  /** ISO 8601, as Jira sent it. The renderer owns display. */
+  created: string;
+  /** Absent when never edited. */
+  updated?: string;
+  body: AdfBlock[];
+}
+
+/**
+ * One link off an issue (HIVE-71).
+ *
+ * Both remote/web links and Jira-to-Jira links land here, because the panel
+ * shows them in one list and the user does not care which API they came from.
+ * `relationship` is the direction wording — "blocks", "is blocked by" — and
+ * dropping it would make the list meaningless: an issue that blocks another and
+ * one blocked by it are not the same fact.
+ */
+export interface JiraLink {
+  kind: 'remote' | 'issue';
+  title: string;
+  url: string;
+  /** Jira-to-Jira only. The direction wording, which is the whole point. */
+  relationship?: string;
+  /** Jira-to-Jira only. */
+  status?: string;
+}
+
+/** How many comments are read at once. Bounded, like every other list. */
+export const JIRA_MAX_COMMENTS = 50;

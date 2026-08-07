@@ -11,7 +11,9 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  AddJiraCommentRequest,
   ApplyJiraTransitionRequest,
+  JiraConversationRequest,
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
@@ -37,8 +39,10 @@ import {
   type WriteRequest,
 } from '@shared/ipc-contract';
 import type {
+  JiraComment,
   JiraIdentity,
   JiraIssue,
+  JiraLink,
   JiraResult,
   JiraSearchResult,
   JiraStatus,
@@ -220,6 +224,19 @@ const bridge: HiveBridge = {
       request: ApplyJiraTransitionRequest,
     ): Promise<JiraResult<JiraIssue>> =>
       ipcRenderer.invoke(CH.jiraApplyTransition, request),
+    // HIVE-71. Two reads, and the one verb that sends free text.
+    comments: (
+      request: JiraConversationRequest,
+    ): Promise<JiraResult<JiraComment[]>> =>
+      ipcRenderer.invoke(CH.jiraComments, request),
+    links: (
+      request: JiraConversationRequest,
+    ): Promise<JiraResult<JiraLink[]>> =>
+      ipcRenderer.invoke(CH.jiraLinks, request),
+    addComment: (
+      request: AddJiraCommentRequest,
+    ): Promise<JiraResult<JiraComment>> =>
+      ipcRenderer.invoke(CH.jiraAddComment, request),
   },
   notifications: {
     onActivate: (callback: (event: NotificationActivateEvent) => void) =>

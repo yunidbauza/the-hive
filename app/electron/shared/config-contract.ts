@@ -559,6 +559,24 @@ export interface ApplyJiraTransitionRequest {
   transitionId: string;
 }
 
+/** Payload of `jira:comments` and `jira:links` (HIVE-71). */
+export interface JiraConversationRequest {
+  key: string;
+}
+
+/**
+ * Payload of `jira:add-comment` (HIVE-71).
+ *
+ * `markdown`, not ADF. The renderer sends what the user typed and main converts
+ * it — putting a document builder in the renderer would mean shipping the
+ * vendored parser into the browser bundle and trusting a structure the guard
+ * cannot meaningfully check.
+ */
+export interface AddJiraCommentRequest {
+  key: string;
+  markdown: string;
+}
+
 /**
  * Change one project's runtime overrides (story 104).
  *

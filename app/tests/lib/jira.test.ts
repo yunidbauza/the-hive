@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  addJiraComment,
   clearJiraToken,
+  readJiraComments,
   readJiraIssue,
+  readJiraLinks,
   readJiraStatus,
   saveJiraToken,
   searchJiraIssues,
@@ -170,5 +173,52 @@ describe('the read verbs (HIVE-68)', () => {
 
     await expect(searchJiraIssues()).resolves.toBeNull();
     expect(spy.mock.calls[0]?.[0]).toContain('jira.search');
+  });
+});
+
+describe('the conversation verbs (HIVE-71)', () => {
+  it('answer null with no bridge', async () => {
+    await expect(readJiraComments({ key: 'HIVE-1' })).resolves.toBeNull();
+    await expect(readJiraLinks({ key: 'HIVE-1' })).resolves.toBeNull();
+    await expect(
+      addJiraComment({ key: 'HIVE-1', markdown: 'hi' }),
+    ).resolves.toBeNull();
+  });
+
+  it('pass the key through', async () => {
+    const comments = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }));
+    bridge({ comments });
+
+    await readJiraComments({ key: 'HIVE-71' });
+
+    expect(comments).toHaveBeenCalledWith({ key: 'HIVE-71' });
+  });
+
+  it('send the markdown, not a document', async () => {
+    const addComment = vi.fn(() =>
+      Promise.resolve({
+        ok: false as const,
+        error: { kind: 'unknown' as const, message: 'x' },
+      }),
+    );
+    bridge({ addComment });
+
+    await addJiraComment({ key: 'HIVE-71', markdown: '**bold**' });
+
+    // The converter stays in main, so the vendored parser never reaches the
+    // browser bundle.
+    expect(addComment).toHaveBeenCalledWith({
+      key: 'HIVE-71',
+      markdown: '**bold**',
+    });
+  });
+
+  it('never log the comment text when a post is refused', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bridge({ addComment: () => Promise.reject(new Error('refused')) });
+
+    await addJiraComment({ key: 'HIVE-71', markdown: 'private thoughts' });
+
+    expect(JSON.stringify(spy.mock.calls)).not.toContain('private thoughts');
   });
 });

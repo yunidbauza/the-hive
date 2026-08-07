@@ -1,6 +1,8 @@
 import type {
+  AddJiraCommentRequest,
   ApplyJiraTransitionRequest,
   ConfigSnapshot,
+  JiraConversationRequest,
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
@@ -9,16 +11,21 @@ import type {
 import {
   JIRA_DEFAULT_JQL,
   JIRA_FIELDS,
+  JIRA_MAX_COMMENTS,
   JIRA_MAX_ISSUES,
   JIRA_PAGE_SIZE,
   type JiraIdentity,
   type JiraIssue,
   type JiraResult,
   type JiraSearchResult,
+  type JiraComment,
+  type JiraLink,
   type JiraStatus,
   type JiraTransition,
 } from '../../../shared/jira-contract';
 
+import { validateAdf } from './adf/adf-validate';
+import { convertMarkdown } from './adf/markdown-to-adf';
 import {
   createJiraAuth,
   type JiraAuth,
@@ -26,7 +33,13 @@ import {
   type SecretStore,
 } from './auth';
 import { createJiraClient, type FetchLike, type JiraClient, type Sleep } from './client';
-import { toIssue, toTransition } from './mapping';
+import {
+  toComment,
+  toIssue,
+  toIssueLink,
+  toRemoteLink,
+  toTransition,
+} from './mapping';
 
 /**
  * The verbs main exposes for Jira (HIVE-67).
@@ -69,6 +82,12 @@ export interface Jira {
   applyTransition(
     request: ApplyJiraTransitionRequest,
   ): Promise<JiraResult<JiraIssue>>;
+  /** An issue's conversation, oldest first (HIVE-71). */
+  comments(request: JiraConversationRequest): Promise<JiraResult<JiraComment[]>>;
+  /** Remote links and Jira-to-Jira links, in one list (HIVE-71). */
+  links(request: JiraConversationRequest): Promise<JiraResult<JiraLink[]>>;
+  /** Post a comment written as markdown (HIVE-71). */
+  addComment(request: AddJiraCommentRequest): Promise<JiraResult<JiraComment>>;
 }
 
 /**
@@ -436,6 +455,152 @@ export function createJira(deps: {
        * the only honest answer to "what is it now" is to ask.
        */
       return readIssue({ key: request.key });
+    },
+
+    /**
+     * The conversation, oldest first (HIVE-71).
+     *
+     * Oldest first because a comment thread is an argument, and reading an
+     * argument backwards is how you misunderstand it. Jira's default for this
+     * endpoint is already ascending; asking explicitly means a change to that
+     * default does not silently reverse the panel.
+     */
+    async comments(request) {
+      const connection = connect();
+      if (!connection.ok) return connection.error;
+
+      const result = await connection.client.get<{ comments?: unknown }>(
+        `${ISSUE}/${request.key}/comment`,
+        { orderBy: 'created', maxResults: String(JIRA_MAX_COMMENTS) },
+      );
+      if (!result.ok) return result;
+
+      const raw = Array.isArray(result.value.comments)
+        ? result.value.comments
+        : [];
+      const mapped: JiraComment[] = [];
+      for (const entry of raw) {
+        // One unreadable comment costs itself, not the conversation.
+        const one = toComment(entry);
+        if (one !== null) mapped.push(one);
+      }
+      return { ok: true, value: mapped };
+    },
+
+    /**
+     * Both kinds of link, in one list (HIVE-71).
+     *
+     * Two requests, because Jira keeps them in two places: remote/web links have
+     * their own endpoint, and Jira-to-Jira links ride on the issue as
+     * `fields.issuelinks`. The user does not care which API a link came from, so
+     * they arrive merged.
+     *
+     * A failure on either half is reported rather than half-answered. A link
+     * list missing the half that happened to fail is indistinguishable from an
+     * issue that genuinely has no links that way.
+     */
+    async links(request) {
+      const connection = connect();
+      if (!connection.ok) return connection.error;
+
+      const remote = await connection.client.get<unknown>(
+        `${ISSUE}/${request.key}/remotelink`,
+      );
+      if (!remote.ok) return remote;
+
+      const issue = await connection.client.get<{ fields?: unknown }>(
+        `${ISSUE}/${request.key}`,
+        { fields: 'issuelinks' },
+      );
+      if (!issue.ok) return issue;
+
+      const links: JiraLink[] = [];
+
+      for (const entry of Array.isArray(remote.value) ? remote.value : []) {
+        const one = toRemoteLink(entry);
+        if (one !== null) links.push(one);
+      }
+
+      const fields = issue.value.fields;
+      const issuelinks =
+        typeof fields === 'object' && fields !== null
+          ? (fields as { issuelinks?: unknown }).issuelinks
+          : undefined;
+      for (const entry of Array.isArray(issuelinks) ? issuelinks : []) {
+        const one = toIssueLink(entry, connection.site);
+        if (one !== null) links.push(one);
+      }
+
+      return { ok: true, value: links };
+    },
+
+    /**
+     * Post a comment (HIVE-71).
+     *
+     * ## Validated locally, before anything is sent
+     *
+     * An ADF document Jira rejects comes back as a 400 whose message does not
+     * say which node was wrong. `validateAdf` is what turns that into a
+     * diagnosable failure — and because it runs *before* the request, a
+     * malformed document never reaches Jira at all.
+     *
+     * ## Markdown in, ADF out, conversion in main
+     *
+     * The renderer sends what the user typed. Building the document there would
+     * mean shipping the vendored parser into the browser bundle and trusting a
+     * structure the IPC guard cannot meaningfully check — a guard can bound a
+     * string, but "is this a valid ADF tree" is exactly the question this
+     * validator exists to answer, in main, where the answer is enforceable.
+     */
+    async addComment(request) {
+      const connection = connect();
+      if (!connection.ok) return connection.error;
+
+      const body = convertMarkdown(request.markdown);
+      const validation = validateAdf(body);
+      /**
+       * Defensive, and deliberately so.
+       *
+       * No markdown reaches this branch today: the converter resolves ADF's
+       * mark exclusivity itself, always sets `localId` on task nodes, always
+       * gives table cells an `attrs`, and never puts a block inside a
+       * paragraph. `markdown-to-adf.test.ts` asserts that pairing directly —
+       * every document it produces validates.
+       *
+       * The branch exists for the change that breaks one of those, which is
+       * the change that would otherwise ship a 400 naming nothing. Its cost is
+       * one comparison; its absence would be a silent failure mode.
+       */
+      if (!validation.ok) {
+        return {
+          ok: false,
+          error: {
+            kind: 'bad-query',
+            message: 'That comment could not be turned into a valid document.',
+            // The rule and the path, so the failure names something. This is
+            // the app's own diagnosis, not a quoted server response.
+            details: [`${validation.rule} at ${validation.path || 'the document'}: ${validation.message}`],
+          },
+        };
+      }
+
+      const posted = await connection.client.post<unknown>(
+        `${ISSUE}/${request.key}/comment`,
+        { body },
+      );
+      if (!posted.ok) return posted;
+
+      const mapped = toComment(posted.value);
+      if (mapped === null) {
+        return {
+          ok: false,
+          error: {
+            kind: 'unknown',
+            message: 'The comment was posted, but Jira\'s answer could not be read.',
+          },
+        };
+      }
+      return { ok: true, value: mapped };
     },
   };
 }

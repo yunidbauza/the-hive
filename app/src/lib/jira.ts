@@ -1,12 +1,16 @@
 import type {
+  AddJiraCommentRequest,
   ApplyJiraTransitionRequest,
+  JiraConversationRequest,
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
 } from '@shared/config-contract';
 import type {
+  JiraComment,
   JiraIdentity,
   JiraIssue,
+  JiraLink,
   JiraResult,
   JiraSearchResult,
   JiraStatus,
@@ -111,3 +115,27 @@ export const applyJiraTransition = (
   request: ApplyJiraTransitionRequest,
 ): Promise<JiraResult<JiraIssue> | null> =>
   call('applyTransition', (bridge) => bridge.jira.applyTransition(request));
+
+/** An issue's conversation, oldest first (HIVE-71). */
+export const readJiraComments = (
+  request: JiraConversationRequest,
+): Promise<JiraResult<JiraComment[]> | null> =>
+  call('comments', (bridge) => bridge.jira.comments(request));
+
+/** Remote and Jira-to-Jira links, merged, with their direction wording. */
+export const readJiraLinks = (
+  request: JiraConversationRequest,
+): Promise<JiraResult<JiraLink[]> | null> =>
+  call('links', (bridge) => bridge.jira.links(request));
+
+/**
+ * Post a comment, written as markdown (HIVE-71).
+ *
+ * The markdown goes to main and is converted there. That keeps the vendored
+ * parser out of the browser bundle and puts the ADF validation on the side of
+ * the boundary that can enforce it.
+ */
+export const addJiraComment = (
+  request: AddJiraCommentRequest,
+): Promise<JiraResult<JiraComment> | null> =>
+  call('addComment', (bridge) => bridge.jira.addComment(request));

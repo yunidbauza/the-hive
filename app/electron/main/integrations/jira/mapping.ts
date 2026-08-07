@@ -1,8 +1,12 @@
 import type {
+  JiraComment,
   JiraIssue,
+  JiraLink,
   JiraStatusCategory,
   JiraTransition,
 } from '../../../shared/jira-contract';
+
+import { adfToBlocks } from './adf/adf-to-blocks';
 
 /**
  * Jira JSON to named fields (HIVE-68).
@@ -134,5 +138,93 @@ export function toTransition(raw: unknown): JiraTransition | null {
     id,
     name,
     to: { name: toName, statusCategory: toStatusCategory(category) },
+  };
+}
+
+/**
+ * One comment, or `null` if it cannot be read (HIVE-71).
+ *
+ * Same contract as its siblings: one unreadable comment costs itself, not the
+ * conversation. `body` goes through `adfToBlocks`, which never throws and falls
+ * back to plain text for any node type this app has not met.
+ */
+export function toComment(raw: unknown): JiraComment | null {
+  if (!isRecord(raw)) return null;
+
+  const id = text(raw.id);
+  const created = text(raw.created);
+  if (id === null || created === null) return null;
+
+  const author = isRecord(raw.author)
+    ? (text(raw.author.displayName) ?? 'Unknown')
+    : 'Unknown';
+
+  const updated = text(raw.updated);
+
+  return {
+    id,
+    author,
+    created,
+    // Jira sends `updated === created` for an untouched comment, and showing
+    // "edited" on one nobody edited is a small lie told very often.
+    ...(updated === null || updated === created ? {} : { updated }),
+    body: adfToBlocks(raw.body),
+  };
+}
+
+/**
+ * One remote or web link (HIVE-71).
+ *
+ * The remote-link endpoint nests everything under `object`.
+ */
+export function toRemoteLink(raw: unknown): JiraLink | null {
+  if (!isRecord(raw)) return null;
+  const object = isRecord(raw.object) ? raw.object : null;
+  if (object === null) return null;
+
+  const url = text(object.url);
+  if (url === null) return null;
+
+  return { kind: 'remote', title: text(object.title) ?? url, url };
+}
+
+/**
+ * One Jira-to-Jira link, from `fields.issuelinks` (HIVE-71).
+ *
+ * The **direction wording is the whole point**. Jira gives an entry either an
+ * `outwardIssue` or an `inwardIssue`, and the link type carries a different
+ * phrase for each — "blocks" versus "is blocked by". An entry that kept the
+ * linked key and dropped which way it pointed would be worse than no entry at
+ * all: it reads as information while saying the opposite of the truth half the
+ * time.
+ */
+export function toIssueLink(raw: unknown, site: string): JiraLink | null {
+  if (!isRecord(raw)) return null;
+
+  const type = isRecord(raw.type) ? raw.type : null;
+  if (type === null) return null;
+
+  const outward = isRecord(raw.outwardIssue) ? raw.outwardIssue : null;
+  const inward = isRecord(raw.inwardIssue) ? raw.inwardIssue : null;
+  const other = outward ?? inward;
+  if (other === null) return null;
+
+  const key = text(other.key);
+  if (key === null) return null;
+
+  const relationship =
+    (outward !== null ? text(type.outward) : text(type.inward)) ?? 'relates to';
+
+  const fields = isRecord(other.fields) ? other.fields : null;
+  const summary = fields === null ? null : text(fields.summary);
+  const status =
+    fields !== null && isRecord(fields.status) ? text(fields.status.name) : null;
+
+  return {
+    kind: 'issue',
+    title: summary === null ? key : `${key} — ${summary}`,
+    url: `https://${site}/browse/${key}`,
+    relationship,
+    ...(status === null ? {} : { status }),
   };
 }

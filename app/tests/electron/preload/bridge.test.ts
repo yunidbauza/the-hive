@@ -157,6 +157,31 @@ describe('exposed surface', () => {
   });
 
   /**
+   * HIVE-71. Two reads and the one verb that carries free text — bounded and
+   * control-character-free at the guard, converted to ADF in main, and
+   * validated there before a request is made.
+   */
+  it('routes the conversation verbs (HIVE-71)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await jira().comments({ key: 'HIVE-71' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraComments, {
+      key: 'HIVE-71',
+    });
+
+    await jira().links({ key: 'HIVE-71' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraLinks, {
+      key: 'HIVE-71',
+    });
+
+    await jira().addComment({ key: 'HIVE-71', markdown: 'hi' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraAddComment, {
+      key: 'HIVE-71',
+      markdown: 'hi',
+    });
+  });
+
+  /**
    * Story 106's two additions, asserted for what they can and cannot do.
    *
    * `integrations.status` is the first verb behind which main executes another

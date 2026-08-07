@@ -5,7 +5,9 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  AddJiraCommentRequest,
   ApplyJiraTransitionRequest,
+  JiraConversationRequest,
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
@@ -773,6 +775,58 @@ export function parseJiraTransitionsRequest(
 ): JiraTransitionsRequest {
   const raw = assertShape(input, ['key'], 'jiraTransitions');
   return { key: assertJiraIssueKey(raw.key, 'jiraTransitions.key') };
+}
+
+/** Reading an issue's conversation or its links (HIVE-71). */
+export function parseJiraConversationRequest(
+  input: unknown,
+): JiraConversationRequest {
+  const raw = assertShape(input, ['key'], 'jiraConversation');
+  return { key: assertJiraIssueKey(raw.key, 'jiraConversation.key') };
+}
+
+/**
+ * A comment, as markdown (HIVE-71).
+ *
+ * `assertText` bounds it and refuses control characters, which is the right
+ * check for a value that becomes a *document* rather than a command: markdown
+ * is meant to contain `*`, `#`, backticks and angle brackets, and rejecting
+ * those would reject the feature. What it must not contain is a control byte,
+ * because the converter would carry it into a text node and Jira would reject
+ * the whole document with a message naming nothing.
+ *
+ * Newlines are the one exception, and they are the point — a comment without
+ * paragraphs is not a comment. `assertText` refuses them, so this checks the
+ * same properties itself rather than pretending the shared guard fits.
+ */
+const MAX_COMMENT = 32_768;
+
+export function parseAddJiraCommentRequest(
+  input: unknown,
+): AddJiraCommentRequest {
+  const raw = assertShape(input, ['key', 'markdown'], 'addJiraComment');
+  const markdown = assertString(raw.markdown, 'addJiraComment.markdown');
+
+  if (markdown.trim() === '') {
+    return fail('addJiraComment.markdown: must not be empty');
+  }
+  if (markdown.length > MAX_COMMENT) {
+    return fail('addJiraComment.markdown: too long');
+  }
+  for (const char of markdown) {
+    const code = char.codePointAt(0) ?? 0;
+    // Tab, newline and carriage return are prose; everything else in C0, DEL
+    // and C1 is not.
+    if (code === 0x09 || code === 0x0a || code === 0x0d) continue;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+      return fail('addJiraComment.markdown: control characters are not allowed');
+    }
+  }
+
+  return {
+    key: assertJiraIssueKey(raw.key, 'addJiraComment.key'),
+    markdown,
+  };
 }
 
 export function parseApplyJiraTransitionRequest(

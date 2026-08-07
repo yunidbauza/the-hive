@@ -29,7 +29,9 @@ import type {
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
+  AddJiraCommentRequest,
   ApplyJiraTransitionRequest,
+  JiraConversationRequest,
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
@@ -41,8 +43,10 @@ import type {
   SetRuntimeRequest,
 } from './config-contract';
 import type {
+  JiraComment,
   JiraIdentity,
   JiraIssue,
+  JiraLink,
   JiraResult,
   JiraSearchResult,
   JiraStatus,
@@ -156,6 +160,16 @@ export const CH = {
    */
   jiraTransitions: 'jira:transitions',
   jiraApplyTransition: 'jira:apply-transition',
+  /**
+   * The conversation and the links (HIVE-71).
+   *
+   * `jiraAddComment` is the epic's second write, and the only one that carries
+   * free text: markdown, converted to ADF and validated in main before
+   * anything is sent.
+   */
+  jiraComments: 'jira:comments',
+  jiraLinks: 'jira:links',
+  jiraAddComment: 'jira:add-comment',
   notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
@@ -678,6 +692,22 @@ export interface HiveBridge {
     applyTransition(
       request: ApplyJiraTransitionRequest,
     ): Promise<JiraResult<JiraIssue>>;
+    /** An issue's conversation, oldest first (HIVE-71). Rendered, not raw ADF. */
+    comments(
+      request: JiraConversationRequest,
+    ): Promise<JiraResult<JiraComment[]>>;
+    /** Remote links and Jira-to-Jira links, merged, with direction (HIVE-71). */
+    links(request: JiraConversationRequest): Promise<JiraResult<JiraLink[]>>;
+    /**
+     * Post a comment written as markdown (HIVE-71).
+     *
+     * The renderer sends the text; main converts it to ADF and **validates it
+     * locally before anything is sent**, because a document Jira rejects comes
+     * back as a 400 that does not say which node was wrong.
+     */
+    addComment(
+      request: AddJiraCommentRequest,
+    ): Promise<JiraResult<JiraComment>>;
   };
   /** OS notifications raised by main (story 106). */
   notifications: {
@@ -781,6 +811,15 @@ export const BRIDGE_JIRA_KEYS = [
    */
   'transitions',
   'applyTransition',
+  /**
+   * HIVE-71. Two reads and one write. `addComment` carries the only free text
+   * that reaches Jira from this app — bounded and control-character-free at the
+   * guard, converted in main, and validated against ADF's rules before a
+   * request is made.
+   */
+  'comments',
+  'links',
+  'addComment',
 ] as const;
 
 /** The exact key set of `window.hive.notifications`. */

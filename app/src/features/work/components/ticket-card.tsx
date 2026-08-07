@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils';
 import type { Ticket } from '@/types/ticket';
 
+import { TicketConversation } from '@features/work/components/ticket-conversation';
 import { TicketPrRow } from '@features/work/components/ticket-pr-row';
 import { TicketSessionRow } from '@features/work/components/ticket-session-row';
 import { TicketTransitionMenu } from '@features/work/components/ticket-transition-menu';
@@ -100,6 +101,11 @@ export function TicketCard({ ticket }: TicketCardProps) {
           ))}
         </div>
       ) : null}
+
+      {/* Real issues only — a fixture has no conversation to read (HIVE-71). */}
+      {ticket.url === undefined ? null : (
+        <TicketConversation issueKey={ticket.key} />
+      )}
     </article>
   );
 }

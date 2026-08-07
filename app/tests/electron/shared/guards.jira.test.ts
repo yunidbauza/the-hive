@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   IpcValidationError,
+  parseAddJiraCommentRequest,
   parseApplyJiraTransitionRequest,
+  parseJiraConversationRequest,
   parseJiraIssueRequest,
   parseJiraSearchRequest,
   parseJiraTransitionsRequest,
@@ -340,6 +342,88 @@ describe('parseApplyJiraTransitionRequest', () => {
           key: 'HIVE-70',
           transitionId: '31',
           fields: {},
+        }),
+      /unexpected key/,
+    );
+  });
+});
+
+describe('parseJiraConversationRequest', () => {
+  it('accepts a well-formed key', () => {
+    expect(parseJiraConversationRequest({ key: 'HIVE-71' })).toEqual({
+      key: 'HIVE-71',
+    });
+  });
+
+  it('refuses a malformed key, like every other verb', () => {
+    refuses(() => parseJiraConversationRequest({ key: 'nope' }), /key/);
+    refuses(() => parseJiraConversationRequest({}), /missing key/);
+  });
+});
+
+describe('parseAddJiraCommentRequest', () => {
+  it('accepts markdown, punctuation and all', () => {
+    const markdown = '# Heading\n\nSome **bold**, a `code span`, and <angle>.';
+    expect(
+      parseAddJiraCommentRequest({ key: 'HIVE-71', markdown }),
+    ).toEqual({ key: 'HIVE-71', markdown });
+  });
+
+  it('allows newlines — a comment without paragraphs is not a comment', () => {
+    const markdown = 'one\n\ntwo\r\nthree\tfour';
+    expect(
+      parseAddJiraCommentRequest({ key: 'HIVE-71', markdown }).markdown,
+    ).toBe(markdown);
+  });
+
+  it('refuses other control characters', () => {
+    // A control byte would ride into a text node and Jira would reject the
+    // whole document with a message naming nothing.
+    refuses(
+      () =>
+        parseAddJiraCommentRequest({ key: 'HIVE-71', markdown: 'a\u0000b' }),
+      /control characters/,
+    );
+    refuses(
+      () =>
+        parseAddJiraCommentRequest({ key: 'HIVE-71', markdown: 'a\u001bb' }),
+      /control characters/,
+    );
+  });
+
+  it('refuses an empty or whitespace-only comment', () => {
+    refuses(
+      () => parseAddJiraCommentRequest({ key: 'HIVE-71', markdown: '' }),
+      /empty/,
+    );
+    refuses(
+      () => parseAddJiraCommentRequest({ key: 'HIVE-71', markdown: '   \n ' }),
+      /empty/,
+    );
+  });
+
+  it('refuses one past the bound', () => {
+    refuses(
+      () =>
+        parseAddJiraCommentRequest({
+          key: 'HIVE-71',
+          markdown: 'x'.repeat(32_769),
+        }),
+      /too long/,
+    );
+  });
+
+  it('refuses a malformed key and an unknown sibling', () => {
+    refuses(
+      () => parseAddJiraCommentRequest({ key: 'nope', markdown: 'hi' }),
+      /key/,
+    );
+    refuses(
+      () =>
+        parseAddJiraCommentRequest({
+          key: 'HIVE-71',
+          markdown: 'hi',
+          body: {},
         }),
       /unexpected key/,
     );

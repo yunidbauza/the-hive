@@ -127,11 +127,22 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * — never retried, because a transition that may already have applied must
      * not be applied twice.
      */
+    'addComment',
     'applyTransition',
     'clearToken',
+    'comments',
     // HIVE-68's two reads. Both answer with mapped, named fields; neither
     // returns a token and neither takes a host.
     'issue',
+    /**
+     * HIVE-71's `links` and `comments` are reads; `addComment` is the only verb
+     * in this bridge that sends **free text** to Jira. What bounds it: the
+     * markdown is length-bounded and control-character-free at the guard, the
+     * conversion to ADF happens in main so no document builder ships to the
+     * renderer, and the result is validated against ADF's rules before a
+     * request is made.
+     */
+    'links',
     'search',
     'setToken',
     'status',

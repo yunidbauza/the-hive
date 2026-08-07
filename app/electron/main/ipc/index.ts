@@ -29,7 +29,9 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseAddJiraCommentRequest,
   parseApplyJiraTransitionRequest,
+  parseJiraConversationRequest,
   parseJiraIssueRequest,
   parseJiraSearchRequest,
   parseJiraTransitionsRequest,
@@ -47,8 +49,10 @@ import {
   type NotificationActivateEvent,
 } from '@shared/ipc-contract';
 import type {
+  JiraComment,
   JiraIdentity,
   JiraIssue,
+  JiraLink,
   JiraResult,
   JiraSearchResult,
   JiraStatus,
@@ -489,6 +493,21 @@ export function registerIpcHandlers(): void {
     CH.jiraApplyTransition,
     (_event, payload): Promise<JiraResult<JiraIssue>> =>
       jira.applyTransition(parseApplyJiraTransitionRequest(payload)),
+  );
+  handle(
+    CH.jiraComments,
+    (_event, payload): Promise<JiraResult<JiraComment[]>> =>
+      jira.comments(parseJiraConversationRequest(payload)),
+  );
+  handle(
+    CH.jiraLinks,
+    (_event, payload): Promise<JiraResult<JiraLink[]>> =>
+      jira.links(parseJiraConversationRequest(payload)),
+  );
+  handle(
+    CH.jiraAddComment,
+    (_event, payload): Promise<JiraResult<JiraComment>> =>
+      jira.addComment(parseAddJiraCommentRequest(payload)),
   );
   handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
     setJira(parseSetJiraRequest(payload)),
