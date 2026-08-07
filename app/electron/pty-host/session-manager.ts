@@ -6,6 +6,7 @@ import {
   KILL_GRACE_MS,
   MAX_SESSIONS,
   SCROLLBACK_BYTES,
+  SHUTDOWN_TIMEOUT_MS,
   type HostMessage,
   type SpawnCommand,
 } from '@shared/pty-host-protocol';
@@ -92,11 +93,28 @@ interface Session {
  *
  * A courtesy, not a correctness requirement — the sweep would be correct
  * without it, just quicker to SIGKILL something that was already leaving.
- * Kept small: the whole teardown has to fit inside `SHUTDOWN_TIMEOUT_MS`
- * (3s) or the supervisor force-kills the host mid-sweep and the orphan
- * survives anyway.
  */
 const SWEEP_SETTLE_MS = 250;
+
+/**
+ * The wall clock the whole teardown has to finish inside.
+ *
+ * `supervisor.shutdown()` arms a `SHUTDOWN_TIMEOUT_MS` timer **before** it even
+ * posts the shutdown message, and force-kills the host when it fires. A
+ * teardown that overruns is killed mid-sweep — orphaning the descendant this
+ * code exists to reap, by way of the fix's own latency.
+ *
+ * So the budget is *derived* from that timeout and threaded through as a
+ * deadline, rather than summed from independent constants and hoped to fit.
+ * Summing is how the first version of this got it wrong: `ps` (up to 2s) then
+ * the grace (2s) then the settle (250ms) are sequential, not overlapping, so
+ * the real worst case was 4.25s against a 3s limit.
+ */
+const TEARDOWN_BUDGET_MS = SHUTDOWN_TIMEOUT_MS - 500;
+
+/** Whatever is left of the budget, never negative. */
+const remaining = (deadline: number): number =>
+  Math.max(0, deadline - Date.now());
 
 export function createSessionManager(
   options: SessionManagerOptions = {},
@@ -186,8 +204,18 @@ export function createSessionManager(
   }
 
   /** Wait for every target to exit, SIGKILLing whatever outlasts the grace. */
-  function waitForExit(targets: readonly Session[]): Promise<void> {
+  function waitForExit(
+    targets: readonly Session[],
+    deadline: number,
+  ): Promise<void> {
     const allGone = () => targets.every((session) => session.status !== 'live');
+
+    // The grace is whichever is shorter: the usual one, or what is left of the
+    // budget once the sweep has been reserved its settle.
+    const grace = Math.min(
+      killGraceMs,
+      Math.max(0, remaining(deadline) - SWEEP_SETTLE_MS),
+    );
 
     return new Promise<void>((resolve) => {
       if (allGone()) {
@@ -209,7 +237,7 @@ export function createSessionManager(
           if (session.status === 'live') signalGroup(session.pid, 'SIGKILL');
         }
         finish();
-      }, killGraceMs);
+      }, grace);
 
       const watcher = () => {
         if (allGone()) finish();
@@ -227,10 +255,18 @@ export function createSessionManager(
    * takes SIGHUP and goes promptly while a descendant that ignores hangup
    * carries on, invisible, holding the tokens.
    */
-  async function sweep(snapshot: readonly Descendant[]): Promise<void> {
+  async function sweep(
+    snapshot: readonly Descendant[],
+    deadline: number,
+  ): Promise<void> {
     if (snapshot.length === 0) return;
 
-    await delay(SWEEP_SETTLE_MS);
+    // Nothing to be courteous to. Checking before sleeping keeps the common
+    // case — every job took the hangup and left — off the quit path entirely.
+    if (!snapshot.some(({ pid }) => control.isAlive(pid))) return;
+
+    const settle = Math.min(SWEEP_SETTLE_MS, remaining(deadline));
+    if (settle > 0) await delay(settle);
 
     const survivors = snapshot.filter(({ pid }) => control.isAlive(pid));
     if (survivors.length === 0) return;
@@ -246,12 +282,40 @@ export function createSessionManager(
     }
   }
 
+  /**
+   * Teardowns started by `kill` that have not finished yet.
+   *
+   * `killAll` waits on these as well as its own. Without that, closing a tab
+   * and then quitting within the sweep's settle window abandons the sweep: the
+   * shell is already `exited`, so `killAll` sees no live session, returns
+   * immediately, and `host.ts` calls `process.exit` out from under the pending
+   * work — leaving exactly the orphan this file exists to prevent.
+   */
+  const inFlight = new Set<Promise<void>>();
+
+  /** Track a teardown, and make sure a rejection cannot take the host down. */
+  function track(work: Promise<void>): void {
+    const settled = work.catch(() => {
+      /**
+       * Every signal inside teardown is already ESRCH-tolerant, so this can
+       * only fire for a `ProcessControl` whose `descendants` rejects. Losing
+       * one sweep is bad; an unhandled rejection killing the pty-host and
+       * every live session with it is worse.
+       */
+    });
+
+    inFlight.add(settled);
+    void settled.finally(() => inFlight.delete(settled));
+  }
+
   /** The one teardown both `kill` and `killAll` run. */
   async function teardown(
     targets: readonly Session[],
     sig: NodeJS.Signals,
   ): Promise<void> {
     if (targets.length === 0) return;
+
+    const deadline = Date.now() + TEARDOWN_BUDGET_MS;
 
     /**
      * Before any signal, without exception.
@@ -260,14 +324,25 @@ export function createSessionManager(
      * `ppid` linkage that identifies them is gone for good. There is no
      * reading the tree afterwards — snapshot first or do not snapshot at all.
      */
-    const snapshot = await control.descendants(
-      targets.map((session) => session.pid),
-    );
+    const snapshot = await control
+      .descendants(targets.map((session) => session.pid))
+      .catch(() => {
+        /**
+         * A tree we could not read must not stop the shells being killed.
+         *
+         * The shipped `ProcessControl` already answers `[]` for any failure,
+         * but the interface permits a rejection, and letting one propagate
+         * here would abandon teardown *before the first signal* — turning a
+         * failed `ps` into "no session was killed at all", which is far worse
+         * than the group-kill-only behaviour this degrades to.
+         */
+        return [] as Descendant[];
+      });
 
     for (const session of targets) signalGroup(session.pid, sig);
 
-    await waitForExit(targets);
-    await sweep(snapshot);
+    await waitForExit(targets, deadline);
+    await sweep(snapshot, deadline);
   }
 
   return {
@@ -423,7 +498,7 @@ export function createSessionManager(
        * `SessionOperations.kill` is synchronous; every signal inside tolerates
        * a process that is already gone.
        */
-      void teardown([session], sig as NodeJS.Signals);
+      track(teardown([session], sig as NodeJS.Signals));
     },
 
     pause(sessionId) {
@@ -448,6 +523,15 @@ export function createSessionManager(
         [...sessions.values()].filter((session) => session.status === 'live'),
         'SIGHUP',
       );
+
+      /**
+       * Then wait out anything `kill` started and has not finished.
+       *
+       * Loops rather than awaiting once because a `kill` can land while the
+       * first batch is settling. It terminates: teardown never starts another
+       * teardown, so the set only drains.
+       */
+      while (inFlight.size > 0) await Promise.all([...inFlight]);
     },
 
     replay(sessionId) {

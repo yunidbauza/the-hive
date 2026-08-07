@@ -610,8 +610,98 @@ describe('descendant teardown', () => {
     await vi.advanceTimersByTimeAsync(2_250);
     await pending;
 
+    // One `ps` for the whole app. The pids are not asserted by value: the pty
+    // mock reports 4242 for every instance, so `[4242, 4242]` would read like a
+    // meaningful assertion while proving only that two sessions were passed.
     expect(control.descendants).toHaveBeenCalledTimes(1);
-    expect(control.descendants).toHaveBeenCalledWith([4242, 4242]);
+    expect(control.descendants.mock.calls[0]![0]).toHaveLength(2);
+  });
+
+  it('waits out a kill() that is still sweeping when quit arrives', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([JOB]);
+    control.isAlive.mockReturnValue(true);
+    manager.spawn(SPAWN, emit);
+
+    /**
+     * The abandoned-sweep race.
+     *
+     * Closing a tab starts a teardown; the shell takes SIGHUP and exits at
+     * once, leaving the sweep in its settle window. Quit arriving now finds no
+     * *live* session, so without `inFlight` it would return immediately and
+     * `host.ts` would `process.exit` out from under the pending sweep — and the
+     * descendant would survive exactly as it did before this fix.
+     */
+    manager.kill('hero-refresh');
+    await vi.advanceTimersByTimeAsync(0);
+    pty().emitExit(0);
+
+    const quit = manager.killAll();
+    await vi.advanceTimersByTimeAsync(250);
+    await quit;
+
+    expect(signals).toContain('pid 5150 SIGKILL');
+  });
+
+  it('keeps the whole teardown inside the supervisor’s shutdown timeout', async () => {
+    vi.useFakeTimers();
+    // A `ps` that burns its own timeout, then a shell that ignores the hangup:
+    // the worst case, and the one the first version of this overran on.
+    control.descendants.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve([JOB]), 500);
+        }),
+    );
+    control.isAlive.mockReturnValue(true);
+    manager.spawn(SPAWN, emit);
+
+    const started = Date.now();
+    let finishedAt = 0;
+    // `SessionOperations.killAll` is typed `Promise<void> | void`.
+    const pending = Promise.resolve(manager.killAll()).then(() => {
+      // Sampled at resolution, not after the advance — advancing 5s moves the
+      // clock 5s whatever teardown did.
+      finishedAt = Date.now();
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await pending;
+
+    // SHUTDOWN_TIMEOUT_MS is 3_000, and the supervisor arms that timer before
+    // it even posts the shutdown message.
+    expect(finishedAt - started).toBeLessThan(3_000);
+    expect(signals).toContain('pid 5150 SIGKILL');
+  });
+
+  it('still kills the shells when the process table rejects', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockRejectedValue(new Error('ps exploded'));
+    manager.spawn(SPAWN, emit);
+
+    /**
+     * A tree that cannot be read is not a reason to leave the session running.
+     * Letting the rejection propagate would abandon teardown before the first
+     * signal, so a broken `ps` would mean nothing was killed at all — strictly
+     * worse than the pre-HIVE-72 behaviour it degrades to.
+     */
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(2_500);
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(signals).toContain('group 4242 SIGHUP');
+    expect(signals).toContain('group 4242 SIGKILL');
+  });
+
+  it('does not take the host down when a fire-and-forget kill rejects', async () => {
+    vi.useFakeTimers();
+    control.descendants.mockRejectedValue(new Error('ps exploded'));
+    manager.spawn(SPAWN, emit);
+
+    // `kill` is fire-and-forget, so an unhandled rejection here would kill the
+    // pty-host and every live session with it.
+    expect(() => manager.kill('hero-refresh')).not.toThrow();
+
+    await expect(vi.advanceTimersByTimeAsync(2_500)).resolves.toBeDefined();
   });
 });
 

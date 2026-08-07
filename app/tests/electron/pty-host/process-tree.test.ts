@@ -46,6 +46,31 @@ describe('parseProcessTable', () => {
 
     expect(rows).toEqual([{ pid: 100, ppid: 99, pgid: 100 }]);
   });
+
+  it('drops any row whose pid or pgid could not be safely signalled', () => {
+    /**
+     * `kill(-0, sig)` is `kill(0, sig)` — every process in the *caller's* own
+     * group, i.e. the pty-host shooting itself — and `kill(-1, sig)` is every
+     * process the user owns. Linux reports pgid 0 for kernel threads, so a
+     * row like this is not hypothetical, and `isAlive` is no guard: the
+     * permission check on pid 0 succeeds.
+     */
+    const rows = parseProcessTable(
+      ['    0     0     0', '    1     0     1', '   -1    99    -1', '  100    99   100'].join(
+        '\n',
+      ),
+    );
+
+    expect(rows).toEqual([{ pid: 100, ppid: 99, pgid: 100 }]);
+  });
+
+  it('keeps a row whose ppid is 0 or 1, which is ordinary', () => {
+    // Only pid and pgid are ever signalled; a parent of init is just the top
+    // of the tree, and dropping those rows would break the walk.
+    expect(parseProcessTable('  100     1   100\n')).toEqual([
+      { pid: 100, ppid: 1, pgid: 100 },
+    ]);
+  });
 });
 
 describe('walkDescendants', () => {
@@ -143,6 +168,31 @@ describe('descendants', () => {
 
     await expect(control.descendants([100])).resolves.toEqual([]);
     expect(readTable).not.toHaveBeenCalled();
+  });
+});
+
+describe('signal guards', () => {
+  it('refuses to signal group 0, which would be the host’s own group', () => {
+    const control = createProcessControl({ platform: 'darwin' });
+
+    // If this ever regresses, the pty-host SIGKILLs itself and every session
+    // with it. Asserted by not throwing *and* not signalling: a real
+    // `process.kill(-0, 'SIGKILL')` would end this test process.
+    expect(() => control.signalGroup(0, 'SIGKILL')).not.toThrow();
+    expect(() => control.signalPid(0, 'SIGKILL')).not.toThrow();
+  });
+
+  it('refuses pid -1, which is every process the user owns', () => {
+    const control = createProcessControl({ platform: 'darwin' });
+
+    expect(() => control.signalPid(-1, 'SIGKILL')).not.toThrow();
+    expect(() => control.signalGroup(-1, 'SIGKILL')).not.toThrow();
+  });
+
+  it('refuses init', () => {
+    const control = createProcessControl({ platform: 'darwin' });
+
+    expect(() => control.signalPid(1, 'SIGKILL')).not.toThrow();
   });
 });
 

@@ -30,8 +30,28 @@ export interface ProcessControl {
   descendants(roots: readonly number[]): Promise<Descendant[]>;
 }
 
-/** How long `ps` gets before teardown gives up on knowing the tree. */
-export const PS_TIMEOUT_MS = 2_000;
+/**
+ * How long `ps` gets before teardown gives up on knowing the tree.
+ *
+ * Deliberately short. This runs on the app's quit path, inside a budget the
+ * supervisor enforces with a force-kill, and a `ps` still running after half a
+ * second is not going to produce an answer that arrives in time to be useful.
+ * Giving up early leaves budget for the signals, which are the part that
+ * actually kills anything.
+ */
+export const PS_TIMEOUT_MS = 500;
+
+/**
+ * The lowest pid or pgid worth signalling.
+ *
+ * `process.kill(-0, sig)` is `kill(0, sig)` — *every process in the caller's
+ * own group*, i.e. the pty-host shooting itself. `kill(-1, sig)` is every
+ * process the user can signal. Neither can come from a well-formed `ps` on a
+ * real session, but the cost of being wrong is the user's whole login, so the
+ * table is filtered rather than trusted. pid 1 is init/launchd; nothing below
+ * that is ever a session descendant.
+ */
+const LOWEST_SIGNALLABLE = 2;
 
 /** Room for a very busy machine — a truncated table reads as a short one. */
 const PS_MAX_BUFFER = 4 * 1024 * 1024;
@@ -61,6 +81,14 @@ export function parseProcessTable(text: string): Row[] {
     ) {
       continue;
     }
+
+    /**
+     * `ppid` is left alone — 0 and 1 are ordinary there, and a row whose parent
+     * is init is exactly how the tree terminates. `pid` and `pgid` are what get
+     * signalled, and a 0 among them would signal the caller's own group.
+     * Linux reports pgid 0 for kernel threads, so this is not hypothetical.
+     */
+    if (pid < LOWEST_SIGNALLABLE || pgid < LOWEST_SIGNALLABLE) continue;
 
     rows.push({ pid, ppid, pgid });
   }
@@ -108,7 +136,9 @@ export function walkDescendants(
 function readProcessTable(): Promise<string> {
   return new Promise((resolve) => {
     execFile(
-      'ps',
+      // Pinned rather than resolved through PATH: this runs with the app's
+      // inherited environment, and the result is fed straight into `kill`.
+      '/bin/ps',
       ['-eo', 'pid=,ppid=,pgid='],
       { timeout: PS_TIMEOUT_MS, maxBuffer: PS_MAX_BUFFER },
       (error, stdout) => {
@@ -130,11 +160,17 @@ export function createProcessControl({
 }: ProcessControlDeps = {}): ProcessControl {
   return {
     signalGroup(pgid, signal) {
+      // Belt and braces: the parser already drops these, and this is the call
+      // where getting it wrong SIGKILLs the pty-host's own process group.
+      if (!Number.isInteger(pgid) || pgid < LOWEST_SIGNALLABLE) return;
+
       // Negative pid means "the process group led by pgid".
       process.kill(-pgid, signal);
     },
 
     signalPid(pid, signal) {
+      if (!Number.isInteger(pid) || pid < LOWEST_SIGNALLABLE) return;
+
       process.kill(pid, signal);
     },
 
