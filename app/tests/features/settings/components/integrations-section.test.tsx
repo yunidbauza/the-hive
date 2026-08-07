@@ -8,12 +8,21 @@ import {
   type NotificationPrefs,
 } from '@shared/config-contract';
 import type { GhStatus, IntegrationsStatus } from '@shared/ipc-contract';
+import type { JiraStatus } from '@shared/jira-contract';
 
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
 const setNotificationPrefs = vi.fn();
 const readIntegrationsStatus = vi.fn();
+const readJiraStatus = vi.fn<() => Promise<JiraStatus | null>>();
+
+vi.mock('@/lib/jira', () => ({
+  readJiraStatus: () => readJiraStatus(),
+  saveJiraToken: () => Promise.resolve(null),
+  clearJiraToken: () => Promise.resolve(null),
+  testJiraConnection: () => Promise.resolve(null),
+}));
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -58,6 +67,12 @@ const install = (notifications?: Partial<NotificationPrefs>): void => {
 beforeEach(() => {
   vi.clearAllMocks();
   readIntegrationsStatus.mockResolvedValue(status());
+  readJiraStatus.mockResolvedValue({
+    site: null,
+    email: null,
+    credential: { kind: 'none' },
+    encryptionAvailable: true,
+  });
   install();
 });
 
@@ -252,5 +267,48 @@ describe('IntegrationsSection — without a bridge', () => {
     render(<IntegrationsSection />);
 
     expect(readIntegrationsStatus).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * HIVE-67's two groups, asserted from the section rather than in isolation.
+ *
+ * What this covers that the group suites cannot: that the section reads the
+ * Jira status on open, and that both groups are actually mounted — a component
+ * with perfect unit tests and no call site renders nowhere.
+ */
+describe('IntegrationsSection — Jira', () => {
+  it('reads the Jira status when the pane opens', async () => {
+    render(<IntegrationsSection />);
+
+    await screen.findByText('Jira site');
+    expect(readJiraStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders both groups', async () => {
+    render(<IntegrationsSection />);
+
+    expect(await screen.findByText('Jira site')).toBeInTheDocument();
+    // By role: "API token" is both the group heading and the field's label.
+    expect(
+      screen.getByRole('heading', { name: 'API token' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Site')).toBeInTheDocument();
+    expect(screen.getByLabelText('Account email')).toBeInTheDocument();
+    expect(screen.getByLabelText('API token')).toBeInTheDocument();
+  });
+
+  it('says it is checking until the status arrives', () => {
+    let resolve: (value: JiraStatus | null) => void = () => {};
+    readJiraStatus.mockReturnValue(
+      new Promise<JiraStatus | null>((done) => {
+        resolve = done;
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(screen.getAllByText('Checking\u2026').length).toBeGreaterThan(0);
+    resolve(null);
   });
 });

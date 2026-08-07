@@ -8,6 +8,7 @@ import type {
   RenameProjectRequest,
   ReorderProjectsRequest,
   RepointProjectRequest,
+  SetJiraRequest,
   SetNotificationsRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
@@ -158,6 +159,20 @@ export const setProjectRuntimeConfig = (
 export const setNotificationPrefs = (
   request: SetNotificationsRequest,
 ): Promise<void> => mutate((bridge) => bridge.config.setNotifications(request));
+
+/**
+ * Change the Jira site and account email (HIVE-67).
+ *
+ * Here rather than in `lib/jira.ts` because it writes the config file and
+ * returns a `ConfigSnapshot`, so it needs this module's `mutate` to install the
+ * fresh one — the same path every other settings write takes. The *token* lives
+ * in `lib/jira.ts`, because it is not config and does not produce a snapshot.
+ *
+ * `null` clears a field; an absent field is untouched, so saving the site never
+ * restates the email.
+ */
+export const setJiraConnection = (request: SetJiraRequest): Promise<void> =>
+  mutate((bridge) => bridge.config.setJira(request));
 
 /**
  * What this machine's `gh` looks like (story 106).

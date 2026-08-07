@@ -1,0 +1,68 @@
+import type {
+  JiraIdentity,
+  JiraResult,
+  JiraStatus,
+} from '@shared/jira-contract';
+
+/**
+ * The renderer's half of the Jira bridge (HIVE-67).
+ *
+ * Mirrors `project-config.ts` in the two ways that matter. **No bridge returns
+ * `null`** — that is the browser demo, not a failure, and story 083's rule is to
+ * feature-detect the bridge rather than the user agent. **A rejected channel
+ * returns `null` too**, logged once, because a settings section that throws when
+ * IPC hiccups is worse than one that says it does not know.
+ *
+ * No module-level cache here, unlike `project-config.ts`. The credential state
+ * is read by exactly one pane, which holds it in component state and re-reads
+ * after each write — there is no second consumer for a cache to keep in sync,
+ * and a stale credential state is the one thing this surface must not show.
+ *
+ * The token appears in exactly one function's parameter list, and is never
+ * logged — including on the failure path, which is the branch where a careless
+ * `console.error('…', request)` would put a live credential in the devtools
+ * console.
+ */
+
+async function call<T>(
+  verb: string,
+  run: (bridge: NonNullable<Window['hive']>) => Promise<T>,
+): Promise<T | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await run(bridge);
+  } catch (cause) {
+    // The verb name and the cause — never the payload. `saveJiraToken`'s
+    // payload is a secret, and this line is shared by all four verbs.
+    console.error(`[hive] jira.${verb} failed:`, cause);
+    return null;
+  }
+}
+
+/** Where the credential comes from, and what the site and email are. */
+export const readJiraStatus = (): Promise<JiraStatus | null> =>
+  call('status', (bridge) => bridge.jira.status());
+
+/**
+ * Store a token.
+ *
+ * Answers with the fresh status, so the pane never has to follow a write with a
+ * read — the same contract every mutating config verb has.
+ */
+export const saveJiraToken = (token: string): Promise<JiraStatus | null> =>
+  call('setToken', (bridge) => bridge.jira.setToken({ token }));
+
+export const clearJiraToken = (): Promise<JiraStatus | null> =>
+  call('clearToken', (bridge) => bridge.jira.clearToken());
+
+/**
+ * `GET /rest/api/3/myself`.
+ *
+ * Resolves `null` only when the channel itself failed. A Jira that answered
+ * with a refusal is a `JiraResult` whose `ok` is false — that is an answer, and
+ * the pane shows it.
+ */
+export const testJiraConnection = (): Promise<JiraResult<JiraIdentity> | null> =>
+  call('test', (bridge) => bridge.jira.test());

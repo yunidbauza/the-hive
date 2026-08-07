@@ -2,12 +2,16 @@ import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
 
 import { Switch } from '@components/ui/switch';
+import { JiraConnectionGroup } from '@features/settings/components/jira-connection-group';
+import { JiraCredentialGroup } from '@features/settings/components/jira-credential-group';
 import { PathProbes } from '@features/settings/components/path-probes';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
+import { readJiraStatus } from '@lib/jira';
 import { readIntegrationsStatus, setNotificationPrefs } from '@lib/project-config';
 import { NOTIFICATION_KEYS, type NotificationPrefs } from '@shared/config-contract';
 import type { GhStatus, IntegrationsStatus } from '@shared/ipc-contract';
+import type { JiraStatus } from '@shared/jira-contract';
 
 /**
  * Integrations & notifications (story 106).
@@ -152,6 +156,7 @@ function GhSummary({ gh }: { gh: GhStatus }) {
 export function IntegrationsSection() {
   const snapshot = useProjectConfig();
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
+  const [jira, setJira] = useState<JiraStatus | null>(null);
 
   /**
    * Asked once, when the pane opens — and keyed on *whether* there is a
@@ -174,11 +179,25 @@ export function IntegrationsSection() {
     void readIntegrationsStatus().then((next) => {
       if (!cancelled) setStatus(next);
     });
+    void readJiraStatus().then((next) => {
+      if (!cancelled) setJira(next);
+    });
 
     return () => {
       cancelled = true;
     };
   }, [hasSnapshot]);
+
+  /**
+   * Re-read after a Jira write.
+   *
+   * Unlike `gh`, this answer *does* change from inside the pane — all four
+   * verbs can change it — so the "asked once" rule above governs the initial
+   * read, not the lifetime.
+   */
+  const refreshJira = () => {
+    void readJiraStatus().then(setJira);
+  };
 
   if (!snapshot) {
     return (
@@ -242,6 +261,17 @@ export function IntegrationsSection() {
           </p>
         </div>
       </SettingsGroup>
+
+      {jira === null ? (
+        <SettingsGroup title="Jira" description="Real tickets in the WORK tab.">
+          <p className="text-[12.5px] text-subtle">Checking…</p>
+        </SettingsGroup>
+      ) : (
+        <>
+          <JiraConnectionGroup status={jira} onChanged={refreshJira} />
+          <JiraCredentialGroup status={jira} onChanged={refreshJira} />
+        </>
+      )}
 
       <SettingsGroup
         title="Notifications"

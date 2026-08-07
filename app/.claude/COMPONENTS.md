@@ -104,6 +104,7 @@ contract for their owning story, not existing code.
 | `StatusDot` | `ui/status-dot.tsx` | **030** (used by 031, 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean`, `label?: string`, `className?: string` | **built** |
 | `Icon` | `ui/icon.tsx` | **031** (also 033, 051, 053) | `name: string`, `size?: number`, `weight?: IconWeight`, `className?: string` | **built** |
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
+| `SecretField` | `ui/secret-field.tsx` | **HIVE-67** | `label: string`, `value: string`, `onChange(value: string): void`, `onCommit?(): void`, `placeholder?: string`, `hint?: string`, `className?: string` | **built** |
 
 `Badge` moved from story 030 to 021: the header's bell needs an unread count,
 and 021 lands first. 030's tab-bar badges reuse it rather than building a second.
@@ -128,6 +129,13 @@ Contracts worth knowing before reusing them:
   never be announced. The header's bell does exactly this.
 - **`StatusDot` follows the same label contract.** With a `label` it announces
   `"lead-form status: needs input"`; without one it is `aria-hidden` decoration.
+- **`SecretField` is not a masked `TextField`, and must not become one.** It is
+  **write-only**: it never displays a stored value, because the app cannot read
+  one back. Its `value` is always a *new* secret on its way in, and what is
+  already stored is described in prose beside the field. A `type="password"` prop
+  on `TextField` would put a masked box on screen that implies a round trip which
+  does not exist. It also sets `autocomplete="off"` and `spellcheck="false"`, and
+  carries a reveal toggle so a truncated paste can be caught before saving.
   Omit it wherever a visible status label already sits beside the dot (031); pass
   it where none does (032), so status is never carried by colour alone.
 - **`StatusDot` derives its pulse from its status**, so only `working` pulses.
