@@ -232,7 +232,21 @@ export function createJira(deps: {
       const connection = connect();
       if (!connection.ok) return connection.error;
 
-      const jql = request.jql ?? JIRA_DEFAULT_JQL;
+      /**
+       * Three levels, most specific first (HIVE-69).
+       *
+       * An explicit request wins — that is the settings pane's "Test query",
+       * checking a draft before it is saved. Otherwise the configured override,
+       * which **replaces** the default rather than being appended to: a user
+       * who writes JQL expects their query to be the query. Otherwise the
+       * default, whose `currentUser()` Jira evaluates so the app never needs an
+       * account id.
+       *
+       * Resolved here rather than in the renderer because main already reads
+       * the config on every verb, and passing it in would mean the store
+       * holding a setting it would then race a hand-edit of the file over.
+       */
+      const jql = request.jql ?? config().jira.jql ?? JIRA_DEFAULT_JQL;
       const issues: JiraIssue[] = [];
       let nextPageToken: string | undefined;
       let capped = false;

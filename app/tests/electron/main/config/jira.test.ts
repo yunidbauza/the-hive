@@ -127,6 +127,7 @@ describe('setJira', () => {
     expect(snapshot.jira).toEqual({
       site: 'a.b.net',
       email: 'me@example.com',
+      jql: null,
     });
     expect(onDisk().jira).toEqual({
       site: 'a.b.net',
@@ -149,7 +150,7 @@ describe('setJira', () => {
     expect(onDisk().jira).toBeUndefined();
   });
 
-  it('preserves an unknown key inside the block — jql, which HIVE-69 adds', () => {
+  it('preserves a hand-written jql across a write of another field', () => {
     seed(
       '{\n  "version": 2,\n  "jira": { "site": "a.b.net", "jql": "assignee = currentUser()" }\n}\n',
     );
@@ -171,7 +172,11 @@ describe('setJira', () => {
     setJira({ site: null });
 
     expect(onDisk().jira).toEqual({ email: 'me@example.com' });
-    expect(setJira({ email: null }).jira).toEqual({ site: null, email: null });
+    expect(setJira({ email: null }).jira).toEqual({
+      site: null,
+      email: null,
+      jql: null,
+    });
   });
 
   it('replaces a block that was not an object rather than merging into it', () => {
@@ -217,6 +222,7 @@ describe('setJira', () => {
     expect(setJira({ site: 'a.b.net' }).jira).toEqual({
       site: 'a.b.net',
       email: 'me@example.com',
+      jql: null,
     });
   });
 });

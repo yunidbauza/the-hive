@@ -24,7 +24,13 @@ describe('createInitialState', () => {
   it('does not share nested arrays between calls', () => {
     const first = createInitialState();
     first.entities['hero-refresh'].lines.push({ text: 'leak', color: 'red' });
-    first.tickets.push({ key: 'X-1', status: 'To Do', title: 'x', sessions: [] });
+    first.tickets.push({
+      key: 'X-1',
+      status: 'To Do',
+      statusCategory: 'todo',
+      title: 'x',
+      sessions: [],
+    });
 
     const second = createInitialState();
 

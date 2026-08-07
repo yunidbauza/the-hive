@@ -5,11 +5,24 @@ import { TicketPrRow } from '@features/work/components/ticket-pr-row';
 import { TicketSessionRow } from '@features/work/components/ticket-session-row';
 import { useTicketPrs } from '@stores/hive-store';
 
-const STATUS_TEXT: Record<Ticket['status'], string> = {
-  'To Do': 'text-subtle',
-  'In Progress': 'text-brand',
-  'In Review': 'text-amber',
-  Done: 'text-green',
+/**
+ * Colour by Jira's own category, never by the status *name* (HIVE-69).
+ *
+ * This map was keyed on a four-literal union until the `Ticket` widening, which
+ * is precisely why the widening had to happen: real statuses are per-workflow
+ * and arbitrary, so a project with "Blocked", "In QA" or "Awaiting deploy" would
+ * have had no entry here and rendered unstyled — or, worse, been mapped onto one
+ * of the four and told the user something false.
+ *
+ * Three buckets is the whole set, because `statusCategory` is
+ * `new | indeterminate | done` at the source. Jira uses the same field to colour
+ * its own lozenge, so this agrees with what the user sees in Jira and there is
+ * no table to maintain as workflows change.
+ */
+const CATEGORY_TEXT: Record<Ticket['statusCategory'], string> = {
+  todo: 'text-subtle',
+  'in-progress': 'text-brand',
+  done: 'text-green',
 };
 
 interface TicketCardProps {
@@ -30,16 +43,31 @@ export function TicketCard({ ticket }: TicketCardProps) {
   return (
     <article className="flex flex-col gap-[7px] rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)]">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[12px] font-bold text-brand">
-          {ticket.key}
-        </span>
+        {ticket.url === undefined ? (
+          <span className="font-mono text-[12px] font-bold text-brand">
+            {ticket.key}
+          </span>
+        ) : (
+          /*
+            A real issue links out; a fixture has nowhere to go. The URL was
+            built in main, so the renderer never had to learn the site.
+          */
+          <a
+            href={ticket.url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono text-[12px] font-bold text-brand hover:underline"
+          >
+            {ticket.key}
+          </a>
+        )}
 
         <span className="flex-1" />
 
         <span
           className={cn(
             'shrink-0 rounded-full bg-chip px-[9px] py-0.5 text-[10px] font-bold uppercase tracking-[0.05em]',
-            STATUS_TEXT[ticket.status],
+            CATEGORY_TEXT[ticket.statusCategory],
           )}
         >
           {ticket.status}

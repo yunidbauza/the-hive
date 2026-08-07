@@ -47,14 +47,23 @@ describe('WorkPanel', () => {
     ).toBeInTheDocument();
   });
 
-  it('colours the status pill by status', () => {
+  /**
+   * Colour comes from `statusCategory`, not from the status name (HIVE-69).
+   *
+   * "In Review" is `indeterminate` in Jira — the same bucket as "In Progress" —
+   * so it is brand-coloured rather than amber. That is a deliberate change: the
+   * app now agrees with the colour Jira paints its own lozenge, instead of
+   * holding a second opinion in a table that would need a new row every time
+   * somebody added a workflow state.
+   */
+  it('colours the status pill by category, not by name', () => {
     render(<WorkPanel />);
 
     expect(within(card('GRAC-3018')).getByText('In Progress')).toHaveClass(
       'text-brand',
     );
     expect(within(card('GRAC-2991')).getByText('In Review')).toHaveClass(
-      'text-amber',
+      'text-brand',
     );
     expect(within(card('GRAC-2810')).getByText('Done')).toHaveClass(
       'text-green',
@@ -160,6 +169,7 @@ describe('WorkPanel', () => {
           {
             key: 'GHOST-1',
             status: 'To Do',
+            statusCategory: 'todo',
             title: 'Names a session that never existed',
             sessions: ['not-a-session', 'hero-refresh'],
           },

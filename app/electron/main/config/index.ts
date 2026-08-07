@@ -578,6 +578,7 @@ export function setJira(request: SetJiraRequest): ConfigSnapshot {
 
       applyOverride(current, 'site', request.site);
       applyOverride(current, 'email', request.email);
+      applyOverride(current, 'jql', request.jql);
 
       return { ...draft, jira: current };
     }),
@@ -632,7 +633,7 @@ export function resetConfig(): ConfigSnapshot {
  */
 function applyOverride(
   entry: Record<string, unknown>,
-  key: 'shell' | 'claudeCommand' | 'env' | 'site' | 'email',
+  key: 'shell' | 'claudeCommand' | 'env' | 'site' | 'email' | 'jql',
   value: string | Record<string, string> | null | undefined,
 ): void {
   if (value === undefined) return;

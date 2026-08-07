@@ -123,6 +123,35 @@ from a clean copy and one test's mutation cannot leak into the next.
 **Fixtures are store-only consumers.** Nothing that renders may import them —
 enforced by an import zone, not by review.
 
+### Tickets have two possible sources (HIVE-69)
+
+The WORK tab's tickets are fixtures in the browser target and real Jira issues on
+the desktop, and `ticketSource` on `hive-store` says which:
+
+```typescript
+type TicketSource =
+  | { kind: 'fixtures' }                              // the browser demo
+  | { kind: 'unconfigured' }                          // desktop, no credential
+  | { kind: 'live'; stale: boolean; capped: boolean }
+  | { kind: 'failed'; message: string };
+```
+
+This is the payoff of the store-only rule rather than an exception to it:
+`work-panel.tsx` still maps over `useTickets()` and never learns where the array
+came from. `refreshTickets()` gates on `isDesktop()` — feature-detecting the
+bridge, never the user agent — so the demo pays nothing and keeps its eight
+tickets.
+
+Two properties worth not breaking:
+
+- **Staleness over emptiness.** `reportTicketFailure` keeps the tickets it has
+  and only flips `stale`. It becomes `failed` only when there is nothing to keep.
+  Replacing a populated panel with an error is the wrong trade for a tool the
+  user leaves open on a second monitor.
+- **`capped` is not a truncation.** Reaching the 200-issue limit sets the flag so
+  the panel can say so. A backlog silently cut to 200 is the one failure a read
+  path can have that the user cannot detect for themselves.
+
 ## The console grammar
 
 `runOrchCommand` takes an **already-parsed** `ParsedCommand`, not a string. The

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Switch } from '@components/ui/switch';
 import { JiraConnectionGroup } from '@features/settings/components/jira-connection-group';
 import { JiraCredentialGroup } from '@features/settings/components/jira-credential-group';
+import { JiraQueryGroup } from '@features/settings/components/jira-query-group';
 import { PathProbes } from '@features/settings/components/path-probes';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
@@ -270,6 +271,20 @@ export function IntegrationsSection() {
         <>
           <JiraConnectionGroup status={jira} onChanged={refreshJira} />
           <JiraCredentialGroup status={jira} onChanged={refreshJira} />
+          <JiraQueryGroup
+            jql={snapshot.jira.jql}
+            /*
+              A test is only meaningful once a request could actually be made.
+              Offering the button before then would report "no site configured"
+              as though it were a problem with the query.
+            */
+            canTest={
+              jira.site !== null &&
+              jira.email !== null &&
+              (jira.credential.kind === 'stored' ||
+                jira.credential.kind === 'env')
+            }
+          />
         </>
       )}
 

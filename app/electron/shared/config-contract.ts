@@ -186,13 +186,29 @@ export interface JiraConfig {
   site: string | null;
   /** The account the API token belongs to. Half of the Basic credential. */
   email: string | null;
+  /**
+   * A JQL override for the WORK tab (HIVE-69).
+   *
+   * `null` means the default query. When set it **replaces** the default
+   * wholesale rather than being appended to — a user who writes JQL expects
+   * their query to be the query.
+   */
+  jql: string | null;
 }
 
 /** Nothing configured. Both halves are needed before a request can be made. */
-export const DEFAULT_JIRA: JiraConfig = { site: null, email: null };
+export const DEFAULT_JIRA: JiraConfig = {
+  site: null,
+  email: null,
+  jql: null,
+};
 
 /** The block's keys, for the parser's exact-key check. */
-export const JIRA_KEYS: readonly (keyof JiraConfig)[] = ['site', 'email'];
+export const JIRA_KEYS: readonly (keyof JiraConfig)[] = [
+  'site',
+  'email',
+  'jql',
+];
 
 /**
  * What `window.hive.config.get()` answers with.
@@ -501,6 +517,8 @@ export interface SetNotificationsRequest {
 export interface SetJiraRequest {
   site?: string | null;
   email?: string | null;
+  /** HIVE-69's override. `null` restores the default query. */
+  jql?: string | null;
 }
 
 /** Payload of `jira:set-token` (HIVE-67). The one payload carrying a secret. */

@@ -662,7 +662,7 @@ export function assertJiraToken(value: unknown, label: string): string {
  * the config write path.
  */
 export function parseSetJiraRequest(input: unknown): SetJiraRequest {
-  const raw = assertShape(input, [], 'setJira', ['site', 'email']);
+  const raw = assertShape(input, [], 'setJira', ['site', 'email', 'jql']);
 
   const request: SetJiraRequest = {
     ...(raw.site !== undefined
@@ -678,6 +678,11 @@ export function parseSetJiraRequest(input: unknown): SetJiraRequest {
               ? null
               : assertJiraEmail(raw.email, 'setJira.email'),
         }
+      : {}),
+    // HIVE-69. Same bounded, control-character-free treatment the search verb
+    // gives a query, and for the same reason: JQL is not parsed here.
+    ...(raw.jql !== undefined
+      ? { jql: raw.jql === null ? null : assertText(raw.jql, 'setJira.jql') }
       : {}),
   };
 

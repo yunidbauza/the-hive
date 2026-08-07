@@ -21,14 +21,17 @@ import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
+
 import { isDesktop } from '@config/runtime';
 import { reset as resetClock, stamp } from '@lib/fake-clock';
+import { readJiraStatus, searchJiraIssues } from '@lib/jira';
 import {
   projectConfigSnapshot,
   subscribeProjectConfig,
 } from '@lib/project-config';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
+import type { JiraIssue } from '@shared/jira-contract';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -79,16 +82,43 @@ export type SendOutcome =
   | { kind: 'refused'; reason: string }
   | { kind: 'demo'; timer: ReturnType<typeof setTimeout> };
 
+/**
+ * Where the WORK tab's tickets came from, and how much to trust them (HIVE-69).
+ *
+ * A discriminated union rather than a pair of booleans, because the five cases
+ * want five different things on screen and only one of them is an error.
+ */
+export type TicketSource =
+  /** The browser demo. Fixtures are its data, not a degraded mode. */
+  | { kind: 'fixtures' }
+  /** Desktop with nothing configured. The panel explains rather than sits empty. */
+  | { kind: 'unconfigured' }
+  /** Desktop, at least one successful read. */
+  | { kind: 'live'; stale: boolean; capped: boolean }
+  /** Desktop, and the first read failed. There is nothing to keep. */
+  | { kind: 'failed'; message: string };
+
 interface HiveState {
   entities: Record<string, Entity>;
   order: string[];
   agentOrder: string[];
   projects: ReturnType<typeof createInitialState>['projects'];
   tickets: ReturnType<typeof createInitialState>['tickets'];
+  /** Where {@link HiveState.tickets} came from (HIVE-69). */
+  ticketSource: TicketSource;
   prs: ReturnType<typeof createInitialState>['prs'];
   notifs: ReturnType<typeof createInitialState>['notifs'];
   feed: FeedItem[];
   orchLines: TermLine[];
+
+  /** Replace the ticket list with real issues (HIVE-69). */
+  hydrateTickets: (issues: JiraIssue[], capped: boolean) => void;
+  /** A read failed. Keeps the tickets it has and marks them stale (HIVE-69). */
+  reportTicketFailure: (message: string) => void;
+  /** Desktop, but no Jira credential is configured (HIVE-69). */
+  reportTicketsUnconfigured: () => void;
+  /** Read the configured query and install the answer (HIVE-69). */
+  refreshTickets: () => Promise<void>;
 
   spawnSession: (
     repo: string,
@@ -194,6 +224,14 @@ const line = (text: string, color: TermLine['color'] = 'ink'): TermLine => ({
 
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...createInitialState(),
+  /**
+   * Fixtures until something says otherwise.
+   *
+   * The browser target never leaves this state, which is the point: `pnpm dev`
+   * has no main process, so the fixtures are its data rather than a fallback
+   * from a read that failed.
+   */
+  ticketSource: { kind: 'fixtures' } as TicketSource,
 
   /**
    * Create a session and open its tab.
@@ -648,10 +686,106 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       };
     }),
 
+  /**
+   * Install real issues (HIVE-69).
+   *
+   * `sessions` is empty for every one of them, and that is honest rather than
+   * unfinished: linking a Hive session to a Jira ticket is the app's own concern
+   * with no Jira counterpart, and no story in this epic owns it. A real card
+   * renders its key, status and title, and nothing pretends to know which
+   * session is working it.
+   */
+  hydrateTickets: (issues, capped) =>
+    set({
+      tickets: issues.map((issue) => ({
+        key: issue.key,
+        status: issue.status,
+        statusCategory: issue.statusCategory,
+        title: issue.summary,
+        sessions: [],
+        url: issue.url,
+      })),
+      ticketSource: { kind: 'live', stale: false, capped },
+    }),
+
+  /**
+   * A read failed — **staleness over emptiness**.
+   *
+   * If there are already live tickets they stay exactly as they are and only
+   * `stale` flips. Replacing a populated panel with an error is the wrong trade
+   * for a tool the user leaves open on a second monitor: the tickets it is
+   * showing were true a minute ago, and "possibly out of date" is far more
+   * useful than nothing at all.
+   *
+   * With no live tickets there is nothing to keep, so the failure is the state.
+   */
+  reportTicketFailure: (message) =>
+    set((state) => {
+      if (state.ticketSource.kind === 'live') {
+        return {
+          ticketSource: { ...state.ticketSource, stale: true },
+        };
+      }
+      return { ticketSource: { kind: 'failed', message } };
+    }),
+
+  reportTicketsUnconfigured: () =>
+    set({ tickets: [], ticketSource: { kind: 'unconfigured' } }),
+
+  /**
+   * Read the configured query and install the answer (HIVE-69).
+   *
+   * Lives on the store rather than in a hook for the same reason `sendToEntity`
+   * does: it is a domain action with a browser-target gate, and the gate is
+   * `isDesktop()` — feature-detecting the bridge, never the user agent.
+   *
+   * Never throws. `lib/jira.ts` answers `null` instead of rejecting, and `null`
+   * here means the channel itself failed, which is a failure with a message
+   * rather than an exception a panel would have to catch.
+   */
+  refreshTickets: async () => {
+    // The browser demo keeps its fixtures. Nothing to read, nothing to fail.
+    if (!isDesktop()) return;
+
+    const status = await readJiraStatus();
+    if (status === null) {
+      get().reportTicketFailure('The app could not reach its own main process.');
+      return;
+    }
+    if (
+      status.site === null ||
+      status.email === null ||
+      status.credential.kind === 'none' ||
+      status.credential.kind === 'unavailable'
+    ) {
+      get().reportTicketsUnconfigured();
+      return;
+    }
+
+    /**
+     * No `jql` here on purpose.
+     *
+     * The configured override is applied in **main**, which already reads the
+     * config on every verb. Passing it from the renderer would mean the store
+     * reading a setting, holding it, and racing a hand-edit of the file — for a
+     * value main has in front of it anyway.
+     */
+    const result = await searchJiraIssues();
+    if (result === null) {
+      get().reportTicketFailure('The app could not reach its own main process.');
+      return;
+    }
+    if (!result.ok) {
+      get().reportTicketFailure(result.error.message);
+      return;
+    }
+    get().hydrateTickets(result.value.issues, result.value.capped);
+  },
+
   reset: () => {
     spawnCounter = 0;
     resetClock();
-    set(createInitialState());
+    set({ ...createInitialState(), ticketSource: { kind: 'fixtures' } });
   },
 }));
 
@@ -918,6 +1052,14 @@ export const useProjectSessions = (projectId: string) =>
 /** Every work item, in fixture order (story 032). */
 export const useTickets = () =>
   useHiveStore(useShallow((state) => state.tickets));
+
+/** Where the ticket list came from, and how much to trust it (HIVE-69). */
+export const useTicketSource = (): TicketSource =>
+  useHiveStore((state) => state.ticketSource);
+
+/** The refresh action, for the panel's mount effect and its retry (HIVE-69). */
+export const useRefreshTickets = (): (() => Promise<void>) =>
+  useHiveStore((state) => state.refreshTickets);
 
 /**
  * PRs reachable from a ticket's sessions, with their state resolved (story 032).

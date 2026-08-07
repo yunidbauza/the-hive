@@ -1,0 +1,202 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { useHiveStore } from '@stores/hive-store';
+import type { JiraStatus } from '@shared/jira-contract';
+
+/**
+ * `refreshTickets` (HIVE-69).
+ *
+ * The orchestration between "what is configured" and "what the panel shows".
+ * `lib/jira` is mocked because what is under test is the *decision tree* — which
+ * of the three actions each answer produces — and the verbs themselves have
+ * their own suite.
+ */
+
+const readJiraStatus = vi.fn<() => Promise<JiraStatus | null>>();
+const searchJiraIssues = vi.fn();
+
+vi.mock('@/lib/jira', () => ({
+  readJiraStatus: () => readJiraStatus(),
+  searchJiraIssues: (request?: unknown) => searchJiraIssues(request),
+  saveJiraToken: () => Promise.resolve(null),
+  clearJiraToken: () => Promise.resolve(null),
+  testJiraConnection: () => Promise.resolve(null),
+  readJiraIssue: () => Promise.resolve(null),
+}));
+
+const status = (over: Partial<JiraStatus> = {}): JiraStatus => ({
+  site: 'behiques.atlassian.net',
+  email: 'me@example.com',
+  credential: { kind: 'stored', email: 'me@example.com' },
+  encryptionAvailable: true,
+  ...over,
+});
+
+const issue = {
+  key: 'HIVE-1',
+  summary: 'A real ticket',
+  status: 'In Progress',
+  statusCategory: 'in-progress' as const,
+  issueType: 'Story',
+  priority: null,
+  assignee: null,
+  updated: '2026-08-07T00:00:00.000-0400',
+  url: 'https://behiques.atlassian.net/browse/HIVE-1',
+};
+
+const state = () => useHiveStore.getState();
+
+/** `isDesktop()` feature-detects `window.hive`. */
+const asDesktop = (): void => {
+  window.hive = {} as NonNullable<Window['hive']>;
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  state().reset();
+  readJiraStatus.mockResolvedValue(status());
+  searchJiraIssues.mockResolvedValue({
+    ok: true,
+    value: { issues: [issue], capped: false },
+  });
+});
+
+afterEach(() => {
+  delete window.hive;
+});
+
+describe('the browser target', () => {
+  it('keeps its fixtures and asks nothing', async () => {
+    // No bridge: this is the demo, and fixtures are its data.
+    await state().refreshTickets();
+
+    expect(readJiraStatus).not.toHaveBeenCalled();
+    expect(state().ticketSource).toEqual({ kind: 'fixtures' });
+    expect(state().tickets).toHaveLength(8);
+  });
+});
+
+describe('on desktop', () => {
+  beforeEach(asDesktop);
+
+  it('hydrates from a successful search', async () => {
+    await state().refreshTickets();
+
+    expect(state().tickets.map((t) => t.key)).toEqual(['HIVE-1']);
+    expect(state().ticketSource).toEqual({
+      kind: 'live',
+      stale: false,
+      capped: false,
+    });
+  });
+
+  it('sends no jql — the override is applied in main', async () => {
+    await state().refreshTickets();
+
+    // Passing it from here would mean the store holding a setting and racing a
+    // hand-edit of the file, for a value main has in front of it anyway.
+    expect(searchJiraIssues).toHaveBeenCalledTimes(1);
+    expect(searchJiraIssues.mock.calls[0]?.[0]).toBeUndefined();
+  });
+
+  it('carries capped through to the source', async () => {
+    searchJiraIssues.mockResolvedValue({
+      ok: true,
+      value: { issues: [issue], capped: true },
+    });
+
+    await state().refreshTickets();
+
+    expect(state().ticketSource).toEqual({
+      kind: 'live',
+      stale: false,
+      capped: true,
+    });
+  });
+
+  for (const [label, over] of [
+    ['no site', { site: null }],
+    ['no email', { email: null }],
+    ['no credential', { credential: { kind: 'none' as const } }],
+    [
+      'no keyring and no env token',
+      { credential: { kind: 'unavailable' as const, reason: 'no keyring' } },
+    ],
+  ] as [string, Partial<JiraStatus>][]) {
+    it(`reports unconfigured with ${label}, without searching`, async () => {
+      readJiraStatus.mockResolvedValue(status(over));
+
+      await state().refreshTickets();
+
+      expect(searchJiraIssues).not.toHaveBeenCalled();
+      expect(state().ticketSource).toEqual({ kind: 'unconfigured' });
+    });
+  }
+
+  it('accepts an environment credential as configured', async () => {
+    readJiraStatus.mockResolvedValue(
+      status({ credential: { kind: 'env', variable: 'JIRA_API_KEY' } }),
+    );
+
+    await state().refreshTickets();
+
+    expect(state().ticketSource).toMatchObject({ kind: 'live' });
+  });
+
+  it("reports Jira's own message when the search is refused", async () => {
+    searchJiraIssues.mockResolvedValue({
+      ok: false,
+      error: { kind: 'bad-query', message: "Jira could not parse that." },
+    });
+
+    await state().refreshTickets();
+
+    expect(state().ticketSource).toEqual({
+      kind: 'failed',
+      message: "Jira could not parse that.",
+    });
+  });
+
+  it('reports a broken channel distinctly from a Jira refusal', async () => {
+    readJiraStatus.mockResolvedValue(null);
+
+    await state().refreshTickets();
+
+    expect(state().ticketSource).toEqual({
+      kind: 'failed',
+      message: 'The app could not reach its own main process.',
+    });
+  });
+
+  it('reports a broken channel on the search hop too', async () => {
+    searchJiraIssues.mockResolvedValue(null);
+
+    await state().refreshTickets();
+
+    expect(state().ticketSource).toMatchObject({ kind: 'failed' });
+  });
+
+  it('keeps the last good tickets when a later refresh fails', async () => {
+    await state().refreshTickets();
+    expect(state().tickets).toHaveLength(1);
+
+    searchJiraIssues.mockResolvedValue({
+      ok: false,
+      error: { kind: 'offline', message: 'Could not reach Jira.' },
+    });
+    await state().refreshTickets();
+
+    // Staleness over emptiness, end to end.
+    expect(state().tickets).toHaveLength(1);
+    expect(state().ticketSource).toEqual({
+      kind: 'live',
+      stale: true,
+      capped: false,
+    });
+  });
+
+  it('never throws, whatever the verbs answer', async () => {
+    readJiraStatus.mockResolvedValue(null);
+    await expect(state().refreshTickets()).resolves.toBeUndefined();
+  });
+});

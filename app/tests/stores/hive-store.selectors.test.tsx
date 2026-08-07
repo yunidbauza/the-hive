@@ -243,6 +243,7 @@ describe('hive-store selectors', () => {
             {
               key: 'GHOST-1',
               status: 'To Do',
+              statusCategory: 'todo',
               title: 'Names a session that never existed',
               sessions: ['not-a-session', 'hero-refresh'],
             },

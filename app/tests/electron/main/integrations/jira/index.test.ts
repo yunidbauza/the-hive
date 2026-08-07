@@ -80,6 +80,7 @@ const build = (options: {
 const CONFIGURED: JiraConfig = {
   site: 'behiques.atlassian.net',
   email: 'me@example.com',
+  jql: null,
 };
 
 describe('status', () => {
@@ -141,7 +142,7 @@ describe('clearToken', () => {
 describe('test', () => {
   it('refuses before a site is configured, without calling fetch', async () => {
     const result = await build({
-      jira: { site: null, email: 'me@example.com' },
+      jira: { site: null, email: 'me@example.com', jql: null },
     }).test();
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.message).toMatch(/site/i);
@@ -149,7 +150,7 @@ describe('test', () => {
 
   it('refuses before an email is configured, without calling fetch', async () => {
     const result = await build({
-      jira: { site: 'behiques.atlassian.net', email: null },
+      jira: { site: 'behiques.atlassian.net', email: null, jql: null },
     }).test();
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.message).toMatch(/email/i);
@@ -238,7 +239,11 @@ describe('test', () => {
   });
 
   it('reads the site fresh, so a config edit is picked up without a restart', async () => {
-    let jiraConfig: JiraConfig = { site: 'first.atlassian.net', email: 'me@example.com' };
+    let jiraConfig: JiraConfig = {
+      site: 'first.atlassian.net',
+      email: 'me@example.com',
+      jql: null,
+    };
     const seen: string[] = [];
     const fetch: FetchLike = (url) => {
       seen.push(url);
@@ -258,7 +263,11 @@ describe('test', () => {
     });
 
     await jira.test();
-    jiraConfig = { site: 'second.atlassian.net', email: 'me@example.com' };
+    jiraConfig = {
+      site: 'second.atlassian.net',
+      email: 'me@example.com',
+      jql: null,
+    };
     await jira.test();
 
     expect(seen[0]).toContain('first.atlassian.net');
@@ -362,7 +371,7 @@ describe('search - the query', () => {
 
   it('refuses before a site is configured, without calling fetch', async () => {
     const result = await build({
-      jira: { site: null, email: 'me@example.com' },
+      jira: { site: null, email: 'me@example.com', jql: null },
     }).search({});
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.message).toMatch(/site/i);
@@ -597,7 +606,7 @@ describe('issue', () => {
   });
 
   it('refuses before configuration, without calling fetch', async () => {
-    const result = await build({ jira: { site: null, email: null } }).issue({
+    const result = await build({ jira: { site: null, email: null, jql: null } }).issue({
       key: 'HIVE-68',
     });
     expect(result.ok).toBe(false);
