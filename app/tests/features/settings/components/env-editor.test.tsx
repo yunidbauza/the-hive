@@ -83,6 +83,28 @@ describe('EnvEditor', () => {
     expect(screen.getByRole('button', { name: 'Save variables' })).toBeDisabled();
   });
 
+  /**
+   * The user-facing half of HIVE-64.
+   *
+   * `buildEnv` strips `CLAUDE_*` from `injected` as well as from the ambient
+   * environment, so without a refusal here the variable would save, render as
+   * set, and then be dropped on every spawn. The pane saying so is what makes
+   * the strip honest rather than silent.
+   */
+  it('blocks a variable that identifies a Claude session', async () => {
+    const user = userEvent.setup();
+    render(<EnvEditor value={{}} onSave={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Add variable' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Variable 1 name' }),
+      'CLAUDE_CONFIG_DIR',
+    );
+
+    expect(screen.getByText(/identifies a Claude session/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save variables' })).toBeDisabled();
+  });
+
   it('blocks a duplicate name', async () => {
     const user = userEvent.setup();
     render(<EnvEditor value={{ FOO: '1' }} onSave={vi.fn()} />);
