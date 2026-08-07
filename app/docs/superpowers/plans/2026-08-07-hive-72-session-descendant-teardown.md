@@ -11,7 +11,9 @@
 ## Global Constraints
 
 - `electron/pty-host/**` may not import `electron/main/**` or `src/**` (verify-boundaries zones at `scripts/verify-boundaries.mjs:224,233`). `node:child_process` is fine.
-- Total teardown must finish inside `SHUTDOWN_TIMEOUT_MS` (3,000ms, `electron/shared/pty-host-protocol.ts:152`) or the supervisor force-kills the host mid-sweep and the orphan survives anyway. Worst case here is `PS_TIMEOUT_MS` overlap + `KILL_GRACE_MS` (2,000) + `SWEEP_SETTLE_MS` (250) ≈ 2.3s. **Margin is ~700ms — do not add another unconditional wait.**
+- Total teardown must finish inside `SHUTDOWN_TIMEOUT_MS` (3,000ms, `electron/shared/pty-host-protocol.ts:152`) or the supervisor force-kills the host mid-sweep and the orphan survives anyway.
+
+  > **Corrected during self review.** This constraint originally read "`PS_TIMEOUT_MS` overlap + `KILL_GRACE_MS` + `SWEEP_SETTLE_MS` ≈ 2.3s". **There is no overlap** — `teardown` awaits `ps`, *then* signals, *then* waits the grace, *then* settles — so the real worst case was 2,000 + 2,000 + 250 = **4,250ms against a 3,000ms limit**, and the supervisor arms that timer *before* it posts the shutdown message. Summing independent constants is what produced the error. The implementation therefore derives a `TEARDOWN_BUDGET_MS` from `SHUTDOWN_TIMEOUT_MS` and threads it through as a deadline that clamps both the grace and the settle, and `PS_TIMEOUT_MS` is 500ms rather than 2,000. A unit test asserts the whole teardown resolves in under 3,000ms in the worst case.
 - Unit tests never signal a real process and never exec a real `ps`. Everything goes through the injected seam.
 - `kill()` keeps its synchronous `void` return (it implements `SessionOperations.kill`, `electron/pty-host/sessions.ts:18`). It starts async work with `void teardown(...)`.
 

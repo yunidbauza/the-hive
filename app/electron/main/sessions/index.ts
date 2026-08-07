@@ -170,9 +170,10 @@ const LOGIN_SHELL_ARGS = ['-l'];
 /**
  * How long a restart waits for the old process to die before giving up.
  *
- * Comfortably past the host's own SIGTERM-then-SIGKILL escalation, so this only
- * fires when that escalation itself has failed — which means the host is wedged,
- * not that the process is slow.
+ * Comfortably past the host's own SIGHUP-then-SIGKILL escalation and the
+ * descendant sweep that follows it (HIVE-72 — bounded to under 3s in total), so
+ * this only fires when that escalation itself has failed, which means the host
+ * is wedged rather than the process being slow.
  */
 const RESTART_EXIT_TIMEOUT_MS = 10_000;
 
@@ -506,7 +507,7 @@ export function createSessions(options: SessionsOptions): Sessions {
         /**
          * A bound of this layer's own, rather than trust in two others.
          *
-         * The host escalates SIGTERM to SIGKILL and the supervisor's heartbeat
+         * The host escalates SIGHUP to SIGKILL and the supervisor's heartbeat
          * eventually condemns a hung host, so in practice the exit arrives. But
          * this promise is awaited across an `invoke`, so if it ever did not, the
          * renderer's `restart()` would hang forever with no error and no

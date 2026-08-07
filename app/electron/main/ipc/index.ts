@@ -232,8 +232,9 @@ export function registerIpcHandlers(): void {
    *
    * The *processes* are not killed here, and that is deliberate rather than an
    * omission: `pty-host/index.ts` already registers a hook that asks the host to
-   * SIGTERM every session's process group, waits, and force-kills what is left
-   * (story 091). Signalling them twice from two hooks would race, and the second
+   * hang up every session's process group, waits, and force-kills what is left
+   * — including descendants job control moved into their own groups (HIVE-72).
+   * Signalling them twice from two hooks would race, and the second
    * kill would target pids that no longer exist. This hook exists so that the
    * batching and debounce timers cannot outlive the app and hold `before-quit`
    * open after the processes are already gone.

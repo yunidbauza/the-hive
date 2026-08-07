@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -360,6 +361,52 @@ test('restart produces a fresh process and the old one is gone', async ({}, test
   }
 });
 
+/**
+ * Cleanup state for the backgrounded jobs these tests start.
+ *
+ * `strays` holds pids; `markers` holds a unique string that appears in the job's
+ * own command line. Both are needed: the pid is exact but is only known once the
+ * job has written it, and a job that hung before writing would otherwise leak a
+ * five-minute `sleep`. The marker closes that gap and is recorded *before* the
+ * job starts.
+ *
+ * What neither does is match machine-wide. The previous cleanup was
+ * `pkill -f 'sleep 300'`, and with `fullyParallel` the spec file is split across
+ * workers that each run their own `afterAll` — so a sibling finishing mid-poll
+ * would kill the descendant *for* the app and flip a genuine failure green. That
+ * is what hid HIVE-72: the test passed at 22.9s, byte-identical to the sibling's
+ * duration. An assertion another worker can decide is not an assertion.
+ */
+const strays: number[] = [];
+const markers: string[] = [];
+
+test.afterAll(() => {
+  for (const pid of strays) {
+    // The group first — a recorded pid leads its own group, so this reaps the
+    // `sleep` it started as well.
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      // Already gone, which is the expected outcome.
+    }
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // As above.
+    }
+  }
+
+  for (const marker of markers) {
+    try {
+      // The marker is this run's own output path, so it cannot match another
+      // worker's process — the whole point of replacing the old pattern.
+      execFileSync('pkill', ['-f', marker], { stdio: 'ignore' });
+    } catch {
+      // Nothing matched, which is the expected outcome.
+    }
+  }
+});
+
 /** Is this pid still around? `kill -0` asks without signalling anything. */
 function isAlive(pid: number): boolean {
   try {
@@ -393,6 +440,10 @@ test('quitting the app leaves zero descendant processes', async ({}, testInfo) =
   const page = await app.firstWindow();
   await openSession(page);
   await expectFile(testInfo.outputPath('ran-in.txt'), REAL_DIRECTORY);
+
+  // Recorded before the job exists: if it hangs before writing its pid, the
+  // marker is the only handle cleanup will ever have on it.
+  markers.push(pidFile);
 
   // A long-lived child of the session's shell, so the check covers the whole
   // process *group* and not just the shell that started it.
@@ -440,6 +491,8 @@ test('quitting the app kills a descendant that ignores hangup', async ({}, testI
   const page = await app.firstWindow();
   await openSession(page);
   await expectFile(testInfo.outputPath('ran-in.txt'), REAL_DIRECTORY);
+
+  markers.push(pidFile);
 
   await page.evaluate(
     ([sessionId, path]) => {
@@ -598,32 +651,3 @@ test('an unmapped project is refused by name, with the file to edit', async ({},
   }
 });
 
-/**
- * Kept so a stray job from a failed run cannot outlive the suite — but scoped
- * to pids **this worker started**, which the previous version was not.
- *
- * It used to be `pkill -f 'sleep 300'`, matching by pattern across the whole
- * machine. With `fullyParallel` the spec file is split across workers, each
- * running its own `afterAll`, so a sibling worker finishing mid-poll would kill
- * the descendant *for* the app and flip a genuine failure green. That is what
- * hid HIVE-72: the test passed at 22.9s, byte-identical to the sibling's
- * duration. An assertion another worker can decide is not an assertion.
- */
-const strays: number[] = [];
-
-test.afterAll(() => {
-  for (const pid of strays) {
-    // The group first — a recorded pid leads its own group, so this reaps the
-    // `sleep` it started as well.
-    try {
-      process.kill(-pid, 'SIGKILL');
-    } catch {
-      // Already gone, which is the expected outcome.
-    }
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // As above.
-    }
-  }
-});
