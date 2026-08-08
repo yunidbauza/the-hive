@@ -13,6 +13,35 @@ import {
 import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
 /**
+ * One definition per column, shared by the header row and every data row.
+ *
+ * These were duplicated class strings — the header's and the row's had to be
+ * edited together or the columns silently stopped lining up, which is the one
+ * defect a table cannot survive. Now a width can only be changed in one place.
+ *
+ * ## Why the two text columns are proportional rather than fixed
+ *
+ * `SESSION` used to be `basis-[130px]`, sized for ids like `hero-refresh` when
+ * every session came from a fixture. Real names come from the *agent* now
+ * (HIVE-61: Claude writes the session title and rewrites it on `/rename`), so
+ * they are sentences like `completion-task-cleanup` — and 130px truncated them
+ * to an ellipsis while a third of the table sat empty to their right.
+ *
+ * Both variable-width columns now share the leftover space, 2:3. `PROJECT ·
+ * BRANCH` takes the larger share because it is two values joined, and it is the
+ * one that grows with deep branch names. The floors matter as much as the
+ * ratio: below them the columns truncate rather than collapsing to nothing,
+ * which is what keeps the table readable in a narrow window.
+ */
+const COL = {
+  caret: 'w-3 shrink-0',
+  session: 'min-w-[120px] flex-[2] truncate',
+  status: 'w-[90px] shrink-0 truncate',
+  project: 'min-w-[140px] flex-[3] truncate',
+  pr: 'w-[34px] shrink-0',
+} as const;
+
+/**
  * The orchestrator's fleet table (story 041).
  *
  * **DOM, not xterm.** The transcript below it goes through the terminal, but
@@ -44,11 +73,11 @@ export function SessionTable() {
   return (
     <div className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]">
       <div className="flex gap-2.5 px-2 pb-1.5 text-[11px] tracking-[0.06em] text-term-head">
-        <span className="w-3 shrink-0" />
-        <span className="min-w-[70px] shrink basis-[130px] truncate">SESSION</span>
-        <span className="w-[90px] shrink-0 truncate">STATUS</span>
-        <span className="min-w-0 flex-1 truncate">PROJECT · BRANCH</span>
-        <span className="w-[34px] shrink-0">PR</span>
+        <span className={COL.caret} />
+        <span className={COL.session}>SESSION</span>
+        <span className={COL.status}>STATUS</span>
+        <span className={COL.project}>PROJECT · BRANCH</span>
+        <span className={COL.pr}>PR</span>
       </div>
 
       {empty ? (
@@ -138,17 +167,25 @@ function SessionTableRow({ id }: { id: string }) {
     >
       <span
         aria-hidden="true"
-        className={cn('w-3 shrink-0 text-green', selected ? 'visible' : 'invisible')}
+        className={cn(COL.caret, 'text-green', selected ? 'visible' : 'invisible')}
       >
         ▸
       </span>
-      <span className="min-w-[70px] shrink basis-[130px] truncate text-ink">
+      {/*
+        `title` on the two truncating columns, so a name the width cuts short is
+        still readable on hover. Without it the ellipsis is a dead end — the
+        agent picks these names and they can be longer than any column.
+      */}
+      <span className={cn(COL.session, 'text-ink')} title={entityLabel(entity)}>
         {entityLabel(entity)}
       </span>
-      <span className={cn('w-[90px] shrink-0 truncate', STATUS_TEXT[entity.status])}>
+      <span className={cn(COL.status, STATUS_TEXT[entity.status])}>
         {STATUS_LABEL[entity.status]}
       </span>
-      <span className="min-w-0 flex-1 truncate text-subtle">
+      <span
+        className={cn(COL.project, 'text-subtle')}
+        title={`${entity.project} · ${entity.branch}`}
+      >
         {`${entity.project} · ${entity.branch}`}
       </span>
       {/*
@@ -160,7 +197,7 @@ function SessionTableRow({ id }: { id: string }) {
       <span
         title={entity.pr ? `#${entity.pr.n} · ${entity.pr.state}` : 'no pull request'}
         className={cn(
-          'w-[34px] shrink-0',
+          COL.pr,
           entity.pr ? prStateText(entity.pr.state) : 'text-subtle',
         )}
       >
