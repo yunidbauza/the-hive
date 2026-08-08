@@ -220,6 +220,27 @@ const DONE_CAP = 20;
  * the overwhelmingly common one: a terminal that has never been cleared answers
  * its own id without a scan.
  */
+/**
+ * The title a `/clear` leaves behind, per terminal.
+ *
+ * Claude names a session by writing it into the **terminal title**, and it
+ * repaints that title continuously — the activity glyph animates, so the same
+ * name arrives many times a second. `/clear` starts a new conversation with no
+ * name, but it does *not* reset the title: Claude goes on emitting the old one
+ * until the user renames again.
+ *
+ * That was invisible before, because the row already had the name and
+ * `renameSession` drops an unchanged value. A successor has no name, so the
+ * stale title landed on it as a rename and the new session inherited the
+ * finished one's identity.
+ *
+ * Held here rather than as a field on `Session` because it is not a property of
+ * the session — it is a fact about one terminal's title stream, and it stops
+ * being true the moment a different name arrives. Module-level for the same
+ * reason `spawnCounter` is, and cleared by `reset()` alongside it.
+ */
+const staleTitles = new Map<string, string>();
+
 function currentSessionIn(state: HiveState, terminalId: string): string {
   const direct = state.entities[terminalId];
   if (direct !== undefined && isSession(direct) && !isEnded(direct.status)) {
@@ -834,7 +855,23 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       // finished one whose name is now history.
       const target = currentSessionIn(state, id);
       const entity = state.entities[target];
-      if (!entity || !isSession(entity) || entity.name === name) return state;
+      if (!entity || !isSession(entity)) return state;
+
+      /**
+       * Refuse the title the finished conversation left in the terminal.
+       *
+       * Suppressed until a *different* name arrives, not merely once: Claude
+       * repaints the title continuously, so the stale value comes back many
+       * times a second and a one-shot guard would let the second one through.
+       * Anything else means the agent has genuinely renamed itself, and the
+       * terminal stops being suspect from then on.
+       */
+      const terminal = terminalOf(entity);
+      const stale = staleTitles.get(terminal);
+      if (stale === name) return state;
+      if (stale !== undefined) staleTitles.delete(terminal);
+
+      if (entity.name === name) return state;
       return {
         entities: { ...state.entities, [target]: { ...entity, name } },
       };
@@ -897,6 +934,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ...(current.model === undefined ? {} : { model: current.model }),
       ...(current.effort === undefined ? {} : { effort: current.effort }),
     };
+
+    /**
+     * The name the terminal is still advertising belongs to the conversation
+     * that just ended. Until Claude names the new one, ignore it.
+     */
+    if (current.name !== undefined) {
+      staleTitles.set(terminalOf(current), current.name);
+    }
 
     set((state) => {
       const retired: Session = { ...current, status: 'done' };
@@ -1132,6 +1177,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   reset: () => {
     spawnCounter = 0;
+    staleTitles.clear();
     resetClock();
     set({
       ...emptySeeds(),

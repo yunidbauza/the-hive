@@ -224,6 +224,79 @@ describe('clearSession', () => {
       expect(sessionAt(successorId).name).toBe('something-new');
       expect(sessionAt('hero-refresh').name).toBeUndefined();
     });
+  });
+
+  /**
+   * Claude names a session by writing it into the terminal *title*, and repaints
+   * that title continuously. `/clear` starts an unnamed conversation but does
+   * not reset the title, so the finished session's name keeps arriving — and
+   * without a guard the successor inherits the identity of the work that just
+   * ended.
+   */
+  describe('the title a cleared conversation leaves behind', () => {
+    const named = (id: string, name: string) => {
+      useHiveStore.setState((current) => ({
+        entities: { ...current.entities, [id]: { ...sessionAt(id), name } },
+      }));
+    };
+
+    it('does not give the successor the finished session’s name', () => {
+      named('hero-refresh', 'lolo');
+      const successorId = state().clearSession('hero-refresh')!;
+
+      // The title stream, still advertising the old name.
+      state().renameSession('hero-refresh', 'lolo');
+
+      expect(sessionAt(successorId).name).toBeUndefined();
+    });
+
+    /**
+     * Suppressed until something *different* arrives, not merely once — the
+     * title repaints many times a second, so a one-shot guard would let the
+     * second emission straight through.
+     */
+    it('keeps refusing it however many times it repeats', () => {
+      named('hero-refresh', 'lolo');
+      const successorId = state().clearSession('hero-refresh')!;
+
+      for (let i = 0; i < 5; i += 1) {
+        state().renameSession('hero-refresh', 'lolo');
+      }
+
+      expect(sessionAt(successorId).name).toBeUndefined();
+    });
+
+    it('accepts the name once the agent really renames itself', () => {
+      named('hero-refresh', 'lolo');
+      const successorId = state().clearSession('hero-refresh')!;
+      state().renameSession('hero-refresh', 'lolo');
+
+      state().renameSession('hero-refresh', 'pepe');
+
+      expect(sessionAt(successorId).name).toBe('pepe');
+    });
+
+    /**
+     * And stops being suspicious afterwards. A user who renames to `pepe` and
+     * then back to `lolo` means it, and the terminal is no longer stale.
+     */
+    it('stops suppressing once the terminal has moved on', () => {
+      named('hero-refresh', 'lolo');
+      const successorId = state().clearSession('hero-refresh')!;
+      state().renameSession('hero-refresh', 'pepe');
+
+      state().renameSession('hero-refresh', 'lolo');
+
+      expect(sessionAt(successorId).name).toBe('lolo');
+    });
+
+    it('leaves the retired row’s own name intact', () => {
+      named('hero-refresh', 'lolo');
+      state().clearSession('hero-refresh');
+
+      // ENDED still says what the finished work was called.
+      expect(sessionAt('hero-refresh').name).toBe('lolo');
+    });
 
     /**
      * A pty exit still lands. `terminated` arrives on the same header as
