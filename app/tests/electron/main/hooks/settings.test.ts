@@ -5,6 +5,7 @@ import {
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_EVENTS,
+  HOOK_STATUS,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
 } from '../../../../electron/shared/hook-contract';
@@ -27,13 +28,21 @@ describe('hookSettings', () => {
     expect(Object.keys(settings.hooks).sort()).toEqual([...HOOK_EVENTS].sort());
   });
 
-  it('does not subscribe SessionEnd', () => {
-    /**
-     * `/clear` fires it on a live session. Subscribing it and calling it
-     * `terminated` locked the user out of a working agent — see the note on
-     * `HOOK_EVENTS`.
-     */
-    expect(Object.keys(settings.hooks)).not.toContain('SessionEnd');
+  /**
+   * `SessionEnd` **is** subscribed now, and the reason the old omission gave is
+   * still respected.
+   *
+   * That reason was: `/clear` fires it on a live session, so calling it
+   * `terminated` locks the user out of a working agent. Both remain true. What
+   * changed is that the event no longer produces a status at all — it produces
+   * `done` on its own channel, and only for `reason: 'clear'`. The guarantee
+   * that used to be expressed by not subscribing is now expressed by
+   * {@link StatusHookEvent}, which excludes it from the status map so no edit
+   * can quietly map it back onto `terminated`.
+   */
+  it('subscribes SessionEnd, but never as a status', () => {
+    expect(Object.keys(settings.hooks)).toContain('SessionEnd');
+    expect(Object.keys(HOOK_STATUS)).not.toContain('SessionEnd');
   });
 
   it('posts every event to the receiver over http', () => {

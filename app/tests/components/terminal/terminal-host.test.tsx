@@ -24,10 +24,25 @@ const transport = (): TerminalTransport => ({
   onData: vi.fn(() => vi.fn()),
 });
 
+/**
+ * One row, in its own terminal — the shape of everything that has never been
+ * cleared. `/clear` is the only thing that makes the two ids differ, and the
+ * cases that exercise that spell it out explicitly.
+ */
+const entry = (
+  id: string,
+  over: Partial<TerminalHostEntry> = {},
+): TerminalHostEntry => ({
+  id,
+  terminalKey: id,
+  transport: transport(),
+  ...over,
+});
+
 const entries: TerminalHostEntry[] = [
-  { id: 'orch', transport: transport() },
-  { id: 'hero-refresh', transport: transport() },
-  { id: 'webhooks', transport: transport() },
+  entry('orch'),
+  entry('hero-refresh'),
+  entry('webhooks'),
 ];
 
 const surfaces = () => screen.queryAllByTestId('terminal-surface');
@@ -113,12 +128,100 @@ describe('TerminalHost', () => {
   it('passes read-only through to the surface', () => {
     render(
       <TerminalHost
-        entries={[{ id: 'orch', transport: transport(), readOnly: true }]}
+        entries={[entry('orch', { readOnly: true })]}
         activeId="orch"
         theme="dark"
       />,
     );
 
     expect(terminalInstances[0].options).toMatchObject({ disableStdin: true });
+  });
+
+  /**
+   * `/clear` leaves two rows naming one pty: the session that finished and the
+   * one that replaced it. Both stay in the fleet list, so both reach this
+   * component.
+   */
+  describe('two rows sharing one terminal', () => {
+    /**
+     * One transport, shared — which is what `center-stage.tsx` produces, because
+     * its cache is keyed on the terminal. Giving the two rows separate
+     * transports would be testing a situation the app cannot create, and would
+     * hide the very thing this block is for: the surface resubscribes when its
+     * transport identity changes, so a per-row transport would rebuild the
+     * xterm no matter what the key said.
+     */
+    const shared = transport();
+    /** Before the `/clear`: one row, live, the user typing into it. */
+    const live = entry('sess-01', { terminalKey: 'sess-01', transport: shared });
+    /** After: the same row retired, and a successor on the same terminal. */
+    const cleared = entry('sess-01', {
+      terminalKey: 'sess-01',
+      transport: shared,
+      readOnly: true,
+    });
+    const successor = entry('sess-02', {
+      terminalKey: 'sess-01',
+      transport: shared,
+    });
+
+    it('mounts one surface, not two', () => {
+      const { rerender } = render(
+        <TerminalHost entries={[live]} activeId="sess-01" theme="dark" />,
+      );
+      rerender(
+        <TerminalHost
+          entries={[cleared, successor]}
+          activeId="sess-02"
+          theme="dark"
+        />,
+      );
+
+      // Two instances would fight over one channel, and React would be handed
+      // duplicate keys.
+      expect(surfaces()).toHaveLength(1);
+    });
+
+    /**
+     * The retired row is inert and never shown; the successor is the one the
+     * user types into. Keeping the read-only entry would leave them looking at
+     * a live terminal that swallows every keystroke.
+     */
+    it('keeps the live row, not the retired one', () => {
+      const { rerender } = render(
+        <TerminalHost entries={[live]} activeId="sess-01" theme="dark" />,
+      );
+      rerender(
+        <TerminalHost
+          entries={[cleared, successor]}
+          activeId="sess-02"
+          theme="dark"
+        />,
+      );
+
+      expect(surfaces()[0]).toHaveAttribute('data-terminal-id', 'sess-02');
+    });
+
+    /**
+     * The whole reason the key is the terminal and not the row: xterm keeps its
+     * instance across the swap, so the scrollback the user was reading survives
+     * the moment they typed `/clear`.
+     */
+    it('does not rebuild the xterm instance across the swap', () => {
+      const { rerender } = render(
+        <TerminalHost entries={[live]} activeId="sess-01" theme="dark" />,
+      );
+      const before = terminalInstances.length;
+
+      rerender(
+        <TerminalHost
+          entries={[cleared, successor]}
+          activeId="sess-02"
+          theme="dark"
+        />,
+      );
+
+      expect(terminalInstances).toHaveLength(before);
+    });
   });
 });

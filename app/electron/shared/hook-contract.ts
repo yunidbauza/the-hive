@@ -34,10 +34,10 @@
  * is another POST per session per turn on a channel whose only job is to keep a
  * status dot honest.
  *
- * ## Why `SessionEnd` is absent, and `terminated` comes from the pty
+ * ## `SessionEnd`, and why it reports `done` rather than `terminated`
  *
- * It looks like the obvious source for "this session is over" and it is the
- * wrong one. Claude Code fires `SessionEnd` with a `reason` of
+ * It looks like the obvious source for "this session is over" and it is not.
+ * Claude Code fires `SessionEnd` with a `reason` of
  * `clear | logout | prompt_input_exit | other`, and only some of those mean the
  * process ended — `/clear` fires it on a session that is alive and sitting at
  * its prompt.
@@ -45,14 +45,28 @@
  * Subscribing it and mapping it to `terminated` regardless, which is what this
  * shipped as first, made `/clear` lock the user out of a working session:
  * `isTerminated` closes the tab to new visits and disables its input, and
- * because a hook event outranks the activity inference nothing could correct
- * it.
+ * because a hook event outranks the activity inference nothing could correct it.
+ * The event was then dropped entirely, on the reasoning that reading `reason`
+ * would still leave a hook asserting a process death it cannot observe.
  *
- * Reading `reason` would fix that case and still leave a hook asserting a
- * process death it cannot observe. Main *can* observe it — the pty exits, and
- * `activity.ts` reports `terminated` for every session including hook-driven
- * ones. So the division stands: hooks report what the agent is *doing*, the pty
- * reports whether it is still *there*.
+ * That reasoning weighed two options and both were wrong, because the third had
+ * no target: `done` had no producer, so "map it to something that is *not* a
+ * death" was not available. It is now. `reason: 'clear'` means the
+ * **conversation** ended while the process kept running — a boundary a hook can
+ * see and a pty cannot — and that is exactly `done`.
+ *
+ * Measured, not assumed (real claude 2.1.225, real pty, outside the app):
+ *
+ * ```
+ * /clear -> SessionEnd   reason "clear"              pty alive
+ *           SessionStart source "clear"              new session_id
+ * /exit  -> SessionEnd   reason "prompt_input_exit"  pty exits, code 0
+ * ```
+ *
+ * Every other reason is still ignored here, and `terminated` still comes from
+ * the pty. So the division holds and gets sharper: hooks report what the agent
+ * is *doing* and whether its conversation ended; the pty reports whether the
+ * process is still *there*.
  */
 export const HOOK_EVENTS = [
   'SessionStart',
@@ -60,9 +74,26 @@ export const HOOK_EVENTS = [
   'PermissionRequest',
   'Elicitation',
   'Stop',
+  'SessionEnd',
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+/**
+ * The `SessionEnd` reason that means "the conversation ended, the process did
+ * not". The only one this app acts on.
+ */
+export const CLEAR_REASON = 'clear';
+
+/**
+ * Events that say what the agent is *doing*.
+ *
+ * `SessionEnd` is excluded because it is a **lifecycle** event, not a status:
+ * it reports a boundary between two conversations, and there is no honest
+ * `ObservedStatus` to map it to. Expressed as a type rather than a comment so
+ * {@link HOOK_STATUS} cannot be given a bogus entry for it.
+ */
+export type StatusHookEvent = Exclude<HookEvent, 'SessionEnd'>;
 
 /**
  * Status as observed from outside the pty.
@@ -72,9 +103,10 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  * that type is still the right one for `activity.ts`. It becomes observable here
  * because a hook is a different observer with a different vantage point.
  *
- * `done` is still absent, and still for story 108's reason: it is a judgement
- * about the *work*, and no hook makes it either. `SessionEnd` is a process
- * ending, which is `terminated`.
+ * `done` is absent here too, and for a reason that survives `SessionEnd` being
+ * subscribed: it is not a *status* a hook observes moment to moment, it is what
+ * a session becomes at a boundary. It travels its own channel — see
+ * `SessionClearedEvent` — rather than riding this union.
  */
 export type ObservedStatus = 'working' | 'waiting' | 'idle' | 'terminated';
 
@@ -87,9 +119,11 @@ export type ObservedStatus = 'working' | 'waiting' | 'idle' | 'terminated';
  * same status rather than being distinguished for their own sake.
  *
  * `Stop` is `idle`, not `done`: the turn ended, which says nothing about whether
- * the work did.
+ * the work did. `/clear` is what says that, and it arrives as `SessionEnd` —
+ * which is why this record is keyed on {@link StatusHookEvent} and cannot hold
+ * an entry for it.
  */
-export const HOOK_STATUS: Record<HookEvent, ObservedStatus> = {
+export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
   SessionStart: 'idle',
   UserPromptSubmit: 'working',
   PermissionRequest: 'waiting',
@@ -133,6 +167,6 @@ export const HOOK_MAX_BODY_BYTES = 64 * 1024;
 /** What the receiver hands the rest of main once a POST validates. */
 export interface HookStatusEvent {
   entityId: string;
-  event: HookEvent;
+  event: StatusHookEvent;
   status: ObservedStatus;
 }

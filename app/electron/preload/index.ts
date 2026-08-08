@@ -48,7 +48,11 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
-import type { SessionNameEvent, SessionStatusEvent } from '@shared/session-contract';
+import type {
+  SessionClearedEvent,
+  SessionNameEvent,
+  SessionStatusEvent,
+} from '@shared/session-contract';
 
 /**
  * The bridge (story 082).
@@ -247,6 +251,8 @@ const bridge: HiveBridge = {
       subscribe<SessionStatusEvent>(CH.sessionStatus, callback),
     onName: (callback: (event: SessionNameEvent) => void) =>
       subscribe<SessionNameEvent>(CH.sessionName, callback),
+    onCleared: (callback: (event: SessionClearedEvent) => void) =>
+      subscribe<SessionClearedEvent>(CH.sessionCleared, callback),
   },
 };
 

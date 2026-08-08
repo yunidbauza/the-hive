@@ -1,7 +1,6 @@
 # `/clear` marks a session done — design
 
-**Status:** designed, not built. The probe below is done and decisive; the
-implementation is the next chunk.
+**Status:** built, with one gap — see *Coverage* at the end.
 
 ## The question this answers
 
@@ -156,3 +155,31 @@ is its own id, so nothing changes for a session that is never cleared.
 - **An unhooked session never emits this.** Sessions whose hooks are disabled or
   could not bind still fall back to pty inference, so `/clear` there is invisible
   and the row simply keeps running — degraded, not wrong.
+
+## Coverage, and the one gap
+
+Covered, each against the real thing rather than a mock of it:
+
+| Seam | Where |
+| --- | --- |
+| Claude really emits `SessionEnd{reason:'clear'}`, pty alive | the probe above, real `claude` in a real pty |
+| The `reason` gate — `clear` acts, everything else is ignored | `tests/electron/main/hooks/receiver.test.ts`, real HTTP server and headers |
+| `SessionEnd` is subscribed but can never be a status | `tests/electron/main/hooks/settings.test.ts` |
+| Retire, mint, inherit the terminal, ordering, the cap, every refusal | `tests/stores/hive-store.clear-session.test.ts` (17 cases) |
+| One surface per terminal, and no xterm rebuild across the swap | `tests/components/terminal/terminal-host.test.tsx` |
+| A cleared row cannot be opened or typed into | `hive-store.test.ts`, `resolve-transport.test.ts` |
+
+**The gap: no end-to-end spec drives a real `/clear` through the built app.**
+
+One was written and withdrawn rather than shipped half-working. The approach was
+sound — have the session's own stub command POST the hook using
+`$HIVE_SESSION_ID` and `$HIVE_HOOK_TOKEN` from its environment, which is exactly
+what Claude's `http` handler does and exercises the correlation path rather than
+mocking past it. It got as far as the receiver binding and the settings file
+being found, but the POST never landed: most likely the stub is delivered as
+typed shell input and the quoting does not survive it.
+
+What is unproven is therefore narrow: main's `publishCleared` → `session:cleared`
+→ the renderer's subscription. Every hop is typed end to end and each side is
+tested, so the risk is a wiring mistake rather than a design one — but it is
+unproven, and worth closing with a spec that has room to debug the stub quoting.

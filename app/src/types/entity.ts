@@ -61,6 +61,24 @@ export interface Session {
    * only the former.
    */
   name?: string;
+  /**
+   * The terminal this session runs in — a pty, not a row.
+   *
+   * Absent means "my own id", which is every session that has never been
+   * cleared. It is only set when `/clear` retires a row and opens a successor
+   * on the *same* pty, so one terminal comes to host a sequence of sessions.
+   *
+   * **Load-bearing, not bookkeeping.** `center-stage.tsx` keys its xterm
+   * instance on this. Keying on `id` would remount the terminal the moment a
+   * successor is minted — wiping and replaying the user's scrollback at exactly
+   * the instant they typed `/clear`, which is the most visible regression this
+   * feature could have. The row's identity changes; the terminal's must not.
+   *
+   * `lib/terminal/` resolves transports through it for the same reason: the
+   * channel belongs to the pty, and the successor has to inherit the live one
+   * rather than spawn a second process in the same directory.
+   */
+  terminalId?: string;
   project: string; // 'apfm-web'
   branch: string; // 'feat/hero-refresh'
   status: SessionStatus;
@@ -140,6 +158,17 @@ export const isSession = (entity: Entity): entity is Session =>
 
 export const isAgent = (entity: Entity): entity is Agent =>
   entity.kind === 'agent';
+
+/**
+ * Which terminal a session runs in.
+ *
+ * One accessor rather than `session.terminalId ?? session.id` spelled at four
+ * call sites: the fallback *is* the contract for every session that has never
+ * been cleared, and a single place to read it is what stops one of those sites
+ * forgetting the `??` and quietly spawning a second pty.
+ */
+export const terminalOf = (session: Session): string =>
+  session.terminalId ?? session.id;
 
 /**
  * What to call an entity on screen (HIVE-61).

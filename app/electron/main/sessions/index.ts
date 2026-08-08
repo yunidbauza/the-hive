@@ -15,6 +15,7 @@ import {
   type SessionEffort,
   type SessionModel,
   SESSION_NAME_DISPLAY_MAX,
+  type SessionClearedEvent,
   type SessionNameEvent,
   type SessionStatusEvent,
 } from '@shared/session-contract';
@@ -373,6 +374,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   void hooks?.start(
     (entityId) => registry.sessionFor(entityId) !== undefined,
     (event) => publishHookStatus(event.entityId, event.status),
+    (entityId) => publishCleared(entityId),
   );
 
   /**
@@ -401,6 +403,22 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   function publishStatus(entityId: string, status: ObservedStatus): void {
     send(CH.sessionStatus, { entityId, status } satisfies SessionStatusEvent);
+  }
+
+  /**
+   * The conversation in this terminal ended; the terminal did not.
+   *
+   * Nothing is torn down here on purpose. The pty keeps running, the registry
+   * entry stands, and `hookDriven` keeps its membership — the successor the
+   * renderer opens is the *same* terminal, so the next hook for this entity id
+   * is still authoritative and must not fall back to activity inference.
+   *
+   * Main does not mint the successor's id. Entity ids are the renderer's to
+   * allocate (`spawnSession` owns the counter), and having two processes both
+   * able to name rows is how ids drift apart.
+   */
+  function publishCleared(entityId: string): void {
+    send(CH.sessionCleared, { entityId } satisfies SessionClearedEvent);
   }
 
   /**

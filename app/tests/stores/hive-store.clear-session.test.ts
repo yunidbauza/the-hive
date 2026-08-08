@@ -1,0 +1,236 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { isSession, terminalOf, type Session } from '@/types/entity';
+import { isDesktop } from '@config/runtime';
+import { requestSpawn } from '@lib/terminal/pty-transport';
+import { useHiveStore } from '@stores/hive-store';
+import { useUiStore } from '@stores/ui-store';
+import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
+
+vi.mock('@config/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@config/runtime')>()),
+  isDesktop: vi.fn(() => true),
+}));
+
+vi.mock('@lib/terminal/pty-transport', () => ({
+  requestSpawn: vi.fn(() => Promise.resolve({ ok: true })),
+  sessionChannelState: vi.fn(() => 'live'),
+}));
+
+/**
+ * `/clear` — the conversation ended, the terminal did not.
+ *
+ * The distinction this whole action exists to draw: `/exit` kills the process
+ * and main reports `terminated`; `/clear` leaves the process running and Claude
+ * starts a fresh conversation in it. Probed against real claude 2.1.225 —
+ * `SessionEnd{reason:'clear'}` fires on a session sitting alive at its prompt,
+ * and a new `session_id` follows it.
+ */
+const state = () => useHiveStore.getState();
+
+const sessionAt = (id: string): Session => {
+  const entity = state().entities[id];
+  if (entity === undefined || !isSession(entity)) {
+    throw new Error(`${id} is not a session`);
+  }
+  return entity;
+};
+
+describe('clearSession', () => {
+  beforeEach(() => {
+    state().reset();
+    seedDemoFleet();
+    seedDemoProjectConfig();
+    useUiStore.getState().reset();
+    vi.clearAllMocks();
+    vi.mocked(isDesktop).mockReturnValue(true);
+    vi.mocked(requestSpawn).mockResolvedValue({ ok: true });
+  });
+
+  it('retires the session as done rather than terminated', () => {
+    state().clearSession('hero-refresh');
+
+    // Not `terminated`: nothing died. The user finished a piece of work.
+    expect(sessionAt('hero-refresh').status).toBe('done');
+  });
+
+  it('opens a successor with a new id', () => {
+    const successorId = state().clearSession('hero-refresh');
+
+    expect(successorId).not.toBeNull();
+    expect(successorId).not.toBe('hero-refresh');
+    expect(sessionAt(successorId!).status).toBe('idle');
+  });
+
+  /**
+   * The load-bearing assertion. Both rows name one pty, which is what stops the
+   * successor spawning a second process in the same directory — and what lets
+   * `center-stage.tsx` keep the same xterm instance across the swap instead of
+   * wiping the user's terminal the instant they type `/clear`.
+   */
+  it('puts the successor in the same terminal', () => {
+    const successorId = state().clearSession('hero-refresh')!;
+
+    expect(terminalOf(sessionAt(successorId))).toBe('hero-refresh');
+    expect(terminalOf(sessionAt('hero-refresh'))).toBe('hero-refresh');
+  });
+
+  it('never asks for a process — there already is one', () => {
+    state().clearSession('hero-refresh');
+
+    expect(requestSpawn).not.toHaveBeenCalled();
+  });
+
+  it('carries the terminal’s properties to the successor', () => {
+    const before = sessionAt('hero-refresh');
+    const successor = sessionAt(state().clearSession('hero-refresh')!);
+
+    // These describe the terminal, and `/clear` changes none of them.
+    expect(successor.project).toBe(before.project);
+    expect(successor.branch).toBe(before.branch);
+  });
+
+  /**
+   * The successor is a *new conversation*. Carrying the old name or task
+   * forward would make it look like a continuation of work it cannot see —
+   * Claude has just wiped its own context.
+   */
+  it('does not carry the finished conversation’s name, task or PR', () => {
+    useHiveStore.setState((current) => ({
+      entities: {
+        ...current.entities,
+        'hero-refresh': {
+          ...sessionAt('hero-refresh'),
+          name: 'fix the login bug',
+        },
+      },
+    }));
+
+    const successor = sessionAt(state().clearSession('hero-refresh')!);
+
+    expect(successor.name).toBeUndefined();
+    expect(successor.task).toBe('');
+    expect(successor.pr).toBeNull();
+    expect(successor.lines).toEqual([]);
+  });
+
+  /**
+   * The rails read `order` positionally. A terminal the user has had open all
+   * day jumping to the bottom of the list because they typed `/clear` would be
+   * a navigation surprise with no visible cause.
+   */
+  it('puts the successor where the retired session sat', () => {
+    const before = state().order.indexOf('hero-refresh');
+    const successorId = state().clearSession('hero-refresh')!;
+
+    expect(state().order.indexOf(successorId)).toBe(before);
+    expect(state().order.indexOf('hero-refresh')).toBe(before + 1);
+  });
+
+  it('moves the user to the successor when the retired row was on screen', () => {
+    useUiStore.getState().openTab('hero-refresh');
+
+    const successorId = state().clearSession('hero-refresh')!;
+
+    // The user is looking at this terminal — they just typed into it.
+    expect(useUiStore.getState().activeTab).toBe(successorId);
+  });
+
+  it('leaves the view alone when the user was looking elsewhere', () => {
+    useUiStore.getState().openTab('lead-form');
+
+    state().clearSession('hero-refresh');
+
+    expect(useUiStore.getState().activeTab).toBe('lead-form');
+  });
+
+  it('names the retired session in the console, the only place left that does', () => {
+    state().clearSession('hero-refresh');
+
+    const transcript = state()
+      .orchLines.map((entry) => entry.text)
+      .join('\n');
+    expect(transcript).toContain('done — cleared');
+  });
+
+  describe('the cases it refuses', () => {
+    /**
+     * A hook can arrive for a row the user removed a moment earlier. The honest
+     * answer to that race is to do nothing.
+     */
+    it('is a no-op for an unknown id', () => {
+      const before = state().order.length;
+
+      expect(state().clearSession('no-such-session')).toBeNull();
+      expect(state().order).toHaveLength(before);
+    });
+
+    it('is a no-op for an agent', () => {
+      expect(state().clearSession('slack-agent')).toBeNull();
+    });
+
+    it('is a no-op for a session that already ended', () => {
+      state().setSessionStatus('hero-refresh', 'terminated');
+
+      expect(state().clearSession('hero-refresh')).toBeNull();
+      expect(sessionAt('hero-refresh').status).toBe('terminated');
+    });
+
+    /** Clearing twice must not retire the successor along with its parent. */
+    it('does not double-retire when the same event arrives twice', () => {
+      const successorId = state().clearSession('hero-refresh')!;
+
+      expect(state().clearSession('hero-refresh')).toBeNull();
+      expect(sessionAt(successorId).status).toBe('idle');
+    });
+  });
+
+  /**
+   * A terminal cleared every twenty minutes for a working day is twenty rows of
+   * history in a table whose job is showing what is running.
+   */
+  describe('the done cap', () => {
+    it('drops the oldest done rows past the cap', () => {
+      let current = 'hero-refresh';
+      for (let i = 0; i < 25; i += 1) {
+        current = state().clearSession(current)!;
+      }
+
+      const done = state().order.filter((id) => {
+        const entity = state().entities[id];
+        return entity !== undefined && isSession(entity) && entity.status === 'done';
+      });
+
+      expect(done).toHaveLength(20);
+    });
+
+    it('drops the dropped rows’ entities too, rather than leaking them', () => {
+      let current = 'hero-refresh';
+      for (let i = 0; i < 25; i += 1) {
+        current = state().clearSession(current)!;
+      }
+
+      // An entity nothing lists is a leak. `order` is the only index.
+      const listed = new Set(state().order);
+      for (const id of Object.keys(state().entities)) {
+        if (state().agentOrder.includes(id)) continue;
+        expect(listed.has(id)).toBe(true);
+      }
+    });
+
+    /**
+     * Only `done` rows are capped. A `terminated` row is the only record that a
+     * process existed and died; a cleared session's successor is right there.
+     */
+    it('never drops a terminated row', () => {
+      state().setSessionStatus('lead-form', 'terminated');
+
+      let current = 'hero-refresh';
+      for (let i = 0; i < 25; i += 1) {
+        current = state().clearSession(current)!;
+      }
+
+      expect(state().order).toContain('lead-form');
+    });
+  });
+});

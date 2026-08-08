@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 
-import { useRenameSession, useSetSessionStatus } from '@stores/hive-store';
+import {
+  useClearSession,
+  useRenameSession,
+  useSetSessionStatus,
+} from '@stores/hive-store';
 
 /**
  * Keep real sessions' status and name in sync with their processes (story 096,
@@ -35,6 +39,7 @@ import { useRenameSession, useSetSessionStatus } from '@stores/hive-store';
 export function useSessionStatus(): void {
   const setSessionStatus = useSetSessionStatus();
   const renameSession = useRenameSession();
+  const clearSession = useClearSession();
 
   useEffect(() => {
     // No bridge is the browser demo, where every transcript is a recording and
@@ -49,9 +54,23 @@ export function useSessionStatus(): void {
       renameSession(entityId, name);
     });
 
+    /**
+     * `/clear` — the conversation ended and the terminal did not.
+     *
+     * The only structural event on this channel: the others assign a field,
+     * this one retires a row and opens its successor. It still belongs here
+     * rather than in its own hook, because it arrives on the same bridge from
+     * the same observer and a second mount would mean a second listener for
+     * one broadcast.
+     */
+    const disposeCleared = bridge.session.onCleared(({ entityId }) => {
+      clearSession(entityId);
+    });
+
     return () => {
       disposeStatus();
       disposeName();
+      disposeCleared();
     };
-  }, [setSessionStatus, renameSession]);
+  }, [setSessionStatus, renameSession, clearSession]);
 }

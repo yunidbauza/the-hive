@@ -13,7 +13,7 @@ import type {
   Session,
   SessionStatus,
 } from '@/types/entity';
-import { isEnded, isSession, isTerminated } from '@/types/entity';
+import { isEnded, isSession, terminalOf } from '@/types/entity';
 import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
@@ -159,6 +159,13 @@ interface HiveState {
   setSessionStatus: (id: string, status: SessionStatus) => void;
   /** The agent reported a new display name (HIVE-61). */
   renameSession: (id: string, name: string) => void;
+  /**
+   * `/clear` ended this session's conversation; its terminal kept running.
+   *
+   * Retires the row as `done` and opens a successor on the same terminal.
+   * Answers the successor's id, or `null` if there was nothing to retire.
+   */
+  clearSession: (id: string) => string | null;
   reset: () => void;
 }
 
@@ -179,6 +186,20 @@ const NOTIF_CAP = 8;
  * orchestrator slower the longer the session had been running.
  */
 const ORCH_LINE_CAP = 200;
+
+/**
+ * How many cleared sessions the ENDED group keeps (per fleet, not per terminal).
+ *
+ * A terminal cleared every twenty minutes for a working day is twenty rows of
+ * history in a table whose job is showing what is *running*. Twenty is the same
+ * bet `NOTIF_CAP` and `FEED_CAP` make: enough to answer "what did I just
+ * finish?", few enough that the live rows stay above the fold.
+ *
+ * Only `done` rows are capped. A `terminated` row is a process that died and is
+ * the only record that it existed; dropping those would lose information the
+ * user cannot recover, while a cleared session's successor is right there.
+ */
+const DONE_CAP = 20;
 
 const capLines = (lines: TermLine[]) =>
   lines.length > ORCH_LINE_CAP ? lines.slice(lines.length - ORCH_LINE_CAP) : lines;
@@ -520,7 +541,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * blank stage. Duplicating that decision here would put two answers to one
      * question in two files.
      */
-    if (!isTerminated(get().entities[id])) {
+    /**
+     * Ended, however it ended — the gate widened with `/clear` (was
+     * `isTerminated`).
+     *
+     * A `done` session's pty is alive, which is exactly why it must be refused:
+     * that terminal belongs to the successor now. Opening the retired row would
+     * put the *new* session's output on screen under the *old* session's name,
+     * and let the user type into work they think they finished.
+     */
+    const entity = get().entities[id];
+    if (!(entity !== undefined && isSession(entity) && isEnded(entity.status))) {
       useUiStore.getState().openTab(id);
       return true;
     }
@@ -751,6 +782,125 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         entities: { ...state.entities, [id]: { ...entity, name } },
       };
     }),
+
+  /**
+   * `/clear` — the conversation ended, the terminal did not.
+   *
+   * Where `terminated` comes from a pty exit that main watched, this comes from
+   * a hook: `SessionEnd{reason:'clear'}`, fired on a session sitting alive at
+   * its prompt. So the row becomes `done` — the work finished — and a successor
+   * opens on the **same terminal**, which is the whole point. Nothing is
+   * spawned; there is already a process, and it is still running.
+   *
+   * ## What the successor inherits, and what it does not
+   *
+   * `terminalId`, `project`, `branch`, `model` and `effort` carry over: they
+   * describe the *terminal*, and a `/clear` changes none of them. `task`,
+   * `name`, `pr` and `lines` do not: they described a conversation that just
+   * ended, and carrying the old name forward would make the successor look like
+   * a continuation of work it cannot see. Claude renames it moments later
+   * anyway, through the same `renameSession` path any session uses.
+   *
+   * ## Ordering
+   *
+   * The successor takes the retired session's *place* in `order` rather than
+   * being appended. The rails read that array positionally, and a terminal the
+   * user has had open all day jumping to the bottom of the list because they
+   * typed `/clear` would be a navigation surprise with no cause they can see.
+   *
+   * An unknown id, an agent, or a session that already ended is a no-op — a
+   * hook can arrive for a row the user removed a moment earlier, and the honest
+   * answer to that race is to do nothing.
+   */
+  clearSession: (id) => {
+    const current = get().entities[id];
+    if (!current || !isSession(current) || isEnded(current.status)) return null;
+
+    const successorId = nextSessionId();
+    const successor: Session = {
+      kind: 'session',
+      id: successorId,
+      terminalId: terminalOf(current),
+      project: current.project,
+      branch: current.branch,
+      status: 'idle',
+      task: '',
+      pr: null,
+      cost: '$0.00',
+      lines: [],
+      ...(current.model === undefined ? {} : { model: current.model }),
+      ...(current.effort === undefined ? {} : { effort: current.effort }),
+    };
+
+    set((state) => {
+      const retired: Session = { ...current, status: 'done' };
+      const entities: Record<string, Entity> = {
+        ...state.entities,
+        [id]: retired,
+        [successorId]: successor,
+      };
+
+      const at = state.order.indexOf(id);
+      const order =
+        at === -1
+          ? [...state.order, successorId]
+          : [
+              ...state.order.slice(0, at),
+              successorId,
+              id,
+              ...state.order.slice(at + 1),
+            ];
+
+      /**
+       * Drop the oldest `done` rows past the cap.
+       *
+       * Oldest by position in `order`, which is spawn order — the same
+       * definition of "oldest" every other capped list in this store uses.
+       * Their entities go with them; an entity nothing lists is a leak.
+       */
+      const doneIds = order.filter((entityId) => {
+        const entity = entities[entityId];
+        return entity !== undefined && isSession(entity) && entity.status === 'done';
+      });
+      const excess = new Set(doneIds.slice(0, Math.max(0, doneIds.length - DONE_CAP)));
+      if (excess.size > 0) {
+        for (const dropped of excess) delete entities[dropped];
+      }
+
+      return {
+        entities,
+        order: excess.size === 0 ? order : order.filter((e) => !excess.has(e)),
+      };
+    });
+
+    /**
+     * Follow the terminal, not the row.
+     *
+     * The user is looking at this terminal — they just typed into it. If the
+     * retired row was on screen, the successor has to take the stage or the
+     * next keystroke goes to a tab that no longer accepts one.
+     */
+    if (useUiStore.getState().activeTab === id) {
+      useUiStore.getState().openTab(successorId);
+    }
+
+    /**
+     * The console is the only place the retired session is now named.
+     *
+     * Its row is inert and carries no transcript, so without this line a
+     * session the user worked in for an hour would leave no trace of *what* it
+     * was — only that something called `sess-04` finished.
+     */
+    set((state) => ({
+      orchLines: capLines([
+        ...state.orchLines,
+        line(`  ✓ ${current.name ?? current.id} done — cleared`, 'green'),
+        line(`  ▸ ${successorId} started in the same terminal`, 'dim'),
+      ]),
+    }));
+
+    return successorId;
+  },
 
   /**
    * Install real issues (HIVE-69).
@@ -1031,6 +1181,24 @@ export const useSpawnSession = () => useHiveStore((state) => state.spawnSession)
 /** HIVE-61: main pushes the name the agent gave itself through this. */
 export const useRenameSession = () =>
   useHiveStore((state) => state.renameSession);
+
+/** `/clear`: main reports the conversation boundary through this. */
+export const useClearSession = () =>
+  useHiveStore((state) => state.clearSession);
+
+/**
+ * Which terminal an id runs in — the id itself for anything that is not a
+ * session, or a session that has never been cleared.
+ *
+ * A plain read rather than a hook, because its callers are inside `useMemo`
+ * bodies keyed on the id list, not render paths of their own. Subscribing would
+ * rebuild every transport whenever any unrelated slice changed, which is the
+ * one thing `center-stage.tsx`'s cache exists to prevent.
+ */
+export function terminalIdFor(id: string): string {
+  const entity = useHiveStore.getState().entities[id];
+  return entity !== undefined && isSession(entity) ? terminalOf(entity) : id;
+}
 
 /** Story 096: main pushes a real session's derived status through this. */
 export const useSetSessionStatus = () =>

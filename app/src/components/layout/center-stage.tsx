@@ -19,7 +19,12 @@ import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transpor
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import { useTerminalAppearance, useTheme } from '@stores/appearance-store';
-import { useActiveEntity, useAgentOrder, useNavOrder } from '@stores/hive-store';
+import {
+  terminalIdFor,
+  useActiveEntity,
+  useAgentOrder,
+  useNavOrder,
+} from '@stores/hive-store';
 import {
   useActiveTab,
   useBackToOrch,
@@ -88,10 +93,20 @@ export function CenterStage() {
   const entries = useMemo(
     () =>
       ids.map((id) => {
-        let transport = cache.current.get(id);
+        /**
+         * The cache is keyed on the **terminal**, not the row.
+         *
+         * Identical for every session that has never been cleared. For a
+         * successor minted by `/clear` it is what makes the transport — and so
+         * the pty behind it — be *inherited* rather than created: a fresh entry
+         * here would call `resolveTransport` again and spawn a second process
+         * in the same directory.
+         */
+        const terminalKey = terminalIdFor(id);
+        let transport = cache.current.get(terminalKey);
         if (!transport) {
           transport = resolveTransport(id);
-          cache.current.set(id, transport);
+          cache.current.set(terminalKey, transport);
         }
         /**
          * Typable exactly when there is a live shell to type into (story 095).
@@ -103,7 +118,7 @@ export function CenterStage() {
          * terminal that blinks a cursor and swallows every keystroke, which
          * reads as a hung session rather than as a read-only one.
          */
-        return { id, transport, readOnly: !isLiveTerminal(id) };
+        return { id, terminalKey, transport, readOnly: !isLiveTerminal(id) };
       }),
     [ids],
   );

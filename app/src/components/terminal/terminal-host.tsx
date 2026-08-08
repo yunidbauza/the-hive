@@ -7,6 +7,15 @@ import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 export interface TerminalHostEntry {
   /** Entity id, or `'orch'` for the console. Opaque to this component. */
   id: string;
+  /**
+   * Which terminal this entry runs in. Equal to {@link TerminalHostEntry.id}
+   * unless a `/clear` retired one row and opened another on the same pty.
+   *
+   * The React key, and therefore what decides whether an xterm instance is
+   * reused or rebuilt. Two entries may share one: a cleared session and the
+   * successor that replaced it both name the terminal that is still running.
+   */
+  terminalKey: string;
   transport: TerminalTransport;
   readOnly?: boolean;
 }
@@ -68,16 +77,49 @@ export function TerminalHost({
    * list cannot reorder live DOM nodes and force xterm to re-measure.
    * Filtered against `entries` so a removed entity's instance is torn down.
    */
-  const mounted = visited.flatMap((id) => {
+  /**
+   * Visit order, collapsed to **terminals**.
+   *
+   * A `/clear` leaves two rows naming one pty — the session that finished and
+   * the one that replaced it — and mounting both would hand React duplicate
+   * keys and xterm two instances fighting over one channel.
+   */
+  const visitedTerminals: string[] = [];
+  for (const id of visited) {
     const entry = entries.find((candidate) => candidate.id === id);
-    return entry ? [entry] : [];
+    if (entry && !visitedTerminals.includes(entry.terminalKey)) {
+      visitedTerminals.push(entry.terminalKey);
+    }
+  }
+
+  /**
+   * For each terminal, the row that can still be typed into.
+   *
+   * Chosen from **all** entries rather than only the visited ones, and that is
+   * the load-bearing part. `visited` grows in an effect, so the render right
+   * after a `/clear` sees the retired row already read-only while its successor
+   * has not been recorded as visited yet. Picking from visited alone would mount
+   * the retired row for exactly one frame — and since `readOnly` is structural
+   * to xterm (it cannot change `disableStdin` after construction), that frame
+   * costs two rebuilds and throws the user's scrollback away twice on the way
+   * through.
+   *
+   * Sharing the key across the swap is what makes the handover seamless at all:
+   * keyed by row id, the successor would be a different element and xterm would
+   * tear down and replay the transcript at the instant the user typed `/clear`.
+   */
+  const mounted = visitedTerminals.flatMap((key) => {
+    const sharing = entries.filter((candidate) => candidate.terminalKey === key);
+    const live = sharing.find((candidate) => candidate.readOnly !== true);
+    const chosen = live ?? sharing[0];
+    return chosen ? [chosen] : [];
   });
 
   return (
     <>
       {mounted.map((entry) => (
         <TerminalSurface
-          key={entry.id}
+          key={entry.terminalKey}
           id={entry.id}
           transport={entry.transport}
           theme={theme}

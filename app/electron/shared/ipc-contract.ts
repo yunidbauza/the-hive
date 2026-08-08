@@ -55,6 +55,7 @@ import type {
 import type {
   SessionEffort,
   SessionModel,
+  SessionClearedEvent,
   SessionNameEvent,
   SessionStatusEvent,
 } from './session-contract';
@@ -222,6 +223,16 @@ export const CH = {
    * not observe on that tick.
    */
   sessionName: 'session:name', // main → renderer
+  /**
+   * A session's conversation ended by `/clear`, and its terminal kept running.
+   *
+   * Separate from `session:status` because the renderer's response is
+   * structural, not a field assignment: the row becomes `done` and a successor
+   * opens on the same terminal. Sending it as a status would also have to
+   * invent a `done` member of `ObservedStatus`, which is the conflation that
+   * once made `/clear` lock users out of live sessions.
+   */
+  sessionCleared: 'session:cleared', // main → renderer
   appInfo: 'app:info',
 } as const;
 
@@ -240,6 +251,7 @@ export const EVENT_CHANNELS = [
   CH.ptyLost,
   CH.sessionStatus,
   CH.sessionName,
+  CH.sessionCleared,
   CH.configCloneDone,
   CH.notificationsActivate,
 ] as const;
@@ -724,6 +736,8 @@ export interface HiveBridge {
     onStatus(callback: (event: SessionStatusEvent) => void): () => void;
     /** A session reported a new display name (HIVE-61). */
     onName(callback: (event: SessionNameEvent) => void): () => void;
+    /** A session's conversation ended by `/clear`; its terminal did not. */
+    onCleared(callback: (event: SessionClearedEvent) => void): () => void;
   };
 }
 
@@ -782,7 +796,7 @@ export const BRIDGE_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.session`. */
-export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName'] as const;
+export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName', 'onCleared'] as const;
 
 /** The exact key set of `window.hive.integrations`. */
 export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;

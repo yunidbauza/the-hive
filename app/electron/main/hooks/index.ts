@@ -36,6 +36,7 @@ export interface HookRuntime {
   start(
     knowsSession: (entityId: string) => boolean,
     onEvent: (event: HookStatusEvent) => void,
+    onCleared: (entityId: string) => void,
   ): Promise<void>;
   /** The `--settings` argument, or `null` when hooks are not available. */
   readonly settingsPath: string | null;
@@ -60,9 +61,10 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       return settingsPath;
     },
 
-    async start(knowsSession, onEvent) {
+    async start(knowsSession, onEvent, onCleared) {
       const created = createReceiver({
         onEvent,
+        onCleared,
         knowsSession,
         ...(port === undefined ? {} : { port }),
       });

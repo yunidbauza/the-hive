@@ -445,13 +445,22 @@ describe('hive-store', () => {
         expect(useUiStore.getState().activeTab).toBe('orch');
       });
 
-      it('still opens a session that is merely done', () => {
-        // `done` is a fixture's judgement about the *work*, not an observation
-        // about a process. Its transcript is a recording and reads fine.
+      /**
+       * A `done` session is refused too, and for the opposite reason to a
+       * terminated one.
+       *
+       * This used to assert it *opened*: `done` was a fixture's judgement about
+       * the work, its transcript was a recording, and reading it was harmless.
+       * `done` means `/clear` now, and a cleared session's pty is very much
+       * alive — it belongs to the successor. Opening the retired row would put
+       * the new session's output on screen under the old session's name and let
+       * the user type into work they believe they finished.
+       */
+      it('refuses a session that was cleared, though its pty still runs', () => {
         useHiveStore.getState().setSessionStatus('webhooks', 'done');
 
-        expect(useHiveStore.getState().openEntity('webhooks')).toBe(true);
-        expect(useUiStore.getState().activeTab).toBe('webhooks');
+        expect(useHiveStore.getState().openEntity('webhooks')).toBe(false);
+        expect(useUiStore.getState().activeTab).toBe('orch');
       });
 
       it('passes an unknown id through rather than inventing an answer', () => {

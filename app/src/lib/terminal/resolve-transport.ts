@@ -1,4 +1,4 @@
-import { isSession, type Session } from '@/types/entity';
+import { isSession, terminalOf, type Session } from '@/types/entity';
 
 import { isDesktop } from '@config/runtime';
 import { createPtyTransport } from '@lib/terminal/pty-transport';
@@ -62,6 +62,24 @@ function liveSession(entityId: string): Session | null {
    * path happened to be, which is worse than the recording.
    */
   if (!entity || !isSession(entity)) return null;
+
+  /**
+   * A **cleared** session is not live — its pty belongs to the successor.
+   *
+   * Returning a live transport here would attach the retired row to the
+   * terminal that replaced it, so the user would watch new work appear under a
+   * finished session's name and be able to type into it.
+   *
+   * `terminated` is deliberately **not** included, though it is equally ended.
+   * That case is carried by `center-stage.tsx`'s `endedId` and the surface's
+   * `ended` prop (story 108), which disable stdin *in place*. Flipping
+   * `readOnly` instead would rebuild the xterm instance and wipe the transcript
+   * of the session that just died — the one thing the user still wants to read.
+   * A cleared session has no such transcript to protect: its row is inert and
+   * never shown.
+   */
+  if (entity.status === 'done') return null;
+
   return entity;
 }
 
@@ -91,7 +109,18 @@ export function resolveTransport(entityId: string): TerminalTransport {
    * Spread rather than assigning `undefined`, so a session with no recorded
    * model sends no key and gets the bare command.
    */
-  return createPtyTransport(entityId, session.project, {
+  /**
+   * Keyed on the **terminal**, not the row.
+   *
+   * For every session that has never been cleared these are the same string, so
+   * nothing changes. For a successor minted by `/clear` they differ, and the
+   * difference is the whole feature: the successor has to attach to the pty
+   * that is already running rather than spawn a second one in the same
+   * directory. `pty-transport.ts` caches channels by this id and main's
+   * registry keys its sessions by it, so passing the row id would be asking for
+   * a new process by definition.
+   */
+  return createPtyTransport(terminalOf(session), session.project, {
     ...(session.model === undefined ? {} : { model: session.model }),
     ...(session.effort === undefined ? {} : { effort: session.effort }),
   });

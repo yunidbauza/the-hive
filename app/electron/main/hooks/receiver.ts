@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 
 import {
+  CLEAR_REASON,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -50,6 +51,15 @@ import {
 export interface ReceiverOptions {
   /** Called for each valid, correlated hook event. */
   onEvent: (event: HookStatusEvent) => void;
+  /**
+   * The session's conversation ended by `/clear`, and its pty is still running.
+   *
+   * A separate callback rather than a widened {@link HookStatusEvent}, because
+   * this is not a status: nothing about the agent's moment-to-moment state
+   * changed, a boundary was crossed. Conflating the two is what made the first
+   * version of `SessionEnd` handling lock users out of live sessions.
+   */
+  onCleared: (entityId: string) => void;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
   /** Overridable for tests; `0` asks the OS for any free port. */
@@ -75,7 +85,7 @@ const isHookEvent = (value: unknown): value is HookEvent =>
   typeof value === 'string' && (HOOK_EVENTS as readonly string[]).includes(value);
 
 export function createReceiver(options: ReceiverOptions): Receiver {
-  const { onEvent, knowsSession, port = 0 } = options;
+  const { onEvent, onCleared, knowsSession, port = 0 } = options;
 
   const token = randomUUID();
   let server: Server | null = null;
@@ -89,6 +99,15 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * both sufficient and honest about what it is doing.
    */
   const EVENT_IN_PREFIX = /"hook_event_name"\s*:\s*"([A-Za-z]+)"/;
+
+  /**
+   * Same trick, same justification, for `SessionEnd`'s `reason`.
+   *
+   * It decides whether a `SessionEnd` means the conversation ended (`clear`) or
+   * something this app leaves to the pty, so it has to survive a truncated body
+   * exactly as the event name does.
+   */
+  const REASON_IN_PREFIX = /"reason"\s*:\s*"([a-z_]+)"/;
 
   function handle(
     headers: Record<string, string | string[] | undefined>,
@@ -117,10 +136,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (!knowsSession(entityId)) return 404;
 
     let event: unknown;
+    let reason: unknown;
 
     if (truncated) {
       // The prefix is all there is; see EVENT_IN_PREFIX.
       event = EVENT_IN_PREFIX.exec(body)?.[1];
+      reason = REASON_IN_PREFIX.exec(body)?.[1];
     } else {
       let parsed: unknown;
       try {
@@ -128,10 +149,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       } catch {
         return 400;
       }
-      event =
+      const fields =
         typeof parsed === 'object' && parsed !== null
-          ? (parsed as { hook_event_name?: unknown }).hook_event_name
+          ? (parsed as { hook_event_name?: unknown; reason?: unknown })
           : undefined;
+      event = fields?.hook_event_name;
+      reason = fields?.reason;
     }
 
     /**
@@ -142,6 +165,20 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * their session for something the app simply does not care about.
      */
     if (!isHookEvent(event)) return 204;
+
+    /**
+     * `SessionEnd` is a lifecycle event and leaves here on its own channel.
+     *
+     * **Only `clear` is acted on.** `logout`, `prompt_input_exit` and `other`
+     * all mean the process is going away, and the pty is the honest observer of
+     * that — `activity.ts` reports `terminated` for hook-driven sessions too.
+     * Acting on them here is the exact bug this event was withdrawn for once
+     * already.
+     */
+    if (event === 'SessionEnd') {
+      if (reason === CLEAR_REASON) onCleared(entityId);
+      return 204;
+    }
 
     onEvent({ entityId, event, status: HOOK_STATUS[event] });
     return 204;

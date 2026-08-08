@@ -2,7 +2,11 @@ import { renderHook } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SessionNameEvent, SessionStatusEvent } from '@shared/session-contract';
+import type {
+  SessionClearedEvent,
+  SessionNameEvent,
+  SessionStatusEvent,
+} from '@shared/session-contract';
 
 import { isSession } from '@/types/entity';
 
@@ -21,6 +25,7 @@ import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 let listeners: ((event: SessionStatusEvent) => void)[];
 let nameListeners: ((event: SessionNameEvent) => void)[];
+let clearedListeners: ((event: SessionClearedEvent) => void)[];
 let disposals: number;
 
 function withBridge() {
@@ -34,6 +39,12 @@ function withBridge() {
       },
       onName: (callback: (event: SessionNameEvent) => void) => {
         nameListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
+      onCleared: (callback: (event: SessionClearedEvent) => void) => {
+        clearedListeners.push(callback);
         return () => {
           disposals += 1;
         };
@@ -55,6 +66,7 @@ const emitName = (event: SessionNameEvent) =>
 beforeEach(() => {
   listeners = [];
   nameListeners = [];
+  clearedListeners = [];
   disposals = 0;
   useHiveStore.getState().reset();
     seedDemoFleet();
@@ -88,15 +100,16 @@ describe('useSessionStatus', () => {
     expect(listeners).toHaveLength(1);
   });
 
-  it('unsubscribes both channels on unmount', () => {
+  it('unsubscribes every channel on unmount', () => {
     withBridge();
     const { unmount } = renderHook(() => useSessionStatus());
 
     unmount();
 
-    // Status and name (HIVE-61) — a leaked listener on either would keep
-    // writing to a store the unmounted shell no longer renders.
-    expect(disposals).toBe(2);
+    // Status, name (HIVE-61) and cleared — a leaked listener on any of the
+    // three would keep writing to a store the unmounted shell no longer
+    // renders, and the cleared one would go on minting sessions.
+    expect(disposals).toBe(3);
   });
 
   it('applies a rename pushed from main', () => {

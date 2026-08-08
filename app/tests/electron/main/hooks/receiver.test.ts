@@ -20,11 +20,14 @@ import { createReceiver, type Receiver } from '../../../../electron/main/hooks/r
 describe('hook receiver', () => {
   let receiver: Receiver;
   let events: HookStatusEvent[];
+  let cleared: string[];
   let url: string;
 
   beforeEach(async () => {
     events = [];
+    cleared = [];
     receiver = createReceiver({
+      onCleared: (entityId) => cleared.push(entityId),
       onEvent: (event) => events.push(event),
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
@@ -65,6 +68,59 @@ describe('hook receiver', () => {
     const response = await post({ hook_event_name: event, session_id: 'uuid' });
     expect(response.status).toBe(204);
     expect(events).toEqual([{ entityId: 'sess-01', event, status }]);
+  });
+
+  /**
+   * `SessionEnd` and the `reason` gate.
+   *
+   * Only `clear` may be acted on. The others all mean the process is going
+   * away, which the pty observes and reports as `terminated` — and acting on
+   * them here is the exact bug this event was once withdrawn for: it locked the
+   * user out of a live session by calling `/clear` a death.
+   */
+  it('reports a cleared session, and never as a status', async () => {
+    const response = await post({
+      hook_event_name: 'SessionEnd',
+      reason: 'clear',
+      session_id: 'uuid',
+    });
+
+    expect(response.status).toBe(204);
+    expect(cleared).toEqual(['sess-01']);
+    // Crucially not a status — `terminated` here is what broke it before.
+    expect(events).toEqual([]);
+  });
+
+  it.each(['prompt_input_exit', 'logout', 'other'])(
+    'ignores SessionEnd with reason %s — the pty owns that verdict',
+    async (reason) => {
+      const response = await post({
+        hook_event_name: 'SessionEnd',
+        reason,
+        session_id: 'uuid',
+      });
+
+      expect(response.status).toBe(204);
+      expect(cleared).toEqual([]);
+      expect(events).toEqual([]);
+    },
+  );
+
+  it('ignores a SessionEnd with no reason at all', async () => {
+    const response = await post({ hook_event_name: 'SessionEnd' });
+
+    expect(response.status).toBe(204);
+    expect(cleared).toEqual([]);
+  });
+
+  it('does not report a cleared session the app has never heard of', async () => {
+    const response = await post(
+      { hook_event_name: 'SessionEnd', reason: 'clear' },
+      { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+    );
+
+    expect(response.status).toBe(404);
+    expect(cleared).toEqual([]);
   });
 
   it('rejects a request with no token', async () => {
@@ -172,6 +228,7 @@ describe('hook receiver', () => {
      * as an ordinary user fails.
      */
     const doomed = createReceiver({
+    onCleared: () => {},
       onEvent: () => {},
       knowsSession: () => true,
       port: 1,
@@ -182,6 +239,7 @@ describe('hook receiver', () => {
 
   it('survives a throwing listener without taking the process down', async () => {
     const exploding = createReceiver({
+    onCleared: () => {},
       onEvent: () => {
         throw new Error('listener blew up');
       },
@@ -203,14 +261,14 @@ describe('hook receiver', () => {
 
 describe('hook receiver tokens', () => {
   it('gives each receiver a distinct token', () => {
-    const a = createReceiver({ onEvent: () => {}, knowsSession: () => true });
-    const b = createReceiver({ onEvent: () => {}, knowsSession: () => true });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, knowsSession: () => true });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, knowsSession: () => true });
     expect(a.token).not.toBe(b.token);
     expect(a.token).toHaveLength(36);
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, knowsSession: () => true });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, knowsSession: () => true });
     expect(receiver.url).toBeNull();
   });
 });

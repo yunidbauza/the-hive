@@ -287,8 +287,13 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * this assertion has been failing since that commit. Corrected here rather
    * than left red: an assertion nobody believes is worse than no assertion,
    * because the next real widening would land in an already-failing test.
+   *
+   * `onCleared` is the third, and the same shape as the other two: a `/clear`
+   * is something the page is *told* about. It grants the renderer no new verb
+   * — it cannot end a session, only learn that one ended — so the "listener
+   * only" property this assertion exists to pin is unchanged.
    */
-  expect(surface.session).toEqual(['onName', 'onStatus']);
+  expect(surface.session).toEqual(['onCleared', 'onName', 'onStatus']);
 });
 
 test('ipcRenderer is not reachable through the bridge at any depth', async ({

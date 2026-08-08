@@ -112,6 +112,26 @@ export interface SessionNameEvent {
 }
 
 /**
+ * The conversation in this session's terminal ended, and a new one began in it.
+ *
+ * Emitted only for `SessionEnd{reason:'clear'}` — `//clear` in Claude Code.
+ * Every other reason means the process is going away, which the pty observes and
+ * reports as `terminated`.
+ *
+ * Its own event rather than a `SessionStatusEvent` carrying `done`, for the same
+ * reason `SessionNameEvent` is separate: this is not a status tick. It is a
+ * *boundary*, and the renderer's response is structural — retire the row and
+ * open a successor on the same terminal — rather than a field assignment.
+ *
+ * Carries only the entity. The terminal is still running and still bound to the
+ * same pty; what the renderer needs to know is which row just became history,
+ * and it mints the successor itself because ids are its to allocate.
+ */
+export interface SessionClearedEvent {
+  entityId: string;
+}
+
+/**
  * The model and thinking effort a session may be started with (story 109).
  *
  * **Closed sets, and they live here rather than in `src/types/entity.ts`
