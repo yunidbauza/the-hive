@@ -71,9 +71,40 @@ const MAX_SEQUENCE_LENGTH = 2_048;
  */
 const LEADING_GLYPH = /^[⠀-⣿✠-❏]+\s*/u;
 
-/** Strip the activity glyph and surrounding whitespace from a raw title. */
+/**
+ * What Claude titles a session that has no name of its own.
+ *
+ * Not a name — the *absence* of one, spelled out. A session shows it at startup
+ * before the agent has named itself, and again after `/clear`, which begins a
+ * fresh unnamed conversation in the same terminal.
+ *
+ * Reporting it as a rename is how a cleared session came to be called
+ * `Claude Code` for a moment. Worse, it was indistinguishable from a real
+ * rename, so it convinced the renderer that the terminal had moved on — which
+ * dropped the guard against the *previous* session's title and let that title
+ * name the new session. Measured, after a `/clear`:
+ *
+ * ```
+ * title "pepe"          <- the finished conversation's name, correctly refused
+ * title "Claude Code"   <- taken for a rename; guard dropped
+ * title "pepe"          <- no longer refused; the successor inherited it
+ * ```
+ *
+ * A user could of course rename a session to exactly this, and would then see
+ * no name. That is the right trade: the string is Claude's own default, so the
+ * common case by far is a session that has not been named.
+ */
+const UNNAMED_TITLE = 'Claude Code';
+
+/**
+ * Strip the activity glyph and surrounding whitespace from a raw title.
+ *
+ * Answers `''` for a title that carries no name, which {@link createTitleReader}
+ * drops — the same treatment an empty title already gets.
+ */
 export function nameFromTitle(title: string): string {
-  return title.replace(LEADING_GLYPH, '').trim();
+  const name = title.replace(LEADING_GLYPH, '').trim();
+  return name === UNNAMED_TITLE ? '' : name;
 }
 
 export interface TitleReader {

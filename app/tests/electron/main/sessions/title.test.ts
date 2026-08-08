@@ -17,6 +17,27 @@ describe('nameFromTitle', () => {
     expect(nameFromTitle('⠐ fix the login bug')).toBe('fix the login bug');
   });
 
+  /**
+   * The default title is the *absence* of a name, and reporting it as one broke
+   * `/clear` in a way that took a probe to see. Measured order after a clear:
+   *
+   * ```
+   * title "pepe"          the finished conversation's name, correctly refused
+   * title "Claude Code"   taken for a real rename, so the guard was dropped
+   * title "pepe"          no longer refused — the successor inherited it
+   * ```
+   */
+  it('reports the default title as no name at all', () => {
+    expect(nameFromTitle('✳ Claude Code')).toBe('');
+    expect(nameFromTitle('⠂ Claude Code')).toBe('');
+    expect(nameFromTitle('Claude Code')).toBe('');
+  });
+
+  it('still accepts a name that merely contains it', () => {
+    // Only the exact default is meaningless; this is somebody's real session.
+    expect(nameFromTitle('✳ Claude Code rewrite')).toBe('Claude Code rewrite');
+  });
+
   it('leaves a name with no glyph alone', () => {
     expect(nameFromTitle('sess-07')).toBe('sess-07');
   });
