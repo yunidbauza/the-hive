@@ -176,12 +176,76 @@ describe('clearSession', () => {
       expect(sessionAt('hero-refresh').status).toBe('terminated');
     });
 
-    /** Clearing twice must not retire the successor along with its parent. */
-    it('does not double-retire when the same event arrives twice', () => {
+    it('is a no-op for a terminal whose last session ended', () => {
+      const successorId = state().clearSession('hero-refresh')!;
+      state().setSessionStatus(successorId, 'terminated');
+
+      // Nothing live is left in this terminal to retire.
+      expect(state().clearSession('hero-refresh')).toBeNull();
+    });
+  });
+
+  /**
+   * Every hook a session sends carries the id its pty was spawned with, and
+   * that value never changes — the pty never restarts. So a terminal cleared
+   * twice names the *first* row both times, and the app has to resolve that to
+   * whichever row is live.
+   *
+   * This is what `/clear` doing nothing looked like: `SessionEnd{clear}` marked
+   * the row done, and the `SessionStart{source:'clear'}` immediately behind it
+   * mapped to `idle` and un-marked it — leaving two idle rows, both openable,
+   * one of them showing a blank stage.
+   */
+  describe('events keep arriving under the original id', () => {
+    it('does not let the SessionStart behind a clear un-retire the row', () => {
       const successorId = state().clearSession('hero-refresh')!;
 
-      expect(state().clearSession('hero-refresh')).toBeNull();
+      // What Claude sends a beat later, on the same header.
+      state().setSessionStatus('hero-refresh', 'idle');
+
+      expect(sessionAt('hero-refresh').status).toBe('done');
       expect(sessionAt(successorId).status).toBe('idle');
+    });
+
+    it('routes later statuses to the successor, not the retired row', () => {
+      const successorId = state().clearSession('hero-refresh')!;
+
+      state().setSessionStatus('hero-refresh', 'working');
+
+      expect(sessionAt(successorId).status).toBe('working');
+      expect(sessionAt('hero-refresh').status).toBe('done');
+    });
+
+    it('routes a rename to the successor — the old name is history', () => {
+      const successorId = state().clearSession('hero-refresh')!;
+
+      state().renameSession('hero-refresh', 'something-new');
+
+      expect(sessionAt(successorId).name).toBe('something-new');
+      expect(sessionAt('hero-refresh').name).toBeUndefined();
+    });
+
+    /**
+     * A pty exit still lands. `terminated` arrives on the same header as
+     * everything else, and it belongs to whichever conversation was running.
+     */
+    it('routes a pty exit to the successor', () => {
+      const successorId = state().clearSession('hero-refresh')!;
+
+      state().setSessionStatus('hero-refresh', 'terminated');
+
+      expect(sessionAt(successorId).status).toBe('terminated');
+      expect(sessionAt('hero-refresh').status).toBe('done');
+    });
+
+    it('retires the successor when the terminal is cleared again', () => {
+      const first = state().clearSession('hero-refresh')!;
+      const second = state().clearSession('hero-refresh')!;
+
+      expect(second).not.toBe(first);
+      expect(sessionAt(first).status).toBe('done');
+      expect(sessionAt(second).status).toBe('idle');
+      expect(terminalOf(sessionAt(second))).toBe('hero-refresh');
     });
   });
 

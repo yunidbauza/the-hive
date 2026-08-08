@@ -201,6 +201,51 @@ const ORCH_LINE_CAP = 200;
  */
 const DONE_CAP = 20;
 
+/**
+ * The row a terminal's events belong to **now**.
+ *
+ * Every hook a session sends carries `HIVE_SESSION_ID`, and that value is baked
+ * into the pty's environment at spawn — it never changes, because the pty never
+ * restarts. So after a `/clear`, main is still naming the row that has just been
+ * retired, and it cannot do better: it does not know the successor exists.
+ *
+ * Without this, `/clear` looked like it did nothing. The sequence is
+ * `SessionEnd{clear}` then `SessionStart{source:'clear'}`, and the second one
+ * maps to `idle` — so the row was marked `done` and then immediately un-marked,
+ * while every later status went on landing on the retired row and the successor
+ * never showed a status at all.
+ *
+ * Resolving here rather than adding a renderer→main verb keeps main speaking the
+ * only id it has and the renderer owning the ids it allocates. The fast path is
+ * the overwhelmingly common one: a terminal that has never been cleared answers
+ * its own id without a scan.
+ */
+function currentSessionIn(state: HiveState, terminalId: string): string {
+  const direct = state.entities[terminalId];
+  if (direct !== undefined && isSession(direct) && !isEnded(direct.status)) {
+    return terminalId;
+  }
+
+  for (const id of state.order) {
+    const entity = state.entities[id];
+    if (
+      entity !== undefined &&
+      isSession(entity) &&
+      terminalOf(entity) === terminalId &&
+      !isEnded(entity.status)
+    ) {
+      return id;
+    }
+  }
+
+  /**
+   * No live row — an id nothing has cleared, or a terminal whose last session
+   * really did end. Answering the original keeps every existing behaviour
+   * (a pty exit still marks the row it names) instead of silently dropping it.
+   */
+  return terminalId;
+}
+
 const capLines = (lines: TermLine[]) =>
   lines.length > ORCH_LINE_CAP ? lines.slice(lines.length - ORCH_LINE_CAP) : lines;
 
@@ -753,10 +798,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    */
   setSessionStatus: (id, status) =>
     set((state) => {
-      const entity = state.entities[id];
+      /**
+       * Main names the *terminal*; this is the row that owns it now.
+       *
+       * A cleared session must not be un-retired by the `SessionStart` its own
+       * `/clear` produces, and the successor must receive the statuses that
+       * follow. See {@link currentSessionIn}.
+       */
+      const target = currentSessionIn(state, id);
+      const entity = state.entities[target];
       if (!entity || !isSession(entity) || entity.status === status) return state;
       return {
-        entities: { ...state.entities, [id]: { ...entity, status } },
+        entities: { ...state.entities, [target]: { ...entity, status } },
       };
     }),
 
@@ -776,10 +829,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    */
   renameSession: (id, name) =>
     set((state) => {
-      const entity = state.entities[id];
+      // The terminal's current row, for the reason `setSessionStatus` gives:
+      // a rename after a `/clear` describes the new conversation, not the
+      // finished one whose name is now history.
+      const target = currentSessionIn(state, id);
+      const entity = state.entities[target];
       if (!entity || !isSession(entity) || entity.name === name) return state;
       return {
-        entities: { ...state.entities, [id]: { ...entity, name } },
+        entities: { ...state.entities, [target]: { ...entity, name } },
       };
     }),
 
@@ -813,7 +870,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * answer to that race is to do nothing.
    */
   clearSession: (id) => {
-    const current = get().entities[id];
+    /**
+     * Resolve to the terminal's live row first.
+     *
+     * A terminal cleared twice sends the same `HIVE_SESSION_ID` both times, so
+     * the second `/clear` names a row that is already `done`. Retiring by that
+     * id would no-op and leave the successor running under a conversation the
+     * user has just wiped.
+     */
+    const targetId = currentSessionIn(get(), id);
+    const current = get().entities[targetId];
     if (!current || !isSession(current) || isEnded(current.status)) return null;
 
     const successorId = nextSessionId();
@@ -836,18 +902,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       const retired: Session = { ...current, status: 'done' };
       const entities: Record<string, Entity> = {
         ...state.entities,
-        [id]: retired,
+        [targetId]: retired,
         [successorId]: successor,
       };
 
-      const at = state.order.indexOf(id);
+      const at = state.order.indexOf(targetId);
       const order =
         at === -1
           ? [...state.order, successorId]
           : [
               ...state.order.slice(0, at),
               successorId,
-              id,
+              targetId,
               ...state.order.slice(at + 1),
             ];
 
@@ -880,7 +946,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * retired row was on screen, the successor has to take the stage or the
      * next keystroke goes to a tab that no longer accepts one.
      */
-    if (useUiStore.getState().activeTab === id) {
+    if (useUiStore.getState().activeTab === targetId) {
       useUiStore.getState().openTab(successorId);
     }
 
