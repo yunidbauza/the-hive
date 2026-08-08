@@ -24,10 +24,10 @@ import type { Pr } from '@/types/pull-request';
  * They are **knowingly stale**, and the consequence is precise enough to write
  * down. Their `session` and `target` fields name sessions (`hero-refresh`,
  * `lead-form`) that no longer exist in any store. `openEntity` passes an unknown
- * id through by design — it refuses only *terminated* sessions — so clicking one
- * of these rows sets `activeTab` to a phantom id, `resolve-view` routes back to
- * the orchestrator, and `markRead` still fires: the badge drops and nothing
- * opens.
+ * id through by design — it refuses *ended* sessions, and an id it has never
+ * heard of is not one — so clicking one of these rows sets `activeTab` to a
+ * phantom id, `resolve-view` routes back to the orchestrator, and `markRead`
+ * still fires: the badge drops and nothing opens.
  *
  * That was an explicit call, not an oversight. The alternative — making the rows
  * non-interactive — would freeze a panel that is due to become real, and the

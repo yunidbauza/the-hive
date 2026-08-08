@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isSession, terminalOf, type Session } from '@/types/entity';
 import { isDesktop } from '@config/runtime';
 import { requestSpawn } from '@lib/terminal/pty-transport';
+import { sendToSession } from '@lib/terminal/session-input';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
@@ -15,6 +16,10 @@ vi.mock('@config/runtime', async (importOriginal) => ({
 vi.mock('@lib/terminal/pty-transport', () => ({
   requestSpawn: vi.fn(() => Promise.resolve({ ok: true })),
   sessionChannelState: vi.fn(() => 'live'),
+}));
+
+vi.mock('@lib/terminal/session-input', () => ({
+  sendToSession: vi.fn(() => ({ ok: true })),
 }));
 
 /**
@@ -319,6 +324,29 @@ describe('clearSession', () => {
       expect(sessionAt(first).status).toBe('done');
       expect(sessionAt(second).status).toBe('idle');
       expect(terminalOf(sessionAt(second))).toBe('hero-refresh');
+    });
+  });
+
+  /**
+   * Everything that reaches the pty must address the **terminal**.
+   *
+   * `pty-transport` keys its channels by the id `createPtyTransport` was given,
+   * which is `terminalOf(session)`. A successor's row id is not that id, so any
+   * path still passing the row id talks to a channel that does not exist.
+   */
+  describe('addressing the pty after a clear', () => {
+    it('sends a message on the terminal id, not the row id', () => {
+      const successorId = state().clearSession('hero-refresh')!;
+      vi.mocked(sendToSession).mockClear();
+
+      state().sendToEntity(successorId, 'hello');
+
+      /**
+       * `sess-01`, not `sess-02`. Addressed by row id this refused every
+       * message — "has no live session — open it to start one" — for a pty that
+       * was running and perfectly typable.
+       */
+      expect(sendToSession).toHaveBeenCalledWith('hero-refresh', 'hello');
     });
   });
 

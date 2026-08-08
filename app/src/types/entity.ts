@@ -144,10 +144,13 @@ export const isEnded = (status: SessionStatus): boolean =>
 /**
  * Whether this session's process is gone and cannot be typed into.
  *
- * Narrower than {@link isEnded}, and the two are not interchangeable: a `done`
- * fixture is a *recording* whose terminal has always been read-only and works
- * fine, while a `terminated` session has a real, dead pty behind it. Only the
- * second one closes its tab to new visits.
+ * Narrower than {@link isEnded}, and the two are still not interchangeable —
+ * though the reason changed. Both endings now close their tab to new visits, so
+ * `openEntity` gates on `isEnded`; what only `terminated` means is that the
+ * **process is gone**. A cleared session's pty is alive and belongs to its
+ * successor, which is why `center-stage.tsx` uses this one for the "this
+ * terminal has died" notice: showing it over a session whose terminal is still
+ * running would be false.
  */
 export const isTerminated = (entity: Entity | undefined): boolean =>
   entity !== undefined && entity.kind === 'session' && entity.status === 'terminated';

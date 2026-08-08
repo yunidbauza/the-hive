@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { useOpenEntity } from '@stores/hive-store';
+import { currentRowFor, useOpenEntity } from '@stores/hive-store';
 
 /**
  * Open the session a clicked notification was about (story 106).
@@ -32,8 +32,17 @@ export function useNotificationActivate(): void {
      * user may click it minutes later. Opening the tab anyway would put them
      * inside a dead terminal; the gate sends them to the fleet view instead.
      */
+    /**
+     * `entityId` from main is a **terminal** id, so resolve it to the row that
+     * owns the terminal now.
+     *
+     * After a `/clear` the raw id names the retired session, which the gate
+     * above correctly refuses — so a notification about work happening *right
+     * now* would bounce the user to the orchestrator. The terminal is the same
+     * one; only the row changed.
+     */
     return bridge.notifications.onActivate(({ entityId }) => {
-      openEntity(entityId);
+      openEntity(currentRowFor(entityId));
     });
   }, [openEntity]);
 }

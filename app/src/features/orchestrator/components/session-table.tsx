@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { entityLabel, isSession } from '@/types/entity';
+import { entityLabel, isEnded, isSession } from '@/types/entity';
 
 import { STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
@@ -135,7 +135,7 @@ function SessionTableRow({ id }: { id: string }) {
   const index = navOrder.indexOf(id);
   const selected = index === selIdx;
   /**
-   * A terminated row still reads, still selects, and does not open (story 108).
+   * An ended row still reads, still selects, and does not open (story 108).
    *
    * `disabled` rather than a silently ignored click. The row's whole job on this
    * screen is to say what happened to a session, so it stays legible and stays
@@ -143,14 +143,27 @@ function SessionTableRow({ id }: { id: string }) {
    * one that says it is spent, and `disabled` is the only version of that a
    * screen reader hears too. The `title` supplies the *why*, which the status
    * word alone does not.
+   *
+   * **Both endings**, because `openEntity` refuses both. This keyed on
+   * `terminated` alone while `done` was a fixture's recording that opened fine.
+   * A cleared session does not open — its terminal belongs to the successor —
+   * so leaving it enabled produced exactly the trap this paragraph rejects.
+   *
+   * The two reasons differ and the title says which: a terminated session's
+   * process is gone, while a cleared one's is very much alive and simply is not
+   * its own any more.
    */
-  const terminated = entity.status === 'terminated';
+  const ended = isEnded(entity.status);
+  const endedReason =
+    entity.status === 'terminated'
+      ? `${entityLabel(entity)} has terminated — its process is gone`
+      : `${entityLabel(entity)} was cleared — its terminal continues as a new session`;
 
   return (
     <button
       type="button"
-      disabled={terminated}
-      title={terminated ? `${entityLabel(entity)} has terminated — its process is gone` : undefined}
+      disabled={ended}
+      title={ended ? endedReason : undefined}
       onClick={() => {
         // Click both selects and opens: the caret should follow the user's
         // last action, or the keyboard and the mouse end up disagreeing about
@@ -162,7 +175,7 @@ function SessionTableRow({ id }: { id: string }) {
       className={cn(
         'flex w-full items-center gap-2.5 rounded px-2 py-[3px] text-left',
         selected ? 'bg-term-row-active' : 'hover:bg-term-row-hover',
-        terminated && 'opacity-60',
+        ended && 'opacity-60',
       )}
     >
       <span

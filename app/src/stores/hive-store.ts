@@ -500,7 +500,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * from becoming typable while its transport stays a recording.
      */
     if (isDesktop() && isSession(entity)) {
-      const result = sendToSession(id, msg);
+      /**
+       * Addressed to the **terminal**, because that is what owns the channel.
+       *
+       * `pty-transport` keys its channels by the id `createPtyTransport` was
+       * given, and that is `terminalOf(session)`. A successor minted by
+       * `/clear` has a row id its terminal does not answer to, so sending on
+       * the row id refused every message — `sess-02 has no live session` — for
+       * a pty that was running and typable.
+       *
+       * The *messages* still name the row, because that is what the user typed
+       * and what they see in the rails.
+       */
+      const result = sendToSession(terminalOf(entity), msg);
 
       get().pushFeed({
         time: stamp(),
@@ -729,20 +741,30 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * "unknown repo" for projects sitting right there in the Projects
          * panel. One source for "which projects exist", and it is the config.
          *
-         * **No snapshot means permissive, not empty.** `main.tsx` fires
-         * `loadProjectConfig()` without awaiting, and `project-config.ts` leaves
-         * the snapshot `null` when that read throws — deliberately, so a broken
-         * IPC hop degrades rather than locks the app. Treating `null` as "no
-         * projects" would make this verb refuse every repo during the first
+         * **On desktop, no snapshot means permissive, not empty.** `main.tsx`
+         * fires `loadProjectConfig()` without awaiting, and `project-config.ts`
+         * leaves the snapshot `null` when that read throws — deliberately, so a
+         * broken IPC hop degrades rather than locks the app. Treating `null` as
+         * "no projects" would make this verb refuse every repo during the first
          * frames of launch, and refuse them *permanently* after a failed read.
          * `can.spawnSessionIn` already answers `true` with no snapshot; this
          * agrees with it, and lets main — which has the file in front of it —
          * give the refusal if there is one.
+         *
+         * **In a browser it means empty, and the distinction is load-bearing.**
+         * There is no bridge, so the snapshot is `null` *forever* rather than
+         * briefly, and nothing downstream can ever refuse: `spawnSession` skips
+         * `requestSpawn` off-desktop, so no main-side refusal arrives and the
+         * row stays. Being permissive there would let `spawn anything` mint a
+         * session with a fabricated transcript that the header counts and the
+         * rails list — a phantom fleet, which is the exact lie this branch
+         * exists to delete.
          */
         const snapshot = projectConfigSnapshot();
         const known =
-          snapshot === null ||
-          snapshot.projects.some((project) => project.id === command.repo);
+          (snapshot === null && isDesktop()) ||
+          (snapshot?.projects.some((project) => project.id === command.repo) ??
+            false);
         if (!known) {
           pushOrch(
             `  unknown repo: ${command.repo} — try one from the Projects panel`,
@@ -1307,6 +1329,23 @@ export const useClearSession = () =>
  * rebuild every transport whenever any unrelated slice changed, which is the
  * one thing `center-stage.tsx`'s cache exists to prevent.
  */
+/**
+ * The inverse of {@link terminalIdFor}: the row a terminal id names *now*.
+ *
+ * Main speaks terminal ids — they are baked into a pty's environment and never
+ * change — so anything arriving from main names a terminal, not a row. After a
+ * `/clear` that id belongs to the retired session, and acting on it directly
+ * targets history: an OS notification clicked minutes later would refuse to
+ * open (the row is ended) and drop the user on the orchestrator, instead of the
+ * live session the notification was actually about.
+ *
+ * A plain read, like its inverse — its callers are event handlers, not render
+ * paths, and a subscription would re-run them on unrelated writes.
+ */
+export function currentRowFor(id: string): string {
+  return currentSessionIn(useHiveStore.getState(), id);
+}
+
 export function terminalIdFor(id: string): string {
   const entity = useHiveStore.getState().entities[id];
   return entity !== undefined && isSession(entity) ? terminalOf(entity) : id;

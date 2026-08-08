@@ -601,6 +601,9 @@ describe('hive-store', () => {
        * launch, and refuse them permanently after a failed read.
        */
       it('does not refuse every repo when the config has not been read', () => {
+        // Desktop explicitly: this suite defaults to the browser, where a null
+        // snapshot means something else entirely — see the case below.
+        vi.mocked(isDesktop).mockReturnValue(true);
         resetProjectConfig();
         const before = useHiveStore.getState().order.length;
 
@@ -608,6 +611,27 @@ describe('hive-store', () => {
 
         expect(useHiveStore.getState().order).toHaveLength(before + 1);
         expect(lastLine()?.text).not.toContain('unknown repo');
+      });
+
+      /**
+       * …but a *browser* has no snapshot for a different reason, and being
+       * permissive there mints a phantom fleet.
+       *
+       * On desktop `null` means "not read yet" and main gives the refusal a
+       * moment later. In a browser there is no bridge, so the snapshot is null
+       * **forever** and `spawnSession` never calls `requestSpawn` — no refusal
+       * can ever arrive, and the fabricated row stays in the rails and the
+       * header counts. That is the exact lie this branch exists to delete.
+       */
+      it('refuses any repo in a browser, where no refusal could ever arrive', () => {
+        vi.mocked(isDesktop).mockReturnValue(false);
+        resetProjectConfig();
+        const before = useHiveStore.getState().order.length;
+
+        run('spawn anything at all');
+
+        expect(useHiveStore.getState().order).toHaveLength(before);
+        expect(lastLine()?.text).toContain('unknown repo: anything');
       });
 
       /**
