@@ -132,7 +132,14 @@ export function SplitHandle({
     <button
       type="button"
       role="slider"
-      aria-orientation={vertical ? 'vertical' : 'horizontal'}
+      /*
+        Inverted relative to the prop name, deliberately. `axis` names the
+        *divider* — a vertical divider separates side-by-side panes — but
+        `aria-orientation` on a slider names the direction the **value moves**,
+        which for a vertical divider is horizontal. Getting this the intuitive
+        way round announces the opposite of the arrow keys that actually work.
+      */
+      aria-orientation={vertical ? 'horizontal' : 'vertical'}
       aria-label="Resize the editor"
       aria-valuenow={Math.round(ratio * 100)}
       aria-valuemin={0}

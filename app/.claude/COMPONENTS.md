@@ -441,8 +441,9 @@ which rendered fixture rows narrating events the app already shows elsewhere.
   arrow-key navigation across the whole widget to be correct; a half-built one
   announces capabilities that are not there. This is a list of buttons that all
   work, and full tree semantics are a deliberate follow-up.
-- **It owns the filesystem watcher**, torn down with the panel — the thing being
-  watched is what the panel is showing.
+- **It does not own the filesystem watcher.** That is `useProjectWatcher` at the
+  composition root: an open editor buffer reconciles against the same events and
+  outlives the rail tab. The panel reads the revision counter the watcher bumps.
 
 ### `<EditorPane />`, `<EditorTabStrip />` and `<EditorNotice />`
 

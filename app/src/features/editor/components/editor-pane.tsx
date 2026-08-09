@@ -9,6 +9,7 @@ import {
 import { languageFor } from '@lib/explorer/language';
 import { useEditorAppearance, useEditorLayout } from '@stores/appearance-store';
 import { useActiveFile, useEditorActions } from '@stores/editor-store';
+import { usePickerState, useSettingsOpen } from '@stores/ui-store';
 
 /**
  * The document half of the stage: notices, then the editor.
@@ -55,6 +56,10 @@ export function EditorPane() {
   const appearance = useEditorAppearance();
   const { nav } = useEditorLayout();
   const { edit, save, reload, closeFile } = useEditorActions();
+  /** Escape belongs to whichever overlay is up, not to this pane. */
+  const settingsOpen = useSettingsOpen();
+  const { picker } = usePickerState();
+  const overlayOpen = settingsOpen || picker;
 
   const fileName = file?.name;
 
@@ -100,13 +105,36 @@ export function EditorPane() {
   useEffect(() => {
     if (nav !== 'single' || !key) return;
 
+    /**
+     * Two things this must not steal Escape from, both found in review:
+     *
+     * - **An open overlay.** The pane stays mounted inside the merely-`hidden`
+     *   stage while the picker or settings is up, and Radix listens for Escape
+     *   on the document in the capture phase — so one press would dismiss the
+     *   dialog *and* close the file, discarding unsaved edits.
+     * - **A text field.** Escape in the message row or the console is a
+     *   gesture about that input, not a request to close a file the user may
+     *   not even be looking at in `split`.
+     */
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (overlayOpen) return;
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement)
+      ) {
+        return;
+      }
+
       closeFile(key);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [nav, key, closeFile]);
+  }, [nav, key, overlayOpen, closeFile]);
 
   if (!file) return null;
 

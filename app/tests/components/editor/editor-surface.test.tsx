@@ -165,6 +165,61 @@ describe('EditorSurface', () => {
     expect(content(container)).toContain('const a = 1;');
   });
 
+  /**
+   * **The regression this cache exists for.**
+   *
+   * A new `EditorState` is built with whatever the compartment is given at
+   * construction, and the grammar arrives asynchronously *after* that. Without
+   * somewhere to remember it, every rebuild dropped back to plain text — and
+   * the watcher's silent reload rebuilds on `value`, which is the feature's
+   * headline case. Highlighting used to vanish the first time an agent touched
+   * the open file.
+   */
+  it('keeps its grammar across a reload of the same file', async () => {
+    const { javascript } = await import('@codemirror/lang-javascript');
+    const languageLoad = vi.fn(async () => javascript({ typescript: true }));
+
+    const { container, rerender } = render(
+      <EditorSurface {...baseProps} languageLoad={languageLoad} />,
+    );
+
+    await vi.waitFor(() =>
+      expect(container.querySelector('.cm-line span')).not.toBeNull(),
+    );
+
+    // The watcher's silent reload: same file, new bytes.
+    rerender(
+      <EditorSurface
+        {...baseProps}
+        languageLoad={languageLoad}
+        value={'const b = 2;\n'}
+      />,
+    );
+
+    expect(container.querySelector('.cm-line span')).not.toBeNull();
+    // Reused, not re-imported.
+    expect(languageLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps its grammar across a configuration change', async () => {
+    const { javascript } = await import('@codemirror/lang-javascript');
+    const languageLoad = vi.fn(async () => javascript({ typescript: true }));
+
+    const { container, rerender } = render(
+      <EditorSurface {...baseProps} languageLoad={languageLoad} />,
+    );
+
+    await vi.waitFor(() =>
+      expect(container.querySelector('.cm-line span')).not.toBeNull(),
+    );
+
+    rerender(
+      <EditorSurface {...baseProps} languageLoad={languageLoad} fontSize={18} />,
+    );
+
+    expect(container.querySelector('.cm-line span')).not.toBeNull();
+  });
+
   it('destroys its view on unmount', () => {
     const { container, unmount } = render(<EditorSurface {...baseProps} />);
     expect(container.querySelector('.cm-editor')).not.toBeNull();

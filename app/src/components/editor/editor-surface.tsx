@@ -80,6 +80,27 @@ export interface EditorSurfaceProps {
 /** The compartment the lazily-loaded grammar lands in. */
 const languageCompartment = new Compartment();
 
+/**
+ * How many files' states and grammars to keep.
+ *
+ * The caches are keyed by file and this component never learns that a tab was
+ * closed — it only ever sees the file it is currently showing. Without a bound,
+ * a long session that opened a hundred files would hold a hundred documents and
+ * their undo histories forever. Twelve is well past any realistic set of tabs,
+ * so the eviction never fires in normal use; it exists so the growth is bounded
+ * rather than unbounded.
+ */
+const CACHE_LIMIT = 12;
+
+/** Evict oldest-first until the map fits, never dropping the active entry. */
+function trim<T>(cache: Map<string, T>, keep: string | null): void {
+  for (const key of cache.keys()) {
+    if (cache.size <= CACHE_LIMIT) return;
+    if (key === keep) continue;
+    cache.delete(key);
+  }
+}
+
 export function EditorSurface({
   fileKey,
   value,
@@ -97,6 +118,19 @@ export function EditorSurface({
   const viewRef = useRef<EditorView | null>(null);
   const statesRef = useRef(new Map<string, EditorState>());
   const activeKeyRef = useRef<string | null>(null);
+
+  /**
+   * Grammars that have already resolved, by file key.
+   *
+   * **Load-bearing, not a cache for speed.** A new `EditorState` is built with
+   * whatever the compartment is given at construction, and the language arrives
+   * asynchronously *after* that — so without somewhere to remember it, every
+   * rebuild would drop the grammar back to plain text. Rebuilds are not rare:
+   * the watcher's silent reload changes `value`, which is the feature's headline
+   * case. Highlighting used to disappear the first time an agent touched the
+   * open file.
+   */
+  const grammarsRef = useRef(new Map<string, LanguageSupport>());
 
   /**
    * Callbacks through refs, read at dispatch time.
@@ -149,12 +183,14 @@ export function EditorSurface({
     // Captured now rather than read in the cleanup: the ref's identity is
     // stable, but the lint rule cannot know that and the copy costs nothing.
     const states = statesRef.current;
+    const grammars = grammarsRef.current;
 
     return () => {
       view.destroy();
       viewRef.current = null;
       activeKeyRef.current = null;
       states.clear();
+      grammars.clear();
     };
   }, []);
 
@@ -171,7 +207,13 @@ export function EditorSurface({
       bracketMatching(),
       editorTheme,
       editorHighlight,
-      languageCompartment.of([]),
+      /*
+        Seeded from what has already resolved for this file, not empty. A
+        rebuild that dropped to `[]` would un-highlight the document until the
+        loader happened to run again — and on a silent reload it never would,
+        because `languageLoad` and `fileKey` are both unchanged.
+      */
+      languageCompartment.of(grammarsRef.current.get(fileKey) ?? []),
       EditorState.readOnly.of(readOnly),
       /**
        * `readOnly` alone leaves a blinking cursor in a document that swallows
@@ -263,6 +305,7 @@ export function EditorSurface({
 
     const state = EditorState.create({ doc: value, extensions });
     statesRef.current.set(fileKey, state);
+    trim(statesRef.current, fileKey);
     activeKeyRef.current = fileKey;
     view.setState(state);
   }, [fileKey, value, configKey, readOnly, fontFamily, fontSize, wordWrap, lineNumbers, tabWidth]);
@@ -281,13 +324,20 @@ export function EditorSurface({
     if (!view) return;
 
     if (!languageLoad) {
+      grammarsRef.current.delete(fileKey);
       view.dispatch({ effects: languageCompartment.reconfigure([]) });
       return;
     }
 
+    // Already resolved for this file — the state was built with it, so there is
+    // nothing to dispatch and nothing to await.
+    if (grammarsRef.current.has(fileKey)) return;
+
     let cancelled = false;
     void languageLoad().then((support) => {
       if (cancelled || !viewRef.current) return;
+      grammarsRef.current.set(fileKey, support);
+      trim(grammarsRef.current, fileKey);
       viewRef.current.dispatch({
         effects: languageCompartment.reconfigure(support),
       });

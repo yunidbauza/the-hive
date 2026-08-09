@@ -5,14 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExplorerPanel } from '@features/explorer/components/explorer-panel';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { emptySnapshot } from '@shared/config-contract';
-import type { DirEntry, FsChangedEvent } from '@shared/fs-contract';
+import type { DirEntry } from '@shared/fs-contract';
 import { useEditorStore } from '@stores/editor-store';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
 
 /**
- * The explorer panel, the tree it renders, and the watcher it owns.
+ * The explorer panel and the tree it renders.
  *
  * Driven through the fs-client rather than through `window.hive`, because the
  * client is the seam every component in this feature goes through and mocking
@@ -58,22 +58,13 @@ function seedTree(): void {
   });
 }
 
-/** The watcher callback the panel registered, if any. */
-let emitChange: ((event: FsChangedEvent) => void) | null = null;
-
 beforeEach(() => {
   vi.clearAllMocks();
-  emitChange = null;
 
   hasFsBridge.mockReturnValue(true);
   watchProject.mockResolvedValue(true);
   unwatchProject.mockResolvedValue(undefined);
-  onFsChanged.mockImplementation((callback: (event: FsChangedEvent) => void) => {
-    emitChange = callback;
-    return () => {
-      emitChange = null;
-    };
-  });
+  onFsChanged.mockReturnValue(() => {});
   seedTree();
 
   useHiveStore.getState().reset();
@@ -234,18 +225,14 @@ describe('ExplorerPanel — the tree', () => {
   });
 });
 
-describe('ExplorerPanel — the watcher', () => {
-  it('watches the visible project and stops on unmount', async () => {
-    const { unmount } = render(<ExplorerPanel />);
-    await screen.findByText('README.md');
-
-    expect(watchProject).toHaveBeenCalledWith('apfm-web');
-
-    unmount();
-    expect(unwatchProject).toHaveBeenCalled();
-  });
-
-  it('re-reads the expanded directories when the project changes on disk', async () => {
+describe('ExplorerPanel — refreshing', () => {
+  /**
+   * The panel no longer owns the watcher — `useProjectWatcher` does, at the
+   * composition root, because an open editor buffer outlives the rail tab that
+   * shows this tree. What the panel still owns is re-reading when the shared
+   * revision changes, whichever of the two bumped it.
+   */
+  it('re-reads the expanded directories when the revision changes', async () => {
     render(<ExplorerPanel />);
     await screen.findByText('README.md');
     await userEvent.click(row('src'));
@@ -254,42 +241,21 @@ describe('ExplorerPanel — the watcher', () => {
     const before = readDir.mock.calls.length;
 
     await act(async () => {
-      emitChange?.({ projectId: 'apfm-web', paths: ['src/app.ts'] });
+      useUiStore.getState().bumpFsRevision();
     });
 
     await waitFor(() =>
       expect(readDir.mock.calls.length).toBeGreaterThan(before),
     );
-    // Both the root and the one expanded directory, not the collapsed ones.
-    expect(readDir).toHaveBeenLastCalledWith('apfm-web', expect.any(String));
   });
 
-  it('ignores an event for another project', async () => {
-    render(<ExplorerPanel />);
-    await screen.findByText('README.md');
-    const before = readDir.mock.calls.length;
-
-    await act(async () => {
-      emitChange?.({ projectId: 'somewhere-else', paths: ['a.ts'] });
-    });
-
-    expect(readDir.mock.calls.length).toBe(before);
-  });
-
-  /**
-   * The watcher's second job: an open buffer whose file changed underneath it
-   * is reconciled by the editor store. Clean buffers reload silently.
-   */
-  it('reconciles open buffers on a change event', async () => {
+  it('does not subscribe to the filesystem itself', async () => {
     render(<ExplorerPanel />);
     await screen.findByText('README.md');
 
-    const reconcile = vi.spyOn(useEditorStore.getState(), 'reconcile');
-
-    await act(async () => {
-      emitChange?.({ projectId: 'apfm-web', paths: ['README.md'] });
-    });
-
-    expect(reconcile).toHaveBeenCalledWith('apfm-web', ['README.md']);
+    // The subscription belongs to the hook at the composition root. A panel
+    // that also subscribed would double-reconcile every event.
+    expect(onFsChanged).not.toHaveBeenCalled();
+    expect(watchProject).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { EditorPane } from '@features/editor/components/editor-pane';
 import { MAX_FILE_BYTES } from '@shared/fs-contract';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { fileKey, useEditorStore } from '@stores/editor-store';
+import { useUiStore } from '@stores/ui-store';
 
 /**
  * The document half of the stage.
@@ -264,6 +265,55 @@ describe('EditorPane — single-file mode', () => {
     await userEvent.click(screen.getByRole('button', { name: /Close app\.ts/ }));
 
     expect(store().openFiles).toHaveLength(0);
+  });
+
+  /**
+   * Escape reaches this listener while an overlay is up, because the pane stays
+   * mounted inside the merely-`hidden` stage. Radix dismisses the dialog on the
+   * same key — so without this guard one press closed the dialog *and* the file,
+   * discarding unsaved edits.
+   */
+  it('leaves Escape to an open overlay', async () => {
+    await openFile();
+    act(() => {
+      useUiStore.getState().openSettings();
+    });
+    render(<EditorPane />);
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(store().openFiles).toHaveLength(1);
+  });
+
+  it('leaves Escape to the picker', async () => {
+    await openFile();
+    act(() => {
+      useUiStore.getState().openPicker();
+    });
+    render(<EditorPane />);
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(store().openFiles).toHaveLength(1);
+  });
+
+  /**
+   * Escape in the message row or the console is a gesture about that input, not
+   * a request to close a file the user may not even be looking at in `split`.
+   */
+  it('leaves Escape to a focused text field', async () => {
+    await openFile();
+    render(
+      <>
+        <input aria-label="message" />
+        <EditorPane />
+      </>,
+    );
+
+    screen.getByLabelText('message').focus();
+    await userEvent.keyboard('{Escape}');
+
+    expect(store().openFiles).toHaveLength(1);
   });
 
   it('does not close on Escape in tab mode', async () => {

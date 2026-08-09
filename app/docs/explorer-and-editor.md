@@ -30,9 +30,23 @@ Resolving *after* `realpath`, not before, is the part that matters. A guard that
 only normalises the string is beaten by a symlink; a guard that resolves the
 link and re-checks containment is not.
 
-The write path checks the **parent** directory and re-appends the basename,
-because a file created inside a symlinked directory lands wherever that link
-goes.
+The write path has **two** links to defeat, and self-review caught that an
+earlier revision only handled the first:
+
+1. **A symlinked parent.** The target may be about to be created, so only its
+   parent can be resolved — and a file created inside a symlinked directory
+   lands wherever that link goes. The basename is re-appended to the *real*
+   parent.
+2. **A symlinked target.** Resolving the parent says nothing about the leaf.
+   `root/sub/link.txt -> /outside/target.txt` has a parent inside the root and a
+   joined path inside the root, so it passed both original checks — and
+   `writeFile` follows symlinks. `lstat` is the only call that can see it:
+   `stat` would follow the link, and `realpath` throws for a target that does
+   not exist yet.
+
+A link resolving back *inside* the root is allowed rather than refused —
+in-repo symlinks are ordinary, and containment is the property being defended,
+not the absence of links.
 
 ### Containment, and the prefix trap
 
@@ -78,14 +92,31 @@ One recursive watcher, for the project the explorer is currently showing.
 argument — there is only ever one thing to stop. A watcher per visited project
 would be a file-descriptor leak with a long fuse.
 
+**The renderer subscribes at the composition root**, in `useProjectWatcher`, not
+in `ExplorerPanel`. It started in the panel and that was a bug: the rail swaps
+panels and the shell can unmount the rail entirely, so freshness died the moment
+the user looked at the Inbox with a file open — no silent reload, no
+`staleOnDisk`, and the next save refused with a conflict they were never warned
+about. The tree is only one consumer; the editor is the other, and it outlives
+the panel.
+
+A request is also stamped with a generation counter taken *before* its
+`projectRoot` await and checked after it, so two overlapping `fs:watch` calls —
+a fast session switch across projects — cannot settle out of order and leave the
+visible project unwatched.
+
 Two properties, both in `electron/main/fs/watcher.ts`:
 
 - **Hidden paths are filtered in main, before emit.** A `pnpm install` rewrites
   tens of thousands of paths under `node_modules`; filtering in the renderer
   would serialise every one of them across the bridge to be discarded.
-- **Trailing debounce, 300 ms.** One `git checkout` produces a change event per
-  file. Leading would report the state *before* most of the burst had happened,
-  which is the one thing the flush exists to avoid.
+- **Trailing debounce, 300 ms, with a 2 s ceiling.** One `git checkout` produces
+  a change event per file. Leading would report the state *before* most of the
+  burst had happened, which is the one thing the flush exists to avoid. The
+  ceiling matters because a plain trailing debounce resets on every event: a
+  sustained write stream at under 300 ms intervals — a long build, a watch-mode
+  compiler — would otherwise never flush at all, and the tree would sit stale
+  for exactly as long as the agent kept working.
 
 Recursive watching is native on macOS and Windows and available on Linux from
 Node 20. Electron 43 ships Node 22, so there is no fallback path and no polling.
@@ -157,7 +188,14 @@ the stale state has already been restored.
 Seventeen grammars is roughly a megabyte of parser tables. Each is behind a
 `() => import(…)`, so a language nobody opens costs nothing but a table entry.
 The document renders before the grammar arrives; that is the point, not a
-glitch. An extension with no entry opens as plain text with line numbers,
+glitch.
+
+A resolved grammar is then **remembered per file**, and that cache is
+load-bearing rather than an optimisation: a new `EditorState` takes whatever the
+compartment is given at construction, so without it every rebuild dropped back
+to plain text. Rebuilds are not rare — the watcher's silent reload changes
+`value`, which is the feature's headline case. Highlighting used to disappear
+the first time an agent touched the open file. An extension with no entry opens as plain text with line numbers,
 wrapping and search intact — a supported outcome, not a gap.
 
 ## Placement, and the one rule that unifies it
@@ -189,11 +227,22 @@ should be mounted.
 | --- | --- | --- |
 | clean | changed | **silently reloaded** |
 | dirty | changed | `staleOnDisk`; banner offers Reload or Keep mine |
-| any | mid-save | skipped — a save writes the file, which the watcher reports |
+| any | mid-save | skipped |
+| any | the app's own last write | suppressed once, by mtime |
 
 Silent reload of a clean buffer is the whole point of the feature: you open a
 file to watch what a session does to it, and a prompt between you and that is
 friction carrying no information.
+
+**The `saving` flag cannot suppress the app's own echo**, and an earlier
+revision of this document claimed it could. The watcher is a *trailing*
+debounce, so the event always arrives after the write has settled and the flag
+has gone false. A save therefore records the mtime it produced, and the first
+event afterwards consumes it — otherwise every save the user made would put a
+"changed on disk" banner in front of them. The suppression is one-shot and
+deliberately narrow: an agent writing inside that same window is folded into the
+same event and swallowed with ours, which the next event and the save-time mtime
+check both catch.
 
 Saving is optimistic concurrency, not a lock — the other writer is an agent in a
 subprocess that would never take one. The buffer sends the mtime it was read at;
@@ -204,6 +253,11 @@ act rather than a retry that would be refused identically.
 The comparison is `!==`, not `>`. A file restored from a backup or checked out
 by `git` can land with an mtime *older* than the buffer's base, and treating
 "older" as "unchanged" would overwrite it.
+
+A save is also a round trip the user can type during, so the buffer goes clean
+only if its text still equals what was actually sent. Clearing `dirty`
+unconditionally claimed the disk held text it did not — and the watcher's echo
+would then find a "clean" buffer and reload over those keystrokes.
 
 **What this does not cover, stated plainly:** mtime resolution is coarse, so two
 writes inside one filesystem tick are indistinguishable. A situation where an

@@ -325,11 +325,12 @@ orchestrator's own transcript already answers "what did it just do", and the
 feed was a second, invented telling of the same thing. `ExplorerPanel` answers
 the question the app could not — *what is the agent actually changing*.
 
-`ExplorerPanel` is also the one rail panel that owns a subscription. The
-filesystem watcher lives there rather than at the composition root — unlike
-`useSessionStatus`, which is app-wide — because the thing being watched **is**
-what the panel is showing, and a watcher outliving it would hold an `FSEvents`
-stream over a repository nobody is looking at.
+The filesystem watcher is **not** the panel's, though an early revision made it
+so. It sits at the composition root in `useProjectWatcher`, alongside
+`useSessionStatus` and for the same reason: the tree is only one consumer, the
+editor on the centre stage is the other, and the editor outlives the rail tab.
+A watcher scoped to the panel meant an open file stopped reconciling the instant
+the user clicked Inbox.
 
 ## The editor on the centre stage
 

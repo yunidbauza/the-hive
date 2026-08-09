@@ -249,4 +249,41 @@ describe('resolveForWrite', () => {
       code: 'EPROJECT',
     });
   });
+
+  /**
+   * **The second link, which an earlier revision missed.**
+   *
+   * Resolving the *parent* says nothing about the leaf: the parent is inside
+   * the root and the joined path is inside the root, so both original checks
+   * passed — and `writeFile` follows symlinks, so the bytes landed outside.
+   * Only `lstat` on the target can see this.
+   */
+  it('refuses a target that is itself a symlink out of the project', async () => {
+    const target = join(outside, 'secret.txt');
+    symlinkSync(target, join(root, 'src', 'link.ts'));
+
+    await expect(resolveForWrite('demo', 'src/link.ts')).rejects.toMatchObject({
+      code: 'EOUTSIDE',
+    });
+  });
+
+  it('refuses a dangling symlink rather than creating through it', async () => {
+    symlinkSync(join(outside, 'not-there.txt'), join(root, 'src', 'dangling.ts'));
+
+    await expect(
+      resolveForWrite('demo', 'src/dangling.ts'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  /**
+   * Containment is the property being defended, not the absence of links: an
+   * in-repo symlink is ordinary and resolves to a real path inside the root.
+   */
+  it('follows a symlinked target that stays inside the project', async () => {
+    symlinkSync(join(root, 'src', 'app.ts'), join(root, 'alias.ts'));
+
+    await expect(resolveForWrite('demo', 'alias.ts')).resolves.toMatchObject({
+      absolute: join(root, 'src', 'app.ts'),
+    });
+  });
 });

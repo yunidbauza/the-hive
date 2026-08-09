@@ -175,6 +175,26 @@ describe('parseWriteFileRequest', () => {
       parseWriteFileRequest({ ...valid, relPath: '/etc/passwd' }),
     ).toThrow(/relative/);
   });
+
+  /**
+   * Bytes, not UTF-16 units.
+   *
+   * `read.ts` caps on the file's size in bytes, so counting `.length` let
+   * non-ASCII content through at up to three times the limit — and the editor
+   * then refused to reopen the file it had just written.
+   */
+  it('rejects multi-byte text that fits the cap only when counted as units', () => {
+    // Two bytes per character in UTF-8, so 600k characters is 1.2MB.
+    const text = 'é'.repeat(600_000);
+    expect(text.length).toBeLessThan(MAX_FILE_BYTES);
+
+    expect(() => parseWriteFileRequest({ ...valid, text })).toThrow(/too large/);
+  });
+
+  it('accepts multi-byte text that fits the cap in bytes', () => {
+    const text = 'é'.repeat(1000);
+    expect(parseWriteFileRequest({ ...valid, text }).text).toBe(text);
+  });
 });
 
 describe('parseWatchRequest', () => {

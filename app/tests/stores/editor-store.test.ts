@@ -392,6 +392,101 @@ describe('showTerminal and setActive', () => {
   });
 });
 
+/**
+ * The two ways a save could quietly lose the user's work. Both were found in
+ * review, and neither is reachable without a race — which is exactly why they
+ * are pinned here rather than left to a manual test.
+ */
+describe('save — races', () => {
+  beforeEach(async () => {
+    store().openFile('demo', 'src/app.ts');
+    await vi.waitFor(() => expect(fileAt(KEY)?.loading).toBe(false));
+  });
+
+  /**
+   * A save is a round trip; the user can type during it. Clearing `dirty` on
+   * success regardless would claim the disk holds text it does not — and the
+   * watcher's echo would then find a "clean" buffer and reload over those
+   * keystrokes.
+   */
+  it('stays dirty when the buffer changed while the write was in flight', async () => {
+    let finishWrite: (value: unknown) => void = () => {};
+    writeFile.mockReturnValue(
+      new Promise((resolve) => {
+        finishWrite = resolve;
+      }),
+    );
+
+    store().edit(KEY, 'first\n');
+    const saving = store().save(KEY);
+
+    // The user keeps typing before the write resolves.
+    store().edit(KEY, 'first and second\n');
+
+    finishWrite({ ok: true, mtimeMs: 400 });
+    await saving;
+
+    expect(writeFile).toHaveBeenCalledWith('demo', 'src/app.ts', 'first\n', 100);
+    expect(fileAt(KEY)).toMatchObject({
+      dirty: true,
+      text: 'first and second\n',
+    });
+  });
+
+  it('goes clean when nothing was typed during the write', async () => {
+    store().edit(KEY, 'mine\n');
+    await store().save(KEY);
+
+    expect(fileAt(KEY)).toMatchObject({ dirty: false, text: 'mine\n' });
+  });
+
+  /**
+   * The watcher is a *trailing* debounce, so a save's own echo always arrives
+   * after `saving` has gone false — the flag structurally cannot suppress it.
+   * Without the mtime record, every save would put a "changed on disk" banner
+   * in front of the user for a write only they made.
+   */
+  it('does not report its own write back as somebody else’s change', async () => {
+    store().edit(KEY, 'mine\n');
+    await store().save(KEY);
+
+    // Still typing, so the buffer is dirty when the echo lands.
+    store().edit(KEY, 'mine, extended\n');
+    store().reconcile('demo', ['src/app.ts']);
+    await Promise.resolve();
+
+    expect(fileAt(KEY)?.staleOnDisk).toBe(false);
+  });
+
+  it('reports the next change after the echo has been consumed', async () => {
+    store().edit(KEY, 'mine\n');
+    await store().save(KEY);
+
+    store().reconcile('demo', ['src/app.ts']); // the echo
+    await Promise.resolve();
+
+    store().edit(KEY, 'mine again\n');
+    store().reconcile('demo', ['src/app.ts']); // an agent, genuinely
+    await Promise.resolve();
+
+    expect(fileAt(KEY)?.staleOnDisk).toBe(true);
+  });
+
+  it('does not swallow an echo after a reload has replaced the buffer', async () => {
+    store().edit(KEY, 'mine\n');
+    await store().save(KEY);
+
+    readFile.mockResolvedValue(content('theirs\n', 900));
+    await store().reload(KEY);
+
+    store().edit(KEY, 'mine again\n');
+    store().reconcile('demo', ['src/app.ts']);
+    await Promise.resolve();
+
+    expect(fileAt(KEY)?.staleOnDisk).toBe(true);
+  });
+});
+
 describe('fileKey', () => {
   it('is unique across projects', () => {
     expect(fileKey('a', 'src/x.ts')).not.toBe(fileKey('b', 'src/x.ts'));

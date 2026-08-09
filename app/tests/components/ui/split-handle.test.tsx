@@ -33,13 +33,24 @@ function renderHandle(
 }
 
 describe('SplitHandle', () => {
-  it('announces its orientation and its value', () => {
+  /**
+   * `aria-orientation` on a slider names the direction the **value moves**, not
+   * the direction the divider is drawn. A vertical divider is dragged left and
+   * right, so it announces `horizontal` — the opposite of the prop name, and
+   * the same direction as the arrow keys that actually work.
+   */
+  it('announces the axis its value moves along, not the line it draws', () => {
     const { handle } = renderHandle('vertical');
 
-    expect(handle).toHaveAttribute('aria-orientation', 'vertical');
+    expect(handle).toHaveAttribute('aria-orientation', 'horizontal');
     expect(handle).toHaveAttribute('aria-valuenow', '50');
     expect(handle).toHaveAttribute('aria-valuemin', '0');
     expect(handle).toHaveAttribute('aria-valuemax', '100');
+  });
+
+  it('announces the other way round for a stacked split', () => {
+    const { handle } = renderHandle('horizontal');
+    expect(handle).toHaveAttribute('aria-orientation', 'vertical');
   });
 
   it('reports the ratio along X for a vertical divider', () => {

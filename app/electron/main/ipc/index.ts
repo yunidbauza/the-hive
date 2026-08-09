@@ -278,6 +278,13 @@ export function registerIpcHandlers(): void {
      * process tree is torn down underneath it.
      */
     cloneFlow?.dispose();
+    /**
+     * The watcher holds an `FSEvents` stream and a pending debounce timer, and
+     * this hook exists precisely so neither outlives the app. `resetIpcHandlers`
+     * disposes it too, but that is the test path — leaving it out here meant
+     * only production leaked.
+     */
+    fsWatch?.dispose();
   });
 
   handle(CH.appInfo, (): AppInfo => {

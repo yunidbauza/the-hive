@@ -38,6 +38,16 @@ import { projectRoot } from './paths';
 const DEBOUNCE_MS = 300;
 
 /**
+ * The longest a burst may postpone a flush.
+ *
+ * A plain trailing debounce resets on every event, so a sustained write stream
+ * at under 300ms intervals — a long build, a big checkout, a watch-mode
+ * compiler — would never flush at all, and the tree would sit stale for as long
+ * as the agent kept working. That is precisely the moment the user is watching.
+ */
+const MAX_DEBOUNCE_MS = 2_000;
+
+/**
  * Recursive watching is native on macOS and Windows, and available on Linux
  * from Node 20. The app ships Electron 43 (Node 22), so there is no fallback
  * path here and no polling — if this ever needs one, it needs a design, not a
@@ -48,6 +58,8 @@ interface ActiveWatch {
   watcher: FSWatcher;
   pending: Set<string>;
   timer: NodeJS.Timeout | null;
+  /** When the current burst began, so it cannot be postponed indefinitely. */
+  burstStartedAt: number | null;
 }
 
 export interface FsWatchLayer {
@@ -67,6 +79,8 @@ export function createFsWatchLayer(
   emit: (event: FsChangedEvent) => void,
 ): FsWatchLayer {
   let active: ActiveWatch | null = null;
+  /** Monotonic request id, so an out-of-order `watchProject` cannot install. */
+  let requested = 0;
 
   const stop = (): void => {
     if (!active) return;
@@ -78,6 +92,7 @@ export function createFsWatchLayer(
   const flush = (): void => {
     if (!active) return;
     active.timer = null;
+    active.burstStartedAt = null;
     if (active.pending.size === 0) return;
 
     const paths = [...active.pending];
@@ -92,7 +107,17 @@ export function createFsWatchLayer(
        * not a second, weaker way to name a directory. An unknown or unusable
        * project throws here exactly as it would on a read.
        */
+      const generation = ++requested;
       const root = await projectRoot(projectId);
+
+      /**
+       * Two `fs:watch` calls in flight — a fast session switch across projects
+       * — can settle out of order, and the loser would then `stop()` the winner
+       * and install itself, leaving the *visible* project unwatched. The
+       * generation counter is taken before the await and checked after it, so
+       * only the most recent request may install.
+       */
+      if (generation !== requested) return;
 
       stop();
 
@@ -102,8 +127,14 @@ export function createFsWatchLayer(
         if (relPath === '' || isHiddenPath(relPath)) return;
 
         active.pending.add(relPath);
+        active.burstStartedAt ??= Date.now();
+
+        // Postpone, but never past the burst ceiling — see MAX_DEBOUNCE_MS.
+        const elapsed = Date.now() - active.burstStartedAt;
+        const wait = Math.max(0, Math.min(DEBOUNCE_MS, MAX_DEBOUNCE_MS - elapsed));
+
         if (active.timer) clearTimeout(active.timer);
-        active.timer = setTimeout(flush, DEBOUNCE_MS);
+        active.timer = setTimeout(flush, wait);
       });
 
       /**
@@ -111,12 +142,22 @@ export function createFsWatchLayer(
        * closed rather than left in place. There is nothing useful to tell the
        * renderer: the tree's next read will fail with the real reason, which is
        * a better message than "the watcher broke".
+       *
+       * Guarded on identity: a late error from a watcher that has already been
+       * replaced must not stop its successor.
        */
       watcher.on('error', () => {
+        if (active?.watcher !== watcher) return;
         stop();
       });
 
-      active = { projectId, watcher, pending: new Set(), timer: null };
+      active = {
+        projectId,
+        watcher,
+        pending: new Set(),
+        timer: null,
+        burstStartedAt: null,
+      };
     },
 
     unwatch: stop,

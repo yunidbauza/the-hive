@@ -58,6 +58,19 @@ interface UiState {
    * yank the tree away from what you were reading, once per navigation.
    */
   explorerProjectId: string | null;
+  /**
+   * Bumped whenever the filesystem is known to have changed — by the watcher,
+   * and by the explorer's ↻ button.
+   *
+   * A counter rather than a timestamp: two events in the same millisecond must
+   * still be two refreshes, and `Date.now()` would collapse them.
+   *
+   * It lives in the store rather than in the panel because the watcher now
+   * outlives the panel. Local state died with the rail tab, which is precisely
+   * the bug — an open file stopped reconciling the moment the user looked at
+   * the Inbox.
+   */
+  fsRevision: number;
 
   openTab: (id: 'orch' | string) => void;
   backToOrch: () => void;
@@ -76,6 +89,7 @@ interface UiState {
   toggleExplorerDir: (projectId: string, relPath: string) => void;
   collapseExplorer: () => void;
   setExplorerProjectId: (projectId: string) => void;
+  bumpFsRevision: () => void;
   reset: () => void;
 }
 
@@ -94,6 +108,7 @@ const initialUiState = {
   showActivityRail: true,
   explorerExpanded: {} as Record<string, boolean>,
   explorerProjectId: null as string | null,
+  fsRevision: 0,
 };
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -177,6 +192,9 @@ export const useUiStore = create<UiState>()((set) => ({
   collapseExplorer: () => set({ explorerExpanded: {} }),
 
   setExplorerProjectId: (explorerProjectId) => set({ explorerProjectId }),
+
+  bumpFsRevision: () =>
+    set((state) => ({ fsRevision: state.fsRevision + 1 })),
 
   reset: () => set(initialUiState),
 }));
@@ -307,19 +325,10 @@ export const useExplorerProjectId = () =>
 export const useSetExplorerProjectId = () =>
   useUiStore((state) => state.setExplorerProjectId);
 
-/**
- * Every expanded directory in one project, as a set of relative paths.
- *
- * The refresh path needs this — "re-read what is open" is a question about the
- * whole map, not about one row — and it is the only consumer, which is why the
- * per-row hook above still exists rather than every row filtering this.
- */
-export const useExpandedPaths = (projectId: string): string[] =>
-  useUiStore(
-    useShallow((state) => {
-      const prefix = `${projectId}:`;
-      return Object.entries(state.explorerExpanded)
-        .filter(([key, open]) => open && key.startsWith(prefix))
-        .map(([key]) => key.slice(prefix.length));
-    }),
-  );
+/** The filesystem-change counter the tree re-reads on. */
+export const useFsRevision = () => useUiStore((state) => state.fsRevision);
+
+export const useBumpFsRevision = () =>
+  useUiStore((state) => state.bumpFsRevision);
+
+

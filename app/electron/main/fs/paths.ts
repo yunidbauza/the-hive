@@ -1,4 +1,5 @@
-import { realpath } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import type { FsFailure } from '@shared/fs-contract';
@@ -125,11 +126,24 @@ export async function resolveExisting(
 /**
  * Resolve a path that may not exist yet — the write.
  *
- * The target cannot be `realpath`'d, because it might be about to be created.
- * Its **parent** can, and must be: a file created inside a symlinked directory
- * lands wherever that link goes, so checking the parent is what makes the
- * eventual write contained. The basename is then re-appended to the real
- * parent, which is why the result is not simply `resolve(root, relPath)`.
+ * **Two links to defeat, not one**, and an earlier revision of this function
+ * only handled the first:
+ *
+ * 1. **A symlinked parent.** The target cannot be `realpath`'d because it might
+ *    be about to be created, but its parent can — and must be, because a file
+ *    created inside a symlinked directory lands wherever that link goes. The
+ *    basename is re-appended to the *real* parent, which is why the result is
+ *    not simply `resolve(root, relPath)`.
+ * 2. **A symlinked target.** Resolving the parent says nothing about the leaf.
+ *    `root/sub/link.txt -> /outside/target.txt` has a parent inside the root
+ *    and a `join`ed path inside the root, so it passed both checks — and
+ *    `writeFile` follows symlinks, so the bytes landed outside. `lstat` is the
+ *    only call that can see this: `stat` would follow the link and `realpath`
+ *    would throw for a target that does not exist yet.
+ *
+ * A link that resolves back *inside* the root is allowed rather than refused —
+ * in-repo symlinks are ordinary, and containment is the property being
+ * defended, not the absence of links.
  *
  * A `relPath` naming the root itself has no parent to check and is refused —
  * writing a file over a directory is not something this verb does.
@@ -156,10 +170,41 @@ export async function resolveForWrite(
     throw new FsGuardError(code, 'cannot write to that path');
   }
 
-  const absolute = join(realParent, basename(joined));
+  let absolute = join(realParent, basename(joined));
 
   if (!contains(root, realParent) || !contains(root, absolute)) {
     throw new FsGuardError('EOUTSIDE', 'cannot write to that path');
+  }
+
+  /**
+   * The leaf itself. `lstat` does not follow the link, so this is the one call
+   * that can tell a symlink from the file it points at; ENOENT means the target
+   * does not exist yet, which is fine and needs no further check.
+   */
+  let leaf: Stats | null = null;
+  try {
+    leaf = await lstat(absolute);
+  } catch {
+    leaf = null;
+  }
+
+  if (leaf?.isSymbolicLink()) {
+    try {
+      absolute = await realpath(absolute);
+    } catch (cause) {
+      // A dangling link. Refused rather than followed: there is no target to
+      // contain, and creating one would write through the link to wherever it
+      // points — which is exactly the case this check exists for.
+      const code =
+        cause instanceof Error && 'code' in cause
+          ? String((cause as NodeJS.ErrnoException).code)
+          : 'ENOENT';
+      throw new FsGuardError(code, 'cannot write to that path');
+    }
+
+    if (!contains(root, absolute)) {
+      throw new FsGuardError('EOUTSIDE', 'cannot write to that path');
+    }
   }
 
   return { root, absolute };

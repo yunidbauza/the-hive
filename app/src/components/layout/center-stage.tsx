@@ -83,7 +83,7 @@ export function CenterStage() {
    */
   const activeFileKey = useActiveFileKey();
   const hasOpenFiles = useHasOpenFiles();
-  const { placement, splitAxis, splitRatio } = useEditorLayout();
+  const { placement, splitAxis, splitRatio, nav } = useEditorLayout();
   const setSplitRatio = useSetEditorSplitRatio();
 
   const editorOpen = activeFileKey !== null;
@@ -234,7 +234,7 @@ export function CenterStage() {
           terminal is already on screen and an entry offering to "go to" it
           would point at something the user is looking at.
         */}
-        {hasOpenFiles ? (
+        {hasOpenFiles && nav === 'tabs' ? (
           <EditorTabStrip showTerminalTab={placement === 'full'} />
         ) : null}
 

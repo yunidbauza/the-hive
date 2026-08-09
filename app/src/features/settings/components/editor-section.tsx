@@ -9,7 +9,7 @@ import { TERMINAL_FONTS, type TerminalFontId } from '@lib/terminal/fonts';
 import {
   EDITOR_FONT_SIZES,
   EDITOR_TAB_WIDTHS,
-  useEditorActions,
+  useEditorSettingsActions,
   useEditorSettings,
   type EditorNav,
   type EditorPlacement,
@@ -71,7 +71,7 @@ export function EditorSection() {
     setEditorWordWrap,
     setEditorLineNumbers,
     setEditorTabWidth,
-  } = useEditorActions();
+  } = useEditorSettingsActions();
 
   const split = settings.editorPlacement === 'split';
 

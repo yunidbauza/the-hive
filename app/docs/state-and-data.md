@@ -50,7 +50,8 @@ feature turns on its branches:
 | --- | --- | --- |
 | clean | changed | **silently reloaded** |
 | dirty | changed | `staleOnDisk`; the banner offers Reload or Keep mine |
-| any | mid-save | skipped — a save writes the file, which the watcher then reports |
+| any | mid-save | skipped |
+| any | the app's own last write | suppressed once, by the mtime the write returned |
 
 Silent reload of a clean buffer is the point: you open a file to watch what a
 session does to it, and a prompt between you and that is friction carrying no

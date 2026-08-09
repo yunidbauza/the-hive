@@ -524,7 +524,7 @@ const editorSettingsSelector = (state: AppearanceState) => ({
   editorTabWidth: state.editorTabWidth,
 });
 
-const editorActionsSelector = (state: AppearanceState) => ({
+const editorSettingsActionsSelector = (state: AppearanceState) => ({
   setEditorPlacement: state.setEditorPlacement,
   setEditorSplitAxis: state.setEditorSplitAxis,
   setEditorNav: state.setEditorNav,
@@ -553,5 +553,5 @@ export const useSetEditorSplitRatio = () =>
 /** The editor section's current values and its setters. */
 export const useEditorSettings = () =>
   useAppearanceStore(useShallow(editorSettingsSelector));
-export const useEditorActions = () =>
-  useAppearanceStore(useShallow(editorActionsSelector));
+export const useEditorSettingsActions = () =>
+  useAppearanceStore(useShallow(editorSettingsActionsSelector));

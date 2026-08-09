@@ -80,6 +80,14 @@ export interface OpenFile {
   /** Set by a refused save. Cleared by reloading or by overwriting. */
   conflict: boolean;
   saving: boolean;
+  /**
+   * The mtime this app's own last write produced, or `null`.
+   *
+   * Consumed by the first watcher event that names this file, so the app does
+   * not report its own save back to the user as somebody else's change. See
+   * `reconcile`.
+   */
+  selfWriteMtimeMs: number | null;
 }
 
 interface EditorState {
@@ -121,6 +129,7 @@ const blank = (projectId: string, relPath: string): OpenFile => ({
   error: null,
   conflict: false,
   saving: false,
+  selfWriteMtimeMs: null,
 });
 
 const initialEditorState = {
@@ -180,6 +189,9 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       refusal: null,
       error: null,
       conflict: false,
+      // A fresh read supersedes any pending self-write suppression: whatever is
+      // on screen now came from the disk, so the next event is genuinely new.
+      selfWriteMtimeMs: null,
     });
   };
 
@@ -292,22 +304,45 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         }
       }
 
+      /**
+       * What was actually sent, captured before the await.
+       *
+       * `file` is a snapshot taken at entry, and a save is a round trip through
+       * IPC — the user can type during it. Marking the buffer clean on success
+       * regardless would claim the disk holds text it does not, and the
+       * watcher's echo would then find a "clean" buffer and reload over those
+       * keystrokes. Silently.
+       */
+      const sentText = file.text;
+
       const result = await writeFile(
         file.projectId,
         file.relPath,
-        file.text,
+        sentText,
         base,
       );
 
-      if (!get().openFiles.some((entry) => entry.key === key)) return;
+      const settled = get().openFiles.find((entry) => entry.key === key);
+      if (!settled) return;
 
       if (result.ok) {
         patch(key, {
           saving: false,
-          dirty: false,
+          // Clean only if nothing was typed while the write was in flight.
+          dirty: settled.text !== sentText,
           conflict: false,
           staleOnDisk: false,
           mtimeMs: result.mtimeMs,
+          /**
+           * The mtime this app just produced.
+           *
+           * The watcher reports our own write ~300ms later — it is a *trailing*
+           * debounce, so `saving` has always gone false again by then and
+           * cannot suppress it. Recording the mtime lets `reconcile` recognise
+           * the echo as ours and ignore it once, rather than telling the user
+           * an agent changed a file that only they wrote.
+           */
+          selfWriteMtimeMs: result.mtimeMs,
           error: null,
         });
         return;
@@ -335,9 +370,21 @@ export const useEditorStore = create<EditorState>()((set, get) => {
      * is the one case where the app holds something the disk does not, and that
      * is the only case worth interrupting for.
      *
-     * A save writes the file, which the watcher then reports — so a buffer that
-     * is `saving` is skipped. Without that, every save would race its own
-     * change event and reload the file out from under the cursor.
+     * ## The app's own writes
+     *
+     * A save writes the file, which the watcher then reports. `saving` cannot
+     * suppress that echo — the watcher is a **trailing** 300ms debounce, so the
+     * event always arrives after the write has settled and the flag has gone
+     * false. `selfWriteMtimeMs` is what actually does it: a save records the
+     * mtime it produced, and the first event afterwards consumes it.
+     *
+     * The suppression is **one-shot and deliberately narrow**. If an agent
+     * happens to write inside that same debounce window, its change is folded
+     * into the same event and swallowed with ours — a real, bounded cost. What
+     * catches it: the next event reconciles normally, and the mtime check on
+     * the following save refuses rather than overwriting. Skipping the
+     * suppression instead would put a "changed on disk" banner in front of the
+     * user after every single save they make, which is wrong far more often.
      */
     reconcile: (projectId, paths) => {
       const touched = new Set(paths);
@@ -346,6 +393,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         if (file.projectId !== projectId) continue;
         if (!touched.has(file.relPath)) continue;
         if (file.loading || file.saving) continue;
+
+        if (file.selfWriteMtimeMs !== null) {
+          patch(file.key, { selfWriteMtimeMs: null });
+          continue;
+        }
 
         if (file.dirty) {
           patch(file.key, { staleOnDisk: true });
@@ -440,20 +492,14 @@ export const useActiveFile = (): OpenFile | null =>
 export const useHasOpenFiles = () =>
   useEditorStore((state) => state.openFiles.length > 0);
 
-/** Whether one path is open, so the tree can mark the row. */
-export const useIsFileOpen = (projectId: string, relPath: string) =>
-  useEditorStore((state) =>
-    state.openFiles.some((file) => file.key === fileKey(projectId, relPath)),
-  );
-
 export const useEditorActions = () =>
   useEditorStore(useShallow(editorActionsSelector));
 
 /**
  * The watcher's entry point into this store.
  *
- * Exported as a plain action hook rather than reached through `getState()`,
- * because the subscription lives in a component effect like every other
- * subscription in this app.
+ * A plain action hook, never `getState()`: the subscription lives in a
+ * component effect (`useProjectWatcher`) like every other subscription in this
+ * app, and selecting a stable action does not re-render on buffer changes.
  */
 export const useReconcileFiles = () => useEditorStore((state) => state.reconcile);

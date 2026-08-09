@@ -999,7 +999,27 @@ export function parseWriteFileRequest(input: unknown): WriteFileRequest {
   );
 
   const text = assertString(raw.text, 'writeFile.text');
+  /**
+   * Bytes, not UTF-16 units — and in two steps.
+   *
+   * `read.ts` caps on the file's size in bytes, so measuring `.length` alone
+   * let non-ASCII content through at up to three times the limit, and the
+   * editor would then refuse to reopen the file it had just written. Both ends
+   * of the round trip have to count the same thing.
+   *
+   * The cheap check runs first because UTF-8 never encodes a string in fewer
+   * bytes than it has UTF-16 units — so a string longer than the cap is over it
+   * whatever its content, and rejecting there bounds what the exact count is
+   * asked to allocate.
+   *
+   * `TextEncoder`, not `Buffer`: this module is the one both processes may
+   * import, and a Node global here would break that (`AGENTS.md` → import
+   * zones), however main-only its callers happen to be today.
+   */
   if (text.length > MAX_FILE_BYTES) return fail('writeFile.text: too large');
+  if (new TextEncoder().encode(text).length > MAX_FILE_BYTES) {
+    return fail('writeFile.text: too large');
+  }
 
   const { baseMtimeMs } = raw;
   if (typeof baseMtimeMs !== 'number' || !Number.isFinite(baseMtimeMs)) {

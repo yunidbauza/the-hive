@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 
 import { EmptyState, EmptyStatePath } from '@components/ui/empty-state';
 import { Icon } from '@components/ui/icon';
@@ -6,15 +6,14 @@ import { TreeNode } from '@features/explorer/components/tree-node';
 import { useDirectory } from '@features/explorer/hooks/use-directory';
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
 import { useProjectAccess } from '@hooks/use-project-config';
-import {
-  hasFsBridge,
-  onFsChanged,
-  unwatchProject,
-  watchProject,
-} from '@lib/explorer/fs-client';
+import { hasFsBridge } from '@lib/explorer/fs-client';
 import { useEditorLayout } from '@stores/appearance-store';
-import { useEditorActions, useEditorStore } from '@stores/editor-store';
-import { useCollapseExplorer } from '@stores/ui-store';
+import { useEditorActions } from '@stores/editor-store';
+import {
+  useBumpFsRevision,
+  useCollapseExplorer,
+  useFsRevision,
+} from '@stores/ui-store';
 
 /**
  * Project explorer — the repository the active session is working in.
@@ -27,13 +26,12 @@ import { useCollapseExplorer } from '@stores/ui-store';
  * This file is part of a feature slice and may not import `features/editor` —
  * the two talk through `editor-store`, which is exactly what the fence is for.
  *
- * ## The watcher lives here
+ * ## The watcher does *not* live here
  *
- * One subscription and one watcher, for the visible project, torn down when the
- * project changes or the panel unmounts. Here rather than at the composition
- * root — unlike `useSessionStatus`, which is app-wide — because the thing being
- * watched *is* what this panel is showing. A watcher outliving the panel would
- * hold an `FSEvents` stream over a repository nobody is looking at.
+ * It did, and that was a bug: the rail swaps panels and the shell can unmount
+ * the rail entirely, so freshness died the moment the user looked at the Inbox
+ * with a file open. `useProjectWatcher()` is mounted at the composition root
+ * instead, and this panel reads the revision counter it bumps.
  */
 export function ExplorerPanel() {
   const project = useExplorerProject();
@@ -43,13 +41,11 @@ export function ExplorerPanel() {
   const { nav } = useEditorLayout();
 
   /**
-   * Bumped by the watcher and by ↻. Every mounted directory node re-reads.
-   *
-   * A counter rather than a timestamp: two events in the same millisecond must
-   * still be two refreshes, and `Date.now()` would collapse them.
+   * The shared filesystem revision. Every mounted directory node re-reads when
+   * it changes — whether the watcher bumped it or the ↻ button did.
    */
-  const [refreshToken, setRefreshToken] = useState(0);
-  const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
+  const refreshToken = useFsRevision();
+  const refresh = useBumpFsRevision();
 
   /**
    * Read once per render, before the hooks that depend on it.
@@ -66,35 +62,6 @@ export function ExplorerPanel() {
   const usable = bridge && projectId !== null && access.spawnable;
 
   const root = useDirectory(projectId ?? '', '', usable, refreshToken);
-
-  useEffect(() => {
-    if (!usable || projectId === null) return;
-
-    let live = true;
-    void watchProject(projectId);
-
-    const stop = onFsChanged((event) => {
-      if (!live || event.projectId !== projectId) return;
-      refresh();
-      /**
-       * The store is reached through `getState()` here rather than a hook, and
-       * this is the one place in the app that does it.
-       *
-       * `reconcile` is called from inside a subscription callback, not from a
-       * render — there is no component to re-render on and nothing to
-       * subscribe to. Taking it as a hook would subscribe this panel to the
-       * editor store and re-render the whole tree every time a buffer changed,
-       * which is precisely what the store split exists to prevent.
-       */
-      useEditorStore.getState().reconcile(event.projectId, event.paths);
-    });
-
-    return () => {
-      live = false;
-      stop();
-      void unwatchProject();
-    };
-  }, [usable, projectId, refresh]);
 
   const onOpenFile = useCallback(
     (relPath: string) => {
