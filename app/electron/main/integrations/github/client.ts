@@ -2,7 +2,12 @@ import type { GhResult, PrRecord } from '../../../shared/github-contract';
 
 import { classifyGhFailure, ghError } from './classify';
 import { collectPrs, readViewerLogin } from './mapping';
-import { buildPrQuery, buildPrVariables, type RepoRef } from './query';
+import {
+  buildPrQuery,
+  buildPrVariables,
+  repoQualifiers,
+  type RepoRef,
+} from './query';
 import type { RunAsync } from './run';
 
 /**
@@ -11,12 +16,17 @@ import type { RunAsync } from './run';
  * ## Why the payload beats the exit code
  *
  * `gh` exits non-zero whenever the GraphQL response carries an `errors` array —
- * including the case where it *also* carries perfectly good data. One
- * inaccessible repository out of five is exactly that case: GitHub answers with
- * `null` for that block, an error naming it, and real data for the other four.
- * Reading the exit code first would throw those four away, so this reads the
- * body first and only falls back to classifying a failure when there is nothing
- * usable in it.
+ * including the case where it *also* carries perfectly good data. One of the two
+ * search connections failing while the other answers is exactly that case:
+ * GitHub sends `null` for the field it could not resolve, an error naming it,
+ * and real nodes for the other. Reading the exit code first would throw the good
+ * half away, so this reads the body first and only falls back to classifying a
+ * failure when there is nothing usable in it.
+ *
+ * Note that an *inaccessible repository* no longer produces an error at all. A
+ * `repo:` qualifier the token cannot see simply matches nothing, so one bad
+ * project in the config now costs its own results and stays silent — where the
+ * aliased-repository query it replaced would name it in `errors`.
  *
  * ## What is never returned
  *
@@ -47,7 +57,22 @@ export function createGithubClient(
 ): GithubClient {
   return {
     async sweep(repos, now) {
-      if (repos.length === 0) {
+      /**
+       * Nothing to scope the search to is a configuration answer, never a
+       * request.
+       *
+       * This covers two cases that must not be told apart here, because the
+       * consequence of getting either wrong is the same. The ordinary one is an
+       * empty repository list. The other is a list where nothing survived
+       * {@link repoQualifiers} — and *that* one is why the check moved from
+       * `repos.length` to the qualifiers. An `author:@me` search with no `repo:`
+       * scope is a perfectly valid query that answers with the user's pull
+       * requests from every repository they have ever touched, so a sweep that
+       * fell through here would not fail: it would quietly fill the panel with
+       * work from projects the user never configured.
+       */
+      const scope = repoQualifiers(repos);
+      if (scope.length === 0) {
         return {
           ok: false,
           error: ghError(
@@ -57,13 +82,13 @@ export function createGithubClient(
         };
       }
 
-      const variables = buildPrVariables(repos);
-      const args = ['api', 'graphql', '-f', `query=${buildPrQuery(repos.length)}`];
+      const variables = buildPrVariables(scope);
+      const args = ['api', 'graphql', '-f', `query=${buildPrQuery()}`];
 
       for (const [key, value] of Object.entries(variables)) {
-        // `-F` types the value; `-f` keeps it a string. Owners and names are
-        // strings, and a repository literally named `123` must not arrive as a
-        // number.
+        // `-F` types the value; `-f` keeps it a string. A search expression is
+        // always a string, and `-F` would try to read one that happened to look
+        // numeric as a number — or, worse, one beginning with `@` as a filename.
         args.push('-f', `${key}=${value}`);
       }
 
@@ -95,9 +120,14 @@ export function createGithubClient(
        *
        * Not merely a missing field: `viewer` is the one part of this query that
        * cannot be `null` for a working token, so its absence means the request
-       * did not succeed — whatever the exit code said. It is also load-bearing,
-       * since "mine" is defined by it, and showing everybody's PRs because the
-       * login was unreadable would be the wrong failure.
+       * did not succeed — whatever the exit code said. Both searches answering
+       * with an empty list is a legitimate outcome for a user with no open work,
+       * and indistinguishable from a failure without this.
+       *
+       * "Mine" is no longer defined by the login — `author:@me` in the search
+       * expression is — but `mapping.ts` still checks each node's author against
+       * it, so an unreadable login must not be allowed to stand in for a
+       * successful read.
        */
       if (login === null) {
         return {
@@ -106,7 +136,7 @@ export function createGithubClient(
         };
       }
 
-      return { ok: true, value: collectPrs(data, repos, login, now) };
+      return { ok: true, value: collectPrs(data, login, now) };
     },
   };
 }

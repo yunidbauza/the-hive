@@ -7,6 +7,7 @@ import {
   emptySnapshot,
   type ConfigSnapshot,
 } from '../../electron/shared/config-contract';
+import type { PrRecord } from '../../electron/shared/github-contract';
 import {
   resetProjectConfig,
   setProjectConfigForTest,
@@ -27,6 +28,7 @@ import {
   useTicketCount,
   useTicketPrs,
   useTickets,
+  useTicketSessions,
   useUnreadCount,
 } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
@@ -756,6 +758,239 @@ describe('hive-store selectors', () => {
 
       expect(result.current.notifs[0].unread).toBe(false);
       expect(result.current.notifs[1].unread).toBe(true);
+    });
+  });
+
+  /**
+   * What the fleet-derived selectors are allowed to react to.
+   *
+   * These are `toBe` assertions, and the identity *is* the behaviour under test:
+   * all three hooks build fresh arrays of fresh objects, so a new identity is a
+   * re-render of every ticket card in the WORK panel and every row in the PR
+   * panel. They used to memoise over `entities`, which is replaced wholesale by
+   * any write to any session — so one session changing status re-resolved the
+   * pull requests for all of them.
+   *
+   * Each hook is checked both ways round. Stability alone would be satisfied by
+   * a selector that had simply stopped updating, so every "holds" case is paired
+   * with a "moves" case that proves the cache still lets a real change through.
+   */
+  describe('fleet selector stability', () => {
+    /** All three, because all three shared the over-broad subscription. */
+    const FLEET_HOOKS: [string, () => unknown][] = [
+      ['usePrs', () => usePrs()],
+      ['useTicketPrs', () => useTicketPrs('GRAC-3018')],
+      ['useTicketSessions', () => useTicketSessions('GRAC-3018')],
+    ];
+
+    it.each(FLEET_HOOKS)(
+      '%s holds its identity across terminal output',
+      (_label, hook) => {
+        const { result } = renderHook(hook);
+        const before = result.current;
+
+        act(() => {
+          useHiveStore
+            .getState()
+            .appendEntityLines('hero-refresh', [{ text: 'more', color: 'ink' }]);
+        });
+
+        expect(result.current).toBe(before);
+      },
+    );
+
+    /**
+     * The point of projecting `ended` rather than carrying `status`.
+     *
+     * `working` → `waiting` is the most frequent write in the app — an agent
+     * asking a question and being answered — and it cannot change any of these
+     * answers, so it must not cost a recomputation.
+     */
+    it.each(FLEET_HOOKS)(
+      '%s holds its identity across a status change',
+      (_label, hook) => {
+        const { result } = renderHook(hook);
+        const before = result.current;
+
+        act(() => {
+          useHiveStore
+            .getState()
+            .appendEntityLines('hero-refresh', [], 'waiting');
+        });
+
+        expect(result.current).toBe(before);
+      },
+    );
+
+    /** A session ending crosses the boundary the projection does keep. */
+    it('recomputes when a session ends', () => {
+      const { result } = renderHook(() => useTicketSessions('GRAC-3018'));
+
+      expect(result.current).toEqual(['hero-refresh']);
+
+      act(() => {
+        useHiveStore.getState().appendEntityLines('hero-refresh', [], 'done');
+      });
+
+      expect(result.current).toEqual([]);
+    });
+
+    /** So does a branch moving, which is what a PR is matched on. */
+    it('recomputes when a session changes branch', () => {
+      const { result } = renderHook(() => usePrs());
+
+      expect(result.current.find((pr) => pr.n === 482)?.session).toBe(
+        'hero-refresh',
+      );
+
+      act(() => {
+        useHiveStore.setState((state) => ({
+          entities: {
+            ...state.entities,
+            'hero-refresh': {
+              ...(state.entities['hero-refresh'] as Session),
+              branch: 'feat/moved',
+            },
+          },
+        }));
+      });
+
+      expect(result.current.find((pr) => pr.n === 482)?.session).toBeNull();
+    });
+
+    /** A new session is a new facet, however quiet the rest of the fleet is. */
+    it('recomputes when a session joins the ticket', () => {
+      const { result } = renderHook(() => useTicketSessions('GRAC-3018'));
+      const before = result.current;
+
+      act(() => {
+        useHiveStore.setState((state) => ({
+          entities: {
+            ...state.entities,
+            'hero-refresh-two': {
+              ...(state.entities['hero-refresh'] as Session),
+              id: 'hero-refresh-two',
+            },
+          },
+          order: [...state.order, 'hero-refresh-two'],
+        }));
+      });
+
+      expect(result.current).not.toBe(before);
+      expect(result.current).toEqual(['hero-refresh', 'hero-refresh-two']);
+    });
+  });
+
+  /**
+   * The other half of the same problem: the poller sweeps every minute whether
+   * or not GitHub has anything new, and an unconditional `set` handed the
+   * renderer two brand-new objects each time. Both slices are subscribed to by
+   * name, so a quiet minute still re-rendered the panel.
+   */
+  describe('hydratePrs', () => {
+    /** Equal by value, never the same array — that is the whole comparison. */
+    const resweep = () =>
+      useHiveStore.getState().prs.map((pr) => ({ ...pr }));
+
+    beforeEach(() => {
+      act(() => {
+        useHiveStore.getState().hydratePrs(resweep(), 3);
+      });
+    });
+
+    it('keeps both slices when a sweep found nothing new', () => {
+      const { prs, prSource } = useHiveStore.getState();
+
+      act(() => {
+        useHiveStore.getState().hydratePrs(resweep(), 3);
+      });
+
+      expect(useHiveStore.getState().prs).toBe(prs);
+      expect(useHiveStore.getState().prSource).toBe(prSource);
+    });
+
+    it('keeps the PR panel from recomputing on a quiet sweep', () => {
+      const { result } = renderHook(() => usePrs());
+      const before = result.current;
+
+      act(() => {
+        useHiveStore.getState().hydratePrs(resweep(), 3);
+      });
+
+      expect(result.current).toBe(before);
+    });
+
+    it.each([
+      ['a finding appeared', (pr: PrRecord) => ({ ...pr, findings: pr.findings + 1 })],
+      ['checks changed', (pr: PrRecord) => ({ ...pr, checks: 'failing' as const })],
+      ['a PR was approved', (pr: PrRecord) => ({ ...pr, state: 'approved' as const })],
+      ['the title changed', (pr: PrRecord) => ({ ...pr, title: 'renamed' })],
+    ])('installs a new list when %s', (_label, change) => {
+      const before = useHiveStore.getState().prs;
+
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydratePrs(
+            before.map((pr, index) => (index === 0 ? change(pr) : { ...pr })),
+            3,
+          );
+      });
+
+      expect(useHiveStore.getState().prs).not.toBe(before);
+    });
+
+    it('installs a new list when a PR disappeared', () => {
+      const before = useHiveStore.getState().prs;
+
+      act(() => {
+        useHiveStore.getState().hydratePrs(before.slice(1), 3);
+      });
+
+      expect(useHiveStore.getState().prs).toHaveLength(before.length - 1);
+    });
+
+    /**
+     * `collectPrs` sorts live work above what landed, so a reordering is a real
+     * change even when the set of pull requests is identical.
+     */
+    it('installs a new list when the order changed', () => {
+      const before = useHiveStore.getState().prs;
+
+      act(() => {
+        useHiveStore.getState().hydratePrs([...before].reverse(), 3);
+      });
+
+      expect(useHiveStore.getState().prs).not.toBe(before);
+    });
+
+    /** A sweep succeeding after a failure is what takes the banner down. */
+    it('replaces a stale source even when the list is unchanged', () => {
+      act(() => {
+        useHiveStore.getState().reportPrFailure('gh timed out');
+      });
+      expect(useHiveStore.getState().prSource).toMatchObject({ stale: true });
+
+      act(() => {
+        useHiveStore.getState().hydratePrs(resweep(), 3);
+      });
+
+      expect(useHiveStore.getState().prSource).toEqual({
+        kind: 'live',
+        stale: false,
+        repos: 3,
+      });
+    });
+
+    it('replaces the source when the repository count changed', () => {
+      const before = useHiveStore.getState().prSource;
+
+      act(() => {
+        useHiveStore.getState().hydratePrs(resweep(), 4);
+      });
+
+      expect(useHiveStore.getState().prSource).not.toBe(before);
+      expect(useHiveStore.getState().prSource).toMatchObject({ repos: 4 });
     });
   });
 });

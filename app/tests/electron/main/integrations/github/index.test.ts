@@ -59,31 +59,28 @@ const config = (projects: ProjectConfig[]): ConfigSnapshot => ({
 const SWEEP = JSON.stringify({
   data: {
     viewer: { login: 'octocat' },
-    r0: {
-      name: 'apfm-web',
-      owner: { login: 'acme' },
-      open: {
-        nodes: [
-          {
-            number: 482,
-            title: 'Hero: semantic token refactor',
-            url: 'https://github.com/acme/apfm-web/pull/482',
-            isDraft: false,
-            state: 'OPEN',
-            reviewDecision: 'APPROVED',
-            headRefName: 'feat/hero-refresh',
-            updatedAt: '2026-08-09T11:00:00Z',
-            mergedAt: null,
-            author: { login: 'octocat' },
-            reviewThreads: { nodes: [{ isResolved: false }] },
-            commits: {
-              nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }],
-            },
+    open: {
+      nodes: [
+        {
+          number: 482,
+          title: 'Hero: semantic token refactor',
+          url: 'https://github.com/acme/apfm-web/pull/482',
+          isDraft: false,
+          state: 'OPEN',
+          reviewDecision: 'APPROVED',
+          headRefName: 'feat/hero-refresh',
+          updatedAt: '2026-08-09T11:00:00Z',
+          mergedAt: null,
+          author: { login: 'octocat' },
+          repository: { name: 'apfm-web', owner: { login: 'acme' } },
+          reviewThreads: { nodes: [{ isResolved: false }] },
+          commits: {
+            nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }],
           },
-        ],
-      },
-      merged: { nodes: [] },
+        },
+      ],
     },
+    merged: { nodes: [] },
   },
 });
 

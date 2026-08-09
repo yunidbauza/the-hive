@@ -5,28 +5,41 @@ import {
 } from '../../../shared/github-contract';
 
 /**
- * The GraphQL document, and how many repositories fit in one of them.
+ * The GraphQL document, and how the user's own pull requests are asked for.
  *
- * ## Why one query for every repository
+ * ## Why `search` and not `repository.pullRequests`
  *
- * The obvious shape is a query per repo, run in a loop. This is one query with
- * an **aliased `repository` block per repo** — `r0:`, `r1:`, … — which makes a
- * sweep one `gh` spawn and one HTTP round trip no matter how many projects the
- * user has configured. At a poll a minute, per-repo calls would be the whole
- * cost of this feature.
+ * This used to be an aliased `repository` block per repo — `r0:`, `r1:`, … —
+ * each asking for the fifty most recently updated open PRs, with "mine" applied
+ * afterwards while reading the payload. The filter was in the wrong place.
+ * `Repository.pullRequests` takes `states`, `labels`, `headRefName`,
+ * `baseRefName` and `orderBy` and **no author argument at all**, so the only
+ * place the author could be applied was after the page had already been chosen.
+ * In a repository where fifty PRs are updated before any of the user's, theirs
+ * were simply not in the answer, and the panel said "No open pull requests of
+ * yours" with total confidence.
  *
- * ## Why the repo names are variables and not interpolated
+ * `search` is the one connection that takes an author. Two of them — open and
+ * merged — replace the whole alias scheme: one round trip regardless of how many
+ * projects are configured, as before, but now the page GitHub chooses is a page
+ * of *the user's* pull requests, so the cap can only be reached by someone who
+ * genuinely has a hundred of their own.
  *
- * Only the *alias list* is generated, and it is generated from a **count** —
- * `r0`, `owner0`, `name0` — so no value derived from the user's config is ever
- * concatenated into the query text. The owners and names travel as GraphQL
- * variables, where they are data and cannot be anything else. This is the same
- * rule `gh.ts` states for argv, applied one layer up: the query is a constant
- * shape, and the inputs are bound.
+ * ## Why the repository names are still not concatenated into the document
  *
- * Names come from the config file rather than the renderer, so this is defence
- * in depth rather than the only line — which is exactly when it is cheap enough
- * to be worth having.
+ * The old rule was that no config-derived value ever entered the query text, and
+ * it still holds: the search expressions travel as the bound variables `$open`
+ * and `$merged`, where they are data. The query text itself is now a **constant**
+ * — there is no per-repo aliasing left to generate — which is a stronger version
+ * of the same guarantee rather than a weaker one.
+ *
+ * What is new is that a repository name now lands inside a *search expression*,
+ * which is a second, much weaker language: the worst a hostile name could do
+ * there is smuggle another qualifier and widen the search. {@link repoQualifiers}
+ * is the answer — a name is only emitted if it matches the character set GitHub
+ * itself permits in an owner or repository, and one that does not is dropped
+ * rather than escaped. Dropping is the safe direction: a repository missing from
+ * the sweep shows fewer PRs, where a mis-escaped one could show anybody's.
  */
 
 /** One repository to sweep. */
@@ -35,17 +48,47 @@ export interface RepoRef {
   name: string;
 }
 
-/** The alias a repository's block answers under. Derived from the index only. */
-export function repoAlias(index: number): string {
-  return `r${index}`;
+/**
+ * What GitHub allows in an owner or a repository name.
+ *
+ * Deliberately the *whole* permitted set and not a guess at a safe subset: a
+ * pattern narrower than reality would silently drop real repositories, which is
+ * the failure this file exists to stop. Every character here is inert inside a
+ * search expression — no space, so a qualifier cannot be split; no colon, so one
+ * cannot be introduced.
+ */
+const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * The `repo:` qualifiers for a sweep, one per repository GitHub can be asked
+ * about safely.
+ *
+ * Repeated `repo:` qualifiers are **OR**ed by GitHub's search, which is what
+ * makes a single query cover every configured project.
+ *
+ * An empty result is meaningful and the callers treat it as such: it means there
+ * is nothing safe to scope the search to, and an *unscoped* `author:@me` search
+ * would answer with the user's pull requests from every repository they have ever
+ * touched. That is a far worse answer than none, so `client.ts` refuses the call
+ * rather than sending a search with no scope.
+ */
+export function repoQualifiers(repos: readonly RepoRef[]): string[] {
+  return repos
+    .filter((repo) => SAFE_SEGMENT.test(repo.owner) && SAFE_SEGMENT.test(repo.name))
+    .map((repo) => `repo:${repo.owner}/${repo.name}`);
 }
 
 /**
  * The fields read from one PR.
  *
  * `reviewThreads` is the whole reason this is GraphQL rather than
- * `gh pr list --json`: the REST-shaped field set has no thread resolution in
- * it, and "unresolved review threads" is what the findings badge counts.
+ * `gh pr list --json` or `gh search prs --json`: neither REST-shaped field set
+ * has thread resolution in it, and "unresolved review threads" is what the
+ * findings badge counts.
+ *
+ * `repository` is here because a search result is not addressed by repository
+ * the way an aliased block was — the nodes arrive in one flat list spanning every
+ * repo, so each one has to say which it came from.
  */
 const PR_PARTS = `fragment PrParts on PullRequest {
   number
@@ -58,77 +101,70 @@ const PR_PARTS = `fragment PrParts on PullRequest {
   updatedAt
   mergedAt
   author { login }
+  repository { name owner { login } }
   reviewThreads(first: ${String(GH_THREAD_PAGE)}) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }`;
 
 /**
- * Two connections per repository rather than one `states: [OPEN, MERGED]`.
+ * The document. A constant, because nothing about it varies with the config any
+ * more — the repositories live entirely in the two bound variables.
  *
- * A combined connection orders by `updatedAt` across both states, so a busy
- * repository's merged PRs would push the user's open ones off the first page —
- * and the open ones are the entire point of the panel. Asking separately gives
- * each state its own page and makes neither able to starve the other.
- */
-const REPO_PRS = `fragment RepoPrs on Repository {
-  name
-  owner { login }
-  open: pullRequests(states: [OPEN], first: ${String(GH_OPEN_PAGE)}, orderBy: {field: UPDATED_AT, direction: DESC}) {
-    nodes { ...PrParts }
-  }
-  merged: pullRequests(states: [MERGED], first: ${String(GH_MERGED_PAGE)}, orderBy: {field: UPDATED_AT, direction: DESC}) {
-    nodes { ...PrParts }
-  }
-}`;
-
-/**
- * The document for `count` repositories.
+ * ## Two searches rather than one
  *
- * `viewer { login }` rides along because the author filter needs to know who
- * "mine" is, and asking in the same round trip is free — a separate
- * `gh api user` call would double the request count to learn something that
- * never changes within a session.
+ * The same reason the two connections existed before: a single search ordered by
+ * `updated-desc` across both states would let a busy week of merges push the
+ * user's open PRs off the page, and the open ones are the entire point of the
+ * panel. Asking separately gives each state its own page and makes neither able
+ * to starve the other.
+ *
+ * ## Why no date qualifier on the merged search
+ *
+ * The twenty-four hour window that decides which merged PRs are still worth
+ * showing stays where it was, in `mapping.ts`, applied to `mergedAt`. Putting an
+ * `updated:` qualifier in the expression instead would filter on *when a PR was
+ * last touched*, which is a different question, and anything the panel dropped
+ * for that reason would vanish without ever being counted.
+ *
+ * `viewer { login }` rides along because `client.ts` uses it as the signal that
+ * the request genuinely succeeded — it is the one field here that cannot be null
+ * for a working token. `author:@me` already does the filtering, so the login is
+ * no longer what defines "mine"; it is kept as the sentinel, and as the second
+ * check `mapping.ts` applies behind the search.
  */
-export function buildPrQuery(count: number): string {
-  const params: string[] = [];
-  const blocks: string[] = [];
-
-  for (let index = 0; index < count; index += 1) {
-    params.push(`$owner${String(index)}: String!, $name${String(index)}: String!`);
-    blocks.push(
-      `  ${repoAlias(index)}: repository(owner: $owner${String(index)}, name: $name${String(index)}) { ...RepoPrs }`,
-    );
-  }
-
-  // No repositories means no parameter list at all — `query () {` is a syntax
-  // error, not an empty query.
-  const signature = params.length === 0 ? '' : `(${params.join(', ')})`;
-
+export function buildPrQuery(): string {
   return [
-    `query${signature} {`,
+    'query($open: String!, $merged: String!) {',
     '  viewer { login }',
-    ...blocks,
+    `  open: search(query: $open, type: ISSUE, first: ${String(GH_OPEN_PAGE)}) {`,
+    '    nodes { ... on PullRequest { ...PrParts } }',
+    '  }',
+    `  merged: search(query: $merged, type: ISSUE, first: ${String(GH_MERGED_PAGE)}) {`,
+    '    nodes { ... on PullRequest { ...PrParts } }',
+    '  }',
     '}',
-    REPO_PRS,
     PR_PARTS,
   ].join('\n');
 }
 
 /**
- * The variable bindings, keyed to match {@link buildPrQuery}'s parameter names.
+ * The two search expressions, keyed to match {@link buildPrQuery}'s parameters.
  *
- * A flat `Record<string, string>` because that is what `gh api graphql` takes
- * on the command line, one `-f key=value` per entry.
+ * Takes the qualifiers rather than the repositories so that the caller has
+ * already had to confront the empty case — see {@link repoQualifiers}.
+ *
+ * `sort:updated-desc` is explicit because search defaults to relevance ordering,
+ * and "most relevant" is not a thing a pull request panel means. A flat
+ * `Record<string, string>` because that is what `gh api graphql` takes on the
+ * command line, one `-f key=value` per entry.
  */
 export function buildPrVariables(
-  repos: readonly RepoRef[],
+  qualifiers: readonly string[],
 ): Record<string, string> {
-  const variables: Record<string, string> = {};
+  const scope = qualifiers.join(' ');
 
-  repos.forEach((repo, index) => {
-    variables[`owner${String(index)}`] = repo.owner;
-    variables[`name${String(index)}`] = repo.name;
-  });
-
-  return variables;
+  return {
+    open: `is:pr author:@me is:open ${scope} sort:updated-desc`,
+    merged: `is:pr author:@me is:merged ${scope} sort:updated-desc`,
+  };
 }

@@ -106,15 +106,27 @@ export interface PrsSnapshot {
 export const GH_MERGED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * How many PRs are read per repository, per state.
+ * How many PRs are read per state, per sweep.
  *
- * Both are first-page reads ordered by `UPDATED_AT` — no paging. A user with
- * more than fifty *open* PRs of their own in one repository has a different
- * problem than this panel can solve, and the merged window makes twenty
- * generous for a day's landings.
+ * **Per sweep, not per repository** — the search connections these size span
+ * every configured project at once, where the aliased `repository` blocks they
+ * replaced each had a page of their own. Both are first-page reads ordered by
+ * `sort:updated-desc`, with no paging.
+ *
+ * A hundred each is search's own maximum, and the cap is deliberately generous
+ * rather than tight: the page is the *only* thing that can now drop a pull
+ * request the user still cares about. A PR opened on a Friday and left untouched
+ * sinks down an `updated-desc` list every time somebody else's moves, so the
+ * headroom is what stops a quiet PR falling off while it waits. Reaching a
+ * hundred means a hundred open pull requests of the user's own across every
+ * project they have configured, which is a different problem than a panel solves.
+ *
+ * The cost is affordable at the poll rate: a hundred nodes each carrying
+ * `reviewThreads(first: 100)` measures at two rate-limit points, so a sweep of
+ * both connections is about four against an hourly budget of five thousand.
  */
-export const GH_OPEN_PAGE = 50;
-export const GH_MERGED_PAGE = 20;
+export const GH_OPEN_PAGE = 100;
+export const GH_MERGED_PAGE = 100;
 
 /**
  * How many review threads are counted per PR.

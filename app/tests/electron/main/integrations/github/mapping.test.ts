@@ -9,7 +9,6 @@ import {
   toPrRecord,
   toState,
 } from '../../../../../electron/main/integrations/github/mapping';
-import type { RepoRef } from '../../../../../electron/main/integrations/github/query';
 
 /**
  * GitHub's GraphQL payload to named fields.
@@ -18,8 +17,6 @@ import type { RepoRef } from '../../../../../electron/main/integrations/github/q
  * arrives as an argument — which is the whole reason the branchiest part of the
  * integration can be tested without a network.
  */
-
-const REPO: RepoRef = { owner: 'acme', name: 'apfm-web' };
 
 /** `2026-08-09T12:00:00Z`, as epoch ms. The "now" every case is relative to. */
 const NOW = Date.parse('2026-08-09T12:00:00Z');
@@ -35,6 +32,7 @@ const node = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   updatedAt: '2026-08-09T11:00:00Z',
   mergedAt: null,
   author: { login: 'octocat' },
+  repository: { name: 'apfm-web', owner: { login: 'acme' } },
   reviewThreads: { nodes: [] },
   commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
   ...over,
@@ -160,7 +158,7 @@ describe('toChecks', () => {
 
 describe('toPrRecord', () => {
   it('maps the named fields and nothing else', () => {
-    expect(toPrRecord(node(), REPO)).toEqual({
+    expect(toPrRecord(node())).toEqual({
       number: 482,
       title: 'Hero: semantic token refactor',
       url: 'https://github.com/acme/apfm-web/pull/482',
@@ -175,6 +173,20 @@ describe('toPrRecord', () => {
   });
 
   /**
+   * The repository comes off the node now, because search answers with one flat
+   * list spanning every repo in the expression — there is no index left that
+   * says where a result came from. A node that cannot say is one this app has
+   * nowhere to put.
+   */
+  it('takes the repository from the node itself', () => {
+    const record = toPrRecord(
+      node({ repository: { name: 'referral-api', owner: { login: 'other' } } }),
+    );
+
+    expect(record).toMatchObject({ repo: 'referral-api', owner: 'other' });
+  });
+
+  /**
    * A PR it cannot read costs itself and nothing else. A sweep of forty where
    * the ninth has no branch renders thirty-nine rows, not an error.
    */
@@ -185,44 +197,82 @@ describe('toPrRecord', () => {
     ['no url', { url: null }],
     ['no branch', { headRefName: undefined }],
     ['no updatedAt', { updatedAt: '   ' }],
+    ['no repository', { repository: undefined }],
+    ['a null repository', { repository: null }],
+    ['a repository with no name', { repository: { owner: { login: 'acme' } } }],
+    ['a repository with no owner', { repository: { name: 'apfm-web' } }],
   ])('answers null for a node with %s', (_label, over) => {
-    expect(toPrRecord(node(over), REPO)).toBeNull();
+    expect(toPrRecord(node(over))).toBeNull();
   });
 
-  it('answers null for something that is not a node at all', () => {
-    expect(toPrRecord(null, REPO)).toBeNull();
-    expect(toPrRecord([1, 2], REPO)).toBeNull();
+  /**
+   * A search over `type: ISSUE` also answers with issues, which the inline
+   * `... on PullRequest` fragment leaves as bare `{}`. That is a routine
+   * outcome here rather than a corruption.
+   */
+  it('answers null for something that is not a pull request', () => {
+    expect(toPrRecord({})).toBeNull();
+    expect(toPrRecord(null)).toBeNull();
+    expect(toPrRecord([1, 2])).toBeNull();
   });
 });
 
 describe('collectPrs', () => {
   const payload = (over: Record<string, unknown> = {}) => ({
     viewer: { login: 'octocat' },
-    r0: {
-      name: 'apfm-web',
-      owner: { login: 'acme' },
-      open: { nodes: [node()] },
-      merged: { nodes: [] },
-      ...over,
-    },
+    open: { nodes: [node()] },
+    merged: { nodes: [] },
+    ...over,
   });
 
-  it('reads a repository block by its alias', () => {
-    const prs = collectPrs(payload(), [REPO], 'octocat', NOW);
+  it('reads both search connections', () => {
+    const prs = collectPrs(payload(), 'octocat', NOW);
 
     expect(prs.map((pr) => pr.number)).toEqual([482]);
   });
 
-  /** "Mine" is the whole rule the user chose. Somebody else's PR is not shown. */
+  /**
+   * The search already asked for `author:@me`, so this is the second of two
+   * independent mechanisms rather than the one that defines the list. It is kept
+   * because it costs a comparison and it is what would catch a search expression
+   * that failed to scope the way it was meant to.
+   */
   it('drops PRs authored by anyone else', () => {
     const prs = collectPrs(
       payload({ open: { nodes: [node({ author: { login: 'someone' } })] } }),
-      [REPO],
       'octocat',
       NOW,
     );
 
     expect(prs).toEqual([]);
+  });
+
+  /**
+   * The nodes now span every repository in one list, so the records have to come
+   * out attributed individually.
+   */
+  it('attributes each node to its own repository', () => {
+    const prs = collectPrs(
+      payload({
+        open: {
+          nodes: [
+            node({ number: 1, updatedAt: '2026-08-09T09:00:00Z' }),
+            node({
+              number: 2,
+              updatedAt: '2026-08-09T11:30:00Z',
+              repository: { name: 'referral-api', owner: { login: 'other' } },
+            }),
+          ],
+        },
+      }),
+      'octocat',
+      NOW,
+    );
+
+    expect(prs.map((pr) => [pr.number, pr.repo])).toEqual([
+      [2, 'referral-api'],
+      [1, 'apfm-web'],
+    ]);
   });
 
   it('keeps a PR merged inside the 24h window', () => {
@@ -239,7 +289,6 @@ describe('collectPrs', () => {
           ],
         },
       }),
-      [REPO],
       'octocat',
       NOW,
     );
@@ -262,7 +311,6 @@ describe('collectPrs', () => {
           ],
         },
       }),
-      [REPO],
       'octocat',
       NOW,
     );
@@ -278,7 +326,6 @@ describe('collectPrs', () => {
           nodes: [node({ state: 'MERGED', mergedAt: 'the day before' })],
         },
       }),
-      [REPO],
       'octocat',
       NOW,
     );
@@ -311,7 +358,6 @@ describe('collectPrs', () => {
           ],
         },
       }),
-      [REPO],
       'octocat',
       NOW,
     );
@@ -320,23 +366,26 @@ describe('collectPrs', () => {
   });
 
   /**
-   * Partial data survives. GraphQL answers one inaccessible repository with a
-   * `null` block and real data for the rest; losing the rest would be the wrong
-   * trade.
+   * Partial data survives. GraphQL answers a field it could not resolve with
+   * `null` and an error beside it, while the sibling field carries real nodes;
+   * losing the half that answered would be the wrong trade.
    */
-  it('skips a repository block that came back null', () => {
-    const second: RepoRef = { owner: 'acme', name: 'referral-api' };
-    const prs = collectPrs(
-      { ...payload(), r1: null },
-      [REPO, second],
-      'octocat',
-      NOW,
-    );
+  it('keeps the connection that answered when its sibling did not', () => {
+    const prs = collectPrs(payload({ merged: null }), 'octocat', NOW);
 
     expect(prs.map((pr) => pr.number)).toEqual([482]);
   });
 
+  it.each([
+    ['a missing connection', { open: undefined }],
+    ['a connection with no nodes array', { open: { nodes: null } }],
+  ])('contributes nothing for %s', (_label, over) => {
+    const prs = collectPrs(payload(over), 'octocat', NOW);
+
+    expect(prs).toEqual([]);
+  });
+
   it('answers an empty list for a payload it cannot read', () => {
-    expect(collectPrs(null, [REPO], 'octocat', NOW)).toEqual([]);
+    expect(collectPrs(null, 'octocat', NOW)).toEqual([]);
   });
 });

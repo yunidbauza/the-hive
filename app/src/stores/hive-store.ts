@@ -413,6 +413,39 @@ const emptySeeds = (): Pick<
   orchLines: [],
 });
 
+/**
+ * Whether a sweep found anything the panel would draw differently.
+ *
+ * Every field of `PrRecord` is compared, because every field of `PrRecord` is
+ * one a surface renders or resolves against — that is the contract the type
+ * states, and a comparison narrower than the type would go quietly wrong the
+ * day a field was added. Order counts too: `collectPrs` sorts live work above
+ * what landed, so a reordering is a real change even when the set is the same.
+ *
+ * Deliberately not `JSON.stringify` equality, which is the same work with a
+ * silent dependency on key order and an allocation the size of the whole list,
+ * once a minute, forever.
+ */
+function samePrs(next: readonly PrRecord[], previous: readonly PrRecord[]): boolean {
+  if (next.length !== previous.length) return false;
+
+  return next.every((pr, index) => {
+    const before = previous[index];
+    return (
+      pr.number === before.number &&
+      pr.title === before.title &&
+      pr.url === before.url &&
+      pr.repo === before.repo &&
+      pr.owner === before.owner &&
+      pr.branch === before.branch &&
+      pr.state === before.state &&
+      pr.findings === before.findings &&
+      pr.checks === before.checks &&
+      pr.updatedAt === before.updatedAt
+    );
+  });
+}
+
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
   ...createInitialState(),
@@ -1245,8 +1278,33 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     get().hydrateTickets(result.value.issues, result.value.capped);
   },
 
+  /**
+   * Install a sweep's answer — **keeping both slices' identity when the answer
+   * has not changed.**
+   *
+   * The poller sweeps every minute whether or not GitHub has anything new, and
+   * an unconditional `set` handed the renderer two brand-new objects each time.
+   * Both are subscribed to by name (`usePrs`, `usePrSource`), so a quiet minute
+   * still re-rendered the PR panel and re-resolved every row's owning session
+   * against the fleet. Most minutes are quiet minutes.
+   *
+   * `prSource` is compared as well as `prs`, and not as an afterthought: leaving
+   * it churning would have left the panel re-rendering once a minute regardless
+   * of what `prs` did, which is the whole thing this is here to stop. The
+   * comparison covers `stale` because a sweep succeeding after a failure is a
+   * real change — it is what takes the "may be out of date" banner down.
+   */
   hydratePrs: (prs, repos) =>
-    set({ prs, prSource: { kind: 'live', stale: false, repos } }),
+    set((state) => {
+      const source = state.prSource;
+      const settled =
+        source.kind === 'live' && !source.stale && source.repos === repos;
+
+      return {
+        prs: samePrs(prs, state.prs) ? state.prs : prs,
+        prSource: settled ? source : { kind: 'live', stale: false, repos },
+      };
+    }),
 
   /**
    * A sweep failed — **staleness over emptiness**, exactly as
@@ -1661,27 +1719,125 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
   useHiveStore((state) => state.updateTicket);
 
 /**
+ * The five things the fleet-derived selectors below actually read off a session.
+ *
+ * A projection, not a summary: nothing here is for display. `branch` and
+ * `project` are what a pull request is matched against, `ticket` is the reverse
+ * of `Session.ticket`, and `ended` is `isEnded(status)` already applied.
+ */
+export interface SessionFacet {
+  id: string;
+  branch: string;
+  project: string;
+  ticket: string | undefined;
+  /** {@link isEnded}, resolved. See the note on churn in {@link selectSessionFacets}. */
+  ended: boolean;
+}
+
+/**
+ * The fleet, projected — and **the same array back** whenever nothing in the
+ * projection changed.
+ *
+ * ## The problem this exists for
+ *
+ * `usePrs`, `useTicketPrs` and `useTicketSessions` all build fresh objects, so
+ * none of them can use `useShallow` (freshly-built objects never compare equal,
+ * and React loops until it bails out with "Maximum update depth exceeded" —
+ * spelled out on {@link useTicketPrs}). They memoised over `entities` instead,
+ * which is correct but far too broad: the entities map is replaced wholesale by
+ * *any* write to *any* session, so one session's status flip re-resolved the
+ * pull requests for every ticket card in the WORK panel and every row in the PR
+ * panel. Thirteen live sessions made that a routine event.
+ *
+ * Subscribing to this instead narrows the trigger to the fields that can
+ * actually change an answer. `useSyncExternalStore` requires a snapshot to be
+ * referentially stable when the underlying data has not changed, and returning
+ * the cached array is exactly that contract — not an optimisation on top of it.
+ *
+ * ## Why `ended` and not `status`
+ *
+ * Because a status is a five-state field and the selectors only ever ask one
+ * question of it. Collapsing it here means the most frequent write in the whole
+ * app — a session going `working` → `waiting` → `working` as an agent asks and
+ * is answered — changes no facet at all, so the memo holds and nothing
+ * downstream recomputes. Only crossing the live/ended boundary counts.
+ *
+ * ## Why the cache needs no reset
+ *
+ * It is compared by value on every call and never trusted. A `reset()` produces
+ * an empty projection, which either differs from the cache and replaces it, or
+ * matches it and is correctly the same empty array. There is no state in which a
+ * stale entry can be returned, which is what makes a module-level cache safe for
+ * a store this one is a singleton of.
+ */
+let facetCache: SessionFacet[] = [];
+
+function sameFacets(
+  next: readonly SessionFacet[],
+  previous: readonly SessionFacet[],
+): boolean {
+  if (next.length !== previous.length) return false;
+
+  return next.every((facet, index) => {
+    const before = previous[index];
+    return (
+      facet.id === before.id &&
+      facet.branch === before.branch &&
+      facet.project === before.project &&
+      facet.ticket === before.ticket &&
+      facet.ended === before.ended
+    );
+  });
+}
+
+export function selectSessionFacets(state: HiveState): SessionFacet[] {
+  const next: SessionFacet[] = [];
+
+  /*
+    Walked in `order` rather than over `Object.keys(entities)`, which is what
+    every consumer of this used to do for itself: `order` is the array the rails
+    already read positionally, so a ticket card lists its sessions in the same
+    sequence the fleet table does, and a `/clear` successor inherits its
+    predecessor's slot instead of jumping to the end of the card.
+  */
+  for (const id of state.order) {
+    const entity = state.entities[id];
+    if (!entity || !isSession(entity)) continue;
+
+    next.push({
+      id,
+      branch: entity.branch,
+      project: entity.project,
+      ticket: entity.ticket,
+      ended: isEnded(entity.status),
+    });
+  }
+
+  if (sameFacets(next, facetCache)) return facetCache;
+
+  facetCache = next;
+  return facetCache;
+}
+
+/**
  * Every session that has *ever* been pointed at a ticket, in fleet order
- * (HIVE-73). Ended ones included — see the two callers below.
+ * (HIVE-73). Ended ones included — the three callers below each decide.
  *
  * The reverse of `Session.ticket`, computed rather than stored — which is what
  * makes the link immune to `hydrateTickets` replacing the whole ticket list on
  * every WORK-panel open.
  *
- * Ordered by `order` rather than by `Object.keys(entities)`: `order` is the
- * array the rails already read positionally, so a ticket card lists its
- * sessions in the same sequence the fleet table does, and a `/clear` successor
- * inherits its predecessor's slot instead of jumping to the end of the card.
+ * Answers **facets** rather than ids, which is what lets it be the single
+ * definition of "this ticket's sessions": the card wants ids, the PR resolution
+ * wants branches, and the live filter wants `ended`. Handing back ids would send
+ * two of the three straight back to the fleet to look up what they were just
+ * given.
  */
-export function sessionsForTicket(
+function facetsForTicket(
   ticketKey: string,
-  order: string[],
-  entities: Record<string, Entity>,
-): string[] {
-  return order.filter((id) => {
-    const entity = entities[id];
-    return Boolean(entity && isSession(entity) && entity.ticket === ticketKey);
-  });
+  fleet: readonly SessionFacet[],
+): SessionFacet[] {
+  return fleet.filter((session) => session.ticket === ticketKey);
 }
 
 /**
@@ -1702,13 +1858,11 @@ export function sessionsForTicket(
  */
 function liveSessionsForTicket(
   ticketKey: string,
-  order: string[],
-  entities: Record<string, Entity>,
+  fleet: readonly SessionFacet[],
 ): string[] {
-  return sessionsForTicket(ticketKey, order, entities).filter((id) => {
-    const entity = entities[id];
-    return entity !== undefined && isSession(entity) && !isEnded(entity.status);
-  });
+  return facetsForTicket(ticketKey, fleet)
+    .filter((session) => !session.ended)
+    .map((session) => session.id);
 }
 
 /**
@@ -1742,17 +1896,9 @@ function liveSessionsForTicket(
  */
 function sessionForPr(
   pr: Pick<PrRecord, 'branch' | 'repo'>,
-  order: string[],
-  entities: Record<string, Entity>,
+  fleet: readonly SessionFacet[],
 ): string | null {
-  const candidates: Session[] = [];
-
-  for (const id of order) {
-    const entity = entities[id];
-    if (entity && isSession(entity) && entity.branch === pr.branch) {
-      candidates.push(entity);
-    }
-  }
+  const candidates = fleet.filter((session) => session.branch === pr.branch);
 
   const sameProject = candidates.filter(
     (session) => session.project.toLowerCase() === pr.repo.toLowerCase(),
@@ -1775,7 +1921,7 @@ function sessionForPr(
    * `/clear`. Returning `null` restores what both surfaces already do with it —
    * open the PR on GitHub, as a real link that middle-click works on.
    */
-  return pool.find((session) => !isEnded(session.status))?.id ?? null;
+  return pool.find((session) => !session.ended)?.id ?? null;
 }
 
 /**
@@ -1809,19 +1955,16 @@ function sessionForPr(
 export function resolveTicketPrs(
   ticketKey: string,
   tickets: Ticket[],
-  order: string[],
-  entities: Record<string, Entity>,
+  fleet: readonly SessionFacet[],
   prs: PrRecord[],
 ): TicketPr[] {
   const ticket = tickets.find((t) => t.key === ticketKey);
   if (!ticket) return [];
 
   /** The branches this ticket's sessions are working on. */
-  const branches = new Set<string>();
-  for (const sessionId of sessionsForTicket(ticketKey, order, entities)) {
-    const entity = entities[sessionId];
-    if (entity && isSession(entity)) branches.add(entity.branch);
-  }
+  const branches = new Set<string>(
+    facetsForTicket(ticketKey, fleet).map((session) => session.branch),
+  );
 
   /*
     Escaped, then bounded by non-word characters on both sides. A Jira key is
@@ -1847,7 +1990,7 @@ export function resolveTicketPrs(
       state: pr.state,
       findings: pr.findings,
       url: pr.url,
-      session: sessionForPr(pr, order, entities),
+      session: sessionForPr(pr, fleet),
     });
   }
 
@@ -1862,36 +2005,40 @@ export function resolveTicketPrs(
  * back store-owned ones, and `useShallow` compares an array's *elements* by
  * identity — freshly-built objects never match, so every render would produce a
  * new snapshot and React would loop until it bails out with "Maximum update
- * depth exceeded". Subscribing to the stable slices and memoising over them is
- * what keeps the identity stable between renders.
+ * depth exceeded". Subscribing to stable slices and memoising over them is what
+ * keeps the identity stable between renders.
+ *
+ * The fleet arrives as {@link selectSessionFacets} rather than as `order` plus
+ * `entities`, which is what makes "stable" true in practice as well as in
+ * principle: the entities map is a new object after any write to any session, so
+ * memoising over it re-resolved every ticket card in the panel whenever one
+ * session anywhere changed status.
  */
 export const useTicketPrs = (ticketKey: string): TicketPr[] => {
   const tickets = useHiveStore((state) => state.tickets);
-  const order = useHiveStore((state) => state.order);
-  const entities = useHiveStore((state) => state.entities);
+  const fleet = useHiveStore(selectSessionFacets);
   const prs = useHiveStore((state) => state.prs);
 
   return useMemo(
-    () => resolveTicketPrs(ticketKey, tickets, order, entities, prs),
-    [ticketKey, tickets, order, entities, prs],
+    () => resolveTicketPrs(ticketKey, tickets, fleet, prs),
+    [ticketKey, tickets, fleet, prs],
   );
 };
 
 /**
  * The sessions working a ticket (HIVE-73) — the card's session rows.
  *
- * Memoised over `order` and `entities` for the same reason `useTicketPrs` is:
- * the result is a freshly-built array, so a plain selector would hand React a
- * new identity on every store write and re-render every card in the panel
- * whenever any session anywhere produced a line of output.
+ * Memoised over the fleet facets for the same reason `useTicketPrs` is: the
+ * result is a freshly-built array, so a plain selector would hand React a new
+ * identity on every store write and re-render every card in the panel whenever
+ * any session anywhere changed.
  */
 export const useTicketSessions = (ticketKey: string): string[] => {
-  const order = useHiveStore((state) => state.order);
-  const entities = useHiveStore((state) => state.entities);
+  const fleet = useHiveStore(selectSessionFacets);
 
   return useMemo(
-    () => liveSessionsForTicket(ticketKey, order, entities),
-    [ticketKey, order, entities],
+    () => liveSessionsForTicket(ticketKey, fleet),
+    [ticketKey, fleet],
   );
 };
 
@@ -1943,8 +2090,7 @@ export const useNotifs = () => useHiveStore((state) => state.notifs);
  */
 export const usePrs = (): Pr[] => {
   const prs = useHiveStore((state) => state.prs);
-  const order = useHiveStore((state) => state.order);
-  const entities = useHiveStore((state) => state.entities);
+  const fleet = useHiveStore(selectSessionFacets);
 
   return useMemo(
     () =>
@@ -1957,9 +2103,9 @@ export const usePrs = (): Pr[] => {
         checks: pr.checks,
         url: pr.url,
         branch: pr.branch,
-        session: sessionForPr(pr, order, entities),
+        session: sessionForPr(pr, fleet),
       })),
-    [prs, order, entities],
+    [prs, fleet],
   );
 };
 

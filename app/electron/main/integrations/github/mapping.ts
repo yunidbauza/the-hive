@@ -5,15 +5,12 @@ import {
   type PrRecord,
 } from '../../../shared/github-contract';
 
-import { repoAlias, type RepoRef } from './query';
-
 /**
  * GitHub's GraphQL JSON to named fields.
  *
- * Pure. No I/O, no imports beyond the contract and the alias helper, and the
- * clock arrives as an argument — which is what lets the module carrying every
- * branch in this integration be tested against recorded payloads instead of
- * against GitHub.
+ * Pure. No I/O, no imports beyond the contract, and the clock arrives as an
+ * argument — which is what lets the module carrying every branch in this
+ * integration be tested against recorded payloads instead of against GitHub.
  *
  * ## Why nothing here throws
  *
@@ -23,13 +20,19 @@ import { repoAlias, type RepoRef } from './query';
  * rows rather than an error, and the panel's rule that it must render either
  * way applies *inside* a sweep too.
  *
- * ## Why the filtering lives here
+ * ## What is still filtered here, now that the search filters too
  *
- * "Mine, plus what landed in the last day" is a rule about the payload, not
- * about process management, so {@link collectPrs} applies it while it reads
- * rather than handing a wider list to the composition root to narrow. That
- * keeps the whole payload→records step one pure function with a table for a
- * test, and leaves `index.ts` doing only composition.
+ * "Mine" is asked for in the query — `author:@me`, see `query.ts` — so the
+ * author check here is no longer what defines the list. It is kept anyway,
+ * because it costs one comparison and it is the thing that would catch a search
+ * expression that failed to scope the way it was meant to. Cheap agreement
+ * between two independent mechanisms beats trusting either alone.
+ *
+ * **The twenty-four hour merged window is a different matter: this is the only
+ * place it is applied.** It filters on `mergedAt`, which is the question the
+ * panel actually asks — "did this land recently" — and deliberately not on the
+ * `updated:` qualifier the search could have carried, which answers "was this
+ * touched recently" and would drop a PR for being quiet.
  */
 
 /** A plain object, and not an array. `typeof null` is the usual trap. */
@@ -109,8 +112,34 @@ export function toState(raw: unknown): GhPrState {
   return 'open';
 }
 
-/** One PR, or `null` if the entry cannot be read. */
-export function toPrRecord(raw: unknown, repo: RepoRef): PrRecord | null {
+/**
+ * The repository a node came from, or `null`.
+ *
+ * Read off the node rather than passed in. Search returns one flat list spanning
+ * every repository in the expression, so there is no longer an index that says
+ * which repo a result belongs to — the node has to carry it, and a node that
+ * does not is one this app cannot place on a card.
+ */
+function repoOf(raw: Record<string, unknown>): { name: string; owner: string } | null {
+  const repository = raw.repository;
+  if (!isRecord(repository)) return null;
+
+  const name = text(repository.name);
+  const owner = isRecord(repository.owner) ? text(repository.owner.login) : null;
+  if (name === null || owner === null) return null;
+
+  return { name, owner };
+}
+
+/**
+ * One PR, or `null` if the entry cannot be read.
+ *
+ * A search over `type: ISSUE` can also answer with issues and with nodes the
+ * inline `... on PullRequest` fragment left empty, so "cannot be read" is a
+ * routine outcome here rather than a corruption — those arrive as `{}` and leave
+ * as `null`, costing themselves and nothing else.
+ */
+export function toPrRecord(raw: unknown): PrRecord | null {
   if (!isRecord(raw)) return null;
 
   const number = raw.number;
@@ -120,7 +149,14 @@ export function toPrRecord(raw: unknown, repo: RepoRef): PrRecord | null {
   const url = text(raw.url);
   const branch = text(raw.headRefName);
   const updatedAt = text(raw.updatedAt);
-  if (title === null || url === null || branch === null || updatedAt === null) {
+  const repo = repoOf(raw);
+  if (
+    title === null ||
+    url === null ||
+    branch === null ||
+    updatedAt === null ||
+    repo === null
+  ) {
     return null;
   }
 
@@ -155,8 +191,9 @@ function isAuthoredBy(raw: unknown, login: string): boolean {
   return isRecord(author) && text(author.login) === login;
 }
 
-function nodesOf(repository: Record<string, unknown>, key: string): unknown[] {
-  const connection = repository[key];
+/** The `nodes` of one search connection, or nothing at all. */
+function nodesOf(payload: Record<string, unknown>, key: string): unknown[] {
+  const connection = payload[key];
   if (!isRecord(connection)) return [];
   return Array.isArray(connection.nodes) ? connection.nodes : [];
 }
@@ -169,14 +206,17 @@ function nodesOf(repository: Record<string, unknown>, key: string): unknown[] {
  * minutes ago sit above one waiting on the user right now, and the panel's job
  * is to show what still needs them.
  *
- * A repository whose block is missing or `null` contributes nothing rather than
- * failing the sweep: GraphQL answers partial data with per-field `null` when one
- * repo of several is inaccessible, and losing the other four because of it would
- * be the wrong trade.
+ * The sort is applied here rather than trusted from `sort:updated-desc`, because
+ * the two searches arrive as separate lists and the panel's order interleaves
+ * neither — it stacks them.
+ *
+ * A connection that came back missing or `null` contributes nothing rather than
+ * failing the sweep. GraphQL answers partial data with a `null` field and an
+ * error beside it, and losing the connection that did answer because its sibling
+ * did not would be the wrong trade.
  */
 export function collectPrs(
   payload: unknown,
-  repos: readonly RepoRef[],
   login: string,
   now: number,
 ): PrRecord[] {
@@ -184,26 +224,21 @@ export function collectPrs(
 
   const records: PrRecord[] = [];
 
-  repos.forEach((repo, index) => {
-    const repository = payload[repoAlias(index)];
-    if (!isRecord(repository)) return;
+  for (const node of nodesOf(payload, 'open')) {
+    if (!isAuthoredBy(node, login)) continue;
+    const record = toPrRecord(node);
+    if (record !== null) records.push(record);
+  }
 
-    for (const node of nodesOf(repository, 'open')) {
-      if (!isAuthoredBy(node, login)) continue;
-      const record = toPrRecord(node, repo);
-      if (record !== null) records.push(record);
-    }
+  for (const node of nodesOf(payload, 'merged')) {
+    if (!isAuthoredBy(node, login)) continue;
 
-    for (const node of nodesOf(repository, 'merged')) {
-      if (!isAuthoredBy(node, login)) continue;
+    const merged = mergedAtMs(node);
+    if (merged === null || now - merged > GH_MERGED_WINDOW_MS) continue;
 
-      const merged = mergedAtMs(node);
-      if (merged === null || now - merged > GH_MERGED_WINDOW_MS) continue;
-
-      const record = toPrRecord(node, repo);
-      if (record !== null) records.push(record);
-    }
-  });
+    const record = toPrRecord(node);
+    if (record !== null) records.push(record);
+  }
 
   return records.sort((left, right) => {
     const landed = Number(left.state === 'merged') - Number(right.state === 'merged');
