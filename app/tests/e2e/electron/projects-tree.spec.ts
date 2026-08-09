@@ -66,9 +66,13 @@ test('the tree starts a session, and the link stays below the last one', async (
     await expect(
       page.getByRole('button', { name: 'New session', exact: true }),
     ).toHaveCount(1);
-    await expect(
-      page.getByRole('button', { name: 'New session' }),
-    ).toHaveCount(2);
+    // Scoped to the tree rather than counted page-wide: the claim is "the link
+    // is one of the loose matches", and a page-global count would also fail
+    // for a second project in this config, or any future control whose name
+    // happens to contain the words.
+    await expect(tree.getByRole('button', { name: 'New session' })).toHaveCount(
+      1,
+    );
 
     const rail = page.getByRole('navigation', {
       name: 'Projects, work, and agents',

@@ -151,11 +151,36 @@ describe('NewSessionLink', () => {
     expect(link).toHaveAttribute('title', expect.stringContaining('missing'));
   });
 
-  it('stays enabled with no config — the browser demo is unchanged', () => {
+  it('says what it is about to start on', () => {
+    setProjectConfigForTest(snapshot([{ id: PROJECT, status: 'ok' }]));
+    useUiStore.getState().setNewModel('haiku');
+    useUiStore.getState().setNewEffort('max');
+
     render(<NewSessionLink projectId={PROJECT} />);
 
-    const link = screen.getByRole('button');
-    expect(link).toBeEnabled();
-    expect(link).not.toHaveAttribute('title');
+    // The steppers that decide this live in the picker, and the picker is not
+    // open. Without the tooltip the click commits to a model the user cannot
+    // see from here.
+    expect(screen.getByRole('button')).toHaveAttribute(
+      'title',
+      'Starts on haiku · max',
+    );
+  });
+
+  /**
+   * `projectAccess` answers "spawnable" while no snapshot has arrived, and this
+   * pins that default — but note what it is *not* evidence of. The component
+   * never renders in that state: `useProjects()` returns `[]` with no snapshot,
+   * so there is no `ProjectRow` to hang a link on, in the browser target (which
+   * has no config at all) or in the first frames of a desktop launch.
+   *
+   * It is here because the permissive default is the one that would spawn into
+   * an unresolved directory if a future caller mounted this component outside
+   * the tree. Asserting it costs a line; discovering it costs a bug.
+   */
+  it('defaults to enabled before any config has arrived', () => {
+    render(<NewSessionLink projectId={PROJECT} />);
+
+    expect(screen.getByRole('button')).toBeEnabled();
   });
 });

@@ -49,7 +49,16 @@ export function NewSessionLink({ projectId }: NewSessionLinkProps) {
       // the first message gives it its job (story 043).
       onClick={() => spawnSession(projectId, '', newModel, newEffort)}
       disabled={!access.spawnable}
-      title={access.reason ?? undefined}
+      /*
+        The refusal when there is one; otherwise what the click is about to
+        commit to.
+
+        This control spends a choice the user cannot see from here — the
+        picker's steppers are the source, and the picker is not open. Naming
+        the pair costs a tooltip and removes the only thing the picker offered
+        that this does not: sight of the model before you start on it.
+      */
+      title={access.reason ?? `Starts on ${newModel} · ${newEffort}`}
       aria-label={`New session in ${projectId}`}
       className="flex items-center gap-1.5 rounded-lg py-[3px] pr-2.5 pl-[26px] text-left font-mono text-[11.5px] text-subtle hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-subtle"
     >
