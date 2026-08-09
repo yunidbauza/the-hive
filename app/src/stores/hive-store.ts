@@ -1759,9 +1759,23 @@ function sessionForPr(
   );
   const pool = sameProject.length > 0 ? sameProject : candidates;
 
-  return (
-    pool.find((session) => !isEnded(session.status))?.id ?? pool[0]?.id ?? null
-  );
+  /**
+   * A live match, or **nothing** — never an ended one.
+   *
+   * There used to be a `?? pool[0]?.id` fallback here, and it defeated both the
+   * paragraph above and the type's own contract (`Pr.session` is documented as
+   * `null` when no *live* session is on the branch). `openEntity` refuses ended
+   * sessions outright — it calls `backToOrch()` and returns `false` — so
+   * handing back a corpse did not open a terminal, it bounced the user to the
+   * orchestrator and swallowed the click.
+   *
+   * Worse, it did that in the **common** case rather than an exotic one: the
+   * panel deliberately keeps PRs merged in the last 24 hours, and those are
+   * exactly the branches whose sessions have finished or been retired by
+   * `/clear`. Returning `null` restores what both surfaces already do with it —
+   * open the PR on GitHub, as a real link that middle-click works on.
+   */
+  return pool.find((session) => !isEnded(session.status))?.id ?? null;
 }
 
 /**

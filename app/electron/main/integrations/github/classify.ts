@@ -32,6 +32,23 @@ export const ghError = (kind: GhErrorKind, message: string): GhError => ({
  */
 export function isNotAGitHubRepo(stderr: string): boolean {
   const text = stderr.toLowerCase();
+
+  /**
+   * An unknown *host* is not an absent remote, and it is fixable.
+   *
+   * `gh` says "none of the git remotes configured for this repository point to
+   * a known GitHub host. To tell gh about a new GitHub host, please use `gh
+   * auth login`" — which matches the phrase below while meaning the opposite of
+   * what this function is for. A GitHub Enterprise checkout was therefore
+   * cached as "not a repository" for the life of the process, and running
+   * `gh auth login --hostname …` changed nothing until the app was restarted:
+   * exactly the failure the negative-cache split exists to prevent.
+   *
+   * The remedy `gh` prints is the signal. If it is telling the user how to fix
+   * it, this is a state that can change, and the rule above says retry.
+   */
+  if (text.includes('gh auth login')) return false;
+
   return (
     text.includes('no git remotes') ||
     text.includes('none of the git remotes') ||

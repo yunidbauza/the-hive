@@ -240,11 +240,22 @@ describe('hive-store selectors', () => {
       );
     });
 
-    it('falls back to an ended session when that is all there is', () => {
+    /**
+     * The test that used to live here asserted the opposite — that an ended
+     * session is returned when it is the only match. That pinned a bug rather
+     * than a decision: `openEntity` refuses ended sessions, so the id it handed
+     * back bounced the user to the orchestrator instead of opening anything,
+     * and both surfaces lost their GitHub link in the process.
+     *
+     * It is the common case, not an edge one: the panel keeps PRs merged in the
+     * last 24 hours, and those are precisely the branches whose sessions have
+     * ended or been retired by `/clear`.
+     */
+    it('resolves to null when the only session on the branch has ended', () => {
       const { result } = renderHook(() => usePrs());
 
       // `tz-fix` is done, and it is the only session on `fix/timezone-bug`.
-      expect(result.current.find((pr) => pr.n === 77)?.session).toBe('tz-fix');
+      expect(result.current.find((pr) => pr.n === 77)?.session).toBeNull();
     });
 
     /**

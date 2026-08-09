@@ -71,3 +71,37 @@ describe('runAsync', () => {
     ).rejects.toThrow();
   });
 });
+
+/**
+ * Only *our* timeout is a timeout — against real processes.
+ *
+ * Node sets `killed: true` when its own `timeout` option fires and leaves it
+ * `false` for a kill from anywhere else. Reporting every signal as a timeout
+ * told the user "GitHub did not answer in time" about a process the system had
+ * shot. A self-`kill -9` reproduces that second case exactly, and in
+ * milliseconds.
+ */
+describe('killed by a signal', () => {
+  it('does not call an external SIGKILL a timeout', async () => {
+    const result = await runAsync('/bin/sh', ['-c', 'kill -9 $$']);
+
+    expect(result.code).toBe(-1);
+    expect(result.timedOut).toBe(false);
+  });
+
+  /**
+   * The stdin half of the same function, also measured rather than assumed.
+   * `execFile` ignores a `stdio` option and always hands the child an open
+   * pipe, so a `gh` that decides to prompt would block for the full timeout.
+   * Ending stdin gives it EOF at once.
+   */
+  it('gives the child EOF on stdin instead of leaving it to block', async () => {
+    const started = Date.now();
+    const result = await runAsync('/bin/sh', ['-c', 'cat; echo done']);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.trim()).toBe('done');
+    // Nowhere near the 20s timeout it would hit with stdin left open.
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});

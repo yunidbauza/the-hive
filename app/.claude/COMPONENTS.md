@@ -350,14 +350,15 @@ projects panel groups by repo, grouped by work item instead.
 - **`TicketSessionRow` passes `StatusDot` a `label`**, unlike the projects panel:
   these rows carry no visible status text, so without one the dot would convey
   status by colour alone.
-- **PR rows open the owning session's terminal**, not a browser. A PR has no tab
-  of its own in this app.
+- **A PR row opens the owning session's terminal when there is a live one, and
+  the PR on GitHub when there is not.** A PR has no tab of its own in this app,
+  and `Pr.session` is `null` unless a *live* session sits on the branch — which
+  for anything merged in the last day it usually does not.
 
-`useTicketPrs()` **walks the ticket's sessions** rather than filtering the global
-`prs` list, and resolves each PR's state from that list with the session's own
-`pr` as fallback. Both halves matter and both have a fixture proving them: #219 is
-`approved` globally but still `open` on its session (the global list wins), and
-#31 exists only on `ecs-scaling` (the fallback fires). It also **cannot use
+`useTicketPrs()` filters the live `prs` list by the branches the ticket's
+sessions are on. It used to walk `Session.pr` instead, with the global list as a
+fallback; nothing ever wrote that field, so the section was permanently empty and
+only the fixtures made it look otherwise. It **cannot use
 `useShallow`** — it builds new objects, and `useShallow` compares an array's
 elements by identity, so every render would produce a new snapshot and React
 would loop. It subscribes to the stable slices and memoises instead; the
@@ -414,9 +415,10 @@ One card per PR from `usePrs()`, with a wrapping badge row.
   outside this slice.
 - **The badge row is unguarded** because every `PrListState` yields at least one
   badge; an `if (badges.length)` would be an unreachable branch.
-- **Clicking opens the owning *session*, not GitHub.** A PR has no tab of its
-  own; the agent that produced it does, and that is where a human can act on the
-  findings.
+- **Clicking opens the owning *session* when one is live, and GitHub when none
+  is.** The agent that produced a PR is where a human can act on the findings —
+  but a merged PR's session has usually ended, and `openEntity` refuses those,
+  so `Pr.session` resolves to `null` and the card becomes a real link instead.
 
 ### `<ExplorerPanel />` and `<TreeNode />`
 

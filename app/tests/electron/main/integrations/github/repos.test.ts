@@ -289,3 +289,58 @@ describe('createRepoResolver', () => {
     expect(result.failure?.kind).toBe('not-installed');
   });
 });
+
+/**
+ * An unknown GitHub host is not an absent remote.
+ *
+ * `gh` reports it with a message containing "none of the git remotes" — the
+ * phrase `isNotAGitHubRepo` keys on — while also naming the fix. So a GitHub
+ * Enterprise checkout was cached as "not a repository" for the life of the
+ * process, and `gh auth login --hostname …` changed nothing until the app was
+ * restarted: exactly what the negative-cache split is documented to prevent.
+ */
+describe('an unknown GitHub host', () => {
+  const ENTERPRISE_STDERR =
+    'none of the git remotes configured for this repository point to a known ' +
+    'GitHub host. To tell gh about a new GitHub host, please use `gh auth login`';
+
+  const failing = (stderr: string) =>
+    vi.fn<RunAsync>().mockResolvedValue({
+      code: 1,
+      stdout: '',
+      stderr,
+      timedOut: false,
+    });
+
+  it('is a retryable failure, not a permanent "not a repository"', async () => {
+    const run = failing(ENTERPRISE_STDERR);
+
+    const result = await createRepoResolver('/usr/bin/gh', run).resolve([
+      project(),
+    ]);
+
+    expect(result.repos).toEqual([]);
+    expect(result.failure).not.toBeNull();
+  });
+
+  it('is asked again on the next sweep rather than cached away', async () => {
+    const run = failing(ENTERPRISE_STDERR);
+    const resolver = createRepoResolver('/usr/bin/gh', run);
+
+    await resolver.resolve([project()]);
+    await resolver.resolve([project()]);
+
+    // Two sweeps, two asks. A cached negative would have made the second free.
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('still caches a genuine no-GitHub-remote answer', async () => {
+    const run = failing('no git remotes found');
+    const resolver = createRepoResolver('/usr/bin/gh', run);
+
+    await resolver.resolve([project()]);
+    await resolver.resolve([project()]);
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});

@@ -6,6 +6,7 @@ import {
   BRIDGE_INTEGRATIONS_KEYS,
   BRIDGE_JIRA_KEYS,
   BRIDGE_FS_KEYS,
+  BRIDGE_GITHUB_KEYS,
   BRIDGE_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
@@ -65,6 +66,8 @@ const notifications = () =>
   exposed.notifications as Record<string, (...args: unknown[]) => unknown>;
 const jira = () =>
   exposed.jira as Record<string, (...args: unknown[]) => unknown>;
+const github = () =>
+  exposed.github as Record<string, (...args: unknown[]) => unknown>;
 const fs = () =>
   exposed.fs as Record<string, (...args: unknown[]) => unknown>;
 
@@ -77,6 +80,14 @@ describe('exposed surface', () => {
       ...BRIDGE_INTEGRATIONS_KEYS,
     ].sort());
     expect(Object.keys(fs()).sort()).toEqual([...BRIDGE_FS_KEYS].sort());
+    /**
+     * `github` shipped without this assertion, and `BRIDGE_GITHUB_KEYS` sat
+     * unimported — a constant whose docblock claims it makes a second verb
+     * "impossible to add quietly" while nothing checked it. That is the third
+     * time in this file's history that a new namespace arrived without its
+     * key-set test; the list is only an alarm if something reads it.
+     */
+    expect(Object.keys(github()).sort()).toEqual([...BRIDGE_GITHUB_KEYS].sort());
     expect(Object.keys(notifications()).sort()).toEqual([
       ...BRIDGE_NOTIFICATIONS_KEYS,
     ].sort());

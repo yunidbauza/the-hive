@@ -17,7 +17,7 @@ the screen** — everything else exists to route the user's attention to the rig
 terminal at the right moment.
 
 Current phase: terminals are **real PTYs**, projects come from a config file and
-tickets from **Jira**; PRs and notifications are the last seeded surfaces. The
+tickets from **Jira**, PRs from `gh`; notifications are the last seeded surface. The
 right rail's third tab is a **project explorer** over the active session's
 repository, opening files into a CodeMirror editor on the centre stage. Full
 context and scope: the **HIVE project in Jira**, the backlog.
@@ -163,8 +163,8 @@ Derived values are computed **in selectors, never stored** — one source of tru
 per number on screen. Cross-store effects call the other store's action
 explicitly; no store subscribes to another.
 
-Fixtures (`src/data/`) are **store-only**, seed only `prs`/`notifs`, and never
-gain a slice back — **the app boots empty**. Tests: `tests/support/`.
+Fixtures (`src/data/`) are **store-only**, seed only `notifs`, and never gain a
+slice back — **the app boots empty**. Tests: `tests/support/`.
 
 ## Styling
 

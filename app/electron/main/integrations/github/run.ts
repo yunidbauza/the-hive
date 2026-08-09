@@ -63,7 +63,7 @@ export type RunAsync = (
 
 export const runAsync: RunAsync = (file, args, options) =>
   new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       file,
       [...args],
       {
@@ -112,14 +112,42 @@ export const runAsync: RunAsync = (file, args, options) =>
           return;
         }
 
-        // A killed process — the timeout, in practice. Reported as such rather
-        // than as exit code 0, which would read as success.
-        if (error.killed === true || error.signal !== undefined) {
-          resolve({ code: -1, stdout, stderr, timedOut: true });
+        /**
+         * A killed process. Reported as a failure rather than exit code 0,
+         * which would read as success.
+         *
+         * `timedOut` is set only when this was **our** timeout: Node sets
+         * `killed: true` for that, and leaves it `false` for a kill that came
+         * from anywhere else — the OOM killer, an external SIGKILL. Treating
+         * every signal as a timeout told the user "GitHub did not answer in
+         * time" about a process the system had shot.
+         */
+        if (error.killed === true || error.signal != null) {
+          resolve({
+            code: -1,
+            stdout,
+            stderr,
+            timedOut: error.killed === true,
+          });
           return;
         }
 
         reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
+
+    /**
+     * Give `gh` EOF on stdin immediately.
+     *
+     * `gh.ts` gets this from `spawnSync`'s `stdio: ['ignore', …]`, and its
+     * comment explains why it matters: a `gh` that decides to prompt has no
+     * terminal here, and an open stdin leaves it blocking for the full timeout
+     * instead of failing at once.
+     *
+     * `execFile` cannot express that — it **ignores** a `stdio` option and
+     * always hands the child an open pipe it never ends. Measured, not assumed:
+     * with stdin left open a prompting child burns the whole timeout; ending it
+     * here returns in milliseconds.
+     */
+    child.stdin?.end();
   });

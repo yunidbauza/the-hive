@@ -175,10 +175,13 @@ loaded it at launch. That is what made the header count a fleet that was not
 running, the projects tree list repositories nobody had mapped, and the WORK tab
 paint eight sample tickets for a frame before the real Jira read replaced them.
 
-What remains in `fixtures.ts` is `prs` and `notifs`: the two slices
-with no live producer yet. They are **knowingly stale** — their `session` and
-`target` fields name sessions that no longer exist — and each dies the day
-something real feeds it.
+What remains in `fixtures.ts` is `notifs`, and only that: the one slice with no
+live producer yet. It is **knowingly stale** — its `target` fields name sessions
+that no longer exist — and it dies the day something real feeds it.
+
+`prs` left the day something real did: GitHub feeds that panel now, swept from
+the configured project repositories through `gh`. `feed` left the other way, with
+the Activity panel the project explorer replaced.
 
 `createInitialState()` is a factory, not a frozen object, so every test starts
 from a clean copy and one test's mutation cannot leak into the next.
