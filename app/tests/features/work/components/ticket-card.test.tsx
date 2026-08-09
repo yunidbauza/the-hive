@@ -148,6 +148,39 @@ describe('TicketCard', () => {
     expect(screen.getByText('hero-refresh')).toBeInTheDocument();
   });
 
+  /**
+   * `/clear` retires the old row as `done` and gives the successor the same
+   * `ticket`, because the terminal is still on the same issue. Listing both
+   * would grow the card by a row on every clear — up to `DONE_CAP` of them.
+   */
+  it('shows one row per terminal after /clear, not two', () => {
+    render(<TicketCard ticket={ticket()} />);
+    expect(screen.getByText('hero-refresh')).toBeInTheDocument();
+
+    let successor = '';
+    act(() => {
+      successor = useHiveStore.getState().clearSession('hero-refresh') ?? '';
+    });
+
+    expect(successor).not.toBe('');
+    expect(screen.queryByText('hero-refresh')).not.toBeInTheDocument();
+    expect(screen.getByText(successor)).toBeInTheDocument();
+  });
+
+  /**
+   * The other half of that filter. A merged PR outlives the session that opened
+   * it, so a completed ticket must keep its PR row even though no session is
+   * running — which is what the concept shows for a Done issue.
+   */
+  it('keeps the PR of a session that has ended', () => {
+    // GRAC-2810 / `tz-fix` is `done` and carries merged PR #77.
+    render(<TicketCard ticket={ticket({ key: 'GRAC-2810' })} />);
+
+    expect(screen.queryByText('tz-fix')).not.toBeInTheDocument();
+    expect(screen.getByText('#77')).toBeInTheDocument();
+    expect(screen.getByText('merged')).toBeInTheDocument();
+  });
+
   it('links out to Jira only when the issue is real', () => {
     const { rerender } = render(
       <TicketCard ticket={ticket({ url: 'https://example.test/GRAC-3018' })} />,

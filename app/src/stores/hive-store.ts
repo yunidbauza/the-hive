@@ -1511,7 +1511,8 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
   useHiveStore((state) => state.updateTicket);
 
 /**
- * The sessions working a ticket, in fleet order (HIVE-73).
+ * Every session that has *ever* been pointed at a ticket, in fleet order
+ * (HIVE-73). Ended ones included — see the two callers below.
  *
  * The reverse of `Session.ticket`, computed rather than stored — which is what
  * makes the link immune to `hydrateTickets` replacing the whole ticket list on
@@ -1530,6 +1531,33 @@ export function sessionsForTicket(
   return order.filter((id) => {
     const entity = entities[id];
     return Boolean(entity && isSession(entity) && entity.ticket === ticketKey);
+  });
+}
+
+/**
+ * The subset still running — what the card's session rows list.
+ *
+ * **Why the rows filter and the PR resolution does not.** The two answer
+ * different questions. A session row answers "who is working this ticket", so
+ * an ended session is not an answer. A PR row answers "what did work on this
+ * ticket produce", and a merged PR is precisely the output of a session that
+ * has finished — filtering ended sessions there would empty the PR section of
+ * every completed ticket, which is the opposite of what the concept shows for
+ * a Done issue.
+ *
+ * The filter is also what keeps `/clear` from duplicating a row. `clearSession`
+ * retires the old row as `done` and gives the successor the same `ticket`,
+ * because the terminal is still on the same issue — so without this both would
+ * list, and the card would grow by one row on every clear.
+ */
+function liveSessionsForTicket(
+  ticketKey: string,
+  order: string[],
+  entities: Record<string, Entity>,
+): string[] {
+  return sessionsForTicket(ticketKey, order, entities).filter((id) => {
+    const entity = entities[id];
+    return entity !== undefined && isSession(entity) && !isEnded(entity.status);
   });
 }
 
@@ -1620,7 +1648,7 @@ export const useTicketSessions = (ticketKey: string): string[] => {
   const entities = useHiveStore((state) => state.entities);
 
   return useMemo(
-    () => sessionsForTicket(ticketKey, order, entities),
+    () => liveSessionsForTicket(ticketKey, order, entities),
     [ticketKey, order, entities],
   );
 };

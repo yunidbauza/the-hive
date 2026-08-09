@@ -94,7 +94,11 @@ export function TicketCard({ ticket }: TicketCardProps) {
         The sessions working this ticket, then the way to start another —
         `new session` is the last child either way, so it sits directly under
         the title when nothing is running and under the final session when
-        something is. Same shape the projects tree uses for its own start link.
+        something is.
+
+        Only the *live* ones are listed. `useTicketSessions` filters ended
+        sessions; the PR block below deliberately does not, because a merged PR
+        outlives the session that opened it.
       */}
       <div className="flex flex-col">
         {sessions.map((id) => (

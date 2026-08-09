@@ -208,16 +208,6 @@ export const useSettingsOpen = () => useUiStore((state) => state.settings);
 export const useSettingsActions = () =>
   useUiStore(useShallow(settingsActionsSelector));
 
-/**
- * The ticket the picker is open for, or `null`.
- *
- * Deliberately narrower than `usePickerState()`: the ticket cards in the WORK
- * panel do not need it, but anything that wants to know *why* the picker is
- * open should not have to subscribe to `pickerQuery` and re-render on every
- * keystroke in the search box.
- */
-export const usePickerTicket = () => useUiStore((state) => state.pickerTicket);
-
 /** New-session picker state and actions. */
 export const usePickerState = () => useUiStore(useShallow(pickerStateSelector));
 export const usePickerActions = () =>
