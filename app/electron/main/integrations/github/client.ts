@@ -1,7 +1,7 @@
 import type { GhResult, PrRecord } from '../../../shared/github-contract';
 
 import { classifyGhFailure, ghError } from './classify';
-import { collectPrs, readViewerLogin } from './mapping';
+import { collectPrs, hasAnyConnection, readViewerLogin } from './mapping';
 import {
   buildPrQuery,
   buildPrVariables,
@@ -73,11 +73,21 @@ export function createGithubClient(
        */
       const scope = repoQualifiers(repos);
       if (scope.length === 0) {
+        /*
+          The two cases share a kind but not a sentence. Telling a user whose
+          projects all resolved that none of them is a GitHub repository would
+          send them to fix a list that is already correct. The second case is
+          close to unreachable — these names come from `gh repo view` and
+          GitHub's own are always within the permitted set — but an unreachable
+          branch is a poor place to keep a message that is false.
+        */
         return {
           ok: false,
           error: ghError(
             'no-repos',
-            'No configured project is a GitHub repository.',
+            repos.length === 0
+              ? 'No configured project is a GitHub repository.'
+              : 'No configured repository has a name GitHub search can be scoped to.',
           ),
         };
       }
@@ -116,20 +126,32 @@ export function createGithubClient(
       const login = readViewerLogin(data);
 
       /**
-       * No `viewer` means no answer worth reading.
+       * Two sentinels, because one of them cannot see the failure that matters.
        *
-       * Not merely a missing field: `viewer` is the one part of this query that
-       * cannot be `null` for a working token, so its absence means the request
-       * did not succeed — whatever the exit code said. Both searches answering
-       * with an empty list is a legitimate outcome for a user with no open work,
-       * and indistinguishable from a failure without this.
-       *
-       * "Mine" is no longer defined by the login — `author:@me` in the search
-       * expression is — but `mapping.ts` still checks each node's author against
-       * it, so an unreadable login must not be allowed to stand in for a
+       * **No `viewer`** means the request did not succeed at all: it is the one
+       * part of this query that cannot be `null` for a working token, whatever
+       * the exit code said. "Mine" is no longer defined by the login —
+       * `author:@me` in the expression is — but `mapping.ts` still checks each
+       * node's author against it, so an unreadable login must not stand in for a
        * successful read.
+       *
+       * **No connection at all** is the one `viewer` misses, and it is the more
+       * dangerous of the two. `viewer` is a top-level field that resolves
+       * independently of the searches, so a response where both connections
+       * failed still carries a good login beside `open: null, merged: null`.
+       * GraphQL calls that partial success and `gh` reports it in `errors`,
+       * which this deliberately does not read (the payload beats the exit code,
+       * above) — so without this check the sweep would answer `ok` with an empty
+       * list, and `hydratePrs` would install it as *live and not stale*. The
+       * panel would then say "No open pull requests of yours" with total
+       * confidence: the precise failure this integration was rewritten to stop,
+       * reintroduced one layer up and across every repository at once.
+       *
+       * An empty connection is not a missing one. A user with no open work gets
+       * `{ nodes: [] }`, which passes, and one search surviving while the other
+       * fails is the partial-data case `collectPrs` is built to keep.
        */
-      if (login === null) {
+      if (login === null || !hasAnyConnection(data)) {
         return {
           ok: false,
           error: classifyGhFailure(result.stderr, result.timedOut),

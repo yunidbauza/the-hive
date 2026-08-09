@@ -121,10 +121,23 @@ const PR_PARTS = `fragment PrParts on PullRequest {
  * ## Why no date qualifier on the merged search
  *
  * The twenty-four hour window that decides which merged PRs are still worth
- * showing stays where it was, in `mapping.ts`, applied to `mergedAt`. Putting an
- * `updated:` qualifier in the expression instead would filter on *when a PR was
- * last touched*, which is a different question, and anything the panel dropped
- * for that reason would vanish without ever being counted.
+ * showing stays where it was, in `mapping.ts`, applied to `mergedAt`.
+ *
+ * `updated:` is the qualifier not to reach for: it filters on *when a PR was
+ * last touched*, which is a different question, so an open PR left alone for a
+ * week would disappear for being quiet. `merged:>=` is the one that would
+ * genuinely match the window, and it is left out on purpose rather than
+ * overlooked — it would bind the query to this machine's clock, where a laptop
+ * running fast would silently ask GitHub to exclude pull requests that had in
+ * fact just landed. The client-side filter compares two timestamps and can be
+ * wrong about the boundary; a qualifier makes GitHub wrong about the contents.
+ *
+ * The cost of leaving it out is that the merged page is spent on the most
+ * recently *updated* merged PRs rather than the most recently merged ones, so a
+ * hundred old merged PRs with fresh comment activity could in principle push
+ * out one merged an hour ago. At a hundred per sweep across a personal set of
+ * projects that is a long way from reachable, and the failure is a missing row
+ * rather than a wrong one.
  *
  * `viewer { login }` rides along because `client.ts` uses it as the signal that
  * the request genuinely succeeded — it is the one field here that cannot be null

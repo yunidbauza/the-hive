@@ -191,6 +191,28 @@ function isAuthoredBy(raw: unknown, login: string): boolean {
   return isRecord(author) && text(author.login) === login;
 }
 
+/**
+ * Whether the payload carries at least one search connection worth reading.
+ *
+ * The difference between "you have no open pull requests" and "GitHub did not
+ * answer", which `viewer` alone cannot tell apart. `viewer` is a top-level field
+ * that resolves independently of the two searches, so a response where both
+ * connections failed — a search-backend timeout, a secondary rate limit, an
+ * expression GitHub would not parse — still carries a perfectly good login next
+ * to `open: null, merged: null`. Reading that as a successful empty sweep would
+ * install a *live, non-stale* empty list and put "No open pull requests of
+ * yours" on the panel with total confidence, which is the exact failure this
+ * whole change set out to remove.
+ *
+ * An empty connection is **not** this: `{ nodes: [] }` is a record and passes.
+ * Only a `null` or missing connection counts as no answer, and only when both
+ * are — one search surviving is the partial-data case `collectPrs` keeps.
+ */
+export function hasAnyConnection(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  return isRecord(payload.open) || isRecord(payload.merged);
+}
+
 /** The `nodes` of one search connection, or nothing at all. */
 function nodesOf(payload: Record<string, unknown>, key: string): unknown[] {
   const connection = payload[key];

@@ -982,6 +982,68 @@ describe('hive-store selectors', () => {
       });
     });
 
+    /**
+     * The failure paths repeat far longer than the happy one — a machine with
+     * no network re-reports the same failure every minute for as long as it is
+     * offline — so holding identity there matters more, not less.
+     */
+    it('holds the source while a failure persists', () => {
+      act(() => {
+        useHiveStore.getState().reportPrFailure('gh timed out');
+      });
+      const stale = useHiveStore.getState().prSource;
+
+      act(() => {
+        useHiveStore.getState().reportPrFailure('gh timed out');
+      });
+
+      expect(useHiveStore.getState().prSource).toBe(stale);
+    });
+
+    it('holds both slices while the same conclusion repeats', () => {
+      act(() => {
+        useHiveStore.getState().reportPrsUnconfigured('no gh on this machine');
+      });
+      const { prs, prSource } = useHiveStore.getState();
+      expect(prs).toEqual([]);
+
+      act(() => {
+        useHiveStore.getState().reportPrsUnconfigured('no gh on this machine');
+      });
+
+      expect(useHiveStore.getState().prs).toBe(prs);
+      expect(useHiveStore.getState().prSource).toBe(prSource);
+    });
+
+    it('replaces the conclusion when its explanation changed', () => {
+      act(() => {
+        useHiveStore.getState().reportPrsUnconfigured('no gh on this machine');
+      });
+      const before = useHiveStore.getState().prSource;
+
+      act(() => {
+        useHiveStore.getState().reportPrsUnconfigured('gh is not logged in');
+      });
+
+      expect(useHiveStore.getState().prSource).not.toBe(before);
+      expect(useHiveStore.getState().prSource).toMatchObject({
+        kind: 'unconfigured',
+        message: 'gh is not logged in',
+      });
+    });
+
+    /** A first failure after a live sweep still has to raise the banner. */
+    it('still flips a live source to stale', () => {
+      const before = useHiveStore.getState().prSource;
+
+      act(() => {
+        useHiveStore.getState().reportPrFailure('gh timed out');
+      });
+
+      expect(useHiveStore.getState().prSource).not.toBe(before);
+      expect(useHiveStore.getState().prSource).toMatchObject({ stale: true });
+    });
+
     it('replaces the source when the repository count changed', () => {
       const before = useHiveStore.getState().prSource;
 

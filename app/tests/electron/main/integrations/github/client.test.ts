@@ -138,6 +138,8 @@ describe('createGithubClient', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe('no-repos');
+    // Not "none of your projects is a GitHub repository" — they resolved fine.
+    expect(result.error.message).toContain('GitHub search');
   });
 
   /**
@@ -190,6 +192,59 @@ describe('createGithubClient', () => {
     ).sweep(REPOS, NOW);
 
     expect(result.ok).toBe(false);
+  });
+
+  /**
+   * The failure `viewer` alone cannot see.
+   *
+   * `viewer` is a top-level field that resolves independently of the two
+   * searches, so a response where both connections failed still carries a good
+   * login. Reading that as a successful empty sweep would install a *live, not
+   * stale* empty list and put "No open pull requests of yours" on the panel with
+   * total confidence — the exact failure this integration was rewritten to stop.
+   */
+  it('fails when both searches came back null, however good the viewer is', async () => {
+    const stdout = JSON.stringify({
+      data: { viewer: { login: 'octocat' }, open: null, merged: null },
+      errors: [{ message: 'Something went wrong while executing your query.' }],
+    });
+
+    const result = await createGithubClient(
+      '/usr/bin/gh',
+      answering({ code: 1, stdout, stderr: 'timeout' }),
+    ).sweep(REPOS, NOW);
+
+    expect(result.ok).toBe(false);
+  });
+
+  /** An empty connection is not a missing one — a quiet user is not a failure. */
+  it('reads two empty searches as a successful empty sweep', async () => {
+    const stdout = JSON.stringify({
+      data: {
+        viewer: { login: 'octocat' },
+        open: { nodes: [] },
+        merged: { nodes: [] },
+      },
+    });
+
+    const result = await createGithubClient(
+      '/usr/bin/gh',
+      answering({ stdout }),
+    ).sweep(REPOS, NOW);
+
+    expect(result).toEqual({ ok: true, value: [] });
+  });
+
+  /** One search surviving is the partial-data case, and it is kept. */
+  it('keeps the search that answered when the other came back null', async () => {
+    const result = await createGithubClient(
+      '/usr/bin/gh',
+      answering({ code: 1, stdout: body({ merged: null }) }),
+    ).sweep(REPOS, NOW);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(1);
   });
 
   it('reports a gh that could not be executed', async () => {

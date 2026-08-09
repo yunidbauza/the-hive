@@ -1315,13 +1315,28 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * minute would otherwise blank a panel the user is looking at and fill it
    * again a minute later. With no live list there is nothing to keep, and the
    * failure is the state.
+   *
+   * **Already-failed stays put**, for the reason {@link HiveState.hydratePrs}
+   * keeps an unchanged answer: a failure that persists is the *common* case, not
+   * the exotic one. A machine with no network re-reports the same failure every
+   * minute for as long as it is offline, and minting a new `prSource` each time
+   * would re-render the panel once a minute to say exactly what it already said.
    */
   reportPrFailure: (message) =>
     set((state) => {
-      if (state.prSource.kind === 'live') {
-        return { prSource: { ...state.prSource, stale: true } };
+      const source = state.prSource;
+
+      if (source.kind === 'live') {
+        // `return state` rather than an empty patch: zippering an unchanged
+        // partial still rebuilds the root object and wakes every listener.
+        // Returning the state itself is what `setSessionStatus` does, and
+        // zustand short-circuits on it.
+        return source.stale ? state : { prSource: { ...source, stale: true } };
       }
-      return { prSource: { kind: 'failed', message } };
+
+      return source.kind === 'failed' && source.message === message
+        ? state
+        : { prSource: { kind: 'failed', message } };
     }),
 
   /**
@@ -1330,9 +1345,25 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * Clears the list, unlike a failure: `unconfigured` is a *conclusion* — no
    * `gh`, no login, or no GitHub-backed project — and rows from a previous
    * configuration would be claiming to describe a setup that no longer exists.
+   *
+   * Repeating the same conclusion changes nothing, and this is the path that
+   * repeats longest of all: a machine without `gh` installed reaches it on every
+   * sweep, forever. Both slices are held so the panel's explanation renders once
+   * rather than once a minute.
    */
   reportPrsUnconfigured: (message) =>
-    set({ prs: [], prSource: { kind: 'unconfigured', message } }),
+    set((state) => {
+      const source = state.prSource;
+      const settled =
+        source.kind === 'unconfigured' && source.message === message;
+
+      if (settled && state.prs.length === 0) return state;
+
+      return {
+        prs: state.prs.length === 0 ? state.prs : [],
+        prSource: settled ? source : { kind: 'unconfigured', message },
+      };
+    }),
 
   /**
    * Sweep GitHub and install the answer.
