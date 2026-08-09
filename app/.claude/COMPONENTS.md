@@ -129,7 +129,7 @@ contract for their owning story, not existing code.
 | --- | --- | --- | --- | --- |
 | `Chip` | `ui/chip.tsx` | 021 (also 040) | `children: ReactNode`, `tone?: Tone`, `title?: string`, `className?: string` | **built** |
 | `Badge` | `ui/badge.tsx` | **021** (also 030, 050) | `count: number`, `tone?: BadgeTone`, `label?: string`, `className?: string` | **built** |
-| `Tag` | `ui/tag.tsx` | **052** | `children: ReactNode`, `tone: 'brand' \| 'green' \| 'amber' \| 'red' \| 'subtle'`, `className?: string` | **built** |
+| `Tag` | `ui/tag.tsx` | **052** | `children: ReactNode`, `tone: 'brand' \| 'green' \| 'amber' \| 'red' \| 'subtle'`, `surface?: 'panel' \| 'raised'`, `title?: string`, `className?: string` | **built** |
 | `TabBar` | `ui/tab-bar.tsx` | **030** (reused by 050) | generic over `Id extends string`: `tabs: { id: Id; label: string; badgeCount?: number; badgeLabel?: string; badgeTone?: BadgeTone }[]`, `active: Id`, `onSelect(id: Id): void`, `label: string`, `className?: string` | **built** |
 | `StatusDot` | `ui/status-dot.tsx` | **030** (used by 031, 032, 041) | `status: SessionStatus \| 'online'`, `pulse?: boolean`, `label?: string`, `className?: string` | **built** |
 | `Icon` | `ui/icon.tsx` | **031** (also 033, 051, 053) | `name: string`, `size?: number`, `weight?: IconWeight`, `className?: string` | **built** |
@@ -183,8 +183,12 @@ Contracts worth knowing before reusing them:
   scale, used for the PRs panel's `merged` / `2 open findings` / `checks
   running` row. Reach for a fourth only when none of those three fits — and say
   why here.
-- **`Tag`'s fill never changes, only its ink.** Every tone sits on `bg-chip`,
-  which is what lets four of them wrap in one row without competing.
+- **`Tag`'s ink carries the tone; its fill carries the *surface*.** All five
+  tones share one fill, which is what lets four of them wrap in one row without
+  competing. Which fill depends on what is behind them: `surface="panel"` (the
+  default) is `bg-chip`, and `surface="raised"` inverts to `bg-panel` for a card
+  that is itself chip-filled — the PRs panel's live cards, where a chip pill on a
+  chip card would leave only floating coloured text.
 - **`TabBar`'s `badgeTone` defaults to `muted`.** The left rail's work count is
   an inventory and stays quiet; the activity rail passes `danger` because its
   unread count means the user is what an agent is blocked on (050).

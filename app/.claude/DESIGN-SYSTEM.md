@@ -29,7 +29,8 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-green` | `#74b79c` | `#2e6b52` | working / online status |
 | `--cc-amber` | `#ffac47` | `#c77414` | needs-input status |
 | `--cc-red` | `#ff8d85` | `#d3372f` | errors, failing checks |
-| `--cc-chip` | `#1c2648` | `#edf2f4` | chips, pills |
+| `--cc-chip` | `#1c2648` | `#edf2f4` | chips, pills, raised cards |
+| `--cc-chip-hover` | `#232e57` | `#e2eaee` | hover on a chip-filled card |
 | `--cc-term-bg` | `#0b1023` | *(unchanged)* | terminal background |
 | `--cc-term-input` | `#0e1430` | *(unchanged)* | terminal input bar |
 | `--cc-term-row-hover` | `#161f45` | *(unchanged)* | session-table row hover |
