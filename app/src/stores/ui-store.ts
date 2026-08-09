@@ -134,6 +134,11 @@ const pickerStateSelector = (state: UiState) => ({
   newEffort: state.newEffort,
 });
 
+const newSessionDefaultsSelector = (state: UiState) => ({
+  newModel: state.newModel,
+  newEffort: state.newEffort,
+});
+
 const settingsActionsSelector = (state: UiState) => ({
   openSettings: state.openSettings,
   closeSettings: state.closeSettings,
@@ -181,6 +186,20 @@ export const useProjectCollapsed = (id: string) =>
   useUiStore((state) => Boolean(state.collapsed[id]));
 
 export const useToggleProject = () => useUiStore((state) => state.toggleProject);
+
+/**
+ * The model and effort a new session starts with.
+ *
+ * Deliberately narrower than `usePickerState()`: the projects tree renders one
+ * start link per project, and subscribing those to `pickerQuery` as well would
+ * re-render every one of them on every keystroke in the picker's search box.
+ *
+ * These are the *current* defaults, not the seeded ones — the picker's steppers
+ * write here, so the tree starts sessions on whatever the user last chose,
+ * which is also what the picker shows as selected.
+ */
+export const useNewSessionDefaults = () =>
+  useUiStore(useShallow(newSessionDefaultsSelector));
 
 /** Whether the settings overlay is open (story 101). */
 export const useSettingsOpen = () => useUiStore((state) => state.settings);

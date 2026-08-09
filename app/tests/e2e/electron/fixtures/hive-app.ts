@@ -201,7 +201,16 @@ export async function startSession(
   page: Page,
   projectQuery: string,
 ): Promise<string> {
-  await page.getByRole('button', { name: 'New session' }).click();
+  /**
+   * `exact` is load-bearing.
+   *
+   * Playwright's `name` matches a **substring**, case-insensitively, unless
+   * told otherwise. The projects tree now renders a per-project start link
+   * named `New session in <project>`, so the loose form matches the header
+   * button *and* one link per mapped project — a strict-mode violation in every
+   * spec that has a config. The header button is what this helper means.
+   */
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
 
   const search = page.getByRole('textbox', { name: 'Search all projects' });
   await expect(search).toBeFocused();

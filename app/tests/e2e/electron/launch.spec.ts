@@ -29,7 +29,7 @@ test('renders the real app, not an empty shell', async ({ page }) => {
   // The whole premise of the epic: the renderer we already shipped IS the
   // desktop app's UI.
   await expect(page.locator('header')).toContainText('The Hive');
-  await expect(page.getByRole('button', { name: 'New session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
   await expect(page.locator('.xterm').first()).toBeVisible();
 });
 

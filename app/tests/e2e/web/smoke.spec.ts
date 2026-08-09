@@ -44,7 +44,7 @@ test('renders the header chrome', async ({ page }) => {
 
   await expect(header.getByText('The Hive')).toBeVisible();
   await expect(header.getByText('APFM Engineering')).toBeVisible();
-  await expect(header.getByRole('button', { name: 'New session' })).toBeVisible();
+  await expect(header.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
 
   /**
    * The theme toggle names the theme it switches *to*, so its accessible name

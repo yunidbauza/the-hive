@@ -2,6 +2,7 @@ import type { Project } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
 import { Tag } from '@components/ui/tag';
+import { NewSessionLink } from '@features/projects/components/new-session-link';
 import { SessionRow } from '@features/projects/components/session-row';
 import { useProjectAccess } from '@hooks/use-project-config';
 import { useProjectSessions } from '@stores/hive-store';
@@ -79,9 +80,23 @@ export function ProjectRow({ project }: ProjectRowProps) {
         </span>
       </button>
 
-      {expanded
-        ? sessionIds.map((id) => <SessionRow key={id} id={id} />)
-        : null}
+      {/*
+        Sessions, then the way to start another — last child of the expanded
+        region either way, so it sits directly under the folder when nothing is
+        running and under the final session when something is.
+
+        Only when expanded: a collapsed project is a summary, and its count pill
+        already says what is happening inside it. Hanging a control off a closed
+        row would put an action where the user asked for silence.
+      */}
+      {expanded ? (
+        <>
+          {sessionIds.map((id) => (
+            <SessionRow key={id} id={id} />
+          ))}
+          <NewSessionLink projectId={project.id} />
+        </>
+      ) : null}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -109,5 +110,50 @@ describe('ProjectRow', () => {
     expect(
       screen.getByRole('button', { expanded: true }),
     ).toHaveAccessibleName('apfm-web unmapped 3 active sessions');
+  });
+
+  /**
+   * Where the start link sits (this job).
+   *
+   * Placement is the whole feature: "under the project" and "under its last
+   * session" are one rule — last child of the expanded region — and asserting
+   * the link merely *exists* would pass for a link rendered above the sessions
+   * or beside the folder name.
+   */
+  describe('the new-session link', () => {
+    const LINK = 'New session in apfm-web';
+
+    it('follows the last session', () => {
+      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+      const { container } = render(<ProjectRow project={PROJECT} />);
+
+      const rows = container.firstElementChild;
+      // Header button, three fixture sessions, then the link.
+      expect(rows?.children).toHaveLength(5);
+      expect(rows?.lastElementChild).toHaveAccessibleName(LINK);
+    });
+
+    it('sits directly under a project with nothing running', () => {
+      useHiveStore.getState().reset();
+      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+      const { container } = render(<ProjectRow project={PROJECT} />);
+
+      const rows = container.firstElementChild;
+      expect(rows?.children).toHaveLength(2);
+      expect(rows?.lastElementChild).toHaveAccessibleName(LINK);
+    });
+
+    it('is gone when the project is collapsed', async () => {
+      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+      render(<ProjectRow project={PROJECT} />);
+      await userEvent.click(screen.getByRole('button', { expanded: true }));
+
+      // A collapsed row is a summary; its count pill already says what is
+      // running inside it.
+      expect(screen.queryByRole('button', { name: LINK })).not.toBeInTheDocument();
+    });
   });
 });
