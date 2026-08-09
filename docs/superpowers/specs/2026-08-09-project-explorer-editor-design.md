@@ -155,13 +155,20 @@ it runs; there is no fallback path and no polling.
 Everything here is a function of its arguments, which is what makes the
 interesting decisions testable without rendering anything.
 
-- **`hidden.ts`** — `.git` always; then `node_modules`, `dist`, `out`, `.next`,
-  `coverage`, `.turbo`, `target`, `__pycache__`, `.venv`. Other dotfiles are
-  **shown**: `.claude`, `.github`, `.env.example`, `.gitignore` and `AGENTS.md`
-  are all things you open in this app. A `.gitignore` parser was considered and
-  declined — it needs a matcher dependency, it has to compose nested ignore
-  files, and it hides `.env.local`, which is one of the files you most want to
-  look at when a session will not start.
+- **The hidden list** — `.git` always; then `node_modules`, `dist`, `out`,
+  `.next`, `coverage`, `.turbo`, `target`, `__pycache__`, `.venv`. Other
+  dotfiles are **shown**: `.claude`, `.github`, `.env.example`, `.gitignore` and
+  `AGENTS.md` are all things you open in this app. A `.gitignore` parser was
+  considered and declined — it needs a matcher dependency, it has to compose
+  nested ignore files, and it hides `.env.local`, which is one of the files you
+  most want to look at when a session will not start.
+
+  **As built, it lives in `electron/shared/fs-contract.ts` and is applied in
+  main only**, not in a `lib/explorer/hidden.ts` as this document first
+  proposed. Main already has to filter watcher events before they cross the
+  bridge, so a second application in the renderer would be a second place for
+  the same rule to be got wrong — and would still have paid for the `stat`
+  calls it was trying to avoid.
 - **`sort.ts`** — directories first, then files, each `localeCompare`'d
   case-insensitively. One function, so the tree and its tests cannot disagree.
 - **`language.ts`** — extension → a lazy `() => import('@codemirror/lang-…')`.
@@ -371,12 +378,13 @@ The mirror rule applies as always. The high-value targets, in order:
    including that `split` never returns `'editor'`.
 5. **`appearance-store`** — the new preferences persist and reset.
 
-**CodeMirror is mocked in unit tests**, following the xterm precedent and for the
-same reason: happy-dom performs no layout, so a real `EditorView` measures
-nothing. `__mocks__/@codemirror/` records what it was configured with, and the
-tests assert plumbing — that the right language loader was chosen, that
-`readOnly` follows the setting, that a tab switch calls `setState` rather than
-reconstructing.
+**CodeMirror is *not* mocked** — this document planned to, following the xterm
+precedent, and the premise turned out to be wrong. xterm cannot run under
+happy-dom because it measures a cell before it can render one; CodeMirror
+renders its document into the DOM without measuring first, so `.cm-content`
+really contains the text and the tests assert the real thing. `__mocks__/` gains
+nothing here, and a fake would assert less. Colour, scrolling and selection
+still belong in Playwright, which a mock could never have covered either.
 
 Rendering, theming and the split divider belong in Playwright, which is also
 where "does the tree actually render" is answered: a green type-check does not

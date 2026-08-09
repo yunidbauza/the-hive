@@ -114,6 +114,7 @@ describe('AGENTS.md', () => {
   it('routes to every deep-dive doc that exists', () => {
     for (const doc of [
       'docs/terminal-architecture.md',
+      'docs/explorer-and-editor.md',
       'docs/state-and-data.md',
       'docs/component-patterns.md',
       'docs/simulation.md',

@@ -17,11 +17,13 @@ the screen** — everything else exists to route the user's attention to the rig
 terminal at the right moment.
 
 Current phase: terminals are **real PTYs**, projects come from a config file and
-tickets from **Jira**; PRs, notifications and the feed are the last seeded
-surfaces. Full context and scope: the **HIVE project in Jira**, the backlog.
+tickets from **Jira**; PRs and notifications are the last seeded surfaces. The
+right rail's third tab is a **project explorer** over the active session's
+repository, opening files into a CodeMirror editor on the centre stage. Full
+context and scope: the **HIVE project in Jira**, the backlog.
 
-Stack: React 19 · TypeScript (strict) · Vite · xterm.js · Zustand · Tailwind v4 ·
-shadcn/ui · pnpm.
+Stack: React 19 · TypeScript (strict) · Vite · xterm.js · CodeMirror 6 ·
+Zustand · Tailwind v4 · shadcn/ui · pnpm.
 
 ## Essential commands
 
@@ -52,6 +54,7 @@ Load the one that matches the surface you are working on.
 | When you are working on… | Load |
 | --- | --- |
 | The terminal, transports, ANSI, xterm config | [`docs/terminal-architecture.md`](docs/terminal-architecture.md) |
+| The project explorer, the editor, the fs IPC surface | [`docs/explorer-and-editor.md`](docs/explorer-and-editor.md) |
 | The main process, IPC, native modules, packaging | [`docs/desktop-architecture.md`](docs/desktop-architecture.md) |
 | Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
@@ -74,6 +77,7 @@ one still fires.
 | `src/features/<slice>/**` | any other slice (except `src/features/shared/**`) |
 | `src/components/**` (except `layout/`) | `src/features/**` |
 | **`src/components/terminal/**`** | `src/features/**`, `src/data/**`, `src/stores/**` |
+| **`src/components/editor/**`** | `src/features/**`, `src/data/**`, `src/stores/**` |
 | `src/lib/**` | `src/features/**`, `src/components/**` |
 | `src/hooks/**` | `src/features/**` |
 | `src/stores/**` | `src/features/**`, `src/components/**` |
@@ -86,18 +90,16 @@ one still fires.
 
 `electron/shared/**` is the **only** module both processes may import, and it is
 types and constants only — no runtime imports, no Node APIs, no DOM APIs. The
-renderer reaches it through the `@shared` alias and must import from it
-**type-only**; a value import would pull main-process code into the renderer
-bundle. That is what makes the IPC contract a compile-time artifact rather than a
-convention.
+renderer reaches it through `@shared`; anything with behaviour behind it must be
+imported **type-only**, or main-process code lands in the renderer bundle. That
+is what makes the IPC contract a compile-time artifact rather than a convention.
 
 `src/components/layout/` is the **composition root** and is exempt from the
-`features/` ban: the rails and the center stage exist to mount feature panels. The
-exemption stops there — `components/ui/` and `components/terminal/` stay fully
-fenced. It is expressed by listing the fenced directories in
-`FENCED_COMPONENT_DIRS`, because `except` filters the *imported* module and can
-never exempt the importing file; a **new** directory under `src/components/` gets
-no fence until it is added to that list.
+`features/` ban: the rails and the center stage exist to mount feature panels.
+The exemption stops there — `ui/`, `terminal/` and `editor/` stay fully fenced,
+expressed by listing them in `FENCED_COMPONENT_DIRS`, because `except` filters
+the *imported* module and can never exempt the importing file. A **new**
+directory under `src/components/` gets no fence until it is added to that list.
 
 Feature isolation is generated as **one zone per slice**, each exempting itself and
 `features/shared`. Adding a slice means adding it to `FEATURE_SLICES` in
@@ -106,17 +108,14 @@ silently becomes importable from everywhere.
 
 ### Naming and imports
 
-- **kebab-case** for every file and folder under `src/` and `electron/`.
-- **Absolute `@/` imports**, never relative parent imports (`../`).
+- **kebab-case** everywhere; **absolute `@/` imports**, never `../`.
 - Import order: builtin → external → internal → parent → sibling → index, with
   `@/**` pinned before internal, blank lines between groups, alphabetised.
 - **No circular dependencies.** Barrel files that create cycles are a bug.
-- Path aliases live in **two** places — `vite.aliases.mjs` and `tsconfig.json`.
-  Every bundler config (`vite.config.ts`, `vitest.config.ts`,
-  `electron.vite.config.ts`) imports the first; TypeScript cannot import a JS
-  module to build its config, so `paths` is the second copy. Add an alias to
-  both or it will resolve in the editor and fail at runtime —
-  `pnpm verify:boundaries` fails if the two disagree.
+- Path aliases live in **two** places — `vite.aliases.mjs` (imported by every
+  bundler config) and `tsconfig.json`'s `paths`, because TypeScript cannot
+  import a JS module to build its config. Add an alias to both or it resolves in
+  the editor and fails at runtime; `pnpm verify:boundaries` catches a mismatch.
 
 ## The terminal seam
 
@@ -126,52 +125,54 @@ silently becomes importable from everywhere.
 `features/`, `data/`, or `stores/` — and cannot, because the lint zone fails the
 build.
 
-In this phase the transport is a static/scripted fake. Later it becomes IPC to a
+In this phase the transport is a static/scripted fake; later it becomes IPC to a
 local PTY daemon **with no changes to the component tree**. That is the whole
-reason the seam exists: when real terminals arrive, the work touches
-`src/lib/terminal/` and nothing else.
+reason the seam exists.
 
 Corollary: xterm resolves colours from its own JS `theme` option and paints them
-into markup it owns, so a `--cc-*` custom property has no path to a terminal cell.
-Terminal colour comes from JS — `TERM` and `XTERM_THEME` in
-`src/lib/terminal/ansi.ts` are the single definition. Never hand-write a hex into a
-terminal component. (Older revisions said "xterm paints to a canvas". It does not:
-xterm 6 core ships the DOM renderer and no canvas/WebGL addon is installed. The
-conclusion stands regardless — see `docs/terminal-architecture.md`.)
+into markup it owns, so a `--cc-*` custom property has no path to a terminal
+cell. Terminal colour comes from JS — `TERM` and `XTERM_THEME` in
+`src/lib/terminal/ansi.ts` are the single definition. Never hand-write a hex into
+a terminal component (`docs/terminal-architecture.md`).
+
+`src/components/editor/` is the same seam with the colour rule **inverted**:
+CodeMirror emits real CSS, so its palette is `--cc-code-*` in `tokens.css`. The
+ban on hex literals holds in both ([`docs/explorer-and-editor.md`](docs/explorer-and-editor.md)).
 
 ## State management
 
-Three stores: what the user is *looking at*, what the system *knows*, what the
-user has *chosen*. Not cosmetic — it keeps a picker keystroke from re-rendering
-thirteen live terminals.
+Four stores: what the system *knows*, what the user is *looking at*, what they
+have *chosen*, and what they have *open*. Not cosmetic — it keeps a picker
+keystroke from re-rendering thirteen live terminals.
 
-- `hive-store.ts` — domain: entities, tickets, PRs, notifications, feed, transcript.
-- `ui-store.ts` — view state: tabs, selection, picker, rails. **Never persisted.**
-- `appearance-store.ts` — theme, terminal font/size/scrollback, density. **Always persisted**, to `localStorage`, not the config file (`docs/state-and-data.md`).
+- `hive-store.ts` — domain: entities, tickets, PRs, notifications, transcript.
+- `ui-store.ts` — view state: tabs, selection, picker, rails, tree expansion.
+- `appearance-store.ts` — theme, terminal and editor typography, density.
+- `editor-store.ts` — open file buffers: text, dirty, stale, conflict.
+
+**Everything in `appearance-store` is persisted, to `localStorage` and not the
+config file; nothing anywhere else is.** That rule is the boundary, and it is
+why buffers earned a fourth store — see `docs/state-and-data.md`.
 
 **Components never read a store object directly and never call `getState()`.**
 Every consumer goes through a named selector hook exported next to the store
 (`useCounts()`, `useEntity(id)`, `useUnreadCount()`, …). This is what keeps a
 status change from re-rendering the whole shell.
 
-Derived values are computed **in selectors, never stored** — there is exactly one
-source of truth for every number on screen.
+Derived values are computed **in selectors, never stored** — one source of truth
+per number on screen. Cross-store effects call the other store's action
+explicitly; no store subscribes to another.
 
-Cross-store effects call the other store's action explicitly. No store subscribes
-to another.
-
-Fixtures (`src/data/`) are **store-only**, seed only `prs`/`notifs`/`feed`, and
-never gain a slice back — **the app boots empty**. Tests: `tests/support/`.
+Fixtures (`src/data/`) are **store-only**, seed only `prs`/`notifs`, and never
+gain a slice back — **the app boots empty**. Tests: `tests/support/`.
 
 ## Styling
 
 - Colour comes from the `--cc-*` tokens in `src/styles/tokens.css`, bound to
-  Tailwind through `@theme inline`. Use the resulting utilities (`bg-panel`,
-  `text-muted`, `border-soft`).
+  Tailwind through `@theme inline`. Use the utilities (`bg-panel`, `text-muted`).
 - **Raw hex literals in component code are banned.** If a colour is missing, add a
   token.
-- The terminal keeps its dark background in light mode, like the concept and most
-  real tools.
+- The terminal keeps its dark background in light mode; the editor does not.
 - Icons: `@phosphor-icons/react`. The app ships one icon library.
 
 ## Testing requirements
@@ -179,20 +180,19 @@ never gain a slice back — **the app boots empty**. Tests: `tests/support/`.
 - `tests/` **mirrors** `src/`. A test for `src/features/inbox/components/x.tsx`
   lives at `tests/features/inbox/components/x.test.tsx`. No exceptions — the mirror
   is what makes "is this covered?" answerable by path.
-- **80% coverage** on lines, statements, branches, and functions. The gate fails
-  the build; it is what CI runs.
-- Stores are plain functions and are the highest-value target: every action gets a
-  test against a fresh store. See `tests/stores/hive-store.test.ts` for the pattern.
+- **80% coverage** on all four metrics. The gate fails the build; CI runs it.
+- Stores are plain functions and the highest-value target: every action gets a
+  test against a fresh store (`tests/stores/hive-store.test.ts`).
 - Timer-based behaviour uses **fake timers**, never real waits.
-- **xterm is never instantiated for real in unit tests** — happy-dom performs no
-  layout, so xterm can never measure a cell.
-  `__mocks__/@xterm/` holds recording fakes; assert plumbing only. Colours,
-  selection, and scrollback belong in Playwright.
-- **`node-pty` is never loaded for real in unit tests** — not because it cannot
-  load (its N-API prebuild works fine under plain Node), but because a unit test
-  that spawns real processes is a unit test that leaks them.
+- **xterm is never instantiated for real** — happy-dom performs no layout, so it
+  can never measure a cell. `__mocks__/@xterm/` holds recording fakes; assert
+  plumbing only. Colours, selection and scrollback belong in Playwright.
+  **CodeMirror is the opposite**: it renders without measuring first, so
+  `.cm-content` really holds the text. Do not add a mock for it.
+- **`node-pty` is never loaded for real** — not because it cannot load, but
+  because a unit test that spawns real processes leaks them.
   `__mocks__/node-pty.ts` holds a recording fake; assert spawn arguments, cwd,
   write/resize/kill routing and exit handling. Terminal *semantics* — signals,
   resize, alt-screen, exit codes — need Electron's ABI: `pnpm test:pty` (098).
-- Do not add a coverage-ignore comment to get past the gate. An untestable branch
-  is usually a design smell — fix the shape instead.
+- Never add a coverage-ignore comment to pass the gate. An untestable branch is
+  usually a design smell — fix the shape instead.
