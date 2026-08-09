@@ -33,6 +33,17 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  * the ratio: below them the columns truncate rather than collapsing to nothing,
  * which is what keeps the table readable in a narrow window.
  *
+ * **The floors have a hard ceiling, and it is not a matter of taste.** Splitting
+ * `PROJECT · BRANCH` in two added a second floor *and* a second `gap-2.5`, and
+ * the first draft of this map (100/120) spent 90px more than the joined cell
+ * did. That is enough to overflow the center stage at `MIN_WINDOW_SIZE` (1100px,
+ * `electron/shared/window.ts`) in comfortable density, where the two rails leave
+ * it 516px: the scroll container is `overflow-y-auto`, so `overflow-x` resolves
+ * to `auto` and the table grows a horizontal scrollbar that hides the `PR` cell
+ * and steals height from the terminal below. 80/100 is what fits exactly at that
+ * width, measured rather than reasoned. Raising either floor re-breaks it, and
+ * truncation is not the cost it looks like — every column carries a `title`.
+ *
  * ## Why `BRANCH` is its own column
  *
  * It used to be half of a single `PROJECT · BRANCH` cell — one string, one
@@ -47,8 +58,8 @@ const COL = {
   caret: 'w-3 shrink-0',
   session: 'min-w-[120px] flex-[2] truncate',
   status: 'w-[90px] shrink-0 truncate',
-  project: 'min-w-[100px] flex-[1] truncate',
-  branch: 'min-w-[120px] flex-[2] truncate',
+  project: 'min-w-[80px] flex-[1] truncate',
+  branch: 'min-w-[100px] flex-[2] truncate',
   pr: 'w-[34px] shrink-0',
 } as const;
 
