@@ -65,6 +65,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from './jira-contract';
+import type { HiveNotification } from './notification-contract';
 import type {
   SessionEffort,
   SessionModel,
@@ -196,6 +197,24 @@ export const CH = {
    */
   githubPrs: 'github:prs',
   notificationsActivate: 'notifications:activate', // main → renderer
+  /**
+   * A notification was raised (HIVE-75). main → renderer.
+   *
+   * Push rather than poll, because the renderer cannot know when a session
+   * blocks and a one-second poll would be a timer running for the lifetime of
+   * the app to learn nothing almost every time.
+   */
+  notificationsNew: 'notifications:new', // main → renderer
+  /**
+   * The buffer, newest first.
+   *
+   * Hydration exists because the hub outlives the window. Without it a reload —
+   * or a devtools refresh — would empty an inbox whose contents main still
+   * holds, and drop the unread badge to zero while four sessions sat blocked.
+   */
+  notificationsList: 'notifications:list',
+  /** Mark one read, or all of them when the id is null. */
+  notificationsMarkRead: 'notifications:mark-read',
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
   configCloneDone: 'config:clone-done', // main → renderer
@@ -837,6 +856,12 @@ export interface HiveBridge {
      * answering, because only the renderer knows how to open one.
      */
     onActivate(callback: (event: NotificationActivateEvent) => void): () => void;
+    /** A notification was raised (HIVE-75). Push, because the renderer cannot know. */
+    onNew(callback: (notification: HiveNotification) => void): () => void;
+    /** The hub's buffer, newest first. Hydration on mount, since it outlives the window. */
+    list(): Promise<HiveNotification[]>;
+    /** Mark one read, or every one when `id` is null. */
+    markRead(id: string | null): Promise<void>;
   };
   /** Real session lifecycle, derived in main (story 096). */
   session: {
@@ -973,7 +998,15 @@ export const BRIDGE_JIRA_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.notifications`. */
-export const BRIDGE_NOTIFICATIONS_KEYS = ['onActivate'] as const;
+export const BRIDGE_NOTIFICATIONS_KEYS = [
+  'onActivate',
+  // HIVE-75. `list` and `markRead` are invokes rather than subscriptions: the
+  // hub's buffer is the source of truth for read-state, so the renderer asks
+  // for it and writes back to it rather than keeping a second copy.
+  'onNew',
+  'list',
+  'markRead',
+] as const;
 
 /** The exact key set of `window.hive.config`. */
 export const BRIDGE_CONFIG_KEYS = [

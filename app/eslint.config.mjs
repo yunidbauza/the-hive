@@ -237,18 +237,18 @@ export default tseslint.config(
              * Fixtures are store-only consumers (story 012). Everything that
              * renders reads through a selector hook, never the raw data.
              */
-            {
-              target: [
-                './src/components/**/*',
-                './src/features/**/*',
-                './src/hooks/**/*',
-                './src/lib/**/*',
-                './src/utils/**/*',
-              ],
-              from: './src/data/**/*',
-              message:
-                'Only stores/ may import data/. Read fixture-derived state through a selector hook.',
-            },
+            /*
+              THE `data/` FENCE IS GONE, WITH `data/` (HIVE-75).
+
+              It existed to stop panels reading fixtures directly instead of
+              going through a selector. `src/data/fixtures.ts` was the last
+              fixture in the app and the inbox is fed by the main process now,
+              so the directory is empty and the rule has no subject.
+
+              Keeping a hollow module alive to satisfy a lint zone would be the
+              tail wagging the dog: the fence protected an invariant, and the
+              invariant left with the directory.
+            */
 
             /**
              * THE PROCESS BOUNDARY (story 080).

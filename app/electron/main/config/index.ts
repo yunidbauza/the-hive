@@ -4,7 +4,6 @@ import { basename, dirname } from 'node:path';
 import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_JIRA,
-  DEFAULT_NOTIFICATIONS,
   DEFAULT_PROJECT_ICON,
   DEFAULT_SHELL,
   emptySnapshot,
@@ -20,6 +19,7 @@ import {
   type SetProjectRuntimeRequest,
   type SetRuntimeRequest,
 } from '@shared/config-contract';
+import { resolveNotificationPrefs } from '@shared/notification-contract';
 
 import { deriveProjectId } from './identity';
 import { parseConfig } from './parse';
@@ -107,9 +107,15 @@ export function loadConfig(): ConfigSnapshot {
     shell: parsed.shell ?? shell,
     claudeCommand: parsed.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
     projects,
-    // Defaults *under* whatever the file named, so a file declaring one switch
-    // still answers for all three (story 106).
-    notifications: { ...DEFAULT_NOTIFICATIONS, ...parsed.notifications },
+    /**
+     * Registry defaults under the file, and the legacy booleans in between
+     * (HIVE-75).
+     *
+     * A plain spread is no longer enough: the block may hold the three
+     * booleans this shape replaced, and dropping them would silently switch
+     * session notifications back on for everyone who had turned them off.
+     */
+    notifications: resolveNotificationPrefs(parsed.notifications),
     // Defaults *under* whatever the file named, so a file declaring only a site
     // still answers for both fields (HIVE-67).
     jira: { ...DEFAULT_JIRA, ...parsed.jira },

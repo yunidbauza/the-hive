@@ -7,6 +7,7 @@ import {
   ChatCircleDots,
   CheckCircle,
   Cube,
+  DownloadSimple,
   File,
   FileCode,
   FileCss,
@@ -29,6 +30,7 @@ import {
   GlobeHemisphereWest,
   HandPalm,
   Lightning,
+  Moon,
   PaperPlaneTilt,
   PlusCircle,
   Question,
@@ -40,6 +42,7 @@ import {
   UsersThree,
   Warning,
   X,
+  XCircle,
   type Icon as PhosphorIcon,
   type IconWeight,
 } from '@phosphor-icons/react';
@@ -84,6 +87,17 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-lightning': Lightning,
   'ph-arrows-clockwise': ArrowsClockwise,
   'ph-robot': Robot,
+
+  /*
+    HIVE-75's kinds. Every one of these is named by a
+    `NOTIFICATION_KIND_SPECS` entry rather than by a fixture — which is what
+    the note above now means by "adding a fixture icon means adding it here":
+    the registry is the list, and a kind whose glyph is missing renders the
+    fallback question mark in plain sight.
+  */
+  'ph-moon': Moon,
+  'ph-x-circle': XCircle,
+  'ph-download-simple': DownloadSimple,
 
   /**
    * The project explorer and the editor.

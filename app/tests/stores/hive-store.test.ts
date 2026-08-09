@@ -10,6 +10,9 @@ import { sendToSession } from '@lib/terminal/session-input';
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
+import { NOTIFICATION_CAP } from '@shared/notification-contract';
+
+import { notif as notif2 } from '../support/notifications';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
 
 /**
@@ -71,7 +74,8 @@ describe('hive-store', () => {
       expect(state.agentOrder).toHaveLength(3);
       expect(state.tickets).toHaveLength(8);
       expect(state.prs).toHaveLength(5);
-      expect(state.notifs).toHaveLength(5);
+      // The inbox is fed by the main process now — nothing seeds it (HIVE-75).
+      expect(state.notifs).toHaveLength(0);
       expect(state.orchLines).toHaveLength(3);
       expect(Object.keys(state.entities)).toHaveLength(13);
     });
@@ -717,15 +721,25 @@ describe('hive-store', () => {
   });
 
   describe('inbox', () => {
-    it('markRead clears exactly one notification', () => {
-      useHiveStore.getState().markRead(0);
+    it('markRead clears exactly the notification it names', () => {
+      useHiveStore
+        .getState()
+        .hydrateNotifs([
+          notif2({ id: 'a', createdAt: 2_000 }),
+          notif2({ id: 'b', createdAt: 1_000 }),
+        ]);
+
+      useHiveStore.getState().markRead('a');
       const notifs = useHiveStore.getState().notifs;
 
-      expect(notifs[0].unread).toBe(false);
-      expect(notifs[1].unread).toBe(true);
+      expect(notifs.find((n) => n.id === 'a')?.unread).toBe(false);
+      expect(notifs.find((n) => n.id === 'b')?.unread).toBe(true);
     });
 
     it('markAllRead clears every notification', () => {
+      useHiveStore
+        .getState()
+        .hydrateNotifs([notif2({ id: 'a' }), notif2({ id: 'b' })]);
       useHiveStore.getState().markAllRead();
       expect(
         useHiveStore.getState().notifs.every((n) => !n.unread),
@@ -794,15 +808,15 @@ describe('hive-store', () => {
   });
 
   describe('pushNotif', () => {
-    const notif = (title: string) => ({
-      icon: 'ph-hand-palm',
-      tone: 'amber' as const,
-      title,
-      sub: 'a subtitle',
-      time: 'now',
-      unread: true,
-      target: 'lead-form',
-    });
+    /**
+     * A distinct id per call, because `pushNotif` dedups on it now (HIVE-75).
+     * A helper that reused one would make "nine notifications" mean "one".
+     */
+    let seq = 0;
+    const notif = (title: string) => {
+      seq += 1;
+      return notif2({ id: `local-${seq}`, title, createdAt: seq });
+    };
 
     it('prepends, so the newest notification is first', () => {
       useHiveStore.getState().pushNotif(notif('newest'));
@@ -810,18 +824,16 @@ describe('hive-store', () => {
       expect(useHiveStore.getState().notifs[0].title).toBe('newest');
     });
 
-    it('caps the list at eight, dropping the oldest', () => {
-      const before = useHiveStore.getState().notifs;
-      expect(before).toHaveLength(5);
-      const oldest = before[before.length - 1].title;
+    it('caps the list at the shared cap, dropping the oldest', () => {
+      useHiveStore.getState().pushNotif(notif('oldest'));
 
-      for (let i = 0; i < 4; i += 1) {
+      for (let i = 0; i < NOTIFICATION_CAP; i += 1) {
         useHiveStore.getState().pushNotif(notif(`extra ${i}`));
       }
 
       const after = useHiveStore.getState().notifs;
-      expect(after).toHaveLength(8);
-      expect(after.map((n) => n.title)).not.toContain(oldest);
+      expect(after).toHaveLength(NOTIFICATION_CAP);
+      expect(after.map((n) => n.title)).not.toContain('oldest');
     });
 
     it('counts as unread the moment it lands', () => {

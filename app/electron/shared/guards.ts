@@ -32,6 +32,10 @@ import type {
   SpawnRequest,
   WriteRequest,
 } from './ipc-contract';
+import {
+  NOTIFICATION_DELIVERIES,
+  isNotificationDelivery,
+} from './notification-contract';
 import { SESSION_EFFORTS, SESSION_MODELS } from './session-contract';
 
 /**
@@ -551,8 +555,17 @@ export function parseSetNotificationsRequest(
   for (const key of NOTIFICATION_KEYS) {
     const value = raw[key];
     if (value === undefined) continue;
-    if (typeof value !== 'boolean') {
-      return fail(`setNotifications.${key}: expected a boolean`);
+    /**
+     * A delivery, not a boolean (HIVE-75).
+     *
+     * The old guard's reasoning survives the widening intact: an unparseable
+     * value must be *rejected*, never coerced, because coercing would turn
+     * switching a kind off into switching it on.
+     */
+    if (!isNotificationDelivery(value)) {
+      return fail(
+        `setNotifications.${key}: expected one of ${NOTIFICATION_DELIVERIES.join(', ')}`,
+      );
     }
     request[key] = value;
   }

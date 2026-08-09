@@ -2,7 +2,6 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-import { createInitialState } from '@/data/fixtures';
 import type { ParsedCommand } from '@/types/command';
 import { USAGE } from '@/types/command';
 import type {
@@ -14,7 +13,7 @@ import type {
   SessionStatus,
 } from '@/types/entity';
 import { isEnded, isSession, terminalOf } from '@/types/entity';
-import type { Notification } from '@/types/notification';
+import type { HiveNotification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
@@ -32,6 +31,7 @@ import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import type { PrRecord } from '@shared/github-contract';
 import type { JiraIssue } from '@shared/jira-contract';
+import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -158,7 +158,7 @@ interface HiveState {
   prs: PrRecord[];
   /** Where {@link HiveState.prs} came from. */
   prSource: PrSource;
-  notifs: ReturnType<typeof createInitialState>['notifs'];
+  notifs: HiveNotification[];
   orchLines: TermLine[];
 
   /** Replace the ticket list with real issues (HIVE-69). */
@@ -197,8 +197,11 @@ interface HiveState {
   openEntity: (id: string) => boolean;
   runOrchCommand: (command: ParsedCommand) => void;
   markAllRead: () => void;
-  markRead: (index: number) => void;
-  pushNotif: (notif: Notification) => void;
+  /** Mark one notification read, by id (HIVE-75). */
+  markRead: (id: string) => void;
+  pushNotif: (notif: HiveNotification) => void;
+  /** Install the buffer main holds, replacing whatever is here (HIVE-75). */
+  hydrateNotifs: (notifs: HiveNotification[]) => void;
   appendEntityLines: (
     id: string,
     lines: TermLine[],
@@ -218,10 +221,16 @@ interface HiveState {
 }
 
 /**
- * Inbox cap (story 051). Eight is what fits the rail without scrolling on a
- * laptop, and an inbox that grows without bound stops being an inbox.
+ * Inbox cap, matching the hub's (HIVE-75).
+ *
+ * Eight was an honest bet for a seeded list that never grew. With real
+ * producers it is too few: a busy afternoon would push an approval request off
+ * the end before the user got back to their desk, which is the one outcome this
+ * surface exists to prevent. The renderer's cap and `NOTIFICATION_CAP` in the
+ * hub are the same number by intent — a shorter list here would silently
+ * discard rows a hydration would then bring straight back.
  */
-const NOTIF_CAP = 8;
+const NOTIF_CAP = NOTIFICATION_CAP;
 
 /**
  * Console transcript cap (story 041). Oldest lines drop first.
@@ -415,7 +424,7 @@ const emptySeeds = (): Pick<
 
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
-  ...createInitialState(),
+  notifs: [],
   /**
    * Loading until the first read answers.
    *
@@ -835,20 +844,64 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }
   },
 
-  markAllRead: () =>
+  markAllRead: () => {
     set((state) => ({
       notifs: state.notifs.map((notif) => ({ ...notif, unread: false })),
-    })),
+    }));
+    void window.hive?.notifications.markRead(null);
+  },
 
-  markRead: (index) =>
+  /**
+   * By id, not by index (HIVE-75).
+   *
+   * The index version was correct only while nothing prepended between render
+   * and click — true of a fixture, false the moment a producer exists. A
+   * session finishing at the wrong instant used to shift every row down one and
+   * turn the user's click into a dismissal of the row above their target.
+   */
+  markRead: (id) => {
     set((state) => ({
-      notifs: state.notifs.map((notif, i) =>
-        i === index ? { ...notif, unread: false } : notif,
+      notifs: state.notifs.map((notif) =>
+        notif.id === id ? { ...notif, unread: false } : notif,
       ),
-    })),
+    }));
+    // Through to the hub, which owns read-state. Fire-and-forget: the local
+    // update has already happened, and a failed write costs a badge that is
+    // right until the next hydration rather than a click that did nothing.
+    void window.hive?.notifications.markRead(id);
+  },
 
+  /**
+   * Dedups by id, because the stream subscribes before it hydrates.
+   *
+   * That order is deliberate — see `use-notification-stream.ts` — and it can
+   * only ever produce a duplicate, never a gap. Absorbing it here is what makes
+   * the trade free.
+   */
   pushNotif: (notif) =>
-    set((state) => ({ notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) })),
+    set((state) =>
+      state.notifs.some((existing) => existing.id === notif.id)
+        ? state
+        : { notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) },
+    ),
+
+  hydrateNotifs: (notifs) =>
+    set((state) => {
+      /**
+       * Union, not replacement, and newest first.
+       *
+       * Anything that arrived on the subscription while `list()` was in flight
+       * is already here and is *newer* than what main answered with. Replacing
+       * would drop it.
+       */
+      const seen = new Set(state.notifs.map((notif) => notif.id));
+      const merged = [
+        ...state.notifs,
+        ...notifs.filter((notif) => !seen.has(notif.id)),
+      ].sort((a, b) => b.createdAt - a.createdAt);
+
+      return { notifs: merged.slice(0, NOTIF_CAP) };
+    }),
 
   appendEntityLines: (id, lines, status) =>
     set((state) => {
@@ -1369,7 +1422,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     resetClock();
     set({
       ...emptySeeds(),
-      ...createInitialState(),
+      notifs: [],
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
     });
@@ -1970,11 +2023,15 @@ export const usePrSource = () => useHiveStore((state) => state.prSource);
 export const useRefreshPrs = () => useHiveStore((state) => state.refreshPrs);
 
 
-/** Mark one notification read, by its index in `notifs` (story 051). */
+/** Mark one notification read, by its id (story 051, HIVE-75). */
 export const useMarkRead = () => useHiveStore((state) => state.markRead);
 
-/** Push a notification — the simulation's entry point (stories 051, 061). */
+/** Push a notification — the stream's entry point (stories 051, 061, HIVE-75). */
 export const usePushNotif = () => useHiveStore((state) => state.pushNotif);
+
+/** Install main's buffer on mount (HIVE-75). */
+export const useHydrateNotifs = () =>
+  useHiveStore((state) => state.hydrateNotifs);
 
 /** The entity behind `activeTab`, or null for the orchestrator. */
 export const useActiveEntity = () => {

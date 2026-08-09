@@ -102,7 +102,7 @@ import { createGithub } from '../integrations/github';
 import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
-import { createNotifier } from '../notifications';
+import { createNotificationHub, createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
@@ -196,7 +196,7 @@ export function registerIpcHandlers(): void {
    * call time and nothing broadcasts during registration, so the ordering here
    * is a declaration detail rather than a cycle.
    */
-  const notifier = createNotifier({
+  const hub = createNotificationHub({
     prefs: () => getConfig().notifications,
     present: ({ title, body, onClick }) => {
       // False on a Linux box with no notification daemon. Checked per send
@@ -208,7 +208,22 @@ export function registerIpcHandlers(): void {
       notification.on('click', onClick);
       notification.show();
     },
-    activate: (entityId) => {
+    /**
+     * Straight to the renderer, not through `send` (HIVE-75).
+     *
+     * `send` taps the notifier, and the notifier produces into the hub — so
+     * broadcasting a notification through it would feed the hub's own output
+     * back into its input. `observe` ignores the channel, so nothing would
+     * actually loop today, but the cycle would be one `if` away from existing
+     * and nobody would see it coming.
+     */
+    broadcast: (notification) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        window.webContents.send(CH.notificationsNew, notification);
+      }
+    },
+    activate: (action) => {
       /**
        * Main focuses the window; the renderer opens the session.
        *
@@ -221,11 +236,24 @@ export function registerIpcHandlers(): void {
         if (window.isMinimized()) window.restore();
         window.focus();
       }
+
+      // A `url` action is the browser's to handle and a `none` action has
+      // nowhere to go; both are satisfied by the focus above.
+      if (action.type !== 'session') return;
+
       send(CH.notificationsActivate, {
-        entityId,
+        entityId: action.entityId,
       } satisfies NotificationActivateEvent);
     },
+    now: () => Date.now(),
   });
+
+  const notifier = createNotifier({ hub });
+
+  handle(CH.notificationsList, () => hub.list());
+  handle(CH.notificationsMarkRead, (_event, payload) =>
+    hub.markRead(typeof payload === 'string' ? payload : null),
+  );
 
   /**
    * The hook pipeline is constructed here and started by `createSessions`

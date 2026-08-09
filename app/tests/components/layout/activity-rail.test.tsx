@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ActivityRail } from '@components/layout/activity-rail';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { notif } from '../../support/notifications';
 
 /** Panels are identified by `data-panel`, as in the left rail's tests. */
 const panel = (container: HTMLElement, name: string) =>
@@ -56,8 +57,18 @@ describe('ActivityRail', () => {
   });
 
   /** Louder than the left rail's neutral count: it means agents are blocked. */
-  it('badges the inbox tab in red with the unread count', () => {
+  it('badges the inbox tab in red with the unread count', async () => {
     render(<ActivityRail />);
+
+    await act(async () => {
+      useHiveStore
+        .getState()
+        .hydrateNotifs([
+          notif({ id: 'a' }),
+          notif({ id: 'b' }),
+          notif({ id: 'c' }),
+        ]);
+    });
 
     expect(screen.getByText('3').parentElement).toHaveClass('bg-danger-solid');
   });
@@ -66,10 +77,13 @@ describe('ActivityRail', () => {
     render(<ActivityRail />);
 
     await act(async () => {
+      useHiveStore.getState().hydrateNotifs([notif({ id: 'a' })]);
+    });
+    await act(async () => {
       useHiveStore.getState().markAllRead();
     });
 
-    expect(screen.queryByText('3')).not.toBeInTheDocument();
+    expect(screen.queryByText('1')).not.toBeInTheDocument();
   });
 
   it('updates the badge live when a notification arrives', async () => {
@@ -77,22 +91,30 @@ describe('ActivityRail', () => {
 
     await act(async () => {
       useHiveStore.getState().markAllRead();
-      useHiveStore.getState().pushNotif({
-        icon: 'ph-hand-palm',
-        tone: 'amber',
-        title: 'nplusone needs approval',
-        sub: 'drop the index?',
-        time: 'now',
-        unread: true,
-        target: 'nplusone',
-      });
+      useHiveStore.getState().pushNotif(
+        notif({
+          id: 'nplusone',
+          title: 'nplusone needs approval',
+          body: 'drop the index?',
+        }),
+      );
     });
 
     expect(screen.getByText('1')).toBeInTheDocument();
   });
 
-  it('badges only the inbox tab', () => {
+  it('badges only the inbox tab', async () => {
     render(<ActivityRail />);
+
+    await act(async () => {
+      useHiveStore
+        .getState()
+        .hydrateNotifs([
+          notif({ id: 'a' }),
+          notif({ id: 'b' }),
+          notif({ id: 'c' }),
+        ]);
+    });
 
     expect(screen.getByRole('tab', { name: /Inbox/ })).toHaveTextContent('3');
     expect(screen.getByRole('tab', { name: /PRs/ })).not.toHaveTextContent(/\d/);

@@ -30,6 +30,7 @@ import {
   useUnreadCount,
 } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import { notif } from '../support/notifications';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
@@ -565,15 +566,28 @@ describe('hive-store selectors', () => {
   });
 
   describe('useUnreadCount', () => {
-    it('counts the unread fixtures', () => {
+    it('counts what is unread, and nothing else', () => {
       const { result } = renderHook(() => useUnreadCount());
-      expect(result.current).toBe(3);
+      expect(result.current).toBe(0);
+
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateNotifs([
+            notif({ id: 'a' }),
+            notif({ id: 'b' }),
+            notif({ id: 'c', unread: false }),
+          ]);
+      });
+
+      expect(result.current).toBe(2);
     });
 
     it('drops to zero once everything is read', () => {
       const { result } = renderHook(() => useUnreadCount());
 
       act(() => {
+        useHiveStore.getState().hydrateNotifs([notif({ id: 'a' })]);
         useHiveStore.getState().markAllRead();
       });
 
@@ -731,11 +745,20 @@ describe('hive-store selectors', () => {
   });
 
   describe('rail selectors', () => {
-    it('useNotifs returns the inbox in order', () => {
+    it('useNotifs returns the inbox newest first', () => {
       const { result } = renderHook(() => useNotifs());
+      expect(result.current).toHaveLength(0);
 
-      expect(result.current).toHaveLength(5);
-      expect(result.current[0].title).toBe('lead-form needs approval');
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateNotifs([
+            notif({ id: 'a', title: 'older', createdAt: 1_000 }),
+            notif({ id: 'b', title: 'newer', createdAt: 2_000 }),
+          ]);
+      });
+
+      expect(result.current.map((n) => n.title)).toEqual(['newer', 'older']);
     });
 
     it('usePrs returns the seeded PRs, in order', () => {
@@ -744,18 +767,27 @@ describe('hive-store selectors', () => {
       expect(result.current.map((pr) => pr.n)).toEqual([482, 219, 495, 31, 77]);
     });
 
-    it('useMarkRead marks exactly one notification read', () => {
+    it('useMarkRead marks exactly the notification it names', () => {
       const { result } = renderHook(() => ({
         markRead: useMarkRead(),
         notifs: useNotifs(),
       }));
 
       act(() => {
-        result.current.markRead(0);
+        useHiveStore
+          .getState()
+          .hydrateNotifs([
+            notif({ id: 'a', createdAt: 2_000 }),
+            notif({ id: 'b', createdAt: 1_000 }),
+          ]);
       });
 
-      expect(result.current.notifs[0].unread).toBe(false);
-      expect(result.current.notifs[1].unread).toBe(true);
+      act(() => {
+        result.current.markRead('a');
+      });
+
+      expect(result.current.notifs.find((n) => n.id === 'a')?.unread).toBe(false);
+      expect(result.current.notifs.find((n) => n.id === 'b')?.unread).toBe(true);
     });
   });
 });

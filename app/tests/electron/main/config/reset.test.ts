@@ -9,6 +9,7 @@ import { reloadConfig, resetConfig } from '../../../../electron/main/config';
 import {
   CONFIG_PATH_ENV,
   CONFIG_VERSION,
+  DEFAULT_NOTIFICATIONS,
 } from '../../../../electron/shared/config-contract';
 
 /**
@@ -93,17 +94,13 @@ describe('resetConfig', () => {
   });
 
   it('returns a snapshot the renderer can install without reloading', () => {
-    seed('{\n  "version": 2,\n  "notifications": { "sessionIdle": true }\n}\n');
+    seed('{\n  "version": 2,\n  "notifications": { "session.idle": "off" }\n}\n');
 
     const snapshot = resetConfig();
 
     expect(snapshot.configPath).toBe(path);
     // Back to the defaults, because the file no longer names any of them.
-    expect(snapshot.notifications).toEqual({
-      sessionDone: true,
-      sessionIdle: false,
-      cloneDone: true,
-    });
+    expect(snapshot.notifications).toEqual(DEFAULT_NOTIFICATIONS);
   });
 
   it('refuses and reports when there is no file to read', () => {

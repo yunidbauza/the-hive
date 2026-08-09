@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ConfigSnapshot } from '@shared/config-contract';
-import type { ObservedStatus } from '@shared/hook-contract';
+import type { ObservedStatus, StatusHookEvent } from '@shared/hook-contract';
 import {
   CH,
   type DataEvent,
@@ -373,7 +373,7 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   void hooks?.start(
     (entityId) => registry.sessionFor(entityId) !== undefined,
-    (event) => publishHookStatus(event.entityId, event.status),
+    (event) => publishHookStatus(event.entityId, event.status, event.event),
     (entityId) => publishCleared(entityId),
   );
 
@@ -401,8 +401,25 @@ export function createSessions(options: SessionsOptions): Sessions {
     settleExit(entityId);
   });
 
-  function publishStatus(entityId: string, status: ObservedStatus): void {
-    send(CH.sessionStatus, { entityId, status } satisfies SessionStatusEvent);
+  function publishStatus(
+    entityId: string,
+    status: ObservedStatus,
+    /**
+     * The hook that produced this status, when one did (HIVE-75).
+     *
+     * Passed straight through rather than interpreted here. The session layer's
+     * job is to say what a session is doing; deciding that a `PermissionRequest`
+     * deserves a different notification than an `Elicitation` is the hub's, and
+     * putting that judgement here would give the sessions layer an opinion
+     * about the inbox it has managed to avoid having so far.
+     */
+    event?: StatusHookEvent,
+  ): void {
+    send(CH.sessionStatus, {
+      entityId,
+      status,
+      ...(event === undefined ? {} : { event }),
+    } satisfies SessionStatusEvent);
   }
 
   /**
@@ -428,9 +445,13 @@ export function createSessions(options: SessionsOptions): Sessions {
    * next tick — which may already be scheduled — is suppressed rather than
    * racing this event.
    */
-  function publishHookStatus(entityId: string, status: ObservedStatus): void {
+  function publishHookStatus(
+    entityId: string,
+    status: ObservedStatus,
+    event?: StatusHookEvent,
+  ): void {
     hookDriven.add(entityId);
-    publishStatus(entityId, status);
+    publishStatus(entityId, status, event);
   }
 
   /**

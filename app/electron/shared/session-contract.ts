@@ -1,4 +1,4 @@
-import type { ObservedStatus } from './hook-contract';
+import type { ObservedStatus, StatusHookEvent } from './hook-contract';
 
 /**
  * The session lifecycle contract (story 096).
@@ -46,6 +46,20 @@ export interface SessionStatusEvent {
   /** The *entity* id — the renderer never sees a pty session id. */
   entityId: string;
   status: ObservedStatus;
+  /**
+   * The hook that produced this status, when one did (HIVE-75).
+   *
+   * The renderer ignores it; the notification hub is the only reader. It is
+   * here rather than on a channel of its own because `waiting` is reachable
+   * from **two** hooks that mean different things to the user —
+   * `PermissionRequest` wants a yes, `Elicitation` wants a sentence — and the
+   * status deliberately collapses them. Without this field the inbox could only
+   * offer one row for both, which is a row that is wrong half the time.
+   *
+   * Optional, and absent for every pty-derived status, because `activity.ts`
+   * has no hook to name. Absent is the honest answer there, not a default.
+   */
+  event?: StatusHookEvent;
 }
 
 /**
