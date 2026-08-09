@@ -129,6 +129,30 @@ export function createNotificationHub(
   let buffer: HiveNotification[] = [];
   const seen = new Set<string>();
 
+  /**
+   * A free function, deliberately, rather than a method reached through `this`.
+   *
+   * The toast's `onClick` has to mark its notification read, and reaching that
+   * through `this` binds to however `raise` was *invoked* — so a caller who
+   * destructured (`const { raise } = hub`) would make `this` undefined.
+   *
+   * The damage lands **after** `raise` has returned, which is what makes it
+   * nasty. `this` is only dereferenced inside the click handler, so the
+   * notification is raised and shown perfectly; `raise`'s own `try` is long
+   * since unwound. Clicking the toast then throws a TypeError inside an
+   * Electron event handler in main — an uncaught exception on the main process,
+   * from a call style that looks entirely reasonable — and the session the user
+   * was trying to reach never opens.
+   */
+  const markRead = (id: string | null): void => {
+    buffer =
+      id === null
+        ? buffer.map((entry) => ({ ...entry, unread: false }))
+        : buffer.map((entry) =>
+            entry.id === id ? { ...entry, unread: false } : entry,
+          );
+  };
+
   const remember = (id: string): void => {
     seen.add(id);
     if (seen.size <= SEEN_CAP) return;
@@ -191,7 +215,7 @@ export function createNotificationHub(
              * the count exists.
              */
             onClick: () => {
-              this.markRead(id);
+              markRead(id);
               activate(notification.action);
             },
           });
@@ -208,14 +232,7 @@ export function createNotificationHub(
       return buffer;
     },
 
-    markRead(id) {
-      buffer =
-        id === null
-          ? buffer.map((entry) => ({ ...entry, unread: false }))
-          : buffer.map((entry) =>
-              entry.id === id ? { ...entry, unread: false } : entry,
-            );
-    },
+    markRead,
 
     clear() {
       buffer = [];

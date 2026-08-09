@@ -159,6 +159,33 @@ describe('presentation', () => {
 
 describe('robustness', () => {
   /**
+   * The regression: `raise` used to reach its own `markRead` through `this`, so
+   * a destructured call bound it to `undefined`.
+   *
+   * The raise itself still looked fine — `this` is only dereferenced in the
+   * click handler — so the assertions that matter are the last two. Clicking
+   * the toast threw a TypeError inside an Electron event handler in main, well
+   * after `raise`'s try/catch had unwound.
+   */
+  it('works when raise is called detached from the hub', () => {
+    const { raise: detached } = hub;
+
+    const raised = detached({
+      kind: 'session.waiting',
+      title: 'blocked',
+      id: 'detached',
+    });
+
+    expect(raised).not.toBeNull();
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(present).toHaveBeenCalledTimes(1);
+
+    // And the toast's click still marks it read.
+    present.mock.calls[0][0].onClick();
+    expect(hub.list()[0].unread).toBe(false);
+  });
+
+  /**
    * The hub sits inside the broadcast every session's output depends on. A
    * notification that failed must cost a notification, never a `pty:data`.
    */
