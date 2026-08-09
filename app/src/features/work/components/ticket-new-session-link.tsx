@@ -9,18 +9,19 @@ interface TicketNewSessionLinkProps {
 /**
  * Start a session for this ticket (HIVE-73).
  *
- * ## Why this opens the picker rather than spawning
+ * ## Why this opens the picker and the projects-tree link does not
  *
- * A ticket names no project. A Jira issue has no idea which of the user's
- * repositories it will be worked in, and the same issue can legitimately be
- * worked in two — so the click here *is* a question, and the picker is where it
- * gets asked, along with model and thinking effort, which the user may well
- * want to set differently for a ticket than for a scratch session.
+ * `features/projects`' `NewSessionLink` spawns immediately, because the row
+ * above it already names the project — the picker would only ask a question the
+ * click had answered. A ticket names no project at all: a Jira issue has no
+ * idea which of the user's repositories it will be worked in, and the same
+ * issue can legitimately be worked in two. So the click here *is* a question,
+ * and the picker is where it gets asked — along with model and thinking effort,
+ * which the user may well want to set differently for a ticket than for a
+ * scratch session.
  *
- * A start affordance hung off a row that *does* name its project could spawn
- * straight away instead, since the picker would only ask what the click had
- * already answered. That is the shape a projects-tree equivalent would take;
- * none exists on this branch.
+ * The two links are therefore siblings in intent and opposites in mechanism,
+ * which is why neither delegates to the other.
  *
  * ## Why it reaches the picker through the store
  *

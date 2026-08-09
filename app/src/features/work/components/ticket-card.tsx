@@ -94,7 +94,8 @@ export function TicketCard({ ticket }: TicketCardProps) {
         The sessions working this ticket, then the way to start another —
         `new session` is the last child either way, so it sits directly under
         the title when nothing is running and under the final session when
-        something is.
+        something is — the same shape `features/projects`' `ProjectRow` uses
+        for its own start link.
 
         Only the *live* ones are listed. `useTicketSessions` filters ended
         sessions; the PR block below deliberately does not, because a merged PR
