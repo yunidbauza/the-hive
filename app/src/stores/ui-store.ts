@@ -26,6 +26,14 @@ interface UiState {
   collapsed: Record<string, boolean>; // project id -> collapsed
   picker: boolean; // new-session overlay open
   pickerQuery: string;
+  /**
+   * The ticket the picker was opened *for*, or `null` for the header button.
+   *
+   * View state rather than domain state: it is a property of the overlay
+   * currently on screen, not something the app knows about the ticket. It dies
+   * with the overlay, which is why it lives here and not in `hive-store`.
+   */
+  pickerTicket: string | null;
   settings: boolean; // full-stage settings overlay open (story 101)
   newModel: Model;
   newEffort: Effort;
@@ -37,7 +45,7 @@ interface UiState {
   setLeftTab: (tab: LeftTab) => void;
   setRailTab: (tab: RailTab) => void;
   toggleProject: (id: string) => void;
-  openPicker: () => void;
+  openPicker: (ticketKey?: string) => void;
   closePicker: () => void;
   openSettings: () => void;
   closeSettings: () => void;
@@ -56,6 +64,7 @@ const initialUiState = {
   collapsed: {} as Record<string, boolean>,
   picker: false,
   pickerQuery: '',
+  pickerTicket: null as string | null,
   settings: false,
   newModel: 'opus' as Model,
   newEffort: 'high' as Effort,
@@ -89,9 +98,18 @@ export const useUiStore = create<UiState>()((set) => ({
       collapsed: { ...state.collapsed, [id]: !state.collapsed[id] },
     })),
 
-  // The query is cleared on open, not on close, so reopening never shows a
-  // stale filter.
-  openPicker: () => set({ picker: true, pickerQuery: '' }),
+  /**
+   * Open the picker, optionally *for* a ticket.
+   *
+   * The query is cleared on open, not on close, so reopening never shows a
+   * stale filter — and `pickerTicket` is assigned on **every** open for the
+   * same reason, `null` included. That unconditional assignment is what makes
+   * the four other places that set `picker: false` safe to leave alone: a
+   * ticket key can never outlive the overlay it was set for, because the next
+   * open overwrites it before anything can read it.
+   */
+  openPicker: (ticketKey) =>
+    set({ picker: true, pickerQuery: '', pickerTicket: ticketKey ?? null }),
   closePicker: () => set({ picker: false }),
 
   /**
@@ -130,6 +148,7 @@ const railStateSelector = (state: UiState) => ({
 const pickerStateSelector = (state: UiState) => ({
   picker: state.picker,
   pickerQuery: state.pickerQuery,
+  pickerTicket: state.pickerTicket,
   newModel: state.newModel,
   newEffort: state.newEffort,
 });
@@ -188,6 +207,16 @@ export const useSettingsOpen = () => useUiStore((state) => state.settings);
 /** Settings actions, referentially stable across unrelated state changes. */
 export const useSettingsActions = () =>
   useUiStore(useShallow(settingsActionsSelector));
+
+/**
+ * The ticket the picker is open for, or `null`.
+ *
+ * Deliberately narrower than `usePickerState()`: the ticket cards in the WORK
+ * panel do not need it, but anything that wants to know *why* the picker is
+ * open should not have to subscribe to `pickerQuery` and re-render on every
+ * keystroke in the search box.
+ */
+export const usePickerTicket = () => useUiStore((state) => state.pickerTicket);
 
 /** New-session picker state and actions. */
 export const usePickerState = () => useUiStore(useShallow(pickerStateSelector));

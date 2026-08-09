@@ -1,6 +1,8 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { Session } from '@/types/entity';
+
 import {
   emptySnapshot,
   type ConfigSnapshot,
@@ -238,7 +240,7 @@ describe('hive-store selectors', () => {
       ]);
     });
 
-    it('skips sessions the store does not know', () => {
+    it('resolves only the sessions pointing at this ticket', () => {
       act(() => {
         useHiveStore.setState({
           tickets: [
@@ -246,11 +248,21 @@ describe('hive-store selectors', () => {
               key: 'GHOST-1',
               status: 'To Do',
               statusCategory: 'todo',
-              title: 'Names a session that never existed',
-              sessions: ['not-a-session', 'hero-refresh'],
+              title: 'One session claims it',
             },
           ],
         });
+        // `hero-refresh` carries PR #482; `webhooks` carries #219 and stays on
+        // its own ticket, so a resolver that ignored the key would return two.
+        useHiveStore.setState((current) => ({
+          entities: {
+            ...current.entities,
+            'hero-refresh': {
+              ...(current.entities['hero-refresh'] as Session),
+              ticket: 'GHOST-1',
+            },
+          },
+        }));
       });
 
       const { result } = renderHook(() => useTicketPrs('GHOST-1'));

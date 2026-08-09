@@ -110,6 +110,7 @@ describe('ui-store selectors', () => {
     expect(result.current.state).toEqual({
       picker: false,
       pickerQuery: '',
+      pickerTicket: null,
       newModel: 'opus',
       newEffort: 'high',
     });
@@ -124,6 +125,9 @@ describe('ui-store selectors', () => {
     expect(result.current.state).toEqual({
       picker: true,
       pickerQuery: 'apfm',
+      // The header's entry point — no ticket, and `openPicker` assigns it on
+      // every open rather than leaving whatever was there before (HIVE-73).
+      pickerTicket: null,
       newModel: 'sonnet',
       newEffort: 'max',
     });

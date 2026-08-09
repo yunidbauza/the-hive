@@ -441,3 +441,124 @@ describe('NewSessionPicker · unmapped projects', () => {
     expect(screen.queryByText(/no projects yet/)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Opened from a ticket card (HIVE-73).
+ *
+ * The click that opens the picker from a card means "work this issue", so the
+ * picker has to say which issue — otherwise the user gets a generic overlay
+ * and no confirmation that the session will be linked at all.
+ */
+describe('NewSessionPicker · opened for a ticket', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useUiStore.getState().reset();
+    resetProjectConfig();
+    seedDemoProjectConfig();
+  });
+
+  afterEach(() => {
+    resetProjectConfig();
+  });
+  const openForTicket = (key: string) => {
+    useUiStore.getState().openPicker(key);
+  };
+
+  it('names the ticket and shows its summary', () => {
+    useHiveStore.getState().hydrateTickets(
+      [
+        {
+          key: 'HIVE-73',
+          summary: 'Sessions and PRs on the ticket card',
+          status: 'In Progress',
+          statusCategory: 'in-progress',
+          issueType: 'Story',
+          priority: null,
+          assignee: null,
+          updated: '2026-08-09T00:00:00.000+0000',
+          url: 'https://example.test/HIVE-73',
+        },
+      ],
+      false,
+    );
+    openForTicket('HIVE-73');
+    render(<NewSessionPicker />);
+
+    expect(
+      screen.getByText('Start a session for HIVE-73'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Sessions and PRs on the ticket card'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Start a new session')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The key comes from the click and is always known; the ticket object is a
+   * lookup into a list the WORK panel replaces on every refresh. A card that
+   * scrolled out from under the query still gets a titled picker.
+   */
+  it('still names a ticket the list no longer holds', () => {
+    openForTicket('GONE-1');
+    render(<NewSessionPicker />);
+
+    expect(screen.getByText('Start a session for GONE-1')).toBeInTheDocument();
+    expect(
+      screen.getByText('Pick a project — a Claude Code terminal will open for it'),
+    ).toBeInTheDocument();
+  });
+
+  it('links the spawned session to the ticket', async () => {
+    const user = userEvent.setup();
+    openForTicket('HIVE-73');
+    render(<NewSessionPicker />);
+
+    await user.click(rowsFor(/^apfm-web/)[0]);
+
+    const linked = Object.values(useHiveStore.getState().entities).filter(
+      (entity) => entity.kind === 'session' && entity.ticket === 'HIVE-73',
+    );
+    expect(linked).toHaveLength(1);
+    expect(linked[0]?.kind === 'session' && linked[0].project).toBe('apfm-web');
+  });
+
+  it('carries the chosen model and effort onto the linked session', async () => {
+    const user = userEvent.setup();
+    openForTicket('HIVE-73');
+    useUiStore.getState().setNewModel('sonnet');
+    useUiStore.getState().setNewEffort('low');
+    render(<NewSessionPicker />);
+
+    await user.click(rowsFor(/^apfm-web/)[0]);
+
+    const linked = Object.values(useHiveStore.getState().entities).find(
+      (entity) => entity.kind === 'session' && entity.ticket === 'HIVE-73',
+    );
+    expect(linked?.kind === 'session' && linked.model).toBe('sonnet');
+    expect(linked?.kind === 'session' && linked.effort).toBe('low');
+  });
+
+  /**
+   * The header's entry point must not acquire a ticket. `openPicker` assigns
+   * on every open for exactly this reason.
+   */
+  it('leaves no ticket on a session started from the header', async () => {
+    const user = userEvent.setup();
+    const linkedCount = () =>
+      Object.values(useHiveStore.getState().entities).filter(
+        (entity) => entity.kind === 'session' && entity.ticket !== undefined,
+      ).length;
+
+    // Open for a ticket, then reopen from the header: the second open must
+    // overwrite the key rather than inherit it.
+    openForTicket('HIVE-73');
+    useUiStore.getState().openPicker();
+    const before = linkedCount();
+    render(<NewSessionPicker />);
+
+    await user.click(rowsFor(/^apfm-web/)[0]);
+
+    expect(linkedCount()).toBe(before);
+  });
+});

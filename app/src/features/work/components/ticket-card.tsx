@@ -2,10 +2,11 @@ import { cn } from '@/lib/utils';
 import type { Ticket } from '@/types/ticket';
 
 import { TicketConversation } from '@features/work/components/ticket-conversation';
+import { TicketNewSessionLink } from '@features/work/components/ticket-new-session-link';
 import { TicketPrRow } from '@features/work/components/ticket-pr-row';
 import { TicketSessionRow } from '@features/work/components/ticket-session-row';
 import { TicketTransitionMenu } from '@features/work/components/ticket-transition-menu';
-import { useTicketPrs } from '@stores/hive-store';
+import { useTicketPrs, useTicketSessions } from '@stores/hive-store';
 
 /**
  * Colour by Jira's own category, never by the status *name* (HIVE-69).
@@ -40,6 +41,7 @@ interface TicketCardProps {
  * which is why the story calls it out explicitly.
  */
 export function TicketCard({ ticket }: TicketCardProps) {
+  const sessions = useTicketSessions(ticket.key);
   const prs = useTicketPrs(ticket.key);
 
   return (
@@ -88,10 +90,17 @@ export function TicketCard({ ticket }: TicketCardProps) {
 
       <h3 className="text-[12.5px] leading-[1.4] text-ink">{ticket.title}</h3>
 
+      {/*
+        The sessions working this ticket, then the way to start another —
+        `new session` is the last child either way, so it sits directly under
+        the title when nothing is running and under the final session when
+        something is. Same shape the projects tree uses for its own start link.
+      */}
       <div className="flex flex-col">
-        {ticket.sessions.map((id) => (
+        {sessions.map((id) => (
           <TicketSessionRow key={id} id={id} />
         ))}
+        <TicketNewSessionLink ticketKey={ticket.key} />
       </div>
 
       {prs.length > 0 ? (

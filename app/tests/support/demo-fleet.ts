@@ -48,6 +48,34 @@ const line = (text: string, color: TermColor = 'ink'): TermLine => ({
   color,
 });
 
+/**
+ * Which ticket each demo session is working (HIVE-73).
+ *
+ * This is the same data the tickets used to carry as a `sessions` array, turned
+ * around to match where the link now lives — on `Session.ticket`, because a
+ * ticket is replaced wholesale by every Jira refresh and a session is not.
+ *
+ * Kept as a map beside the sessions rather than a ninth positional argument to
+ * the `session()` helper: eight untyped positions is already the most a reader
+ * can hold, and the ticket is the one field here that describes a relationship
+ * rather than the session itself.
+ *
+ * `rails-upgrade` is deliberately absent — the fleet has a session on no ticket
+ * at all, which is what makes "does an unlinked session stay off every card"
+ * an answerable question.
+ */
+const SESSION_TICKET: Readonly<Record<string, string>> = {
+  'hero-refresh': 'GRAC-3018',
+  'lead-form': 'GRAC-3022',
+  webhooks: 'GRAC-2991',
+  nplusone: 'GRAC-3010',
+  'e2e-quote': 'GRAC-3010',
+  'call-notes': 'GRAC-2977',
+  'dark-tokens': 'GRAC-3005',
+  'tz-fix': 'GRAC-2810',
+  'ecs-scaling': 'GRAC-2954',
+};
+
 function createSessions(): Session[] {
   const session = (
     id: string,
@@ -68,6 +96,9 @@ function createSessions(): Session[] {
     pr,
     cost,
     lines,
+    // Spread conditionally so an unlinked session has no `ticket` key at all,
+    // matching what `spawnSession` produces for one started from the header.
+    ...(SESSION_TICKET[id] === undefined ? {} : { ticket: SESSION_TICKET[id] }),
   });
 
   return [
@@ -360,56 +391,48 @@ export function createDemoFleet(): DemoFleet {
         status: 'In Progress',
         statusCategory: 'in-progress',
         title: 'Hero refresh: migrate to semantic tokens',
-        sessions: ['hero-refresh'],
       },
       {
         key: 'GRAC-3022',
         status: 'In Progress',
         statusCategory: 'in-progress',
         title: 'Lead form: phone/zip validation + index',
-        sessions: ['lead-form'],
       },
       {
         key: 'GRAC-2991',
         status: 'In Review',
         statusCategory: 'in-progress',
         title: 'Partner webhook delivery with retries',
-        sessions: ['webhooks'],
       },
       {
         key: 'GRAC-3010',
         status: 'In Progress',
         statusCategory: 'in-progress',
         title: 'Lead search performance across services',
-        sessions: ['nplusone', 'e2e-quote'],
       },
       {
         key: 'GRAC-2977',
         status: 'In Progress',
         statusCategory: 'in-progress',
         title: 'Advisor call notes editor (PHI-safe)',
-        sessions: ['call-notes'],
       },
       {
         key: 'GRAC-3005',
         status: 'In Review',
         statusCategory: 'in-progress',
         title: 'Dark-mode token ramp for design system',
-        sessions: ['dark-tokens'],
       },
       {
         key: 'GRAC-2810',
         status: 'Done',
         statusCategory: 'done',
         title: 'Tour times shown in wrong timezone',
-        sessions: ['tz-fix'],
       },
       {
         key: 'GRAC-2954',
         status: 'Done',
         statusCategory: 'done',
         title: 'ECS autoscaling policies',
-        sessions: ['ecs-scaling'],
       },
     ],
     orchLines: [

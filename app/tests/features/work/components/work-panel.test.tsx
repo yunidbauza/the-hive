@@ -173,8 +173,14 @@ describe('WorkPanel', () => {
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
   });
 
-  /** Defensive: the simulation may not create everything a ticket names. */
-  it('skips a session the store does not know, without throwing', () => {
+  /**
+   * A ticket naming a session that does not exist used to be the defensive case
+   * here, and HIVE-73 made it unrepresentable: the link points the other way
+   * now, so a card lists sessions the store *has* rather than ids it was told
+   * about. The surviving question is the inverse — a ticket nothing is working
+   * shows no session rows and still renders.
+   */
+  it('renders a ticket no session is working, without throwing', () => {
     act(() => {
       useHiveStore.setState({
         tickets: [
@@ -182,8 +188,7 @@ describe('WorkPanel', () => {
             key: 'GHOST-1',
             status: 'To Do',
             statusCategory: 'todo',
-            title: 'Names a session that never existed',
-            sessions: ['not-a-session', 'hero-refresh'],
+            title: 'Nobody is working this one',
           },
         ],
       });
@@ -191,8 +196,10 @@ describe('WorkPanel', () => {
 
     render(<WorkPanel />);
 
-    expect(screen.getByText('hero-refresh')).toBeInTheDocument();
-    expect(screen.queryByText('not-a-session')).not.toBeInTheDocument();
+    expect(screen.getByText('Nobody is working this one')).toBeInTheDocument();
+    // The demo fleet is seeded, so this proves the card filters by ticket
+    // rather than simply having no sessions to show.
+    expect(screen.queryByText('hero-refresh')).not.toBeInTheDocument();
   });
 
   it('keeps findings in sync with the PRs list', () => {

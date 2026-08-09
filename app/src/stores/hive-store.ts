@@ -139,6 +139,8 @@ interface HiveState {
     task?: string,
     model?: Model,
     effort?: Effort,
+    /** The Jira issue this session is being started for (HIVE-73). */
+    ticket?: string,
   ) => string;
   sendToEntity: (
     id: string,
@@ -373,7 +375,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * no store subscribes to the other. That keeps the dependency one-way and
    * makes the cross-store effect visible at the call site.
    */
-  spawnSession: (repo, task, model, effort) => {
+  spawnSession: (repo, task, model, effort, ticket) => {
     const id = nextSessionId();
     // Resolved once: the seed transcript quotes them back, so a default applied
     // in two places could print one model and record another.
@@ -384,6 +386,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       kind: 'session',
       id,
       project: repo,
+      /**
+       * Only present when the picker was opened from a ticket card, which is
+       * why it is spread conditionally rather than assigned `undefined`: an
+       * explicit `ticket: undefined` key is a different object shape from an
+       * absent one, and the store's snapshots are compared in tests.
+       */
+      ...(ticket ? { ticket } : {}),
       branch: `feat/${id}`,
       status: task ? 'working' : 'idle',
       /**
@@ -910,12 +919,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    *
    * ## What the successor inherits, and what it does not
    *
-   * `terminalId`, `project`, `branch`, `model` and `effort` carry over: they
-   * describe the *terminal*, and a `/clear` changes none of them. `task`,
-   * `name`, `pr` and `lines` do not: they described a conversation that just
-   * ended, and carrying the old name forward would make the successor look like
-   * a continuation of work it cannot see. Claude renames it moments later
+   * `terminalId`, `project`, `branch`, `ticket`, `model` and `effort` carry
+   * over: they describe the *terminal*, and a `/clear` changes none of them.
+   * `task`, `name`, `pr` and `lines` do not: they described a conversation that
+   * just ended, and carrying the old name forward would make the successor look
+   * like a continuation of work it cannot see. Claude renames it moments later
    * anyway, through the same `renameSession` path any session uses.
+   *
+   * `ticket` is in the first list rather than the second, and the WORK panel is
+   * why: the link is the user's answer to "which terminal is on this issue",
+   * and dropping it here would make a session vanish from its ticket card at
+   * the instant the user typed `/clear` — on the same terminal, still in the
+   * same repository, still working the same issue.
    *
    * ## Ordering
    *
@@ -953,6 +968,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       pr: null,
       cost: '$0.00',
       lines: [],
+      ...(current.ticket === undefined ? {} : { ticket: current.ticket }),
       ...(current.model === undefined ? {} : { model: current.model }),
       ...(current.effort === undefined ? {} : { effort: current.effort }),
     };
@@ -1038,11 +1054,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   /**
    * Install real issues (HIVE-69).
    *
-   * `sessions` is empty for every one of them, and that is honest rather than
-   * unfinished: linking a Hive session to a Jira ticket is the app's own concern
-   * with no Jira counterpart, and no story in this epic owns it. A real card
-   * renders its key, status and title, and nothing pretends to know which
-   * session is working it.
+   * Wholesale replacement, and that is safe now in a way it would not have been
+   * while tickets carried a `sessions` array: the ticket→session link lives on
+   * `Session.ticket`, which this never touches. A user can refresh the WORK
+   * panel as often as they like and the sessions on every card survive it,
+   * because they were never stored on the card in the first place (HIVE-73).
    */
   hydrateTickets: (issues, capped) =>
     set({
@@ -1051,7 +1067,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         status: issue.status,
         statusCategory: issue.statusCategory,
         title: issue.summary,
-        sessions: [],
         url: issue.url,
       })),
       ticketSource: { kind: 'live', stale: false, capped },
@@ -1094,8 +1109,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * means the list changed underneath and the next refresh is the right fix —
    * not an orphan row nothing else knows about.
    *
-   * `sessions` is carried over rather than emptied, so this survives whatever
-   * links a later story adds.
+   * There is no longer anything to carry over. This used to preserve a
+   * `sessions` array, which was the tell that the link was stored in the wrong
+   * place: every writer of a ticket had to remember to copy it forward, and
+   * exactly one of them did. Moving the key onto the session deleted the
+   * obligation rather than satisfying it (HIVE-73).
    */
   updateTicket: (issue) =>
     set((state) => {
@@ -1108,7 +1126,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         status: issue.status,
         statusCategory: issue.statusCategory,
         title: issue.summary,
-        sessions: state.tickets[at]?.sessions ?? [],
         url: issue.url,
       };
       return { tickets: next };
@@ -1494,6 +1511,29 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
   useHiveStore((state) => state.updateTicket);
 
 /**
+ * The sessions working a ticket, in fleet order (HIVE-73).
+ *
+ * The reverse of `Session.ticket`, computed rather than stored — which is what
+ * makes the link immune to `hydrateTickets` replacing the whole ticket list on
+ * every WORK-panel open.
+ *
+ * Ordered by `order` rather than by `Object.keys(entities)`: `order` is the
+ * array the rails already read positionally, so a ticket card lists its
+ * sessions in the same sequence the fleet table does, and a `/clear` successor
+ * inherits its predecessor's slot instead of jumping to the end of the card.
+ */
+export function sessionsForTicket(
+  ticketKey: string,
+  order: string[],
+  entities: Record<string, Entity>,
+): string[] {
+  return order.filter((id) => {
+    const entity = entities[id];
+    return Boolean(entity && isSession(entity) && entity.ticket === ticketKey);
+  });
+}
+
+/**
  * PRs reachable from a ticket's sessions, with their state resolved (story 032).
  *
  * Walks the ticket's sessions rather than filtering the global `prs` list,
@@ -1505,10 +1545,16 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
  * single source of truth for state and findings, and a session's own `pr.state`
  * is a stale copy. Fixture #219 proves the difference — `approved` globally,
  * still `open` on the `webhooks` session.
+ *
+ * Since HIVE-73 the sessions come from `sessionsForTicket` rather than from a
+ * `sessions` array on the ticket. The ticket lookup stays: a key with no ticket
+ * behind it returns nothing, so a card that has scrolled out of the list cannot
+ * contribute PRs to a panel that is no longer showing it.
  */
 export function resolveTicketPrs(
   ticketKey: string,
   tickets: Ticket[],
+  order: string[],
   entities: Record<string, Entity>,
   prs: Pr[],
 ): TicketPr[] {
@@ -1517,7 +1563,7 @@ export function resolveTicketPrs(
 
   const resolved: TicketPr[] = [];
 
-  for (const sessionId of ticket.sessions) {
+  for (const sessionId of sessionsForTicket(ticketKey, order, entities)) {
     const entity = entities[sessionId];
     if (!entity || !isSession(entity)) continue;
 
@@ -1551,14 +1597,47 @@ export function resolveTicketPrs(
  */
 export const useTicketPrs = (ticketKey: string): TicketPr[] => {
   const tickets = useHiveStore((state) => state.tickets);
+  const order = useHiveStore((state) => state.order);
   const entities = useHiveStore((state) => state.entities);
   const prs = useHiveStore((state) => state.prs);
 
   return useMemo(
-    () => resolveTicketPrs(ticketKey, tickets, entities, prs),
-    [ticketKey, tickets, entities, prs],
+    () => resolveTicketPrs(ticketKey, tickets, order, entities, prs),
+    [ticketKey, tickets, order, entities, prs],
   );
 };
+
+/**
+ * The sessions working a ticket (HIVE-73) — the card's session rows.
+ *
+ * Memoised over `order` and `entities` for the same reason `useTicketPrs` is:
+ * the result is a freshly-built array, so a plain selector would hand React a
+ * new identity on every store write and re-render every card in the panel
+ * whenever any session anywhere produced a line of output.
+ */
+export const useTicketSessions = (ticketKey: string): string[] => {
+  const order = useHiveStore((state) => state.order);
+  const entities = useHiveStore((state) => state.entities);
+
+  return useMemo(
+    () => sessionsForTicket(ticketKey, order, entities),
+    [ticketKey, order, entities],
+  );
+};
+
+/**
+ * One ticket by key, or `undefined` (HIVE-73).
+ *
+ * The picker needs the title of the ticket it was opened for, and it cannot
+ * reach into the WORK slice to get it — `features/sessions` and `features/work`
+ * are fenced from each other. The store is the seam they share.
+ */
+export const useTicket = (ticketKey: string | null): Ticket | undefined =>
+  useHiveStore((state) =>
+    ticketKey === null
+      ? undefined
+      : state.tickets.find((ticket) => ticket.key === ticketKey),
+  );
 
 /**
  * How many work items exist — the left rail's Work tab badge (story 030).

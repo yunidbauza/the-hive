@@ -80,6 +80,20 @@ export interface Session {
    */
   terminalId?: string;
   project: string; // 'apfm-web'
+  /**
+   * The Jira issue this session was started for, if it was started from one.
+   *
+   * **The link lives here, on the session, and not as a `sessions` array on the
+   * ticket.** Tickets are re-read from Jira every time the WORK panel opens, so
+   * a list held on the ticket would be overwritten by its own refresh — the
+   * link would survive exactly until the user looked at it. A session outlives
+   * any number of those reads, so hanging the key here makes `hydrateTickets`
+   * a non-event and leaves one source of truth for the association.
+   *
+   * The reverse direction — "which sessions is this ticket being worked by" —
+   * is a selector over the entities map, never stored.
+   */
+  ticket?: string; // 'HIVE-73'
   branch: string; // 'feat/hero-refresh'
   status: SessionStatus;
   task: string; // one-line description

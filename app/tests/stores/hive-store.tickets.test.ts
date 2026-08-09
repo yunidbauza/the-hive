@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isSession } from '@/types/entity';
+
 import { useHiveStore } from '@stores/hive-store';
 import type { JiraIssue } from '@shared/jira-contract';
 
@@ -89,14 +91,25 @@ describe('hydrateTickets', () => {
       status: 'In Progress',
       statusCategory: 'in-progress',
       title: 'A real ticket',
-      sessions: [],
       url: 'https://behiques.atlassian.net/browse/HIVE-1',
     });
   });
 
-  it('leaves sessions empty, because nothing links one yet', () => {
+  /**
+   * The reason the link moved onto the session (HIVE-73).
+   *
+   * The WORK panel refreshes on every open, and `hydrateTickets` replaces the
+   * whole list. While the link was a `sessions` array on the ticket, this is
+   * the read that silently erased it.
+   */
+  it('leaves a ticket’s sessions intact — the link is on the session', () => {
+    state().spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-1');
     state().hydrateTickets([issue()], false);
-    expect(state().tickets[0]?.sessions).toEqual([]);
+
+    const linked = Object.values(state().entities).filter(
+      (entity) => isSession(entity) && entity.ticket === 'HIVE-1',
+    );
+    expect(linked).toHaveLength(1);
   });
 
   it('keeps a status Jira invented, verbatim', () => {
@@ -235,16 +248,17 @@ describe('updateTicket (HIVE-70)', () => {
     expect(state().tickets[1]?.key).toBe('HIVE-2');
   });
 
-  it('carries the existing sessions over', () => {
+  it('leaves the ticket’s sessions alone', () => {
     state().hydrateTickets([issue()], false);
-    // A later story may link sessions to real tickets; this must survive it.
-    useHiveStore.setState((current) => ({
-      tickets: current.tickets.map((t) => ({ ...t, sessions: ['hero-refresh'] })),
-    }));
+    const sessionId = state().spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-1');
 
     state().updateTicket(issue({ status: 'Done' }));
 
-    expect(state().tickets[0]?.sessions).toEqual(['hero-refresh']);
+    // Nothing to carry over any more: a transition rewrites the ticket and the
+    // link is not on it. This used to need an explicit copy-forward in
+    // `updateTicket`, and every future writer would have needed one too.
+    const session = state().entities[sessionId];
+    expect(isSession(session) && session.ticket).toBe('HIVE-1');
   });
 
   it('is a no-op for a key that is not on screen', () => {

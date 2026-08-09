@@ -13,6 +13,7 @@ import {
   useProjectSessions,
   useProjects,
   useSpawnSession,
+  useTicket,
 } from '@stores/hive-store';
 import {
   usePickerActions,
@@ -51,7 +52,8 @@ export function NewSessionPicker() {
   const projects = useProjects();
   const spawnSession = useSpawnSession();
   const config = useProjectConfig();
-  const { pickerQuery, newModel, newEffort } = usePickerState();
+  const { pickerQuery, pickerTicket, newModel, newEffort } = usePickerState();
+  const ticket = useTicket(pickerTicket);
   const { closePicker, setPickerQuery, setNewModel, setNewEffort } =
     usePickerActions();
   const { openSettings } = useSettingsActions();
@@ -74,7 +76,12 @@ export function NewSessionPicker() {
     // Task is empty on purpose: the picker starts a session, and the first
     // message gives it its job (story 043). `spawnSession` opens the new tab,
     // which also dismisses the picker.
-    spawnSession(repo, '', newModel, newEffort);
+    //
+    // `pickerTicket ?? undefined` rather than the value itself: the store's
+    // "no ticket" is `null`, the session field's is absent, and passing `null`
+    // into an optional parameter would put a `ticket: null` on the entity that
+    // nothing knows how to read (HIVE-73).
+    spawnSession(repo, '', newModel, newEffort, pickerTicket ?? undefined);
   };
 
   return (
@@ -96,12 +103,27 @@ export function NewSessionPicker() {
       >
         <div className="mt-auto" />
 
+        {/*
+          Opened from a ticket card, the picker says so (HIVE-73). The click
+          that got here was "work this issue", and a generic heading would give
+          the user no confirmation that the session they are about to start will
+          be linked to it.
+
+          `pickerTicket` carries the heading, not `ticket`: the key is what the
+          user clicked and is always known, whereas the ticket object is a
+          lookup into a list the WORK panel replaces on every refresh. So a
+          card that scrolled out from under the query still gets a titled
+          picker — it simply has no summary line to add.
+        */}
         <div className="flex flex-col gap-1.5 text-center">
           <DialogPrimitive.Title className="font-display text-[22px] tracking-[-0.02em] text-ink">
-            Start a new session
+            {pickerTicket === null
+              ? 'Start a new session'
+              : `Start a session for ${pickerTicket}`}
           </DialogPrimitive.Title>
           <span className="text-[13px] text-subtle">
-            Pick a project — a Claude Code terminal will open for it
+            {ticket?.title ??
+              'Pick a project — a Claude Code terminal will open for it'}
           </span>
         </div>
 

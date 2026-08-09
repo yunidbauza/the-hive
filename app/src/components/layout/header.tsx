@@ -195,7 +195,14 @@ export function Header() {
 
         <button
           type="button"
-          onClick={openPicker}
+          /*
+            Wrapped, not passed by reference: `openPicker` takes an optional
+            ticket key since HIVE-73, and handing it straight to `onClick` would
+            feed it the MouseEvent as that key — a picker headed "Start a
+            session for [object Object]". The header's button is the
+            no-ticket entry point, so it calls with no argument.
+          */
+          onClick={() => openPicker()}
           className="flex h-9 shrink-0 items-center rounded-full bg-brand-fill px-4 text-sm font-bold text-on-brand hover:bg-brand-fill-hover [-webkit-app-region:no-drag]"
         >
           New session

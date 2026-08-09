@@ -24,7 +24,16 @@ export interface Ticket {
    */
   statusCategory: JiraStatusCategory;
   title: string;
-  sessions: string[]; // session ids
+  /**
+   * There is deliberately **no `sessions` array here** (HIVE-73).
+   *
+   * It existed until the link became real, and it could not have survived it:
+   * `hydrateTickets` replaces this whole list on every WORK-panel open, so a
+   * list of session ids stored on the ticket would be wiped by the next
+   * refresh. The key lives on the *session* instead — `Session.ticket` — and
+   * the reverse direction is `useTicketSessions(key)`, a selector over the
+   * entities map. Derived, never stored, exactly one source of truth.
+   */
   /**
    * The Jira browse URL. Absent for fixtures, present for real issues.
    *
