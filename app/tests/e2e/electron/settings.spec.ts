@@ -110,7 +110,7 @@ test('adds a folder, shows it in the rail, and makes it spawnable', async ({}, t
 
     // …and the picker offers it as spawnable, which is the acceptance criterion
     // the whole story is named for.
-    await page.getByRole('button', { name: 'New session' }).click();
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
     const offered = page.getByRole('button', { name: /^scratch-repo/ }).first();
     await expect(offered).toBeVisible();
     await expect(offered).not.toContainText('unmapped');

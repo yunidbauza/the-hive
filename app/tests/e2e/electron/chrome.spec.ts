@@ -69,7 +69,7 @@ test('every control in the header stays clickable inside that drag region', asyn
 test('the New session button actually responds to a click', async ({ page }) => {
   // The end-to-end version of the assertion above: no-drag is only meaningful
   // if the click lands.
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
 
   await expect(page.getByText('Start a new session')).toBeVisible();
 });

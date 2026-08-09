@@ -91,14 +91,26 @@ describe('ProjectsPanel', () => {
     );
   });
 
-  /** The story's empty state: the row stays, the pill reads 0, no children. */
-  it('renders a project with no live sessions as a childless row', () => {
+  /**
+   * The story's empty state: the row stays, the pill reads 0, no session rows.
+   *
+   * This counted *buttons* until the tree grew a start link, which made the
+   * count 2 and the name "childless" wrong. Both were only ever standing in for
+   * the real claim — that no session is listed under a project running none —
+   * so the assertion now makes that claim directly instead of by arithmetic.
+   */
+  it('lists no sessions under a project running none', () => {
     render(<ProjectsPanel />);
 
     const row = projectToggle('infra-terraform');
     expect(row).toBeInTheDocument();
     expect(row).toHaveAttribute('aria-expanded', 'true');
-    expect(row.parentElement?.querySelectorAll('button')).toHaveLength(1);
+
+    const children = [...(row.parentElement?.children ?? [])].filter(
+      (child) => child !== row,
+    );
+    expect(children).toHaveLength(1);
+    expect(children[0]).toHaveAccessibleName('New session in infra-terraform');
   });
 
   it('starts expanded and hides the children once collapsed', async () => {

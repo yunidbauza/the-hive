@@ -75,7 +75,7 @@ test('a valid mapping makes its project spawnable and an unresolvable one unmapp
     // And the picker refuses the ones it cannot open. `exact` matters: a
     // pinned pill's accessible name is the bare id, while the search row below
     // it also carries a count ("apfm-web 3 active").
-    await page.getByRole('button', { name: 'New session' }).click();
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
     await expect(
       page.getByRole('button', { name: 'apfm-web', exact: true }),
     ).toBeEnabled();
@@ -156,7 +156,7 @@ test('a first run writes a template and offers a way to add a project', async ({
     expect(written.version).toBe(2);
     expect(written.projects).toEqual([]);
 
-    await page.getByRole('button', { name: 'New session' }).click();
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
 
     /**
      * Story 090 printed `configPath` here and story 101 replaced it with a

@@ -28,7 +28,10 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
   const session = isSession(entity) ? entity : null;
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-soft bg-panel px-4 py-2.5">
+    <div
+      data-testid="session-meta-bar"
+      className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-soft bg-panel px-4 py-2.5"
+    >
       {/*
         A native `title` rather than the Radix tooltip: the app mounts no
         TooltipProvider yet, and adding one to the root for a single affordance
