@@ -29,6 +29,19 @@ interface SegmentedControlProps<T extends string> {
   options: readonly SegmentedOption<T>[];
   value: T;
   onChange: (value: T) => void;
+  /**
+   * Greys the group out and refuses every interaction.
+   *
+   * Added for the editor's split-direction control, which is meaningless while
+   * placement is Full. Disabled rather than hidden: a control that appears the
+   * first time you pick an option makes that option feel like it did nothing,
+   * because the thing it enabled arrived somewhere the eye was not.
+   *
+   * The whole group goes at once — there is no per-option disable, because a
+   * radio group with one dead option is a set of choices that lies about its
+   * own size.
+   */
+  disabled?: boolean;
   className?: string;
 }
 
@@ -37,6 +50,7 @@ export function SegmentedControl<T extends string>({
   options,
   value,
   onChange,
+  disabled = false,
   className,
 }: SegmentedControlProps<T>) {
   const groupId = useId();
@@ -50,6 +64,7 @@ export function SegmentedControl<T extends string>({
    * announcing an option that is not the one in effect.
    */
   const move = (offset: number) => {
+    if (disabled) return;
     const index = options.findIndex((option) => option.value === value);
     const next = options[(index + offset + options.length) % options.length];
     onChange(next.value);
@@ -57,6 +72,7 @@ export function SegmentedControl<T extends string>({
   };
 
   const jump = (target: SegmentedOption<T>) => {
+    if (disabled) return;
     onChange(target.value);
     refs.current.get(target.value)?.focus();
   };
@@ -65,8 +81,10 @@ export function SegmentedControl<T extends string>({
     <div
       role="radiogroup"
       aria-label={label}
+      aria-disabled={disabled || undefined}
       className={cn(
         'inline-flex items-center gap-0.5 rounded-[7px] border border-border-soft bg-panel-2 p-0.5',
+        disabled && 'opacity-45',
         className,
       )}
     >
@@ -84,6 +102,7 @@ export function SegmentedControl<T extends string>({
             role="radio"
             id={`${groupId}-${option.value}`}
             aria-checked={selected}
+            disabled={disabled}
             // Roving tabindex: one stop for the whole group, not one per option.
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(option.value)}
@@ -117,6 +136,7 @@ export function SegmentedControl<T extends string>({
               selected
                 ? 'bg-active text-ink'
                 : 'text-muted hover:bg-hover hover:text-ink',
+              disabled && 'cursor-not-allowed hover:bg-transparent',
             )}
           >
             {option.label}

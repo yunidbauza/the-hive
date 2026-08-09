@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 
 import { AdvancedSection } from '@features/settings/components/advanced-section';
 import { AppearanceSection } from '@features/settings/components/appearance-section';
+import { EditorSection } from '@features/settings/components/editor-section';
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
 import { RuntimeSection } from '@features/settings/components/runtime-section';
@@ -55,6 +56,7 @@ const SECTIONS = [
   { id: 'projects', label: 'Projects' },
   { id: 'runtime', label: 'Runtime' },
   { id: 'appearance', label: 'Appearance' },
+  { id: 'editor', label: 'Editor' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'advanced', label: 'Advanced' },
 ] as const;
@@ -71,6 +73,7 @@ const PANES: Record<SectionId, ComponentType> = {
   projects: ProjectsSection,
   runtime: RuntimeSection,
   appearance: AppearanceSection,
+  editor: EditorSection,
   integrations: IntegrationsSection,
   advanced: AdvancedSection,
 };

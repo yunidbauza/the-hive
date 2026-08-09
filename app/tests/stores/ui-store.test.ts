@@ -189,3 +189,59 @@ describe('settings overlay (story 101)', () => {
     expect(useUiStore.getState().activeTab).toBe('orch');
   });
 });
+
+/**
+ * The explorer's view state.
+ *
+ * Which directories are open, and which repository the tree is rooted at while
+ * no session is. Both are facts about a panel, both die with the window — which
+ * is why they are here and not in `editor-store` beside the buffers.
+ */
+describe('the explorer tree', () => {
+  it('toggles a directory open and closed', () => {
+    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    expect(useUiStore.getState().explorerExpanded['apfm-web:src']).toBe(true);
+
+    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    expect(useUiStore.getState().explorerExpanded['apfm-web:src']).toBe(false);
+  });
+
+  /**
+   * Keyed by project as well as path, so returning to a repository finds it as
+   * it was left rather than inheriting whatever the last one had expanded.
+   */
+  it('keeps one project’s expansion separate from another’s', () => {
+    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+
+    expect(useUiStore.getState().explorerExpanded['referral-api:src']).toBeUndefined();
+  });
+
+  /**
+   * Everything, in every project. "Collapse all" that left another
+   * repository's tree open would surprise the user the next time they opened a
+   * session in it.
+   */
+  it('collapses every project at once', () => {
+    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    useUiStore.getState().toggleExplorerDir('referral-api', 'lib');
+
+    useUiStore.getState().collapseExplorer();
+
+    expect(useUiStore.getState().explorerExpanded).toEqual({});
+  });
+
+  it('remembers the project the tree was rooted at', () => {
+    useUiStore.getState().setExplorerProjectId('referral-api');
+    expect(useUiStore.getState().explorerProjectId).toBe('referral-api');
+  });
+
+  it('starts with nothing expanded and no sticky project', () => {
+    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    useUiStore.getState().setExplorerProjectId('apfm-web');
+
+    useUiStore.getState().reset();
+
+    expect(useUiStore.getState().explorerExpanded).toEqual({});
+    expect(useUiStore.getState().explorerProjectId).toBeNull();
+  });
+});

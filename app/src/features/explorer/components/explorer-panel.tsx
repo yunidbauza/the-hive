@@ -51,8 +51,19 @@ export function ExplorerPanel() {
   const [refreshToken, setRefreshToken] = useState(0);
   const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
 
+  /**
+   * Read once per render, before the hooks that depend on it.
+   *
+   * Not reactive, and does not need to be: a preload bridge either exists when
+   * the window loads or never does. It gates `usable` rather than only the
+   * early return below, because the hooks run before that return — without it
+   * the browser demo would fire a root read on every mount and throw the
+   * `ENOBRIDGE` answer away.
+   */
+  const bridge = hasFsBridge();
+
   const projectId = project?.id ?? null;
-  const usable = projectId !== null && access.spawnable;
+  const usable = bridge && projectId !== null && access.spawnable;
 
   const root = useDirectory(projectId ?? '', '', usable, refreshToken);
 
@@ -110,7 +121,7 @@ export function ExplorerPanel() {
    * either, so the projects list is empty and the message below would blame the
    * user for something they cannot fix.
    */
-  if (!hasFsBridge()) {
+  if (!bridge) {
     return (
       <div data-panel="explorer" className="flex flex-col gap-0.5">
         <EmptyState>The project explorer needs the desktop app.</EmptyState>

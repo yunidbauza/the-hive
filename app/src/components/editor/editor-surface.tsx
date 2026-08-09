@@ -128,6 +128,17 @@ export function EditorSurface({
     tabWidth,
   ].join('|');
 
+  /**
+   * The configuration the cached states were built with.
+   *
+   * Compared inside the effect rather than handled by a second effect with
+   * `[configKey]` as its dependency. A separate effect runs *after* this one,
+   * so the active state would already have been restored from the stale cache
+   * by the time the cache was cleared — and a font or read-only change would
+   * apply to every file except the one on screen.
+   */
+  const configRef = useRef(configKey);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -209,7 +220,18 @@ export function EditorSurface({
       extensions.push(EditorView.lineWrapping);
     }
 
-    const cached = statesRef.current.get(fileKey);
+    /**
+     * A configuration change invalidates **every** cached state, the active one
+     * included. Extensions are baked in at construction, so a state built with
+     * the old font would keep it — and be adopted the moment it was switched to.
+     */
+    const configChanged = configRef.current !== configKey;
+    if (configChanged) {
+      statesRef.current.clear();
+      configRef.current = configKey;
+    }
+
+    const cached = configChanged ? undefined : statesRef.current.get(fileKey);
 
     /**
      * Reuse the cached state only when its document still matches what the
@@ -231,7 +253,11 @@ export function EditorSurface({
      * exact file. Without this guard, every keystroke would rebuild the state
      * from the value it just produced and put the caret back at the start.
      */
-    if (activeKeyRef.current === fileKey && view.state.doc.toString() === value) {
+    if (
+      !configChanged &&
+      activeKeyRef.current === fileKey &&
+      view.state.doc.toString() === value
+    ) {
       return;
     }
 
@@ -240,14 +266,6 @@ export function EditorSurface({
     activeKeyRef.current = fileKey;
     view.setState(state);
   }, [fileKey, value, configKey, readOnly, fontFamily, fontSize, wordWrap, lineNumbers, tabWidth]);
-
-  /** A configuration change invalidates every cached state. See the header. */
-  useEffect(() => {
-    const active = activeKeyRef.current;
-    for (const key of [...statesRef.current.keys()]) {
-      if (key !== active) statesRef.current.delete(key);
-    }
-  }, [configKey]);
 
   /**
    * The grammar, once its chunk arrives.

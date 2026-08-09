@@ -22,7 +22,14 @@ import { useActiveFile, useEditorActions } from '@stores/editor-store';
  * second threshold to keep in step with the first.
  */
 
-const BYTES_PER_KB = 1024;
+/**
+ * Decimal, not binary.
+ *
+ * `MAX_FILE_BYTES` is 1,000,000 — a round decimal number — so a 1024-based
+ * formatter would render the cap itself as "977 KB" and make the refusal read
+ * as though the limit were somewhere else entirely.
+ */
+const BYTES_PER_KB = 1000;
 
 /** A size a person can read. Not `Intl` — this is two digits and a suffix. */
 function humanSize(bytes: number): string {

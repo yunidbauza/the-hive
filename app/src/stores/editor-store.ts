@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -388,15 +389,42 @@ export interface EditorTab {
   dirty: boolean;
 }
 
-const tabsSelector = (state: EditorState): EditorTab[] =>
-  state.openFiles.map((file) => ({
-    key: file.key,
-    name: file.name,
-    relPath: file.relPath,
-    dirty: file.dirty,
-  }));
+/**
+ * Encoded as strings, then parsed back — not selected as objects.
+ *
+ * `useShallow` compares the selected value one level deep. A selector returning
+ * an array of freshly-built objects therefore compares *unequal every time*,
+ * because each element is a new reference: the hook re-renders, re-selects,
+ * builds new objects again, and React tears the component down with "Maximum
+ * update depth exceeded". Selecting an array of strings gives `useShallow`
+ * something it can actually compare, so the strip re-renders when a tab is
+ * opened, closed, renamed or dirtied — and not on every keystroke inside one.
+ *
+ * NUL as the separator, because a filename may legitimately contain anything
+ * else — spaces very much included. `assertRelPath` rejects control characters,
+ * which makes this the one byte guaranteed absent from every field joined here.
+ */
+const TAB_FIELD_SEPARATOR = '\u0000';
 
-export const useEditorTabs = () => useEditorStore(useShallow(tabsSelector));
+const tabFieldsSelector = (state: EditorState): string[] =>
+  state.openFiles.map((file) =>
+    [file.key, file.name, file.relPath, file.dirty ? '1' : '0'].join(
+      TAB_FIELD_SEPARATOR,
+    ),
+  );
+
+export const useEditorTabs = (): EditorTab[] => {
+  const encoded = useEditorStore(useShallow(tabFieldsSelector));
+
+  return useMemo(
+    () =>
+      encoded.map((entry) => {
+        const [key, name, relPath, dirty] = entry.split(TAB_FIELD_SEPARATOR);
+        return { key, name, relPath, dirty: dirty === '1' };
+      }),
+    [encoded],
+  );
+};
 
 /** Which file is on screen, or `null` for the terminal. */
 export const useActiveFileKey = () => useEditorStore((state) => state.activeKey);
