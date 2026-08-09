@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -48,6 +48,68 @@ describe('PrCard', () => {
 
     rerender(<PrCard pr={pr({ state: 'draft' })} />);
     expect(container.querySelector('svg')).toHaveClass('text-subtle');
+  });
+
+  /**
+   * The surface, not just the badge, says whether the PR still wants something.
+   *
+   * A column of merged PRs with two open ones in it is the ordinary case; the
+   * raised fill is what makes those two findable without reading every badge.
+   */
+  describe('raised surface for live PRs', () => {
+    const surfaceOf = (state: Pr['state']) => {
+      const { container } = render(<PrCard pr={pr({ state })} />);
+      return container.firstElementChild;
+    };
+
+    it.each(['open', 'approved', 'draft'] as const)(
+      'raises a %s PR onto the chip surface',
+      (state) => {
+        expect(surfaceOf(state)).toHaveClass('bg-chip', 'border-border');
+      },
+    );
+
+    it('leaves a merged PR on the flat card', () => {
+      const card = surfaceOf('merged');
+
+      expect(card).toHaveClass('border-border-soft');
+      expect(card).not.toHaveClass('bg-chip');
+    });
+
+    /**
+     * The fill is calibrated against the panel, and so is `bg-hover` — which
+     * lands *under* a chip fill. A live card sharing it would answer the
+     * pointer by going flat, on the cards most likely to be clicked.
+     */
+    it('hovers a live card up rather than back toward the panel', () => {
+      expect(surfaceOf('open')).toHaveClass('hover:bg-chip-hover');
+      expect(surfaceOf('merged')).toHaveClass('hover:bg-hover');
+    });
+
+    /**
+     * `Tag` fills with the same `--cc-chip` the live card does. Left alone, the
+     * badges would keep their shape only on merged cards — the exact inversion
+     * of what the raised surface is for.
+     */
+    it('keeps the badges legible as pills on a live card', () => {
+      render(<PrCard pr={pr({ state: 'draft', findings: 0 })} />);
+      expect(screen.getByText('draft')).toHaveClass('bg-panel');
+    });
+
+    it('leaves merged badges on the default chip fill', () => {
+      render(<PrCard pr={pr({ state: 'merged', findings: 0 })} />);
+      expect(screen.getByText('merged')).toHaveClass('bg-chip');
+    });
+
+    /** `subtle` at 10.5px falls under 3:1 on the raised fill in light mode. */
+    it('lifts the repo line off subtle on a live card', () => {
+      render(<PrCard pr={pr({ state: 'open' })} />);
+      expect(screen.getByText('apfm-web')).toHaveClass('text-muted');
+
+      cleanup();
+      render(<PrCard pr={pr({ state: 'merged' })} />);
+      expect(screen.getByText('apfm-web')).toHaveClass('text-subtle');
+    });
   });
 
   /**

@@ -32,6 +32,18 @@
   --cc-amber: #ffac47;
   --cc-red: #ff8d85;
   --cc-chip: #1c2648;
+  /**
+   * Hover for a card already filled with `--cc-chip` — the PRs panel's live
+   * cards (052).
+   *
+   * `--cc-hover` cannot serve: it is calibrated against `--cc-panel`, and on a
+   * chip fill it lands *below* the surface it is meant to lift (#1b2344 under
+   * #1c2648), so the affordance reads as a faint darkening or vanishes. This
+   * continues the lift in the direction the theme already lifts — brighter in
+   * dark, deeper in light — so a filled card answers the pointer the way a flat
+   * one does.
+   */
+  --cc-chip-hover: #232e57;
   --cc-term-bg: #0b1023;
   --cc-term-input: #0e1430;
 
@@ -164,6 +176,9 @@ body[data-theme='light'] {
   --cc-amber: #c77414;
   --cc-red: #d3372f;
   --cc-chip: #edf2f4;
+  /* Light lifts by *deepening*: the chip already sits below a white panel, so
+     its hover continues down rather than back up toward the panel. */
+  --cc-chip-hover: #e2eaee;
 
   /* --cc-term-bg / --cc-term-input intentionally stay dark: the terminal keeps
      its dark background in light mode, like the concept and most real tools. */
@@ -214,6 +229,7 @@ body[data-theme='light'] {
   --color-amber: var(--cc-amber);
   --color-red: var(--cc-red);
   --color-chip: var(--cc-chip);
+  --color-chip-hover: var(--cc-chip-hover);
   --color-term-bg: var(--cc-term-bg);
   --color-term-input: var(--cc-term-input);
   --color-term-row-hover: var(--cc-term-row-hover);

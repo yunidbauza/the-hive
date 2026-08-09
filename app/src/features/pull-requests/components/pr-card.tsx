@@ -45,10 +45,38 @@ interface PrCardProps {
  * The badge row comes from `composeBadges` in `features/shared` rather than
  * from local `if`s, so the rules cannot drift from the colours the work panel
  * (032) paints the same PRs with.
+ *
+ * ## Why merged cards sit lower than the rest
+ *
+ * The list is dominated by merged PRs — they accumulate, and the ones a user
+ * still has to do something about are the minority scattered among them. When
+ * every card shares one flat surface, finding those means reading each badge in
+ * turn, which is the work the panel is supposed to save.
+ *
+ * So the surface carries the state too: draft, open and approved get the raised
+ * `chip` fill and the stronger border, merged keeps the flat `border-soft` card.
+ * This is the inbox's unread-vs-read treatment (`notification-card.tsx`) applied
+ * to the same question — "does this still want me?" — and reusing it rather than
+ * inventing a second visual language is the point.
+ *
+ * Two things have to move *with* the fill rather than stay shared, because both
+ * are calibrated against the flat panel and neither survives the lift:
+ *
+ * - **the badges.** `Tag`'s fill is `--cc-chip`, the same colour as the raised
+ *   card, so on a live card the pills would flatten into bare coloured text —
+ *   leaving merged cards as the only ones whose badges still had a shape, which
+ *   is precisely backwards. `surface="raised"` drops them to `--cc-panel`, so
+ *   they read as cut into the card.
+ * - **the hover**, and the repo line's ink; see the two comments below.
+ *
+ * The inbox needed none of this: its cards carry no `Tag`s, and its hover flaw
+ * is real but latent. Copying the fill alone would have copied a treatment that
+ * was never asked to hold a badge row.
  */
 export function PrCard({ pr }: PrCardProps) {
   const openEntity = useOpenEntity();
   const badges = composeBadges(pr);
+  const isLive = pr.state !== 'merged';
 
   const openSession = () => {
     if (pr.session !== null) {
@@ -61,7 +89,22 @@ export function PrCard({ pr }: PrCardProps) {
   };
 
   return (
-    <div className="relative rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)] hover:bg-hover">
+    <div
+      className={cn(
+        'relative rounded-xl border px-3 py-[var(--cc-card-py)]',
+        // Live PRs sit on the raised chip surface; merged ones fall back to the
+        // flat card. Same device the inbox uses for unread vs read, and for the
+        // same reason: in a column where most cards have landed, the ones still
+        // wanting something have to be findable without reading a badge.
+        //
+        // The hover pairs with the fill rather than being shared: `bg-hover` is
+        // calibrated against the panel and lands *under* a chip fill, so a live
+        // card would answer the pointer by going flat.
+        isLive
+          ? 'border-border bg-chip hover:bg-chip-hover'
+          : 'border-border-soft hover:bg-hover',
+      )}
+    >
       {/*
         The primary target. First in the DOM so it is also first in the tab
         order: "open the session" is what the panel is for, and the link is the
@@ -108,7 +151,17 @@ export function PrCard({ pr }: PrCardProps) {
             </span>
           </span>
 
-          <span className="pt-px pb-1.5 font-mono text-[10.5px] text-subtle">
+          {/*
+            `subtle` at 10.5px is already thin against the panel; on the raised
+            fill it drops under 3:1 in light mode. `muted` buys back the step the
+            fill costs, on the cards the panel is trying to draw the eye to.
+          */}
+          <span
+            className={cn(
+              'pt-px pb-1.5 font-mono text-[10.5px]',
+              isLive ? 'text-muted' : 'text-subtle',
+            )}
+          >
             {pr.repo}
           </span>
 
@@ -120,7 +173,11 @@ export function PrCard({ pr }: PrCardProps) {
           */}
           <span className="flex flex-wrap gap-1.5">
             {badges.map((badge) => (
-              <Tag key={badge.text} tone={badge.tone}>
+              <Tag
+                key={badge.text}
+                tone={badge.tone}
+                surface={isLive ? 'raised' : 'panel'}
+              >
                 {badge.text}
               </Tag>
             ))}
