@@ -20,6 +20,7 @@ const pr = (over: Partial<TicketPr> = {}): TicketPr => ({
   repo: 'apfm-web',
   state: 'open',
   findings: 0,
+  url: 'https://github.com/demo/apfm-web/pull/482',
   session: 'hero-refresh',
   ...over,
 });
@@ -72,5 +73,23 @@ describe('TicketPrRow', () => {
     await userEvent.click(screen.getByRole('button'));
 
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+  });
+
+  /**
+   * With no session on the branch there is no terminal to open, so the row
+   * becomes a link to the PR itself — a `<a>` and not a button, because the
+   * destination is a page and that is what a middle click and a screen reader
+   * both expect.
+   */
+  it('links to GitHub when no session matched', () => {
+    render(<TicketPrRow pr={pr({ session: null })} />);
+
+    const link = screen.getByRole('link', { name: 'Open PR #482 on GitHub' });
+
+    expect(link).toHaveAttribute(
+      'href',
+      'https://github.com/demo/apfm-web/pull/482',
+    );
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@ import type { Agent, Entity, Project, Session } from '@/types/entity';
 import type { TermColor, TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 import { emptySnapshot } from '@shared/config-contract';
+import type { PrRecord } from '@shared/github-contract';
 
 import { setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
@@ -339,10 +340,16 @@ function createAgents(): Agent[] {
 /**
  * The slices this fleet supplies.
  *
- * Exactly the six the app stopped seeding. `prs`, `notifs` and `feed` are
- * absent because the app still seeds those itself from `src/data/fixtures.ts` —
- * duplicating them here would give a test two sources for one list and no way
- * to tell which one it was asserting against.
+ * `prs` joined them when GitHub became the producer: the app no longer seeds a
+ * PR list, so a test that needs one has to say so. They are declared here rather
+ * than in each test because their **branches are the link** — `feat/hero-refresh`
+ * is what ties PR #482 to the `hero-refresh` session and, through it, to ticket
+ * GRAC-3018. A test writing its own would have to re-derive that mapping to
+ * assert anything at all.
+ *
+ * `notifs` and `feed` are still absent, because the app does still seed those
+ * from `src/data/fixtures.ts` — duplicating them here would give a test two
+ * sources for one list and no way to tell which it was asserting against.
  */
 export interface DemoFleet {
   entities: Record<string, Entity>;
@@ -350,6 +357,7 @@ export interface DemoFleet {
   agentOrder: string[];
   projects: Project[];
   tickets: Ticket[];
+  prs: PrRecord[];
   orchLines: TermLine[];
 }
 
@@ -435,6 +443,75 @@ export function createDemoFleet(): DemoFleet {
         title: 'ECS autoscaling policies',
       },
     ],
+    /*
+      The four PRs the panels assert against, each on a branch one of the
+      sessions above is working. They were `src/data/fixtures.ts`'s `prs` array
+      until GitHub started feeding that slice for real; the shape changed with
+      them — `number` rather than `n`, plus the `branch` and `url` the live
+      records carry.
+    */
+    prs: [
+      {
+        number: 482,
+        title: 'Hero: semantic token refactor',
+        url: 'https://github.com/demo/apfm-web/pull/482',
+        repo: 'apfm-web',
+        owner: 'demo',
+        branch: 'feat/hero-refresh',
+        state: 'open',
+        findings: 2,
+        checks: 'passing',
+        updatedAt: '2026-08-09T14:37:00Z',
+      },
+      {
+        number: 219,
+        title: 'Partner webhooks + retries',
+        url: 'https://github.com/demo/referral-api/pull/219',
+        repo: 'referral-api',
+        owner: 'demo',
+        branch: 'feat/partner-webhooks',
+        state: 'approved',
+        findings: 0,
+        checks: 'passing',
+        updatedAt: '2026-08-09T14:20:00Z',
+      },
+      {
+        number: 495,
+        title: 'Dark-mode token ramp',
+        url: 'https://github.com/demo/design-system/pull/495',
+        repo: 'design-system',
+        owner: 'demo',
+        branch: 'feat/dark-tokens',
+        state: 'draft',
+        findings: 0,
+        checks: 'running',
+        updatedAt: '2026-08-09T13:58:00Z',
+      },
+      {
+        number: 31,
+        title: 'ECS autoscaling policies',
+        url: 'https://github.com/demo/infra-terraform/pull/31',
+        repo: 'infra-terraform',
+        owner: 'demo',
+        branch: 'chore/ecs-autoscaling',
+        state: 'merged',
+        findings: 0,
+        checks: 'passing',
+        updatedAt: '2026-08-09T09:14:00Z',
+      },
+      {
+        number: 77,
+        title: 'Tour timezone fix',
+        url: 'https://github.com/demo/advisor-portal/pull/77',
+        repo: 'advisor-portal',
+        owner: 'demo',
+        branch: 'fix/timezone-bug',
+        state: 'merged',
+        findings: 0,
+        checks: 'passing',
+        updatedAt: '2026-08-09T11:02:00Z',
+      },
+    ],
     orchLines: [
       line('maestro v0.4.2 — orchestrator console · host devbox-01', 'dim'),
       line('✓ connected — 10 sessions · 3 agents · single machine', 'green'),
@@ -449,14 +526,13 @@ export function createDemoFleet(): DemoFleet {
  * Call it *after* `reset()`, not instead of it: `reset()` also clears the spawn
  * counter and the fake clock, which this does not touch.
  *
- * `setState` merges by default, so the three slices the app still seeds
- * (`prs`, `notifs`, `feed`) survive untouched — which is what keeps the PR rows
- * inside a ticket card resolvable, since those PRs name these sessions.
+ * `setState` merges by default, so the two slices the app still seeds
+ * (`notifs`, `feed`) survive untouched.
  *
- * `ticketSource` is set to `live` because that is what a store holding real
- * tickets *means* now. Left at its boot value of `loading`, every panel test
- * would render the skeleton and assert against tickets that are deliberately
- * not on screen yet.
+ * `ticketSource` and `prSource` are set to `live` because that is what a store
+ * holding real tickets and real PRs *means* now. Left at their boot value of
+ * `loading`, every panel test would render a skeleton and assert against rows
+ * that are deliberately not on screen yet.
  */
 export function seedDemoFleet(): DemoFleet {
   const fleet = createDemoFleet();
@@ -470,6 +546,7 @@ export function seedDemoFleet(): DemoFleet {
   useHiveStore.setState({
     ...storeSlices,
     ticketSource: { kind: 'live', stale: false, capped: false },
+    prSource: { kind: 'live', stale: false, repos: 5 },
   });
   return fleet;
 }

@@ -42,6 +42,7 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
+import type { GhResult, PrsSnapshot } from './github-contract';
 import type {
   JiraComment,
   JiraIdentity,
@@ -171,6 +172,17 @@ export const CH = {
   jiraComments: 'jira:comments',
   jiraLinks: 'jira:links',
   jiraAddComment: 'jira:add-comment',
+  /**
+   * The pull requests the configured repositories hold.
+   *
+   * **Takes no payload at all**, which is the security design and not an
+   * omission — the same one `integrations:status` uses. This handler executes a
+   * binary, and what makes that safe is that nothing from the renderer reaches
+   * the argv: the repositories come from the config file, and the GraphQL
+   * document is a constant shape whose only inputs are bound variables. A
+   * renderer cannot name a repository, a host, or a flag.
+   */
+  githubPrs: 'github:prs',
   notificationsActivate: 'notifications:activate', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
@@ -648,6 +660,20 @@ export interface HiveBridge {
     status(): Promise<IntegrationsStatus>;
   };
   /**
+   * GitHub, read-only.
+   *
+   * One verb, no arguments, and both facts are the security design. What a web
+   * page can now do that it could not before: learn which pull requests the
+   * account behind this machine's `gh` has open in the *configured* project
+   * repositories. What it still cannot do: name a repository, name a host,
+   * reach a repository the config does not list, or obtain a token — there is
+   * no verb for any of it, and the argv `gh` receives contains nothing that
+   * arrived over IPC.
+   */
+  github: {
+    prs(): Promise<GhResult<PrsSnapshot>>;
+  };
+  /**
    * Jira (HIVE-67).
    *
    * Read the credential *state*, write a token, clear one, and test the
@@ -788,6 +814,7 @@ export const RESIZE_THROTTLE_MS = 50;
 export const BRIDGE_KEYS = [
   'appInfo',
   'config',
+  'github',
   'integrations',
   'jira',
   'notifications',
@@ -800,6 +827,16 @@ export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName', 'onCleared'] as const;
 
 /** The exact key set of `window.hive.integrations`. */
 export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
+
+/**
+ * The exact key set of `window.hive.github`.
+ *
+ * One. A second verb that took a repository name would be the addition this
+ * list exists to make impossible to add quietly: it would turn a bounded read
+ * of the user's own configured projects into a general-purpose GitHub client
+ * driven by the renderer.
+ */
+export const BRIDGE_GITHUB_KEYS = ['prs'] as const;
 
 /**
  * The exact key set of `window.hive.jira` (HIVE-67).

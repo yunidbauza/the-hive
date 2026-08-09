@@ -17,6 +17,7 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
 } from '@shared/config-contract';
+import type { GhResult, PrsSnapshot } from '@shared/github-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
@@ -78,6 +79,8 @@ import {
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { createHookRuntime } from '../hooks';
 import { readGhStatus, runCommand } from '../integrations/gh';
+import { createGithub } from '../integrations/github';
+import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
 import { createNotifier } from '../notifications';
@@ -468,6 +471,32 @@ export function registerIpcHandlers(): void {
     config: getConfig,
     fetch: (url, init) => globalThis.fetch(url, init),
   });
+
+  /**
+   * The PR poller's read — the app's second handler that executes a binary,
+   * and the first that does so on a timer.
+   *
+   * Same security design as `integrations:status`: **no payload**, so there is
+   * no argv to inject into. What it adds is a cwd and a set of GraphQL
+   * variables, and both come from the config file rather than the renderer —
+   * see `integrations/github/query.ts` for why the repository names are bound
+   * variables and never concatenated into the document.
+   *
+   * Asynchronous, unlike `integrations:status`. That one runs when a settings
+   * pane opens; this one runs every minute for as long as the app is open, and
+   * a `spawnSync` on that schedule would stall every pty chunk and every window
+   * event behind it.
+   */
+  const github = createGithub({
+    config: getConfig,
+    // The same merge `integrations:status` makes, for the same reason: what is
+    // reported has to be what would actually run.
+    env: () => ({ ...process.env, ...effectiveRuntime(getConfig(), null).env }),
+    run: runAsync,
+    now: () => Date.now(),
+  });
+
+  handle(CH.githubPrs, (): Promise<GhResult<PrsSnapshot>> => github.prs());
 
   handle(CH.jiraStatus, (): JiraStatus => jira.status());
   handle(CH.jiraSetToken, (_event, payload): JiraStatus =>

@@ -24,6 +24,7 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
+import type { GhResult, PrsSnapshot } from '@shared/github-contract';
 import {
   CH,
   type AckRequest,
@@ -197,6 +198,11 @@ const bridge: HiveBridge = {
   integrations: {
     status: (): Promise<IntegrationsStatus> =>
       ipcRenderer.invoke(CH.integrationsStatus),
+  },
+  // One verb, no argument. Like `integrations.status`, the absent parameter
+  // list is what makes a handler that executes a binary safe to expose.
+  github: {
+    prs: (): Promise<GhResult<PrsSnapshot>> => ipcRenderer.invoke(CH.githubPrs),
   },
   /*
     HIVE-67. Four verbs, and none of them returns a token — see the contract for

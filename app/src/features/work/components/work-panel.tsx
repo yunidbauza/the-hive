@@ -1,6 +1,8 @@
 import { ArrowClockwise } from '@phosphor-icons/react';
 import { useEffect } from 'react';
 
+import { usePrRefresh } from '@/hooks/use-pr-refresh';
+
 import { TicketCard } from '@features/work/components/ticket-card';
 import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
 import {
@@ -121,6 +123,19 @@ export function WorkPanel() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /*
+    The PR half of a ticket card is polled, unlike the ticket itself.
+
+    The asymmetry is deliberate and it is about what actually changes. A Jira
+    issue moves when a human moves it, which is roughly never while the panel is
+    open — one read on open is the right cost. A PR's state moves without anyone
+    touching this app: CI finishes, a reviewer approves, a bot leaves findings.
+    Those are the things a card is worth watching for, so the PR rows share the
+    minute poller with the PRS panel — and closing that tab does not stop them
+    updating, because this subscription is its own.
+  */
+  usePrRefresh();
 
   const retry = () => {
     void refresh();

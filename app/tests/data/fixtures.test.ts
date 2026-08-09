@@ -11,15 +11,16 @@ import { createInitialState } from '@/data/fixtures';
  * mattered because the dataset was loaded into the store at boot and was
  * therefore what the user saw.
  *
- * Six of those slices are gone. Sessions, agents, projects, tickets and the
- * orchestrator banner now come from PTYs, the config file and Jira, so the
+ * Seven of those slices are gone. Sessions, agents, projects, tickets and the
+ * orchestrator banner now come from PTYs, the config file and Jira, and `prs`
+ * comes from a `gh` sweep of the configured repositories — so the
  * cross-references that held the dataset together no longer have two ends: the
- * PRs and notifications below name sessions that will not exist until a user
- * starts one. That is accepted and deliberate — those three slices have no live
- * producer yet, and an empty PR panel with no path to filling it would be a
- * worse lie than a stale sample row.
+ * notifications below name sessions that will not exist until a user starts
+ * one. That is accepted and deliberate — the two slices left have no live
+ * producer yet, and an empty inbox with no path to filling it would be a worse
+ * lie than a stale sample row.
  *
- * So the assertions changed shape. What is tested now is the *boundary*: three
+ * So the assertions changed shape. What is tested now is the *boundary*: two
  * slices, no more, and no seeded fleet hiding behind them.
  */
 describe('createInitialState', () => {
@@ -34,8 +35,8 @@ describe('createInitialState', () => {
 
     expect(first).toEqual(second);
     expect(first).not.toBe(second);
-    expect(first.prs).not.toBe(second.prs);
-    expect(first.prs[0]).not.toBe(second.prs[0]);
+    expect(first.notifs).not.toBe(second.notifs);
+    expect(first.notifs[0]).not.toBe(second.notifs[0]);
   });
 
   it('does not share nested arrays between calls', () => {
@@ -63,20 +64,19 @@ describe('createInitialState', () => {
    * started, a projects tree listing repositories nobody mapped, and eight
    * sample tickets painted for a frame before the real Jira read replaced them.
    */
-  it('seeds exactly three slices, and no fleet', () => {
+  it('seeds exactly two slices, and no fleet', () => {
     const state = createInitialState();
 
-    expect(Object.keys(state).sort()).toEqual(['feed', 'notifs', 'prs']);
+    expect(Object.keys(state).sort()).toEqual(['feed', 'notifs']);
 
-    for (const slice of ['entities', 'order', 'agentOrder', 'projects', 'tickets', 'orchLines']) {
+    for (const slice of ['entities', 'order', 'agentOrder', 'projects', 'tickets', 'prs', 'orchLines']) {
       expect(state).not.toHaveProperty(slice);
     }
   });
 
-  it('still supplies the three panels that have no live producer', () => {
+  it('still supplies the two panels that have no live producer', () => {
     const state = createInitialState();
 
-    expect(state.prs.length).toBeGreaterThan(0);
     expect(state.notifs.length).toBeGreaterThan(0);
     expect(state.feed.length).toBeGreaterThan(0);
   });

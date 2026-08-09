@@ -23,7 +23,13 @@ describe('WorkPanel', () => {
      * cases are about how a ticket *renders*, not where it came from;
      * `work-panel.states.test.tsx` owns the source states.
      */
-    useHiveStore.setState({ refreshTickets: () => Promise.resolve() });
+    useHiveStore.setState({
+      refreshTickets: () => Promise.resolve(),
+      // The panel now shares the PR poller with the PRS tab, and the real sweep
+      // settles on `unconfigured` here — which would clear the seeded PRs the
+      // ticket cards resolve against.
+      refreshPrs: () => Promise.resolve(),
+    });
     useUiStore.getState().reset();
   });
 
@@ -129,10 +135,13 @@ describe('WorkPanel', () => {
   });
 
   /**
-   * The fallback the selector was rewritten for: #31 is on `ecs-scaling` but
-   * absent from the global list, and must still appear.
+   * A finished session still shows its PR.
+   *
+   * `ecs-scaling` is `done`, and #31 is on its branch. The row is the record
+   * that the work landed, so a ticket card that dropped it the moment the
+   * terminal closed would lose the one thing a completed ticket has to show.
    */
-  it('shows a PR the global list does not know', () => {
+  it('shows a merged PR from an ended session', () => {
     render(<WorkPanel />);
 
     const ticket = within(card('GRAC-2954'));
@@ -208,7 +217,9 @@ describe('WorkPanel', () => {
 
     act(() => {
       useHiveStore.setState((state) => ({
-        prs: state.prs.map((pr) => (pr.n === 482 ? { ...pr, findings: 5 } : pr)),
+        prs: state.prs.map((pr) =>
+          pr.number === 482 ? { ...pr, findings: 5 } : pr,
+        ),
       }));
     });
 

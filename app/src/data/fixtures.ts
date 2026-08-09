@@ -1,6 +1,5 @@
 import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
-import type { Pr } from '@/types/pull-request';
 
 /**
  * What the app still seeds at boot, and why it is only three arrays.
@@ -15,25 +14,30 @@ import type { Pr } from '@/types/pull-request';
  * for a frame before the Jira read replaced it — both of which read as bugs
  * because they were.
  *
- * What remains is the three slices with no live source yet. `prs`, `notifs` and
- * `feed` are seeded because nothing produces them: there is no PR poller, no
- * notification producer and no event stream. Emptying them would leave three
- * panels permanently blank with no path to filling them, which is a worse lie
- * than stale sample rows.
+ * What remains is the two slices with no live source yet. `notifs` and `feed`
+ * are seeded because nothing produces them: there is no notification producer
+ * and no event stream. Emptying them would leave two panels permanently blank
+ * with no path to filling them, which is a worse lie than stale sample rows.
  *
- * They are **knowingly stale**, and the consequence is precise enough to write
- * down. Their `session` and `target` fields name sessions (`hero-refresh`,
- * `lead-form`) that no longer exist in any store. `openEntity` passes an unknown
- * id through by design — it refuses *ended* sessions, and an id it has never
- * heard of is not one — so clicking one of these rows sets `activeTab` to a
- * phantom id, `resolve-view` routes back to the orchestrator, and `markRead`
+ * **`prs` used to be here and is gone.** GitHub feeds that panel now — a sweep
+ * of the configured project repositories through `gh`, on a poll — so a seeded
+ * PR would be a fourth sample row sitting above a user's real ones, claiming a
+ * repository they do not have. That is exactly the flash the seeded tickets
+ * caused before HIVE-69 removed them.
+ *
+ * The two that remain are **knowingly stale**, and the consequence is precise
+ * enough to write down. Their `target` fields name sessions (`lead-form`,
+ * `call-notes`) that no longer exist in any store. `openEntity` passes an
+ * unknown id through by design — it refuses *ended* sessions, and an id it has
+ * never heard of is not one — so clicking one of these rows sets `activeTab` to
+ * a phantom id, `resolve-view` routes back to the orchestrator, and `markRead`
  * still fires: the badge drops and nothing opens.
  *
  * That was an explicit call, not an oversight. The alternative — making the rows
  * non-interactive — would freeze a panel that is due to become real, and the
  * click still does the one useful thing it can, which is dismiss the row. Each
- * of these three dies the day something real feeds it, and this file dies with
- * the last of them.
+ * of these two dies the day something real feeds it, and this file dies with the
+ * last of them.
  *
  * Nothing outside `src/stores/` may import this module — enforced by an import
  * zone (story 014), not by review. Panels read derived state through selector
@@ -42,7 +46,6 @@ import type { Pr } from '@/types/pull-request';
 
 /** The slices that still have no live producer. */
 export interface InitialState {
-  prs: Pr[];
   notifs: Notification[];
   feed: FeedItem[];
 }
@@ -53,44 +56,6 @@ export interface InitialState {
  */
 export function createInitialState(): InitialState {
   return {
-    prs: [
-      {
-        n: 482,
-        repo: 'apfm-web',
-        title: 'Hero: semantic token refactor',
-        state: 'open',
-        findings: 2,
-        checks: 'passing',
-        session: 'hero-refresh',
-      },
-      {
-        n: 219,
-        repo: 'referral-api',
-        title: 'Partner webhooks + retries',
-        state: 'approved',
-        findings: 0,
-        checks: 'passing',
-        session: 'webhooks',
-      },
-      {
-        n: 495,
-        repo: 'design-system',
-        title: 'Dark-mode token ramp',
-        state: 'draft',
-        findings: 0,
-        checks: 'running',
-        session: 'dark-tokens',
-      },
-      {
-        n: 77,
-        repo: 'advisor-portal',
-        title: 'Tour timezone fix',
-        state: 'merged',
-        findings: 0,
-        checks: 'passing',
-        session: 'tz-fix',
-      },
-    ],
     notifs: [
       {
         icon: 'ph-hand-palm',

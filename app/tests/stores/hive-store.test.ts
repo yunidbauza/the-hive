@@ -70,7 +70,7 @@ describe('hive-store', () => {
       expect(state.order).toHaveLength(10);
       expect(state.agentOrder).toHaveLength(3);
       expect(state.tickets).toHaveLength(8);
-      expect(state.prs).toHaveLength(4);
+      expect(state.prs).toHaveLength(5);
       expect(state.notifs).toHaveLength(5);
       expect(state.feed).toHaveLength(7);
       expect(state.orchLines).toHaveLength(3);

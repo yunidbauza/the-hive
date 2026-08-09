@@ -7,6 +7,8 @@ export type PrChecks = 'passing' | 'running' | 'failing';
  * `state` is wider than `Session['pr'].state`: the panel distinguishes
  * `approved` from `open`, while a session only tracks whether its PR exists and
  * whether it has landed.
+ *
+ * The fields come from GitHub through `PrRecord`, except `session` — see below.
  */
 export interface Pr {
   n: number;
@@ -15,22 +17,39 @@ export interface Pr {
   state: PrListState;
   findings: number;
   checks: PrChecks;
-  session: string; // owning session id
+  /** The GitHub page. Every surface that opens a PR externally opens this. */
+  url: string;
+  /** `headRefName`. The only thing a session is matched on. */
+  branch: string;
+  /**
+   * The session that owns it, or `null` when no live session is on that branch.
+   *
+   * **Resolved, never stored.** Main has no idea what a session is, so this is
+   * computed by `usePrs()` from a branch match against the fleet. `null` is the
+   * ordinary case for a PR raised outside the app, or one whose session has
+   * ended — and it is why every surface has a fallback action rather than
+   * assuming there is a tab to open.
+   */
+  session: string | null;
 }
 
 /**
- * A PR as reached through a ticket's sessions (story 032).
+ * A PR as reached through a Jira ticket (story 032).
  *
- * Distinct from `Pr` because it is *resolved*, not stored: `state` and
- * `findings` come from the global `prs` list when that list knows the number,
- * and fall back to the owning session's own `pr` field when it does not. Fixture
- * PR #31 exercises the fallback — `ecs-scaling` carries it, the global list does
- * not.
+ * Distinct from `Pr` because it is *resolved*, not stored, and because the
+ * ticket row shows less: no title, since the ticket above it already says what
+ * the work is.
+ *
+ * It used to be resolved from `Session.pr` — a field nothing ever set, which is
+ * why the section was permanently empty. It now comes from the live PR list,
+ * matched to the ticket by branch and then by key; see `resolveTicketPrs`.
  */
 export interface TicketPr {
   n: number;
   repo: string;
   state: PrListState;
   findings: number;
-  session: string; // owning session id, for openTab
+  url: string;
+  /** Owning session id, for `openEntity` — `null` when nothing matched. */
+  session: string | null;
 }
