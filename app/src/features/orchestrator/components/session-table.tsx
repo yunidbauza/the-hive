@@ -19,7 +19,7 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  * edited together or the columns silently stopped lining up, which is the one
  * defect a table cannot survive. Now a width can only be changed in one place.
  *
- * ## Why the two text columns are proportional rather than fixed
+ * ## Why the three text columns are proportional rather than fixed
  *
  * `SESSION` used to be `basis-[130px]`, sized for ids like `hero-refresh` when
  * every session came from a fixture. Real names come from the *agent* now
@@ -27,17 +27,39 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  * they are sentences like `completion-task-cleanup` — and 130px truncated them
  * to an ellipsis while a third of the table sat empty to their right.
  *
- * Both variable-width columns now share the leftover space, 2:3. `PROJECT ·
- * BRANCH` takes the larger share because it is two values joined, and it is the
- * one that grows with deep branch names. The floors matter as much as the
- * ratio: below them the columns truncate rather than collapsing to nothing,
+ * The variable-width columns share the leftover space, 2:1:2. `BRANCH` takes as
+ * much as `SESSION` because it is the value that grows with deep branch names;
+ * `PROJECT` is a short slug and takes half of that. The floors matter as much as
+ * the ratio: below them the columns truncate rather than collapsing to nothing,
  * which is what keeps the table readable in a narrow window.
+ *
+ * **The floors have a hard ceiling, and it is not a matter of taste.** Splitting
+ * `PROJECT · BRANCH` in two added a second floor *and* a second `gap-2.5`, and
+ * the first draft of this map (100/120) spent 90px more than the joined cell
+ * did. That is enough to overflow the center stage at `MIN_WINDOW_SIZE` (1100px,
+ * `electron/shared/window.ts`) in comfortable density, where the two rails leave
+ * it 516px: the scroll container is `overflow-y-auto`, so `overflow-x` resolves
+ * to `auto` and the table grows a horizontal scrollbar that hides the `PR` cell
+ * and steals height from the terminal below. 80/100 is what fits exactly at that
+ * width, measured rather than reasoned. Raising either floor re-breaks it, and
+ * truncation is not the cost it looks like — every column carries a `title`.
+ *
+ * ## Why `BRANCH` is its own column
+ *
+ * It used to be half of a single `PROJECT · BRANCH` cell — one string, one
+ * header. That reads fine as a phrase and fails as a table: the header word
+ * `BRANCH` sits wherever the phrase happens to put it, while every branch value
+ * starts wherever its project name happens to end, so the label and the values
+ * it names never line up on the same x. Two columns cost nothing (the `·` that
+ * joined them is now the gap) and the header once again points at what is under
+ * it.
  */
 const COL = {
   caret: 'w-3 shrink-0',
   session: 'min-w-[120px] flex-[2] truncate',
   status: 'w-[90px] shrink-0 truncate',
-  project: 'min-w-[140px] flex-[3] truncate',
+  project: 'min-w-[80px] flex-[1] truncate',
+  branch: 'min-w-[100px] flex-[2] truncate',
   pr: 'w-[34px] shrink-0',
 } as const;
 
@@ -49,8 +71,8 @@ const COL = {
  * cannot be. That split is the whole reason the console is two surfaces rather
  * than one.
  *
- * Column widths mirror the concept: a fixed caret and status, a fixed-ish
- * session name, and `project · branch` taking whatever is left.
+ * Column widths mirror the concept: a fixed caret, status and PR, with the
+ * session name, the project and the branch sharing whatever is left.
  *
  * ## The empty fleet
  *
@@ -76,7 +98,8 @@ export function SessionTable() {
         <span className={COL.caret} />
         <span className={COL.session}>SESSION</span>
         <span className={COL.status}>STATUS</span>
-        <span className={COL.project}>PROJECT · BRANCH</span>
+        <span className={COL.project}>PROJECT</span>
+        <span className={COL.branch}>BRANCH</span>
         <span className={COL.pr}>PR</span>
       </div>
 
@@ -185,7 +208,7 @@ function SessionTableRow({ id }: { id: string }) {
         ▸
       </span>
       {/*
-        `title` on the two truncating columns, so a name the width cuts short is
+        `title` on every truncating column, so a value the width cuts short is
         still readable on hover. Without it the ellipsis is a dead end — the
         agent picks these names and they can be longer than any column.
       */}
@@ -195,11 +218,11 @@ function SessionTableRow({ id }: { id: string }) {
       <span className={cn(COL.status, STATUS_TEXT[entity.status])}>
         {STATUS_LABEL[entity.status]}
       </span>
-      <span
-        className={cn(COL.project, 'text-subtle')}
-        title={`${entity.project} · ${entity.branch}`}
-      >
-        {`${entity.project} · ${entity.branch}`}
+      <span className={cn(COL.project, 'text-subtle')} title={entity.project}>
+        {entity.project}
+      </span>
+      <span className={cn(COL.branch, 'text-subtle')} title={entity.branch}>
+        {entity.branch}
       </span>
       {/*
         The column is 34px wide, so the PR *state* cannot be visible text here

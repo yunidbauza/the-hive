@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +21,20 @@ vi.mock('@xterm/addon-fit');
 vi.mock('@xterm/addon-web-links');
 vi.mock('@xterm/addon-webgl');
 
-const metaBarFor = (id: string) => screen.queryByText(id);
+/**
+ * The meta bar, probed by the branch it names — scoped to the bar itself.
+ *
+ * A bare `queryByText` used to do it, back when the fleet table underneath
+ * rendered `project · branch` as one joined string and so could never collide
+ * with a branch on its own. `BRANCH` is a real column now, so the branch text
+ * appears in two places and an unscoped probe finds the table's copy even when
+ * no meta bar is mounted — which is exactly what the "no meta bar" assertions
+ * below are for.
+ */
+const metaBarFor = (branch: string) => {
+  const bar = screen.queryByTestId('session-meta-bar');
+  return bar ? within(bar).queryByText(branch) : null;
+};
 const pickerTitle = () => screen.queryByText('Start a new session');
 const visibleSurfaces = () =>
   screen

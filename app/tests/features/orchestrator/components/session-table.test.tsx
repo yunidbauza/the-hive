@@ -41,7 +41,8 @@ describe('SessionTable', () => {
       render(<SessionTable />);
 
       expect(screen.getByText('SESSION')).toBeInTheDocument();
-      expect(screen.getByText('PROJECT · BRANCH')).toBeInTheDocument();
+      expect(screen.getByText('PROJECT')).toBeInTheDocument();
+      expect(screen.getByText('BRANCH')).toBeInTheDocument();
       // `rows()` uses getAllByRole, which throws on an empty fleet — the very
       // case under test.
       expect(screen.queryAllByRole('button')).toHaveLength(0);
@@ -79,15 +80,17 @@ describe('SessionTable', () => {
     expect(labels.slice(8).join(' ')).toContain('ecs-scaling');
   });
 
-  it('shows id, status, project · branch, and PR for a row', () => {
+  it('shows id, status, project, branch, and PR for a row', () => {
     render(<SessionTable />);
     const row = rows()[0];
 
     expect(within(row).getByText('hero-refresh')).toBeInTheDocument();
     expect(within(row).getByText('working')).toBeInTheDocument();
-    expect(
-      within(row).getByText('apfm-web · feat/hero-refresh'),
-    ).toBeInTheDocument();
+    // Two cells, not one joined string: a `PROJECT · BRANCH` header can never
+    // line up with the values under it, because the label sits where the phrase
+    // puts it and each branch starts where its project name ends.
+    expect(within(row).getByText('apfm-web')).toBeInTheDocument();
+    expect(within(row).getByText('feat/hero-refresh')).toBeInTheDocument();
     expect(within(row).getByText('#482')).toBeInTheDocument();
   });
 
