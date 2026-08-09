@@ -51,6 +51,33 @@ describe('PrCard', () => {
   });
 
   /**
+   * The surface, not just the badge, says whether the PR still wants something.
+   *
+   * A column of merged PRs with two open ones in it is the ordinary case; the
+   * raised fill is what makes those two findable without reading every badge.
+   */
+  describe('raised surface for live PRs', () => {
+    const surfaceOf = (state: Pr['state']) => {
+      const { container } = render(<PrCard pr={pr({ state })} />);
+      return container.firstElementChild;
+    };
+
+    it.each(['open', 'approved', 'draft'] as const)(
+      'raises a %s PR onto the chip surface',
+      (state) => {
+        expect(surfaceOf(state)).toHaveClass('bg-chip', 'border-border');
+      },
+    );
+
+    it('leaves a merged PR on the flat card', () => {
+      const card = surfaceOf('merged');
+
+      expect(card).toHaveClass('border-border-soft');
+      expect(card).not.toHaveClass('bg-chip');
+    });
+  });
+
+  /**
    * The two actions, and the reason the card stopped being one `<button>`.
    *
    * A user reaching this card wants one of two things — the diff, or the agent

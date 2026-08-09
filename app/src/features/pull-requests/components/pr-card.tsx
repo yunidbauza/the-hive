@@ -45,10 +45,24 @@ interface PrCardProps {
  * The badge row comes from `composeBadges` in `features/shared` rather than
  * from local `if`s, so the rules cannot drift from the colours the work panel
  * (032) paints the same PRs with.
+ *
+ * ## Why merged cards sit lower than the rest
+ *
+ * The list is dominated by merged PRs — they accumulate, and the ones a user
+ * still has to do something about are the minority scattered among them. When
+ * every card shares one flat surface, finding those means reading each badge in
+ * turn, which is the work the panel is supposed to save.
+ *
+ * So the surface carries the state too: draft, open and approved get the raised
+ * `chip` fill and the stronger border, merged keeps the flat `border-soft` card.
+ * This is the inbox's unread-vs-read treatment (`notification-card.tsx`) applied
+ * to the same question — "does this still want me?" — and reusing it rather than
+ * inventing a second visual language is the point.
  */
 export function PrCard({ pr }: PrCardProps) {
   const openEntity = useOpenEntity();
   const badges = composeBadges(pr);
+  const isLive = pr.state !== 'merged';
 
   const openSession = () => {
     if (pr.session !== null) {
@@ -61,7 +75,16 @@ export function PrCard({ pr }: PrCardProps) {
   };
 
   return (
-    <div className="relative rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)] hover:bg-hover">
+    <div
+      className={cn(
+        'relative rounded-xl border px-3 py-[var(--cc-card-py)] hover:bg-hover',
+        // Live PRs sit on the raised chip surface; merged ones fall back to the
+        // flat card. Same device the inbox uses for unread vs read, and for the
+        // same reason: in a column where most cards have landed, the ones still
+        // wanting something have to be findable without reading a badge.
+        isLive ? 'border-border bg-chip' : 'border-border-soft',
+      )}
+    >
       {/*
         The primary target. First in the DOM so it is also first in the tab
         order: "open the session" is what the panel is for, and the link is the
