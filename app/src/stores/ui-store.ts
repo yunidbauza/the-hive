@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { Effort, Model } from '@/types/entity';
 
 export type LeftTab = 'projects' | 'work' | 'agents';
-export type RailTab = 'inbox' | 'prs' | 'activity';
+export type RailTab = 'inbox' | 'prs' | 'explorer';
 
 /**
  * View state — what the user is looking at, as opposed to what the system knows
@@ -39,6 +39,26 @@ interface UiState {
   newEffort: Effort;
   showActivityRail: boolean;
 
+  /**
+   * Which directories the explorer has open, keyed `projectId:relPath`.
+   *
+   * Keyed by project as well as path so that returning to a repository finds it
+   * as it was left, rather than inheriting whatever the last one had expanded.
+   *
+   * View state, and therefore not persisted: an expansion map restored across a
+   * launch would describe a tree that an agent has been rewriting all night.
+   */
+  explorerExpanded: Record<string, boolean>;
+  /**
+   * The project the explorer is rooted at while no session is open.
+   *
+   * The tree follows the active session, and the orchestrator tab names no
+   * session — so this remembers the last one it was rooted at. Falling back to
+   * "the first mapped project" every time you visit the orchestrator would
+   * yank the tree away from what you were reading, once per navigation.
+   */
+  explorerProjectId: string | null;
+
   openTab: (id: 'orch' | string) => void;
   backToOrch: () => void;
   setSelIdx: (index: number) => void;
@@ -53,6 +73,9 @@ interface UiState {
   setNewModel: (model: Model) => void;
   setNewEffort: (effort: Effort) => void;
   toggleActivityRail: () => void;
+  toggleExplorerDir: (projectId: string, relPath: string) => void;
+  collapseExplorer: () => void;
+  setExplorerProjectId: (projectId: string) => void;
   reset: () => void;
 }
 
@@ -69,6 +92,8 @@ const initialUiState = {
   newModel: 'opus' as Model,
   newEffort: 'high' as Effort,
   showActivityRail: true,
+  explorerExpanded: {} as Record<string, boolean>,
+  explorerProjectId: null as string | null,
 };
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -129,6 +154,29 @@ export const useUiStore = create<UiState>()((set) => ({
 
   toggleActivityRail: () =>
     set((state) => ({ showActivityRail: !state.showActivityRail })),
+
+  toggleExplorerDir: (projectId, relPath) =>
+    set((state) => {
+      const key = `${projectId}:${relPath}`;
+      return {
+        explorerExpanded: {
+          ...state.explorerExpanded,
+          [key]: !state.explorerExpanded[key],
+        },
+      };
+    }),
+
+  /**
+   * Collapse everything, in every project — the panel's ⤡ button.
+   *
+   * Everything, not just the visible project. "Collapse all" that left another
+   * repository's tree expanded would surprise the user the next time they
+   * opened a session in it, and there is nothing worth preserving in a map of
+   * directories they asked to close.
+   */
+  collapseExplorer: () => set({ explorerExpanded: {} }),
+
+  setExplorerProjectId: (explorerProjectId) => set({ explorerProjectId }),
 
   reset: () => set(initialUiState),
 }));
@@ -235,3 +283,43 @@ export const usePickerActions = () =>
 /** Orchestrator table selection. */
 export const useSelIdx = () => useUiStore((state) => state.selIdx);
 export const useSetSelIdx = () => useUiStore((state) => state.setSelIdx);
+
+/**
+ * Whether one explorer directory is expanded.
+ *
+ * Per row, like `useProjectCollapsed`, and for the same reason: subscribing the
+ * whole tree to the expansion map would re-render every visible row each time
+ * any one of them opened.
+ */
+export const useExplorerExpanded = (projectId: string, relPath: string) =>
+  useUiStore((state) => Boolean(state.explorerExpanded[`${projectId}:${relPath}`]));
+
+export const useToggleExplorerDir = () =>
+  useUiStore((state) => state.toggleExplorerDir);
+
+export const useCollapseExplorer = () =>
+  useUiStore((state) => state.collapseExplorer);
+
+/** The sticky root for the orchestrator tab. See the field's comment. */
+export const useExplorerProjectId = () =>
+  useUiStore((state) => state.explorerProjectId);
+
+export const useSetExplorerProjectId = () =>
+  useUiStore((state) => state.setExplorerProjectId);
+
+/**
+ * Every expanded directory in one project, as a set of relative paths.
+ *
+ * The refresh path needs this — "re-read what is open" is a question about the
+ * whole map, not about one row — and it is the only consumer, which is why the
+ * per-row hook above still exists rather than every row filtering this.
+ */
+export const useExpandedPaths = (projectId: string): string[] =>
+  useUiStore(
+    useShallow((state) => {
+      const prefix = `${projectId}:`;
+      return Object.entries(state.explorerExpanded)
+        .filter(([key, open]) => open && key.startsWith(prefix))
+        .map(([key]) => key.slice(prefix.length));
+    }),
+  );

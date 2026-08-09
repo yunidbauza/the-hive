@@ -43,6 +43,18 @@ import type {
   SetRuntimeRequest,
 } from './config-contract';
 import type {
+  DirEntry,
+  FileContent,
+  FsChangedEvent,
+  FsRefusal,
+  FsResult,
+  ReadDirRequest,
+  ReadFileRequest,
+  WatchRequest,
+  WriteFileRequest,
+  WriteFileResult,
+} from './fs-contract';
+import type {
   JiraComment,
   JiraIdentity,
   JiraIssue,
@@ -233,6 +245,23 @@ export const CH = {
    * once made `/clear` lock users out of live sessions.
    */
   sessionCleared: 'session:cleared', // main → renderer
+  /**
+   * The project filesystem — the explorer and the editor.
+   *
+   * Five verbs and one event. None of them takes a path: each names a
+   * `projectId` and a project-relative path, and main resolves it against the
+   * directory *it* validated when it loaded the config. See `fs-contract.ts`
+   * for why that is the whole security design rather than one layer of it.
+   *
+   * `fsWatch` replaces the single watcher rather than adding one, which is what
+   * makes `fsUnwatch` take no payload: there is only ever one thing to stop.
+   */
+  fsReadDir: 'fs:read-dir',
+  fsReadFile: 'fs:read-file',
+  fsWriteFile: 'fs:write-file',
+  fsWatch: 'fs:watch',
+  fsUnwatch: 'fs:unwatch',
+  fsChanged: 'fs:changed', // main → renderer
   appInfo: 'app:info',
 } as const;
 
@@ -254,6 +283,7 @@ export const EVENT_CHANNELS = [
   CH.sessionCleared,
   CH.configCloneDone,
   CH.notificationsActivate,
+  CH.fsChanged,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -638,6 +668,57 @@ export interface HiveBridge {
     restart(request: SpawnRequest): Promise<void>;
   };
   /**
+   * The project filesystem — the explorer and the editor.
+   *
+   * **The widest capability in this bridge, and the most narrowly bounded.**
+   * Everything above it either writes one file main chose (`config`), talks to
+   * one remote host (`jira`), or drives a process the user started (`pty`).
+   * This reads and writes arbitrary files — but only inside a directory the
+   * user mapped, and only via an id, never a path.
+   *
+   * What a reviewer should check any future verb here against:
+   *
+   * - It takes a `projectId` and a **relative** path, or it does not ship. The
+   *   moment one accepts an absolute path, the containment argument is over.
+   * - Main resolves and `realpath`s before touching anything, and re-checks
+   *   containment on the *resolved* path — a symlink inside the project is the
+   *   attack the string check alone misses.
+   * - A project whose `status` is not `'ok'` is not readable. The config's
+   *   verdict is the gate; there is no second opinion here.
+   *
+   * `writeFile` is present regardless of the editor's read-only preference.
+   * That preference lives in `localStorage`, which is writable by exactly the
+   * thing a capability check would be defending against — so it gates the UI
+   * and containment gates the disk.
+   */
+  fs: {
+    readDir(request: ReadDirRequest): Promise<FsResult<DirEntry[]>>;
+    /**
+     * Read a file, or say why not.
+     *
+     * `FsRefusal` is a success at the transport level and a decline at the
+     * product level — too large, or binary. It is separate from `FsResult`'s
+     * error arm because "there is nothing worth showing you" and "this failed"
+     * read differently and the panel renders them differently.
+     */
+    readFile(
+      request: ReadFileRequest,
+    ): Promise<FsResult<FileContent | FsRefusal>>;
+    /** Write, unless the file moved on. See {@link WriteFileResult}. */
+    writeFile(request: WriteFileRequest): Promise<WriteFileResult>;
+    /**
+     * Watch one project. Replaces the previous watcher rather than adding one.
+     *
+     * Singular by design: the explorer shows one project at a time, and a
+     * watcher set that grows with navigation is a file-descriptor leak with a
+     * long fuse.
+     */
+    watch(request: WatchRequest): Promise<void>;
+    unwatch(): Promise<void>;
+    /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
+    onChanged(callback: (event: FsChangedEvent) => void): () => void;
+  };
+  /**
    * External tooling this app can see but does not own (story 106).
    *
    * Read-only, and `status()` takes no arguments at all. That is the whole
@@ -788,6 +869,7 @@ export const RESIZE_THROTTLE_MS = 50;
 export const BRIDGE_KEYS = [
   'appInfo',
   'config',
+  'fs',
   'integrations',
   'jira',
   'notifications',
@@ -800,6 +882,23 @@ export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName', 'onCleared'] as const;
 
 /** The exact key set of `window.hive.integrations`. */
 export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
+
+/**
+ * The exact key set of `window.hive.fs`.
+ *
+ * Six, and the shape of the list is the point: **five of them take a
+ * `projectId` and a relative path, and none of them takes a path.** A seventh
+ * verb that accepted an absolute path would break that sentence, and this list
+ * is where a reviewer would see it happen.
+ */
+export const BRIDGE_FS_KEYS = [
+  'readDir',
+  'readFile',
+  'writeFile',
+  'watch',
+  'unwatch',
+  'onChanged',
+] as const;
 
 /**
  * The exact key set of `window.hive.jira` (HIVE-67).

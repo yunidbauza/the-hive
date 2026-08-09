@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "pnpm": {
-    "//": "Since pnpm 10, dependency lifecycle scripts are blocked unless allowlisted \u2014 a supply-chain default, and the right one. Every entry here is a package granted arbitrary code execution at install time; the list stays minimal and every addition is justified in review. `electron` downloads its runtime binary (story 080); `node-pty` compiles its native addon (story 084). Without them, installs succeed and the app does not run.",
+    "//": "Since pnpm 10, dependency lifecycle scripts are blocked unless allowlisted — a supply-chain default, and the right one. Every entry here is a package granted arbitrary code execution at install time; the list stays minimal and every addition is justified in review. `electron` downloads its runtime binary (story 080); `node-pty` compiles its native addon (story 084). Without them, installs succeed and the app does not run.",
     "onlyBuiltDependencies": [
       "electron",
       "node-pty"
@@ -39,6 +39,26 @@
     "test:pty": "electron-vite build && ELECTRON_RUN_AS_NODE=1 electron scripts/run-pty-conformance.mjs"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-go": "^6.0.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-java": "^6.0.2",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/lang-php": "^6.0.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-rust": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/lang-yaml": "^6.1.3",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/legacy-modes": "^6.5.3",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.8",
+    "@lezer/highlight": "^1.2.3",
     "@phosphor-icons/react": "^2.1.10",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",

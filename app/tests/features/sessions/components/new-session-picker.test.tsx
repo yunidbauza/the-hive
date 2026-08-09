@@ -197,15 +197,12 @@ describe('NewSessionPicker', () => {
       );
     });
 
-    it('records the spawn in the feed and the console', async () => {
+    it('records the spawn in the console', async () => {
       const user = userEvent.setup();
       render(<NewSessionPicker />);
 
       await user.type(search(), 'referral{Enter}');
 
-      expect(useHiveStore.getState().feed[0]).toMatchObject({
-        txt: 'Spawned sess-01 on referral-api',
-      });
       expect(
         useHiveStore.getState().orchLines.map((line) => line.text),
       ).toContain('  spawned sess-01 on referral-api');

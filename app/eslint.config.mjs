@@ -19,8 +19,9 @@ const appRoot = fileURLToPath(new URL('.', import.meta.url)).replace(/\/$/, '');
  * silently becomes importable from everywhere.
  */
 const FEATURE_SLICES = [
-  'activity-feed',
   'agents',
+  'editor',
+  'explorer',
   'inbox',
   'orchestrator',
   'projects',
@@ -80,7 +81,7 @@ const featureIsolationZones = FEATURE_SLICES.map((slice) => ({
  * `scripts/verify-boundaries.mjs` proves both halves: `ui/` still blocked,
  * `layout/` allowed.
  */
-const FENCED_COMPONENT_DIRS = ['terminal', 'ui'];
+const FENCED_COMPONENT_DIRS = ['editor', 'terminal', 'ui'];
 
 const fencedComponentDirs = FENCED_COMPONENT_DIRS.map(
   (dir) => `./src/components/${dir}/**/*`,
@@ -179,6 +180,19 @@ export default tseslint.config(
               from: ['./src/features/**/*', './src/data/**/*', './src/stores/**/*'],
               message:
                 'components/terminal/ speaks only TerminalTransport. It may not import features/, data/, or stores/.',
+            },
+
+            /**
+             * THE SAME SEAM, for the editor. `components/editor/` is a
+             * CodeMirror instance that knows its props and nothing else — the
+             * composition root reads the stores and passes values down, which
+             * is what `center-stage.tsx` already does for terminal appearance.
+             */
+            {
+              target: './src/components/editor/**/*',
+              from: ['./src/features/**/*', './src/data/**/*', './src/stores/**/*'],
+              message:
+                'components/editor/ knows only its props. It may not import features/, data/, or stores/.',
             },
 
             // Library code is leaf-level.

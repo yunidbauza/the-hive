@@ -31,8 +31,8 @@ describe('ActivityRail', () => {
     expect(panel(container, 'prs')).toBeInTheDocument();
     expect(panel(container, 'inbox')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('tab', { name: /Activity/ }));
-    expect(panel(container, 'activity')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Explorer/ }));
+    expect(panel(container, 'explorer')).toBeInTheDocument();
     expect(panel(container, 'prs')).not.toBeInTheDocument();
   });
 

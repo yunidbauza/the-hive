@@ -24,6 +24,18 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
+import type {
+  DirEntry,
+  FileContent,
+  FsChangedEvent,
+  FsRefusal,
+  FsResult,
+  ReadDirRequest,
+  ReadFileRequest,
+  WatchRequest,
+  WriteFileRequest,
+  WriteFileResult,
+} from '@shared/fs-contract';
 import {
   CH,
   type AckRequest,
@@ -191,6 +203,30 @@ const bridge: HiveBridge = {
       subscribe<SessionLostEvent>(CH.ptyLost, callback),
     restart: (request: SpawnRequest): Promise<void> =>
       ipcRenderer.invoke(CH.ptyRestart, request),
+  },
+  /*
+    The project filesystem — the explorer and the editor.
+
+    Pure forwarding, like everything else here: the preload adds no validation
+    and makes no decisions. Every one of these takes a `projectId` and a
+    relative path, never a path, so there is nothing here that could be widened
+    by accident — a verb that accepted an absolute path would have to be written
+    into the contract first, and that is where a reviewer would see it.
+  */
+  fs: {
+    readDir: (request: ReadDirRequest): Promise<FsResult<DirEntry[]>> =>
+      ipcRenderer.invoke(CH.fsReadDir, request),
+    readFile: (
+      request: ReadFileRequest,
+    ): Promise<FsResult<FileContent | FsRefusal>> =>
+      ipcRenderer.invoke(CH.fsReadFile, request),
+    writeFile: (request: WriteFileRequest): Promise<WriteFileResult> =>
+      ipcRenderer.invoke(CH.fsWriteFile, request),
+    watch: (request: WatchRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.fsWatch, request),
+    unwatch: (): Promise<void> => ipcRenderer.invoke(CH.fsUnwatch),
+    onChanged: (callback: (event: FsChangedEvent) => void) =>
+      subscribe<FsChangedEvent>(CH.fsChanged, callback),
   },
   // Story 106. `status` takes no argument — see the contract for why that is
   // the security design and not an oversight.

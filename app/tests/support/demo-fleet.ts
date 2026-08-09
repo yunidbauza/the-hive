@@ -339,8 +339,8 @@ function createAgents(): Agent[] {
 /**
  * The slices this fleet supplies.
  *
- * Exactly the six the app stopped seeding. `prs`, `notifs` and `feed` are
- * absent because the app still seeds those itself from `src/data/fixtures.ts` —
+ * Exactly the six the app stopped seeding. `prs` and `notifs` are absent
+ * because the app still seeds those itself from `src/data/fixtures.ts` —
  * duplicating them here would give a test two sources for one list and no way
  * to tell which one it was asserting against.
  */
@@ -449,8 +449,8 @@ export function createDemoFleet(): DemoFleet {
  * Call it *after* `reset()`, not instead of it: `reset()` also clears the spawn
  * counter and the fake clock, which this does not touch.
  *
- * `setState` merges by default, so the three slices the app still seeds
- * (`prs`, `notifs`, `feed`) survive untouched — which is what keeps the PR rows
+ * `setState` merges by default, so the two slices the app still seeds (`prs`,
+ * `notifs`) survive untouched — which is what keeps the PR rows
  * inside a ticket card resolvable, since those PRs name these sessions.
  *
  * `ticketSource` is set to `live` because that is what a store holding real

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isSession } from '@/types/entity';
 import { isDesktop } from '@config/runtime';
-import { peek } from '@lib/fake-clock';
+import { peek, stamp } from '@lib/fake-clock';
 import { resetProjectConfig } from '@lib/project-config';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
@@ -72,7 +72,6 @@ describe('hive-store', () => {
       expect(state.tickets).toHaveLength(8);
       expect(state.prs).toHaveLength(4);
       expect(state.notifs).toHaveLength(5);
-      expect(state.feed).toHaveLength(7);
       expect(state.orchLines).toHaveLength(3);
       expect(Object.keys(state.entities)).toHaveLength(13);
     });
@@ -141,15 +140,6 @@ describe('hive-store', () => {
       expect(isSession(session) && session.effort).toBe('low');
     });
 
-    it('pushes a feed item', () => {
-      const before = useHiveStore.getState().feed.length;
-      const id = useHiveStore.getState().spawnSession('design-system');
-
-      const feed = useHiveStore.getState().feed;
-      expect(feed).toHaveLength(before + 1);
-      expect(feed[0].txt).toBe(`Spawned ${id} on design-system`);
-    });
-
     it('gives each session a distinct id', () => {
       const first = useHiveStore.getState().spawnSession('apfm-web');
       const second = useHiveStore.getState().spawnSession('apfm-web');
@@ -209,13 +199,6 @@ describe('hive-store', () => {
       expect(useHiveStore.getState().sendToEntity('nope', 'hi')).toBeNull();
     });
 
-    it('pushes a feed item', () => {
-      useHiveStore.getState().sendToEntity('call-notes', 'immutable');
-      expect(useHiveStore.getState().feed[0].txt).toBe(
-        'Routed your reply to call-notes',
-      );
-    });
-
     /**
      * The story's payload (097): on desktop a session's message is a pty
      * write, not a narration. The demo round-trip above is what the browser
@@ -256,23 +239,7 @@ describe('hive-store', () => {
         expect(isSession(entity) && entity.status).toBe('waiting');
       });
 
-      it('still logs the routing to the activity feed', () => {
-        useHiveStore.getState().sendToEntity('lead-form', 'y');
-
-        expect(useHiveStore.getState().feed[0].txt).toBe(
-          'Routed your reply to lead-form',
-        );
-      });
-
-      it('names the origin in the feed, as the demo path does', () => {
-        useHiveStore.getState().sendToEntity('lead-form', 'y', 'session');
-
-        expect(useHiveStore.getState().feed[0].txt).toBe(
-          'Routed your message to lead-form',
-        );
-      });
-
-      it('reports a refusal, writes nothing, and says so in the feed', () => {
+      it('reports a refusal and writes nothing', () => {
         vi.mocked(sendToSession).mockReturnValue({
           ok: false,
           reason: 'lead-form has exited — restart it to send again',
@@ -288,9 +255,6 @@ describe('hive-store', () => {
         expect(
           useHiveStore.getState().entities['lead-form'].lines,
         ).toHaveLength(before);
-        expect(useHiveStore.getState().feed[0].txt).toBe(
-          'Could not route to lead-form — lead-form has exited — restart it to send again',
-        );
       });
 
       it('leaves agents on the demo round-trip — they have no pty this epic', () => {
@@ -769,34 +733,6 @@ describe('hive-store', () => {
     });
   });
 
-  describe('pushFeed', () => {
-    it('prepends, so the newest item reads first', () => {
-      useHiveStore.getState().pushFeed({
-        time: '15:00',
-        txt: 'newest',
-        tone: 'green',
-        icon: 'ph-lightning',
-      });
-      expect(useHiveStore.getState().feed[0].txt).toBe('newest');
-    });
-
-    it('caps the feed at 24 items', () => {
-      for (let i = 0; i < 40; i += 1) {
-        useHiveStore.getState().pushFeed({
-          time: '15:00',
-          txt: `item ${i}`,
-          tone: 'brand',
-          icon: 'ph-lightning',
-        });
-      }
-
-      const feed = useHiveStore.getState().feed;
-      expect(feed).toHaveLength(24);
-      // The cap drops the oldest, not the newest.
-      expect(feed[0].txt).toBe('item 39');
-    });
-  });
-
   describe('appendEntityLines', () => {
     it('appends without touching status by default', () => {
       const before = useHiveStore.getState().entities['hero-refresh'];
@@ -838,27 +774,20 @@ describe('hive-store', () => {
     });
   });
 
-  describe('the activity feed clock', () => {
-    it('stamps a spawn with the fake clock, not the wall clock', () => {
-      useHiveStore.getState().spawnSession('apfm-web', 'a task');
+  /**
+   * The store no longer stamps anything through the clock — the activity feed
+   * was its only producer, and the project explorer replaced it. `reset()`
+   * still rewinds it, which is what this covers: the simulation story is the
+   * clock's next consumer and inherits a store that resets it.
+   */
+  describe('the fake clock', () => {
+    it('rewinds on reset', () => {
+      stamp();
+      stamp();
+      expect(peek()).toBe('14:40');
 
-      expect(useHiveStore.getState().feed[0].time).toBe('14:38');
-    });
-
-    it('advances one minute per feed event', () => {
-      useHiveStore.getState().spawnSession('apfm-web', 'first');
-      useHiveStore.getState().spawnSession('apfm-web', 'second');
-
-      const [newest, older] = useHiveStore.getState().feed;
-      expect(newest.time).toBe('14:39');
-      expect(older.time).toBe('14:38');
-    });
-
-    /** Otherwise the second test in any file inherits the first one's minutes. */
-    it('rewinds the clock on reset', () => {
-      useHiveStore.getState().spawnSession('apfm-web', 'a task');
       useHiveStore.getState().reset();
-    seedDemoFleet();
+      seedDemoFleet();
 
       expect(peek()).toBe('14:38');
     });

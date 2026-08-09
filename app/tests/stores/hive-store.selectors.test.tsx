@@ -17,7 +17,6 @@ import {
   useAgentOrder,
   useCounts,
   useEntity,
-  useFeed,
   useHiveStore,
   useMarkRead,
   useNavOrder,
@@ -455,13 +454,6 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => usePrs());
 
       expect(result.current.map((pr) => pr.n)).toEqual([482, 219, 495, 77]);
-    });
-
-    it('useFeed returns the seeded feed newest-first', () => {
-      const { result } = renderHook(() => useFeed());
-
-      expect(result.current).toHaveLength(7);
-      expect(result.current[0].time).toBe('14:37');
     });
 
     it('useMarkRead marks exactly one notification read', () => {

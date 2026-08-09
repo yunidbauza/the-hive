@@ -5,6 +5,7 @@ import {
   BRIDGE_CONFIG_KEYS,
   BRIDGE_INTEGRATIONS_KEYS,
   BRIDGE_JIRA_KEYS,
+  BRIDGE_FS_KEYS,
   BRIDGE_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
@@ -64,6 +65,8 @@ const notifications = () =>
   exposed.notifications as Record<string, (...args: unknown[]) => unknown>;
 const jira = () =>
   exposed.jira as Record<string, (...args: unknown[]) => unknown>;
+const fs = () =>
+  exposed.fs as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
@@ -73,6 +76,7 @@ describe('exposed surface', () => {
     expect(Object.keys(integrations()).sort()).toEqual([
       ...BRIDGE_INTEGRATIONS_KEYS,
     ].sort());
+    expect(Object.keys(fs()).sort()).toEqual([...BRIDGE_FS_KEYS].sort());
     expect(Object.keys(notifications()).sort()).toEqual([
       ...BRIDGE_NOTIFICATIONS_KEYS,
     ].sort());

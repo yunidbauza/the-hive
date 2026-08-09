@@ -41,6 +41,29 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-brand-fill-strong` | `#334fa9` | *(unchanged)* | hive-mark tile (Serenity) |
 | `--cc-on-brand` | `#ffffff` | *(unchanged)* | text/icons on a brand fill |
 | `--cc-danger-solid` | `#d3372f` | *(unchanged)* | notification badge fill |
+| `--cc-code-keyword` | `#b39ff0` | `#6f42c1` | editor: keywords |
+| `--cc-code-string` | `#74b79c` | `#2e6b52` | editor: strings, regexps |
+| `--cc-code-number` | `#ffac47` | `#a1541a` | editor: numbers, booleans, null |
+| `--cc-code-comment` | `#6b779f` | `#8e949c` | editor: comments |
+| `--cc-code-name` | `#8fa7f2` | `#334fa9` | editor: functions, properties, headings |
+| `--cc-code-type` | `#7fd0e0` | `#0b6b7d` | editor: types, classes, tags |
+| `--cc-code-operator` | `#98a3cc` | `#73767c` | editor: operators, punctuation |
+| `--cc-code-constant` | `#ff8d85` | `#b3271f` | editor: constants |
+| `--cc-code-invalid` | `#ff8d85` | `#d3372f` | editor: parse errors |
+| `--cc-code-active-line` | `#171e3c` | `#f4f9ff` | editor: current line |
+| `--cc-code-selection` | `#2b3768` | `#cfe3f7` | editor: selection |
+
+**The editor follows the theme; the terminal does not.** Both sit on the centre
+stage and they behave differently on purpose. A terminal is a terminal in every
+theme — the concept does it and so does every tool it resembles. An editor is a
+*document* surface, in the slot the settings pane and the picker occupy, and a
+dark slab in the middle of a light app reads as a panel that failed to paint.
+
+The eleven `--cc-code-*` tokens are also the one palette in the app that is
+reachable from a third-party component's own theming. CodeMirror emits real CSS
+rules, so `color: var(--cc-code-keyword)` resolves at paint time and a theme
+switch repaints the editor with no JavaScript at all — which is exactly what
+xterm cannot do, and why the TERM palette lives in `ansi.ts` instead.
 
 **The terminal stays dark in light mode.** The six `--cc-term-*` tokens are
 deliberately not overridden — this matches the concept and most real terminal
@@ -85,6 +108,9 @@ working through the same variables:
 --cc-brand-fill → bg-brand-fill    --cc-brand-fill-hover → bg-brand-fill-hover
 --cc-brand-fill-strong → bg-brand-fill-strong
 --cc-on-brand → text-on-brand      --cc-danger-solid → bg-danger-solid
+--cc-code-* → text-code-* / bg-code-*   (keyword, string, number, comment,
+                                         name, type, operator, constant,
+                                         invalid, active-line, selection)
 ```
 
 `inline` matters: it makes utilities emit `var(--cc-*)` rather than resolving the

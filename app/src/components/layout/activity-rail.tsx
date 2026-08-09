@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 
 import { TabBar, tabId, type Tab } from '@components/ui/tab-bar';
-import { ActivityFeedPanel } from '@features/activity-feed/components/activity-feed-panel';
+import { ExplorerPanel } from '@features/explorer/components/explorer-panel';
 import { InboxPanel } from '@features/inbox/components/inbox-panel';
 import { PrsPanel } from '@features/pull-requests/components/prs-panel';
 import { useUnreadCount } from '@stores/hive-store';
@@ -29,7 +29,7 @@ import { useRailState, useSetRailTab, type RailTab } from '@stores/ui-store';
 const PANELS: Record<RailTab, ComponentType> = {
   inbox: InboxPanel,
   prs: PrsPanel,
-  activity: ActivityFeedPanel,
+  explorer: ExplorerPanel,
 };
 
 export function ActivityRail() {
@@ -50,7 +50,7 @@ export function ActivityRail() {
       badgeTone: 'danger',
     },
     { id: 'prs', label: 'PRs' },
-    { id: 'activity', label: 'Activity' },
+    { id: 'explorer', label: 'Explorer' },
   ];
 
   const Panel = PANELS[railTab];

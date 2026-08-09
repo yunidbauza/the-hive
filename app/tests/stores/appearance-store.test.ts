@@ -182,6 +182,16 @@ describe('appearance-store — persistence', () => {
       terminalFontSize: 12.5,
       terminalScrollback: 5000,
       density: 'compact',
+      editorPlacement: 'full',
+      editorSplitAxis: 'vertical',
+      editorSplitRatio: 0.5,
+      editorNav: 'tabs',
+      editorEditable: false,
+      editorFont: 'system',
+      editorFontSize: 13,
+      editorWordWrap: true,
+      editorLineNumbers: true,
+      editorTabWidth: 2,
     });
     // The environment is not a preference: persisting it would restore a stale
     // answer on a machine whose OS theme has since changed.

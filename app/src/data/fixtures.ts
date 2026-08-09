@@ -1,9 +1,8 @@
-import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
 import type { Pr } from '@/types/pull-request';
 
 /**
- * What the app still seeds at boot, and why it is only three arrays.
+ * What the app still seeds at boot, and why it is only two arrays.
  *
  * This module used to carry the whole demo dataset ported from
  * `concept/Command Center.dc.html` — ten sessions, three agents, five projects,
@@ -15,11 +14,16 @@ import type { Pr } from '@/types/pull-request';
  * for a frame before the Jira read replaced it — both of which read as bugs
  * because they were.
  *
- * What remains is the three slices with no live source yet. `prs`, `notifs` and
- * `feed` are seeded because nothing produces them: there is no PR poller, no
- * notification producer and no event stream. Emptying them would leave three
- * panels permanently blank with no path to filling them, which is a worse lie
- * than stale sample rows.
+ * What remains is the two slices with no live source yet. `prs` and `notifs`
+ * are seeded because nothing produces them: there is no PR poller and no
+ * notification producer. Emptying them would leave two panels permanently blank
+ * with no path to filling them, which is a worse lie than stale sample rows.
+ *
+ * There were three. `feed` is gone with the Activity panel it fed — the right
+ * rail's third tab is the project explorer now. It is the one slice here that
+ * died without something real replacing it, because nothing was ever going to:
+ * the orchestrator's own transcript already answers "what did it just do", and
+ * the feed was a second, invented telling of the same thing.
  *
  * They are **knowingly stale**, and the consequence is precise enough to write
  * down. Their `session` and `target` fields name sessions (`hero-refresh`,
@@ -32,7 +36,7 @@ import type { Pr } from '@/types/pull-request';
  * That was an explicit call, not an oversight. The alternative — making the rows
  * non-interactive — would freeze a panel that is due to become real, and the
  * click still does the one useful thing it can, which is dismiss the row. Each
- * of these three dies the day something real feeds it, and this file dies with
+ * of these two dies the day something real feeds it, and this file dies with
  * the last of them.
  *
  * Nothing outside `src/stores/` may import this module — enforced by an import
@@ -44,7 +48,6 @@ import type { Pr } from '@/types/pull-request';
 export interface InitialState {
   prs: Pr[];
   notifs: Notification[];
-  feed: FeedItem[];
 }
 
 /**
@@ -136,50 +139,6 @@ export function createInitialState(): InitialState {
         time: '1h',
         unread: false,
         target: 'tz-fix',
-      },
-    ],
-    feed: [
-      {
-        time: '14:37',
-        txt: 'Loop: polled 4 open PRs — no new feedback',
-        tone: 'brand',
-        icon: 'ph-arrows-clockwise',
-      },
-      {
-        time: '14:36',
-        txt: 'Routed your reply to call-notes',
-        tone: 'brand',
-        icon: 'ph-paper-plane-tilt',
-      },
-      {
-        time: '14:34',
-        txt: 'Slack: comment on PR #219 in #eng-alerts — response drafted and posted',
-        tone: 'brand',
-        icon: 'ph-slack-logo',
-      },
-      {
-        time: '14:32',
-        txt: 'pr-reviewer kicked off automatically on #482 (new push)',
-        tone: 'green',
-        icon: 'ph-robot',
-      },
-      {
-        time: '14:28',
-        txt: 'Applied review fixes on #219 — 2 findings resolved',
-        tone: 'green',
-        icon: 'ph-git-pull-request',
-      },
-      {
-        time: '14:21',
-        txt: 'Spawned nplusone on referral-api',
-        tone: 'brand',
-        icon: 'ph-plus-circle',
-      },
-      {
-        time: '14:12',
-        txt: 'lead-form paused — permission needed',
-        tone: 'amber',
-        icon: 'ph-hand-palm',
       },
     ],
   };
