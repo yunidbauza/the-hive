@@ -182,6 +182,16 @@ describe('appearance-store — persistence', () => {
       terminalFontSize: 12.5,
       terminalScrollback: 5000,
       density: 'compact',
+      editorPlacement: 'full',
+      editorSplitAxis: 'vertical',
+      editorSplitRatio: 0.5,
+      editorNav: 'tabs',
+      editorEditable: false,
+      editorFont: 'system',
+      editorFontSize: 13,
+      editorWordWrap: true,
+      editorLineNumbers: true,
+      editorTabWidth: 2,
     });
     // The environment is not a preference: persisting it would restore a stale
     // answer on a machine whose OS theme has since changed.
@@ -259,5 +269,91 @@ describe('appearance-store — watchSystemTheme', () => {
     const stop = watchSystemTheme();
 
     expect(() => stop()).not.toThrow();
+  });
+});
+
+/**
+ * The editor block.
+ *
+ * Here rather than in a store of its own for the reason this store exists at
+ * all: every one of these is a durable choice about how the screen looks, and
+ * the browser target has no config file to read it from.
+ */
+describe('appearance-store — the editor', () => {
+  it('opens on the documented defaults', () => {
+    const state = useAppearanceStore.getState();
+
+    expect(state.editorPlacement).toBe('full');
+    expect(state.editorSplitAxis).toBe('vertical');
+    expect(state.editorSplitRatio).toBe(0.5);
+    expect(state.editorNav).toBe('tabs');
+    expect(state.editorEditable).toBe(false);
+    expect(state.editorFontSize).toBe(13);
+    expect(state.editorWordWrap).toBe(true);
+    expect(state.editorLineNumbers).toBe(true);
+    expect(state.editorTabWidth).toBe(2);
+  });
+
+  it('sets each preference independently', () => {
+    const store = useAppearanceStore.getState();
+
+    store.setEditorPlacement('split');
+    store.setEditorSplitAxis('horizontal');
+    store.setEditorNav('single');
+    store.setEditorEditable(true);
+    store.setEditorFont('menlo');
+    store.setEditorFontSize(16);
+    store.setEditorWordWrap(false);
+    store.setEditorLineNumbers(false);
+    store.setEditorTabWidth(8);
+
+    expect(useAppearanceStore.getState()).toMatchObject({
+      editorPlacement: 'split',
+      editorSplitAxis: 'horizontal',
+      editorNav: 'single',
+      editorEditable: true,
+      editorFont: 'menlo',
+      editorFontSize: 16,
+      editorWordWrap: false,
+      editorLineNumbers: false,
+      editorTabWidth: 8,
+    });
+  });
+
+  /**
+   * The ratio arrives from a pointer drag, which can produce anything a fast
+   * gesture past the edge of the window produces — including `NaN` on a
+   * zero-width container. Clamped on the way in, so every reader gets a usable
+   * value without repeating the bound.
+   */
+  it('clamps the split ratio, including a non-finite one', () => {
+    const store = useAppearanceStore.getState();
+
+    store.setEditorSplitRatio(0.01);
+    expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.2);
+
+    store.setEditorSplitRatio(0.99);
+    expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.8);
+
+    store.setEditorSplitRatio(Number.NaN);
+    expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.5);
+
+    store.setEditorSplitRatio(0.35);
+    expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.35);
+  });
+
+  it('puts every editor preference back on reset', () => {
+    const store = useAppearanceStore.getState();
+    store.setEditorPlacement('split');
+    store.setEditorEditable(true);
+    store.setEditorTabWidth(8);
+
+    useAppearanceStore.getState().reset();
+
+    expect(useAppearanceStore.getState()).toMatchObject({
+      editorPlacement: 'full',
+      editorEditable: false,
+      editorTabWidth: 2,
+    });
   });
 });

@@ -11,6 +11,8 @@ import {
 } from '../../../__mocks__/@xterm/xterm';
 
 import { CenterStage } from '@components/layout/center-stage';
+import { useAppearanceStore } from '@stores/appearance-store';
+import { useEditorStore } from '@stores/editor-store';
 import { useHiveStore } from '@stores/hive-store';
 import { TERMINAL_CHORD_EVENT } from '@lib/terminal/keymap';
 import { useUiStore } from '@stores/ui-store';
@@ -457,5 +459,103 @@ describe('CenterStage — text fields keep their native bindings', () => {
 
     expect(pickerTitle()).toBeInTheDocument();
     expect(search).toHaveValue('hero');
+  });
+});
+
+/**
+ * The editor on the stage.
+ *
+ * Two settings, four layouts, and one rule that unifies them: a Terminal entry
+ * exists exactly when the terminal is hidden. The combination that was wrong in
+ * review — `full` + `single` — showed a tab strip *and* the pane's own filename
+ * header, which is two ways to close one file and a Terminal tab the docs say
+ * should not be there.
+ */
+describe('CenterStage — the editor', () => {
+  const openAFile = async () => {
+    await act(async () => {
+      useEditorStore.getState().openFile('apfm-web', 'src/app.ts');
+    });
+  };
+
+  beforeEach(() => {
+    /**
+     * The same resets the other blocks do, and they are not optional: a
+     * leftover `settings: true` from an earlier describe puts `hidden` on the
+     * whole stage region, and `getByRole` skips a `display: none` subtree — so
+     * every assertion here would fail for a reason that has nothing to do with
+     * the editor.
+     */
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useUiStore.getState().reset();
+    resetTerminalInstances();
+    resetFitAddonInstances();
+    resetWebLinksAddonInstances();
+    useEditorStore.getState().reset();
+    useAppearanceStore.getState().reset();
+  });
+
+  afterEach(() => {
+    useEditorStore.getState().reset();
+    useAppearanceStore.getState().reset();
+  });
+
+  it('shows no strip until a file is open', () => {
+    render(<CenterStage />);
+    expect(screen.queryByRole('tablist', { name: 'Open files' })).toBeNull();
+  });
+
+  it('full + tabs: a strip with a Terminal entry', async () => {
+    render(<CenterStage />);
+    await openAFile();
+
+    expect(screen.getByRole('tablist', { name: 'Open files' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Terminal/ })).toBeInTheDocument();
+  });
+
+  /**
+   * The bug: no strip belongs here at all. The pane carries its own filename
+   * header, and a Terminal entry contradicts the documented layout for this
+   * cell.
+   */
+  it('full + single: no strip at all', async () => {
+    act(() => {
+      useAppearanceStore.getState().setEditorNav('single');
+    });
+    render(<CenterStage />);
+    await openAFile();
+
+    expect(screen.queryByRole('tablist', { name: 'Open files' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Terminal/ })).toBeNull();
+  });
+
+  it('split + tabs: a strip, but no Terminal entry', async () => {
+    act(() => {
+      useAppearanceStore.getState().setEditorPlacement('split');
+    });
+    render(<CenterStage />);
+    await openAFile();
+
+    expect(screen.getByRole('tablist', { name: 'Open files' })).toBeInTheDocument();
+    // The terminal is already on screen; an entry offering to "go to" it would
+    // point at something the user is looking at.
+    expect(screen.queryByRole('tab', { name: /Terminal/ })).toBeNull();
+  });
+
+  it('split shows a draggable divider, and full does not', async () => {
+    const { rerender } = render(<CenterStage />);
+    await openAFile();
+
+    expect(screen.queryByRole('slider', { name: 'Resize the editor' })).toBeNull();
+
+    act(() => {
+      useAppearanceStore.getState().setEditorPlacement('split');
+    });
+    rerender(<CenterStage />);
+
+    expect(
+      screen.getByRole('slider', { name: 'Resize the editor' }),
+    ).toBeInTheDocument();
   });
 });

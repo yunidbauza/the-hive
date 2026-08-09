@@ -90,6 +90,36 @@ visit; ids are opaque here, and the composition root
 Full rationale — the seam, colour, fitting, and the bottom-stick rule — is in
 [`../docs/terminal-architecture.md`](../docs/terminal-architecture.md).
 
+## Editor
+
+### `<EditorSurface />`
+
+`src/components/editor/editor-surface.tsx` — built.
+
+A CodeMirror 6 instance, fenced exactly like `<TerminalSurface />`: it may not
+import `features/`, `data/` or `stores/`, so the composition root reads the
+stores and passes values down.
+
+Props: `fileKey`, `value`, `languageLoad`, `readOnly`, `fontFamily`,
+`fontSize`, `wordWrap`, `lineNumbers`, `tabWidth`, `onChange`, `onSave`.
+
+- **One view, one `EditorState` per open file.** Cursor, scroll offset and undo
+  history all live in the state, so a tab switch is `view.setState(cached)` and
+  not a rebuild.
+- **A configuration change clears the cache, the active entry included.**
+  Extensions are baked in at construction; a state built with the old font would
+  keep it and adopt it the moment it was switched to. Getting this wrong makes a
+  font change apply to every open file *except* the one on screen.
+- **`languageLoad` is a loader, not a resolved language**, so every CodeMirror
+  import — including the seventeen dynamic ones — stays inside this directory.
+  The document renders before the grammar arrives; that is the point.
+- **Colour comes from `--cc-code-*` through `EditorView.theme`.** CodeMirror
+  emits real CSS, so the editor follows `data-theme` with no JavaScript. No hex
+  literal belongs in this directory.
+- **`readOnly` and `editable` are both set.** `readOnly` alone leaves a blinking
+  cursor in a document that swallows every keystroke — a hung editor, not a
+  read-only one.
+
 ## Hive atoms
 
 Each is owned by the story that first needs it. Two are built; the rest are a
@@ -105,6 +135,7 @@ contract for their owning story, not existing code.
 | `Icon` | `ui/icon.tsx` | **031** (also 033, 051, 053) | `name: string`, `size?: number`, `weight?: IconWeight`, `className?: string` | **built** |
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
 | `SecretField` | `ui/secret-field.tsx` | **HIVE-67** | `label: string`, `value: string`, `onChange(value: string): void`, `onCommit?(): void`, `placeholder?: string`, `hint?: string`, `className?: string` | **built** |
+| `SplitHandle` | `ui/split-handle.tsx` | **explorer** | `axis: 'horizontal' \| 'vertical'`, `containerRef: RefObject<HTMLElement>`, `ratio: number`, `onRatio(ratio: number): void` | **built** |
 
 `Badge` moved from story 030 to 021: the header's bell needs an unread count,
 and 021 lands first. 030's tab-bar badges reuse it rather than building a second.
@@ -263,7 +294,7 @@ though the panel unmounts on every switch.
 316px fixed, and the only region the shell can hide (`showActivityRail`, 020).
 Structurally a twin of `<LeftRail />`: a pinned `<TabBar />` over a scrolling tab
 panel that mounts exactly one of `InboxPanel` (051), `PrsPanel` (052), or
-`ActivityFeedPanel` (053). Reads `useRailState()` / `useSetRailTab()`, plus
+`ExplorerPanel`. Reads `useRailState()` / `useSetRailTab()`, plus
 `useUnreadCount()` for the Inbox badge.
 
 - **The Inbox badge is `danger`, not `muted`.** It is the one count in the app
@@ -387,19 +418,47 @@ One card per PR from `usePrs()`, with a wrapping badge row.
   own; the agent that produced it does, and that is where a human can act on the
   findings.
 
-### `<ActivityFeedPanel />` and `<FeedRow />`
+### `<ExplorerPanel />` and `<TreeNode />`
 
-`src/features/activity-feed/components/` — story 053, built.
+`src/features/explorer/components/` — built.
 
-The orchestrator's log, newest first, from `useFeed()`.
+A lazy tree of the active session's repository. Replaced `<ActivityFeedPanel />`,
+which rendered fixture rows narrating events the app already shows elsewhere.
 
-- **Rows are deliberately not buttons.** Every other card in this rail
-  navigates; a feed entry is a record of something that already happened, and
-  half of them (a PR poll, a Slack answer) have nowhere to go. A row that
-  navigates only sometimes is worse than one that never does.
-- **Timestamps come from `src/lib/fake-clock.ts`**, not the wall clock — see
-  [`../docs/state-and-data.md`](../docs/state-and-data.md).
-- The store caps the feed at 24 (`FEED_CAP`); the panel adds no cap of its own.
+- **The root follows the session**, through `useExplorerProject()`. There is no
+  project picker: the app is already organised around "which session am I
+  watching", and a second selector would be one more thing to keep in sync with
+  the first. The orchestrator tab falls back to the last project the tree was
+  rooted at.
+- **A collapsed directory is never read.** Each expanded node owns its own
+  `useDirectory()` call, which is what makes opening a repository cheap.
+- **The whole row is a `<button>`**, like `ProjectRow` — reachable by keyboard,
+  with `aria-expanded` on directories and `aria-current` on the open file.
+  Indentation is *padding on the button*, not a nested container, so the hover
+  and selection backgrounds run the full width of the rail rather than being
+  inset one level per depth.
+- **Not a `role="tree"`.** A real ARIA tree needs roving tabindex, typeahead and
+  arrow-key navigation across the whole widget to be correct; a half-built one
+  announces capabilities that are not there. This is a list of buttons that all
+  work, and full tree semantics are a deliberate follow-up.
+- **It does not own the filesystem watcher.** That is `useProjectWatcher` at the
+  composition root: an open editor buffer reconciles against the same events and
+  outlives the rail tab. The panel reads the revision counter the watcher bumps.
+
+### `<EditorPane />`, `<EditorTabStrip />` and `<EditorNotice />`
+
+`src/features/editor/components/` — built.
+
+The centre stage's document half: the strip of open files, the notices for when
+the disk and the buffer disagree, and the CodeMirror surface itself.
+
+- **The strip is stage chrome, not editor chrome**, and carries a Terminal entry
+  exactly when the terminal is hidden — full-stage placement only.
+- **The dirty dot sits inside the label, not in place of the ×.** Swapping the
+  close control for a dot moves it at exactly the moment you most want to close
+  a tab deliberately.
+- **Notices are amber, never red.** An agent rewriting a file under you is the
+  entire point of the app, not a failure.
 
 ### Region placeholders
 

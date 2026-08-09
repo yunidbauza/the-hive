@@ -67,6 +67,8 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     config: Object.keys(window.hive!.config).sort(),
     session: Object.keys(window.hive!.session).sort(),
     integrations: Object.keys(window.hive!.integrations).sort(),
+    fs: Object.keys(window.hive!.fs).sort(),
+    github: Object.keys(window.hive!.github).sort(),
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
   }));
@@ -106,9 +108,42 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *   carries a site and an email; the token goes to `safeStorage` on its own
    *   channel.
    */
+  /**
+   * The project explorer adds `fs`, and it is **the widest capability in this
+   * bridge**: everything above it either writes one file main chose, talks to
+   * one remote host, or drives a process the user started. This reads and
+   * writes arbitrary files.
+   *
+   * What keeps it inside story 082's posture, and what a reviewer should check
+   * any future verb here against:
+   *
+   * - **No verb takes a path.** Each names a `projectId` and a *relative*
+   *   path; main resolves it against the directory it validated when it loaded
+   *   the config. There is nowhere to put an absolute path.
+   * - **Containment is re-checked after `realpath`.** A symlink inside the
+   *   project pointing at `/etc` is a well-formed relative path, and only
+   *   asking the filesystem where it goes settles it.
+   * - **`writeFile` is not gated on the editor's read-only preference.** That
+   *   preference lives in `localStorage`, which is writable by exactly the
+   *   thing a capability check would be defending against. It gates the UI;
+   *   containment gates the disk.
+   */
+  /**
+   * `github` arrived with the live PRs panel and was **not** added to this list
+   * by the branch that introduced it — so this assertion failed on that branch,
+   * which is precisely what it is for. With no CI on this repository, the list
+   * is the only thing standing between a widened bridge and a silent merge.
+   *
+   * What bounds it: one verb, taking **no argument at all**. Main sweeps the
+   * repositories named in the user's own config through `gh`; the renderer
+   * cannot name a repository, so this is a bounded read of what the user
+   * already mapped rather than a general-purpose GitHub client.
+   */
   expect(surface.top).toEqual([
     'appInfo',
     'config',
+    'fs',
+    'github',
     'integrations',
     'jira',
     'notifications',
@@ -116,6 +151,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'session',
   ]);
   expect(surface.integrations).toEqual(['status']);
+  expect(surface.github).toEqual(['prs']);
+  expect(surface.fs).toEqual([
+    'onChanged',
+    'readDir',
+    'readFile',
+    'unwatch',
+    'watch',
+    'writeFile',
+  ]);
   expect(surface.notifications).toEqual(['onActivate']);
   expect(surface.jira).toEqual([
     /**

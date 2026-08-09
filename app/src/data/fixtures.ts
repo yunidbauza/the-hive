@@ -1,8 +1,7 @@
-import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
 
 /**
- * What the app still seeds at boot, and why it is only three arrays.
+ * What the app still seeds at boot, and why it is only two arrays.
  *
  * This module used to carry the whole demo dataset ported from
  * `concept/Command Center.dc.html` — ten sessions, three agents, five projects,
@@ -14,10 +13,16 @@ import type { Notification } from '@/types/notification';
  * for a frame before the Jira read replaced it — both of which read as bugs
  * because they were.
  *
- * What remains is the two slices with no live source yet. `notifs` and `feed`
- * are seeded because nothing produces them: there is no notification producer
- * and no event stream. Emptying them would leave two panels permanently blank
- * with no path to filling them, which is a worse lie than stale sample rows.
+ * **What remains is one slice: `notifs`.** It is seeded because nothing
+ * produces it — there is no notification producer yet — and emptying it would
+ * leave the inbox permanently blank with no path to filling it, which is a
+ * worse lie than stale sample rows.
+ *
+ * There were three, and the other two left by different routes in the same
+ * week. `feed` went with the Activity panel it fed; the right rail's third tab
+ * is the project explorer now, and nothing was ever going to replace the feed
+ * because the orchestrator's own transcript already answers "what did it just
+ * do". `prs` went the opposite way — something real *did* arrive for it.
  *
  * **`prs` used to be here and is gone.** GitHub feeds that panel now — a sweep
  * of the configured project repositories through `gh`, on a poll — so a seeded
@@ -25,8 +30,8 @@ import type { Notification } from '@/types/notification';
  * repository they do not have. That is exactly the flash the seeded tickets
  * caused before HIVE-69 removed them.
  *
- * The two that remain are **knowingly stale**, and the consequence is precise
- * enough to write down. Their `target` fields name sessions (`lead-form`,
+ * The one that remains is **knowingly stale**, and the consequence is precise
+ * enough to write down. Its `target` fields name sessions (`lead-form`,
  * `call-notes`) that no longer exist in any store. `openEntity` passes an
  * unknown id through by design — it refuses *ended* sessions, and an id it has
  * never heard of is not one — so clicking one of these rows sets `activeTab` to
@@ -35,9 +40,8 @@ import type { Notification } from '@/types/notification';
  *
  * That was an explicit call, not an oversight. The alternative — making the rows
  * non-interactive — would freeze a panel that is due to become real, and the
- * click still does the one useful thing it can, which is dismiss the row. Each
- * of these two dies the day something real feeds it, and this file dies with the
- * last of them.
+ * click still does the one useful thing it can, which is dismiss the row. It
+ * dies the day something real feeds it, and this file dies with it.
  *
  * Nothing outside `src/stores/` may import this module — enforced by an import
  * zone (story 014), not by review. Panels read derived state through selector
@@ -47,7 +51,6 @@ import type { Notification } from '@/types/notification';
 /** The slices that still have no live producer. */
 export interface InitialState {
   notifs: Notification[];
-  feed: FeedItem[];
 }
 
 /**
@@ -101,50 +104,6 @@ export function createInitialState(): InitialState {
         time: '1h',
         unread: false,
         target: 'tz-fix',
-      },
-    ],
-    feed: [
-      {
-        time: '14:37',
-        txt: 'Loop: polled 4 open PRs — no new feedback',
-        tone: 'brand',
-        icon: 'ph-arrows-clockwise',
-      },
-      {
-        time: '14:36',
-        txt: 'Routed your reply to call-notes',
-        tone: 'brand',
-        icon: 'ph-paper-plane-tilt',
-      },
-      {
-        time: '14:34',
-        txt: 'Slack: comment on PR #219 in #eng-alerts — response drafted and posted',
-        tone: 'brand',
-        icon: 'ph-slack-logo',
-      },
-      {
-        time: '14:32',
-        txt: 'pr-reviewer kicked off automatically on #482 (new push)',
-        tone: 'green',
-        icon: 'ph-robot',
-      },
-      {
-        time: '14:28',
-        txt: 'Applied review fixes on #219 — 2 findings resolved',
-        tone: 'green',
-        icon: 'ph-git-pull-request',
-      },
-      {
-        time: '14:21',
-        txt: 'Spawned nplusone on referral-api',
-        tone: 'brand',
-        icon: 'ph-plus-circle',
-      },
-      {
-        time: '14:12',
-        txt: 'lead-form paused — permission needed',
-        tone: 'amber',
-        icon: 'ph-hand-palm',
       },
     ],
   };

@@ -113,17 +113,6 @@ describe('MessageInput', () => {
       expect(input()).toHaveValue('');
     });
 
-    it('pushes a feed item naming the target', async () => {
-      const user = userEvent.setup();
-      render(<MessageInput entityId="lead-form" />);
-
-      await user.type(input(), 'yes{Enter}');
-
-      expect(useHiveStore.getState().feed[0]).toMatchObject({
-        txt: 'Routed your message to lead-form',
-      });
-    });
-
     it('acknowledges and flips the session to working after the delay', () => {
       vi.useFakeTimers();
       render(<MessageInput entityId="lead-form" />);

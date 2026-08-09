@@ -20,6 +20,13 @@ import type {
 } from './config-contract';
 import { NOTIFICATION_KEYS, unsafeEnvReason } from './config-contract';
 import type {
+  ReadDirRequest,
+  ReadFileRequest,
+  WatchRequest,
+  WriteFileRequest,
+} from './fs-contract';
+import { MAX_FILE_BYTES } from './fs-contract';
+import type {
   AckRequest,
   ResizeRequest,
   SpawnRequest,
@@ -897,4 +904,137 @@ export function parseDiagnoseCommandRequest(
       ? { id: assertId(raw.id, 'diagnoseCommand.id') }
       : {}),
   };
+}
+
+/**
+ * A project-relative path, as the fs verbs accept one.
+ *
+ * **The highest-value guard in this file.** Every other path in the contract is
+ * chosen by the user through a native dialog or written into a file main owns;
+ * this one is composed by the renderer, once per click, out of a tree it built
+ * from replies it was given.
+ *
+ * What it rejects, and why each is its own case rather than one clever regex:
+ *
+ * - **Absolute paths**, POSIX and Windows-drive alike. A guard that only looked
+ *   for `..` would pass `/etc/passwd` straight into a `join` that discards the
+ *   root it was handed.
+ * - **Any `..` segment**, tested per segment rather than as a substring — so a
+ *   real file named `..hidden` is allowed and `a/../../b` is not.
+ * - **NUL**, which truncates a path inside libuv and makes the string this
+ *   guard inspected differ from the one the syscall receives.
+ * - **Control characters**, on the argument `assertText` already makes: this
+ *   value is about to be rendered in a tab strip and an error message.
+ *
+ * It does **not** reject a path that escapes by symlink, because it cannot: a
+ * symlink is a fact about the disk, not about the string. That check lives in
+ * `electron/main/fs/paths.ts`, after `realpath`, and this guard is explicitly
+ * not a substitute for it. Both are required — this one catches what `realpath`
+ * cannot (a `..` on a path that does not exist yet, which is the write case),
+ * and `realpath` catches what this cannot.
+ *
+ * `''` is valid and means the project root, which is what the tree asks for
+ * first.
+ */
+const MAX_REL_PATH = 1024;
+
+export function assertRelPath(value: unknown, label: string): string {
+  const path = assertString(value, label);
+  if (path.length > MAX_REL_PATH) return fail(`${label}: too long`);
+
+  for (const char of path) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      return fail(`${label}: control characters are not allowed`);
+    }
+  }
+
+  if (path.startsWith('/') || path.startsWith('\\')) {
+    return fail(`${label}: must be relative to the project`);
+  }
+  if (/^[A-Za-z]:/.test(path)) {
+    return fail(`${label}: must be relative to the project`);
+  }
+
+  for (const segment of path.split(/[/\\]/)) {
+    if (segment === '..') return fail(`${label}: must not leave the project`);
+  }
+
+  return path;
+}
+
+export function parseReadDirRequest(input: unknown): ReadDirRequest {
+  const raw = assertShape(input, ['projectId', 'relPath'], 'readDir');
+  return {
+    projectId: assertId(raw.projectId, 'readDir.projectId'),
+    relPath: assertRelPath(raw.relPath, 'readDir.relPath'),
+  };
+}
+
+export function parseReadFileRequest(input: unknown): ReadFileRequest {
+  const raw = assertShape(input, ['projectId', 'relPath'], 'readFile');
+  return {
+    projectId: assertId(raw.projectId, 'readFile.projectId'),
+    relPath: assertRelPath(raw.relPath, 'readFile.relPath'),
+  };
+}
+
+/**
+ * `fs:write-file` — the only verb in this contract that changes a file the user
+ * did not name through a dialog.
+ *
+ * `text` gets neither `assertText` nor a control-character sweep, and that is a
+ * decision rather than an omission. Source files legitimately contain tabs,
+ * newlines, form feeds and — in a fixture, or a test for terminal escapes —
+ * every byte below 0x20. What makes this safe is *where* the bytes land, not
+ * what they are: a bounded size, a contained path, and an mtime that has not
+ * moved. Rejecting a newline here would leave the editor unable to save the
+ * file it had just opened.
+ */
+export function parseWriteFileRequest(input: unknown): WriteFileRequest {
+  const raw = assertShape(
+    input,
+    ['projectId', 'relPath', 'text', 'baseMtimeMs'],
+    'writeFile',
+  );
+
+  const text = assertString(raw.text, 'writeFile.text');
+  /**
+   * Bytes, not UTF-16 units — and in two steps.
+   *
+   * `read.ts` caps on the file's size in bytes, so measuring `.length` alone
+   * let non-ASCII content through at up to three times the limit, and the
+   * editor would then refuse to reopen the file it had just written. Both ends
+   * of the round trip have to count the same thing.
+   *
+   * The cheap check runs first because UTF-8 never encodes a string in fewer
+   * bytes than it has UTF-16 units — so a string longer than the cap is over it
+   * whatever its content, and rejecting there bounds what the exact count is
+   * asked to allocate.
+   *
+   * `TextEncoder`, not `Buffer`: this module is the one both processes may
+   * import, and a Node global here would break that (`AGENTS.md` → import
+   * zones), however main-only its callers happen to be today.
+   */
+  if (text.length > MAX_FILE_BYTES) return fail('writeFile.text: too large');
+  if (new TextEncoder().encode(text).length > MAX_FILE_BYTES) {
+    return fail('writeFile.text: too large');
+  }
+
+  const { baseMtimeMs } = raw;
+  if (typeof baseMtimeMs !== 'number' || !Number.isFinite(baseMtimeMs)) {
+    return fail('writeFile.baseMtimeMs: expected a finite number');
+  }
+
+  return {
+    projectId: assertId(raw.projectId, 'writeFile.projectId'),
+    relPath: assertRelPath(raw.relPath, 'writeFile.relPath'),
+    text,
+    baseMtimeMs,
+  };
+}
+
+export function parseWatchRequest(input: unknown): WatchRequest {
+  const raw = assertShape(input, ['projectId'], 'watch');
+  return { projectId: assertId(raw.projectId, 'watch.projectId') };
 }

@@ -5,6 +5,7 @@ import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
 import { TitleBar } from '@components/layout/title-bar';
+import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
 import { watchSystemTheme } from '@stores/appearance-store';
@@ -50,6 +51,17 @@ export function AppShell() {
    * and at the composition root because the tab it opens can be any of them.
    */
   useNotificationActivate();
+
+  /**
+   * Watch the visible project's files.
+   *
+   * Here, not in the explorer panel, because the panel is not the only
+   * consumer: an open editor buffer reconciles against the same events and
+   * outlives the rail tab that shows the tree. Same reasoning as the two
+   * subscriptions above — one broadcast channel, one listener, at the
+   * composition root.
+   */
+  useProjectWatcher();
 
   /**
    * Follow the OS while the app is open (story 105).

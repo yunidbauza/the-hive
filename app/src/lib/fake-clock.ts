@@ -1,16 +1,20 @@
 /**
  * The prototype's clock (story 053).
  *
- * Every feed item is stamped from here rather than from `new Date()`, for two
- * reasons. A demo recorded at 03:11 should not say so — the seeded feed opens
- * at 14:37 and the story continues from 14:38. And a wall clock makes the
- * store's own tests unassertable: `expect(feed[0].time)` would have to match a
- * moving target.
+ * Scripted events are stamped from here rather than from `new Date()`, for two
+ * reasons. A demo recorded at 03:11 should not say so — the demo's story starts
+ * at 14:38. And a wall clock makes a store's tests unassertable: an assertion on
+ * a rendered time would have to match a moving target.
  *
- * Lives in `lib/` rather than `features/activity-feed/` because `stores/` is
- * what stamps items on spawn and send, and the lint zone forbids
- * `stores/ → features/`. `lib/` is leaf-level, which is exactly what a clock
- * should be.
+ * **It currently has no producer.** The activity feed was its only one, and the
+ * project explorer replaced that panel. The module stays because the simulation
+ * story owns the next one and `docs/simulation.md` already tells it to stamp
+ * through this rather than introduce a second clock; deleting a documented seam
+ * because it is briefly unused is how the second clock gets written.
+ *
+ * Lives in `lib/` rather than in a feature slice because `stores/` is what will
+ * stamp, and the lint zone forbids `stores/ → features/`. `lib/` is leaf-level,
+ * which is exactly what a clock should be.
  *
  * `reset()` is the reason this is a module with a function rather than an
  * exported `let`: story 053 requires tests to be able to rewind it, and

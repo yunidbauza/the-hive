@@ -14,25 +14,25 @@ const agent = { kind: 'agent', id: 'slack-agent' } as Agent;
 
 describe('resolveView', () => {
   it('shows the orchestrator for the reserved tab', () => {
-    expect(resolveView({ activeTab: 'orch', picker: false, settings: false, entity: null })).toBe(
+    expect(resolveView({ activeTab: 'orch', picker: false, settings: false, entity: null, editorFull: false })).toBe(
       'orchestrator',
     );
   });
 
   it('shows a session for a session entity', () => {
     expect(
-      resolveView({ activeTab: 'hero-refresh', picker: false, settings: false, entity: session }),
+      resolveView({ activeTab: 'hero-refresh', picker: false, settings: false, entity: session, editorFull: false }),
     ).toBe('session');
   });
 
   it('shows an agent for an agent entity', () => {
     expect(
-      resolveView({ activeTab: 'slack-agent', picker: false, settings: false, entity: agent }),
+      resolveView({ activeTab: 'slack-agent', picker: false, settings: false, entity: agent, editorFull: false }),
     ).toBe('agent');
   });
 
   it('shows the picker whenever it is open', () => {
-    expect(resolveView({ activeTab: 'orch', picker: true, settings: false, entity: null })).toBe(
+    expect(resolveView({ activeTab: 'orch', picker: true, settings: false, entity: null, editorFull: false })).toBe(
       'picker',
     );
   });
@@ -46,7 +46,13 @@ describe('resolveView', () => {
        */
       for (const entity of [null, session, agent]) {
         expect(
-          resolveView({ activeTab: entity?.id ?? 'orch', picker: true, settings: false, entity }),
+          resolveView({
+            activeTab: entity?.id ?? 'orch',
+            picker: true,
+            settings: false,
+            entity,
+            editorFull: false,
+          }),
         ).toBe('picker');
       }
     });
@@ -55,7 +61,7 @@ describe('resolveView', () => {
       // A session can be removed while its tab is open. Stranding the user on a
       // blank stage is worse than sending them home.
       expect(
-        resolveView({ activeTab: 'deleted-session', picker: false, settings: false, entity: null }),
+        resolveView({ activeTab: 'deleted-session', picker: false, settings: false, entity: null, editorFull: false }),
       ).toBe('orchestrator');
     });
   });
@@ -65,17 +71,22 @@ describe('resolveView', () => {
 
     for (const settings of [true, false]) {
       for (const picker of [true, false]) {
-        for (const entity of [null, session, agent]) {
-          for (const activeTab of ['orch', 'hero-refresh', 'slack-agent', 'gone']) {
-            states.add(resolveView({ activeTab, picker, settings, entity }));
+        for (const editorFull of [true, false]) {
+          for (const entity of [null, session, agent]) {
+            for (const activeTab of ['orch', 'hero-refresh', 'slack-agent', 'gone']) {
+              states.add(
+                resolveView({ activeTab, picker, settings, entity, editorFull }),
+              );
+            }
           }
         }
       }
     }
 
-    // All five states are reachable, and nothing else is.
+    // All six states are reachable, and nothing else is.
     expect([...states].sort()).toEqual([
       'agent',
+      'editor',
       'orchestrator',
       'picker',
       'session',
@@ -96,6 +107,7 @@ describe('resolveView', () => {
           picker: true,
           settings: true,
           entity: null,
+          editorFull: false,
         }),
       ).toBe('settings');
     });
@@ -108,6 +120,7 @@ describe('resolveView', () => {
             picker: false,
             settings: true,
             entity,
+            editorFull: false,
           }),
         ).toBe('settings');
       }
@@ -122,8 +135,71 @@ describe('resolveView', () => {
           picker: false,
           settings: false,
           entity: session,
+          editorFull: false,
         }),
       ).toBe('session');
+    });
+  });
+
+  /**
+   * The editor, and the asymmetry that makes split placement work.
+   *
+   * `editorFull` is one boolean rather than the two facts behind it precisely
+   * so that a split stage never resolves here: in a split the editor is a
+   * *layout* of the entity view, and returning 'editor' would make
+   * `isEntityView` false for a stage that is still showing a session's meta bar
+   * and message row.
+   */
+  describe('the editor', () => {
+    it('fills the stage when a file is open in full-stage placement', () => {
+      expect(
+        resolveView({
+          activeTab: 'hero-refresh',
+          picker: false,
+          settings: false,
+          entity: session,
+          editorFull: true,
+        }),
+      ).toBe('editor');
+    });
+
+    it('yields to both overlays', () => {
+      expect(
+        resolveView({
+          activeTab: 'orch',
+          picker: true,
+          settings: false,
+          entity: null,
+          editorFull: true,
+        }),
+      ).toBe('picker');
+      expect(
+        resolveView({
+          activeTab: 'orch',
+          picker: false,
+          settings: true,
+          entity: null,
+          editorFull: true,
+        }),
+      ).toBe('settings');
+    });
+
+    it('leaves the underlying view untouched — split never resolves here', () => {
+      // What a split stage passes: a file is open, but placement is 'split', so
+      // the caller reports editorFull: false and the session view survives.
+      expect(
+        resolveView({
+          activeTab: 'hero-refresh',
+          picker: false,
+          settings: false,
+          entity: session,
+          editorFull: false,
+        }),
+      ).toBe('session');
+    });
+
+    it('is not an entity view', () => {
+      expect(isEntityView('editor')).toBe(false);
     });
   });
 });

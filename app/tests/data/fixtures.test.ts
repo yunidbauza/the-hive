@@ -64,20 +64,19 @@ describe('createInitialState', () => {
    * started, a projects tree listing repositories nobody mapped, and eight
    * sample tickets painted for a frame before the real Jira read replaced them.
    */
-  it('seeds exactly two slices, and no fleet', () => {
+  it('seeds exactly one slice, and no fleet', () => {
     const state = createInitialState();
 
-    expect(Object.keys(state).sort()).toEqual(['feed', 'notifs']);
+    expect(Object.keys(state).sort()).toEqual(['notifs']);
 
     for (const slice of ['entities', 'order', 'agentOrder', 'projects', 'tickets', 'prs', 'orchLines']) {
       expect(state).not.toHaveProperty(slice);
     }
   });
 
-  it('still supplies the two panels that have no live producer', () => {
+  it('still supplies the one panel that has no live producer', () => {
     const state = createInitialState();
 
     expect(state.notifs.length).toBeGreaterThan(0);
-    expect(state.feed.length).toBeGreaterThan(0);
   });
 });

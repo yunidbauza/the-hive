@@ -17,12 +17,24 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
 } from '@shared/config-contract';
+import type {
+  DirEntry,
+  FileContent,
+  FsChangedEvent,
+  FsRefusal,
+  FsResult,
+  WriteFileResult,
+} from '@shared/fs-contract';
 import type { GhResult, PrsSnapshot } from '@shared/github-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
   parseCloneRequest,
   parseDiagnoseCommandRequest,
+  parseReadDirRequest,
+  parseReadFileRequest,
+  parseWatchRequest,
+  parseWriteFileRequest,
   parseSpawnRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
@@ -77,6 +89,13 @@ import {
   setRuntime,
 } from '../config';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
+import {
+  createFsWatchLayer,
+  readDirectory,
+  readFileContent,
+  writeFileContent,
+  type FsWatchLayer,
+} from '../fs';
 import { createHookRuntime } from '../hooks';
 import { readGhStatus, runCommand } from '../integrations/gh';
 import { createGithub } from '../integrations/github';
@@ -140,6 +159,8 @@ function handle<T>(
 let sessions: Sessions | null = null;
 /** The clone flow (story 102), or `null` before registration. */
 let cloneFlow: CloneFlow | null = null;
+/** The single project watcher, or `null` before registration. */
+let fsWatch: FsWatchLayer | null = null;
 
 /** The live sessions layer, or `null` before registration. Test-only reach-in. */
 export function sessionsLayer(): Sessions | null {
@@ -231,6 +252,16 @@ export function registerIpcHandlers(): void {
   });
 
   /**
+   * The project watcher, constructed here for the same reason the clone flow
+   * is: it needs `send`, and `send` resolves windows per call rather than
+   * capturing one. A watcher holding a stale `webContents` would emit into a
+   * destroyed renderer after a window reload.
+   */
+  fsWatch = createFsWatchLayer((event: FsChangedEvent) =>
+    send(CH.fsChanged, event),
+  );
+
+  /**
    * Drop this layer's timers on quit.
    *
    * The *processes* are not killed here, and that is deliberate rather than an
@@ -250,6 +281,13 @@ export function registerIpcHandlers(): void {
      * process tree is torn down underneath it.
      */
     cloneFlow?.dispose();
+    /**
+     * The watcher holds an `FSEvents` stream and a pending debounce timer, and
+     * this hook exists precisely so neither outlives the app. `resetIpcHandlers`
+     * disposes it too, but that is the test path — leaving it out here meant
+     * only production leaked.
+     */
+    fsWatch?.dispose();
   });
 
   handle(CH.appInfo, (): AppInfo => {
@@ -566,6 +604,53 @@ export function registerIpcHandlers(): void {
   });
 
   /**
+   * The project filesystem (the explorer and the editor).
+   *
+   * Every one of these validates twice, and the two checks are not redundant.
+   * The guard settles what a legal *string* is — relative, no `..` segment, no
+   * control bytes — and `electron/main/fs/paths.ts` settles where that string
+   * actually lands once symlinks are resolved. Neither can do the other's job:
+   * a string check cannot see a symlink, and `realpath` cannot see a `..` on a
+   * path that does not exist yet.
+   *
+   * None of them throws across IPC. Each answers with a result the panel can
+   * render, on the same rule the Jira verbs follow — a tree that throws because
+   * one directory is unreadable says the app is broken, when one directory is
+   * unreadable.
+   */
+  handle(
+    CH.fsReadDir,
+    (_event, payload): Promise<FsResult<DirEntry[]>> =>
+      readDirectory(parseReadDirRequest(payload)),
+  );
+
+  handle(
+    CH.fsReadFile,
+    (_event, payload): Promise<FsResult<FileContent | FsRefusal>> =>
+      readFileContent(parseReadFileRequest(payload)),
+  );
+
+  handle(
+    CH.fsWriteFile,
+    (_event, payload): Promise<WriteFileResult> =>
+      writeFileContent(parseWriteFileRequest(payload)),
+  );
+
+  /**
+   * `watch` resolves once the watcher is up, and rejects if the project cannot
+   * be watched — the one fs verb that does throw, because there is no view to
+   * render its failure into. The explorer treats a rejection as "no live
+   * updates" and keeps its manual refresh, which is the honest degradation.
+   */
+  handle(CH.fsWatch, async (_event, payload): Promise<void> => {
+    await fsWatch?.watchProject(parseWatchRequest(payload).projectId);
+  });
+
+  handle(CH.fsUnwatch, (): void => {
+    fsWatch?.unwatch();
+  });
+
+  /**
    * The PTY channels (story 093).
    *
    * `spawn` and `kill` use `invoke` — both need a result. `write`, `resize`
@@ -645,6 +730,8 @@ export function resetIpcHandlers(): void {
   sessions = null;
   cloneFlow?.dispose();
   cloneFlow = null;
+  fsWatch?.dispose();
+  fsWatch = null;
 }
 
 export { assertSender, isTrustedSender, IpcSenderError } from './sender';

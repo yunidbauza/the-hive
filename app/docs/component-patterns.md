@@ -83,11 +83,12 @@ The stage shows **exactly one thing at a time**, and which one is decided by a
 pure function rather than by nested JSX conditionals:
 
 ```ts
-resolveView({ activeTab, picker, entity }): 'picker' | 'orchestrator' | 'session' | 'agent'
+resolveView({ activeTab, picker, settings, entity, editorFull })
+  : 'settings' | 'picker' | 'editor' | 'orchestrator' | 'session' | 'agent'
 ```
 
 It lives in `src/lib/resolve-view.ts` and is tested exhaustively. A machine
-embedded in JSX is one that grows a fifth state by accident; this one cannot.
+embedded in JSX is one that grows a seventh state by accident; this one cannot.
 
 Two precedence rules carry the weight:
 
@@ -286,7 +287,7 @@ new.
 const PANELS: Record<RailTab, ComponentType> = {
   inbox: InboxPanel,
   prs: PrsPanel,
-  activity: ActivityFeedPanel,
+  explorer: ExplorerPanel,
 };
 
 const Panel = PANELS[railTab];
@@ -312,11 +313,55 @@ means *the user is what an agent is blocked on*. See
 
 ### The panels are feature slices, mounted from the composition root
 
-`InboxPanel`, `PrsPanel`, and `ActivityFeedPanel` live in three separate slices
+`InboxPanel`, `PrsPanel`, and `ExplorerPanel` live in three separate slices
 that cannot import each other. They meet only here, in `components/layout/` —
 which is exactly what the composition-root exemption exists for. Rules the two
 PR-rendering surfaces must agree on live in `features/shared/`, never in one
 slice reaching into another.
+
+The third tab used to be `ActivityFeedPanel`, a feed of fixture rows narrating
+events the app already shows elsewhere. It was deleted rather than moved: the
+orchestrator's own transcript already answers "what did it just do", and the
+feed was a second, invented telling of the same thing. `ExplorerPanel` answers
+the question the app could not — *what is the agent actually changing*.
+
+The filesystem watcher is **not** the panel's, though an early revision made it
+so. It sits at the composition root in `useProjectWatcher`, alongside
+`useSessionStatus` and for the same reason: the tree is only one consumer, the
+editor on the centre stage is the other, and the editor outlives the rail tab.
+A watcher scoped to the panel meant an open file stopped reconciling the instant
+the user clicked Inbox.
+
+## The editor on the centre stage
+
+The stage's view machine gained a sixth state, and the shape of the addition is
+the part worth knowing:
+
+```
+settings  >  picker  >  editor  >  orchestrator | session | agent
+```
+
+`resolveView` returns `'editor'` **only in full-stage placement**. In a split the
+editor is not a view state at all — it is a layout of the entity view, rendered
+beside the terminal under whatever view already resolved. Modelling split as a
+seventh state would make `isEntityView` lie about whether the session meta bar
+and the message row should be mounted.
+
+Two consequences follow, and both are load-bearing:
+
+- **The tab strip is stage chrome, not editor chrome.** It renders whenever
+  something is open, above both regions, so selecting Terminal does not take the
+  strip away with it and strand the open files behind a control that no longer
+  exists.
+- **A Terminal entry appears exactly when the terminal is hidden** — which is
+  only ever full-stage placement. That single rule is what lets placement and
+  nav model be independent settings rather than four hand-written layouts.
+
+The terminal region is `hidden`, never unmounted, for the reason the overlays
+already establish: every live xterm and its scrollback would go with it. The
+editor is the other way round — it is unmounted when nothing is open, because
+`editor-store` still holds the text and a hidden editor would keep a document
+and a `ResizeObserver` alive to show nothing.
 
 ## What later stories add here
 

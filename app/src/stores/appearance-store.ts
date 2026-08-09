@@ -42,12 +42,72 @@ export type ResolvedTheme = 'dark' | 'light';
 
 export type Density = 'comfortable' | 'compact';
 
+/**
+ * Where an opened file renders.
+ *
+ * `full` hides the terminal behind the editor; `split` shows both. This is a
+ * *setting* rather than a decision the app makes, because the two are genuinely
+ * different working modes — reading a file end to end, and watching a session
+ * edit one — and neither is right for the other.
+ */
+export type EditorPlacement = 'full' | 'split';
+
+/** How a split stage is divided. Only consulted when placement is `split`. */
+export type EditorSplitAxis = 'horizontal' | 'vertical';
+
+/**
+ * How many files can be open at once.
+ *
+ * `tabs` keeps a strip of them; `single` replaces whatever was open and
+ * closes on Escape. Independent of {@link EditorPlacement} — the four
+ * combinations are four real layouts, and the one rule that unifies them is
+ * that a `Terminal` entry appears in the strip exactly when the terminal is
+ * hidden, which is only ever `full` + `tabs`.
+ */
+export type EditorNav = 'tabs' | 'single';
+
 interface AppearanceState {
   theme: ThemePreference;
   terminalFont: TerminalFontId;
   terminalFontSize: number;
   terminalScrollback: number;
   density: Density;
+
+  /**
+   * The editor block.
+   *
+   * Here rather than in a store of its own for the reason this store exists at
+   * all: every one of these is a durable choice about how the screen looks, it
+   * is needed before the editor's first paint, and the browser target has no
+   * config file to read it from. `editor-store.ts` holds the *buffers*, which
+   * are none of those things.
+   */
+  editorPlacement: EditorPlacement;
+  editorSplitAxis: EditorSplitAxis;
+  /**
+   * The terminal's share of a split stage, 0.2–0.8.
+   *
+   * Persisted like the rest, but written by dragging the divider rather than by
+   * a control in settings. A ratio has no sensible discrete choices, and a
+   * number field for it would be a worse interface than the divider itself.
+   */
+  editorSplitRatio: number;
+  editorNav: EditorNav;
+  /**
+   * Whether the editor accepts keystrokes and offers a save.
+   *
+   * **Not a security control.** It lives in `localStorage`, so it gates the UI
+   * and nothing else; the filesystem is gated by containment in main. It is
+   * here because most of the time this app is used, the thing editing the file
+   * is the agent in the terminal, and a second editable buffer over the same
+   * file is a way to lose work rather than a convenience.
+   */
+  editorEditable: boolean;
+  editorFont: TerminalFontId;
+  editorFontSize: number;
+  editorWordWrap: boolean;
+  editorLineNumbers: boolean;
+  editorTabWidth: number;
 
   /**
    * The OS's current answer. **Not persisted** — it is an observation of the
@@ -63,8 +123,50 @@ interface AppearanceState {
   setTerminalScrollback: (lines: number) => void;
   setDensity: (density: Density) => void;
   setSystemDark: (dark: boolean) => void;
+
+  setEditorPlacement: (placement: EditorPlacement) => void;
+  setEditorSplitAxis: (axis: EditorSplitAxis) => void;
+  setEditorSplitRatio: (ratio: number) => void;
+  setEditorNav: (nav: EditorNav) => void;
+  setEditorEditable: (editable: boolean) => void;
+  setEditorFont: (font: TerminalFontId) => void;
+  setEditorFontSize: (size: number) => void;
+  setEditorWordWrap: (wrap: boolean) => void;
+  setEditorLineNumbers: (show: boolean) => void;
+  setEditorTabWidth: (width: number) => void;
+
   reset: () => void;
 }
+
+/**
+ * Offered tab widths.
+ *
+ * Display-only while the editor is read-only — it changes how an existing tab
+ * character is rendered, not what typing Tab inserts. That distinction becomes
+ * visible the moment editing is switched on, which is why the setting is
+ * labelled for the display and not for the insert.
+ */
+export const EDITOR_TAB_WIDTHS: readonly number[] = [2, 4, 8] as const;
+
+/**
+ * Offered editor font sizes.
+ *
+ * A superset of the terminal's, minus the half-point: 12.5 exists there because
+ * it is what the terminal has always used, and carrying an odd default into a
+ * second control would be inheriting a quirk rather than a decision.
+ */
+export const EDITOR_FONT_SIZES: readonly number[] = [
+  10, 11, 12, 13, 14, 15, 16, 18,
+] as const;
+
+/** The terminal's share of a split stage, clamped to something usable. */
+export const MIN_SPLIT_RATIO = 0.2;
+export const MAX_SPLIT_RATIO = 0.8;
+
+export const clampSplitRatio = (ratio: number): number => {
+  if (!Number.isFinite(ratio)) return 0.5;
+  return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, ratio));
+};
 
 const MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
@@ -148,6 +250,28 @@ const initialAppearanceState = {
   terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
   terminalScrollback: DEFAULT_TERMINAL_SCROLLBACK,
   density: 'comfortable' as Density,
+
+  /** Full stage: the editor is a place you go, not a permanent tax on the terminal. */
+  editorPlacement: 'full' as EditorPlacement,
+  /**
+   * Vertical, chosen against the merits and recorded as such.
+   *
+   * With both rails mounted the shell already spends ~590px on chrome, so a
+   * vertical split leaves the terminal around 40 columns on a 1440px display —
+   * narrow enough that agent output, tables and diffs wrap badly. `horizontal`
+   * keeps the terminal full-width and is the better default on the merits; this
+   * is the user's stated preference, the axis is a setting, and the divider is
+   * draggable. Written down so the next reader does not "fix" it.
+   */
+  editorSplitAxis: 'vertical' as EditorSplitAxis,
+  editorSplitRatio: 0.5,
+  editorNav: 'tabs' as EditorNav,
+  editorEditable: false,
+  editorFont: DEFAULT_TERMINAL_FONT,
+  editorFontSize: 13,
+  editorWordWrap: true,
+  editorLineNumbers: true,
+  editorTabWidth: 2,
 };
 
 export const APPEARANCE_STORAGE_KEY = 'hive.appearance';
@@ -198,6 +322,26 @@ export const useAppearanceStore = create<AppearanceState>()(
         set({ systemDark });
       },
 
+      setEditorPlacement: (editorPlacement) => set({ editorPlacement }),
+      setEditorSplitAxis: (editorSplitAxis) => set({ editorSplitAxis }),
+      /**
+       * Clamped on the way in, not on the way out.
+       *
+       * The value arrives from a pointer drag, which can produce anything a
+       * fast gesture past the edge of the window produces — including `NaN` on
+       * a zero-width container. Storing the clamped value means every reader
+       * gets a usable ratio without repeating the bound.
+       */
+      setEditorSplitRatio: (ratio) =>
+        set({ editorSplitRatio: clampSplitRatio(ratio) }),
+      setEditorNav: (editorNav) => set({ editorNav }),
+      setEditorEditable: (editorEditable) => set({ editorEditable }),
+      setEditorFont: (editorFont) => set({ editorFont }),
+      setEditorFontSize: (editorFontSize) => set({ editorFontSize }),
+      setEditorWordWrap: (editorWordWrap) => set({ editorWordWrap }),
+      setEditorLineNumbers: (editorLineNumbers) => set({ editorLineNumbers }),
+      setEditorTabWidth: (editorTabWidth) => set({ editorTabWidth }),
+
       reset: () => {
         const systemDark = prefersDark();
         applyAll({ ...initialAppearanceState, systemDark });
@@ -218,6 +362,16 @@ export const useAppearanceStore = create<AppearanceState>()(
         terminalFontSize: state.terminalFontSize,
         terminalScrollback: state.terminalScrollback,
         density: state.density,
+        editorPlacement: state.editorPlacement,
+        editorSplitAxis: state.editorSplitAxis,
+        editorSplitRatio: state.editorSplitRatio,
+        editorNav: state.editorNav,
+        editorEditable: state.editorEditable,
+        editorFont: state.editorFont,
+        editorFontSize: state.editorFontSize,
+        editorWordWrap: state.editorWordWrap,
+        editorLineNumbers: state.editorLineNumbers,
+        editorTabWidth: state.editorTabWidth,
       }),
       /**
        * `localStorage` is synchronous, so this runs during module evaluation —
@@ -323,3 +477,81 @@ export const useAppearanceSettings = () =>
   useAppearanceStore(useShallow(appearanceSettingsSelector));
 export const useAppearanceActions = () =>
   useAppearanceStore(useShallow(appearanceActionsSelector));
+
+/**
+ * Everything the CodeMirror surface needs, resolved.
+ *
+ * Returns the font *stack* rather than the id, for the reason
+ * `useTerminalAppearance` does: `components/editor/**` takes a stack and has no
+ * business knowing that "menlo" was a thing a user picked from a list.
+ *
+ * Deliberately narrower than {@link useEditorSettings}: the surface re-renders
+ * on a font change, and subscribing it to `editorPlacement` as well would
+ * reconstruct the editor every time the layout toggled.
+ */
+const editorAppearanceSelector = (state: AppearanceState) => ({
+  fontFamily: terminalFontStack(state.editorFont),
+  fontSize: state.editorFontSize,
+  wordWrap: state.editorWordWrap,
+  lineNumbers: state.editorLineNumbers,
+  tabWidth: state.editorTabWidth,
+  editable: state.editorEditable,
+});
+
+/**
+ * How the stage is arranged. Read by `center-stage.tsx` and the tab strip.
+ *
+ * Separate from the appearance selector above because the two have different
+ * consumers and different change rates: dragging the divider must not
+ * reconstruct the editor, and changing the font must not re-lay-out the stage.
+ */
+const editorLayoutSelector = (state: AppearanceState) => ({
+  placement: state.editorPlacement,
+  splitAxis: state.editorSplitAxis,
+  splitRatio: state.editorSplitRatio,
+  nav: state.editorNav,
+});
+
+const editorSettingsSelector = (state: AppearanceState) => ({
+  editorPlacement: state.editorPlacement,
+  editorSplitAxis: state.editorSplitAxis,
+  editorNav: state.editorNav,
+  editorEditable: state.editorEditable,
+  editorFont: state.editorFont,
+  editorFontSize: state.editorFontSize,
+  editorWordWrap: state.editorWordWrap,
+  editorLineNumbers: state.editorLineNumbers,
+  editorTabWidth: state.editorTabWidth,
+});
+
+const editorSettingsActionsSelector = (state: AppearanceState) => ({
+  setEditorPlacement: state.setEditorPlacement,
+  setEditorSplitAxis: state.setEditorSplitAxis,
+  setEditorNav: state.setEditorNav,
+  setEditorEditable: state.setEditorEditable,
+  setEditorFont: state.setEditorFont,
+  setEditorFontSize: state.setEditorFontSize,
+  setEditorWordWrap: state.setEditorWordWrap,
+  setEditorLineNumbers: state.setEditorLineNumbers,
+  setEditorTabWidth: state.setEditorTabWidth,
+});
+
+export const useEditorAppearance = () =>
+  useAppearanceStore(useShallow(editorAppearanceSelector));
+
+export const useEditorLayout = () =>
+  useAppearanceStore(useShallow(editorLayoutSelector));
+
+/** Whether the editor accepts input. Its own hook — the tab strip needs only this. */
+export const useEditorEditable = () =>
+  useAppearanceStore((state) => state.editorEditable);
+
+/** Written by dragging the divider, not by a settings control. */
+export const useSetEditorSplitRatio = () =>
+  useAppearanceStore((state) => state.setEditorSplitRatio);
+
+/** The editor section's current values and its setters. */
+export const useEditorSettings = () =>
+  useAppearanceStore(useShallow(editorSettingsSelector));
+export const useEditorSettingsActions = () =>
+  useAppearanceStore(useShallow(editorSettingsActionsSelector));

@@ -1,12 +1,30 @@
 import {
   ArrowsClockwise,
+  ArrowsInSimple,
   CalendarCheck,
   CaretDown,
   CaretRight,
   ChatCircleDots,
   CheckCircle,
   Cube,
+  File,
+  FileCode,
+  FileCss,
+  FileHtml,
+  FileImage,
+  FileJs,
+  FileJsx,
+  FileMd,
+  FilePy,
+  FileSql,
+  FileText,
+  FileTs,
+  FileTsx,
+  FileZip,
+  FloppyDisk,
   Folder,
+  FolderOpen,
+  Gear,
   GitPullRequest,
   GlobeHemisphereWest,
   HandPalm,
@@ -18,7 +36,10 @@ import {
   SlackLogo,
   Stack,
   Swatches,
+  Terminal,
   UsersThree,
+  Warning,
+  X,
   type Icon as PhosphorIcon,
   type IconWeight,
 } from '@phosphor-icons/react';
@@ -63,6 +84,38 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-lightning': Lightning,
   'ph-arrows-clockwise': ArrowsClockwise,
   'ph-robot': Robot,
+
+  /**
+   * The project explorer and the editor.
+   *
+   * The file glyphs are keyed by *language*, not by extension: `.ts`,
+   * `.mts` and `.cts` all resolve to one language upstream and therefore to
+   * one icon here. Phosphor has no glyph for most languages, which is why
+   * `ph-file-code` is the fallback and only the handful it does have get a
+   * distinct one — a made-up icon per language would be noise in a 316px rail.
+   */
+  // `ph-folder` is already above, as a project icon — one glyph, two uses.
+  'ph-folder-open': FolderOpen,
+  'ph-file': File,
+  'ph-file-code': FileCode,
+  'ph-file-text': FileText,
+  'ph-file-js': FileJs,
+  'ph-file-jsx': FileJsx,
+  'ph-file-ts': FileTs,
+  'ph-file-tsx': FileTsx,
+  'ph-file-css': FileCss,
+  'ph-file-html': FileHtml,
+  'ph-file-md': FileMd,
+  'ph-file-py': FilePy,
+  'ph-file-sql': FileSql,
+  'ph-file-image': FileImage,
+  'ph-file-zip': FileZip,
+  'ph-gear': Gear,
+  'ph-terminal': Terminal,
+  'ph-floppy-disk': FloppyDisk,
+  'ph-arrows-in-simple': ArrowsInSimple,
+  'ph-warning': Warning,
+  'ph-x': X,
 };
 
 interface IconProps {

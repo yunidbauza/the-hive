@@ -21,6 +21,11 @@ placeholder until that story lands; it exists now so the routing table in
   It starts at 14:38, advances a minute per `stamp()`, and `reset()` rewinds it.
   Simulation should stamp its events through it rather than introducing a second
   clock. See [`state-and-data.md`](state-and-data.md) → The fake clock.
+  **It has no producer at the moment**: the activity feed was its only one, and
+  the project explorer replaced that panel. The module and its `reset()` call in
+  `hive-store` were deliberately kept rather than deleted as dead code, so this
+  story inherits the seam it was told to use — simulation will be its first
+  consumer.
 - **`pushNotif(notif)` is the inbox's write path**, capped at 8. Simulation
   prepending a notification is what drives the rail's red badge and the header
   bell (051).

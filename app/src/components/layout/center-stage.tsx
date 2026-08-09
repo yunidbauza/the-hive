@@ -6,6 +6,9 @@ import { isTerminated } from '@/types/entity';
 
 import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { TerminalHost } from '@components/terminal/terminal-host';
+import { SplitHandle } from '@components/ui/split-handle';
+import { EditorPane } from '@features/editor/components/editor-pane';
+import { EditorTabStrip } from '@features/editor/components/editor-tab-strip';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
@@ -18,7 +21,13 @@ import {
 import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
-import { useTerminalAppearance, useTheme } from '@stores/appearance-store';
+import {
+  useEditorLayout,
+  useSetEditorSplitRatio,
+  useTerminalAppearance,
+  useTheme,
+} from '@stores/appearance-store';
+import { useActiveFileKey, useHasOpenFiles } from '@stores/editor-store';
 import {
   terminalIdFor,
   useActiveEntity,
@@ -64,7 +73,24 @@ export function CenterStage() {
   const { picker } = usePickerState();
   const settings = useSettingsOpen();
 
-  const view = resolveView({ activeTab, picker, settings, entity });
+  /**
+   * The editor's two facts, kept apart deliberately.
+   *
+   * `activeFileKey` says whether a file is on screen; `placement` says whether
+   * that file *replaces* the terminal or sits beside it. Only the combination
+   * is a view state, which is why `resolveView` takes one boolean rather than
+   * both — see the note on `ViewInput.editorFull`.
+   */
+  const activeFileKey = useActiveFileKey();
+  const hasOpenFiles = useHasOpenFiles();
+  const { placement, splitAxis, splitRatio, nav } = useEditorLayout();
+  const setSplitRatio = useSetEditorSplitRatio();
+
+  const editorOpen = activeFileKey !== null;
+  const editorFull = editorOpen && placement === 'full';
+  const splitting = editorOpen && placement === 'split';
+
+  const view = resolveView({ activeTab, picker, settings, entity, editorFull });
   const showingPicker = view === 'picker';
   /**
    * Both full-stage overlays hide the terminal region, not just the picker.
@@ -89,6 +115,9 @@ export function CenterStage() {
   const cache = useRef(new Map<string, TerminalTransport>());
 
   const messageInputRef = useRef<HTMLInputElement>(null);
+
+  /** The flex container the split handle measures its ratio against. */
+  const splitRef = useRef<HTMLDivElement>(null);
 
   const entries = useMemo(
     () =>
@@ -192,9 +221,52 @@ export function CenterStage() {
       {/*
         Hidden, never unmounted. Tearing the terminal region down for the
         duration of an overlay would dispose every live xterm instance and
-        throw away the scrollback story 042 exists to preserve.
+        throw away the scrollback story 042 exists to preserve. The editor gets
+        the same treatment for the same reason — see the terminal column below.
       */}
       <div className={cn('flex min-h-0 flex-1 flex-col', showingOverlay && 'hidden')}>
+        {/*
+          Stage chrome, above both regions.
+
+          `showTerminalTab` is the whole interaction between the two editor
+          settings: a Terminal entry exists exactly when the terminal is
+          hidden, which is only ever full-stage placement. In a split the
+          terminal is already on screen and an entry offering to "go to" it
+          would point at something the user is looking at.
+        */}
+        {hasOpenFiles && nav === 'tabs' ? (
+          <EditorTabStrip showTerminalTab={placement === 'full'} />
+        ) : null}
+
+        <div
+          ref={splitRef}
+          className={cn(
+            'flex min-h-0 flex-1',
+            splitting && splitAxis === 'vertical' ? 'flex-row' : 'flex-col',
+          )}
+        >
+          {/*
+            The terminal column.
+
+            `hidden` rather than unmounted when the editor fills the stage —
+            the same rule the overlays follow, and for the same reason: every
+            live xterm and its scrollback would go with it.
+          */}
+          <div
+            className={cn(
+              'flex min-h-0 min-w-0 flex-col',
+              editorFull && 'hidden',
+              !splitting && !editorFull && 'flex-1',
+            )}
+            /*
+              `flex: 0 0 <ratio>%` rather than a width or a height: the same
+              declaration divides the container on either axis, so the split
+              needs one style and not two branches. The editor takes the rest
+              with `flex-1`, which means a window resize moves the seam
+              proportionally instead of pinning the terminal to a pixel count.
+            */
+            style={splitting ? { flex: `0 0 ${splitRatio * 100}%` } : undefined}
+          >
         {isEntityView(view) && entity ? <SessionMetaBar entity={entity} /> : null}
 
         {/*
@@ -223,7 +295,7 @@ export function CenterStage() {
              * invisible, so closing it re-reveals the previous one and
              * triggers its refit through the machinery story 042 already has.
              */
-            activeId={showingOverlay ? null : activeTab}
+            activeId={showingOverlay || editorFull ? null : activeTab}
             endedId={endedId}
             theme={theme}
             fontFamily={terminalAppearance.fontFamily}
@@ -262,6 +334,32 @@ export function CenterStage() {
             inputRef={messageInputRef}
           />
         ) : null}
+          </div>
+
+          {splitting ? (
+            <SplitHandle
+              axis={splitAxis}
+              containerRef={splitRef}
+              ratio={splitRatio}
+              onRatio={setSplitRatio}
+            />
+          ) : null}
+
+          {/*
+            The editor is unmounted when nothing is open, unlike the terminal.
+
+            The asymmetry is deliberate: an xterm holds a live process and a
+            scrollback that cannot be rebuilt, and a CodeMirror view holds text
+            that `editor-store` still has. Closing the last file should give the
+            terminal every pixel back, and a hidden editor would keep a
+            `ResizeObserver` and a document alive to show nothing.
+          */}
+          {editorOpen ? (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <EditorPane />
+            </div>
+          ) : null}
+        </div>
       </div>
     </main>
   );

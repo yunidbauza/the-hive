@@ -91,6 +91,40 @@
    * visual change this story is not making. Each keeps its own value and gets
    * its own compact one.
    */
+  /**
+   * Syntax highlighting for the editor.
+   *
+   * **These are CSS, where the terminal's palette deliberately is not**, and
+   * the difference is worth stating because the note at the top of this file
+   * says the opposite about `TERM`. xterm resolves colour from a JS `theme`
+   * object and paints into markup it owns, so a custom property has no path to
+   * a terminal cell. CodeMirror is the other way round: its themes are
+   * CSS-in-JS that emit real rules, so `color: var(--cc-code-keyword)` resolves
+   * exactly like any other declaration — and the editor follows `data-theme`
+   * with no JavaScript involved at all.
+   *
+   * Nine roles, not a full TextMate scope list. Every additional role is a
+   * colour somebody has to choose twice and check for contrast twice, and past
+   * this point the returns are decorative: keyword, string, number, comment and
+   * name carry almost all of the legibility.
+   *
+   * Hues are drawn from the palette already above rather than invented, so the
+   * editor reads as part of this app and not as a themed component dropped into
+   * it.
+   */
+  --cc-code-keyword: #b39ff0;
+  --cc-code-string: #74b79c;
+  --cc-code-number: #ffac47;
+  --cc-code-comment: #6b779f;
+  --cc-code-name: #8fa7f2;
+  --cc-code-type: #7fd0e0;
+  --cc-code-operator: #98a3cc;
+  --cc-code-constant: #ff8d85;
+  --cc-code-invalid: #ff8d85;
+  /** The active line and the selection, on the editor's own background. */
+  --cc-code-active-line: #171e3c;
+  --cc-code-selection: #2b3768;
+
   --cc-rail-w-left: 268px;
   --cc-rail-w-right: 316px;
   --cc-rail-gap: 18px;
@@ -133,6 +167,30 @@ body[data-theme='light'] {
 
   /* --cc-term-bg / --cc-term-input intentionally stay dark: the terminal keeps
      its dark background in light mode, like the concept and most real tools. */
+
+  /**
+   * The editor, unlike the terminal, **does** follow the theme.
+   *
+   * The terminal stays dark in light mode because that is what a terminal is —
+   * the concept does it and so does every tool it resembles. An editor is not a
+   * terminal: it is a document surface, it sits where the settings pane and the
+   * picker sit, and a dark slab in the middle of a light app reads as a broken
+   * panel rather than as a deliberate one.
+   *
+   * Darkened for contrast on white rather than reused from above: `--cc-green`
+   * at its dark-mode value clears nothing on `#ffffff`.
+   */
+  --cc-code-keyword: #6f42c1;
+  --cc-code-string: #2e6b52;
+  --cc-code-number: #a1541a;
+  --cc-code-comment: #8e949c;
+  --cc-code-name: #334fa9;
+  --cc-code-type: #0b6b7d;
+  --cc-code-operator: #73767c;
+  --cc-code-constant: #b3271f;
+  --cc-code-invalid: #d3372f;
+  --cc-code-active-line: #f4f9ff;
+  --cc-code-selection: #cfe3f7;
 }
 
 /**
@@ -167,6 +225,24 @@ body[data-theme='light'] {
   --color-brand-fill-strong: var(--cc-brand-fill-strong);
   --color-on-brand: var(--cc-on-brand);
   --color-danger-solid: var(--cc-danger-solid);
+  /**
+   * The code roles are bound here too, even though CodeMirror reaches them as
+   * `var(--cc-code-*)` directly rather than through a utility. The editor's
+   * *chrome* — the gutter, the tab strip, the conflict banner — is ordinary
+   * markup, and it should be able to say `text-code-comment` rather than
+   * reaching for the raw property.
+   */
+  --color-code-keyword: var(--cc-code-keyword);
+  --color-code-string: var(--cc-code-string);
+  --color-code-number: var(--cc-code-number);
+  --color-code-comment: var(--cc-code-comment);
+  --color-code-name: var(--cc-code-name);
+  --color-code-type: var(--cc-code-type);
+  --color-code-operator: var(--cc-code-operator);
+  --color-code-constant: var(--cc-code-constant);
+  --color-code-invalid: var(--cc-code-invalid);
+  --color-code-active-line: var(--cc-code-active-line);
+  --color-code-selection: var(--cc-code-selection);
 
   --font-mono: ui-monospace, Menlo, 'SF Mono', monospace;
   /**

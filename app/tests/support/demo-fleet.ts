@@ -347,9 +347,10 @@ function createAgents(): Agent[] {
  * GRAC-3018. A test writing its own would have to re-derive that mapping to
  * assert anything at all.
  *
- * `notifs` and `feed` are still absent, because the app does still seed those
- * from `src/data/fixtures.ts` — duplicating them here would give a test two
- * sources for one list and no way to tell which it was asserting against.
+ * `notifs` is still absent, because the app does still seed that from
+ * `src/data/fixtures.ts` — duplicating it here would give a test two sources for
+ * one list and no way to tell which it was asserting against. (`feed` used to
+ * be named here too; it is gone with the Activity panel.)
  */
 export interface DemoFleet {
   entities: Record<string, Entity>;
@@ -526,8 +527,8 @@ export function createDemoFleet(): DemoFleet {
  * Call it *after* `reset()`, not instead of it: `reset()` also clears the spawn
  * counter and the fake clock, which this does not touch.
  *
- * `setState` merges by default, so the two slices the app still seeds
- * (`notifs`, `feed`) survive untouched.
+ * `setState` merges by default, so the one slice the app still seeds
+ * (`notifs`) survives untouched.
  *
  * `ticketSource` and `prSource` are set to `live` because that is what a store
  * holding real tickets and real PRs *means* now. Left at their boot value of

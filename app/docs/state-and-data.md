@@ -6,17 +6,62 @@
 
 ## Stores
 
-Two, split along what the user is *looking at* versus what the system *knows*.
-The split keeps a keystroke in the picker from re-rendering thirteen live
-terminals.
+Four, split along what the system *knows*, what the user is *looking at*, what
+they have *chosen*, and what they have *open*. The split keeps a keystroke in
+the picker from re-rendering thirteen live terminals.
 
 - `src/stores/hive-store.ts` — domain state and the actions that mimic the future
   orchestrator daemon: `spawnSession`, `sendToEntity`, `runOrchCommand`,
-  `markAllRead`, `markRead`, `pushNotif`, `pushFeed`, `appendEntityLines`.
+  `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`.
 - `src/stores/ui-store.ts` — view state: `activeTab`, `selIdx`, `leftTab`,
-  `railTab`, `collapsed`, picker fields, `showActivityRail`.
-- `src/stores/appearance-store.ts` — durable preferences: `theme`,
-  `terminalFont`, `terminalFontSize`, `terminalScrollback`, `density`.
+  `railTab`, `collapsed`, picker fields, `showActivityRail`,
+  `explorerExpanded`, `explorerProjectId`.
+- `src/stores/appearance-store.ts` — durable preferences: `theme`, the terminal
+  and editor typography, `editorPlacement`, `editorNav`, `editorEditable`,
+  `density`.
+- `src/stores/editor-store.ts` — open file buffers: `openFiles`, `activeKey`,
+  and the actions over them (`openFile`, `edit`, `save`, `reload`,
+  `reconcile`).
+
+### Why the fourth store
+
+A buffer is none of the three things the others hold, and the argument is worth
+recording because folding it into `hive-store` is the obvious first answer:
+
+- **Not domain state.** `hive-store` holds what the system knows about
+  sessions, tickets and PRs — things with lifetimes measured in days. A buffer
+  is scratch, and folding it in grows the largest module in the app to carry
+  data nothing else in it reads.
+- **Not view state.** `ui-store` is deliberately never persisted and
+  deliberately cheap. The text of a 900KB file is neither.
+- **Not a preference.** `appearance-store` persists everything it holds, and
+  persisting file contents to `localStorage` would be a bug.
+
+What *is* split off it, on purpose: **where** a file renders is
+`appearance-store`'s `editorPlacement`, and which folders the tree has open is
+`ui-store`'s `explorerExpanded` — a fact about a panel, not about a file.
+
+### The freshness rule
+
+`reconcile(projectId, paths)` is the watcher's entry point, and the whole
+feature turns on its branches:
+
+| Buffer | State on disk | Behaviour |
+| --- | --- | --- |
+| clean | changed | **silently reloaded** |
+| dirty | changed | `staleOnDisk`; the banner offers Reload or Keep mine |
+| any | mid-save | skipped |
+| any | the app's own last write | suppressed once, by the mtime the write returned |
+
+Silent reload of a clean buffer is the point: you open a file to watch what a
+session does to it, and a prompt between you and that is friction carrying no
+information. A dirty buffer is the one case where the app holds something the
+disk does not.
+
+Saving uses optimistic concurrency, not a lock — the other writer is an agent in
+a subprocess that would never take one. The buffer sends the mtime it was read
+at; main refuses the write if the file has moved on, and the renderer offers
+Reload or Overwrite rather than resolving it silently.
 
 ## What persists, and where (story 105)
 
@@ -71,7 +116,6 @@ Components never read a store object directly and never call `getState()`.
 | `useUnreadCount()` | inbox unread count |
 | `useNotifs()` | the inbox, newest first (051) |
 | `usePrs()` | every open PR the fleet produced (052) |
-| `useFeed()` | the orchestrator's activity feed, newest first (053) |
 | `useMarkRead()` | mark one notification read, by index |
 | `usePushNotif()` | push a notification — the simulation's entry point |
 | `useActiveEntity()` | the entity behind `activeTab`, or `null` |
@@ -84,7 +128,6 @@ truth for every number on screen.
 Two collections are bounded, because a long-running demo must not grow without
 end:
 
-- **`feed` at 24** (`FEED_CAP`) — `pushFeed` prepends and drops the oldest.
 - **`notifs` at 8** (`NOTIF_CAP`) — `pushNotif` does the same. Eight is what fits
   the rail without scrolling on a laptop, and an inbox that grows forever stops
   being an inbox.
@@ -96,19 +139,22 @@ second place to get the number right is a second place to get it wrong.
 
 `src/lib/fake-clock.ts` — story 053.
 
-Feed items are stamped by `stamp()`, which starts at **14:38** and advances one
-minute per call. Two reasons it is not `new Date()`: a demo recorded at 03:11
-should not say so (the seeded feed ends at 14:37, and the story continues from
-14:38), and a wall clock makes the store's own tests unassertable.
+`stamp()` starts at **14:38** and advances one minute per call. Two reasons it
+is not `new Date()`: a demo recorded at 03:11 should not say so, and a wall
+clock makes a store's tests unassertable.
 
-- **It lives in `lib/`, not `features/activity-feed/`** as story 053 first
-  suggested. `stores/` is what stamps items on spawn and send, and the import
-  zone forbids `stores/ → features/`. `lib/` is leaf-level, which is what a
-  clock should be.
-- **`reset()` exists for test isolation** and is called by the hive-store's own
-  `reset()`. Without it, the first test to push a feed item leaks its minutes
-  into every test after it — which is why story 053 requires a module with an
-  explicit reset rather than a module-level counter.
+**It currently has no producer.** The activity feed was its only one, and the
+project explorer replaced that panel. The module stays because `simulation.md`
+already tells the simulation story to stamp through it rather than introduce a
+second clock — deleting a documented seam because it is briefly unused is how
+the second clock gets written.
+
+- **It lives in `lib/`, not in a feature slice.** `stores/` is what will stamp,
+  and the import zone forbids `stores/ → features/`. `lib/` is leaf-level,
+  which is what a clock should be.
+- **`reset()` exists for test isolation** and is still called by the
+  hive-store's own `reset()`, so the next consumer inherits a store that
+  rewinds it.
 - `peek()` reads the current time without advancing it.
 
 ## What the store seeds, and what it no longer does
@@ -129,7 +175,7 @@ loaded it at launch. That is what made the header count a fleet that was not
 running, the projects tree list repositories nobody had mapped, and the WORK tab
 paint eight sample tickets for a frame before the real Jira read replaced them.
 
-What remains in `fixtures.ts` is `prs`, `notifs` and `feed`: the three slices
+What remains in `fixtures.ts` is `prs` and `notifs`: the two slices
 with no live producer yet. They are **knowingly stale** — their `session` and
 `target` fields name sessions that no longer exist — and each dies the day
 something real feeds it.
@@ -202,9 +248,9 @@ into an xterm on every subscribe.
 
 `sendToEntity` is the one branch point in the coordination layer (story 097). On
 desktop, for a real session, it calls `sendToSession` and returns
-`{ kind: 'routed' }` — a feed item, **no transcript echo** and **no
-acknowledgement timer**, because status now comes from the process itself
-(story 096) rather than from a timer narrating one.
+`{ kind: 'routed' }` — **no transcript echo** and **no acknowledgement
+timer**, because status now comes from the process itself (story 096) rather
+than from a timer narrating one.
 
 Everything else keeps the prototype's round-trip: the browser target, which has
 no bridge to ask, and agents, which have no project and no pty this epic. That

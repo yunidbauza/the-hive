@@ -14,7 +14,6 @@ import type {
   SessionStatus,
 } from '@/types/entity';
 import { isEnded, isSession, terminalOf } from '@/types/entity';
-import type { FeedItem } from '@/types/feed';
 import type { Notification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
@@ -22,7 +21,7 @@ import type { Ticket } from '@/types/ticket';
 
 
 import { isDesktop } from '@config/runtime';
-import { reset as resetClock, stamp } from '@lib/fake-clock';
+import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
 import {
@@ -160,7 +159,6 @@ interface HiveState {
   /** Where {@link HiveState.prs} came from. */
   prSource: PrSource;
   notifs: ReturnType<typeof createInitialState>['notifs'];
-  feed: FeedItem[];
   orchLines: TermLine[];
 
   /** Replace the ticket list with real issues (HIVE-69). */
@@ -201,7 +199,6 @@ interface HiveState {
   markAllRead: () => void;
   markRead: (index: number) => void;
   pushNotif: (notif: Notification) => void;
-  pushFeed: (item: FeedItem) => void;
   appendEntityLines: (
     id: string,
     lines: TermLine[],
@@ -220,9 +217,6 @@ interface HiveState {
   reset: () => void;
 }
 
-/** Feed is capped so a long-running demo cannot grow without bound. */
-const FEED_CAP = 24;
-
 /**
  * Inbox cap (story 051). Eight is what fits the rail without scrolling on a
  * laptop, and an inbox that grows without bound stops being an inbox.
@@ -232,7 +226,7 @@ const NOTIF_CAP = 8;
 /**
  * Console transcript cap (story 041). Oldest lines drop first.
  *
- * Unlike the feed, this one has a second job: the transcript is replayed into
+ * Unlike the inbox, this one has a second job: the transcript is replayed into
  * an xterm on every subscribe, so an unbounded array would make opening the
  * orchestrator slower the longer the session had been running.
  */
@@ -243,8 +237,8 @@ const ORCH_LINE_CAP = 200;
  *
  * A terminal cleared every twenty minutes for a working day is twenty rows of
  * history in a table whose job is showing what is *running*. Twenty is the same
- * bet `NOTIF_CAP` and `FEED_CAP` make: enough to answer "what did I just
- * finish?", few enough that the live rows stay above the fold.
+ * bet `NOTIF_CAP` makes: enough to answer "what did I just finish?", few enough
+ * that the live rows stay above the fold.
  *
  * Only `done` rows are capped. A `terminated` row is a process that died and is
  * the only record that it existed; dropping those would lose information the
@@ -492,13 +486,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       order: [...state.order, id],
     }));
 
-    get().pushFeed({
-      time: stamp(),
-      txt: `Spawned ${id} on ${repo}`,
-      tone: 'brand',
-      icon: 'ph-plus-circle',
-    });
-
     /**
      * The console records every spawn, whoever asked for it — the `spawn`
      * command, the picker (044), or a future daemon event. Logging here rather
@@ -591,17 +578,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        */
       const result = sendToSession(terminalOf(entity), msg);
 
-      get().pushFeed({
-        time: stamp(),
-        txt: result.ok
-          ? origin === 'orchestrator'
-            ? `Routed your reply to ${id}`
-            : `Routed your message to ${id}`
-          : `Could not route to ${id} — ${result.reason}`,
-        tone: result.ok ? 'brand' : 'amber',
-        icon: result.ok ? 'ph-paper-plane-tilt' : 'ph-warning',
-      });
-
       /**
        * No echo, and no acknowledgement timer.
        *
@@ -628,16 +604,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         : [line(''), line(`❯ ${msg}`, 'cyan')];
 
     get().appendEntityLines(id, echo);
-    get().pushFeed({
-      time: stamp(),
-      txt:
-        origin === 'orchestrator'
-          ? `Routed your reply to ${id}`
-          : `Routed your message to ${id}`,
-      tone: 'brand',
-      icon: 'ph-paper-plane-tilt',
-    });
-
     /**
      * One timer per message, deliberately: two rapid sends produce two
      * independent acknowledgements rather than one that cancels the other.
@@ -883,9 +849,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   pushNotif: (notif) =>
     set((state) => ({ notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) })),
-
-  pushFeed: (item) =>
-    set((state) => ({ feed: [item, ...state.feed].slice(0, FEED_CAP) })),
 
   appendEntityLines: (id, lines, status) =>
     set((state) => {
@@ -1396,6 +1359,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // A sweep from the previous state must not install its answer into the new
     // one — dropping the handle makes the next caller start fresh.
     inFlightPrSweep = null;
+    /**
+     * Nothing in this store stamps through the clock any more — the activity
+     * feed was its only caller and the project explorer replaced it. The rewind
+     * stays because the clock itself stays: it is documented infrastructure for
+     * the simulation story, which will be its first consumer, and a store that
+     * quietly stopped resetting a global would be a trap for whoever writes it.
+     */
     resetClock();
     set({
       ...emptySeeds(),
@@ -1985,8 +1955,6 @@ export const usePrSource = () => useHiveStore((state) => state.prSource);
 /** Sweep GitHub. The poller's entry point — see `hooks/use-pr-refresh.ts`. */
 export const useRefreshPrs = () => useHiveStore((state) => state.refreshPrs);
 
-/** The orchestrator's activity feed, newest first (story 053). */
-export const useFeed = () => useHiveStore((state) => state.feed);
 
 /** Mark one notification read, by its index in `notifs` (story 051). */
 export const useMarkRead = () => useHiveStore((state) => state.markRead);
