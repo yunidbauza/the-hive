@@ -54,9 +54,10 @@ describe('createRepoResolver', () => {
     const { run, calls } = answering({ '/repos/apfm-web': 'acme/apfm-web' });
     const resolver = createRepoResolver('/usr/bin/gh', run);
 
-    await expect(resolver.resolve([project()])).resolves.toEqual([
-      { owner: 'acme', name: 'apfm-web' },
-    ]);
+    await expect(resolver.resolve([project()])).resolves.toEqual({
+      repos: [{ owner: 'acme', name: 'apfm-web' }],
+      failure: null,
+    });
     expect(calls).toEqual(['/repos/apfm-web']);
   });
 
@@ -92,15 +93,139 @@ describe('createRepoResolver', () => {
     expect(calls).toEqual(['/repos/apfm-web']);
   });
 
-  /** The negative answer is cached too — a scratch folder stays a scratch folder. */
-  it('does not re-ask a directory that is not a GitHub repository', async () => {
-    const { run, calls } = answering({});
+  /**
+   * A *definitive* negative is cached — a scratch folder with no GitHub remote
+   * stays one, and re-asking once a minute would be spending a process to
+   * re-learn a permanent fact about a directory.
+   */
+  it('does not re-ask a directory that has no GitHub remote', async () => {
+    const calls: string[] = [];
+    const run: RunAsync = (_file, _args, options) => {
+      calls.push(options?.cwd ?? '');
+      return Promise.resolve({
+        code: 1,
+        stdout: '',
+        stderr: 'no git remotes found for current directory',
+        timedOut: false,
+      });
+    };
     const resolver = createRepoResolver('/usr/bin/gh', run);
 
-    await expect(resolver.resolve([project()])).resolves.toEqual([]);
+    await expect(resolver.resolve([project()])).resolves.toEqual({
+      repos: [],
+      failure: null,
+    });
     await resolver.resolve([project()]);
 
     expect(calls).toEqual(['/repos/apfm-web']);
+  });
+
+  /**
+   * The bug this guards, and it is the worst one this module could have.
+   *
+   * `gh repo view` is a network call that needs credentials. An app launched
+   * offline, or before `gh auth login`, fails for every project — and caching
+   * that would make the panel say "no configured project is a GitHub
+   * repository" every minute *forever*, still saying it after the user logs in,
+   * with only a restart to clear it. A transient failure is never remembered.
+   */
+  it('retries after a failure, and picks the repository up once it works', async () => {
+    let loggedIn = false;
+    const calls: string[] = [];
+
+    const run: RunAsync = (_file, _args, options) => {
+      calls.push(options?.cwd ?? '');
+      if (!loggedIn) {
+        return Promise.resolve({
+          code: 1,
+          stdout: '',
+          stderr: 'To get started with GitHub CLI, please run: gh auth login',
+          timedOut: false,
+        });
+      }
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+        stderr: '',
+        timedOut: false,
+      });
+    };
+
+    const resolver = createRepoResolver('/usr/bin/gh', run);
+
+    const first = await resolver.resolve([project()]);
+    expect(first.repos).toEqual([]);
+    expect(first.failure?.kind).toBe('unauthenticated');
+
+    loggedIn = true;
+
+    const second = await resolver.resolve([project()]);
+    expect(second.repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
+    expect(second.failure).toBeNull();
+    expect(calls).toHaveLength(2);
+  });
+
+  it.each([
+    ['being offline', 'dial tcp: lookup api.github.com: no such host', 'offline'],
+    ['a timeout', '', 'timeout'],
+  ] as const)('reports %s rather than caching it', async (_label, stderr, kind) => {
+    const run: RunAsync = () =>
+      Promise.resolve({
+        code: -1,
+        stdout: '',
+        stderr,
+        timedOut: kind === 'timeout',
+      });
+
+    const resolver = createRepoResolver('/usr/bin/gh', run);
+    const result = await resolver.resolve([project()]);
+
+    expect(result.repos).toEqual([]);
+    expect(result.failure?.kind).toBe(kind);
+  });
+
+  /** The first reason wins — they are almost always the same reason. */
+  it('reports one failure for several unreachable projects', async () => {
+    const run: RunAsync = () =>
+      Promise.resolve({
+        code: 1,
+        stdout: '',
+        stderr: 'gh auth login',
+        timedOut: false,
+      });
+
+    const result = await createRepoResolver('/usr/bin/gh', run).resolve([
+      project(),
+      project({ id: 'other', path: '/repos/other' }),
+    ]);
+
+    expect(result.failure?.kind).toBe('unauthenticated');
+  });
+
+  /** A repository that resolved is not lost because a later one failed. */
+  it('keeps the repositories it did resolve', async () => {
+    const run: RunAsync = (_file, _args, options) =>
+      options?.cwd === '/repos/apfm-web'
+        ? Promise.resolve({
+            code: 0,
+            stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+            stderr: '',
+            timedOut: false,
+          })
+        : Promise.resolve({
+            code: 1,
+            stdout: '',
+            stderr: 'gh auth login',
+            timedOut: false,
+          });
+
+    const result = await createRepoResolver('/usr/bin/gh', run).resolve([
+      project(),
+      project({ id: 'other', path: '/repos/other' }),
+    ]);
+
+    expect(result.repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
+    expect(result.failure?.kind).toBe('unauthenticated');
   });
 
   /**
@@ -118,7 +243,7 @@ describe('createRepoResolver', () => {
       project({ id: 'wt', path: '/repos/apfm-web-worktree' }),
     ]);
 
-    expect(repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
+    expect(repos.repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
   });
 
   it.each([
@@ -130,7 +255,7 @@ describe('createRepoResolver', () => {
 
     await expect(
       createRepoResolver('/usr/bin/gh', run).resolve([entry]),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ repos: [], failure: null });
     expect(calls).toEqual([]);
   });
 
@@ -145,7 +270,7 @@ describe('createRepoResolver', () => {
 
     await expect(
       createRepoResolver('/usr/bin/gh', run).resolve([project()]),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ repos: [], failure: null });
   });
 
   /**
@@ -156,8 +281,11 @@ describe('createRepoResolver', () => {
   it('survives a runner that rejects', async () => {
     const run: RunAsync = () => Promise.reject(new Error('ENOENT'));
 
-    await expect(
-      createRepoResolver('/usr/bin/gh', run).resolve([project()]),
-    ).resolves.toEqual([]);
+    const result = await createRepoResolver('/usr/bin/gh', run).resolve([
+      project(),
+    ]);
+
+    expect(result.repos).toEqual([]);
+    expect(result.failure?.kind).toBe('not-installed');
   });
 });

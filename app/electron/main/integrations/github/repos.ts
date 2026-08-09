@@ -1,5 +1,7 @@
 import type { ProjectConfig } from '../../../shared/config-contract';
+import type { GhError } from '../../../shared/github-contract';
 
+import { classifyGhFailure, isNotAGitHubRepo } from './classify';
 import type { RepoRef } from './query';
 import type { RunAsync } from './run';
 
@@ -13,22 +15,43 @@ import type { RunAsync } from './run';
  * with an upstream. Parsing `.git/config` here would be re-implementing that,
  * worse, in a place that would go stale.
  *
- * ## Why the answer is memoised
+ * ## What is cached, and what is deliberately not
  *
- * The poll runs every minute; a repository's remote changes approximately
- * never. Without a cache this would be one spawn per project per minute to
- * re-learn a constant. The cache holds the **negative** answer too — a directory
- * that is not a GitHub repository is not going to become one mid-session — and
- * lives in a closure rather than at module scope, so each test gets its own.
+ * A **successful** answer is cached for the process lifetime: the poll runs
+ * every minute and a repository's remote changes approximately never, so
+ * without a memo this would be a spawn per project per minute to re-learn a
+ * constant.
  *
- * The consequence is precise and worth writing down: repointing a project at a
- * different repository is not picked up until the app restarts. That is the
- * right trade at a poll a minute, and repointing already restarts the sessions
- * that care.
+ * A **failure is not cached**, and that distinction is the whole design. This
+ * command talks to GitHub and needs credentials, so it fails when the machine
+ * is offline, when `gh` is not logged in yet, or during a blip. Caching those
+ * would mean an app launched before `gh auth login` says "no configured project
+ * is a GitHub repository" every minute *forever*, and keeps saying it after the
+ * user logs in — the panel would tell them to fix their project list, which was
+ * never the problem, and only a restart would clear it.
+ *
+ * The one negative worth remembering is `no git remotes`: a scratch directory
+ * with no GitHub remote is a permanent fact about that directory, not about the
+ * connection. That case is cached; everything else is retried next sweep, which
+ * costs one spawn per unresolved project per minute and buys a system that
+ * repairs itself.
  */
 
 /** `owner/name`, as `nameWithOwner` spells it. */
 const NAME_WITH_OWNER = /^([^/\s]+)\/([^/\s]+)$/;
+
+export interface RepoResolution {
+  repos: RepoRef[];
+  /**
+   * Why resolution came up short, when it did.
+   *
+   * `null` when every project answered — including projects that answered "I am
+   * not a GitHub repository", which is an answer and not a failure. Non-null
+   * carries the *reason*, so an empty list caused by a logged-out `gh` can say
+   * so instead of blaming the user's project list.
+   */
+  failure: GhError | null;
+}
 
 export interface RepoResolver {
   /**
@@ -38,7 +61,7 @@ export interface RepoResolver {
    * its checkout, which is exactly how this app is developed — and asking about
    * it twice would show every PR twice.
    */
-  resolve(projects: readonly ProjectConfig[]): Promise<RepoRef[]>;
+  resolve(projects: readonly ProjectConfig[]): Promise<RepoResolution>;
 }
 
 function parseNameWithOwner(stdout: string): RepoRef | null {
@@ -46,9 +69,6 @@ function parseNameWithOwner(stdout: string): RepoRef | null {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    // Not JSON at all. `gh` printed something this code does not understand,
-    // which makes it a repository it cannot name — not a reason to fail the
-    // sweep, because the other projects may well resolve.
     return null;
   }
 
@@ -62,42 +82,68 @@ function parseNameWithOwner(stdout: string): RepoRef | null {
   return { owner: match[1], name: match[2] };
 }
 
+/** One directory's answer: a repository, "not one", or a reason it failed. */
+type Answer =
+  | { kind: 'repo'; repo: RepoRef }
+  | { kind: 'not-a-repo' }
+  | { kind: 'failed'; error: GhError };
+
 export function createRepoResolver(
   ghPath: string,
   run: RunAsync,
 ): RepoResolver {
-  /** Resolved path → its repository, or `null` for "asked, and it is not one". */
+  /** Resolved path → its repository, or `null` for a *definitive* "not one". */
   const cache = new Map<string, RepoRef | null>();
 
-  async function repoFor(path: string): Promise<RepoRef | null> {
+  async function ask(path: string): Promise<Answer> {
     const cached = cache.get(path);
-    if (cached !== undefined) return cached;
-
-    let repo: RepoRef | null = null;
-
-    try {
-      const result = await run(
-        ghPath,
-        ['repo', 'view', '--json', 'nameWithOwner'],
-        { cwd: path },
-      );
-      // A non-zero exit is the ordinary "this git repository has no GitHub
-      // remote" answer, which is a state and not a failure.
-      if (result.code === 0) repo = parseNameWithOwner(result.stdout);
-    } catch {
-      // A `gh` that could not be executed. Cached as "not a repository" like
-      // any other negative answer: retrying a broken binary once a minute is
-      // how a poller becomes the problem.
+    if (cached !== undefined) {
+      return cached === null ? { kind: 'not-a-repo' } : { kind: 'repo', repo: cached };
     }
 
-    cache.set(path, repo);
-    return repo;
+    let result;
+    try {
+      result = await run(ghPath, ['repo', 'view', '--json', 'nameWithOwner'], {
+        cwd: path,
+      });
+    } catch {
+      // The binary could not be executed. Not cached — it was on the `PATH`
+      // moments ago, so this is the machine changing underneath the app.
+      return {
+        kind: 'failed',
+        error: { kind: 'not-installed', message: 'Could not run `gh`.' },
+      };
+    }
+
+    if (result.code === 0) {
+      const repo = parseNameWithOwner(result.stdout);
+      /*
+        A zero exit is a definitive answer either way. Output this code cannot
+        read is still `gh` saying "here is what this directory is", so it is
+        cached as "not a repository" rather than retried once a minute forever.
+      */
+      cache.set(path, repo);
+      return repo === null ? { kind: 'not-a-repo' } : { kind: 'repo', repo };
+    }
+
+    if (isNotAGitHubRepo(result.stderr)) {
+      cache.set(path, null);
+      return { kind: 'not-a-repo' };
+    }
+
+    // Offline, logged out, a blip. Deliberately uncached: the user can fix all
+    // three without restarting the app, and the next sweep must notice.
+    return {
+      kind: 'failed',
+      error: classifyGhFailure(result.stderr, result.timedOut),
+    };
   }
 
   return {
     async resolve(projects) {
-      const found: RepoRef[] = [];
+      const repos: RepoRef[] = [];
       const seen = new Set<string>();
+      let failure: GhError | null = null;
 
       for (const project of projects) {
         /**
@@ -117,19 +163,27 @@ export function createRepoResolver(
           once, in exchange for a process storm on a machine that is already
           running the user's terminals.
         */
-        const repo = await repoFor(project.path);
-        if (repo === null) continue;
+        const answer = await ask(project.path);
+
+        if (answer.kind === 'failed') {
+          // The first reason wins: they are almost always the same reason, and
+          // the first is the one that has not been coloured by a retry.
+          failure ??= answer.error;
+          continue;
+        }
+
+        if (answer.kind === 'not-a-repo') continue;
 
         // Case-insensitive, because GitHub's own names are: `Owner/Repo` and
         // `owner/repo` are one repository and must not be swept twice.
-        const key = `${repo.owner}/${repo.name}`.toLowerCase();
+        const key = `${answer.repo.owner}/${answer.repo.name}`.toLowerCase();
         if (seen.has(key)) continue;
 
         seen.add(key);
-        found.push(repo);
+        repos.push(answer.repo);
       }
 
-      return found;
+      return { repos, failure };
     },
   };
 }

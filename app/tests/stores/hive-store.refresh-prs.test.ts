@@ -142,9 +142,9 @@ describe('refreshPrs', () => {
   });
 
   /**
-   * A refresh over a live list must not flash a skeleton. `loading` is only set
-   * when the source is not already live — keyed on the *source*, not on
-   * `prs.length`, so a successful sweep that matched nothing keeps saying so.
+   * A refresh over a live list must not flash a skeleton. Nothing sets
+   * `loading` after boot at all, so this holds for a successful sweep that
+   * matched nothing too — an empty `live` answer keeps saying so.
    */
   it('does not return a live source to loading mid-refresh', async () => {
     readPullRequests.mockResolvedValue(ok());
@@ -171,6 +171,80 @@ describe('refreshPrs', () => {
     await useHiveStore.getState().refreshPrs();
 
     expect(seen).toEqual(['loading']);
+  });
+
+  /**
+   * The flicker this used to cause, once a minute, on the two states that most
+   * need to stay readable.
+   *
+   * An earlier version set `loading` on every sweep that was not already
+   * `live`. On an unconfigured machine — or a failed one, where the panel is
+   * showing a "Try again" button — the poll replaced the explanation with a
+   * skeleton for the duration of the sweep, up to twenty seconds of every
+   * sixty. The button the user was reaching for did not exist for a third of
+   * each minute.
+   */
+  it.each(['unconfigured', 'failed'] as const)(
+    'does not flip a %s panel back to a skeleton on the next poll',
+    async (kind) => {
+      readPullRequests.mockResolvedValue(
+        refused(kind === 'unconfigured' ? 'no-repos' : 'offline'),
+      );
+      await useHiveStore.getState().refreshPrs();
+      expect(useHiveStore.getState().prSource.kind).toBe(kind);
+
+      const seen: string[] = [];
+      readPullRequests.mockImplementation(() => {
+        seen.push(useHiveStore.getState().prSource.kind);
+        return Promise.resolve(ok());
+      });
+
+      await useHiveStore.getState().refreshPrs();
+
+      expect(seen).toEqual([kind]);
+    },
+  );
+
+  /**
+   * "Try again" calls this directly while the poller may have a sweep out.
+   *
+   * Two concurrent sweeps are two `gh` processes, and the harm is specific: if
+   * the retry answered first and the older sweep then timed out, the failure
+   * path would mark the just-installed fresh list stale — a "may be out of
+   * date" banner over data a second old.
+   */
+  it('shares one sweep between concurrent callers', async () => {
+    let release: ((value: GhResult<PrsSnapshot>) => void) | undefined;
+    readPullRequests.mockImplementation(
+      () =>
+        new Promise<GhResult<PrsSnapshot>>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const store = useHiveStore.getState();
+    const first = store.refreshPrs();
+    const second = store.refreshPrs();
+
+    expect(readPullRequests).toHaveBeenCalledTimes(1);
+
+    release?.(ok());
+    await Promise.all([first, second]);
+
+    expect(useHiveStore.getState().prSource).toEqual({
+      kind: 'live',
+      stale: false,
+      repos: 2,
+    });
+  });
+
+  it('starts a fresh sweep once the previous one has settled', async () => {
+    readPullRequests.mockResolvedValue(ok());
+
+    await useHiveStore.getState().refreshPrs();
+    await useHiveStore.getState().refreshPrs();
+
+    expect(readPullRequests).toHaveBeenCalledTimes(2);
   });
 
   /** An empty sweep is an answer, and it stays an answer across refreshes. */

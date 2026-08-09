@@ -292,6 +292,15 @@ const DONE_CAP = 20;
  */
 const staleTitles = new Map<string, string>();
 
+/**
+ * The GitHub sweep in flight, or `null`.
+ *
+ * Module scope rather than store state: it is not something a component renders,
+ * and putting it in the store would re-render every subscriber twice per poll
+ * to say "a request started" and "a request finished".
+ */
+let inFlightPrSweep: Promise<void> | null = null;
+
 function currentSessionIn(state: HiveState, terminalId: string): string {
   const direct = state.entities[terminalId];
   if (direct !== undefined && isSession(direct) && !isEnded(direct.status)) {
@@ -1314,6 +1323,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    *
    * Never throws. `lib/github.ts` answers `null` instead of rejecting, and
    * `null` here means the channel itself failed.
+   *
+   * **Nothing here sets `loading`.** That is the boot state and it is left to
+   * the first answer to clear, permanently. An earlier version announced every
+   * sweep that was not already `live`, which flickered the two states that most
+   * need to stay readable: an `unconfigured` explanation and a `failed` message
+   * with its retry button were both replaced by a skeleton once a minute, for
+   * as long as the sweep took — up to twenty seconds of every sixty in which
+   * the button the user was reaching for did not exist.
    */
   refreshPrs: async () => {
     if (!isDesktop()) {
@@ -1324,52 +1341,61 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }
 
     /**
-     * Announce the read only when there is nothing on screen to announce it
-     * *over*, keyed on the source rather than on `prs.length`.
+     * One sweep at a time, however many callers ask.
      *
-     * A successful sweep that matched nothing is `live` with an empty array —
-     * a real answer ("you have no open PRs"), and counting rows would replace
-     * that answer with a skeleton every sixty seconds forever.
+     * The poller already dedupes its own ticks, but "Try again" calls this
+     * directly — so a retry clicked while a slow sweep is out used to start a
+     * second `gh`. The harm is specific: if the retry answered first and the
+     * older sweep then timed out, `reportPrFailure` would mark the
+     * just-installed fresh list stale, putting a "may be out of date" banner
+     * over data a second old. Sharing the promise makes the retry *join* the
+     * sweep instead of racing it.
      */
-    if (get().prSource.kind !== 'live') {
-      set({ prSource: { kind: 'loading' } });
-    }
+    inFlightPrSweep ??= (async () => {
+      const result = await readPullRequests();
 
-    const result = await readPullRequests();
-    if (result === null) {
-      get().reportPrFailure('The app could not reach its own main process.');
-      return;
-    }
-
-    if (!result.ok) {
-      /**
-       * Three of the seven error kinds are *configuration*, not failure.
-       *
-       * They are the difference between a panel that explains what to set up
-       * and one that apologises for something the user did not do. The other
-       * four — offline, timeout, rate-limited, unknown — are failures, and a
-       * live list survives them as stale.
-       */
-      const { kind, message } = result.error;
-      if (
-        kind === 'not-installed' ||
-        kind === 'unauthenticated' ||
-        kind === 'no-repos'
-      ) {
-        get().reportPrsUnconfigured(message);
+      if (result === null) {
+        get().reportPrFailure('The app could not reach its own main process.');
         return;
       }
 
-      get().reportPrFailure(message);
-      return;
-    }
+      if (!result.ok) {
+        /**
+         * Three of the seven error kinds are *configuration*, not failure.
+         *
+         * They are the difference between a panel that explains what to set up
+         * and one that apologises for something the user did not do. The other
+         * four — offline, timeout, rate-limited, unknown — are failures, and a
+         * live list survives them as stale.
+         */
+        const { kind, message } = result.error;
+        if (
+          kind === 'not-installed' ||
+          kind === 'unauthenticated' ||
+          kind === 'no-repos'
+        ) {
+          get().reportPrsUnconfigured(message);
+          return;
+        }
 
-    get().hydratePrs(result.value.prs, result.value.repos);
+        get().reportPrFailure(message);
+        return;
+      }
+
+      get().hydratePrs(result.value.prs, result.value.repos);
+    })().finally(() => {
+      inFlightPrSweep = null;
+    });
+
+    return inFlightPrSweep;
   },
 
   reset: () => {
     spawnCounter = 0;
     staleTitles.clear();
+    // A sweep from the previous state must not install its answer into the new
+    // one — dropping the handle makes the next caller start fresh.
+    inFlightPrSweep = null;
     resetClock();
     set({
       ...emptySeeds(),
@@ -1716,31 +1742,56 @@ function liveSessionsForTicket(
 }
 
 /**
- * The session on a branch, or `null`.
+ * The session that owns a PR, or `null`.
  *
- * Live sessions win over ended ones, and that is the whole reason this is a
- * function rather than a `find`. A branch outlives the session that made it —
- * `/clear` retires a row and opens a successor on the same branch, and ended
- * rows linger under `DONE_CAP` — so the first match in `order` is frequently a
- * corpse. Opening it would land the user on a terminal that cannot be typed
- * into, next to a PR that is very much alive.
+ * ## Two signals, and why both are needed
+ *
+ * **Branch** is the strong one — it is the thing GitHub and the fleet genuinely
+ * share. But a branch name is not unique across repositories: cross-repo work
+ * routinely uses the same name in two of them (`feat/thing` in the frontend and
+ * the backend, one ticket, two PRs). Matching on branch alone would resolve a
+ * backend PR to whichever session happened to come first in `order` — possibly
+ * the frontend one — and clicking the card would open the wrong terminal, which
+ * is worse than opening nothing.
+ *
+ * So **project** narrows it, but only when it can: `entity.project` is a config
+ * id derived from a directory name and `repo` is GitHub's, and while they
+ * usually match they are not the same namespace. Requiring equality would break
+ * the link for anyone whose checkout is named differently from the repository.
+ * The rule is therefore *disambiguate, do not filter*: if any candidate's
+ * project matches the repository, only those candidates are considered;
+ * otherwise every candidate stays, and a single unambiguous one still wins.
+ *
+ * ## Live beats ended
+ *
+ * A branch outlives the session that made it — `/clear` retires a row and opens
+ * a successor on the same branch, and ended rows linger under `DONE_CAP` — so
+ * the first match in `order` is frequently a corpse. Opening it would land the
+ * user on a terminal that cannot be typed into, next to a PR that is very much
+ * alive.
  */
-function sessionOnBranch(
-  branch: string,
+function sessionForPr(
+  pr: Pick<PrRecord, 'branch' | 'repo'>,
   order: string[],
   entities: Record<string, Entity>,
 ): string | null {
-  let ended: string | null = null;
+  const candidates: Session[] = [];
 
   for (const id of order) {
     const entity = entities[id];
-    if (!entity || !isSession(entity) || entity.branch !== branch) continue;
-
-    if (!isEnded(entity.status)) return id;
-    ended ??= id;
+    if (entity && isSession(entity) && entity.branch === pr.branch) {
+      candidates.push(entity);
+    }
   }
 
-  return ended;
+  const sameProject = candidates.filter(
+    (session) => session.project.toLowerCase() === pr.repo.toLowerCase(),
+  );
+  const pool = sameProject.length > 0 ? sameProject : candidates;
+
+  return (
+    pool.find((session) => !isEnded(session.status))?.id ?? pool[0]?.id ?? null
+  );
 }
 
 /**
@@ -1765,7 +1816,11 @@ function sessionOnBranch(
  *    and it is deliberately narrow — the key is bounded by non-word characters
  *    so `HIVE-7` cannot claim `HIVE-73`'s pull request.
  *
- * Deduped by PR number, because a PR that matches both ways is one PR.
+ * No dedupe. Each record is visited once and `prs` holds no duplicates, so a PR
+ * that satisfies both rules is still encountered exactly once — a guard keyed on
+ * the number would never fire, and would actively *drop* the case it looks like
+ * it protects: a frontend #42 and a backend #42 on one ticket are two pull
+ * requests, and both belong on the card.
  */
 export function resolveTicketPrs(
   ticketKey: string,
@@ -1794,23 +1849,21 @@ export function resolveTicketPrs(
   const mentionsKey = new RegExp(`(?:^|\\W)${escaped}(?:\\W|$)`, 'i');
 
   const resolved: TicketPr[] = [];
-  const seen = new Set<number>();
 
   for (const pr of prs) {
     const matched =
       branches.has(pr.branch) ||
       mentionsKey.test(pr.branch) ||
       mentionsKey.test(pr.title);
-    if (!matched || seen.has(pr.number)) continue;
+    if (!matched) continue;
 
-    seen.add(pr.number);
     resolved.push({
       n: pr.number,
       repo: pr.repo,
       state: pr.state,
       findings: pr.findings,
       url: pr.url,
-      session: sessionOnBranch(pr.branch, order, entities),
+      session: sessionForPr(pr, order, entities),
     });
   }
 
@@ -1920,7 +1973,7 @@ export const usePrs = (): Pr[] => {
         checks: pr.checks,
         url: pr.url,
         branch: pr.branch,
-        session: sessionOnBranch(pr.branch, order, entities),
+        session: sessionForPr(pr, order, entities),
       })),
     [prs, order, entities],
   );

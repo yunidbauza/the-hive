@@ -43,6 +43,27 @@ describe('runAsync', () => {
     expect(result.stdout.trim().endsWith('/tmp')).toBe(true);
   });
 
+  /**
+   * A response too large for the buffer must not read as a timeout.
+   *
+   * Node kills the child for a `maxBuffer` overflow, so it arrives looking
+   * exactly like one — killed, signalled, non-numeric code. Reporting it as a
+   * timeout would tell the user GitHub was slow when GitHub in fact answered at
+   * length and the app discarded it.
+   */
+  it('reports an oversized response as a failure, not a timeout', async () => {
+    // 9 MiB, past the 8 MiB cap. `dd` writes it in milliseconds.
+    const result = await runAsync('/bin/dd', [
+      'if=/dev/zero',
+      'bs=1024',
+      'count=9216',
+    ]);
+
+    expect(result.timedOut).toBe(false);
+    expect(result.code).toBe(-1);
+    expect(result.stderr).toContain('output limit');
+  });
+
   /** Nothing ran, so there is nothing to read — this is the one case that rejects. */
   it('rejects when the program does not exist', async () => {
     await expect(

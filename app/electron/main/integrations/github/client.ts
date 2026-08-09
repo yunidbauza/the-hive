@@ -1,10 +1,6 @@
-import type {
-  GhError,
-  GhErrorKind,
-  GhResult,
-  PrRecord,
-} from '../../../shared/github-contract';
+import type { GhResult, PrRecord } from '../../../shared/github-contract';
 
+import { classifyGhFailure, ghError } from './classify';
 import { collectPrs, readViewerLogin } from './mapping';
 import { buildPrQuery, buildPrVariables, type RepoRef } from './query';
 import type { RunAsync } from './run';
@@ -24,10 +20,10 @@ import type { RunAsync } from './run';
  *
  * ## What is never returned
  *
- * `stdout` and `stderr` do not escape. The error messages below are written
- * here, from a classification of what happened — never assembled from command
- * output, which can contain a URL with a token in it if a user has configured
- * one that way.
+ * `stdout` and `stderr` do not escape. Failures are named by
+ * `classify.ts` from a classification of what happened — never assembled from
+ * command output, which can contain a URL with a token in it if a user has
+ * configured one that way.
  */
 
 /** Enough of the response to tell "answered" from "failed". */
@@ -45,54 +41,6 @@ export interface GithubClient {
   sweep(repos: readonly RepoRef[], now: number): Promise<GhResult<PrRecord[]>>;
 }
 
-const fail = (kind: GhErrorKind, message: string): GhError => ({
-  kind,
-  message,
-});
-
-/**
- * What went wrong, from the shape of the failure rather than from its prose.
- *
- * Matching on `stderr` text is a last resort and is treated as one: the two
- * patterns below are matched case-insensitively and only after the structural
- * signals — a timeout, an empty body — have been ruled out. GitHub's wording is
- * not a contract, so a miss here degrades to `unknown`, which still renders.
- */
-function classify(stderr: string, timedOut: boolean): GhError {
-  if (timedOut) {
-    return fail('timeout', 'GitHub did not answer in time.');
-  }
-
-  const text = stderr.toLowerCase();
-
-  if (text.includes('rate limit') || text.includes('secondary rate')) {
-    return fail('rate-limited', 'GitHub is rate-limiting this account.');
-  }
-
-  if (
-    text.includes('no such host') ||
-    text.includes('dial tcp') ||
-    text.includes('connection refused') ||
-    text.includes('network is unreachable')
-  ) {
-    return fail('offline', 'Could not reach GitHub.');
-  }
-
-  if (
-    text.includes('authentication') ||
-    text.includes('bad credentials') ||
-    text.includes('401') ||
-    text.includes('gh auth login')
-  ) {
-    return fail(
-      'unauthenticated',
-      'GitHub refused the credentials `gh` is using.',
-    );
-  }
-
-  return fail('unknown', 'The GitHub read failed.');
-}
-
 export function createGithubClient(
   ghPath: string,
   run: RunAsync,
@@ -102,7 +50,10 @@ export function createGithubClient(
       if (repos.length === 0) {
         return {
           ok: false,
-          error: fail('no-repos', 'No configured project is a GitHub repository.'),
+          error: ghError(
+            'no-repos',
+            'No configured project is a GitHub repository.',
+          ),
         };
       }
 
@@ -123,7 +74,10 @@ export function createGithubClient(
         // The binary could not be executed at all. It was on the `PATH` when
         // the sweep started, so this is a machine changing underneath the app
         // rather than a configuration the user can see and fix.
-        return { ok: false, error: fail('not-installed', 'Could not run `gh`.') };
+        return {
+          ok: false,
+          error: ghError('not-installed', 'Could not run `gh`.'),
+        };
       }
 
       let body: GraphqlBody | null = null;
@@ -146,7 +100,10 @@ export function createGithubClient(
        * login was unreadable would be the wrong failure.
        */
       if (login === null) {
-        return { ok: false, error: classify(result.stderr, result.timedOut) };
+        return {
+          ok: false,
+          error: classifyGhFailure(result.stderr, result.timedOut),
+        };
       }
 
       return { ok: true, value: collectPrs(data, repos, login, now) };

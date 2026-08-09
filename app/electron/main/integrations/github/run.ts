@@ -92,6 +92,26 @@ export const runAsync: RunAsync = (file, args, options) =>
           return;
         }
 
+        /**
+         * A response too large for {@link MAX_BUFFER}.
+         *
+         * Node kills the child for this, so it arrives looking exactly like a
+         * timeout — `killed: true`, a signal, and a non-numeric code. Reporting
+         * it as one would tell the user GitHub was slow when GitHub in fact
+         * answered, at length, and the app threw the answer away. Checked
+         * before the kill branch precisely because the kill branch would
+         * swallow it.
+         */
+        if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+          resolve({
+            code: -1,
+            stdout: '',
+            stderr: 'the response exceeded the output limit',
+            timedOut: false,
+          });
+          return;
+        }
+
         // A killed process — the timeout, in practice. Reported as such rather
         // than as exit code 0, which would read as success.
         if (error.killed === true || error.signal !== undefined) {

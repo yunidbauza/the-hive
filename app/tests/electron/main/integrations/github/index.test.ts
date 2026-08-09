@@ -159,6 +159,78 @@ describe('createGithub', () => {
   });
 
   /**
+   * The misdiagnosis this ordering used to produce.
+   *
+   * Resolution runs before the sweep, and `gh repo view` fails for every
+   * project when no host is logged in — so the list came back empty and the
+   * sweep short-circuited on the count with `no-repos`. The user was told to
+   * fix their project list when the fix was `gh auth login`, and the
+   * `unauthenticated` message was unreachable on the only path that could
+   * produce it.
+   */
+  it('reports a logged-out gh as unauthenticated, not as no-repos', async () => {
+    const loggedOut: RunAsync = () =>
+      Promise.resolve({
+        code: 1,
+        stdout: '',
+        stderr: 'To get started with GitHub CLI, please run: gh auth login',
+        timedOut: false,
+      });
+
+    const github = createGithub({
+      config: () => config([project()]),
+      env: () => ({ PATH: withGh() }),
+      run: loggedOut,
+      now: () => Date.now(),
+    });
+
+    const result = await github.prs();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('unauthenticated');
+    expect(result.error.message).toContain('gh auth login');
+  });
+
+  /**
+   * A partial failure does not outrank a partial success: four repositories
+   * that resolved still get swept when a fifth was unreachable.
+   */
+  it('sweeps what resolved even when another project failed', async () => {
+    const mixed: RunAsync = (_file, args, options) => {
+      if (args[0] === 'repo') {
+        return options?.cwd === '/repos/apfm-web'
+          ? Promise.resolve({
+              code: 0,
+              stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+              stderr: '',
+              timedOut: false,
+            })
+          : Promise.resolve({
+              code: 1,
+              stdout: '',
+              stderr: 'gh auth login',
+              timedOut: false,
+            });
+      }
+      return Promise.resolve({ code: 0, stdout: SWEEP, stderr: '', timedOut: false });
+    };
+
+    const github = createGithub({
+      config: () => config([project(), project({ id: 'other', path: '/repos/other' })]),
+      env: () => ({ PATH: withGh() }),
+      run: mixed,
+      now: () => Date.parse('2026-08-09T12:00:00Z'),
+    });
+
+    const result = await github.prs();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.repos).toBe(1);
+  });
+
+  /**
    * The config is read per call, not captured. Projects are added and removed
    * while the app runs, and a poller holding a snapshot from launch would keep
    * sweeping a repository the user had removed.

@@ -247,6 +247,76 @@ describe('hive-store selectors', () => {
       // `tz-fix` is done, and it is the only session on `fix/timezone-bug`.
       expect(result.current.find((pr) => pr.n === 77)?.session).toBe('tz-fix');
     });
+
+    /**
+     * The same branch name in two repositories is normal — one ticket, a
+     * frontend and a backend session, both on `feat/shared`. Matching on branch
+     * alone would open whichever came first in `order`, which is a coin toss
+     * that lands the user in the wrong terminal half the time.
+     */
+    it('picks the session in the PR’s own repository when a branch is shared', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          entities: {
+            ...state.entities,
+            'fe-shared': {
+              ...(state.entities['hero-refresh'] as Session),
+              id: 'fe-shared',
+              project: 'apfm-web',
+              branch: 'feat/shared',
+            },
+            'be-shared': {
+              ...(state.entities['hero-refresh'] as Session),
+              id: 'be-shared',
+              project: 'referral-api',
+              branch: 'feat/shared',
+            },
+          },
+          // Frontend first, so a branch-only match would always answer `fe`.
+          order: ['fe-shared', 'be-shared', ...state.order],
+          prs: [
+            {
+              number: 900,
+              title: 'Backend half',
+              url: 'https://github.com/demo/referral-api/pull/900',
+              repo: 'referral-api',
+              owner: 'demo',
+              branch: 'feat/shared',
+              state: 'open' as const,
+              findings: 0,
+              checks: 'passing' as const,
+              updatedAt: '2026-08-09T15:00:00Z',
+            },
+          ],
+        }));
+      });
+
+      const { result } = renderHook(() => usePrs());
+
+      expect(result.current[0].session).toBe('be-shared');
+    });
+
+    /**
+     * Project **disambiguates**, it does not filter. A checkout directory named
+     * differently from its repository is common, and requiring equality would
+     * break the link for everyone who has one — so an unambiguous branch match
+     * still wins when no project matches.
+     */
+    it('still links when no session’s project matches the repository', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          prs: state.prs.map((pr) =>
+            pr.number === 482 ? { ...pr, repo: 'apfm-web-renamed' } : pr,
+          ),
+        }));
+      });
+
+      const { result } = renderHook(() => usePrs());
+
+      expect(result.current.find((pr) => pr.n === 482)?.session).toBe(
+        'hero-refresh',
+      );
+    });
   });
 
   describe('useTicketPrs', () => {
@@ -396,8 +466,8 @@ describe('hive-store selectors', () => {
       expect(result.current).toEqual([]);
     });
 
-    /** A PR that matches by branch *and* by key is still one PR. */
-    it('dedupes a PR that matches both ways', () => {
+    /** A PR that matches by branch *and* by key is still listed once. */
+    it('lists a PR that matches both ways only once', () => {
       act(() => {
         useHiveStore.setState((state) => ({
           prs: state.prs.map((pr) =>
@@ -411,6 +481,39 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useTicketPrs('GRAC-3018'));
 
       expect(result.current.map((pr) => pr.n)).toEqual([482]);
+    });
+
+    /**
+     * Cross-repo work on one ticket, which a number-keyed dedupe used to eat.
+     *
+     * A frontend #42 and a backend #42 are two pull requests, and a ticket
+     * worked across two repositories has to show both — that is the shape of
+     * nearly every change in this workspace.
+     */
+    it('keeps two PRs that share a number across repositories', () => {
+      const twin = (repo: string) => ({
+        number: 42,
+        title: 'Cross-repo change (GRAC-3018)',
+        url: `https://github.com/demo/${repo}/pull/42`,
+        repo,
+        owner: 'demo',
+        branch: `feat/cross-${repo}`,
+        state: 'open' as const,
+        findings: 0,
+        checks: 'passing' as const,
+        updatedAt: '2026-08-09T15:00:00Z',
+      });
+
+      act(() => {
+        useHiveStore.setState({ prs: [twin('apfm-web'), twin('referral-api')] });
+      });
+
+      const { result } = renderHook(() => useTicketPrs('GRAC-3018'));
+
+      expect(result.current.map((pr) => pr.repo)).toEqual([
+        'apfm-web',
+        'referral-api',
+      ]);
     });
 
     it('resolves only the sessions pointing at this ticket', () => {

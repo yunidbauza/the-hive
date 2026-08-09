@@ -83,7 +83,24 @@ export function createGithub(deps: GithubDeps): Github {
         client = createGithubClient(resolved, deps.run);
       }
 
-      const repos = await resolver.resolve(deps.config().projects);
+      const { repos, failure } = await resolver.resolve(deps.config().projects);
+
+      /**
+       * A resolution failure outranks the empty list it produced.
+       *
+       * Without this, a `gh` that is not logged in reports `no-repos` — because
+       * `gh repo view` fails for every project, the list comes back empty, and
+       * the sweep short-circuits on the count. The user would be told to fix
+       * their project list, which was never the problem, while the message that
+       * would actually help them (`gh auth login`) sat one layer down. The
+       * failure is only preferred when there is genuinely nothing to sweep: a
+       * machine where four repositories resolved and a fifth timed out still
+       * gets its four.
+       */
+      if (repos.length === 0 && failure !== null) {
+        return { ok: false, error: failure };
+      }
+
       const result = await client.sweep(repos, deps.now());
 
       if (!result.ok) return result;

@@ -119,8 +119,15 @@ export function PrsPanel() {
     <div data-panel="prs" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
       <SourceNotice source={source} onRetry={retry} />
 
+      {/*
+        Keyed on the URL, which is unique by construction. `repo#number` is not:
+        the contract keeps `owner` precisely because two configured repositories
+        can share a short name, and two `docs` repos under different owners with
+        the same PR number would collide — React would reconcile one card's DOM
+        onto the other's data.
+      */}
       {prs.map((pr) => (
-        <PrCard key={`${pr.repo}#${String(pr.n)}`} pr={pr} />
+        <PrCard key={pr.url} pr={pr} />
       ))}
 
       {/*
