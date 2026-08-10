@@ -151,7 +151,20 @@ export function NotificationsSection() {
   const desktopAvailable = status === null || status.notificationsSupported;
 
   return (
-    <div className="flex flex-col gap-6">
+    /*
+      The same shell every other pane uses (`appearance`, `editor`,
+      `integrations`, …). The overlay mounts panes bare and adds no padding of
+      its own, so a section that omits this runs its rows edge to edge and
+      scrolls the wrong box — which is exactly what this one did.
+    */
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-[13px] text-ink">Notifications</h2>
+        <p className="text-[11.5px] text-subtle">
+          Which events reach you, and which are allowed to interrupt.
+        </p>
+      </div>
+
       {status !== null && !status.notificationsSupported ? (
         <p className="text-[12.5px] text-amber">
           This system cannot show desktop notifications, so the

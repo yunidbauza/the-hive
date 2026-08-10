@@ -31,6 +31,28 @@ beforeEach(() => {
 
 describe('NotificationsSection', () => {
   /**
+   * The pane shell every other section carries.
+   *
+   * The overlay mounts panes bare and contributes no padding of its own, so a
+   * section that omits the shell runs its rows edge to edge and scrolls the
+   * wrong box. This one did, and looked broken beside Integrations and Editor.
+   */
+  it('names itself and carries the standard pane shell', () => {
+    const { container } = render(<NotificationsSection />);
+
+    expect(
+      screen.getByRole('heading', { name: 'Notifications', level: 2 }),
+    ).toBeInTheDocument();
+    expect(container.firstElementChild).toHaveClass(
+      'px-5',
+      'py-4',
+      'overflow-y-auto',
+      'min-h-0',
+      'flex-1',
+    );
+  });
+
+  /**
    * The property the whole shape exists for: this file does not name a single
    * kind, so a kind added to the registry gets its control without an edit
    * here, and one removed cannot leave a dead switch behind.
