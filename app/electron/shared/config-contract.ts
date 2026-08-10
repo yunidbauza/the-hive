@@ -1,3 +1,11 @@
+import {
+  NOTIFICATION_KINDS,
+  defaultNotificationPrefs,
+  type NotificationDelivery,
+  type NotificationKind,
+  type NotificationPrefs,
+} from './notification-contract';
+
 /**
  * The workspace config contract (story 090).
  *
@@ -136,14 +144,7 @@ export interface CommandDiagnostic {
  * silently does nothing, and the epic's rule for the section nav applies here
  * too: absent rather than disabled.
  */
-export interface NotificationPrefs {
-  /** A session's process exited. */
-  sessionDone: boolean;
-  /** A session produced no output for `ACTIVITY_IDLE_MS`. */
-  sessionIdle: boolean;
-  /** A clone finished — whether it succeeded or failed. */
-  cloneDone: boolean;
-}
+export type { NotificationPrefs } from './notification-contract';
 
 /**
  * `sessionIdle` is off, and the other two are on.
@@ -154,18 +155,10 @@ export interface NotificationPrefs {
  * discrete, both worth interrupting for, and both things the user walked away
  * from.
  */
-export const DEFAULT_NOTIFICATIONS: NotificationPrefs = {
-  sessionDone: true,
-  sessionIdle: false,
-  cloneDone: true,
-};
+export const DEFAULT_NOTIFICATIONS = defaultNotificationPrefs();
 
 /** The preference keys, in the order the settings section shows them. */
-export const NOTIFICATION_KEYS: readonly (keyof NotificationPrefs)[] = [
-  'sessionDone',
-  'sessionIdle',
-  'cloneDone',
-];
+export const NOTIFICATION_KEYS: readonly NotificationKind[] = NOTIFICATION_KINDS;
 
 /**
  * The Jira connection, as the config file declares it (HIVE-67).
@@ -497,11 +490,9 @@ export interface SetRuntimeRequest {
  * case — unlike a per-project override, a preference has no lower level to fall
  * back to, so "off" is a value rather than an absence.
  */
-export interface SetNotificationsRequest {
-  sessionDone?: boolean;
-  sessionIdle?: boolean;
-  cloneDone?: boolean;
-}
+export type SetNotificationsRequest = Partial<
+  Record<NotificationKind, NotificationDelivery>
+>;
 
 /**
  * Change the Jira site and account email (HIVE-67).

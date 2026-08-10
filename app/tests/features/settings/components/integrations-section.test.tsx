@@ -1,5 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -182,75 +181,6 @@ describe('IntegrationsSection — the token source', () => {
     render(<IntegrationsSection />);
 
     expect(await screen.findByText(/keychain|keyring/i)).toBeInTheDocument();
-  });
-});
-
-describe('IntegrationsSection — notifications', () => {
-  it('offers exactly the three classes that are backed by a real event', async () => {
-    render(<IntegrationsSection />);
-
-    const switches = await screen.findAllByRole('switch');
-    expect(switches).toHaveLength(3);
-  });
-
-  it('offers no switch for waiting — the event does not exist', async () => {
-    render(<IntegrationsSection />);
-
-    await screen.findAllByRole('switch');
-    expect(screen.queryByRole('switch', { name: /waiting/i })).toBeNull();
-  });
-
-  it('shows each class in the state the config says it is in', async () => {
-    install({ sessionDone: true, sessionIdle: false, cloneDone: false });
-    render(<IntegrationsSection />);
-
-    const done = await screen.findByRole('switch', { name: /session finishes/i });
-    const clone = screen.getByRole('switch', { name: /clone finishes/i });
-
-    expect(done).toHaveAttribute('aria-checked', 'true');
-    expect(clone).toHaveAttribute('aria-checked', 'false');
-  });
-
-  it('writes only the class that was toggled', async () => {
-    render(<IntegrationsSection />);
-
-    await userEvent.click(
-      await screen.findByRole('switch', { name: /session finishes/i }),
-    );
-
-    expect(setNotificationPrefs).toHaveBeenCalledWith({ sessionDone: false });
-  });
-
-  it('does not re-run the gh probe when a switch is toggled', async () => {
-    /**
-     * Every mutating verb installs a *fresh* snapshot object, so an effect keyed
-     * on the snapshot re-runs on each save. That would put two `gh` subprocess
-     * spawns behind every click of a switch — for an answer that cannot have
-     * changed, since nothing here installs or signs into `gh`.
-     */
-    render(<IntegrationsSection />);
-    await screen.findAllByRole('switch');
-
-    // What a real save does: main returns a fresh snapshot and it is installed.
-    act(() => {
-      install({ sessionDone: false });
-    });
-    await screen.findByRole('switch', { name: /session finishes/i });
-
-    expect(readIntegrationsStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it('replaces the switches with an explanation when the OS cannot show them', async () => {
-    readIntegrationsStatus.mockResolvedValue(
-      status({ notificationsSupported: false }),
-    );
-
-    render(<IntegrationsSection />);
-
-    expect(
-      await screen.findByText(/cannot show notifications/i),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('switch')).toBeNull();
   });
 });
 

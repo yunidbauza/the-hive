@@ -1,196 +1,172 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createNotifier } from '../../../../electron/main/notifications';
-import {
-  DEFAULT_NOTIFICATIONS,
-  emptySnapshot,
-  type NotificationPrefs,
-} from '../../../../electron/shared/config-contract';
+import type { NotificationHub } from '../../../../electron/main/notifications/hub';
 import { CH } from '../../../../electron/shared/ipc-contract';
 
 /**
- * The OS notification emitter (story 106).
+ * Which broadcasts become notifications (story 106, rewritten by HIVE-75).
  *
- * The presenter is injected, so nothing here touches Electron's `Notification`
- * — what is worth testing is *which* events become a notification and which do
- * not, and that is a decision this module makes on its own.
+ * The notifier no longer presents anything — it translates a channel and a
+ * payload into a *kind*, and the hub decides the rest. So these tests assert on
+ * what was raised, and the hub's own tests cover whether it was delivered.
  */
 
-interface Shown {
-  title: string;
-  body: string;
-  onClick: () => void;
-}
+let raise: ReturnType<typeof vi.fn>;
+let hub: NotificationHub;
 
-function harness(over: Partial<NotificationPrefs> = {}) {
-  const shown: Shown[] = [];
-  const activated: string[] = [];
-  const notifier = createNotifier({
-    prefs: () => ({ ...DEFAULT_NOTIFICATIONS, ...over }),
-    present: (options) => shown.push(options),
-    activate: (entityId) => activated.push(entityId),
-  });
-
-  return { notifier, shown, activated };
-}
-
-const cloneEvent = (ok: boolean) => ({
-  ok,
-  targetPath: ok ? '/tmp/repo' : null,
-  reason: ok ? null : 'authentication failed',
-  snapshot: emptySnapshot('/tmp/config.json'),
+beforeEach(() => {
+  raise = vi.fn(() => null);
+  hub = {
+    raise,
+    list: () => [],
+    markRead: () => undefined,
+    clear: () => undefined,
+  } as unknown as NotificationHub;
 });
 
-describe('sessions', () => {
-  it('notifies when a session ends', () => {
-    const { notifier, shown } = harness();
+const notifier = () => createNotifier({ hub });
 
-    notifier.observe(CH.sessionStatus, {
-      entityId: 'apfm-web',
+const raised = () => raise.mock.calls[0][0] as Record<string, unknown>;
+
+describe('session status', () => {
+  it('raises session.ended when a process exits', () => {
+    notifier().observe(CH.sessionStatus, {
+      entityId: 'lead-form',
       status: 'terminated',
     });
 
-    expect(shown).toHaveLength(1);
-    expect(shown[0]?.body).toContain('apfm-web');
+    expect(raised().kind).toBe('session.ended');
+    expect(raised().title).toBe('Session ended');
+    expect(raised().action).toEqual({ type: 'session', entityId: 'lead-form' });
   });
 
-  it('says nothing about idle by default — the chatty class is off', () => {
-    const { notifier, shown } = harness();
+  it('raises session.idle when a session goes quiet', () => {
+    notifier().observe(CH.sessionStatus, {
+      entityId: 'lead-form',
+      status: 'idle',
+    });
 
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'idle' });
-
-    expect(shown).toEqual([]);
+    expect(raised().kind).toBe('session.idle');
   });
 
-  it('notifies on idle once the user turns it on', () => {
-    const { notifier, shown } = harness({ sessionIdle: true });
+  /**
+   * `HOOK_STATUS` maps both `SessionStart` and `Stop` to `idle`, so without the
+   * gate every spawn announced "has gone quiet" the moment it started, and
+   * every turn announced it again — filling the buffer and evicting the
+   * approval request the user actually walked away from.
+   */
+  it('raises nothing for a hook-driven idle — that is not going quiet', () => {
+    const n = notifier();
 
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'idle' });
-
-    expect(shown).toHaveLength(1);
-  });
-
-  it('never notifies for working — it is not an event class', () => {
-    const { notifier, shown } = harness({ sessionIdle: true });
-
-    notifier.observe(CH.sessionStatus, {
+    n.observe(CH.sessionStatus, {
       entityId: 'apfm-web',
+      status: 'idle',
+      event: 'SessionStart',
+    });
+    n.observe(CH.sessionStatus, {
+      entityId: 'apfm-web',
+      status: 'idle',
+      event: 'Stop',
+    });
+
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('raises nothing for working — it is not an event class', () => {
+    notifier().observe(CH.sessionStatus, {
+      entityId: 'lead-form',
       status: 'working',
     });
 
-    expect(shown).toEqual([]);
+    expect(raise).not.toHaveBeenCalled();
   });
 
-  it('respects a class the user switched off', () => {
-    const { notifier, shown } = harness({ sessionDone: false });
+  /**
+   * The distinction HIVE-75 exists to make. Both hooks mean `waiting`; they do
+   * not mean the same thing to the person being asked.
+   */
+  it('tells a permission request apart from an elicitation', () => {
+    const n = notifier();
 
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'terminated' });
+    n.observe(CH.sessionStatus, {
+      entityId: 'lead-form',
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+    expect(raised().kind).toBe('session.waiting');
+    expect(raised().title).toBe('lead-form needs approval');
 
-    expect(shown).toEqual([]);
+    raise.mockClear();
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'call-notes',
+      status: 'waiting',
+      event: 'Elicitation',
+    });
+    expect(raised().kind).toBe('session.asked');
+    expect(raised().title).toBe('call-notes asked a question');
   });
 
-  it('reads the preference at the moment of the event, not at construction', () => {
-    // The prefs callback exists so a save takes effect without rebuilding the
-    // notifier — a snapshot captured at boot would ignore every later change.
-    let prefs: NotificationPrefs = { ...DEFAULT_NOTIFICATIONS };
-    const shown: Shown[] = [];
-    const notifier = createNotifier({
-      prefs: () => prefs,
-      present: (options) => shown.push(options),
-      activate: () => undefined,
+  /** Guessing would describe a different question than the one being asked. */
+  it('drops a waiting that names no hook rather than guessing', () => {
+    notifier().observe(CH.sessionStatus, {
+      entityId: 'lead-form',
+      status: 'waiting',
     });
 
-    prefs = { ...prefs, sessionDone: false };
-    notifier.observe(CH.sessionStatus, { entityId: 'apfm-web', status: 'terminated' });
-
-    expect(shown).toEqual([]);
+    expect(raise).not.toHaveBeenCalled();
   });
 });
 
-describe('clones', () => {
-  it('notifies when a clone succeeds', () => {
-    const { notifier, shown } = harness();
+describe('clone', () => {
+  it('raises clone.done on success, with nowhere to go', () => {
+    notifier().observe(CH.configCloneDone, { ok: true });
 
-    notifier.observe(CH.configCloneDone, cloneEvent(true));
-
-    expect(shown).toHaveLength(1);
+    expect(raised().kind).toBe('clone.done');
+    expect(raised().title).toBe('Clone finished');
+    expect(raised().action).toEqual({ type: 'none' });
   });
 
-  it('notifies when a clone fails — a failure is what you walked away from', () => {
-    const { notifier, shown } = harness();
-
-    notifier.observe(CH.configCloneDone, cloneEvent(false));
-
-    expect(shown).toHaveLength(1);
-    expect(shown[0]?.body).toContain('authentication failed');
-  });
-
-  it('respects the clone class being switched off', () => {
-    const { notifier, shown } = harness({ cloneDone: false });
-
-    notifier.observe(CH.configCloneDone, cloneEvent(true));
-
-    expect(shown).toEqual([]);
-  });
-
-  it('does not offer to open anything — a clone is not a session', () => {
-    const { notifier, shown, activated } = harness();
-
-    notifier.observe(CH.configCloneDone, cloneEvent(true));
-    shown[0]?.onClick();
-
-    expect(activated).toEqual([]);
-  });
-});
-
-describe('clicking', () => {
-  it('asks the renderer to open the session the notification was about', () => {
-    const { notifier, shown, activated } = harness();
-
-    notifier.observe(CH.sessionStatus, {
-      entityId: 'apfm-web',
-      status: 'terminated',
+  it('carries the reason on a failure', () => {
+    notifier().observe(CH.configCloneDone, {
+      ok: false,
+      reason: 'authentication failed',
     });
-    shown[0]?.onClick();
 
-    expect(activated).toEqual(['apfm-web']);
+    expect(raised().title).toBe('Clone failed');
+    expect(raised().body).toBe('authentication failed');
   });
 });
 
-describe('other channels and bad payloads', () => {
-  it('ignores channels that are not an event class', () => {
-    const { notifier, shown } = harness();
-
-    notifier.observe(CH.ptyData, { sessionId: 'a', chunk: 'x' });
-    notifier.observe(CH.ptyExit, { sessionId: 'a', code: 0 });
-
-    expect(shown).toEqual([]);
+describe('everything else', () => {
+  it('ignores channels that are not event classes', () => {
+    notifier().observe(CH.ptyData, { sessionId: 's1', data: 'hello' });
+    expect(raise).not.toHaveBeenCalled();
   });
 
-  it('ignores a payload that is not the shape it expects', () => {
-    const { notifier, shown } = harness();
-
-    notifier.observe(CH.sessionStatus, null);
-    notifier.observe(CH.sessionStatus, 'terminated');
-    notifier.observe(CH.sessionStatus, { entityId: 42, status: 'terminated' });
-    notifier.observe(CH.sessionStatus, { entityId: 'a' });
-    notifier.observe(CH.configCloneDone, { ok: 'yes' });
-
-    expect(shown).toEqual([]);
+  it('ignores a payload that is not a record', () => {
+    notifier().observe(CH.sessionStatus, 'nonsense');
+    expect(raise).not.toHaveBeenCalled();
   });
 
-  it('never throws — the broadcast it taps must not be broken by it', () => {
-    const notifier = createNotifier({
-      prefs: () => {
-        throw new Error('config exploded');
-      },
-      present: () => undefined,
-      activate: () => undefined,
+  it('ignores a malformed payload rather than raising a nameless notification', () => {
+    notifier().observe(CH.sessionStatus, { status: 'terminated' });
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  /** A failed notification must never cost a `pty:data`. */
+  it('never throws, whatever the hub does', () => {
+    raise.mockImplementation(() => {
+      throw new Error('hub exploded');
     });
 
     expect(() =>
-      notifier.observe(CH.sessionStatus, { entityId: 'a', status: 'terminated' }),
+      notifier().observe(CH.sessionStatus, {
+        entityId: 'lead-form',
+        status: 'terminated',
+      }),
     ).not.toThrow();
   });
 });

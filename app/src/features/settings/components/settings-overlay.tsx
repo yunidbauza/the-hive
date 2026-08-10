@@ -8,6 +8,7 @@ import { AdvancedSection } from '@features/settings/components/advanced-section'
 import { AppearanceSection } from '@features/settings/components/appearance-section';
 import { EditorSection } from '@features/settings/components/editor-section';
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
+import { NotificationsSection } from '@features/settings/components/notifications-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
 import { RuntimeSection } from '@features/settings/components/runtime-section';
 import { useSettingsActions } from '@stores/ui-store';
@@ -58,6 +59,7 @@ const SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'editor', label: 'Editor' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'notifications', label: 'Notifications' },
   { id: 'advanced', label: 'Advanced' },
 ] as const;
 
@@ -75,6 +77,7 @@ const PANES: Record<SectionId, ComponentType> = {
   appearance: AppearanceSection,
   editor: EditorSection,
   integrations: IntegrationsSection,
+  notifications: NotificationsSection,
   advanced: AdvancedSection,
 };
 

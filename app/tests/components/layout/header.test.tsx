@@ -6,6 +6,8 @@ import { Header } from '@components/layout/header';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+
+import { notif } from '../../support/notifications';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 /**
@@ -50,7 +52,7 @@ describe('Header', () => {
       screen.getByRole('button', { name: 'Switch to light theme' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /Mark 3 unread/ }),
+      screen.getByRole('button', { name: /Inbox — nothing unread/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'New session' }),
@@ -138,6 +140,13 @@ describe('Header', () => {
 
   describe('inbox bell', () => {
     it('shows the exact unread count, and names it on the button itself', () => {
+      useHiveStore
+        .getState()
+        .hydrateNotifs([
+          notif({ id: 'a' }),
+          notif({ id: 'b' }),
+          notif({ id: 'c' }),
+        ]);
       render(<Header />);
 
       expect(screen.getByText('3')).toBeInTheDocument();
@@ -151,6 +160,13 @@ describe('Header', () => {
 
     it('marks everything read and hides the badge at zero', async () => {
       const user = userEvent.setup();
+      useHiveStore
+        .getState()
+        .hydrateNotifs([
+          notif({ id: 'a' }),
+          notif({ id: 'b' }),
+          notif({ id: 'c' }),
+        ]);
       render(<Header />);
 
       await user.click(screen.getByRole('button', { name: /Mark 3 unread/ }));

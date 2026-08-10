@@ -1,7 +1,6 @@
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
 
-import { Switch } from '@components/ui/switch';
 import { JiraConnectionGroup } from '@features/settings/components/jira-connection-group';
 import { JiraCredentialGroup } from '@features/settings/components/jira-credential-group';
 import { JiraQueryGroup } from '@features/settings/components/jira-query-group';
@@ -9,8 +8,7 @@ import { PathProbes } from '@features/settings/components/path-probes';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { readJiraStatus } from '@lib/jira';
-import { readIntegrationsStatus, setNotificationPrefs } from '@lib/project-config';
-import { NOTIFICATION_KEYS, type NotificationPrefs } from '@shared/config-contract';
+import { readIntegrationsStatus } from '@lib/project-config';
 import type { GhStatus, IntegrationsStatus } from '@shared/ipc-contract';
 import type { JiraStatus } from '@shared/jira-contract';
 
@@ -31,34 +29,14 @@ import type { JiraStatus } from '@shared/jira-contract';
  * stored, and the pane says so rather than leaving the user to wonder where
  * their token went.
  *
- * ## Why only three notification classes
+ * ## Where the notification switches went
  *
- * These are the events main can actually observe. `waiting` — the state the
- * whole attention model is built around — is not derivable from a pty (story
- * 096) and is the next epic's subject. A switch for it would be a control that
- * silently does nothing, and the epic's own rule for the section nav applies
- * here: absent rather than disabled.
+ * Out, to their own section (HIVE-75). Three switches about the OS notification
+ * centre belonged under the integration that produced them; ten kinds across
+ * three sources, generated from a registry, are a section of their own — and
+ * leaving them here would have made the longest list in Settings a footnote
+ * under somebody else's heading.
  */
-
-/** Label and explanation per class, in the order the config declares them. */
-const CLASS_COPY: Record<
-  keyof NotificationPrefs,
-  { label: string; description: string }
-> = {
-  sessionDone: {
-    label: 'When a session finishes',
-    description: 'Its process exited — the thing you walked away from is done.',
-  },
-  sessionIdle: {
-    label: 'When a session goes quiet',
-    description:
-      'No output for a couple of seconds. Real, but chatty: a build that pauses to download is not news.',
-  },
-  cloneDone: {
-    label: 'When a clone finishes',
-    description: 'Succeeded or failed. Long, and usually unattended.',
-  },
-};
 
 function TokenSourceLine({ gh }: { gh: GhStatus }) {
   if (gh.tokenSource === 'env' && gh.envVar !== null) {
@@ -211,8 +189,6 @@ export function IntegrationsSection() {
     );
   }
 
-  const prefs = snapshot.notifications;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
       <div className="flex flex-col gap-0.5">
@@ -288,33 +264,6 @@ export function IntegrationsSection() {
         </>
       )}
 
-      <SettingsGroup
-        title="Notifications"
-        description="Desktop notifications for the things you walked away from."
-      >
-        {status !== null && !status.notificationsSupported ? (
-          <p className="text-[12.5px] text-amber">
-            This system cannot show notifications, so these settings would have no
-            effect. On Linux this usually means no notification daemon is running.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {NOTIFICATION_KEYS.map((key) => (
-              <Switch
-                key={key}
-                label={CLASS_COPY[key].label}
-                description={CLASS_COPY[key].description}
-                checked={prefs[key]}
-                onCheckedChange={(checked) => {
-                  // One class per call, so saving one switch cannot restate
-                  // another — the write path is partial all the way down.
-                  void setNotificationPrefs({ [key]: checked });
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </SettingsGroup>
     </div>
   );
 }

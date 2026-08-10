@@ -50,6 +50,7 @@ import {
   parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
+  parseMarkReadRequest,
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
@@ -60,6 +61,7 @@ import {
   type AppInfo,
   type IntegrationsStatus,
   type NotificationActivateEvent,
+  type NotificationReadEvent,
 } from '@shared/ipc-contract';
 import type {
   JiraComment,
@@ -89,6 +91,7 @@ import {
   setRuntime,
 } from '../config';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
+import { isSafeExternalUrl } from '../external-links';
 import {
   createFsWatchLayer,
   readDirectory,
@@ -102,7 +105,7 @@ import { createGithub } from '../integrations/github';
 import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
-import { createNotifier } from '../notifications';
+import { createNotificationHub, createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
@@ -196,7 +199,7 @@ export function registerIpcHandlers(): void {
    * call time and nothing broadcasts during registration, so the ordering here
    * is a declaration detail rather than a cycle.
    */
-  const notifier = createNotifier({
+  const hub = createNotificationHub({
     prefs: () => getConfig().notifications,
     present: ({ title, body, onClick }) => {
       // False on a Linux box with no notification daemon. Checked per send
@@ -208,7 +211,30 @@ export function registerIpcHandlers(): void {
       notification.on('click', onClick);
       notification.show();
     },
-    activate: (entityId) => {
+    /**
+     * Straight to the renderer, not through `send` (HIVE-75).
+     *
+     * `send` taps the notifier, and the notifier produces into the hub — so
+     * broadcasting a notification through it would feed the hub's own output
+     * back into its input. `observe` ignores the channel, so nothing would
+     * actually loop today, but the cycle would be one `if` away from existing
+     * and nobody would see it coming.
+     */
+    broadcast: (notification) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        window.webContents.send(CH.notificationsNew, notification);
+      }
+    },
+    announceRead: (id) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        window.webContents.send(CH.notificationsRead, {
+          id,
+        } satisfies NotificationReadEvent);
+      }
+    },
+    activate: (action) => {
       /**
        * Main focuses the window; the renderer opens the session.
        *
@@ -221,11 +247,40 @@ export function registerIpcHandlers(): void {
         if (window.isMinimized()) window.restore();
         window.focus();
       }
+
+      /**
+       * A `url` action goes to the user's browser, through the same allowlist
+       * every other outbound link uses (story 081).
+       *
+       * `isSafeExternalUrl` is not optional politeness here: `shell.openExternal`
+       * will happily launch a `file:` URL or a custom scheme registered by some
+       * other application, and a notification's URL is data rather than a
+       * constant. A `none` action has nowhere to go and is satisfied by the
+       * focus above.
+       */
+      if (action.type === 'url') {
+        if (isSafeExternalUrl(action.url)) void shell.openExternal(action.url);
+        return;
+      }
+
+      if (action.type !== 'session') return;
+
       send(CH.notificationsActivate, {
-        entityId,
+        entityId: action.entityId,
       } satisfies NotificationActivateEvent);
     },
+    now: () => Date.now(),
   });
+
+  const notifier = createNotifier({ hub });
+
+  handle(CH.notificationsList, () => hub.list());
+  handle(CH.notificationsMarkRead, (_event, payload) =>
+    // Validated, never coerced — the rule every other handler in this file
+    // follows. Coercing an accidental `undefined` to `null` would turn a single
+    // dismissal into "mark all fifty read", silently and with no error anywhere.
+    hub.markRead(parseMarkReadRequest(payload)),
+  );
 
   /**
    * The hook pipeline is constructed here and started by `createSessions`

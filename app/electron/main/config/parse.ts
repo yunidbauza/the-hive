@@ -8,6 +8,11 @@ import {
   type ProjectOrigin,
 } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
+import {
+  LEGACY_NOTIFICATION_KEYS,
+  NOTIFICATION_DELIVERIES,
+  isNotificationDelivery,
+} from '@shared/notification-contract';
 
 /**
  * Parsing and shape-validation for `~/.hive/config.json` (story 090).
@@ -314,18 +319,58 @@ function optionalNotifications(
     }
   }
 
-  if (!checkKeys(value, NOTIFICATION_KEYS, at, errors)) return undefined;
+  /**
+   * The three booleans this shape replaced are accepted, not reported.
+   *
+   * A config written before HIVE-75 holds them, and `resolveNotificationPrefs`
+   * migrates them on load. Reporting them as unknown keys would put three
+   * errors in the settings pane for a file the app understands perfectly well.
+   */
+  if (!checkKeys(value, [...NOTIFICATION_KEYS, ...LEGACY_NOTIFICATION_KEYS], at, errors))
+    return undefined;
 
   const prefs: Partial<NotificationPrefs> = {};
   for (const key of NOTIFICATION_KEYS) {
     const raw = value[key];
     if (raw === undefined) continue;
-    if (typeof raw !== 'boolean') {
-      errors.push(`${at}.${key}: expected a boolean — using the default`);
+    /**
+     * A delivery, not a boolean (HIVE-75).
+     *
+     * The **legacy booleans are deliberately not read here.** They are not
+     * listed in `NOTIFICATION_KEYS` any more, so `checkKeys` above would have
+     * already reported them as unknown — except that it does not, because
+     * `resolveNotificationPrefs` is what migrates them and it reads the raw
+     * block. This loop only has to answer for the keys this build writes.
+     */
+    if (!isNotificationDelivery(raw)) {
+      errors.push(
+        `${at}.${key}: expected one of ${NOTIFICATION_DELIVERIES.join(', ')} — using the default`,
+      );
       continue;
     }
     prefs[key] = raw;
   }
+
+  /**
+   * The legacy booleans travel through **unread and unvalidated** (HIVE-75).
+   *
+   * They must reach `resolveNotificationPrefs`, which is the only thing that
+   * knows how to migrate them — and this function is what stands between the
+   * file and that call. Filtering them out here is what made the first version
+   * of this change silently reset the preference it was written to preserve:
+   * the migration was correct and never saw its input.
+   *
+   * Not validated, because a malformed legacy value is not worth an error on a
+   * key this build no longer writes; `resolveNotificationPrefs` ignores
+   * anything that is not a boolean and falls back to the registry default.
+   */
+  for (const key of LEGACY_NOTIFICATION_KEYS) {
+    const raw = value[key];
+    if (typeof raw === 'boolean') {
+      (prefs as Record<string, unknown>)[key] = raw;
+    }
+  }
+
   return prefs;
 }
 

@@ -32,6 +32,10 @@ import type {
   SpawnRequest,
   WriteRequest,
 } from './ipc-contract';
+import {
+  NOTIFICATION_DELIVERIES,
+  isNotificationDelivery,
+} from './notification-contract';
 import { SESSION_EFFORTS, SESSION_MODELS } from './session-contract';
 
 /**
@@ -551,8 +555,17 @@ export function parseSetNotificationsRequest(
   for (const key of NOTIFICATION_KEYS) {
     const value = raw[key];
     if (value === undefined) continue;
-    if (typeof value !== 'boolean') {
-      return fail(`setNotifications.${key}: expected a boolean`);
+    /**
+     * A delivery, not a boolean (HIVE-75).
+     *
+     * The old guard's reasoning survives the widening intact: an unparseable
+     * value must be *rejected*, never coerced, because coercing would turn
+     * switching a kind off into switching it on.
+     */
+    if (!isNotificationDelivery(value)) {
+      return fail(
+        `setNotifications.${key}: expected one of ${NOTIFICATION_DELIVERIES.join(', ')}`,
+      );
     }
     request[key] = value;
   }
@@ -562,6 +575,23 @@ export function parseSetNotificationsRequest(
   }
 
   return request;
+}
+
+/**
+ * The `notifications:mark-read` payload (HIVE-75).
+ *
+ * A notification id, or `null` for "all of them". Deliberately a guard rather
+ * than a `typeof` check at the call site: `null` is a *meaningful* value here,
+ * and coercing anything-that-is-not-a-string to it turns a single dismissal
+ * into clearing the whole inbox — the loudest possible outcome from the
+ * quietest possible bug.
+ */
+export function parseMarkReadRequest(input: unknown): string | null {
+  if (input === null) return null;
+  if (typeof input !== 'string' || input === '') {
+    return fail('markRead: expected a notification id, or null for all');
+  }
+  return input;
 }
 
 /** RFC-1123 label. No leading or trailing hyphen. */

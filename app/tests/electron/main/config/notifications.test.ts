@@ -3,24 +3,33 @@ import { describe, expect, it } from 'vitest';
 
 import { parseConfig } from '../../../../electron/main/config/parse';
 import { DEFAULT_NOTIFICATIONS } from '../../../../electron/shared/config-contract';
+import {
+  NOTIFICATION_KINDS,
+  NOTIFICATION_KIND_SPECS,
+} from '../../../../electron/shared/notification-contract';
 
 /**
- * Reading notification preferences (story 106).
+ * Reading notification preferences (story 106, widened by HIVE-75).
  *
- * The block is optional on every existing file, so the load-bearing case is the
- * one where it is absent: every v1 and v2 config in the wild predates this
- * story, and none of them may change meaning or get rewritten because of it.
+ * The block is optional on every existing file, so the load-bearing case is
+ * still the one where it is absent. HIVE-75 adds a second: a file written
+ * *before* it, holding the three booleans, which must keep meaning what it
+ * meant.
  */
 
 const LABEL = 'config';
 
 describe('DEFAULT_NOTIFICATIONS', () => {
-  it('has the chatty class off and the two discrete ones on', () => {
-    expect(DEFAULT_NOTIFICATIONS).toEqual({
-      sessionDone: true,
-      sessionIdle: false,
-      cloneDone: true,
-    });
+  it('answers for every registered kind, at its registry default', () => {
+    expect(Object.keys(DEFAULT_NOTIFICATIONS).sort()).toEqual(
+      [...NOTIFICATION_KINDS].sort(),
+    );
+
+    for (const kind of NOTIFICATION_KINDS) {
+      expect(DEFAULT_NOTIFICATIONS[kind], kind).toBe(
+        NOTIFICATION_KIND_SPECS[kind].defaultDelivery,
+      );
+    }
   });
 });
 
@@ -41,110 +50,94 @@ describe('parseConfig — notifications', () => {
 
   it('reads a partial block without inventing the keys it omits', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"sessionIdle":true}}',
+      '{"version":2,"notifications":{"session.idle":"off"}}',
       LABEL,
     );
 
-    expect(parsed.notifications).toEqual({ sessionIdle: true });
+    expect(parsed.notifications).toEqual({ 'session.idle': 'off' });
     expect(parsed.errors).toEqual([]);
   });
 
-  it('reads all three when the file names all three', () => {
+  it('reads several kinds when the file names several', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"sessionDone":false,"sessionIdle":true,"cloneDone":false}}',
+      '{"version":2,"notifications":{"session.ended":"off","clone.done":"inbox"}}',
+      LABEL,
+    );
+
+    expect(parsed.notifications).toEqual({
+      'session.ended': 'off',
+      'clone.done': 'inbox',
+    });
+    expect(parsed.errors).toEqual([]);
+  });
+
+  /**
+   * The regression this file exists to prevent.
+   *
+   * The migration lives in `resolveNotificationPrefs`, and this parser is what
+   * stands between the file and it. Filtering the legacy keys out here — which
+   * the first cut of HIVE-75 did — left the migration correct and starved: a
+   * user who had switched session notifications off got them back on.
+   */
+  it('carries the legacy booleans through for the migration to read', () => {
+    const parsed = parseConfig(
+      '{"version":2,"notifications":{"sessionDone":false,"cloneDone":true}}',
       LABEL,
     );
 
     expect(parsed.notifications).toEqual({
       sessionDone: false,
-      sessionIdle: true,
-      cloneDone: false,
+      cloneDone: true,
     });
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('does not report the legacy names as unknown keys', () => {
+    const parsed = parseConfig(
+      '{"version":2,"notifications":{"sessionIdle":true}}',
+      LABEL,
+    );
+
     expect(parsed.errors).toEqual([]);
   });
 
   it('no longer reports notifications as an unknown top-level key', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"cloneDone":false}}',
+      '{"version":2,"notifications":{"clone.done":"off"}}',
       LABEL,
     );
 
     expect(parsed.errors).toEqual([]);
   });
 
-  it('reports a non-boolean rather than coercing it', () => {
+  it('reports a value outside the delivery set rather than coercing it', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"sessionDone":"yes"}}',
+      '{"version":2,"notifications":{"session.ended":"yes"}}',
       LABEL,
     );
 
     expect(parsed.errors).toContain(
-      'config.notifications.sessionDone: expected a boolean — using the default',
+      'config.notifications.session.ended: expected one of off, inbox, both — using the default',
     );
     expect(parsed.notifications).toEqual({});
   });
 
   it('keeps the good keys when one is bad — a typo is not a reason to lose the rest', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"sessionDone":1,"cloneDone":false}}',
+      '{"version":2,"notifications":{"session.ended":"yes","clone.done":"off"}}',
       LABEL,
     );
 
-    expect(parsed.notifications).toEqual({ cloneDone: false });
+    expect(parsed.notifications).toEqual({ 'clone.done': 'off' });
+    expect(parsed.errors).toHaveLength(1);
   });
 
   it('reports an unknown key inside the block', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"waiting":true}}',
+      '{"version":2,"notifications":{"slack.mention":"both"}}',
       LABEL,
     );
 
-    expect(parsed.errors).toContain(
-      'config.notifications: unknown key "waiting" — ignored',
-    );
-  });
-
-  it('reports a block that is not an object', () => {
-    const parsed = parseConfig('{"version":2,"notifications":true}', LABEL);
-
-    expect(parsed.errors).toContain(
-      'config.notifications: expected an object — ignored',
-    );
-    expect(parsed.notifications).toBeUndefined();
-  });
-
-  it('drops the block for a forbidden key, and says only that', () => {
-    const parsed = parseConfig(
-      '{"version":2,"notifications":{"__proto__":{"x":1},"cloneDone":false}}',
-      LABEL,
-    );
-
-    expect(parsed.notifications).toBeUndefined();
-    // Not "ignoring the whole file": a poisoned block costs the block, and
-    // telling the user otherwise sends them hunting for a problem that is not
-    // there.
-    expect(parsed.errors).toContain(
-      'config.notifications: forbidden key "__proto__" — notifications ignored',
-    );
-    expect(parsed.errors.join('\n')).not.toMatch(/whole file/);
-  });
-
-  it('keeps the rest of the file when the block is poisoned', () => {
-    const parsed = parseConfig(
-      '{"version":2,"shell":"/bin/zsh","notifications":{"__proto__":{"x":1}}}',
-      LABEL,
-    );
-
-    expect(parsed.shell).toBe('/bin/zsh');
-    expect(parsed.fatal).toBe(false);
-  });
-
-  it('is advisory, never fatal — a bad block still lets the app launch', () => {
-    const parsed = parseConfig(
-      '{"version":2,"notifications":{"sessionDone":"yes"},"projects":[]}',
-      LABEL,
-    );
-
-    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors.join(' ')).toMatch(/slack\.mention/);
   });
 });

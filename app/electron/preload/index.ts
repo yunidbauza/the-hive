@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
+
 import type {
   AddProjectRequest,
   CloneDoneEvent,
@@ -46,6 +47,7 @@ import {
   type HiveBridge,
   type IntegrationsStatus,
   type NotificationActivateEvent,
+  type NotificationReadEvent,
   type ResizeRequest,
   type SessionLostEvent,
   type SpawnRequest,
@@ -61,6 +63,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import type { HiveNotification } from '@shared/notification-contract';
 import type {
   SessionClearedEvent,
   SessionNameEvent,
@@ -287,6 +290,18 @@ const bridge: HiveBridge = {
   notifications: {
     onActivate: (callback: (event: NotificationActivateEvent) => void) =>
       subscribe<NotificationActivateEvent>(CH.notificationsActivate, callback),
+    /** A notification was raised (HIVE-75). */
+    onNew: (callback: (notification: HiveNotification) => void) =>
+      subscribe<HiveNotification>(CH.notificationsNew, callback),
+    /** The buffer main holds, newest first. Hydration on mount. */
+    list: (): Promise<HiveNotification[]> =>
+      ipcRenderer.invoke(CH.notificationsList) as Promise<HiveNotification[]>,
+    /** Mark one read, or every one when `id` is null. */
+    markRead: (id: string | null): Promise<void> =>
+      ipcRenderer.invoke(CH.notificationsMarkRead, id) as Promise<void>,
+    /** The hub marked something read — including from a desktop toast click. */
+    onRead: (callback: (event: NotificationReadEvent) => void) =>
+      subscribe<NotificationReadEvent>(CH.notificationsRead, callback),
   },
   session: {
     onStatus: (callback: (event: SessionStatusEvent) => void) =>

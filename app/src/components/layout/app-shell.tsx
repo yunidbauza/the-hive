@@ -8,6 +8,7 @@ import { TitleBar } from '@components/layout/title-bar';
 import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
+import { useNotificationStream } from '@hooks/use-notification-stream';
 import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
 
@@ -51,6 +52,13 @@ export function AppShell() {
    * and at the composition root because the tab it opens can be any of them.
    */
   useNotificationActivate();
+  /*
+    The inbox's feed (HIVE-75). Mounted here rather than in the panel: the
+    unread badge on the rail's tab has to be right whether or not the Inbox tab
+    has ever been opened, and a subscription that only exists while the panel is
+    mounted would leave the count at zero until someone looked.
+  */
+  useNotificationStream();
 
   /**
    * Watch the visible project's files.

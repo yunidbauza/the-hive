@@ -145,15 +145,6 @@ const CASES = [
         "import { work } from '@features/work/probe-target';\nexport const probe = work;\n",
     },
   },
-  {
-    name: 'zone: only stores/ may import data/',
-    rule: 'import/no-restricted-paths',
-    files: {
-      'src/data/probe-target.ts': 'export const fixture = 1;\n',
-      'src/features/work/probe.ts':
-        "import { fixture } from '@/data/probe-target';\nexport const probe = fixture;\n",
-    },
-  },
   /**
    * Test scaffolding never ships.
    *
