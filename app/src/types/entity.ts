@@ -62,6 +62,35 @@ export interface Session {
    */
   name?: string;
   /**
+   * The app's own name for this session outranks the agent's (HIVE-77).
+   *
+   * Set when the Hive named the session for a reason of its own — today, that
+   * it is being worked for a ticket. While it is set, `renameSession` ignores
+   * names read off the terminal title.
+   *
+   * ## Why a flag and not just "last write wins"
+   *
+   * Claude re-emits its title constantly — every activity change rewrites
+   * `✳ <name>` — so a name assigned in the store and not defended survives
+   * for about a second. A session the user told to "work on ABC-123" would
+   * flick to `ABC-123` and straight back to `sess-03`, which is worse than not
+   * renaming it at all.
+   *
+   * ## Why not write `/rename` into the terminal instead
+   *
+   * That was the alternative, and it would make both sides genuinely agree.
+   * It was rejected because it types into a live input box at a moment the app
+   * chose: mid-turn, possibly while the user is typing, on a TUI whose paste
+   * detection `bootstrap.ts` already had to work around. The app asserting its
+   * own label is a smaller claim than the app driving the agent's keyboard.
+   *
+   * Sessions named at *spawn* from a ticket card do not need this — they carry
+   * the key as `--name`, so the agent reports it back and the two already
+   * agree. This exists for the mid-session case, where there is no command line
+   * left to put it on.
+   */
+  namePinned?: boolean;
+  /**
    * The terminal this session runs in — a pty, not a row.
    *
    * Absent means "my own id", which is every session that has never been
@@ -94,7 +123,31 @@ export interface Session {
    * is a selector over the entities map, never stored.
    */
   ticket?: string; // 'HIVE-73'
-  branch: string; // 'feat/hero-refresh'
+  /**
+   * The branch checked out where this session's agent is working (HIVE-77).
+   *
+   * **Optional, and that is the fix.** This field used to be assigned
+   * `` `feat/${id}` `` at spawn — a branch nothing created, displayed with total
+   * confidence next to a session sitting on `main`, and still displayed after
+   * the agent moved into a worktree. `docs/branch-sync-note.md` has the full
+   * diagnosis; the short version is that it was not stale, it was never true.
+   *
+   * Now it is only ever what main *observed*: `git rev-parse` in the directory
+   * a hook payload named. Absent means nobody has looked yet, or there is
+   * nothing to see — a session on a plain directory, a detached HEAD, a machine
+   * with no `git`. Every surface renders an em dash for it, which is a smaller
+   * claim than a name and an honest one.
+   */
+  branch?: string;
+  /**
+   * Where that branch was read — the agent's working directory (HIVE-77).
+   *
+   * Absent until observed, and equal to the project path for most sessions. It
+   * differs precisely when the agent has moved into a worktree, which is the
+   * case the explorer needs it for: a tree rooted at the mapped project while
+   * the session works somewhere else shows files nobody is editing.
+   */
+  cwd?: string;
   status: SessionStatus;
   task: string; // one-line description
   pr: { n: number; state: PrState } | null;
@@ -186,6 +239,34 @@ export const isAgent = (entity: Entity): entity is Agent =>
  */
 export const terminalOf = (session: Session): string =>
   session.terminalId ?? session.id;
+
+/**
+ * What the three branch surfaces show when nobody has observed one (HIVE-77).
+ *
+ * An em dash, not "unknown", not "—" spelled differently in three files. It is
+ * the typographic convention for "no value" and it reads as one glance rather
+ * than a word the eye has to parse in a 100px column.
+ */
+export const NO_BRANCH = '—';
+
+/**
+ * What to print in a session's branch slot (HIVE-77).
+ *
+ * One function rather than `session.branch ?? '—'` at three call sites, for the
+ * reason {@link entityLabel} gives for the same shape: the fallback *is* the
+ * contract. This one is stricter about why — the whole point of HIVE-77 is that
+ * these surfaces must never again print a branch nobody created, and three
+ * hand-written `??`s are three chances for the next one to substitute something
+ * plausible instead of admitting it does not know.
+ *
+ * Lives here, next to `entityLabel`, because its three callers sit in three
+ * different lint zones — `components/layout`, `features/orchestrator` and
+ * `features/projects` — and `src/types/` is the one place all three may import.
+ */
+export const branchLabel = (session: Session): string =>
+  session.branch === undefined || session.branch === ''
+    ? NO_BRANCH
+    : session.branch;
 
 /**
  * What to call an entity on screen (HIVE-61).

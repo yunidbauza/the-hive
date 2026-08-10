@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { entityLabel, isEnded, isSession } from '@/types/entity';
+import { branchLabel, entityLabel, isEnded, isSession } from '@/types/entity';
 
 import { STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
@@ -221,8 +221,11 @@ function SessionTableRow({ id }: { id: string }) {
       <span className={cn(COL.project, 'text-subtle')} title={entity.project}>
         {entity.project}
       </span>
-      <span className={cn(COL.branch, 'text-subtle')} title={entity.branch}>
-        {entity.branch}
+      <span
+        className={cn(COL.branch, 'text-subtle')}
+        title={branchLabel(entity)}
+      >
+        {branchLabel(entity)}
       </span>
       {/*
         The column is 34px wide, so the PR *state* cannot be visible text here

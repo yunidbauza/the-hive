@@ -1,9 +1,13 @@
 import { useEffect } from 'react';
 
+import { readJiraIssue } from '@/lib/jira';
+
 import {
   useClearSession,
   useRenameSession,
+  useSetSessionBranch,
   useSetSessionStatus,
+  useSetSessionTicket,
 } from '@stores/hive-store';
 
 /**
@@ -33,13 +37,28 @@ import {
  * renames a session inside Claude renames its row in the fleet view, which is
  * the only place the two identities were ever visibly different.
  *
+ * ## The branch, and the ticket (HIVE-77)
+ *
+ * Two more channels, and they are the first here that are **observed rather
+ * than reported**. Nothing tells main what branch a session is on, so it looks
+ * — `git rev-parse` in the directory each hook payload names — and pushes the
+ * answer only when it changed. That replaces `spawnSession`'s old
+ * `` `feat/${id}` ``, which named a branch nothing had created.
+ *
+ * The ticket channel is the odd one out in this file: it is the only listener
+ * that does **not** immediately write to the store. Main sends a key-*shaped*
+ * string it found in a prompt, and `HTTP-404` is key-shaped. So the key is put
+ * to Jira first, and only an issue that actually exists renames anything.
+ *
  * Mounted once, at the composition root. A per-session subscription would mean
- * thirteen listeners for two broadcast channels.
+ * thirteen listeners for five broadcast channels.
  */
 export function useSessionStatus(): void {
   const setSessionStatus = useSetSessionStatus();
   const renameSession = useRenameSession();
   const clearSession = useClearSession();
+  const setSessionBranch = useSetSessionBranch();
+  const setSessionTicket = useSetSessionTicket();
 
   useEffect(() => {
     // No bridge is the browser demo, where every transcript is a recording and
@@ -67,10 +86,54 @@ export function useSessionStatus(): void {
       clearSession(entityId);
     });
 
+    const disposeBranch = bridge.session.onBranch(({ entityId, branch, cwd }) => {
+      setSessionBranch(entityId, branch, cwd);
+    });
+
+    /**
+     * Cancelled on unmount, so a late Jira answer cannot write to a store the
+     * app has finished with — and, more usefully, cannot rename a session in a
+     * test that has already torn down.
+     */
+    let live = true;
+
+    const disposeTicketIntent = bridge.session.onTicketIntent(
+      ({ entityId, key }) => {
+        void (async () => {
+          /**
+           * **Confirmed before it is acted on.**
+           *
+           * Main matched a shape, and a shape is not an issue: `HTTP-404` and
+           * `UTF-8`-adjacent strings pass it perfectly. Asking Jira is the only
+           * check that actually distinguishes them, and it is cheap — one read,
+           * once, on a prompt that contained work intent.
+           *
+           * Anything other than a confirmed issue does nothing at all. A `null`
+           * is the bridge failing, an `ok: false` is Jira refusing or not
+           * finding it, and neither is grounds for renaming a session — a wrong
+           * guess here is silently misfiled work, which the user has no obvious
+           * way to notice.
+           */
+          const result = await readJiraIssue({ key });
+          if (!live || result === null || !result.ok) return;
+          setSessionTicket(entityId, result.value.key);
+        })();
+      },
+    );
+
     return () => {
+      live = false;
       disposeStatus();
       disposeName();
       disposeCleared();
+      disposeBranch();
+      disposeTicketIntent();
     };
-  }, [setSessionStatus, renameSession, clearSession]);
+  }, [
+    setSessionStatus,
+    renameSession,
+    clearSession,
+    setSessionBranch,
+    setSessionTicket,
+  ]);
 }

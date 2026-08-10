@@ -1,4 +1,9 @@
-import { HOOK_ENV_SESSION, HOOK_ENV_TOKEN, type HookStatusEvent } from '@shared/hook-contract';
+import {
+  HOOK_ENV_SESSION,
+  HOOK_ENV_TOKEN,
+  type HookStatusEvent,
+  type HookTicketIntentEvent,
+} from '@shared/hook-contract';
 
 import { createReceiver, type Receiver } from './receiver';
 import { writeHookSettings } from './settings';
@@ -26,6 +31,24 @@ export interface HookRuntimeOptions {
   port?: number;
 }
 
+/**
+ * What the session layer wants told to it.
+ *
+ * Named rather than positional, and that changed with HIVE-77 adding a fourth.
+ * Three bare callbacks in a row were already at the limit of what a call site
+ * can be read for; a fourth of the same arity would be a swap nothing catches —
+ * the hazard `pty-transport.ts` records for `requestSpawn` and fixed the same
+ * way.
+ */
+export interface HookHandlers {
+  /** Whether an entity id is a session this app actually has. */
+  knowsSession: (entityId: string) => boolean;
+  onEvent: (event: HookStatusEvent) => void;
+  /** A prompt named a ticket (HIVE-77). Unconfirmed — see the contract. */
+  onTicketIntent: (event: HookTicketIntentEvent) => void;
+  onCleared: (entityId: string) => void;
+}
+
 export interface HookRuntime {
   /**
    * Bind, write the settings file, and begin reporting.
@@ -33,11 +56,7 @@ export interface HookRuntime {
    * Resolves either way. `settingsPath` afterwards is the honest answer to
    * whether it worked.
    */
-  start(
-    knowsSession: (entityId: string) => boolean,
-    onEvent: (event: HookStatusEvent) => void,
-    onCleared: (entityId: string) => void,
-  ): Promise<void>;
+  start(handlers: HookHandlers): Promise<void>;
   /** The `--settings` argument, or `null` when hooks are not available. */
   readonly settingsPath: string | null;
   /**
@@ -61,9 +80,10 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       return settingsPath;
     },
 
-    async start(knowsSession, onEvent, onCleared) {
+    async start({ knowsSession, onEvent, onTicketIntent, onCleared }) {
       const created = createReceiver({
         onEvent,
+        onTicketIntent,
         onCleared,
         knowsSession,
         ...(port === undefined ? {} : { port }),

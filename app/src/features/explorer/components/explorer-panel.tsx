@@ -6,7 +6,7 @@ import { TreeNode } from '@features/explorer/components/tree-node';
 import { useDirectory } from '@features/explorer/hooks/use-directory';
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
 import { useProjectAccess } from '@hooks/use-project-config';
-import { hasFsBridge } from '@lib/explorer/fs-client';
+import { baseName, hasFsBridge } from '@lib/explorer/fs-client';
 import { useEditorLayout } from '@stores/appearance-store';
 import { useEditorActions } from '@stores/editor-store';
 import {
@@ -34,7 +34,7 @@ import {
  * instead, and this panel reads the revision counter it bumps.
  */
 export function ExplorerPanel() {
-  const project = useExplorerProject();
+  const { project, root: subRoot } = useExplorerProject();
   const access = useProjectAccess(project?.id ?? '');
   const collapseAll = useCollapseExplorer();
   const { openFile, closeAll } = useEditorActions();
@@ -61,7 +61,11 @@ export function ExplorerPanel() {
   const projectId = project?.id ?? null;
   const usable = bridge && projectId !== null && access.spawnable;
 
-  const root = useDirectory(projectId ?? '', '', usable, refreshToken);
+  /**
+   * Rooted at the session's own directory, which is the project root for every
+   * session that has not moved (HIVE-77).
+   */
+  const root = useDirectory(projectId ?? '', subRoot, usable, refreshToken);
 
   const onOpenFile = useCallback(
     (relPath: string) => {
@@ -121,8 +125,23 @@ export function ExplorerPanel() {
         tree you think is stale.
       */}
       <div className="mb-1 flex shrink-0 items-center gap-1.5 px-1">
-        <span className="flex-1 truncate font-mono text-[11.5px] tracking-wide text-subtle uppercase">
+        {/*
+          The header says when the tree is *not* at the project root (HIVE-77).
+          Silently showing a worktree's contents under the project's name is the
+          same class of untruth this story removed from the branch label: the
+          files would be right and the label would be wrong. The full relative
+          path stays in the tooltip; the visible suffix is the last segment,
+          because a 130px rail cannot carry `.claude/worktrees/…` and the
+          worktree's own name is the part that identifies it.
+        */}
+        <span
+          className="flex-1 truncate font-mono text-[11.5px] tracking-wide text-subtle uppercase"
+          title={subRoot === '' ? project.name : `${project.name}/${subRoot}`}
+        >
           {project.name}
+          {subRoot === '' ? null : (
+            <span className="text-muted"> · {baseName(subRoot)}</span>
+          )}
         </span>
 
         <button
@@ -170,7 +189,18 @@ export function ExplorerPanel() {
               key={entry.name}
               projectId={project.id}
               entry={entry}
-              parentPath=""
+              /**
+               * The prefix, so every path this tree produces stays
+               * **project-relative** (HIVE-77) — `.claude/worktrees/x/src/a.ts`
+               * rather than `src/a.ts`.
+               *
+               * That is what keeps the editor honest for free: two files with
+               * the same path in two worktrees are two different keys in
+               * `editor-store`, so opening one cannot mark the other stale, and
+               * the fs guard resolves both under the same project root it
+               * always did.
+               */
+              parentPath={subRoot}
               depth={0}
               refreshToken={refreshToken}
               onOpenFile={onOpenFile}

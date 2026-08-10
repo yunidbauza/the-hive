@@ -304,6 +304,19 @@ export interface SpawnOptions {
   task?: string;
   model?: SessionModel;
   effort?: SessionEffort;
+  /**
+   * What the agent should call itself (HIVE-77).
+   *
+   * Absent for every ordinary spawn, and absent means main names the session
+   * after its entity id — the HIVE-61 behaviour. The store sets it for exactly
+   * one case: a session started from a ticket card, named after its issue key,
+   * so the agent's prompt box says `HIVE-73` rather than `sess-07`.
+   *
+   * Not validated here, on this module's own stated principle that it never
+   * substitutes or judges — the guard at the IPC boundary owns the vocabulary,
+   * and the store owns the collision-free construction.
+   */
+  name?: string;
 }
 
 /**
@@ -322,7 +335,7 @@ export interface SpawnOptions {
 export function requestSpawn(
   entityId: string,
   projectId: string,
-  { task, model, effort }: SpawnOptions = {},
+  { task, model, effort, name }: SpawnOptions = {},
 ): Promise<SpawnOutcome> {
   /**
    * The bridge is read inside the try, not before it.
@@ -373,6 +386,14 @@ export function requestSpawn(
        */
       ...(model === undefined ? {} : { model }),
       ...(effort === undefined ? {} : { effort }),
+      /**
+       * Same spread, same reason (HIVE-77). No empty case to normalise here
+       * either: the store only ever builds this from a Jira key, so it is
+       * either a well-formed name or the guard's problem — and the guard
+       * rejects rather than drops, which is what surfaces a mistake here as a
+       * refusal in the console instead of a session that quietly opens unnamed.
+       */
+      ...(name === undefined ? {} : { name }),
     })
     .then((): SpawnOutcome => ({ ok: true }))
     .catch((cause: unknown): SpawnOutcome => {

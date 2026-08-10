@@ -39,7 +39,16 @@ export function modelLabel(model: Model = DEFAULT_MODEL): string {
  * The formula is the concept's, kept verbatim so the prototype's chips read
  * exactly as the design did.
  */
-export function contextPct(id: string, branch: string): number {
+export function contextPct(id: string, branch = ''): number {
+  /**
+   * An unobserved branch hashes as the empty string (HIVE-77).
+   *
+   * `Session.branch` became optional when the invented `feat/<id>` was removed,
+   * and this is a **mock** metric — the number means nothing, it only has to be
+   * stable per session so the chip does not flicker. Defaulting keeps that
+   * property; the value simply changes once when the real branch arrives, which
+   * is indistinguishable from any other session having a different number.
+   */
   return 5 + ((id.length * 7 + branch.length * 13) % 60);
 }
 

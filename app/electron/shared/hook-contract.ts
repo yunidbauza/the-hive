@@ -169,4 +169,39 @@ export interface HookStatusEvent {
   entityId: string;
   event: StatusHookEvent;
   status: ObservedStatus;
+  /**
+   * The directory the agent is working in, as the payload reported it (HIVE-77).
+   *
+   * **This is the field that makes an honest branch possible**, and it arrives
+   * free. `docs/branch-sync-note.md` listed "the session's live working
+   * directory" as the first of two things main did not have, and proposed
+   * inspecting the shell process with `lsof -a -p <pid> -d cwd` to get it. That
+   * is unnecessary: every Claude Code hook payload already carries `cwd`, and it
+   * is the *agent's* cwd rather than the shell's — which is the more accurate of
+   * the two anyway, since a session that moves into a worktree moves the agent,
+   * not necessarily the login shell.
+   *
+   * Optional because it is read off a payload this app does not control. A
+   * missing `cwd` means no branch is resolved on that event, which is the same
+   * outcome as a session with no hooks at all.
+   */
+  cwd?: string;
+}
+
+/**
+ * A prompt in which the user named a ticket they intend to work on (HIVE-77).
+ *
+ * Separate from {@link HookStatusEvent} because it is a different kind of fact
+ * arriving from the same POST: `UserPromptSubmit` always moves the status to
+ * `working`, and only *sometimes* carries an intent. Folding the key into the
+ * status event would put an optional field on every tick of the most frequent
+ * event on the channel, and would tie a rename to a status change that has
+ * nothing to do with it.
+ *
+ * The key here is **unconfirmed** — see `SessionTicketIntentEvent` for why
+ * confirming it is the renderer's job.
+ */
+export interface HookTicketIntentEvent {
+  entityId: string;
+  key: string;
 }

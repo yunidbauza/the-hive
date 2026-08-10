@@ -35,7 +35,17 @@ import { useBumpFsRevision } from '@stores/ui-store';
  * open, and a file can be open with no tree ever having been shown.
  */
 export function useProjectWatcher(): void {
-  const project = useExplorerProject();
+  /**
+   * The **project**, not the subdirectory (HIVE-77).
+   *
+   * `useExplorerProject` also answers where in the project the tree is rooted,
+   * and this deliberately ignores it: main watches a whole project and reports
+   * project-relative paths, so a watcher narrowed to a worktree would stop
+   * reporting changes to files the editor still has open from outside it.
+   * Widening what is watched costs nothing here — `reconcile` already filters
+   * by path, and the tree re-reads only its expanded directories.
+   */
+  const { project } = useExplorerProject();
   const access = useProjectAccess(project?.id ?? '');
   const bumpFsRevision = useBumpFsRevision();
   const reconcile = useReconcileFiles();

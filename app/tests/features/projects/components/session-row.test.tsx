@@ -24,6 +24,33 @@ describe('SessionRow', () => {
     expect(screen.getByText('feat/hero-refresh')).toBeInTheDocument();
   });
 
+  it('renders an em dash for a session with no observed branch', () => {
+    /**
+     * HIVE-77. This row used to read `feat/sess-01` for a session sitting on
+     * `main` — a branch nothing had created. An em dash is a smaller claim and
+     * an honest one, and it is what every session shows for the moment between
+     * spawning and main's first `git rev-parse` coming back.
+     */
+    const id = useHiveStore.getState().spawnSession('apfm-web');
+    render(<SessionRow id={id} />);
+
+    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.queryByText(/^feat\/sess-/)).not.toBeInTheDocument();
+  });
+
+  it('renders the branch once main has observed one', () => {
+    const id = useHiveStore.getState().spawnSession('apfm-web');
+    act(() =>
+      useHiveStore
+        .getState()
+        .setSessionBranch(id, 'feat/incorp-332', '/repo/.claude/worktrees/x'),
+    );
+
+    render(<SessionRow id={id} />);
+
+    expect(screen.getByText('feat/incorp-332')).toBeInTheDocument();
+  });
+
   /** The one status whose label is not its own name. */
   it('renders waiting as "needs input"', () => {
     render(<SessionRow id="lead-form" />);

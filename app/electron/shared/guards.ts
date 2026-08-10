@@ -32,11 +32,17 @@ import type {
   SpawnRequest,
   WriteRequest,
 } from './ipc-contract';
+import { ISSUE_KEY_PATTERN } from './jira-contract';
 import {
   NOTIFICATION_DELIVERIES,
   isNotificationDelivery,
 } from './notification-contract';
-import { SESSION_EFFORTS, SESSION_MODELS } from './session-contract';
+import {
+  SESSION_EFFORTS,
+  SESSION_MODELS,
+  SESSION_NAME_MAX,
+  isSendableSessionName,
+} from './session-contract';
 
 /**
  * Payload guards (story 082).
@@ -221,7 +227,7 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     input,
     ['sessionId', 'projectId', 'cols', 'rows'],
     'spawn',
-    ['task', 'model', 'effort'],
+    ['task', 'model', 'effort', 'name'],
   );
   return {
     sessionId: assertId(raw.sessionId, 'spawn.sessionId'),
@@ -243,7 +249,41 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     ...(raw.effort === undefined
       ? {}
       : { effort: assertOneOf(raw.effort, SESSION_EFFORTS, 'spawn.effort') }),
+    /**
+     * The display name, when the renderer has a better one than the id
+     * (HIVE-77).
+     *
+     * `model` and `effort` are checked against closed lists; this cannot be,
+     * because a name is not drawn from one. So it is matched against
+     * {@link SESSION_NAME_PATTERN}, which is the same defence and for the same
+     * reason `assertJiraIssueKey` matches rather than escapes: the value is
+     * interpolated into a command line a login shell parses, and no character
+     * that pattern admits means anything to a shell.
+     *
+     * Rejected rather than dropped here, unlike `bootstrap.ts` which silently
+     * omits the flag. The two are not inconsistent: main's own spawn path can
+     * reach `bootstrap.ts` with no guard in between, so it needs a lenient
+     * fallback, whereas a *renderer* sending an unsendable name is sending
+     * something it constructed wrongly and should hear about.
+     */
+    ...(raw.name === undefined
+      ? {}
+      : { name: assertSessionName(raw.name, 'spawn.name') }),
   };
+}
+
+/**
+ * A session's display name, on its way to a command line (HIVE-77).
+ *
+ * See {@link SESSION_NAME_PATTERN} for what the vocabulary excludes and why it
+ * is narrower than the names Claude Code itself accepts.
+ */
+export function assertSessionName(value: unknown, label: string): string {
+  const name = assertString(value, label);
+  if (!isSendableSessionName(name)) {
+    return fail(`${label}: expected a name like HIVE-73 (max ${SESSION_NAME_MAX})`);
+  }
+  return name;
 }
 
 export function parseWriteRequest(input: unknown): WriteRequest {
@@ -748,12 +788,14 @@ export function parseSetJiraTokenRequest(input: unknown): SetJiraTokenRequest {
  * in that shape can carry a path segment, a query, or a fragment, which is why
  * it is **matched rather than escaped**. Encoding a bad key and sending it
  * anyway is exactly what this refuses to do.
+ *
+ * The pattern itself lives in `jira-contract.ts` rather than here, because
+ * HIVE-77 gave the shape a second reader in main — see
+ * {@link ISSUE_KEY_PATTERN}.
  */
-const ISSUE_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
-
 export function assertJiraIssueKey(value: unknown, label: string): string {
   const key = assertString(value, label);
-  if (!ISSUE_KEY.test(key)) {
+  if (!ISSUE_KEY_PATTERN.test(key)) {
     return fail(`${label}: expected an issue key like HIVE-68`);
   }
   return key;

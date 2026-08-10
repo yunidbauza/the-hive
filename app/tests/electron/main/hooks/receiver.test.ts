@@ -5,6 +5,7 @@ import {
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   type HookStatusEvent,
+  type HookTicketIntentEvent,
 } from '../../../../electron/shared/hook-contract';
 import { createReceiver, type Receiver } from '../../../../electron/main/hooks/receiver';
 
@@ -20,15 +21,18 @@ import { createReceiver, type Receiver } from '../../../../electron/main/hooks/r
 describe('hook receiver', () => {
   let receiver: Receiver;
   let events: HookStatusEvent[];
+  let intents: HookTicketIntentEvent[];
   let cleared: string[];
   let url: string;
 
   beforeEach(async () => {
     events = [];
+    intents = [];
     cleared = [];
     receiver = createReceiver({
       onCleared: (entityId) => cleared.push(entityId),
       onEvent: (event) => events.push(event),
+      onTicketIntent: (event) => intents.push(event),
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
     });
@@ -210,6 +214,159 @@ describe('hook receiver', () => {
     expect(events).toEqual([]);
   });
 
+  /**
+   * The `cwd` half of HIVE-77.
+   *
+   * `docs/branch-sync-note.md` listed "the session's live working directory" as
+   * the first thing main did not have, and proposed inspecting the shell
+   * process with `lsof` to get it. These tests record that it was already in
+   * the payload — and that it is the *agent's* cwd, so it follows a session
+   * into a worktree.
+   */
+  describe('cwd', () => {
+    it('carries the working directory out with the status', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        cwd: '/repo/.claude/worktrees/incorp-332',
+      });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([
+        {
+          entityId: 'sess-01',
+          event: 'Stop',
+          status: 'idle',
+          cwd: '/repo/.claude/worktrees/incorp-332',
+        },
+      ]);
+    });
+
+    it.each([
+      ['absent', {}],
+      ['empty', { cwd: '' }],
+      ['not a string', { cwd: 42 }],
+    ])('omits the field when the payload carries none (%s)', async (_label, extra) => {
+      // Absent rather than empty: the session layer reads absence as "nothing
+      // to look at on this tick", and an empty string would be a directory.
+      const response = await post({ hook_event_name: 'Stop', ...extra });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([
+        { entityId: 'sess-01', event: 'Stop', status: 'idle' },
+      ]);
+    });
+
+    it('recovers the directory from an oversized body', async () => {
+      // Same prefix trick the event name already relies on: a
+      // `PermissionRequest` carrying a whole file is exactly the event that
+      // produces `waiting`, and it must still say where it happened.
+      const response = await post({
+        hook_event_name: 'PermissionRequest',
+        cwd: '/repo/worktree',
+        tool_input: 'x'.repeat(256 * 1024),
+      });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([
+        {
+          entityId: 'sess-01',
+          event: 'PermissionRequest',
+          status: 'waiting',
+          cwd: '/repo/worktree',
+        },
+      ]);
+    });
+  });
+
+  describe('ticket intent', () => {
+    it('reports a key the prompt claimed, before the status', async () => {
+      /**
+       * Ordering is asserted, not incidental: `onEvent` is what makes the
+       * session `working`, and a renderer that learned the ticket second would
+       * render the row under its old name for a frame — a visible flicker, on
+       * exactly the frame the user pressed enter.
+       */
+      const order: string[] = [];
+      const ordered = createReceiver({
+        onCleared: () => {},
+        onEvent: () => order.push('status'),
+        onTicketIntent: () => order.push('intent'),
+        knowsSession: () => true,
+      });
+      const started = (await ordered.start()) as string;
+
+      await fetch(started, {
+        method: 'POST',
+        headers: {
+          [HOOK_HEADER_TOKEN]: ordered.token,
+          [HOOK_HEADER_SESSION]: 'sess-01',
+        },
+        body: JSON.stringify({
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'work on ABC-123',
+        }),
+      });
+
+      expect(order).toEqual(['intent', 'status']);
+      await ordered.stop();
+    });
+
+    it('carries the key and nothing else', async () => {
+      // The prompt never travels. The receiver exists to keep a status dot
+      // honest, not to forward what the user typed.
+      const response = await post({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'work on the ticket ABC-123 please',
+      });
+
+      expect(response.status).toBe(204);
+      expect(intents).toEqual([{ entityId: 'sess-01', key: 'ABC-123' }]);
+    });
+
+    it('says nothing when the prompt only mentions a ticket', async () => {
+      await post({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'the PR for ABC-123 broke CI',
+      });
+
+      expect(intents).toEqual([]);
+    });
+
+    it('ignores prompts on every other event', async () => {
+      // Only `UserPromptSubmit` carries something the user just said. A
+      // `prompt` field on any other event is not a fresh statement of intent.
+      await post({ hook_event_name: 'Stop', prompt: 'work on ABC-123' });
+
+      expect(intents).toEqual([]);
+    });
+
+    it('does not scan a truncated body', async () => {
+      /**
+       * A truncated body means the payload exceeded 64 KB — a paste, which is
+       * the worst input for a shape test and the least likely to be "work on
+       * ABC-123". The status still lands; only the intent is skipped.
+       */
+      const response = await post({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: `work on ABC-123 ${'x'.repeat(256 * 1024)}`,
+      });
+
+      expect(response.status).toBe(204);
+      expect(intents).toEqual([]);
+      expect(events).toHaveLength(1);
+    });
+
+    it('reports nothing for a session the app does not have', async () => {
+      const response = await post(
+        { hook_event_name: 'UserPromptSubmit', prompt: 'work on ABC-123' },
+        { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+      );
+
+      expect(response.status).toBe(404);
+      expect(intents).toEqual([]);
+    });
+  });
+
   it('serves only its own path and method', async () => {
     expect((await fetch(url.replace('/hook', '/'), { method: 'POST' })).status).toBe(404);
     expect((await fetch(url, { method: 'GET' })).status).toBe(404);
@@ -230,6 +387,7 @@ describe('hook receiver', () => {
     const doomed = createReceiver({
     onCleared: () => {},
       onEvent: () => {},
+      onTicketIntent: () => {},
       knowsSession: () => true,
       port: 1,
     });
@@ -243,6 +401,7 @@ describe('hook receiver', () => {
       onEvent: () => {
         throw new Error('listener blew up');
       },
+      onTicketIntent: () => {},
       knowsSession: () => true,
     });
     const started = await exploding.start();
@@ -261,14 +420,14 @@ describe('hook receiver', () => {
 
 describe('hook receiver tokens', () => {
   it('gives each receiver a distinct token', () => {
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, knowsSession: () => true });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, knowsSession: () => true });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, knowsSession: () => true });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, knowsSession: () => true });
     expect(a.token).not.toBe(b.token);
     expect(a.token).toHaveLength(36);
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, knowsSession: () => true });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, knowsSession: () => true });
     expect(receiver.url).toBeNull();
   });
 });

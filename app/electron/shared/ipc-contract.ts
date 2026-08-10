@@ -69,9 +69,11 @@ import type { HiveNotification } from './notification-contract';
 import type {
   SessionEffort,
   SessionModel,
+  SessionBranchEvent,
   SessionClearedEvent,
   SessionNameEvent,
   SessionStatusEvent,
+  SessionTicketIntentEvent,
 } from './session-contract';
 
 export const CH = {
@@ -287,6 +289,27 @@ export const CH = {
    */
   sessionCleared: 'session:cleared', // main → renderer
   /**
+   * Where a session is really working, and what is checked out there (HIVE-77).
+   *
+   * Its own channel for the reason `session:name` has one — a branch changes
+   * rarely and only when a human or an agent decides it, while status ticks
+   * several times a turn. Folding it into `session:status` would make every tick
+   * carry a directory main did not look at on that tick.
+   *
+   * Unlike the other two it is **observed rather than reported**: nothing tells
+   * main the branch, so main reads it with `git rev-parse` in the cwd each hook
+   * payload names. See `sessions/git.ts` for why that is cheap enough to do on a
+   * hook boundary and nowhere near cheap enough to poll.
+   */
+  sessionBranch: 'session:branch', // main → renderer
+  /**
+   * A prompt named a ticket the user intends to work on (HIVE-77).
+   *
+   * Carries the key and nothing else — never the prompt it was found in. See
+   * {@link SessionTicketIntentEvent}.
+   */
+  sessionTicketIntent: 'session:ticket-intent', // main → renderer
+  /**
    * The project filesystem — the explorer and the editor.
    *
    * Five verbs and one event. None of them takes a path: each names a
@@ -322,6 +345,8 @@ export const EVENT_CHANNELS = [
   CH.sessionStatus,
   CH.sessionName,
   CH.sessionCleared,
+  CH.sessionBranch,
+  CH.sessionTicketIntent,
   CH.configCloneDone,
   CH.notificationsActivate,
   CH.fsChanged,
@@ -360,6 +385,15 @@ export interface SpawnRequest {
    */
   model?: SessionModel;
   effort?: SessionEffort;
+  /**
+   * What to call the session, when the renderer has a better answer than its
+   * id (HIVE-77).
+   *
+   * Today that is one case: a session started from a ticket card, named after
+   * its issue key. Absent everywhere else, and absent means "use the id" —
+   * which is what every spawn did before this field existed.
+   */
+  name?: string;
 }
 
 export interface WriteRequest {
@@ -882,6 +916,18 @@ export interface HiveBridge {
     onName(callback: (event: SessionNameEvent) => void): () => void;
     /** A session's conversation ended by `/clear`; its terminal did not. */
     onCleared(callback: (event: SessionClearedEvent) => void): () => void;
+    /**
+     * A session's real working directory and branch, as main observed them
+     * (HIVE-77). Replaces the invented `feat/<id>` the store used to assign.
+     */
+    onBranch(callback: (event: SessionBranchEvent) => void): () => void;
+    /**
+     * A prompt named a ticket. The **key only** — never the prompt, and never
+     * confirmed: the renderer checks it against Jira before acting.
+     */
+    onTicketIntent(
+      callback: (event: SessionTicketIntentEvent) => void,
+    ): () => void;
   };
 }
 
@@ -942,7 +988,19 @@ export const BRIDGE_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.session`. */
-export const BRIDGE_SESSION_KEYS = ['onStatus', 'onName', 'onCleared'] as const;
+export const BRIDGE_SESSION_KEYS = [
+  'onStatus',
+  'onName',
+  'onCleared',
+  /**
+   * HIVE-77's two, and the list is still **listeners only** — main → renderer,
+   * no verb the page can call. `onTicketIntent` is the one to keep an eye on:
+   * its source is the user's prompt, and it carries only a matched issue key
+   * out. See `security.spec.ts` for the full argument.
+   */
+  'onBranch',
+  'onTicketIntent',
+] as const;
 
 /** The exact key set of `window.hive.integrations`. */
 export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;

@@ -279,6 +279,43 @@ transport's lazy path, so main's refusal — "not mapped", "session limit
 reached", "pty host unavailable" — reaches the console transcript verbatim. Both
 routes share one channel, so whoever asks first is the only one who asks.
 
+### What a session claims about itself (HIVE-77)
+
+Three fields on `Session` are **observations, not assertions**, and the
+distinction is the whole of HIVE-77.
+
+`branch` is optional. It used to be assigned ``  `feat/${id}` `` at spawn — a
+branch nothing created, rendered with total confidence beside a session sitting
+on `main`. It now holds only what main read with `git rev-parse`, in the
+directory a Claude Code hook payload named; `cwd` is that directory. Absent
+means nobody has looked yet or there is nothing to see, and `branchLabel()` in
+`src/types/entity.ts` renders an em dash for it at all three surfaces. See
+[`branch-sync-note.md`](branch-sync-note.md).
+
+`namePinned` is the one place the **app's** label outranks the agent's. A
+session started from a ticket card is named after its issue key, and one the
+user later says they are working — "work on ABC-123", read out of a
+`UserPromptSubmit` hook and confirmed against Jira — is renamed to it.
+Claude repaints its terminal title several times a second, so without the pin a
+store-side rename survives about one frame. `renameSession` checks it first.
+
+Two rules follow, and both are load-bearing:
+
+- **The id never changes.** It is the entities-map key, it is what `order`
+  holds, and it is what every console line spells. A name is a label; renaming
+  the id would turn a cosmetic event into a graph rewrite.
+- **Names are de-duplicated across the whole fleet, ended rows included.**
+  `DONE_CAP` keeps finished sessions visible and the WORK card still lists them,
+  so two rows reading `HIVE-73` is exactly the ambiguity `HIVE-73-2` removes —
+  and it arises in the common case of picking an issue back up, not an exotic
+  one.
+
+`SessionFacet.branch` is optional for the same reason, which means a session
+nobody has observed matches no pull request. That is the correct answer rather
+than a gap: the value it replaces was `feat/sess-01`, a string no PR could ever
+carry, so nothing that worked before stops working — the near-miss is simply
+visible now instead of hidden inside a plausible-looking field.
+
 `useActiveSessions()` / `useDoneSessions()` are two flat selectors rather than
 one returning `{ active, done }`: `useShallow` compares the returned value's own
 properties, so an object of two freshly-built arrays never compares equal and the

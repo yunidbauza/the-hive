@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -37,6 +37,32 @@ describe('SessionMetaBar', () => {
       ).toBeInTheDocument();
       expect(screen.getByText('feat/hero-refresh')).toBeInTheDocument();
       expect(screen.getByText('working')).toBeInTheDocument();
+    });
+
+    it('shows an em dash before any branch has been observed', () => {
+      /**
+       * HIVE-77. The chip is the most prominent of the three branch surfaces —
+       * it sits directly above the terminal — so it is the one that made
+       * `feat/sess-01` look most authoritative while the session was on `main`.
+       */
+      const id = useHiveStore.getState().spawnSession('apfm-web');
+
+      render(<SessionMetaBar entity={entity(id)} />);
+
+      expect(screen.getByText('—')).toBeInTheDocument();
+    });
+
+    it('shows the real branch once main reports it', () => {
+      const id = useHiveStore.getState().spawnSession('apfm-web');
+      act(() =>
+        useHiveStore
+          .getState()
+          .setSessionBranch(id, 'feat/incorp-332', '/repo/.claude/worktrees/x'),
+      );
+
+      render(<SessionMetaBar entity={entity(id)} />);
+
+      expect(screen.getByText('feat/incorp-332')).toBeInTheDocument();
     });
 
     it('renders the PR chip with its number and state', () => {

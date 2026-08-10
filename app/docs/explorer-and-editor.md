@@ -145,6 +145,36 @@ already names its project, and a second selector would be one more thing to keep
 in sync with the first. The orchestrator tab — which names no session — falls
 back to the last project the tree was rooted at, then to the first mapped one.
 
+### It also follows the session *into a worktree* (HIVE-77)
+
+A session whose agent has moved into `<project>/.claude/worktrees/<name>` is
+editing files a project-rooted tree does not show, while the tree shows files
+nobody is touching. `useExplorerProject()` therefore answers a **project and a
+root**: a project-relative prefix taken from the session's observed `cwd`.
+
+**The fs guard is untouched by this**, and that is the reason it is a prefix
+rather than a new root. A worktree under the project is already inside the
+realpath'd root the section above describes, so every read still resolves
+through `projectRoot(projectId)` exactly as before. A cwd *outside* the mapped
+project resolves to `''` and the tree stays at the project root — the guard
+would refuse those paths anyway, and showing something true beats an error about
+a path the panel should not have asked for.
+
+Two consequences worth naming:
+
+- **Paths stay project-relative** — `.claude/worktrees/x/src/a.ts`, not
+  `src/a.ts`. So the same file in two worktrees is two distinct keys in
+  `editor-store`, and opening one cannot mark the other stale or conflicted.
+- **The watcher does not narrow.** `useProjectWatcher` deliberately ignores the
+  prefix and watches the whole project: main reports project-relative paths, and
+  a watcher scoped to a worktree would stop reporting changes to files the
+  editor still has open from outside it.
+
+Only the active session's own project is retargeted. The sticky and default
+branches answer `''`, because a prefix describes where one session is working
+and applying it to a project the user navigated to for another reason would be a
+stranger lie than the one this fixes.
+
 Expansion is lazy and per node: each expanded directory owns its own
 `useDirectory()` call, and a collapsed one is never read. On a watcher event the
 tree re-reads **every currently-expanded directory** rather than diffing the

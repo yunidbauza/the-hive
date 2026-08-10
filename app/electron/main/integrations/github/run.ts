@@ -58,7 +58,18 @@ export interface RunResult {
 export type RunAsync = (
   file: string,
   args: readonly string[],
-  options?: { cwd?: string },
+  options?: {
+    cwd?: string;
+    /**
+     * Override {@link TIMEOUT_MS} for callers whose work is not a network call
+     * (HIVE-77).
+     *
+     * The default is sized for `gh`, which talks to GitHub. `sessions/git.ts`
+     * runs `git rev-parse`, which reads a local file — twenty seconds there is
+     * not patience, it is a timer held open on a wedged filesystem.
+     */
+    timeoutMs?: number;
+  },
 ) => Promise<RunResult>;
 
 export const runAsync: RunAsync = (file, args, options) =>
@@ -68,7 +79,7 @@ export const runAsync: RunAsync = (file, args, options) =>
       [...args],
       {
         cwd: options?.cwd,
-        timeout: TIMEOUT_MS,
+        timeout: options?.timeoutMs ?? TIMEOUT_MS,
         maxBuffer: MAX_BUFFER,
         encoding: 'utf8',
         shell: false,

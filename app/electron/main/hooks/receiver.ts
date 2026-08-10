@@ -11,7 +11,10 @@ import {
   HOOK_EVENTS,
   type HookEvent,
   type HookStatusEvent,
+  type HookTicketIntentEvent,
 } from '@shared/hook-contract';
+
+import { ticketKeyFromPrompt } from './ticket-intent';
 
 /**
  * The loopback endpoint Claude Code's hooks report session status to (HIVE-62).
@@ -52,6 +55,15 @@ export interface ReceiverOptions {
   /** Called for each valid, correlated hook event. */
   onEvent: (event: HookStatusEvent) => void;
   /**
+   * A prompt named a ticket the user intends to work on (HIVE-77).
+   *
+   * A separate callback rather than a field on {@link HookStatusEvent}, for the
+   * reason `onCleared` is separate: this is not a status. `UserPromptSubmit`
+   * always means `working` and only sometimes carries an intent, so folding the
+   * two would put an optional key on every tick of the busiest event here.
+   */
+  onTicketIntent: (event: HookTicketIntentEvent) => void;
+  /**
    * The session's conversation ended by `/clear`, and its pty is still running.
    *
    * A separate callback rather than a widened {@link HookStatusEvent}, because
@@ -85,7 +97,7 @@ const isHookEvent = (value: unknown): value is HookEvent =>
   typeof value === 'string' && (HOOK_EVENTS as readonly string[]).includes(value);
 
 export function createReceiver(options: ReceiverOptions): Receiver {
-  const { onEvent, onCleared, knowsSession, port = 0 } = options;
+  const { onEvent, onTicketIntent, onCleared, knowsSession, port = 0 } = options;
 
   const token = randomUUID();
   let server: Server | null = null;
@@ -108,6 +120,18 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * exactly as the event name does.
    */
   const REASON_IN_PREFIX = /"reason"\s*:\s*"([a-z_]+)"/;
+
+  /**
+   * And again for `cwd`, which HIVE-77 reads to resolve the session's branch.
+   *
+   * A path is not a fixed vocabulary the way an event name is, so this is the
+   * loosest of the three: everything up to the closing quote, refusing a value
+   * that carries a backslash escape rather than trying to unescape it. On the
+   * platforms this app runs on a project path contains no character JSON
+   * escapes, so the refusal costs nothing real — and hand-rolling an unescaper
+   * against a truncated body to save it would be the wrong trade.
+   */
+  const CWD_IN_PREFIX = /"cwd"\s*:\s*"([^"\\]*)"/;
 
   function handle(
     headers: Record<string, string | string[] | undefined>,
@@ -137,11 +161,24 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
     let event: unknown;
     let reason: unknown;
+    let cwd: unknown;
+    /**
+     * Only ever set on a body that parsed whole.
+     *
+     * A truncated body means the payload was **larger than 64 KB**, and the
+     * intent shapes this looks for are short opening phrases in short messages.
+     * Recovering a prompt from a truncated prefix would mean matching against
+     * text that has been cut at an arbitrary byte, in the one case where the
+     * user pasted something enormous — the worst input for a shape test and the
+     * least likely to be "work on ABC-123".
+     */
+    let prompt: unknown;
 
     if (truncated) {
       // The prefix is all there is; see EVENT_IN_PREFIX.
       event = EVENT_IN_PREFIX.exec(body)?.[1];
       reason = REASON_IN_PREFIX.exec(body)?.[1];
+      cwd = CWD_IN_PREFIX.exec(body)?.[1];
     } else {
       let parsed: unknown;
       try {
@@ -151,10 +188,17 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       }
       const fields =
         typeof parsed === 'object' && parsed !== null
-          ? (parsed as { hook_event_name?: unknown; reason?: unknown })
+          ? (parsed as {
+              hook_event_name?: unknown;
+              reason?: unknown;
+              cwd?: unknown;
+              prompt?: unknown;
+            })
           : undefined;
       event = fields?.hook_event_name;
       reason = fields?.reason;
+      cwd = fields?.cwd;
+      prompt = fields?.prompt;
     }
 
     /**
@@ -180,7 +224,32 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return 204;
     }
 
-    onEvent({ entityId, event, status: HOOK_STATUS[event] });
+    /**
+     * The intent goes out **before** the status (HIVE-77).
+     *
+     * Ordering, not taste. `onEvent` is what makes a session `working`, and a
+     * renderer that learned the ticket second would briefly render the row
+     * under its old identity — the visible flicker being precisely a rename, on
+     * the frame the user pressed enter. Neither callback is allowed to throw
+     * into the other's path, which is why the whole `handle` runs inside the
+     * caller's try.
+     */
+    if (event === 'UserPromptSubmit' && typeof prompt === 'string') {
+      const key = ticketKeyFromPrompt(prompt);
+      if (key !== null) onTicketIntent({ entityId, key });
+    }
+
+    onEvent({
+      entityId,
+      event,
+      status: HOOK_STATUS[event],
+      /**
+       * Absent rather than empty when the payload did not carry one. The
+       * session layer treats absence as "nothing to look at on this tick",
+       * which is the honest reading — an empty string would be a directory.
+       */
+      ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+    });
     return 204;
   }
 

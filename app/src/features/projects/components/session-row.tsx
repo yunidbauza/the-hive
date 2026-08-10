@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { entityLabel, isSession } from '@/types/entity';
+import { branchLabel, entityLabel, isSession } from '@/types/entity';
 
 import {
   STATUS_LABEL,
@@ -60,7 +60,7 @@ export function SessionRow({ id }: SessionRowProps) {
       </span>
 
       <span className="w-full truncate pl-[15px] text-left font-mono text-[10.5px] text-subtle">
-        {entity.branch}
+        {branchLabel(entity)}
       </span>
     </button>
   );

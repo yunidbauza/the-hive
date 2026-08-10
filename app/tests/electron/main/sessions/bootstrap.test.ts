@@ -644,6 +644,21 @@ describe('sessionCommand identity flags (HIVE-61)', () => {
     }
   });
 
+  it('accepts a ticket key and its de-duplicating suffix (HIVE-77)', () => {
+    /**
+     * The Work-tab path. A session started from a ticket card is called after
+     * its issue rather than `sess-07`, so the agent's own prompt box, its
+     * `/resume` entry and the fleet rail all say the same thing.
+     *
+     * A Jira key is uppercase, digits and hyphens, and the suffix adds a hyphen
+     * and digits — so it satisfies `SESSION_NAME_PATTERN` by construction and
+     * reaches the command line rather than being silently dropped.
+     */
+    for (const name of ['HIVE-73', 'HIVE-73-2', 'INCORP-332', 'H2-1']) {
+      expect(sessionCommand('claude', { name })).toBe(`claude --name ${name} && exit`);
+    }
+  });
+
   it('drops a session id that is not a uuid', () => {
     /**
      * A malformed value makes `claude` exit non-zero, and `&&` turns that into

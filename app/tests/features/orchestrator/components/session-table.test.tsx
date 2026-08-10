@@ -94,6 +94,31 @@ describe('SessionTable', () => {
     expect(within(row).getByText('#482')).toBeInTheDocument();
   });
 
+  it('leaves the BRANCH column an em dash until one is observed', () => {
+    /**
+     * HIVE-77. The fleet table exists to tell thirteen terminals apart, and the
+     * branch is one of the two things that does it — so a column full of
+     * `feat/sess-01`, `feat/sess-02` was not merely wrong, it was *convincing*.
+     * An em dash cannot be mistaken for an answer.
+     */
+    act(() => {
+      useHiveStore.getState().reset();
+    });
+    const id = useHiveStore.getState().spawnSession('apfm-web');
+
+    render(<SessionTable />);
+    const row = rows()[0];
+
+    /**
+     * By `title`, not by text: the PR column renders its own em dash for "no
+     * pull request", so a bare text query matches two cells. The branch cell is
+     * the one that carries the value as a tooltip — which it does precisely
+     * because the column truncates.
+     */
+    expect(within(row).getByTitle('—')).toBeInTheDocument();
+    expect(within(row).queryByText(`feat/${id}`)).not.toBeInTheDocument();
+  });
+
   it('names the PR state rather than carrying it in colour alone', () => {
     render(<SessionTable />);
     const row = rows()[0];

@@ -97,12 +97,73 @@ describe('hive-store', () => {
       expect(useUiStore.getState().activeTab).toBe(id);
     });
 
-    it('derives the branch from the generated id', () => {
+    it('invents no branch at all (HIVE-77)', () => {
+      /**
+       * This assertion is the inverse of the one it replaces, which required
+       * `` `feat/${id}` `` — a branch nothing ever created, rendered with
+       * complete confidence beside a session sitting on `main`.
+       *
+       * A spawn is now silent about the branch, and `sessions/index.ts` reads
+       * the real one with `git rev-parse` a moment later. Absent is the honest
+       * state in between, and every surface draws it as an em dash.
+       */
       const id = useHiveStore.getState().spawnSession('referral-api');
       const session = useHiveStore.getState().entities[id];
 
-      expect(isSession(session) && session.branch).toBe(`feat/${id}`);
+      expect(isSession(session) && session.branch).toBeUndefined();
       expect(isSession(session) && session.project).toBe('referral-api');
+    });
+
+    it('names a ticket session after its key, and de-duplicates', () => {
+      /**
+       * The Work-tab path (HIVE-77). Two sessions on one ticket is ordinary —
+       * a frontend and a backend, or a second attempt — and two rows both
+       * reading `HIVE-73` is the ambiguity the suffix removes.
+       */
+      const store = useHiveStore.getState();
+      const first = store.spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+      const second = store.spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+      const third = store.spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+
+      const nameOf = (id: string) => {
+        const entity = useHiveStore.getState().entities[id];
+        return isSession(entity) ? entity.name : undefined;
+      };
+
+      expect(nameOf(first)).toBe('HIVE-73');
+      expect(nameOf(second)).toBe('HIVE-73-2');
+      expect(nameOf(third)).toBe('HIVE-73-3');
+      // The id is untouched: it is the entities-map key, not a label.
+      expect(first).not.toBe('HIVE-73');
+    });
+
+    it('avoids colliding with a session that has already ended', () => {
+      /**
+       * An ended row keeps its name and its place — `DONE_CAP` leaves it in the
+       * rails and the WORK card still lists it. Skipping ended rows would put
+       * two `HIVE-73`s on one ticket card the moment a user picked the issue
+       * back up, which is the common case rather than an exotic one.
+       */
+      const first = useHiveStore
+        .getState()
+        .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+      useHiveStore.getState().setSessionStatus(first, 'terminated');
+
+      const second = useHiveStore
+        .getState()
+        .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+
+      const entity = useHiveStore.getState().entities[second];
+      expect(isSession(entity) && entity.name).toBe('HIVE-73-2');
+    });
+
+    it('leaves a session with no ticket unnamed', () => {
+      // Every other spawn is byte-identical to what HIVE-61 shipped: no name
+      // on the entity, so main falls back to the entity id on the command line.
+      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const session = useHiveStore.getState().entities[id];
+
+      expect(isSession(session) && session.name).toBeUndefined();
     });
 
     it('starts idle when no task is given', () => {

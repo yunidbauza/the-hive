@@ -126,6 +126,76 @@ export interface SessionNameEvent {
 }
 
 /**
+ * Where a session's agent is actually working, and what branch is checked out
+ * there (HIVE-77).
+ *
+ * ## Why this exists at all
+ *
+ * `spawnSession` used to assign `` `feat/${id}` `` and nothing ever created that
+ * branch. The meta bar and the fleet table read `feat/sess-01` off a session
+ * sitting on `main`, and kept reading it after the agent moved into a worktree.
+ * It was not a stale value — it was never true. `docs/branch-sync-note.md`
+ * records the full diagnosis; this event is the fix it asked for.
+ *
+ * ## Why `cwd` rides along rather than travelling separately
+ *
+ * The two are observed **in the same instant from the same hook payload**, and a
+ * branch without the directory it was read in is not checkable by anything
+ * downstream. That is the opposite of the `status`/`name` split, where the
+ * argument for separate channels is that the two are independent and arrive at
+ * wildly different rates. These are one observation.
+ *
+ * The renderer needs both: `branch` for the three places that render it, `cwd`
+ * for the explorer, which re-roots at the session's real working directory once
+ * it is a worktree rather than the mapped project root.
+ *
+ * ## Why `branch` may be null
+ *
+ * A cwd that is not inside a git work tree — a session opened on a plain
+ * directory, or one whose repository has been moved out from under it — has no
+ * branch, and neither does a detached HEAD. `null` says that; it renders as an
+ * em dash. Inventing a name here is the exact defect this event was added to
+ * remove.
+ */
+export interface SessionBranchEvent {
+  entityId: string;
+  /** The checked-out branch, or `null` for no work tree and for detached HEAD. */
+  branch: string | null;
+  /** The absolute directory the branch was read in. */
+  cwd: string;
+}
+
+/**
+ * The user told their agent, in prose, which ticket they are working on
+ * (HIVE-77).
+ *
+ * Emitted from a `UserPromptSubmit` hook whose prompt names an issue key with
+ * work intent around it — "work on ABC-123", "start ABC-123", or a prompt that
+ * is essentially just the key. `hooks/ticket-intent.ts` owns that judgement.
+ *
+ * ## The prompt itself never travels
+ *
+ * **Only the key crosses this channel.** The user's prompt is read inside the
+ * receiver, matched, and dropped; nothing logs it and nothing sends it. That is
+ * a deliberate limit on what a status-reporting side channel is allowed to carry
+ * — the receiver exists to keep a status dot honest, and a design in which it
+ * quietly forwarded everything typed into every session would be a different and
+ * much larger thing.
+ *
+ * ## Why main does not decide whether the key is real
+ *
+ * A key-shaped string is not an issue. `HTTP-404` matches the shape perfectly.
+ * Confirming it means asking Jira, and the renderer is where the Jira bridge and
+ * the already-loaded ticket list live — so main reports *a candidate* and the
+ * renderer confirms it before anything is renamed or associated.
+ */
+export interface SessionTicketIntentEvent {
+  entityId: string;
+  /** A key-shaped candidate. Unconfirmed — the renderer checks it against Jira. */
+  key: string;
+}
+
+/**
  * The conversation in this session's terminal ended, and a new one began in it.
  *
  * Emitted only for `SessionEnd{reason:'clear'}` — `//clear` in Claude Code.

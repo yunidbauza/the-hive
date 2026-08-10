@@ -731,6 +731,7 @@ export function registerIpcHandlers(): void {
       task: request.task,
       model: request.model,
       effort: request.effort,
+      name: request.name,
     });
   });
 
@@ -756,6 +757,12 @@ export function registerIpcHandlers(): void {
       rows: request.rows,
       model: request.model,
       effort: request.effort,
+      /**
+       * Forwarded with `model` and `effort`, for their reason (HIVE-77): a name
+       * describes the session, not the turn. A restarted `HIVE-73` that came
+       * back as `sess-07` would rename a row the user has been watching.
+       */
+      name: request.name,
     });
   });
 

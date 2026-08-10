@@ -393,6 +393,29 @@ const SPAWNABLE: ProjectAccess = { spawnable: true, reason: null, invalid: false
  * - On desktop, refusing until the async read lands would flash every project
  *   as unmapped for a frame or two on every launch.
  */
+/**
+ * A mapped project's absolute directory, or `null` (HIVE-77).
+ *
+ * The config already carries it — `resolve.ts` expands, absolutises and
+ * `realpath`s every project path — and until now nothing in the renderer needed
+ * it, because every filesystem verb names a `projectId` and lets main resolve
+ * the rest. The explorer's worktree retarget is the first thing that has to
+ * compare an absolute path to another absolute path, so it needs the value
+ * rather than the id.
+ *
+ * **This does not become a way to read files by path.** It answers one
+ * question — "is the session's cwd inside this project?" — and `fs-contract`'s
+ * rule that no verb takes a path is untouched.
+ *
+ * `null` for an unknown project and for one whose `status` is not `ok`, which
+ * are the same two cases `projectRoot()` refuses in main.
+ */
+export function projectPath(projectId: string): string | null {
+  const entry = snapshot?.projects.find((project) => project.id === projectId);
+  if (!entry || entry.status !== 'ok') return null;
+  return entry.path;
+}
+
 export function projectAccess(projectId: string): ProjectAccess {
   const current = snapshot;
   if (!current) return SPAWNABLE;

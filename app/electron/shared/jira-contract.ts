@@ -185,6 +185,23 @@ export interface JiraIssue {
   url: string;
 }
 
+/**
+ * The shape of a Jira issue key — an uppercase project prefix, a hyphen, digits.
+ *
+ * It lives here rather than staying private to `guards.ts` because HIVE-77 gave
+ * it a **second** reader: `hooks/ticket-intent.ts` scans a user's prompt for a
+ * key, and a scanner with its own idea of the shape would eventually accept
+ * something the guard then refuses at the IPC boundary — a session that silently
+ * fails to associate, for a reason visible in neither half.
+ *
+ * Anchored, because the guard's use is a whole-string test and that is the
+ * stricter of the two. The scanner builds its own global, unanchored copy from
+ * {@link ISSUE_KEY_SOURCE} rather than mutating this one's `lastIndex`.
+ */
+export const ISSUE_KEY_SOURCE = '[A-Z][A-Z0-9]*-\\d+';
+
+export const ISSUE_KEY_PATTERN = new RegExp(`^${ISSUE_KEY_SOURCE}$`);
+
 export interface JiraSearchResult {
   issues: JiraIssue[];
   /**

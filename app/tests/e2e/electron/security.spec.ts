@@ -160,7 +160,29 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'watch',
     'writeFile',
   ]);
-  expect(surface.notifications).toEqual(['onActivate']);
+  /**
+   * **Pre-existing red, corrected here rather than left failing** — the same
+   * call the `onName` note above records, for the same reason.
+   *
+   * HIVE-75 turned notifications into a real pipeline and added `list`,
+   * `markRead`, `onNew` and `onRead` without updating this list, so the
+   * assertion has been failing since that commit. It is unrelated to HIVE-77
+   * and is fixed here only because a widened bridge landing in an
+   * already-failing test is exactly the miss this test exists to prevent.
+   *
+   * What bounds the four: two listeners, which grant the page nothing it could
+   * not be told; `list`, a read of a buffer main holds *for* the renderer,
+   * which outlives the window; and `markRead`, whose only argument is an id or
+   * `null`, and whose only effect is a flag on a row the renderer can already
+   * see. None of them reaches the filesystem, a process, or the network.
+   */
+  expect(surface.notifications).toEqual([
+    'list',
+    'markRead',
+    'onActivate',
+    'onNew',
+    'onRead',
+  ]);
   expect(surface.jira).toEqual([
     /**
      * HIVE-70's `applyTransition` is the **first verb in this bridge that
@@ -336,8 +358,31 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * is something the page is *told* about. It grants the renderer no new verb
    * — it cannot end a session, only learn that one ended — so the "listener
    * only" property this assertion exists to pin is unchanged.
+   *
+   * HIVE-77 adds the fourth and fifth, and the property still holds — but they
+   * are worth naming individually, because each carries something new *out* of
+   * main and that is the direction this test is least equipped to notice.
+   *
+   * `onBranch` reports a branch and a working directory. Main learned both by
+   * running `git rev-parse` in a directory a hook named, so the renderer is
+   * being told a fact about a repository it already has the id of, and gains no
+   * ability to read a path it could not already reach through `fs`.
+   *
+   * `onTicketIntent` is the one that deserved the hardest look: its input is
+   * the user's **prompt**. It carries only a matched issue key — the prompt is
+   * read inside the receiver and dropped — which is the whole reason main does
+   * the matching rather than forwarding the text for the renderer to scan.
+   * A channel that shipped prompts to the page would be a materially different
+   * thing from a status side-channel, and this list is where that would show
+   * up first.
    */
-  expect(surface.session).toEqual(['onCleared', 'onName', 'onStatus']);
+  expect(surface.session).toEqual([
+    'onBranch',
+    'onCleared',
+    'onName',
+    'onStatus',
+    'onTicketIntent',
+  ]);
 });
 
 test('ipcRenderer is not reachable through the bridge at any depth', async ({

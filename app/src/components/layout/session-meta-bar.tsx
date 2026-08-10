@@ -1,6 +1,11 @@
 import { ArrowLeft, GitBranch, GitPullRequest, Robot } from '@phosphor-icons/react';
 
-import { type Entity, entityLabel, isSession } from '@/types/entity';
+import {
+  branchLabel,
+  type Entity,
+  entityLabel,
+  isSession,
+} from '@/types/entity';
 
 import { Chip } from '@components/ui/chip';
 import { StatusDot, STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
@@ -64,7 +69,7 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
         <>
           <Chip>
             <GitBranch size={13} aria-hidden="true" className="shrink-0" />
-            {session.branch}
+            {branchLabel(session)}
           </Chip>
 
           <Chip className={STATUS_TEXT[session.status]}>

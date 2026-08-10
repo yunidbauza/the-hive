@@ -65,9 +65,11 @@ import type {
 } from '@shared/jira-contract';
 import type { HiveNotification } from '@shared/notification-contract';
 import type {
+  SessionBranchEvent,
   SessionClearedEvent,
   SessionNameEvent,
   SessionStatusEvent,
+  SessionTicketIntentEvent,
 } from '@shared/session-contract';
 
 /**
@@ -310,6 +312,10 @@ const bridge: HiveBridge = {
       subscribe<SessionNameEvent>(CH.sessionName, callback),
     onCleared: (callback: (event: SessionClearedEvent) => void) =>
       subscribe<SessionClearedEvent>(CH.sessionCleared, callback),
+    onBranch: (callback: (event: SessionBranchEvent) => void) =>
+      subscribe<SessionBranchEvent>(CH.sessionBranch, callback),
+    onTicketIntent: (callback: (event: SessionTicketIntentEvent) => void) =>
+      subscribe<SessionTicketIntentEvent>(CH.sessionTicketIntent, callback),
   },
 };
 

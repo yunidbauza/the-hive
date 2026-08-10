@@ -226,6 +226,20 @@ interface HiveState {
   /** The agent reported a new display name (HIVE-61). */
   renameSession: (id: string, name: string) => void;
   /**
+   * Main observed this session's real branch and working directory (HIVE-77).
+   *
+   * `branch` is `null` when there is none to report — not a work tree, a
+   * detached HEAD, no `git` — and lands on the entity as an absent field.
+   */
+  setSessionBranch: (id: string, branch: string | null, cwd: string) => void;
+  /**
+   * The user named the ticket this session is for, in prose (HIVE-77).
+   *
+   * Associates the session and pins its name to the key. The key must already
+   * have been confirmed against Jira; this action does not check.
+   */
+  setSessionTicket: (id: string, ticket: string) => void;
+  /**
    * `/clear` ended this session's conversation; its terminal kept running.
    *
    * Retires the row as `done` and opens a successor on the same terminal.
@@ -396,6 +410,52 @@ function nextSessionId(): string {
   return `sess-${spawnCounter.toString(36).padStart(2, '0')}`;
 }
 
+/**
+ * What to call a session started for a ticket (HIVE-77).
+ *
+ * `HIVE-73`, then `HIVE-73-2`, `HIVE-73-3` — the key itself for the first one,
+ * because a suffix on a session that has no sibling is noise.
+ *
+ * ## Why the whole fleet is searched, ended rows included
+ *
+ * A `done` session keeps its name and keeps its row: `DONE_CAP` leaves it in the
+ * rails, and the WORK card lists it under its ticket. Two rows reading `HIVE-73`
+ * — one finished this morning, one open now — is exactly the ambiguity the
+ * suffix exists to remove, and skipping ended rows would reintroduce it in the
+ * common case of picking a ticket back up.
+ *
+ * ## Why it is a name and not the id
+ *
+ * The id is the entities-map key, it is what `order` holds, and it is what every
+ * console line spells. Renaming *that* would turn a label into a graph rewrite
+ * — the argument `Session.name` already makes for HIVE-61, unchanged here.
+ *
+ * The result always satisfies `SESSION_NAME_PATTERN`: a Jira key is uppercase,
+ * digits and one hyphen, and the suffix adds a hyphen and digits. So it survives
+ * the IPC guard and reaches `claude --name`.
+ */
+function ticketSessionName(
+  ticketKey: string,
+  entities: Record<string, Entity>,
+): string {
+  const taken = new Set(
+    Object.values(entities)
+      .filter(isSession)
+      .map((session) => session.name)
+      .filter((name): name is string => name !== undefined),
+  );
+
+  if (!taken.has(ticketKey)) return ticketKey;
+
+  /**
+   * Starts at 2, so the second session for a ticket is `-2`. Bounded only by
+   * the loop finding a gap, which it always does: `taken` is finite.
+   */
+  let suffix = 2;
+  while (taken.has(`${ticketKey}-${suffix}`)) suffix += 1;
+  return `${ticketKey}-${suffix}`;
+}
+
 const line = (text: string, color: TermLine['color'] = 'ink'): TermLine => ({
   text,
   color,
@@ -501,6 +561,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const resolvedModel = model ?? 'opus';
     const resolvedEffort = effort ?? 'high';
 
+    /**
+     * A session started from a ticket card is called after its issue (HIVE-77).
+     *
+     * Resolved here rather than in the picker because collision-avoidance needs
+     * to see the whole fleet, and the store is what holds it. The name goes two
+     * places from here — onto the entity, and onto the command line as
+     * `--name` — so the row and the agent agree from the first frame instead of
+     * the row saying `HIVE-73` while the agent's prompt box says `sess-07`.
+     */
+    const name = ticket
+      ? ticketSessionName(ticket, get().entities)
+      : undefined;
+
     const session: Session = {
       kind: 'session',
       id,
@@ -512,7 +585,22 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * absent one, and the store's snapshots are compared in tests.
        */
       ...(ticket ? { ticket } : {}),
-      branch: `feat/${id}`,
+      /**
+       * Named up front only when a ticket said what to call it. Spread for the
+       * same reason `ticket` is: an explicit `name: undefined` is a different
+       * object shape from an absent key, and these snapshots are compared.
+       */
+      ...(name === undefined ? {} : { name }),
+      /**
+       * **No `branch` here, and that is the fix** (HIVE-77).
+       *
+       * This line used to read ``branch: `feat/${id}` ``, naming a branch
+       * nothing had created. Main now reports the real one — read with
+       * `git rev-parse` in the directory the agent is actually working in — and
+       * until that arrives the field is absent and every surface shows an em
+       * dash. A moment of "not known yet" is a much smaller lie than
+       * `feat/sess-01`, which was never true at any moment.
+       */
       status: task ? 'working' : 'idle',
       /**
        * Empty, not a placeholder string. Story 044 suggests seeding the *task
@@ -584,6 +672,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ...(task === undefined ? {} : { task }),
         model: resolvedModel,
         effort: resolvedEffort,
+        /**
+         * Sent only when a ticket named it (HIVE-77). Omitted otherwise, so
+         * main falls back to the entity id and the command line is exactly the
+         * one HIVE-61 shipped.
+         */
+        ...(name === undefined ? {} : { name }),
       }).then((outcome) => {
         if (outcome.ok) return;
         set((state) => ({
@@ -1031,6 +1125,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (!entity || !isSession(entity)) return state;
 
       /**
+       * A pinned name outranks the agent's (HIVE-77).
+       *
+       * The app pinned it because the user said which ticket they were working
+       * on, and Claude has no idea that happened — it goes on repainting
+       * `✳ sess-03` several times a second. Without this the rename would be
+       * visible for about one frame.
+       *
+       * Checked before the stale-title guard because it subsumes it: while
+       * pinned, *every* title is refused, whatever its provenance.
+       */
+      if (entity.namePinned === true) return state;
+
+      /**
        * Refuse the title the finished conversation left in the terminal.
        *
        * Suppressed until a *different* name arrives, not merely once: Claude
@@ -1047,6 +1154,92 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (entity.name === name) return state;
       return {
         entities: { ...state.entities, [target]: { ...entity, name } },
+      };
+    }),
+
+  /**
+   * Main observed where this session is working and what is checked out there
+   * (HIVE-77).
+   *
+   * The replacement for the `feat/<id>` fiction. Same shape and same guards as
+   * `setSessionStatus` — the terminal's *current* row, agents ignored, an
+   * unchanged value dropped — and the last of those matters more here than
+   * anywhere else: main already suppresses unchanged branches, so a write
+   * reaching this action twice means two observations genuinely differed, and
+   * dropping the no-op keeps a rail of thirteen rows from re-rendering when a
+   * fourteenth session's `git` call comes back with the same answer.
+   */
+  setSessionBranch: (id, branch, cwd) =>
+    set((state) => {
+      const target = currentSessionIn(state, id);
+      const entity = state.entities[target];
+      if (!entity || !isSession(entity)) return state;
+      if (entity.branch === (branch ?? undefined) && entity.cwd === cwd) {
+        return state;
+      }
+
+      return {
+        entities: {
+          ...state.entities,
+          [target]: {
+            ...entity,
+            /**
+             * `null` from the wire becomes *absent* on the entity.
+             *
+             * Two spellings of "there is no branch" would mean every surface
+             * had to handle both, and one of them would eventually render the
+             * string `null`. The wire needs `null` because a field cannot be
+             * conditionally absent from a typed event; the store does not.
+             */
+            ...(branch === null ? { branch: undefined } : { branch }),
+            cwd,
+          },
+        },
+      };
+    }),
+
+  /**
+   * The user said, in their own words, which ticket this session is for
+   * (HIVE-77).
+   *
+   * Called from `use-session-status.ts` **after** the key has been confirmed
+   * against Jira — this action does no validation of its own, because the check
+   * that matters is a network call and a store must stay synchronous.
+   *
+   * ## Why it pins the name
+   *
+   * Associating without renaming would leave a row called `sess-03` sitting on
+   * the `ABC-123` card, which is the association the user asked for and none of
+   * the recognition. Pinning is what makes the new name survive Claude's next
+   * title repaint — see {@link Session.namePinned}.
+   *
+   * ## Why it refuses a session that already has a ticket
+   *
+   * A session moved between tickets mid-conversation is a claim about work that
+   * has already happened in it, and the row would carry a name that does not
+   * describe most of its own transcript. A user who genuinely wants that has a
+   * better tool: `/clear`, which retires the row and opens a fresh one.
+   */
+  setSessionTicket: (id, ticket) =>
+    set((state) => {
+      const target = currentSessionIn(state, id);
+      const entity = state.entities[target];
+      if (!entity || !isSession(entity)) return state;
+      if (entity.ticket !== undefined) return state;
+      // An ended row is history; naming it now would rewrite the record.
+      if (isEnded(entity.status)) return state;
+
+      const name = ticketSessionName(ticket, state.entities);
+
+      return {
+        entities: {
+          ...state.entities,
+          [target]: { ...entity, ticket, name, namePinned: true },
+        },
+        orchLines: capLines([
+          ...state.orchLines,
+          line(`  ${target} is working ${ticket} — renamed ${name}`, 'dim'),
+        ]),
       };
     }),
 
@@ -1104,13 +1297,37 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       id: successorId,
       terminalId: terminalOf(current),
       project: current.project,
-      branch: current.branch,
       status: 'idle',
       task: '',
       pr: null,
       cost: '$0.00',
       lines: [],
+      /**
+       * The branch and directory carry over, and are now allowed to be absent
+       * (HIVE-77).
+       *
+       * They describe the *terminal*, which `/clear` does not move: the pty is
+       * still running, still in the same directory, still on the same branch.
+       * Spread rather than assigned so a successor to a session nobody had
+       * observed yet inherits an absent field rather than an explicit
+       * `undefined` — the store's snapshots are compared key-for-key.
+       */
+      ...(current.branch === undefined ? {} : { branch: current.branch }),
+      ...(current.cwd === undefined ? {} : { cwd: current.cwd }),
       ...(current.ticket === undefined ? {} : { ticket: current.ticket }),
+      /**
+       * A pinned name **does** carry over, unlike a name the agent chose.
+       *
+       * The two are different claims. An agent's name described the
+       * conversation that just ended, so it is dropped a few lines below. A
+       * pinned name says "this terminal is working ABC-123", which is a fact
+       * about the terminal and survives a `/clear` exactly as `ticket` does —
+       * and the successor inherits `ticket`, so dropping the name would leave a
+       * row on the ticket card with the agent's next auto-title on it.
+       */
+      ...(current.namePinned === true
+        ? { namePinned: true, ...(current.name === undefined ? {} : { name: current.name }) }
+        : {}),
       ...(current.model === undefined ? {} : { model: current.model }),
       ...(current.effort === undefined ? {} : { effort: current.effort }),
     };
@@ -1650,6 +1867,14 @@ export const useSpawnSession = () => useHiveStore((state) => state.spawnSession)
 export const useRenameSession = () =>
   useHiveStore((state) => state.renameSession);
 
+/** Main observed a session's real branch and working directory (HIVE-77). */
+export const useSetSessionBranch = () =>
+  useHiveStore((state) => state.setSessionBranch);
+
+/** A confirmed ticket key the user named mid-session (HIVE-77). */
+export const useSetSessionTicket = () =>
+  useHiveStore((state) => state.setSessionTicket);
+
 /** `/clear`: main reports the conversation boundary through this. */
 export const useClearSession = () =>
   useHiveStore((state) => state.clearSession);
@@ -1836,7 +2061,16 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
  */
 export interface SessionFacet {
   id: string;
-  branch: string;
+  /**
+   * Optional since HIVE-77, because {@link Session.branch} is.
+   *
+   * A session whose branch nobody has observed yet matches no pull request,
+   * which is the correct answer rather than a gap: the alternative it replaces
+   * matched against `feat/sess-01`, a string no PR could ever carry, so nothing
+   * that worked before stops working. What changes is that the near-miss is now
+   * *visible* as an absent field rather than hidden inside a plausible one.
+   */
+  branch: string | undefined;
   project: string;
   ticket: string | undefined;
   /** {@link isEnded}, resolved. See the note on churn in {@link selectSessionFacets}. */
@@ -2007,7 +2241,17 @@ function sessionForPr(
   pr: Pick<PrRecord, 'branch' | 'repo'>,
   fleet: readonly SessionFacet[],
 ): string | null {
-  const candidates = fleet.filter((session) => session.branch === pr.branch);
+  /**
+   * `session.branch !== undefined` is not redundant with the equality (HIVE-77).
+   *
+   * `pr.branch` is always a string today, so the comparison alone would already
+   * exclude an unobserved session — but the guard states the rule the *code*
+   * relies on rather than borrowing it from a property of the other operand.
+   * A session whose branch nobody has looked at yet owns no pull request.
+   */
+  const candidates = fleet.filter(
+    (session) => session.branch !== undefined && session.branch === pr.branch,
+  );
 
   const sameProject = candidates.filter(
     (session) => session.project.toLowerCase() === pr.repo.toLowerCase(),
@@ -2070,9 +2314,17 @@ export function resolveTicketPrs(
   const ticket = tickets.find((t) => t.key === ticketKey);
   if (!ticket) return [];
 
-  /** The branches this ticket's sessions are working on. */
+  /**
+   * The branches this ticket's sessions are working on.
+   *
+   * Unobserved sessions are dropped rather than contributing `undefined`
+   * (HIVE-77) — a set containing it would match nothing anyway, and letting it
+   * in would leave the membership test below reading as though it might.
+   */
   const branches = new Set<string>(
-    facetsForTicket(ticketKey, fleet).map((session) => session.branch),
+    facetsForTicket(ticketKey, fleet)
+      .map((session) => session.branch)
+      .filter((branch): branch is string => branch !== undefined),
   );
 
   /*

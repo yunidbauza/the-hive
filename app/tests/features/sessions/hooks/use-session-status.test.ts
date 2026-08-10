@@ -3,9 +3,11 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  SessionBranchEvent,
   SessionClearedEvent,
   SessionNameEvent,
   SessionStatusEvent,
+  SessionTicketIntentEvent,
 } from '@shared/session-contract';
 
 import { isSession } from '@/types/entity';
@@ -26,10 +28,27 @@ import { seedDemoFleet } from '@tests/support/demo-fleet';
 let listeners: ((event: SessionStatusEvent) => void)[];
 let nameListeners: ((event: SessionNameEvent) => void)[];
 let clearedListeners: ((event: SessionClearedEvent) => void)[];
+let branchListeners: ((event: SessionBranchEvent) => void)[];
+let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
 let disposals: number;
+
+/**
+ * What `jira.issue` answers (HIVE-77).
+ *
+ * Replaced per test, because the whole point of the intent path is that a
+ * key-shaped string is only acted on when Jira confirms it exists.
+ */
+let issueReply: unknown = null;
+let issueCalls: string[];
 
 function withBridge() {
   (window as { hive?: unknown }).hive = {
+    jira: {
+      issue: ({ key }: { key: string }) => {
+        issueCalls.push(key);
+        return Promise.resolve(issueReply);
+      },
+    },
     session: {
       onStatus: (callback: (event: SessionStatusEvent) => void) => {
         listeners.push(callback);
@@ -49,6 +68,18 @@ function withBridge() {
           disposals += 1;
         };
       },
+      onBranch: (callback: (event: SessionBranchEvent) => void) => {
+        branchListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
+      onTicketIntent: (callback: (event: SessionTicketIntentEvent) => void) => {
+        intentListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
     },
   };
 }
@@ -63,10 +94,34 @@ const emitName = (event: SessionNameEvent) =>
     for (const listener of nameListeners) listener(event);
   });
 
+const emitBranch = (event: SessionBranchEvent) =>
+  act(() => {
+    for (const listener of branchListeners) listener(event);
+  });
+
+/**
+ * Emit an intent and let the Jira confirmation settle.
+ *
+ * `async act` rather than the synchronous one the other emitters use: this is
+ * the only listener that awaits before it writes, so a synchronous `act` would
+ * return before the store had been touched and every assertion would read the
+ * state as it was a microtask ago.
+ */
+const emitIntent = async (event: SessionTicketIntentEvent) => {
+  await act(async () => {
+    for (const listener of intentListeners) listener(event);
+    await Promise.resolve();
+  });
+};
+
 beforeEach(() => {
   listeners = [];
   nameListeners = [];
   clearedListeners = [];
+  branchListeners = [];
+  intentListeners = [];
+  issueCalls = [];
+  issueReply = null;
   disposals = 0;
   useHiveStore.getState().reset();
     seedDemoFleet();
@@ -106,10 +161,11 @@ describe('useSessionStatus', () => {
 
     unmount();
 
-    // Status, name (HIVE-61) and cleared — a leaked listener on any of the
-    // three would keep writing to a store the unmounted shell no longer
-    // renders, and the cleared one would go on minting sessions.
-    expect(disposals).toBe(3);
+    // Status, name (HIVE-61), cleared, branch and ticket-intent (HIVE-77) — a
+    // leaked listener on any of the five would keep writing to a store the
+    // unmounted shell no longer renders, and the cleared one would go on
+    // minting sessions.
+    expect(disposals).toBe(5);
   });
 
   it('applies a rename pushed from main', () => {
@@ -132,6 +188,79 @@ describe('useSessionStatus', () => {
     renderHook(() => useSessionStatus());
 
     expect(nameListeners).toHaveLength(1);
+  });
+
+  it('applies the branch main observed', () => {
+    /**
+     * The replacement for `feat/<id>` (HIVE-77). Main read this with
+     * `git rev-parse` in the directory a hook payload named, so it is the
+     * branch the agent is genuinely on rather than one the app invented.
+     */
+    withBridge();
+    renderHook(() => useSessionStatus());
+
+    emitBranch({
+      entityId: 'hero-refresh',
+      branch: 'feat/incorp-332-adhoc-scrape',
+      cwd: '/repo/.claude/worktrees/incorp-332',
+    });
+
+    const entity = useHiveStore.getState().entities['hero-refresh'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.branch).toBe('feat/incorp-332-adhoc-scrape');
+    expect(entity.cwd).toBe('/repo/.claude/worktrees/incorp-332');
+  });
+
+  it('renames and associates a session whose prompt named a real issue', async () => {
+    /**
+     * The whole mid-session path: the user typed "work on ABC-123" at their
+     * agent, main matched the shape, Jira confirmed the issue, and the row is
+     * now on that ticket's card in WORK under its key.
+     */
+    withBridge();
+    issueReply = { ok: true, value: { key: 'HIVE-73' } };
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({ entityId: 'rails-upgrade', key: 'HIVE-73' });
+
+    const entity = useHiveStore.getState().entities['rails-upgrade'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.ticket).toBe('HIVE-73');
+    expect(entity.name).toBe('HIVE-73');
+    expect(issueCalls).toEqual(['HIVE-73']);
+  });
+
+  it('ignores a key-shaped string Jira does not know', async () => {
+    /**
+     * `HTTP-404` passes the shape test perfectly, which is exactly why main is
+     * not allowed to be the one that decides. A session silently renamed and
+     * filed under a ticket that does not exist is a mistake with no visible
+     * cause.
+     */
+    withBridge();
+    issueReply = { ok: false, error: 'not found' };
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({ entityId: 'rails-upgrade', key: 'HTTP-404' });
+
+    const entity = useHiveStore.getState().entities['rails-upgrade'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.ticket).toBeUndefined();
+    // It was still *asked* — the refusal is Jira's answer, not a skipped call.
+    expect(issueCalls).toEqual(['HTTP-404']);
+  });
+
+  it('ignores an intent when the bridge itself failed', async () => {
+    // `null` is the channel failing, which is not evidence about the issue.
+    withBridge();
+    issueReply = null;
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({ entityId: 'rails-upgrade', key: 'HIVE-73' });
+
+    const entity = useHiveStore.getState().entities['rails-upgrade'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.ticket).toBeUndefined();
   });
 
   it('does nothing at all in the browser build', () => {
