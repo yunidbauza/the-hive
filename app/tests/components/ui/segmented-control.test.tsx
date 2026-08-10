@@ -147,14 +147,41 @@ describe('SegmentedControl', () => {
       expect(onChange).not.toHaveBeenCalledWith('light');
     });
 
-    it('never lands on it from End either', async () => {
+    /**
+     * The APG puts Home/End on the ends of the *reachable* set. Passing the
+     * raw ends instead made End a silent no-op whenever the last option was
+     * the dead one — which is its position in the notifications pane, so every
+     * row on a machine with no daemon ignored the key.
+     */
+    it('sends End to the last selectable option, not the last one', async () => {
       const user = userEvent.setup();
-      const onChange = renderWithDead('dark');
+      const onChange = renderWithDead('system');
 
-      screen.getByRole('radio', { name: 'Dark' }).focus();
+      screen.getByRole('radio', { name: 'System' }).focus();
       await user.keyboard('{End}');
 
-      expect(onChange).not.toHaveBeenCalled();
+      expect(onChange).toHaveBeenCalledWith('dark');
+      expect(onChange).not.toHaveBeenCalledWith('light');
+    });
+
+    /**
+     * The regression the tab-stop fallback introduced on its own.
+     *
+     * With the selection dead, focus sits on the fallback while `value` stays
+     * on the dead option. A walk anchored on `value` steps from an option the
+     * user is not standing on: Right re-selected whatever was already focused
+     * (so the key looked broken) and Left moved one to the right.
+     */
+    it('steps from where focus actually is when the selection is dead', async () => {
+      const user = userEvent.setup();
+      const onChange = renderWithDead('light');
+
+      // The fallback tab stop, not the dead selection.
+      screen.getByRole('radio', { name: 'System' }).focus();
+      await user.keyboard('{ArrowRight}');
+
+      expect(onChange).toHaveBeenCalledWith('dark');
+      expect(onChange).not.toHaveBeenCalledWith('system');
     });
 
     /**

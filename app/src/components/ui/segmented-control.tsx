@@ -75,6 +75,18 @@ export function SegmentedControl<T extends string>({
   const selectable = options.filter((option) => !isDead(option.value));
 
   /**
+   * The group's single tab stop — and the anchor every keyboard move starts
+   * from, which is the same thing said twice: it is where the user is standing.
+   *
+   * Normally the selected option, but a disabled button cannot take focus — and
+   * the selected option really can be the dead one, which is the ordinary case
+   * for a kind defaulting to desktop delivery on a machine that has none. The
+   * group would then have no tab stop at all and drop out of the keyboard
+   * order entirely, so it falls back to the first option that can be reached.
+   */
+  const tabStop = isDead(value) ? selectable[0]?.value : value;
+
+  /**
    * Move selection *and* focus together.
    *
    * In a radio group the two are the same gesture: arrowing to an option
@@ -84,11 +96,17 @@ export function SegmentedControl<T extends string>({
    * The walk steps over dead options rather than landing on one and stopping:
    * an arrow key that appears to do nothing reads as a broken control, not as
    * a boundary.
+   *
+   * It anchors on `tabStop` rather than on `value`, and the difference is not
+   * cosmetic. The two diverge in exactly the case above — selection dead, focus
+   * parked on the first live option — where anchoring on `value` computes the
+   * step from an option the user is *not* on: Right re-selected whatever was
+   * already under the cursor, and Left moved one to the right.
    */
   const move = (offset: number) => {
-    if (selectable.length === 0) return;
+    if (tabStop === undefined) return;
     const total = options.length;
-    const start = options.findIndex((option) => option.value === value);
+    const start = options.findIndex((option) => option.value === tabStop);
 
     for (let step = 1; step <= total; step += 1) {
       const index = (((start + offset * step) % total) + total) % total;
@@ -106,17 +124,6 @@ export function SegmentedControl<T extends string>({
     onChange(target.value);
     refs.current.get(target.value)?.focus();
   };
-
-  /**
-   * The group's single tab stop.
-   *
-   * Normally the selected option, but a disabled button cannot take focus — and
-   * the selected option really can be the dead one, which is the ordinary case
-   * for a kind defaulting to desktop delivery on a machine that has none. The
-   * group would then have no tab stop at all and drop out of the keyboard
-   * order entirely, so it falls back to the first option that can be reached.
-   */
-  const tabStop = isDead(value) ? selectable[0]?.value : value;
 
   return (
     <div
@@ -160,13 +167,20 @@ export function SegmentedControl<T extends string>({
                   event.preventDefault();
                   move(-1);
                   break;
+                /*
+                  First and last *selectable*, not first and last. The APG puts
+                  Home/End on the ends of the reachable set, and in the
+                  notifications pane the dead option is the last one — so
+                  passing `options[length - 1]` made End a no-op in every row on
+                  a machine with no notification daemon.
+                */
                 case 'Home':
                   event.preventDefault();
-                  jump(options[0]);
+                  jump(selectable[0]);
                   break;
                 case 'End':
                   event.preventDefault();
-                  jump(options[options.length - 1]);
+                  jump(selectable[selectable.length - 1]);
                   break;
                 default:
                   break;
@@ -178,7 +192,15 @@ export function SegmentedControl<T extends string>({
               selected
                 ? 'bg-active text-ink'
                 : 'text-muted hover:bg-hover hover:text-ink',
-              dead && 'cursor-not-allowed hover:bg-transparent hover:text-muted',
+              dead && 'cursor-not-allowed',
+              /*
+                The hover overrides must not reach the *selected* segment.
+                `:hover` still matches a disabled button, so on the row whose
+                selection is the dead option these would paint over `bg-active`
+                and mute the ink — the row would read as having nothing chosen
+                for as long as the pointer rested on it.
+              */
+              dead && !selected && 'hover:bg-transparent hover:text-muted',
               // Only the individually dead one dims itself; `disabled` already
               // fades the whole group, and fading twice reads as a third state.
               !disabled && dead && 'opacity-50',

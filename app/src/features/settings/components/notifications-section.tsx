@@ -69,7 +69,7 @@ const DELIVERY_OPTIONS: readonly SegmentedOption<NotificationDelivery>[] = [
   { value: 'both', label: 'System' },
 ];
 
-/** Hoisted: a new array each render would defeat the atom's identity checks. */
+/** Module scope so the ten rows share one array instead of each building its own. */
 const NO_DESKTOP: readonly NotificationDelivery[] = ['both'];
 
 interface DeliveryControlProps {

@@ -144,7 +144,7 @@ describe('setNotifications', () => {
    * snapshot with a plain spread — and that snapshot becomes the cache every
    * later read sees. So a user booted correctly with session-finish
    * notifications off, then changed any unrelated setting, and their toasts
-   * came back on with the pane showing "Inbox + desktop" selected.
+   * came back on with the pane showing "System" selected.
    */
   it('migrates the legacy booleans in the snapshot it returns, not just on load', () => {
     seed('{\n  "version": 2,\n  "notifications": { "sessionDone": false }\n}\n');
