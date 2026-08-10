@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 
+import {
+  SegmentedControl,
+  type SegmentedOption,
+} from '@components/ui/segmented-control';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { readIntegrationsStatus, setNotificationPrefs } from '@lib/project-config';
@@ -46,11 +50,27 @@ import {
  * becomes a notification you never see.
  */
 
-const DELIVERY_OPTIONS: { value: NotificationDelivery; label: string }[] = [
+/**
+ * The scale, in escalating order: nothing, a record, an interruption.
+ *
+ * `both` reads as **System** rather than "Inbox + desktop". The old label
+ * described the implementation — two destinations — and made the third option
+ * look like a different *kind* of thing from the first two rather than one more
+ * step along the same axis. "System" names where the extra reach goes, and
+ * every option stays one word wide, which is what lets ten of these stack
+ * without the eye having to re-measure each row.
+ *
+ * The stored value is still `both`: this is a label, and renaming the wire
+ * format would strand every config file already on disk.
+ */
+const DELIVERY_OPTIONS: readonly SegmentedOption<NotificationDelivery>[] = [
   { value: 'off', label: 'Off' },
   { value: 'inbox', label: 'Inbox' },
-  { value: 'both', label: 'Inbox + desktop' },
+  { value: 'both', label: 'System' },
 ];
+
+/** Hoisted: a new array each render would defeat the atom's identity checks. */
+const NO_DESKTOP: readonly NotificationDelivery[] = ['both'];
 
 interface DeliveryControlProps {
   kind: NotificationKind;
@@ -67,7 +87,6 @@ function DeliveryControl({
   onChange,
 }: DeliveryControlProps) {
   const spec = NOTIFICATION_KIND_SPECS[kind];
-  const name = `notification-${kind}`;
 
   return (
     <div className="flex items-start justify-between gap-4 py-1.5">
@@ -79,49 +98,29 @@ function DeliveryControl({
       </div>
 
       {/*
-        A radio group, not a select. Three options is below the count where a
-        dropdown earns its extra click, and the states are worth reading at a
-        glance when scanning ten rows for the one that is switched off.
-      */}
-      <div
-        role="radiogroup"
-        aria-label={spec.label}
-        className="flex shrink-0 gap-1"
-      >
-        {DELIVERY_OPTIONS.map((option) => {
-          /*
-            The desktop option is disabled rather than hidden when the OS cannot
-            present one. Hiding it would silently change what the control means
-            between two machines; disabling it says the option exists and this
-            box cannot honour it.
-          */
-          const unavailable = option.value === 'both' && !desktopAvailable;
+        The same segmented control the appearance and editor panes use, rather
+        than this section's own row of pills. Three options is below the count
+        where a dropdown earns its extra click, the states are worth reading at
+        a glance when scanning ten rows for the one that is switched off, and a
+        pane where two sections draw the same choice two different ways is one
+        where neither reads as the app's own.
 
-          return (
-            <label
-              key={option.value}
-              className={
-                option.value === value
-                  ? 'cursor-pointer rounded-md bg-active px-2 py-1 text-[11px] text-ink'
-                  : unavailable
-                    ? 'cursor-not-allowed rounded-md px-2 py-1 text-[11px] text-subtle opacity-50'
-                    : 'cursor-pointer rounded-md px-2 py-1 text-[11px] text-muted hover:bg-hover'
-              }
-            >
-              <input
-                type="radio"
-                name={name}
-                value={option.value}
-                checked={option.value === value}
-                disabled={unavailable}
-                onChange={() => onChange(option.value)}
-                className="sr-only"
-              />
-              {option.label}
-            </label>
-          );
-        })}
-      </div>
+        It also brings the keyboard behaviour this row never had: arrow keys,
+        Home/End, and a single tab stop per group instead of three.
+
+        The desktop option is disabled rather than hidden when the OS cannot
+        present one. Hiding it would silently change what the control means
+        between two machines; disabling it says the option exists and this box
+        cannot honour it.
+      */}
+      <SegmentedControl
+        label={spec.label}
+        options={DELIVERY_OPTIONS}
+        value={value}
+        onChange={onChange}
+        disabledValues={desktopAvailable ? undefined : NO_DESKTOP}
+        className="shrink-0"
+      />
     </div>
   );
 }
@@ -168,9 +167,8 @@ export function NotificationsSection() {
       {status !== null && !status.notificationsSupported ? (
         <p className="text-[12.5px] text-amber">
           This system cannot show desktop notifications, so the
-          &ldquo;Inbox&nbsp;+&nbsp;desktop&rdquo; option would have no effect. On
-          Linux this usually means no notification daemon is running — the inbox
-          itself still works.
+          &ldquo;System&rdquo; option would have no effect. On Linux this usually
+          means no notification daemon is running — the inbox itself still works.
         </p>
       ) : null}
 

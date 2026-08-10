@@ -75,7 +75,7 @@ describe('NotificationsSection', () => {
 
     // Read from the registry rather than restated, so the assertion cannot
     // drift the way a hardcoded default did when `session.idle` changed.
-    const LABELS = { off: 'Off', inbox: 'Inbox', both: 'Inbox + desktop' };
+    const LABELS = { off: 'Off', inbox: 'Inbox', both: 'System' };
 
     for (const kind of NOTIFICATION_KINDS) {
       const group = screen.getByRole('radiogroup', {
@@ -124,7 +124,7 @@ describe('NotificationsSection', () => {
       name: NOTIFICATION_KIND_SPECS['session.waiting'].label,
     });
     expect(
-      within(group).getByRole('radio', { name: 'Inbox + desktop' }),
+      within(group).getByRole('radio', { name: 'System' }),
     ).toBeDisabled();
     expect(within(group).getByRole('radio', { name: 'Inbox' })).toBeEnabled();
   });

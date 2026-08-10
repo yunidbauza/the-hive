@@ -37,11 +37,25 @@ interface SegmentedControlProps<T extends string> {
    * first time you pick an option makes that option feel like it did nothing,
    * because the thing it enabled arrived somewhere the eye was not.
    *
-   * The whole group goes at once — there is no per-option disable, because a
-   * radio group with one dead option is a set of choices that lies about its
-   * own size.
+   * Disables every option at once. For individual ones see `disabledValues`.
    */
   disabled?: boolean;
+  /**
+   * Options that exist but cannot be chosen *here*.
+   *
+   * Deliberately narrow, and not the same thing as `disabled`. The rule this
+   * atom started with was that a group with one dead option lies about its own
+   * size — true when the deadness is a passing state of the form, as with the
+   * editor's split direction, where the honest fix is to disable the group.
+   *
+   * It is the wrong rule when the option is unavailable on *this machine*:
+   * notification delivery cannot reach the desktop on a Linux box with no
+   * notification daemon (HIVE-75). Hiding it there would quietly change what
+   * the control means between two computers, and disabling the whole group
+   * would take away the two choices that do still work. So the option stays,
+   * greyed, and keyboard traversal steps over it.
+   */
+  disabledValues?: readonly T[];
   className?: string;
 }
 
@@ -51,10 +65,14 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   disabled = false,
+  disabledValues,
   className,
 }: SegmentedControlProps<T>) {
   const groupId = useId();
   const refs = useRef(new Map<T, HTMLButtonElement>());
+
+  const isDead = (option: T) => disabled || (disabledValues?.includes(option) ?? false);
+  const selectable = options.filter((option) => !isDead(option.value));
 
   /**
    * Move selection *and* focus together.
@@ -62,20 +80,43 @@ export function SegmentedControl<T extends string>({
    * In a radio group the two are the same gesture: arrowing to an option
    * chooses it. Focusing without selecting would leave the user's screen reader
    * announcing an option that is not the one in effect.
+   *
+   * The walk steps over dead options rather than landing on one and stopping:
+   * an arrow key that appears to do nothing reads as a broken control, not as
+   * a boundary.
    */
   const move = (offset: number) => {
-    if (disabled) return;
-    const index = options.findIndex((option) => option.value === value);
-    const next = options[(index + offset + options.length) % options.length];
-    onChange(next.value);
-    refs.current.get(next.value)?.focus();
+    if (selectable.length === 0) return;
+    const total = options.length;
+    const start = options.findIndex((option) => option.value === value);
+
+    for (let step = 1; step <= total; step += 1) {
+      const index = (((start + offset * step) % total) + total) % total;
+      const next = options[index];
+      if (!isDead(next.value)) {
+        onChange(next.value);
+        refs.current.get(next.value)?.focus();
+        return;
+      }
+    }
   };
 
-  const jump = (target: SegmentedOption<T>) => {
-    if (disabled) return;
+  const jump = (target: SegmentedOption<T> | undefined) => {
+    if (!target || isDead(target.value)) return;
     onChange(target.value);
     refs.current.get(target.value)?.focus();
   };
+
+  /**
+   * The group's single tab stop.
+   *
+   * Normally the selected option, but a disabled button cannot take focus — and
+   * the selected option really can be the dead one, which is the ordinary case
+   * for a kind defaulting to desktop delivery on a machine that has none. The
+   * group would then have no tab stop at all and drop out of the keyboard
+   * order entirely, so it falls back to the first option that can be reached.
+   */
+  const tabStop = isDead(value) ? selectable[0]?.value : value;
 
   return (
     <div
@@ -90,6 +131,7 @@ export function SegmentedControl<T extends string>({
     >
       {options.map((option) => {
         const selected = option.value === value;
+        const dead = isDead(option.value);
 
         return (
           <button
@@ -102,9 +144,9 @@ export function SegmentedControl<T extends string>({
             role="radio"
             id={`${groupId}-${option.value}`}
             aria-checked={selected}
-            disabled={disabled}
+            disabled={dead}
             // Roving tabindex: one stop for the whole group, not one per option.
-            tabIndex={selected ? 0 : -1}
+            tabIndex={option.value === tabStop ? 0 : -1}
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => {
               switch (event.key) {
@@ -136,7 +178,10 @@ export function SegmentedControl<T extends string>({
               selected
                 ? 'bg-active text-ink'
                 : 'text-muted hover:bg-hover hover:text-ink',
-              disabled && 'cursor-not-allowed hover:bg-transparent',
+              dead && 'cursor-not-allowed hover:bg-transparent hover:text-muted',
+              // Only the individually dead one dims itself; `disabled` already
+              // fades the whole group, and fading twice reads as a third state.
+              !disabled && dead && 'opacity-50',
             )}
           >
             {option.label}

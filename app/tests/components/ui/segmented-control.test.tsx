@@ -107,6 +107,75 @@ describe('SegmentedControl', () => {
     expect(onChange).toHaveBeenCalledWith('system');
   });
 
+  /**
+   * A single option the machine cannot honour — notification delivery with no
+   * desktop to deliver to. Distinct from `disabled`, which takes the whole
+   * group and would remove the choices that still work.
+   */
+  describe('disabledValues', () => {
+    const renderWithDead = (value: 'system' | 'dark' | 'light') => {
+      const onChange = vi.fn();
+      render(
+        <SegmentedControl
+          label="Theme"
+          options={OPTIONS}
+          value={value}
+          onChange={onChange}
+          disabledValues={['light']}
+        />,
+      );
+      return onChange;
+    };
+
+    it('disables only the named option', () => {
+      renderWithDead('dark');
+
+      expect(screen.getByRole('radio', { name: 'Light' })).toBeDisabled();
+      expect(screen.getByRole('radio', { name: 'Dark' })).toBeEnabled();
+      expect(screen.getByRole('radio', { name: 'System' })).toBeEnabled();
+    });
+
+    /** An arrow key that lands on a dead option reads as a broken control. */
+    it('steps over the dead option rather than stopping on it', async () => {
+      const user = userEvent.setup();
+      const onChange = renderWithDead('dark');
+
+      screen.getByRole('radio', { name: 'Dark' }).focus();
+      await user.keyboard('{ArrowRight}');
+
+      expect(onChange).toHaveBeenCalledWith('system');
+      expect(onChange).not.toHaveBeenCalledWith('light');
+    });
+
+    it('never lands on it from End either', async () => {
+      const user = userEvent.setup();
+      const onChange = renderWithDead('dark');
+
+      screen.getByRole('radio', { name: 'Dark' }).focus();
+      await user.keyboard('{End}');
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The selected option really can be the dead one — a kind defaulting to
+     * desktop delivery on a machine with none. A disabled button cannot hold
+     * focus, so without a fallback the group leaves the tab order entirely.
+     */
+    it('keeps a tab stop when the selected option is the dead one', () => {
+      renderWithDead('light');
+
+      expect(screen.getByRole('radio', { name: 'Light' })).toHaveAttribute(
+        'tabindex',
+        '-1',
+      );
+      expect(screen.getByRole('radio', { name: 'System' })).toHaveAttribute(
+        'tabindex',
+        '0',
+      );
+    });
+  });
+
   it('leaves other keys to the browser', async () => {
     const user = userEvent.setup();
     const onChange = renderControl('dark');

@@ -237,8 +237,8 @@ export function writeConfig(mutate: Mutation): WriteResult {
        * off booted correctly with them off (that path goes through
        * `loadConfig`), then changed *any* unrelated setting — added a project,
        * set the Jira site, moved a different switch — and this snapshot became
-       * the cache. Their toasts came back on, and the pane showed
-       * "Inbox + desktop" selected.
+       * the cache. Their toasts came back on, and the pane showed "System"
+       * selected.
        */
       notifications: resolveNotificationPrefs(validated.notifications),
       jira: { ...DEFAULT_JIRA, ...validated.jira },
