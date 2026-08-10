@@ -215,7 +215,7 @@ describe('hook receiver', () => {
   });
 
   /**
-   * The `cwd` half of HIVE-77.
+   * The `cwd` half of HIVE-78.
    *
    * `docs/branch-sync-note.md` listed "the session's live working directory" as
    * the first thing main did not have, and proposed inspecting the shell

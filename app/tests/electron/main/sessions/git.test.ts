@@ -8,7 +8,7 @@ import {
 } from '../../../../electron/main/sessions/git';
 
 /**
- * Reading a session's real branch (HIVE-77).
+ * Reading a session's real branch (HIVE-78).
  *
  * `run` is injected throughout — a test that shelled out to `git` would answer
  * differently in every checkout, and the reader's whole job is *how it reads*

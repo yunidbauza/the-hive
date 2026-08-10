@@ -6,7 +6,7 @@ import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useHiveStore } from '@stores/hive-store';
 
 /**
- * What a session is *called*, and what branch it is *on* (HIVE-77).
+ * What a session is *called*, and what branch it is *on* (HIVE-78).
  *
  * Both used to be assertions the app made up: the branch was
  * `` `feat/${id}` ``, and the name was whatever Claude's terminal title
@@ -112,7 +112,7 @@ describe('the /status console command', () => {
   it('prints an em dash rather than the word undefined', () => {
     /**
      * The **fourth** branch surface, and the one that survived the first pass
-     * of HIVE-77 — it builds a string instead of rendering a component, so it
+     * of HIVE-78 — it builds a string instead of rendering a component, so it
      * was not caught by converting the three that call `branchLabel()`.
      * Interpolating the now-optional field raw printed a literal `undefined`
      * for every session whose branch had not been observed yet.

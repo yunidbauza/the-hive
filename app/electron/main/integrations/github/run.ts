@@ -62,7 +62,7 @@ export type RunAsync = (
     cwd?: string;
     /**
      * Override {@link TIMEOUT_MS} for callers whose work is not a network call
-     * (HIVE-77).
+     * (HIVE-78).
      *
      * The default is sized for `gh`, which talks to GitHub. `sessions/git.ts`
      * runs `git rev-parse`, which reads a local file — twenty seconds there is

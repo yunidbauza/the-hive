@@ -8,7 +8,7 @@ import {
 
 /**
  * The judgement that decides whether a session gets renamed and refiled
- * (HIVE-77).
+ * (HIVE-78).
  *
  * The false-positive cases below matter more than the true-positive ones. A
  * missed intent costs the user one extra sentence; a wrong one silently files

@@ -8,7 +8,7 @@ import { useActiveEntity, useProjects } from '@stores/hive-store';
 import { useExplorerProjectId, useSetExplorerProjectId } from '@stores/ui-store';
 
 /**
- * Which repository the explorer is showing — and, since HIVE-77, **where in
+ * Which repository the explorer is showing — and, since HIVE-78, **where in
  * it**.
  *
  * The rule for the project, in order:

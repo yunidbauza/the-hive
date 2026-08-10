@@ -169,7 +169,7 @@ test('a failed clone leaves no directory behind', async ({}, testInfo) => {
     /**
      * **Pre-existing red, corrected here rather than left failing.**
      *
-     * Unrelated to HIVE-77. HIVE-75 gave clone failures a notification, so the
+     * Unrelated to HIVE-78. HIVE-75 gave clone failures a notification, so the
      * message now appears twice — once in the clone view and once in the inbox
      * row — and an unscoped `getByText` is a strict-mode violation against two
      * correct elements. `.first()` says "the clone view told the user", which is

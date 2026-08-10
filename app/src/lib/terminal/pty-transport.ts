@@ -305,7 +305,7 @@ export interface SpawnOptions {
   model?: SessionModel;
   effort?: SessionEffort;
   /**
-   * What the agent should call itself (HIVE-77).
+   * What the agent should call itself (HIVE-78).
    *
    * Absent for every ordinary spawn, and absent means main names the session
    * after its entity id — the HIVE-61 behaviour. The store sets it for exactly
@@ -387,7 +387,7 @@ export function requestSpawn(
       ...(model === undefined ? {} : { model }),
       ...(effort === undefined ? {} : { effort }),
       /**
-       * Same spread, same reason (HIVE-77). No empty case to normalise here
+       * Same spread, same reason (HIVE-78). No empty case to normalise here
        * either: the store only ever builds this from a Jira key, so it is
        * either a well-formed name or the guard's problem — and the guard
        * rejects rather than drops, which is what surfaces a mistake here as a

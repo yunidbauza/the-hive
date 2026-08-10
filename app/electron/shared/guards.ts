@@ -251,7 +251,7 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
       : { effort: assertOneOf(raw.effort, SESSION_EFFORTS, 'spawn.effort') }),
     /**
      * The display name, when the renderer has a better one than the id
-     * (HIVE-77).
+     * (HIVE-78).
      *
      * `model` and `effort` are checked against closed lists; this cannot be,
      * because a name is not drawn from one. So it is matched against
@@ -273,7 +273,7 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
 }
 
 /**
- * A session's display name, on its way to a command line (HIVE-77).
+ * A session's display name, on its way to a command line (HIVE-78).
  *
  * See {@link SESSION_NAME_PATTERN} for what the vocabulary excludes and why it
  * is narrower than the names Claude Code itself accepts.
@@ -790,7 +790,7 @@ export function parseSetJiraTokenRequest(input: unknown): SetJiraTokenRequest {
  * anyway is exactly what this refuses to do.
  *
  * The pattern itself lives in `jira-contract.ts` rather than here, because
- * HIVE-77 gave the shape a second reader in main — see
+ * HIVE-78 gave the shape a second reader in main — see
  * {@link ISSUE_KEY_PATTERN}.
  */
 export function assertJiraIssueKey(value: unknown, label: string): string {

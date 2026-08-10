@@ -8,7 +8,7 @@ import { expect, test } from '@playwright/test';
 import { launchHive, startSession, writeProjectConfig } from './fixtures/hive-app';
 
 /**
- * A session's branch is the repository's, never one the app invented (HIVE-77).
+ * A session's branch is the repository's, never one the app invented (HIVE-78).
  *
  * ## Why this cannot be a unit test
  *

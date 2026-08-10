@@ -41,7 +41,7 @@ export function modelLabel(model: Model = DEFAULT_MODEL): string {
  */
 export function contextPct(id: string, branch = ''): number {
   /**
-   * An unobserved branch hashes as the empty string (HIVE-77).
+   * An unobserved branch hashes as the empty string (HIVE-78).
    *
    * `Session.branch` became optional when the invented `feat/<id>` was removed,
    * and this is a **mock** metric — the number means nothing, it only has to be

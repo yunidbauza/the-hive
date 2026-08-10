@@ -1,7 +1,7 @@
 import { ISSUE_KEY_SOURCE } from '@shared/jira-contract';
 
 /**
- * Reading "I am working on ABC-123" out of a prompt (HIVE-77).
+ * Reading "I am working on ABC-123" out of a prompt (HIVE-78).
  *
  * A session started from the PROJECTS tree names no ticket, and often should:
  * the user opens a terminal, looks around, and *then* decides what they are

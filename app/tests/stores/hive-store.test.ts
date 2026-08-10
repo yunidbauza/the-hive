@@ -97,7 +97,7 @@ describe('hive-store', () => {
       expect(useUiStore.getState().activeTab).toBe(id);
     });
 
-    it('invents no branch at all (HIVE-77)', () => {
+    it('invents no branch at all (HIVE-78)', () => {
       /**
        * This assertion is the inverse of the one it replaces, which required
        * `` `feat/${id}` `` — a branch nothing ever created, rendered with
@@ -116,7 +116,7 @@ describe('hive-store', () => {
 
     it('names a ticket session after its key, and de-duplicates', () => {
       /**
-       * The Work-tab path (HIVE-77). Two sessions on one ticket is ordinary —
+       * The Work-tab path (HIVE-78). Two sessions on one ticket is ordinary —
        * a frontend and a backend, or a second attempt — and two rows both
        * reading `HIVE-73` is the ambiguity the suffix removes.
        */

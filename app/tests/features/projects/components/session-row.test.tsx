@@ -26,7 +26,7 @@ describe('SessionRow', () => {
 
   it('renders an em dash for a session with no observed branch', () => {
     /**
-     * HIVE-77. This row used to read `feat/sess-01` for a session sitting on
+     * HIVE-78. This row used to read `feat/sess-01` for a session sitting on
      * `main` — a branch nothing had created. An em dash is a smaller claim and
      * an honest one, and it is what every session shows for the moment between
      * spawning and main's first `git rev-parse` coming back.

@@ -55,7 +55,7 @@ export interface ReceiverOptions {
   /** Called for each valid, correlated hook event. */
   onEvent: (event: HookStatusEvent) => void;
   /**
-   * A prompt named a ticket the user intends to work on (HIVE-77).
+   * A prompt named a ticket the user intends to work on (HIVE-78).
    *
    * A separate callback rather than a field on {@link HookStatusEvent}, for the
    * reason `onCleared` is separate: this is not a status. `UserPromptSubmit`
@@ -122,7 +122,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const REASON_IN_PREFIX = /"reason"\s*:\s*"([a-z_]+)"/;
 
   /**
-   * And again for `cwd`, which HIVE-77 reads to resolve the session's branch.
+   * And again for `cwd`, which HIVE-78 reads to resolve the session's branch.
    *
    * A path is not a fixed vocabulary the way an event name is, so this is the
    * loosest of the three: everything up to the closing quote, refusing a value
@@ -225,7 +225,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     }
 
     /**
-     * The intent goes out **before** the status (HIVE-77).
+     * The intent goes out **before** the status (HIVE-78).
      *
      * Ordering, not taste. `onEvent` is what makes a session `working`, and a
      * renderer that learned the ticket second would briefly render the row

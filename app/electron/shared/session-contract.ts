@@ -127,7 +127,7 @@ export interface SessionNameEvent {
 
 /**
  * Where a session's agent is actually working, and what branch is checked out
- * there (HIVE-77).
+ * there (HIVE-78).
  *
  * ## Why this exists at all
  *
@@ -167,7 +167,7 @@ export interface SessionBranchEvent {
 
 /**
  * The user told their agent, in prose, which ticket they are working on
- * (HIVE-77).
+ * (HIVE-78).
  *
  * Emitted from a `UserPromptSubmit` hook whose prompt names an issue key with
  * work intent around it — "work on ABC-123", "start ABC-123", or a prompt that

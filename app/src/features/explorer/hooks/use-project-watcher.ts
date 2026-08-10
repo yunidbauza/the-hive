@@ -36,7 +36,7 @@ import { useBumpFsRevision } from '@stores/ui-store';
  */
 export function useProjectWatcher(): void {
   /**
-   * The **project**, not the subdirectory (HIVE-77).
+   * The **project**, not the subdirectory (HIVE-78).
    *
    * `useExplorerProject` also answers where in the project the tree is rooted,
    * and this deliberately ignores it: main watches a whole project and reports

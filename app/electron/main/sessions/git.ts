@@ -2,7 +2,7 @@ import { probeCommand } from '../config/probe';
 import { runAsync, type RunAsync } from '../integrations/github/run';
 
 /**
- * Reading the branch a session is actually on (HIVE-77).
+ * Reading the branch a session is actually on (HIVE-78).
  *
  * ## Why main has to go and look
  *

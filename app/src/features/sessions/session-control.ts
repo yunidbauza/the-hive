@@ -59,7 +59,7 @@ export interface RestartRequest {
   model?: Model;
   effort?: Effort;
   /**
-   * The session's display name, carried across for the same reason (HIVE-77).
+   * The session's display name, carried across for the same reason (HIVE-78).
    *
    * `ipc/index.ts` forwards `name` on restart on the stated grounds that "a
    * restarted `HIVE-73` that came back as `sess-07` would rename a row the user
@@ -70,7 +70,7 @@ export interface RestartRequest {
    * push `sess-07` back into the store and the row really would lose its key.
    *
    * Optional, because most sessions have no name of their own and omitting it
-   * reproduces the pre-HIVE-77 command line exactly.
+   * reproduces the pre-HIVE-78 command line exactly.
    */
   name?: string;
 }
@@ -105,7 +105,7 @@ export async function restartSession(request: RestartRequest): Promise<void> {
     ...(request.model === undefined ? {} : { model: request.model }),
     ...(request.effort === undefined ? {} : { effort: request.effort }),
     /**
-     * Only when the name is one the command line will accept (HIVE-77).
+     * Only when the name is one the command line will accept (HIVE-78).
      *
      * A name read off a terminal title is unfiltered by design — "fix the login
      * bug" is a perfectly good row label — but the IPC guard *rejects* rather

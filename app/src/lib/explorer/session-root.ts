@@ -1,5 +1,5 @@
 /**
- * Where the explorer should be rooted for a session that moved (HIVE-77).
+ * Where the explorer should be rooted for a session that moved (HIVE-78).
  *
  * ## The problem
  *

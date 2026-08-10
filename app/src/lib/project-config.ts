@@ -394,7 +394,7 @@ const SPAWNABLE: ProjectAccess = { spawnable: true, reason: null, invalid: false
  *   as unmapped for a frame or two on every launch.
  */
 /**
- * A mapped project's absolute directory, or `null` (HIVE-77).
+ * A mapped project's absolute directory, or `null` (HIVE-78).
  *
  * The config already carries it — `resolve.ts` expands, absolutises and
  * `realpath`s every project path — and until now nothing in the renderer needed

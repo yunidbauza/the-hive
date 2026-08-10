@@ -644,7 +644,7 @@ describe('sessionCommand identity flags (HIVE-61)', () => {
     }
   });
 
-  it('accepts a ticket key and its de-duplicating suffix (HIVE-77)', () => {
+  it('accepts a ticket key and its de-duplicating suffix (HIVE-78)', () => {
     /**
      * The Work-tab path. A session started from a ticket card is called after
      * its issue rather than `sess-07`, so the agent's own prompt box, its

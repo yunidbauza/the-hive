@@ -34,7 +34,7 @@ export function useProjectConfig(): ConfigSnapshot | null {
 
 /** Whether one project can host a session, and why not when it cannot. */
 /**
- * A mapped project's absolute directory, or `null` (HIVE-77).
+ * A mapped project's absolute directory, or `null` (HIVE-78).
  *
  * Same subscribe-then-derive shape as {@link useProjectAccess}, and for the
  * same stated reason: the two can never disagree about which snapshot they were

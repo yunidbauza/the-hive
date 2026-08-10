@@ -62,7 +62,7 @@ export interface Session {
    */
   name?: string;
   /**
-   * The app's own name for this session outranks the agent's (HIVE-77).
+   * The app's own name for this session outranks the agent's (HIVE-78).
    *
    * Set when the Hive named the session for a reason of its own — today, that
    * it is being worked for a ticket. While it is set, `renameSession` ignores
@@ -124,7 +124,7 @@ export interface Session {
    */
   ticket?: string; // 'HIVE-73'
   /**
-   * The branch checked out where this session's agent is working (HIVE-77).
+   * The branch checked out where this session's agent is working (HIVE-78).
    *
    * **Optional, and that is the fix.** This field used to be assigned
    * `` `feat/${id}` `` at spawn — a branch nothing created, displayed with total
@@ -140,7 +140,7 @@ export interface Session {
    */
   branch?: string;
   /**
-   * Where that branch was read — the agent's working directory (HIVE-77).
+   * Where that branch was read — the agent's working directory (HIVE-78).
    *
    * Absent until observed, and equal to the project path for most sessions. It
    * differs precisely when the agent has moved into a worktree, which is the
@@ -241,7 +241,7 @@ export const terminalOf = (session: Session): string =>
   session.terminalId ?? session.id;
 
 /**
- * What the three branch surfaces show when nobody has observed one (HIVE-77).
+ * What the three branch surfaces show when nobody has observed one (HIVE-78).
  *
  * An em dash, not "unknown", not "—" spelled differently in three files. It is
  * the typographic convention for "no value" and it reads as one glance rather
@@ -250,11 +250,11 @@ export const terminalOf = (session: Session): string =>
 export const NO_BRANCH = '—';
 
 /**
- * What to print in a session's branch slot (HIVE-77).
+ * What to print in a session's branch slot (HIVE-78).
  *
  * One function rather than `session.branch ?? '—'` at three call sites, for the
  * reason {@link entityLabel} gives for the same shape: the fallback *is* the
- * contract. This one is stricter about why — the whole point of HIVE-77 is that
+ * contract. This one is stricter about why — the whole point of HIVE-78 is that
  * these surfaces must never again print a branch nobody created, and three
  * hand-written `??`s are three chances for the next one to substitute something
  * plausible instead of admitting it does not know.

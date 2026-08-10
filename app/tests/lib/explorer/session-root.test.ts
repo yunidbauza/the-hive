@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { containsPath, relativeRoot } from '@lib/explorer/session-root';
 
 /**
- * Where the explorer roots for a session that moved (HIVE-77).
+ * Where the explorer roots for a session that moved (HIVE-78).
  *
  * The refusal cases are the important ones. `electron/main/fs/paths.ts` is the
  * explorer's security boundary and this does not widen it — a cwd outside the

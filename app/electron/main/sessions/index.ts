@@ -74,7 +74,7 @@ export interface SessionsOptions {
    */
   newSessionUuid?: () => string;
   /**
-   * How branches are read (HIVE-77).
+   * How branches are read (HIVE-78).
    *
    * Injected for exactly the reason `newSessionUuid` is: the default shells out
    * to `git`, and a unit test that did so would answer differently on every
@@ -107,7 +107,7 @@ export interface OpenRequest {
   model?: SessionModel;
   effort?: SessionEffort;
   /**
-   * What to call the session inside Claude (HIVE-77).
+   * What to call the session inside Claude (HIVE-78).
    *
    * Absent for every ordinary spawn, which falls back to the entity id — the
    * HIVE-61 behaviour, unchanged. Present only when the renderer has a better
@@ -347,7 +347,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   const titles = new Map<string, TitleReader>();
 
   /**
-   * Reads `git rev-parse` for a directory, cached and rate-limited (HIVE-77).
+   * Reads `git rev-parse` for a directory, cached and rate-limited (HIVE-78).
    *
    * One reader for the whole layer rather than one per session, because its
    * cache is keyed by **directory** and two sessions in the same repository are
@@ -358,7 +358,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     branchReader ?? {
       /**
        * Resolved against the **config-augmented** environment, not the bare
-       * one (HIVE-77).
+       * one (HIVE-78).
        *
        * A GUI-launched Electron app on macOS inherits launchd's minimal
        * `PATH`, which frequently has no `git` in it. That is the whole reason
@@ -446,7 +446,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     onEvent: (event) => {
       publishHookStatus(event.entityId, event.status, event.event);
       /**
-       * The branch read is deliberately **after** the status (HIVE-77).
+       * The branch read is deliberately **after** the status (HIVE-78).
        *
        * Status is the reason this channel exists and it is synchronous;
        * resolving a branch may spawn a process. Doing it first would put a
@@ -455,7 +455,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        */
       if (event.cwd !== undefined) {
         /**
-         * `Stop` reads **fresh** (HIVE-77).
+         * `Stop` reads **fresh** (HIVE-78).
          *
          * It is the end of a turn — the moment the agent has finished whatever
          * it was doing, and the last event that will fire until the user types
@@ -537,7 +537,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   }
 
   /**
-   * Where this session is working, and what is checked out there (HIVE-77).
+   * Where this session is working, and what is checked out there (HIVE-78).
    *
    * ## Only on a change
    *
@@ -895,7 +895,7 @@ export function createSessions(options: SessionsOptions): Sessions {
          * comes straight back out on the title stream and becomes the row's
          * name. This only decides what the session is called to begin with.
          *
-         * HIVE-77 lets the renderer say what that name is, and it does so for
+         * HIVE-78 lets the renderer say what that name is, and it does so for
          * exactly one case: a session started from a ticket card, which is
          * called `HIVE-73` rather than `sess-07`. The **id** is untouched —
          * it is the entities-map key and appears in every console line — so
@@ -910,7 +910,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     );
 
     /**
-     * The branch this session opens on (HIVE-77).
+     * The branch this session opens on (HIVE-78).
      *
      * **After the process exists**, because `publishBranch` refuses to speak for
      * an entity the registry does not hold — a guard that earns its keep on the

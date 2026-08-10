@@ -63,7 +63,7 @@ export function ExplorerPanel() {
 
   /**
    * Rooted at the session's own directory, which is the project root for every
-   * session that has not moved (HIVE-77).
+   * session that has not moved (HIVE-78).
    */
   const root = useDirectory(projectId ?? '', subRoot, usable, refreshToken);
 
@@ -126,7 +126,7 @@ export function ExplorerPanel() {
       */}
       <div className="mb-1 flex shrink-0 items-center gap-1.5 px-1">
         {/*
-          The header says when the tree is *not* at the project root (HIVE-77).
+          The header says when the tree is *not* at the project root (HIVE-78).
           Silently showing a worktree's contents under the project's name is the
           same class of untruth this story removed from the branch label: the
           files would be right and the label would be wrong. The full relative
@@ -191,7 +191,7 @@ export function ExplorerPanel() {
               entry={entry}
               /**
                * The prefix, so every path this tree produces stays
-               * **project-relative** (HIVE-77) — `.claude/worktrees/x/src/a.ts`
+               * **project-relative** (HIVE-78) — `.claude/worktrees/x/src/a.ts`
                * rather than `src/a.ts`.
                *
                * That is what keeps the editor honest for free: two files with

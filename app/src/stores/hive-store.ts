@@ -226,14 +226,14 @@ interface HiveState {
   /** The agent reported a new display name (HIVE-61). */
   renameSession: (id: string, name: string) => void;
   /**
-   * Main observed this session's real branch and working directory (HIVE-77).
+   * Main observed this session's real branch and working directory (HIVE-78).
    *
    * `branch` is `null` when there is none to report — not a work tree, a
    * detached HEAD, no `git` — and lands on the entity as an absent field.
    */
   setSessionBranch: (id: string, branch: string | null, cwd: string) => void;
   /**
-   * The user named the ticket this session is for, in prose (HIVE-77).
+   * The user named the ticket this session is for, in prose (HIVE-78).
    *
    * Associates the session and pins its name to the key. The key must already
    * have been confirmed against Jira; this action does not check.
@@ -411,7 +411,7 @@ function nextSessionId(): string {
 }
 
 /**
- * What to call a session started for a ticket (HIVE-77).
+ * What to call a session started for a ticket (HIVE-78).
  *
  * `HIVE-73`, then `HIVE-73-2`, `HIVE-73-3` — the key itself for the first one,
  * because a suffix on a session that has no sibling is noise.
@@ -562,7 +562,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const resolvedEffort = effort ?? 'high';
 
     /**
-     * A session started from a ticket card is called after its issue (HIVE-77).
+     * A session started from a ticket card is called after its issue (HIVE-78).
      *
      * Resolved here rather than in the picker because collision-avoidance needs
      * to see the whole fleet, and the store is what holds it. The name goes two
@@ -592,7 +592,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        */
       ...(name === undefined ? {} : { name }),
       /**
-       * **No `branch` here, and that is the fix** (HIVE-77).
+       * **No `branch` here, and that is the fix** (HIVE-78).
        *
        * This line used to read ``branch: `feat/${id}` ``, naming a branch
        * nothing had created. Main now reports the real one — read with
@@ -673,7 +673,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         model: resolvedModel,
         effort: resolvedEffort,
         /**
-         * Sent only when a ticket named it (HIVE-77). Omitted otherwise, so
+         * Sent only when a ticket named it (HIVE-78). Omitted otherwise, so
          * main falls back to the entity id and the command line is exactly the
          * one HIVE-61 shipped.
          */
@@ -873,7 +873,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           pushOrch(
             /**
              * `branchLabel`, not `entity.branch` — this is the **fourth**
-             * branch surface (HIVE-77) and the easiest to forget, because it
+             * branch surface (HIVE-78) and the easiest to forget, because it
              * builds a string instead of rendering a component. Interpolating
              * the optional field raw printed the literal `undefined` for every
              * session whose branch had not been observed yet.
@@ -1132,7 +1132,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (!entity || !isSession(entity)) return state;
 
       /**
-       * A pinned name outranks the agent's (HIVE-77).
+       * A pinned name outranks the agent's (HIVE-78).
        *
        * The app pinned it because the user said which ticket they were working
        * on, and Claude has no idea that happened — it goes on repainting
@@ -1166,7 +1166,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   /**
    * Main observed where this session is working and what is checked out there
-   * (HIVE-77).
+   * (HIVE-78).
    *
    * The replacement for the `feat/<id>` fiction. Same shape and same guards as
    * `setSessionStatus` — the terminal's *current* row, agents ignored, an
@@ -1217,7 +1217,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   /**
    * The user said, in their own words, which ticket this session is for
-   * (HIVE-77).
+   * (HIVE-78).
    *
    * Called from `use-session-status.ts` **after** the key has been confirmed
    * against Jira — this action does no validation of its own, because the check
@@ -1321,7 +1321,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       lines: [],
       /**
        * The branch and directory carry over, and are now allowed to be absent
-       * (HIVE-77).
+       * (HIVE-78).
        *
        * They describe the *terminal*, which `/clear` does not move: the pty is
        * still running, still in the same directory, still on the same branch.
@@ -1884,11 +1884,11 @@ export const useSpawnSession = () => useHiveStore((state) => state.spawnSession)
 export const useRenameSession = () =>
   useHiveStore((state) => state.renameSession);
 
-/** Main observed a session's real branch and working directory (HIVE-77). */
+/** Main observed a session's real branch and working directory (HIVE-78). */
 export const useSetSessionBranch = () =>
   useHiveStore((state) => state.setSessionBranch);
 
-/** A confirmed ticket key the user named mid-session (HIVE-77). */
+/** A confirmed ticket key the user named mid-session (HIVE-78). */
 export const useSetSessionTicket = () =>
   useHiveStore((state) => state.setSessionTicket);
 
@@ -2079,7 +2079,7 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
 export interface SessionFacet {
   id: string;
   /**
-   * Optional since HIVE-77, because {@link Session.branch} is.
+   * Optional since HIVE-78, because {@link Session.branch} is.
    *
    * A session whose branch nobody has observed yet matches no pull request,
    * which is the correct answer rather than a gap: the alternative it replaces
@@ -2259,7 +2259,7 @@ function sessionForPr(
   fleet: readonly SessionFacet[],
 ): string | null {
   /**
-   * `session.branch !== undefined` is not redundant with the equality (HIVE-77).
+   * `session.branch !== undefined` is not redundant with the equality (HIVE-78).
    *
    * `pr.branch` is always a string today, so the comparison alone would already
    * exclude an unobserved session — but the guard states the rule the *code*
@@ -2335,7 +2335,7 @@ export function resolveTicketPrs(
    * The branches this ticket's sessions are working on.
    *
    * Unobserved sessions are dropped rather than contributing `undefined`
-   * (HIVE-77) — a set containing it would match nothing anyway, and letting it
+   * (HIVE-78) — a set containing it would match nothing anyway, and letting it
    * in would leave the membership test below reading as though it might.
    */
   const branches = new Set<string>(

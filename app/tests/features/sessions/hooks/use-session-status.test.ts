@@ -33,7 +33,7 @@ let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
 let disposals: number;
 
 /**
- * What `jira.issue` answers (HIVE-77).
+ * What `jira.issue` answers (HIVE-78).
  *
  * Replaced per test, because the whole point of the intent path is that a
  * key-shaped string is only acted on when Jira confirms it exists.
@@ -161,7 +161,7 @@ describe('useSessionStatus', () => {
 
     unmount();
 
-    // Status, name (HIVE-61), cleared, branch and ticket-intent (HIVE-77) — a
+    // Status, name (HIVE-61), cleared, branch and ticket-intent (HIVE-78) — a
     // leaked listener on any of the five would keep writing to a store the
     // unmounted shell no longer renders, and the cleared one would go on
     // minting sessions.
@@ -192,7 +192,7 @@ describe('useSessionStatus', () => {
 
   it('applies the branch main observed', () => {
     /**
-     * The replacement for `feat/<id>` (HIVE-77). Main read this with
+     * The replacement for `feat/<id>` (HIVE-78). Main read this with
      * `git rev-parse` in the directory a hook payload named, so it is the
      * branch the agent is genuinely on rather than one the app invented.
      */

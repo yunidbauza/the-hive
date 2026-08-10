@@ -1,6 +1,6 @@
 # A session's real branch, name and ticket
 
-Implemented in HIVE-77. This file was the design note written when the defect
+Implemented in HIVE-78. This file was the design note written when the defect
 was diagnosed but not fixed; it now records what shipped, and — more usefully —
 which of its own predictions turned out to be wrong.
 

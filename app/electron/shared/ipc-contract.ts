@@ -289,7 +289,7 @@ export const CH = {
    */
   sessionCleared: 'session:cleared', // main → renderer
   /**
-   * Where a session is really working, and what is checked out there (HIVE-77).
+   * Where a session is really working, and what is checked out there (HIVE-78).
    *
    * Its own channel for the reason `session:name` has one — a branch changes
    * rarely and only when a human or an agent decides it, while status ticks
@@ -303,7 +303,7 @@ export const CH = {
    */
   sessionBranch: 'session:branch', // main → renderer
   /**
-   * A prompt named a ticket the user intends to work on (HIVE-77).
+   * A prompt named a ticket the user intends to work on (HIVE-78).
    *
    * Carries the key and nothing else — never the prompt it was found in. See
    * {@link SessionTicketIntentEvent}.
@@ -387,7 +387,7 @@ export interface SpawnRequest {
   effort?: SessionEffort;
   /**
    * What to call the session, when the renderer has a better answer than its
-   * id (HIVE-77).
+   * id (HIVE-78).
    *
    * Today that is one case: a session started from a ticket card, named after
    * its issue key. Absent everywhere else, and absent means "use the id" —
@@ -918,7 +918,7 @@ export interface HiveBridge {
     onCleared(callback: (event: SessionClearedEvent) => void): () => void;
     /**
      * A session's real working directory and branch, as main observed them
-     * (HIVE-77). Replaces the invented `feat/<id>` the store used to assign.
+     * (HIVE-78). Replaces the invented `feat/<id>` the store used to assign.
      */
     onBranch(callback: (event: SessionBranchEvent) => void): () => void;
     /**
@@ -993,7 +993,7 @@ export const BRIDGE_SESSION_KEYS = [
   'onName',
   'onCleared',
   /**
-   * HIVE-77's two, and the list is still **listeners only** — main → renderer,
+   * HIVE-78's two, and the list is still **listeners only** — main → renderer,
    * no verb the page can call. `onTicketIntent` is the one to keep an eye on:
    * its source is the user's prompt, and it carries only a matched issue key
    * out. See `security.spec.ts` for the full argument.

@@ -188,7 +188,7 @@ export interface JiraIssue {
 /**
  * The shape of a Jira issue key — an uppercase project prefix, a hyphen, digits.
  *
- * It lives here rather than staying private to `guards.ts` because HIVE-77 gave
+ * It lives here rather than staying private to `guards.ts` because HIVE-78 gave
  * it a **second** reader: `hooks/ticket-intent.ts` scans a user's prompt for a
  * key, and a scanner with its own idea of the shape would eventually accept
  * something the guard then refuses at the IPC boundary — a session that silently

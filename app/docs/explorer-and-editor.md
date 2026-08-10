@@ -145,7 +145,7 @@ already names its project, and a second selector would be one more thing to keep
 in sync with the first. The orchestrator tab — which names no session — falls
 back to the last project the tree was rooted at, then to the first mapped one.
 
-### It also follows the session *into a worktree* (HIVE-77)
+### It also follows the session *into a worktree* (HIVE-78)
 
 A session whose agent has moved into `<project>/.claude/worktrees/<name>` is
 editing files a project-rooted tree does not show, while the tree shows files

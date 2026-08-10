@@ -166,7 +166,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *
    * HIVE-75 turned notifications into a real pipeline and added `list`,
    * `markRead`, `onNew` and `onRead` without updating this list, so the
-   * assertion has been failing since that commit. It is unrelated to HIVE-77
+   * assertion has been failing since that commit. It is unrelated to HIVE-78
    * and is fixed here only because a widened bridge landing in an
    * already-failing test is exactly the miss this test exists to prevent.
    *
@@ -359,7 +359,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * — it cannot end a session, only learn that one ended — so the "listener
    * only" property this assertion exists to pin is unchanged.
    *
-   * HIVE-77 adds the fourth and fifth, and the property still holds — but they
+   * HIVE-78 adds the fourth and fifth, and the property still holds — but they
    * are worth naming individually, because each carries something new *out* of
    * main and that is the direction this test is least equipped to notice.
    *

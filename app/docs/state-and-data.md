@@ -279,10 +279,10 @@ transport's lazy path, so main's refusal — "not mapped", "session limit
 reached", "pty host unavailable" — reaches the console transcript verbatim. Both
 routes share one channel, so whoever asks first is the only one who asks.
 
-### What a session claims about itself (HIVE-77)
+### What a session claims about itself (HIVE-78)
 
 Three fields on `Session` are **observations, not assertions**, and the
-distinction is the whole of HIVE-77.
+distinction is the whole of HIVE-78.
 
 `branch` is optional. It used to be assigned ``  `feat/${id}` `` at spawn — a
 branch nothing created, rendered with total confidence beside a session sitting

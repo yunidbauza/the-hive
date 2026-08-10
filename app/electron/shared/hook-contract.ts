@@ -170,7 +170,7 @@ export interface HookStatusEvent {
   event: StatusHookEvent;
   status: ObservedStatus;
   /**
-   * The directory the agent is working in, as the payload reported it (HIVE-77).
+   * The directory the agent is working in, as the payload reported it (HIVE-78).
    *
    * **This is the field that makes an honest branch possible**, and it arrives
    * free. `docs/branch-sync-note.md` listed "the session's live working
@@ -189,7 +189,7 @@ export interface HookStatusEvent {
 }
 
 /**
- * A prompt in which the user named a ticket they intend to work on (HIVE-77).
+ * A prompt in which the user named a ticket they intend to work on (HIVE-78).
  *
  * Separate from {@link HookStatusEvent} because it is a different kind of fact
  * arriving from the same POST: `UserPromptSubmit` always moves the status to

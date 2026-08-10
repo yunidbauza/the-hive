@@ -37,7 +37,7 @@ import {
  * renames a session inside Claude renames its row in the fleet view, which is
  * the only place the two identities were ever visibly different.
  *
- * ## The branch, and the ticket (HIVE-77)
+ * ## The branch, and the ticket (HIVE-78)
  *
  * Two more channels, and they are the first here that are **observed rather
  * than reported**. Nothing tells main what branch a session is on, so it looks

@@ -96,7 +96,7 @@ describe('SessionTable', () => {
 
   it('leaves the BRANCH column an em dash until one is observed', () => {
     /**
-     * HIVE-77. The fleet table exists to tell thirteen terminals apart, and the
+     * HIVE-78. The fleet table exists to tell thirteen terminals apart, and the
      * branch is one of the two things that does it — so a column full of
      * `feat/sess-01`, `feat/sess-02` was not merely wrong, it was *convincing*.
      * An em dash cannot be mistaken for an answer.

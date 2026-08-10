@@ -41,7 +41,7 @@ describe('SessionMetaBar', () => {
 
     it('shows an em dash before any branch has been observed', () => {
       /**
-       * HIVE-77. The chip is the most prominent of the three branch surfaces —
+       * HIVE-78. The chip is the most prominent of the three branch surfaces —
        * it sits directly above the terminal — so it is the one that made
        * `feat/sess-01` look most authoritative while the session was on `main`.
        */

@@ -38,7 +38,7 @@ describe('parseSpawnRequest', () => {
     ]);
   });
 
-  describe('name (HIVE-77)', () => {
+  describe('name (HIVE-78)', () => {
     it('accepts an issue key and its de-duplicating suffix', () => {
       // The only two shapes the store constructs: `HIVE-73`, then `HIVE-73-2`
       // when a second session is opened for the same ticket.
