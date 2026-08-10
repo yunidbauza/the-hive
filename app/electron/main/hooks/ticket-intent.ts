@@ -73,8 +73,42 @@ const INTENT_VERBS = [
   'take\\s+on',
   'taking\\s+on',
   'begin',
-  'do',
 ];
+
+/**
+ * Words that turn a following verb into a **question about** the ticket rather
+ * than a claim on it.
+ *
+ * Tested against the text immediately before a matched lead-in. Without it the
+ * filler grammar reads ordinary questions as intent:
+ *
+ * ```
+ * "did you fix the ABC-123 bug?"      -> fix + the + <key>
+ * "have you started ABC-123?"         -> started + <key>
+ * ```
+ *
+ * Both were measured associating the session before this guard existed.
+ *
+ * `do` was previously in {@link INTENT_VERBS} and is gone rather than guarded:
+ * it made `"what do the ABC-123 tests cover?"` a match, and every phrasing that
+ * genuinely needed it ("let's do ABC-123") is rare next to the questions it
+ * swallowed. `does`/`did` live here instead, as interrogative markers.
+ *
+ * The trailing `(?:\\w+\\s+)?` is the pronoun — "did **you** fix", "have **we**
+ * started" — and is optional so "did fix" is caught too.
+ *
+ * ## What is deliberately *not* here
+ *
+ * The polite modals — `can`, `could`, `would`, `will`, `please`. "can you work
+ * on ABC-123" is how a great many people phrase a genuine instruction, and
+ * refusing it would trade a narrow false-positive class for a wide
+ * false-negative one. This list is past-and-perfect auxiliaries and wh-words:
+ * the markers of *asking about* work, not of requesting it.
+ */
+const INTERROGATIVE_LEAD = new RegExp(
+  `(?:^|[^a-z])(?:did|does|have|has|had|why|what|when|where|whether)\\s+(?:\\w+\\s+)?$`,
+  'i',
+);
 
 /**
  * Words allowed to sit between the verb and the key.
@@ -155,7 +189,23 @@ export function ticketKeyFromPrompt(prompt: string): string | null {
   }
 
   for (const { key, index } of keyTokens(text)) {
-    if (INTENT_LEAD_IN.test(text.slice(0, index))) return key;
+    const before = text.slice(0, index);
+    const lead = INTENT_LEAD_IN.exec(before);
+    if (lead === null) continue;
+
+    /**
+     * What sits in front of the verb phrase decides whether it is a claim or a
+     * question — see {@link INTERROGATIVE_LEAD}.
+     *
+     * `lead.index + 1` because the lead-in pattern opens by consuming one
+     * non-letter delimiter, so this is the text up to and including it, which
+     * is exactly what the interrogative pattern anchors against. A lead-in that
+     * matched at position 0 has nothing in front of it and cannot be a
+     * question.
+     */
+    if (INTERROGATIVE_LEAD.test(before.slice(0, lead.index + 1))) continue;
+
+    return key;
   }
 
   return null;

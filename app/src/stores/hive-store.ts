@@ -12,7 +12,7 @@ import type {
   Session,
   SessionStatus,
 } from '@/types/entity';
-import { isEnded, isSession, terminalOf } from '@/types/entity';
+import { branchLabel, isEnded, isSession, terminalOf } from '@/types/entity';
 import type { HiveNotification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
@@ -871,7 +871,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
            * "these need you" at a glance.
            */
           pushOrch(
-            `  ${entity.id.padEnd(16)}${STATUS_WORD[entity.status].padEnd(13)}${entity.project} · ${entity.branch}`,
+            /**
+             * `branchLabel`, not `entity.branch` — this is the **fourth**
+             * branch surface (HIVE-77) and the easiest to forget, because it
+             * builds a string instead of rendering a component. Interpolating
+             * the optional field raw printed the literal `undefined` for every
+             * session whose branch had not been observed yet.
+             */
+            `  ${entity.id.padEnd(16)}${STATUS_WORD[entity.status].padEnd(13)}${entity.project} · ${branchLabel(entity)}`,
             STATUS_COLOR[entity.status],
           );
         }
@@ -1178,22 +1185,32 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         return state;
       }
 
+      /**
+       * `null` from the wire becomes a **genuinely absent key** on the entity.
+       *
+       * Two spellings of "there is no branch" would mean every surface handled
+       * both, and one of them would eventually render the string `null`. The
+       * wire needs `null` because a typed event cannot omit a field
+       * conditionally; the store does not.
+       *
+       * Destructured away rather than spread as `{ branch: undefined }`, which
+       * is what this first shipped as and is not the same thing: an own
+       * property whose value is `undefined` is still a key. A session observed
+       * on a branch and then moved to a detached HEAD would have kept
+       * `'branch' in entity === true` and diverged under `toStrictEqual` from a
+       * session nobody had ever looked at — the same key-for-key comparison
+       * `spawnSession` and `clearSession` already spread-to-absent for.
+       */
+      const { branch: _dropped, ...withoutBranch } = entity;
+      const next =
+        branch === null
+          ? { ...withoutBranch, cwd }
+          : { ...entity, branch, cwd };
+
       return {
         entities: {
           ...state.entities,
-          [target]: {
-            ...entity,
-            /**
-             * `null` from the wire becomes *absent* on the entity.
-             *
-             * Two spellings of "there is no branch" would mean every surface
-             * had to handle both, and one of them would eventually render the
-             * string `null`. The wire needs `null` because a field cannot be
-             * conditionally absent from a typed event; the store does not.
-             */
-            ...(branch === null ? { branch: undefined } : { branch }),
-            cwd,
-          },
+          [target]: next,
         },
       };
     }),

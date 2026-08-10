@@ -38,10 +38,29 @@ import { runAsync, type RunAsync } from '../integrations/github/run';
 /**
  * The shortest gap between two reads for the same directory.
  *
- * Two seconds. Long enough that a burst of hook events costs one spawn, short
- * enough that a user who runs `git checkout -b` and looks at the rail sees the
- * new branch by the time they have finished reading the sentence the agent
- * wrote about it.
+ * Two seconds, and it exists to collapse the burst of hook events **inside** a
+ * turn — `UserPromptSubmit`, then a `PermissionRequest` or two — into one
+ * `git` spawn.
+ *
+ * ## Why a turn boundary must be allowed through it
+ *
+ * A floor alone gets the important case exactly backwards. Suppose the agent
+ * runs `git checkout -b feat/x` during a short turn:
+ *
+ * ```
+ * t=0.0s  UserPromptSubmit -> reads, caches `main`
+ * t=1.2s  Stop             -> inside the floor, returns cached `main`
+ *         (no further hook until the user's next prompt)
+ * ```
+ *
+ * The rail then shows `main` until the user types again — which may be minutes,
+ * and is precisely the window in which they look at the rail to check what the
+ * agent just did. The read was suppressed at the one moment the answer was most
+ * likely to have changed.
+ *
+ * So `Stop` passes `fresh`. It is the *end of a turn*: rare by construction —
+ * once per turn, not several — and the moment after which nothing else will
+ * happen to trigger a read. Every other event still pays the floor.
  */
 export const MIN_INTERVAL_MS = 2_000;
 
@@ -66,9 +85,25 @@ export interface BranchReader {
    * detached HEAD, and `git` not being installed — and deliberately does not
    * distinguish them. Every one of them renders as the same em dash, and a
    * reason nobody displays is a field that goes stale unnoticed.
+   *
+   * `fresh` bypasses the rate limit — see {@link MIN_INTERVAL_MS} for why a
+   * turn boundary has to.
    */
-  read(cwd: string): Promise<string | null>;
-  /** Drop everything remembered about a directory. Used when a session exits. */
+  read(cwd: string, fresh?: boolean): Promise<string | null>;
+  /**
+   * Drop everything remembered about a directory.
+   *
+   * Called from `settleExit` with the directory that session was last observed
+   * in, which is what keeps this cache from being append-only for the life of
+   * the app — an agent that works through several worktrees would otherwise
+   * leave an entry per directory behind it forever.
+   *
+   * **Two sessions can share a directory**, and this does not reference-count
+   * them. Forgetting one that another is still using costs a single extra `git`
+   * spawn on that directory's next read, which is a better trade than the
+   * bookkeeping: the cache is an optimisation, and a wrong *answer* is not
+   * among the things dropping an entry can cause.
+   */
   forget(cwd: string): void;
 }
 
@@ -83,24 +118,42 @@ export interface BranchReaderOptions {
   /** Injected so tests answer without spawning anything. */
   run?: RunAsync;
   /**
-   * Where `git` is.
+   * Where `git` is, resolved on demand.
    *
-   * Resolved once, from `PATH`, exactly as `gh.ts` resolves `gh` and for the
-   * reason it gives: the absolute path is what runs, never the bare name, which
-   * closes the window in which `PATH` could resolve to something else between
-   * the probe and the call.
+   * The absolute path is what runs, never the bare name — `gh.ts`'s rule, for
+   * its reason: it closes the window in which `PATH` could resolve to something
+   * else between the probe and the call.
    *
-   * `null` means `git` was not found, and every read answers `null` without
-   * attempting to spawn — a machine with no `git` is not an error state for a
+   * **A callback rather than a string, and that is the fix for a real bug.**
+   * This first shipped resolving `git` once, from the bare `process.env.PATH`,
+   * at `createSessions()` time — but a GUI-launched Electron app on macOS gets
+   * a minimal `PATH` that frequently has no `git` in it. That is the entire
+   * reason `runtime.path` exists in the config, and it is what `gh` and
+   * `claude` are already resolved against. Reading the bare environment once
+   * meant a user who had configured their way around the problem still got
+   * `null` from every branch read, for the life of the process, with no
+   * diagnostic.
+   *
+   * Called at most once per successful resolution — see `gitPathOnce` — and
+   * **re-tried while it answers `null`**, so fixing the config and reloading it
+   * repairs branch reading without restarting the app.
+   *
+   * `null` means `git` is not reachable; every read then answers `null` without
+   * attempting to spawn. A machine with no `git` is not an error state for a
    * terminal multiplexer.
    */
-  gitPath?: string | null;
+  gitPath?: () => string | null;
   /** Injected for tests; the wall clock otherwise. */
   now?: () => number;
   minIntervalMs?: number;
 }
 
-/** Resolve `git` on `PATH`, or `null`. */
+/**
+ * Resolve `git` on a `PATH`, or `null`.
+ *
+ * Takes the environment rather than reading `process.env`, so the caller can
+ * hand it the **config-augmented** one. See {@link BranchReaderOptions.gitPath}.
+ */
 export function resolveGit(env: NodeJS.ProcessEnv): string | null {
   return probeCommand('git', env.PATH ?? '').resolved;
 }
@@ -110,15 +163,31 @@ export function createBranchReader(
 ): BranchReader {
   const {
     run = runAsync,
-    gitPath = resolveGit(process.env),
+    gitPath = () => resolveGit(process.env),
     now = () => Date.now(),
     minIntervalMs = MIN_INTERVAL_MS,
   } = options;
 
   const cache = new Map<string, Entry>();
 
+  /**
+   * The resolved path, remembered once found.
+   *
+   * Asymmetric on purpose: a **successful** resolution is cached forever, and a
+   * failure is not cached at all. Caching the failure is what would make a
+   * config fix require an app restart, which is the bug this shape exists to
+   * avoid; caching the success is what keeps a probe off the hot path.
+   */
+  let resolved: string | null = null;
+
+  function gitPathOnce(): string | null {
+    resolved ??= gitPath();
+    return resolved;
+  }
+
   async function spawnRead(cwd: string): Promise<string | null> {
-    if (gitPath === null) return null;
+    const git = gitPathOnce();
+    if (git === null) return null;
 
     let result;
     try {
@@ -133,7 +202,7 @@ export function createBranchReader(
        * been deleted between the hook arriving and this running is Git's error
        * to report rather than a spawn failure with no output.
        */
-      result = await run(gitPath, ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+      result = await run(git, ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
         timeoutMs: READ_TIMEOUT_MS,
       });
     } catch {
@@ -161,12 +230,22 @@ export function createBranchReader(
   }
 
   return {
-    read(cwd) {
+    read(cwd, fresh = false) {
       const entry = cache.get(cwd);
 
       if (entry) {
+        /**
+         * An in-flight read is shared even by a `fresh` caller.
+         *
+         * `fresh` means "do not serve me a stale *cached* answer", not "start a
+         * second process". A read already running was started microseconds ago
+         * and is about to produce a current answer, so joining it is both
+         * cheaper and no less fresh.
+         */
         if (entry.pending !== null) return entry.pending;
-        if (now() - entry.at < minIntervalMs) return Promise.resolve(entry.branch);
+        if (!fresh && now() - entry.at < minIntervalMs) {
+          return Promise.resolve(entry.branch);
+        }
       }
 
       const pending = spawnRead(cwd).then((branch) => {

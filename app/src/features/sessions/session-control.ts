@@ -2,6 +2,7 @@ import type { Effort, Model } from '@/types/entity';
 
 import { isDesktop } from '@config/runtime';
 import { reopenChannel } from '@lib/terminal/pty-transport';
+import { isSendableSessionName } from '@shared/session-contract';
 import type { SpawnRefusal } from '@shared/session-contract';
 
 
@@ -57,6 +58,21 @@ export interface RestartRequest {
    */
   model?: Model;
   effort?: Effort;
+  /**
+   * The session's display name, carried across for the same reason (HIVE-77).
+   *
+   * `ipc/index.ts` forwards `name` on restart on the stated grounds that "a
+   * restarted `HIVE-73` that came back as `sess-07` would rename a row the user
+   * has been watching" — but nothing was *sending* one, so `spawn()` fell back
+   * to the entity id and did precisely that. A ticket-spawned session is not
+   * `namePinned` (the pin exists for the mid-session rename, where there is no
+   * command line left to put a name on), so the agent's title stream would then
+   * push `sess-07` back into the store and the row really would lose its key.
+   *
+   * Optional, because most sessions have no name of their own and omitting it
+   * reproduces the pre-HIVE-77 command line exactly.
+   */
+  name?: string;
 }
 
 /**
@@ -88,6 +104,19 @@ export async function restartSession(request: RestartRequest): Promise<void> {
     // own property set to undefined is still a key after a structured clone.
     ...(request.model === undefined ? {} : { model: request.model }),
     ...(request.effort === undefined ? {} : { effort: request.effort }),
+    /**
+     * Only when the name is one the command line will accept (HIVE-77).
+     *
+     * A name read off a terminal title is unfiltered by design — "fix the login
+     * bug" is a perfectly good row label — but the IPC guard *rejects* rather
+     * than drops an unsendable one, so forwarding it unchecked would turn a
+     * restart into a refusal for any session the user had renamed inside
+     * Claude. Filtering here means those restart unnamed, which is what they
+     * did before this field existed.
+     */
+    ...(request.name !== undefined && isSendableSessionName(request.name)
+      ? { name: request.name }
+      : {}),
   });
 
   /**

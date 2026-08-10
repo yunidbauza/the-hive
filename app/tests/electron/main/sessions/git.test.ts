@@ -33,7 +33,7 @@ function reader(
   run: RunAsync,
   now: () => number = () => 0,
 ) {
-  return createBranchReader({ run, gitPath: '/usr/bin/git', now });
+  return createBranchReader({ run, gitPath: () => '/usr/bin/git', now });
 }
 
 describe('createBranchReader', () => {
@@ -85,10 +85,82 @@ describe('createBranchReader', () => {
     // A machine with no `git` is not an error state for a terminal
     // multiplexer — it is a session whose branch column reads an em dash.
     const run = vi.fn<RunAsync>();
-    const none = createBranchReader({ run, gitPath: null, now: () => 0 });
+    const none = createBranchReader({ run, gitPath: () => null, now: () => 0 });
 
     await expect(none.read('/repo')).resolves.toBeNull();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  describe('resolving git', () => {
+    it('remembers a successful resolution instead of probing per read', async () => {
+      const run = vi.fn<RunAsync>().mockResolvedValue(ok('main\n'));
+      const gitPath = vi.fn(() => '/usr/bin/git');
+      const branches = createBranchReader({ run, gitPath, now: () => 0 });
+
+      await branches.read('/a');
+      await branches.read('/b');
+
+      expect(gitPath).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-probes while git is unresolved, so a config fix needs no restart', async () => {
+      /**
+       * The asymmetry that matters. A GUI-launched Electron app on macOS gets a
+       * minimal `PATH`; the user fixes it through `runtime.path` and reloads the
+       * config. Caching the *failure* would leave every branch read answering
+       * `null` until the app was restarted, with nothing on screen to explain
+       * it.
+       */
+      const run = vi.fn<RunAsync>().mockResolvedValue(ok('main\n'));
+      const gitPath = vi
+        .fn<() => string | null>()
+        .mockReturnValueOnce(null)
+        .mockReturnValue('/usr/bin/git');
+      const branches = createBranchReader({ run, gitPath, now: () => 0 });
+
+      await expect(branches.read('/a')).resolves.toBeNull();
+      branches.forget('/a');
+      await expect(branches.read('/a')).resolves.toBe('main');
+
+      expect(gitPath).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('freshness', () => {
+    it('bypasses the floor for a turn boundary', async () => {
+      /**
+       * The bug this exists for: an agent runs `git checkout -b` inside a turn
+       * shorter than the floor, `Stop` is suppressed, and the rail shows the old
+       * branch until the user's *next* prompt — which is exactly when they are
+       * looking at it to see what just happened.
+       */
+      const run = vi
+        .fn<RunAsync>()
+        .mockResolvedValueOnce(ok('main\n'))
+        .mockResolvedValueOnce(ok('feat/x\n'));
+      const clock = { t: 0 };
+      const branches = reader(run, () => clock.t);
+
+      await branches.read('/repo');
+      clock.t = MIN_INTERVAL_MS / 2;
+
+      await expect(branches.read('/repo', true)).resolves.toBe('feat/x');
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+
+    it('still joins a read already in flight', async () => {
+      // `fresh` means "no stale cached answer", not "start a second process".
+      const run = vi.fn<RunAsync>().mockResolvedValue(ok('main\n'));
+      const branches = reader(run);
+
+      const [a, b] = await Promise.all([
+        branches.read('/repo'),
+        branches.read('/repo', true),
+      ]);
+
+      expect([a, b]).toEqual(['main', 'main']);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('answers null when the binary cannot be executed at all', async () => {

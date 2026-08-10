@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { isSession } from '@/types/entity';
 
+import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useHiveStore } from '@stores/hive-store';
 
 /**
@@ -86,6 +87,61 @@ describe('setSessionBranch', () => {
     useHiveStore.getState().setSessionBranch('ghost', 'main', '/repo');
 
     expect(useHiveStore.getState().entities).toBe(before);
+  });
+
+  it('removes the key entirely when a branch is lost, not just its value', () => {
+    /**
+     * `'branch' in entity` must be false, which an explicit `branch: undefined`
+     * would not satisfy — and that is what this first shipped as. A session
+     * observed on a branch and then moved to a detached HEAD would otherwise
+     * diverge under `toStrictEqual` from one nobody had ever looked at, which
+     * is the key-for-key comparison the store's own snapshots rely on.
+     */
+    const id = spawn();
+    useHiveStore.getState().setSessionBranch(id, 'feat/thing', '/repo');
+    expect('branch' in sessionAt(id)).toBe(true);
+
+    useHiveStore.getState().setSessionBranch(id, null, '/repo');
+
+    expect('branch' in sessionAt(id)).toBe(false);
+    expect(sessionAt(id).cwd).toBe('/repo');
+  });
+});
+
+describe('the /status console command', () => {
+  it('prints an em dash rather than the word undefined', () => {
+    /**
+     * The **fourth** branch surface, and the one that survived the first pass
+     * of HIVE-77 — it builds a string instead of rendering a component, so it
+     * was not caught by converting the three that call `branchLabel()`.
+     * Interpolating the now-optional field raw printed a literal `undefined`
+     * for every session whose branch had not been observed yet.
+     */
+    spawn();
+
+    useHiveStore.getState().runOrchCommand(parseCommand('status'));
+
+    const transcript = useHiveStore
+      .getState()
+      .orchLines.map((entry) => entry.text)
+      .join('\n');
+
+    expect(transcript).not.toContain('undefined');
+    expect(transcript).toContain('—');
+  });
+
+  it('prints the real branch once observed', () => {
+    const id = spawn();
+    useHiveStore.getState().setSessionBranch(id, 'feat/observed', '/repo');
+
+    useHiveStore.getState().runOrchCommand(parseCommand('status'));
+
+    const transcript = useHiveStore
+      .getState()
+      .orchLines.map((entry) => entry.text)
+      .join('\n');
+
+    expect(transcript).toContain('feat/observed');
   });
 });
 

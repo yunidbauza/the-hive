@@ -29,7 +29,7 @@ import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
 import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
-import { createBranchReader, type BranchReaderOptions } from './git';
+import { createBranchReader, resolveGit, type BranchReaderOptions } from './git';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
 
@@ -354,7 +354,32 @@ export function createSessions(options: SessionsOptions): Sessions {
    * asking the same question. A per-session reader would spawn `git` once per
    * session for an answer the first one already had.
    */
-  const branches = createBranchReader(branchReader ?? {});
+  const branches = createBranchReader(
+    branchReader ?? {
+      /**
+       * Resolved against the **config-augmented** environment, not the bare
+       * one (HIVE-77).
+       *
+       * A GUI-launched Electron app on macOS inherits launchd's minimal
+       * `PATH`, which frequently has no `git` in it. That is the whole reason
+       * `runtime.path` exists in the config, and `gh` and `claude` are already
+       * resolved against it.
+       *
+       * **`process.env` is the base, with the config's env layered over it** —
+       * the identical merge `ipc/index.ts` makes for `gh`.
+       * `effectiveRuntime().env` holds *only* the project's own overrides and
+       * is not a complete environment, so using it alone leaves `PATH`
+       * undefined and every branch read answering `null`. Measured, not
+       * assumed: the first version of this line omitted the spread and broke
+       * `session-branch.spec.ts` — which is exactly what that spec is for.
+       *
+       * `config()` is read per call rather than captured, so a reload is picked
+       * up — the same reason `SessionsOptions.config` is a function at all.
+       */
+      gitPath: () =>
+        resolveGit({ ...process.env, ...effectiveRuntime(config(), null).env }),
+    },
+  );
 
   /**
    * The last branch and directory published per session.
@@ -428,7 +453,19 @@ export function createSessions(options: SessionsOptions): Sessions {
        * `git` spawn between a hook arriving and a status dot moving, on every
        * event, which is the one thing the receiver was careful not to do.
        */
-      if (event.cwd !== undefined) void publishBranch(event.entityId, event.cwd);
+      if (event.cwd !== undefined) {
+        /**
+         * `Stop` reads **fresh** (HIVE-77).
+         *
+         * It is the end of a turn — the moment the agent has finished whatever
+         * it was doing, and the last event that will fire until the user types
+         * again. A `git checkout -b` inside a short turn lands inside the
+         * reader's rate-limit floor, so without this the rail keeps showing the
+         * old branch until the *next* prompt, which is exactly the window in
+         * which the user looks at it. Every other event still pays the floor.
+         */
+        void publishBranch(event.entityId, event.cwd, event.event === 'Stop');
+      }
     },
     onTicketIntent: (event) =>
       send(CH.sessionTicketIntent, {
@@ -522,10 +559,14 @@ export function createSessions(options: SessionsOptions): Sessions {
    * `null` rather than throwing for every failure it can see; this catch is for
    * the ones it cannot.
    */
-  async function publishBranch(entityId: string, cwd: string): Promise<void> {
+  async function publishBranch(
+    entityId: string,
+    cwd: string,
+    fresh = false,
+  ): Promise<void> {
     let branch: string | null;
     try {
-      branch = await branches.read(cwd);
+      branch = await branches.read(cwd, fresh);
     } catch {
       return;
     }
@@ -628,6 +669,13 @@ export function createSessions(options: SessionsOptions): Sessions {
      * last one from the old — so the row would keep the dead session's branch
      * until something else happened to change it.
      */
+    /**
+     * The directory cache goes with it, so it is not append-only for the life
+     * of the app — an agent that works through several worktrees would leave an
+     * entry per directory behind it otherwise.
+     */
+    const seenBranch = lastBranch.get(entityId);
+    if (seenBranch !== undefined) branches.forget(seenBranch.cwd);
     lastBranch.delete(entityId);
     // Same reason as the data path: a command's ending is not a session's.
     if (commandEntities.delete(entityId)) {

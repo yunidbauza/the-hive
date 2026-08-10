@@ -34,8 +34,11 @@ describe('ticketKeyFromPrompt', () => {
       'take on ABC-123',
       'tackle ABC-123',
       'begin ABC-123',
-      "let's do ABC-123",
       'please work on the jira ticket ABC-123 now',
+      // The polite modals are intent, not questions — see INTERROGATIVE_LEAD.
+      'can you work on ABC-123',
+      'could you start ABC-123',
+      'would you fix ABC-123',
       'Work On ABC-123',
       'WORK ON ABC-123',
     ])('%s', (prompt) => {
@@ -89,6 +92,33 @@ describe('ticketKeyFromPrompt', () => {
       // carrying a number becomes a candidate.
       expect(ticketKeyFromPrompt('work on X-ABC-123')).toBeNull();
       expect(ticketKeyFromPrompt('work on ABC-123-BETA')).toBeNull();
+    });
+
+    it.each([
+      // Past/perfect interrogatives: asking whether work happened, not asking
+      // for it. Both were measured associating the session before the
+      // INTERROGATIVE_LEAD guard existed.
+      'did you fix the ABC-123 bug?',
+      'did we start ABC-123?',
+      'have you started ABC-123 yet?',
+      'has anyone begun ABC-123?',
+      // wh-questions about the ticket.
+      'what do the ABC-123 tests cover?',
+      'why did you start ABC-123',
+      'when did we begin ABC-123',
+    ])('a question about the ticket rather than a claim on it: %s', (prompt) => {
+      expect(ticketKeyFromPrompt(prompt)).toBeNull();
+    });
+
+    it('a bare "do", which made ordinary questions match', () => {
+      /**
+       * `do` was in the verb list and is gone rather than guarded. It turned
+       * "what do the ABC-123 tests cover?" into an association, and every
+       * phrasing that genuinely needed it ("let's do ABC-123") is rare beside
+       * the questions it swallowed.
+       */
+      expect(ticketKeyFromPrompt("let's do ABC-123")).toBeNull();
+      expect(ticketKeyFromPrompt('do ABC-123')).toBeNull();
     });
 
     it('a verb separated from the key by unrelated words', () => {

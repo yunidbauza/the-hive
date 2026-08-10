@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
@@ -122,12 +124,25 @@ test('the meta bar shows the repository branch, not a generated one', async ({},
 
 test('a project that is not a repository shows an em dash', async ({}, testInfo) => {
   /**
-   * The honest floor. A plain directory has no branch, and the app says so
-   * rather than inventing one — which is the same rule as the worktree case,
+   * The honest floor. A directory in no repository has no branch, and the app
+   * says so rather than inventing one — the same rule as the worktree case,
    * seen from the other side.
+   *
+   * ## Why this cannot use `testInfo.outputPath()`
+   *
+   * Playwright's output directory lives **inside this repository**, and
+   * `git rev-parse` walks up: run in `test-results/…`, it cheerfully reports
+   * the branch of the enclosing checkout. That is correct git behaviour and
+   * correct app behaviour — a project mapped to a subdirectory of a repository
+   * really is on that repository's branch — but it means an `outputPath` is not
+   * a "not a repository" fixture.
+   *
+   * This spec passed against `outputPath` for a while purely because `git` was
+   * failing to resolve at all, so *every* read answered `null`. Fixing the PATH
+   * resolution is what exposed it. A genuine temp directory is the only place
+   * with no repository above it.
    */
-  const plain = testInfo.outputPath('plain-directory');
-  mkdirSync(plain, { recursive: true });
+  const plain = mkdtempSync(join(tmpdir(), 'hive-plain-'));
 
   writeProjectConfig(testInfo.outputPath('hive-config.json'), {
     id: 'plain',
