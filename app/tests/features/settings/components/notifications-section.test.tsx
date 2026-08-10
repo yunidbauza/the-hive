@@ -51,13 +51,17 @@ describe('NotificationsSection', () => {
   it('shows each kind at its registry default when the config says nothing', () => {
     render(<NotificationsSection />);
 
-    const group = screen.getByRole('radiogroup', {
-      name: NOTIFICATION_KIND_SPECS['session.idle'].label,
-    });
-    // `session.idle` defaults to inbox: worth a row, not worth a toast.
-    expect(
-      within(group).getByRole('radio', { name: 'Inbox' }),
-    ).toBeChecked();
+    // Read from the registry rather than restated, so the assertion cannot
+    // drift the way a hardcoded default did when `session.idle` changed.
+    const LABELS = { off: 'Off', inbox: 'Inbox', both: 'Inbox + desktop' };
+
+    for (const kind of NOTIFICATION_KINDS) {
+      const group = screen.getByRole('radiogroup', {
+        name: NOTIFICATION_KIND_SPECS[kind].label,
+      });
+      const expected = LABELS[NOTIFICATION_KIND_SPECS[kind].defaultDelivery];
+      expect(within(group).getByRole('radio', { name: expected }), kind).toBeChecked();
+    }
   });
 
   it('shows a stored preference over the default', () => {

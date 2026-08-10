@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   IpcValidationError,
+  parseMarkReadRequest,
   parseSetNotificationsRequest,
 } from '../../../electron/shared/guards';
 
@@ -15,6 +16,24 @@ import {
  * now — a delivery has three values, so a coerced one can land on the wrong
  * setting rather than merely the opposite one.
  */
+
+describe('parseMarkReadRequest', () => {
+  it('accepts an id, and null for all of them', () => {
+    expect(parseMarkReadRequest('n1')).toBe('n1');
+    expect(parseMarkReadRequest(null)).toBeNull();
+  });
+
+  /**
+   * Coercing rather than rejecting turns a single dismissal into clearing the
+   * whole inbox — the loudest possible outcome from the quietest possible bug.
+   */
+  it('refuses anything else rather than coercing it to "all"', () => {
+    expect(() => parseMarkReadRequest(undefined)).toThrow(/expected a notification id/);
+    expect(() => parseMarkReadRequest(0)).toThrow(/expected a notification id/);
+    expect(() => parseMarkReadRequest('')).toThrow(/expected a notification id/);
+    expect(() => parseMarkReadRequest({})).toThrow(/expected a notification id/);
+  });
+});
 
 describe('parseSetNotificationsRequest', () => {
   it('accepts a single kind', () => {

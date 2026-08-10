@@ -215,6 +215,16 @@ export const CH = {
   notificationsList: 'notifications:list',
   /** Mark one read, or all of them when the id is null. */
   notificationsMarkRead: 'notifications:mark-read',
+  /**
+   * Read-state changed in the hub (HIVE-75). main → renderer.
+   *
+   * Needed because main can mark a notification read on its own: clicking the
+   * **desktop toast** is the user attending to it, and the renderer has no way
+   * to observe that. Without this the inbox row stays filled and the unread
+   * badge keeps counting a notification the user has already dealt with, until
+   * the next window reload silently corrects it.
+   */
+  notificationsRead: 'notifications:read', // main → renderer
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
   configCloneDone: 'config:clone-done', // main → renderer
@@ -862,6 +872,8 @@ export interface HiveBridge {
     list(): Promise<HiveNotification[]>;
     /** Mark one read, or every one when `id` is null. */
     markRead(id: string | null): Promise<void>;
+    /** The hub marked something read — including from a desktop toast click. */
+    onRead(callback: (event: NotificationReadEvent) => void): () => void;
   };
   /** Real session lifecycle, derived in main (story 096). */
   session: {
@@ -998,8 +1010,14 @@ export const BRIDGE_JIRA_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.notifications`. */
+/** What {@link CH.notificationsRead} carries. `null` means "all of them". */
+export interface NotificationReadEvent {
+  id: string | null;
+}
+
 export const BRIDGE_NOTIFICATIONS_KEYS = [
   'onActivate',
+  'onRead',
   // HIVE-75. `list` and `markRead` are invokes rather than subscriptions: the
   // hub's buffer is the source of truth for read-state, so the renderer asks
   // for it and writes back to it rather than keeping a second copy.

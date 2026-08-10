@@ -577,6 +577,23 @@ export function parseSetNotificationsRequest(
   return request;
 }
 
+/**
+ * The `notifications:mark-read` payload (HIVE-75).
+ *
+ * A notification id, or `null` for "all of them". Deliberately a guard rather
+ * than a `typeof` check at the call site: `null` is a *meaningful* value here,
+ * and coercing anything-that-is-not-a-string to it turns a single dismissal
+ * into clearing the whole inbox — the loudest possible outcome from the
+ * quietest possible bug.
+ */
+export function parseMarkReadRequest(input: unknown): string | null {
+  if (input === null) return null;
+  if (typeof input !== 'string' || input === '') {
+    return fail('markRead: expected a notification id, or null for all');
+  }
+  return input;
+}
+
 /** RFC-1123 label. No leading or trailing hyphen. */
 const HOST_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
 

@@ -126,6 +126,22 @@ export function createNotifier(options: NotifierOptions): Notifier {
       return;
     }
 
+    /**
+     * A hook-driven `idle` is **not** "this session went quiet" (HIVE-75).
+     *
+     * `HOOK_STATUS` maps both `SessionStart` and `Stop` to `idle`, so without
+     * this every session spawn announced "has gone quiet" the instant it
+     * started — false on its face — and every agent turn announced it again.
+     * None of them dedup, so a working hour of thirteen sessions filled the
+     * buffer with idle rows and evicted the approval request the user actually
+     * walked away from.
+     *
+     * The event this notification has always been about is the *pty* going
+     * silent for `ACTIVITY_IDLE_MS`, which `activity.ts` derives and which
+     * carries no hook event. That is the one kept.
+     */
+    if (status === 'idle' && event !== undefined) return;
+
     const kind = SESSION_KIND[status as DerivedStatus];
     if (kind === undefined) return;
 

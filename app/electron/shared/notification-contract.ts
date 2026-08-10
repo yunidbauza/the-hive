@@ -171,10 +171,11 @@ export interface NotificationKindSpec {
  * build that pauses to download is not news, and a notification stream the user
  * stops trusting is worse than no notifications at all".
  *
- * That reasoning survives, but the *answer* changes, because `off` and `inbox`
- * used to be the same thing and are not any more. Idle becomes `inbox`: it is
- * worth a row, it is not worth a toast. Nothing is defaulted to `off` — a kind
- * nobody should ever see has no business being registered.
+ * That reasoning survives intact, and so does its answer: idle stays `off`. The
+ * boolean split makes `inbox` *expressible*, which is not the same as making a
+ * two-second pause worth a row — and a registered kind defaulted to `off` is
+ * still discoverable, because the settings pane lists every kind whether or not
+ * it is switched on. Nothing is hidden by the default; it is only quiet.
  */
 export const NOTIFICATION_KIND_SPECS: Record<
   NotificationKind,
@@ -213,7 +214,17 @@ export const NOTIFICATION_KIND_SPECS: Record<
       'No output for a couple of seconds. Real, but chatty: a build that pauses to download is not news.',
     icon: 'ph-moon',
     tone: 'brand',
-    defaultDelivery: 'inbox',
+    /**
+     * Off, exactly as story 106 had it.
+     *
+     * The first cut of HIVE-75 promoted this to `inbox` on the reasoning that
+     * `off` and `inbox` used to be the same thing — true, but it changed a
+     * default the previous story had argued for on evidence: "a build that
+     * pauses to download is not news, and a notification stream the user stops
+     * trusting is worse than no notifications at all". Nothing about splitting
+     * the boolean makes a two-second pause more interesting than it was.
+     */
+    defaultDelivery: 'off',
   },
   'clone.done': {
     source: 'app',

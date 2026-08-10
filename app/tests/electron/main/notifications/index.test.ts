@@ -51,6 +51,29 @@ describe('session status', () => {
     expect(raised().kind).toBe('session.idle');
   });
 
+  /**
+   * `HOOK_STATUS` maps both `SessionStart` and `Stop` to `idle`, so without the
+   * gate every spawn announced "has gone quiet" the moment it started, and
+   * every turn announced it again — filling the buffer and evicting the
+   * approval request the user actually walked away from.
+   */
+  it('raises nothing for a hook-driven idle — that is not going quiet', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'apfm-web',
+      status: 'idle',
+      event: 'SessionStart',
+    });
+    n.observe(CH.sessionStatus, {
+      entityId: 'apfm-web',
+      status: 'idle',
+      event: 'Stop',
+    });
+
+    expect(raise).not.toHaveBeenCalled();
+  });
+
   it('raises nothing for working — it is not an event class', () => {
     notifier().observe(CH.sessionStatus, {
       entityId: 'lead-form',

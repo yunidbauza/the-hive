@@ -47,6 +47,7 @@ import {
   type HiveBridge,
   type IntegrationsStatus,
   type NotificationActivateEvent,
+  type NotificationReadEvent,
   type ResizeRequest,
   type SessionLostEvent,
   type SpawnRequest,
@@ -298,6 +299,9 @@ const bridge: HiveBridge = {
     /** Mark one read, or every one when `id` is null. */
     markRead: (id: string | null): Promise<void> =>
       ipcRenderer.invoke(CH.notificationsMarkRead, id) as Promise<void>,
+    /** The hub marked something read — including from a desktop toast click. */
+    onRead: (callback: (event: NotificationReadEvent) => void) =>
+      subscribe<NotificationReadEvent>(CH.notificationsRead, callback),
   },
   session: {
     onStatus: (callback: (event: SessionStatusEvent) => void) =>

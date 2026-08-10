@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { useHydrateNotifs, usePushNotif } from '@stores/hive-store';
+import { useApplyRead, useHydrateNotifs, usePushNotif } from '@stores/hive-store';
 
 /**
  * Keep the inbox in step with the hub in main (HIVE-75).
@@ -20,14 +20,21 @@ import { useHydrateNotifs, usePushNotif } from '@stores/hive-store';
  * `useNotificationActivate`. A per-card subscription would mean one listener
  * per row on a channel that broadcasts to all of them.
  *
- * Read-state is **not** mirrored back here. `markRead` writes through to main
- * inside the store action, so the hub stays the one place that knows what has
- * been seen; a second copy in the renderer is how a badge and a list start
- * disagreeing.
+ * Read-state flows **both** ways, and it has to.
+ *
+ * `markRead` writes through to main inside the store action, so the hub stays
+ * the one place that decides what has been seen. But main can decide it on its
+ * own — clicking a **desktop toast** is the user attending to a notification,
+ * and the renderer has no way to observe that. Without the `onRead`
+ * subscription below, that click left the row filled and the unread badge
+ * counting a notification already dealt with, until the next reload silently
+ * corrected it: exactly the badge-and-list disagreement this comment used to
+ * claim was impossible.
  */
 export function useNotificationStream(): void {
   const pushNotif = usePushNotif();
   const hydrate = useHydrateNotifs();
+  const applyRead = useApplyRead();
 
   useEffect(() => {
     // No bridge is the browser demo, where nothing produces notifications.
@@ -48,6 +55,10 @@ export function useNotificationStream(): void {
       pushNotif(notification);
     });
 
+    const unsubscribeRead = bridge.notifications.onRead(({ id }) => {
+      applyRead(id);
+    });
+
     void bridge.notifications
       .list()
       .then((notifications) => {
@@ -61,6 +72,7 @@ export function useNotificationStream(): void {
     return () => {
       live = false;
       unsubscribe();
+      unsubscribeRead();
     };
-  }, [hydrate, pushNotif]);
+  }, [applyRead, hydrate, pushNotif]);
 }

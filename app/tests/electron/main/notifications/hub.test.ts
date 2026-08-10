@@ -17,6 +17,7 @@ let prefs: NotificationPrefs;
 let present: Mock<(options: PresentOptions) => void>;
 let broadcast: Mock<(notification: HiveNotification) => void>;
 let activate: Mock<(action: NotificationAction) => void>;
+let announceRead: Mock<(id: string | null) => void>;
 
 let now: number;
 let hub: NotificationHub;
@@ -26,6 +27,7 @@ beforeEach(() => {
   present = vi.fn();
   broadcast = vi.fn();
   activate = vi.fn();
+  announceRead = vi.fn();
   now = 1_700_000_000_000;
 
   hub = createNotificationHub({
@@ -33,6 +35,7 @@ beforeEach(() => {
     present: (options) => present(options),
     broadcast: (notification) => broadcast(notification),
     activate: (action) => activate(action),
+    announceRead: (id) => announceRead(id),
     now: () => now,
   });
 });
@@ -157,6 +160,32 @@ describe('presentation', () => {
   });
 });
 
+describe('read-state reaches the renderer', () => {
+  /**
+   * The regression: main marked the toast read in its own buffer and told
+   * nobody, so the inbox row stayed filled and the badge went on counting a
+   * notification the user had already dealt with — until a reload silently
+   * corrected it.
+   */
+  it('announces a toast click, which the renderer cannot otherwise observe', () => {
+    raise({ id: 'a' });
+    announceRead.mockClear();
+
+    present.mock.calls[0][0].onClick();
+
+    expect(announceRead).toHaveBeenCalledWith('a');
+  });
+
+  it('announces a mark-all', () => {
+    raise({ id: 'a' });
+    announceRead.mockClear();
+
+    hub.markRead(null);
+
+    expect(announceRead).toHaveBeenCalledWith(null);
+  });
+});
+
 describe('robustness', () => {
   /**
    * The regression: `raise` used to reach its own `markRead` through `this`, so
@@ -197,6 +226,7 @@ describe('robustness', () => {
       present: (options) => present(options),
       broadcast: (notification) => broadcast(notification),
       activate: (action) => activate(action),
+      announceRead: (id) => announceRead(id),
       now: () => now,
     });
 

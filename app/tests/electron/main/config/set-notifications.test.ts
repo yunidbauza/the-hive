@@ -137,6 +137,27 @@ describe('setNotifications', () => {
     });
   });
 
+  /**
+   * The regression, and the nastiest one in HIVE-75.
+   *
+   * `loadConfig` migrates the legacy booleans, but the *write* path built its
+   * snapshot with a plain spread — and that snapshot becomes the cache every
+   * later read sees. So a user booted correctly with session-finish
+   * notifications off, then changed any unrelated setting, and their toasts
+   * came back on with the pane showing "Inbox + desktop" selected.
+   */
+  it('migrates the legacy booleans in the snapshot it returns, not just on load', () => {
+    seed('{\n  "version": 2,\n  "notifications": { "sessionDone": false }\n}\n');
+
+    const snapshot = setNotifications({ 'pr.merged': 'off' });
+
+    expect(snapshot.notifications['session.ended']).toBe('off');
+    // And the raw legacy key does not leak into a fully-resolved object.
+    expect(
+      (snapshot.notifications as Record<string, unknown>).sessionDone,
+    ).toBeUndefined();
+  });
+
   it('keeps projects untouched', () => {
     seed(
       `{\n  "version": 2,\n  "projects": [{ "id": "hive", "path": "${dir}" }]\n}\n`,

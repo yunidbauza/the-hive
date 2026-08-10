@@ -80,6 +80,15 @@ export interface NotificationHubOptions {
   broadcast: (notification: HiveNotification) => void;
   /** Open whatever this notification is about. Main focuses the window itself. */
   activate: (action: NotificationAction) => void;
+  /**
+   * Tell the renderer that read-state moved.
+   *
+   * Announced from **every** path rather than only the toast, so the hub stays
+   * the single source of truth. A renderer-initiated `markRead` echoes back,
+   * which is harmless: applying it is idempotent and the renderer does not
+   * write it back again.
+   */
+  announceRead: (id: string | null) => void;
   now: () => number;
 }
 
@@ -124,7 +133,7 @@ function mintId(kind: NotificationKind, at: number): string {
 export function createNotificationHub(
   options: NotificationHubOptions,
 ): NotificationHub {
-  const { prefs, present, broadcast, activate, now } = options;
+  const { prefs, present, broadcast, activate, announceRead, now } = options;
 
   let buffer: HiveNotification[] = [];
   const seen = new Set<string>();
@@ -145,6 +154,7 @@ export function createNotificationHub(
    * was trying to reach never opens.
    */
   const markRead = (id: string | null): void => {
+    announceRead(id);
     buffer =
       id === null
         ? buffer.map((entry) => ({ ...entry, unread: false }))

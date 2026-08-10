@@ -200,8 +200,23 @@ interface HiveState {
   /** Mark one notification read, by id (HIVE-75). */
   markRead: (id: string) => void;
   pushNotif: (notif: HiveNotification) => void;
-  /** Install the buffer main holds, replacing whatever is here (HIVE-75). */
+  /**
+   * Merge main's buffer into what is already here, newest first (HIVE-75).
+   *
+   * A union rather than a replacement, because the stream subscribes before it
+   * hydrates — anything that landed while `list()` was in flight is newer than
+   * what main answered with, and replacing would drop it.
+   */
   hydrateNotifs: (notifs: HiveNotification[]) => void;
+  /**
+   * Apply read-state the hub decided, without writing it back (HIVE-75).
+   *
+   * Separate from {@link markRead} precisely because it must **not** write
+   * through: this is the echo of a decision main already made — most often the
+   * user clicking a desktop toast, which the renderer cannot observe any other
+   * way.
+   */
+  applyRead: (id: string | null) => void;
   appendEntityLines: (
     id: string,
     lines: TermLine[],
@@ -884,6 +899,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ? state
         : { notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) },
     ),
+
+  applyRead: (id) =>
+    set((state) => ({
+      notifs:
+        id === null
+          ? state.notifs.map((notif) => ({ ...notif, unread: false }))
+          : state.notifs.map((notif) =>
+              notif.id === id ? { ...notif, unread: false } : notif,
+            ),
+    })),
 
   hydrateNotifs: (notifs) =>
     set((state) => {
@@ -2032,6 +2057,9 @@ export const usePushNotif = () => useHiveStore((state) => state.pushNotif);
 /** Install main's buffer on mount (HIVE-75). */
 export const useHydrateNotifs = () =>
   useHiveStore((state) => state.hydrateNotifs);
+
+/** Apply read-state the hub decided — see `use-notification-stream` (HIVE-75). */
+export const useApplyRead = () => useHiveStore((state) => state.applyRead);
 
 /** The entity behind `activeTab`, or null for the orchestrator. */
 export const useActiveEntity = () => {

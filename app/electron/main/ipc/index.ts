@@ -50,6 +50,7 @@ import {
   parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
+  parseMarkReadRequest,
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
@@ -60,6 +61,7 @@ import {
   type AppInfo,
   type IntegrationsStatus,
   type NotificationActivateEvent,
+  type NotificationReadEvent,
 } from '@shared/ipc-contract';
 import type {
   JiraComment,
@@ -89,6 +91,7 @@ import {
   setRuntime,
 } from '../config';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
+import { isSafeExternalUrl } from '../external-links';
 import {
   createFsWatchLayer,
   readDirectory,
@@ -223,6 +226,14 @@ export function registerIpcHandlers(): void {
         window.webContents.send(CH.notificationsNew, notification);
       }
     },
+    announceRead: (id) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        window.webContents.send(CH.notificationsRead, {
+          id,
+        } satisfies NotificationReadEvent);
+      }
+    },
     activate: (action) => {
       /**
        * Main focuses the window; the renderer opens the session.
@@ -237,8 +248,21 @@ export function registerIpcHandlers(): void {
         window.focus();
       }
 
-      // A `url` action is the browser's to handle and a `none` action has
-      // nowhere to go; both are satisfied by the focus above.
+      /**
+       * A `url` action goes to the user's browser, through the same allowlist
+       * every other outbound link uses (story 081).
+       *
+       * `isSafeExternalUrl` is not optional politeness here: `shell.openExternal`
+       * will happily launch a `file:` URL or a custom scheme registered by some
+       * other application, and a notification's URL is data rather than a
+       * constant. A `none` action has nowhere to go and is satisfied by the
+       * focus above.
+       */
+      if (action.type === 'url') {
+        if (isSafeExternalUrl(action.url)) void shell.openExternal(action.url);
+        return;
+      }
+
       if (action.type !== 'session') return;
 
       send(CH.notificationsActivate, {
@@ -252,7 +276,10 @@ export function registerIpcHandlers(): void {
 
   handle(CH.notificationsList, () => hub.list());
   handle(CH.notificationsMarkRead, (_event, payload) =>
-    hub.markRead(typeof payload === 'string' ? payload : null),
+    // Validated, never coerced — the rule every other handler in this file
+    // follows. Coercing an accidental `undefined` to `null` would turn a single
+    // dismissal into "mark all fifty read", silently and with no error anywhere.
+    hub.markRead(parseMarkReadRequest(payload)),
   );
 
   /**

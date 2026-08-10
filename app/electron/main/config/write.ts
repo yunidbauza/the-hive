@@ -16,10 +16,10 @@ import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_JIRA,
-  DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
 } from '@shared/config-contract';
+import { resolveNotificationPrefs } from '@shared/notification-contract';
 
 import { parseConfig } from './parse';
 import { configPath, describe } from './paths';
@@ -224,7 +224,23 @@ export function writeConfig(mutate: Mutation): WriteResult {
       // from the caller's request: the snapshot every mutating verb returns has
       // to describe the file on disk, including a block a concurrent hand-edit
       // changed (story 106).
-      notifications: { ...DEFAULT_NOTIFICATIONS, ...validated.notifications },
+      /**
+       * Resolved, not spread (HIVE-75).
+       *
+       * `validated.notifications` deliberately still carries the **raw legacy
+       * booleans** — `parse.ts` passes them through unmigrated so that
+       * `resolveNotificationPrefs` can read them — so a plain spread leaves
+       * `sessionDone` sitting untranslated in an object typed as fully
+       * resolved, and every registered kind falls back to its registry default.
+       *
+       * The bug that caused: a user who had turned session-finish notifications
+       * off booted correctly with them off (that path goes through
+       * `loadConfig`), then changed *any* unrelated setting — added a project,
+       * set the Jira site, moved a different switch — and this snapshot became
+       * the cache. Their toasts came back on, and the pane showed
+       * "Inbox + desktop" selected.
+       */
+      notifications: resolveNotificationPrefs(validated.notifications),
       jira: { ...DEFAULT_JIRA, ...validated.jira },
       errors: validated.errors,
     },
