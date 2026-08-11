@@ -6,6 +6,7 @@ import {
   useClearSession,
   useRenameSession,
   useSetSessionBranch,
+  useSetSessionMetrics,
   useSetSessionStatus,
   useSetSessionTicket,
 } from '@stores/hive-store';
@@ -59,6 +60,7 @@ export function useSessionStatus(): void {
   const clearSession = useClearSession();
   const setSessionBranch = useSetSessionBranch();
   const setSessionTicket = useSetSessionTicket();
+  const setSessionMetrics = useSetSessionMetrics();
 
   useEffect(() => {
     // No bridge is the browser demo, where every transcript is a recording and
@@ -88,6 +90,19 @@ export function useSessionStatus(): void {
 
     const disposeBranch = bridge.session.onBranch(({ entityId, branch, cwd }) => {
       setSessionBranch(entityId, branch, cwd);
+    });
+
+    /**
+     * Usage, straight through (HIVE-79).
+     *
+     * The plainest listener in this file, and deliberately: the payload is
+     * already the store's shape, every field is optional in both, and the store
+     * merges rather than replaces so a partial report cannot erase a number it
+     * simply did not carry. Nothing is confirmed or defaulted on the way — see
+     * `metrics-contract.ts` for why a missing rate limit must stay missing.
+     */
+    const disposeMetrics = bridge.session.onMetrics(({ entityId, metrics }) => {
+      setSessionMetrics(entityId, metrics);
     });
 
     /**
@@ -128,6 +143,7 @@ export function useSessionStatus(): void {
       disposeCleared();
       disposeBranch();
       disposeTicketIntent();
+      disposeMetrics();
     };
   }, [
     setSessionStatus,
@@ -135,5 +151,6 @@ export function useSessionStatus(): void {
     clearSession,
     setSessionBranch,
     setSessionTicket,
+    setSessionMetrics,
   ]);
 }

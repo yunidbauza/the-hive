@@ -46,7 +46,7 @@ describe('Header', () => {
     render(<Header />);
 
     expect(screen.getByText('The Hive')).toBeInTheDocument();
-    expect(screen.getByText(/Opus 4.5 \(1M\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Opus 4.5 · high/)).toBeInTheDocument();
     expect(screen.getByText('4 working')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Switch to light theme' }),
@@ -63,11 +63,13 @@ describe('Header', () => {
    * happy-dom performs no layout, so "does it line up with the rail?" is
    * unanswerable here — `chip-alignment.spec.ts` measures the boxes in a real
    * browser. What unit tests can pin is the structure that produces the
-   * alignment: two zones, and a brand wrapper that claims the rail's width so
-   * the chips beside it start on the rail's edge.
+   * alignment: **three** zones since HIVE-79 — brand-and-chips, the counts,
+   * and a control cluster that claims the activity rail's width so the counts
+   * beside it end on the rail's edge — plus a brand wrapper that claims the
+   * left rail's width so the chips start on that one.
    */
-  describe('left-aligned chips', () => {
-    it('lays out as two zones, with both chips in the left one', () => {
+  describe('rail-aligned zones', () => {
+    it('lays out as three zones, with both chips in the left one', () => {
       useUiStore.setState({ activeTab: 'hero-refresh' });
 
       render(<Header />);
@@ -78,11 +80,54 @@ describe('Header', () => {
       expect(banner).toHaveClass('flex');
       expect(banner).not.toHaveClass('grid');
 
-      const [left, controls] = Array.from(banner.children);
-      expect(banner.children).toHaveLength(2);
+      const [left, counts, controls] = Array.from(banner.children);
+      expect(banner.children).toHaveLength(3);
       expect(left).toHaveTextContent('The Hive');
-      expect(left).toHaveTextContent(/Opus 4.5 \(1M\)/);
-      expect(controls).toHaveTextContent('4 working');
+      expect(left).toHaveTextContent(/Opus 4.5 · high/);
+
+      /*
+        The counts are their own zone now, and the controls no longer contain
+        them. That separation is the whole mechanism: the control cluster
+        claims the rail's width, so the counts' right edge is the rail's line.
+      */
+      expect(counts).toHaveTextContent('4 working');
+      expect(controls).not.toHaveTextContent('4 working');
+      expect(controls).toHaveTextContent('New session');
+    });
+
+    /**
+     * The header itself must carry no row gap, or every zone boundary would sit
+     * 14px away from the line it is supposed to land on.
+     */
+    it('spaces its zones without a row gap', () => {
+      render(<Header />);
+
+      expect(screen.getByRole('banner')).not.toHaveClass('gap-[14px]');
+    });
+
+    it('gives the controls the activity rail’s width, so the counts end on its edge', () => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
+
+      render(<Header />);
+
+      const controls = screen.getByRole('banner').children[2];
+      // A calc over the token, not a literal: the rail is 316px comfortable and
+      // 276px compact, and a hardcoded number would be wrong in one of them.
+      expect(controls).toHaveClass('w-[calc(var(--cc-rail-w-right)-1rem)]');
+    });
+
+    /**
+     * With the rail unmounted there is no border to align to, so the cluster
+     * drops its width and the counts are simply flush right — the layout this
+     * header had before HIVE-79.
+     */
+    it('drops that width when the activity rail is hidden', () => {
+      useUiStore.setState({ showActivityRail: false });
+
+      render(<Header />);
+
+      const controls = screen.getByRole('banner').children[2];
+      expect(controls).not.toHaveClass('w-[calc(var(--cc-rail-w-right)-1rem)]');
     });
 
     it('gives the brand exactly the rail’s width, so the chips start on its edge', () => {
@@ -106,7 +151,7 @@ describe('Header', () => {
       render(<Header />);
 
       const banner = screen.getByRole('banner');
-      expect(banner.children).toHaveLength(2);
+      expect(banner.children).toHaveLength(3);
       expect(banner.children[0]).toHaveTextContent('The Hive');
       expect(banner.children[0]).not.toHaveTextContent(/Opus 4.5/);
       expect(banner.children[1]).toHaveTextContent('4 working');

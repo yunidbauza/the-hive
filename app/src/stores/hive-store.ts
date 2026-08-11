@@ -31,6 +31,7 @@ import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import type { PrRecord } from '@shared/github-contract';
 import type { JiraIssue } from '@shared/jira-contract';
+import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import { useUiStore } from '@stores/ui-store';
 
@@ -161,6 +162,25 @@ interface HiveState {
   notifs: HiveNotification[];
   orchLines: TermLine[];
 
+  /**
+   * What each session last reported about its own usage (HIVE-79).
+   *
+   * **Its own slice rather than a field on the entity**, and the reason is the
+   * one the four-store split exists for. These arrive from Claude Code's status
+   * line on every assistant message plus a 30-second timer, per live session —
+   * easily the busiest write in the store. Putting them on `Entity` would give
+   * every session row in the left rail a new object identity on each tick, and
+   * a fleet of thirteen would repaint continuously to move a number that only
+   * the header's chip renders.
+   *
+   * Keyed by entity id, and **not pruned when a session ends**. That is a
+   * deliberate non-decision rather than an oversight: the map is bounded by the
+   * number of sessions this app run has created, each entry is eight scalars,
+   * and a retired session's last reported usage is the honest answer for a row
+   * the user can still select. `reset()` clears it with everything else.
+   */
+  metrics: Record<string, SessionMetrics>;
+
   /** Replace the ticket list with real issues (HIVE-69). */
   hydrateTickets: (issues: JiraIssue[], capped: boolean) => void;
   /** A read failed. Keeps the tickets it has and marks them stale (HIVE-69). */
@@ -232,6 +252,8 @@ interface HiveState {
    * detached HEAD, no `git` — and lands on the entity as an absent field.
    */
   setSessionBranch: (id: string, branch: string | null, cwd: string) => void;
+  /** A session reported its context and rate-limit usage (HIVE-79). */
+  setSessionMetrics: (id: string, metrics: SessionMetrics) => void;
   /**
    * The user named the ticket this session is for, in prose (HIVE-78).
    *
@@ -533,6 +555,7 @@ function samePrs(next: readonly PrRecord[], previous: readonly PrRecord[]): bool
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
   notifs: [],
+  metrics: {},
   /**
    * Loading until the first read answers.
    *
@@ -1176,6 +1199,54 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * dropping the no-op keeps a rail of thirteen rows from re-rendering when a
    * fourteenth session's `git` call comes back with the same answer.
    */
+  /**
+   * Record what a session says about its own context and rate limits (HIVE-79).
+   *
+   * Resolved through {@link currentSessionIn} like every other session write, so
+   * a report that arrives just after `/clear` lands on the successor rather than
+   * on the row the store has already retired.
+   *
+   * **Merged, not replaced.** Each status line payload is a complete
+   * observation, but its fields drop in and out independently — `rate_limits` is
+   * absent until a session's first API response, and `context_window`'s
+   * percentage goes null again after `/compact`. Overwriting wholesale would
+   * make the chip flicker back to em dashes on the tick after a `/compact`,
+   * having already known the answer. Undefined fields are dropped from the patch
+   * so absence never overwrites knowledge; the receiver omits a field it did not
+   * read rather than sending `undefined`.
+   */
+  setSessionMetrics: (id, metrics) =>
+    set((state) => {
+      const target = currentSessionIn(state, id);
+      const entity = state.entities[target];
+      if (!entity || !isSession(entity)) return state;
+
+      const patch = Object.fromEntries(
+        Object.entries(metrics).filter(([, value]) => value !== undefined),
+      ) as SessionMetrics;
+      if (Object.keys(patch).length === 0) return state;
+
+      const previous = state.metrics[target];
+      const next = { ...previous, ...patch };
+
+      /*
+        Dropped when nothing moved. The 30-second refresh re-reports identical
+        numbers for a session nobody is typing into, and a new object identity
+        each time would re-render the chip on a timer for no reason.
+      */
+      if (
+        previous !== undefined &&
+        (Object.keys(next) as (keyof SessionMetrics)[]).every(
+          (key) => previous[key] === next[key],
+        ) &&
+        Object.keys(previous).length === Object.keys(next).length
+      ) {
+        return state;
+      }
+
+      return { ...state, metrics: { ...state.metrics, [target]: next } };
+    }),
+
   setSessionBranch: (id, branch, cwd) =>
     set((state) => {
       const target = currentSessionIn(state, id);
@@ -1771,6 +1842,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     set({
       ...emptySeeds(),
       notifs: [],
+      metrics: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
     });
@@ -1887,6 +1959,22 @@ export const useRenameSession = () =>
 /** Main observed a session's real branch and working directory (HIVE-78). */
 export const useSetSessionBranch = () =>
   useHiveStore((state) => state.setSessionBranch);
+
+export const useSetSessionMetrics = () =>
+  useHiveStore((state) => state.setSessionMetrics);
+
+/**
+ * What a session last reported about its usage, or `undefined` (HIVE-79).
+ *
+ * Takes an optional id so the header's chip can call it unconditionally — a
+ * hook cannot be called after an early return, and the chip returns null for
+ * every tab that is not a session. `undefined` in gives `undefined` out.
+ *
+ * Subscribes to **one entry**, not the map, so a report about a background
+ * session cannot re-render the chip showing the foreground one.
+ */
+export const useSessionMetrics = (id: string | undefined) =>
+  useHiveStore((state) => (id === undefined ? undefined : state.metrics[id]));
 
 /** A confirmed ticket key the user named mid-session (HIVE-78). */
 export const useSetSessionTicket = () =>

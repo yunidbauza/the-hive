@@ -13,6 +13,7 @@ import {
   type PtyDiagnostics,
   type SessionLostEvent,
 } from '@shared/ipc-contract';
+import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import {
   spawnRefusal,
@@ -482,6 +483,24 @@ export function createSessions(options: SessionsOptions): Sessions {
         key: event.key,
       } satisfies SessionTicketIntentEvent),
     onCleared: (entityId) => publishCleared(entityId),
+    /**
+     * Usage, forwarded verbatim (HIVE-79).
+     *
+     * No `lastMetrics` guard, unlike `publishBranch` next door, and the
+     * asymmetry is deliberate. A branch is observed by *main* on every hook
+     * boundary and is almost always unchanged, so suppressing the no-op there
+     * is what makes a chatty observation affordable. These arrive only when
+     * Claude Code's own status line fires — an assistant message, a `/compact`,
+     * a 30-second idle tick — which is already the cadence at which the numbers
+     * genuinely move. The store drops an unchanged patch on arrival, so the
+     * one place that would benefit from the comparison already makes it, with
+     * the previous value in hand rather than a copy kept here.
+     */
+    onMetrics: (entityId, metrics) =>
+      send(CH.sessionMetrics, {
+        entityId,
+        metrics,
+      } satisfies SessionMetricsEvent),
   });
 
   /**

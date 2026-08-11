@@ -4,6 +4,7 @@ import {
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
+import type { SessionMetrics } from '@shared/metrics-contract';
 
 import { createReceiver, type Receiver } from './receiver';
 import { writeHookSettings } from './settings';
@@ -47,6 +48,8 @@ export interface HookHandlers {
   /** A prompt named a ticket (HIVE-78). Unconfirmed — see the contract. */
   onTicketIntent: (event: HookTicketIntentEvent) => void;
   onCleared: (entityId: string) => void;
+  /** A session reported its context and rate-limit usage (HIVE-79). */
+  onMetrics: (entityId: string, metrics: SessionMetrics) => void;
 }
 
 export interface HookRuntime {
@@ -80,11 +83,12 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       return settingsPath;
     },
 
-    async start({ knowsSession, onEvent, onTicketIntent, onCleared }) {
+    async start({ knowsSession, onEvent, onTicketIntent, onCleared, onMetrics }) {
       const created = createReceiver({
         onEvent,
         onTicketIntent,
         onCleared,
+        onMetrics,
         knowsSession,
         ...(port === undefined ? {} : { port }),
       });
@@ -98,7 +102,18 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       }
 
       try {
-        settingsPath = await writeHookSettings(userDataPath, url);
+        /*
+          The metrics URL rides along rather than being written separately: one
+          settings file, one write, and a session either gets both halves of
+          what this runtime offers or neither. `metricsUrl` is non-null here by
+          construction — the bind succeeded — but it is read rather than rebuilt
+          so the path lives in exactly one place.
+        */
+        settingsPath = await writeHookSettings(
+          userDataPath,
+          url,
+          created.metricsUrl ?? undefined,
+        );
         receiver = created;
       } catch (cause) {
         /**
@@ -132,4 +147,12 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 }
 
 export { createReceiver } from './receiver';
-export { hookSettings, writeHookSettings, HOOK_SETTINGS_FILE } from './settings';
+export {
+  hookSettings,
+  metricsScript,
+  statusLineSettings,
+  writeHookSettings,
+  HOOK_SETTINGS_FILE,
+  METRICS_SCRIPT_FILE,
+} from './settings';
+export { parseMetrics } from './metrics';

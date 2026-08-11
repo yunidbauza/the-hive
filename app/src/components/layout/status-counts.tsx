@@ -16,14 +16,21 @@ import { useCounts } from '@stores/hive-store';
  * header width it does not have (see below).
  *
  * `truncate` (with the `min-w-0` that actually lets a flex item shrink) is what
- * keeps this to one line, and it is load-bearing for the header's centred model
- * chip rather than mere defensiveness. Centring the chip on the header's true
- * midpoint means both side tracks size to the *wider* of the two, and this
- * cluster is the wider one; at 1440 that costs 113px more than the bar has. If
- * this paragraph cannot give, the deficit lands on the chip instead — so the
- * counts ellipsise from the tail (`done`, the least urgent number) and the chip
- * stays whole and centred. Above roughly 1553px nothing truncates at all. The
- * full string stays in the tooltip.
+ * keeps this to one line, and it is load-bearing rather than defensive: this
+ * paragraph is the widest thing in the header after the model chip, and the two
+ * of them share whatever the brand and the control cluster leave.
+ *
+ * The ellipsis eats the **tail** — `ended`, the least urgent number — and the
+ * full string stays in the `title`. That ordering is why `idle` and `ended` are
+ * the pair that got merged into one `restText`: they are the two the user is
+ * least likely to be missing when the window is narrow.
+ *
+ * ## Where its right edge lands
+ *
+ * On the activity rail's leading edge, which `header.tsx` arranges by giving the
+ * control cluster the rail's own width. Nothing in this file participates in
+ * that beyond being shrinkable — but the alignment is the reason there is no
+ * right padding here, and adding some would quietly undo it.
  */
 export function StatusCounts() {
   const { working, waiting, idle, done, terminated } = useCounts();
@@ -36,6 +43,9 @@ export function StatusCounts() {
 
   return (
     <p
+      /* Named so `chip-alignment.spec.ts` can measure this element's right edge
+         against the activity rail's border directly. */
+      data-testid="status-counts"
       title={`${workingText} · ${waitingText} · ${restText}`}
       className="min-w-0 truncate font-mono text-xs text-muted"
     >

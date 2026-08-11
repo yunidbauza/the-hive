@@ -97,6 +97,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
 
       const receiver = createReceiver({
         knowsSession: (id) => id === 'sess-live',
+        onMetrics: () => {},
         onEvent: (e) =>
           publish({
             entityId: e.entityId,

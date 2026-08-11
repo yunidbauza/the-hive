@@ -11,7 +11,11 @@ import { Badge } from '@components/ui/badge';
 import { isDesktop } from '@config/runtime';
 import { useTheme, useThemeActions } from '@stores/appearance-store';
 import { useMarkAllRead, useUnreadCount } from '@stores/hive-store';
-import { usePickerActions, useSettingsActions } from '@stores/ui-store';
+import {
+  usePickerActions,
+  useSettingsActions,
+  useShowActivityRail,
+} from '@stores/ui-store';
 
 /**
  * Persistent header — 56px, never scrolls, never collapses.
@@ -67,6 +71,13 @@ export function Header() {
 
   const isDark = theme === 'dark';
   const desktop = isDesktop();
+  /*
+    The counts anchor to the activity rail's leading edge, so they need to know
+    whether there is one. With the rail unmounted there is no line to end on and
+    the cluster falls back to flush right — the layout this header had before
+    HIVE-79.
+  */
+  const showActivityRail = useShowActivityRail();
 
   return (
     <header
@@ -77,8 +88,18 @@ export function Header() {
        * browser the property is inert, but the left inset below is not, and a
        * 78px gap in the demo surface would be a visible regression.
        */
+      /*
+        No `gap` at this level any more (HIVE-79).
+
+        The counts have to end **exactly** on the activity rail's leading edge,
+        and a row gap would hold them 14px short of it — an offset small enough
+        to look like a mistake and large enough to see. Spacing is applied by
+        the three zones themselves instead: the brand cluster keeps its own
+        internal gap, the counts carry a left margin, and the control cluster
+        spaces itself inside the column it owns.
+      */
       className={cn(
-        'flex h-14 shrink-0 items-center gap-[14px] border-b border-border-soft bg-panel px-4',
+        'flex h-14 shrink-0 items-center border-b border-border-soft bg-panel px-4',
         desktop && '[-webkit-app-region:drag]',
       )}
     >
@@ -141,9 +162,49 @@ export function Header() {
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center justify-end gap-[14px]">
-        <StatusCounts />
+      {/*
+        The counts are their own zone now, and they end on the rail's line.
 
+        `ml-[14px]` is the only spacing they carry, on the side that faces the
+        model chip. Nothing on the right, because the right edge *is* the
+        alignment: the control cluster below claims the activity rail's width,
+        so wherever the counts stop is where the rail's border rises through
+        the header. `chip-alignment.spec.ts` measures the two against each
+        other, the same way it already measures the chips against the left rail.
+
+        `min-w-0` keeps them the thing that gives when the window narrows —
+        they already truncate from the tail and carry the full string in a
+        `title`.
+      */}
+      <div className="ml-[14px] flex min-w-0 shrink items-center">
+        <StatusCounts />
+      </div>
+
+      <div
+        /*
+          This cluster claims the activity rail's own column, so the buttons sit
+          over the rail rather than straddling its border.
+
+          `calc(… - 1rem)` rather than a literal, for the reason the brand block
+          documents at the other end of the bar: the rail begins at the viewport
+          edge and this header's content box does not, so the column is the
+          rail's width minus this header's own `px-4`. Written as a calc over
+          the token because `--cc-rail-w-right` is 316px at comfortable density
+          and 276px at compact — a hardcoded number would be right in one of
+          them and silently wrong in the other.
+
+          Measured content is ~262px against a 300px column at comfortable
+          density, so nothing here is under width pressure; `shrink-0` keeps it
+          that way and pushes any deficit onto the counts and the chip.
+
+          With the rail hidden there is no column to claim, so the width drops
+          away and the cluster is simply flush right.
+        */
+        className={cn(
+          'flex shrink-0 items-center justify-end gap-[14px]',
+          showActivityRail && 'w-[calc(var(--cc-rail-w-right)-1rem)]',
+        )}
+      >
         <button
           type="button"
           onClick={toggleTheme}

@@ -64,6 +64,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import type { HiveNotification } from '@shared/notification-contract';
 import type {
   SessionBranchEvent,
@@ -322,6 +323,8 @@ const bridge: HiveBridge = {
       subscribe<SessionBranchEvent>(CH.sessionBranch, callback),
     onTicketIntent: (callback: (event: SessionTicketIntentEvent) => void) =>
       subscribe<SessionTicketIntentEvent>(CH.sessionTicketIntent, callback),
+    onMetrics: (callback: (event: SessionMetricsEvent) => void) =>
+      subscribe<SessionMetricsEvent>(CH.sessionMetrics, callback),
   },
 };
 

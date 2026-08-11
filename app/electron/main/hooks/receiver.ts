@@ -15,7 +15,13 @@ import {
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
+import {
+  METRICS_MAX_BODY_BYTES,
+  METRICS_PATH,
+  type SessionMetrics,
+} from '@shared/metrics-contract';
 
+import { parseMetrics } from './metrics';
 import { ticketKeyFromPrompt } from './ticket-intent';
 
 /**
@@ -38,12 +44,14 @@ import { ticketKeyFromPrompt } from './ticket-intent';
  * 2. It requires a **per-launch token**, generated at start and never written
  *    anywhere but the settings file the app itself wrote and the environment of
  *    the PTYs it spawned. A token that leaks dies with the app.
- * 3. It answers **one path** and reads a **capped body**, so nothing about it is
- *    a general-purpose server.
+ * 3. It answers a **closed set of two paths** and reads a **capped body** on
+ *    each, so nothing about it is a general-purpose server. The second path
+ *    (HIVE-79) takes Claude Code's status line payload; it shares the token and
+ *    the session header, and carries a cap four times smaller.
  *
  * It also has no authority: the only thing a valid POST can do is move a status
- * dot for a session id that is already known. There is no command surface here
- * to reach.
+ * dot, or record usage percentages, for a session id that is already known.
+ * There is no command surface here to reach.
  *
  * ## Why a failure to bind is not an error
  *
@@ -74,6 +82,15 @@ export interface ReceiverOptions {
    * version of `SessionEnd` handling lock users out of live sessions.
    */
   onCleared: (entityId: string) => void;
+  /**
+   * A session reported its context and rate-limit usage (HIVE-79).
+   *
+   * Arrives on a second path from Claude Code's status line rather than from a
+   * hook — see `metrics-contract.ts`. A separate callback for the reason
+   * `onTicketIntent` is one: it is not a status, and folding it in would put an
+   * optional payload on every tick of the busiest event here.
+   */
+  onMetrics: (entityId: string, metrics: SessionMetrics) => void;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
   /** Overridable for tests; `0` asks the OS for any free port. */
@@ -91,6 +108,13 @@ export interface Receiver {
   readonly token: string;
   /** The URL hooks should POST to, or `null` before a successful start. */
   readonly url: string | null;
+  /**
+   * The URL the injected status line POSTs usage to, or `null` (HIVE-79).
+   *
+   * Same socket and same token as {@link Receiver.url}; a different path
+   * because the bodies are unrelated shapes.
+   */
+  readonly metricsUrl: string | null;
   stop(): Promise<void>;
 }
 
@@ -99,11 +123,23 @@ const isHookEvent = (value: unknown): value is HookEvent =>
   typeof value === 'string' && (HOOK_EVENTS as readonly string[]).includes(value);
 
 export function createReceiver(options: ReceiverOptions): Receiver {
-  const { onEvent, onTicketIntent, onCleared, knowsSession, port = 0 } = options;
+  const {
+    onEvent,
+    onTicketIntent,
+    onCleared,
+    onMetrics,
+    knowsSession,
+    port = 0,
+  } = options;
 
   const token = randomUUID();
   let server: Server | null = null;
   let url: string | null = null;
+  /**
+   * The scheme and authority, kept so {@link Receiver.metricsUrl} can name the
+   * second path without re-deriving a port from a string it just built.
+   */
+  let origin: string | null = null;
 
   /**
    * Pull the event name out of a body too large to have been kept whole.
@@ -146,11 +182,18 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    */
   const NOTIFICATION_TYPE_IN_PREFIX = /"notification_type"\s*:\s*"([a-z_]+)"/;
 
-  function handle(
+  /**
+   * Token, session id, and "do we still have this session".
+   *
+   * Shared by both paths because both need exactly this and in this order —
+   * and because a second endpoint that checked two of the three would be the
+   * kind of drift a reviewer has to notice rather than the compiler.
+   *
+   * Answers the status to return, or `null` when the request may proceed.
+   */
+  function reject(
     headers: Record<string, string | string[] | undefined>,
-    body: string,
-    truncated = false,
-  ): number {
+  ): number | null {
     /**
      * Compared before anything else is read.
      *
@@ -171,6 +214,52 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * would leak an entry per stale hook forever.
      */
     if (!knowsSession(entityId)) return 404;
+
+    return null;
+  }
+
+  /**
+   * A status line reported (HIVE-79).
+   *
+   * Nothing like the hook path below, and the difference is the point: there is
+   * no event vocabulary, no truncation recovery, and no prefix regex. A status
+   * line payload is small, fixed and entirely scalar, so a body that did not
+   * parse is simply a 400 — there is no partial reading of it worth having.
+   */
+  function handleMetrics(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): number {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    /*
+      A truncated status line body is not a payload this endpoint is for — see
+      METRICS_MAX_BODY_BYTES. Answered 204 rather than 413 for the reason the
+      hook path drains rather than refuses: the reply is visible in the user's
+      session, and nothing the app does with these numbers is worth a red line
+      in a terminal.
+    */
+    if (truncated) return 204;
+
+    const metrics = parseMetrics(body);
+    if (metrics === null) return 400;
+
+    onMetrics(headers[HOOK_HEADER_SESSION] as string, metrics);
+    return 204;
+  }
+
+  function handle(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated = false,
+  ): number {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    // Narrowed by `reject`, which refused every non-string case above.
+    const entityId = headers[HOOK_HEADER_SESSION] as string;
 
     let event: unknown;
     let reason: unknown;
@@ -302,13 +391,27 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return url;
     },
 
+    get metricsUrl() {
+      return origin === null ? null : `${origin}${METRICS_PATH}`;
+    },
+
     start() {
       return new Promise<string | null>((resolve) => {
         const created = createServer((req, res) => {
-          if (req.method !== 'POST' || (req.url ?? '') !== HOOK_PATH) {
+          /*
+            Two paths now, and still nothing resembling a general-purpose
+            server: the set is closed, both are POST-only, and each has its own
+            body cap sized to the document it expects. A request that is neither
+            is 404 without reading a byte.
+          */
+          const path = req.url ?? '';
+          const isMetrics = path === METRICS_PATH;
+          if (req.method !== 'POST' || (path !== HOOK_PATH && !isMetrics)) {
             res.writeHead(404).end();
             return;
           }
+
+          const cap = isMetrics ? METRICS_MAX_BODY_BYTES : HOOK_MAX_BODY_BYTES;
 
           let body = '';
           let bytes = 0;
@@ -331,7 +434,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
              * hundred bytes, so the prefix is kept and the rest is discarded as
              * it arrives. The heap cost is the cap, not the payload.
              */
-            if (bytes > HOOK_MAX_BODY_BYTES) {
+            if (bytes > cap) {
               truncated = true;
               return;
             }
@@ -341,7 +444,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           req.on('end', () => {
             let status: number;
             try {
-              status = handle(req.headers, body, truncated);
+              status = isMetrics
+                ? handleMetrics(req.headers, body, truncated)
+                : handle(req.headers, body, truncated);
             } catch {
               /**
                * A throw here must not take the app down. An uncaught exception
@@ -366,6 +471,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
            */
           if (server === null) {
             url = null;
+            origin = null;
             resolve(null);
           }
         });
@@ -377,7 +483,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             return;
           }
           server = created;
-          url = `http://127.0.0.1:${address.port}${HOOK_PATH}`;
+          origin = `http://127.0.0.1:${address.port}`;
+          url = `${origin}${HOOK_PATH}`;
           resolve(url);
         });
       });
@@ -392,6 +499,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         }
         server = null;
         url = null;
+        origin = null;
         running.close(() => resolve());
         /**
          * Keep-alive sockets would otherwise hold the close open past app quit.

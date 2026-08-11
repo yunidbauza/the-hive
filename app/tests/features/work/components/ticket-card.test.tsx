@@ -224,3 +224,63 @@ describe('TicketCard', () => {
     expect(within(block as HTMLElement).getByText('#482')).toBeInTheDocument();
   });
 });
+
+
+/**
+ * The card's header row (HIVE-79).
+ *
+ * The defect: on a 268px left rail the card has ~216px of content width, and
+ * `INCORP-463` + a `Move ⌄` control + an `IN PROGRESS` lozenge did not fit —
+ * the key wrapped to a second line. Folding the control into the lozenge is what
+ * bought the room back, and these assertions pin that shape rather than the
+ * pixels, which `ticket-card.spec.ts` measures in a real browser.
+ */
+describe('the header row', () => {
+  it('has no separate Move control — the lozenge is the trigger', () => {
+    render(<TicketCard ticket={ticket({ url: 'https://x/browse/HIVE-70' })} />);
+
+    // The word that used to sit between the key and the status is gone.
+    expect(screen.queryByText('Move')).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole('button', { name: 'Move GRAC-3018' });
+    expect(trigger).toHaveTextContent('In Progress');
+  });
+
+  it('holds exactly two things: the key and the status', () => {
+    render(<TicketCard ticket={ticket({ url: 'https://x/browse/HIVE-70' })} />);
+
+    const key = screen.getByText('GRAC-3018');
+    // The key, a flex spacer, and the lozenge — nothing else competing for the
+    // row's width.
+    const row = key.parentElement;
+    expect(row?.children).toHaveLength(3);
+  });
+
+  /**
+   * A fixture has no Jira behind it, so an interactive lozenge would be a
+   * control that cannot work — the same "absent rather than disabled" rule the
+   * notification switches follow. Both spellings share `STATUS_PILL`, so the
+   * card does not resize depending on where its ticket came from.
+   */
+  it('renders an inert lozenge for a ticket with no issue behind it', () => {
+    render(<TicketCard ticket={ticket()} />);
+
+    expect(screen.getByText('In Progress')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Move/ })).not.toBeInTheDocument();
+  });
+
+  it('gives both spellings the same shape, so the row does not jump', () => {
+    const { unmount } = render(<TicketCard ticket={ticket()} />);
+    const inert = screen.getByText('In Progress').className;
+    unmount();
+
+    render(<TicketCard ticket={ticket({ url: 'https://x/browse/HIVE-70' })} />);
+    const interactive = screen.getByRole('button', { name: 'Move GRAC-3018' })
+      .className;
+
+    for (const shape of ['rounded-full', 'bg-chip', 'px-[9px]', 'text-[10px]']) {
+      expect(inert).toContain(shape);
+      expect(interactive).toContain(shape);
+    }
+  });
+});

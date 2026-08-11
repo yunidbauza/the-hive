@@ -2,6 +2,7 @@ import { renderHook } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import type {
   SessionBranchEvent,
   SessionClearedEvent,
@@ -29,6 +30,7 @@ let listeners: ((event: SessionStatusEvent) => void)[];
 let nameListeners: ((event: SessionNameEvent) => void)[];
 let clearedListeners: ((event: SessionClearedEvent) => void)[];
 let branchListeners: ((event: SessionBranchEvent) => void)[];
+let metricsListeners: ((event: SessionMetricsEvent) => void)[];
 let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
 let disposals: number;
 
@@ -80,6 +82,12 @@ function withBridge() {
           disposals += 1;
         };
       },
+      onMetrics: (callback: (event: SessionMetricsEvent) => void) => {
+        metricsListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
     },
   };
 }
@@ -97,6 +105,11 @@ const emitName = (event: SessionNameEvent) =>
 const emitBranch = (event: SessionBranchEvent) =>
   act(() => {
     for (const listener of branchListeners) listener(event);
+  });
+
+const emitMetrics = (event: SessionMetricsEvent) =>
+  act(() => {
+    for (const listener of metricsListeners) listener(event);
   });
 
 /**
@@ -119,6 +132,7 @@ beforeEach(() => {
   nameListeners = [];
   clearedListeners = [];
   branchListeners = [];
+  metricsListeners = [];
   intentListeners = [];
   issueCalls = [];
   issueReply = null;
@@ -165,7 +179,7 @@ describe('useSessionStatus', () => {
     // leaked listener on any of the five would keep writing to a store the
     // unmounted shell no longer renders, and the cleared one would go on
     // minting sessions.
-    expect(disposals).toBe(5);
+    expect(disposals).toBe(6);
   });
 
   it('applies a rename pushed from main', () => {
@@ -188,6 +202,41 @@ describe('useSessionStatus', () => {
     renderHook(() => useSessionStatus());
 
     expect(nameListeners).toHaveLength(1);
+  });
+
+  it('records the usage a session reported', () => {
+    withBridge();
+    renderHook(() => useSessionStatus());
+
+    emitMetrics({
+      entityId: 'hero-refresh',
+      metrics: { contextPct: 46, fiveHourPct: 12, sevenDayPct: 63 },
+    });
+
+    expect(useHiveStore.getState().metrics['hero-refresh']).toEqual({
+      contextPct: 46,
+      fiveHourPct: 12,
+      sevenDayPct: 63,
+    });
+  });
+
+  /**
+   * Each status line payload is a complete observation, but its fields drop in
+   * and out independently — `rate_limits` is absent until the first API
+   * response. A later report that carries only context must not erase limits
+   * the chip already knows.
+   */
+  it('merges a later partial report rather than replacing what it knows', () => {
+    withBridge();
+    renderHook(() => useSessionStatus());
+
+    emitMetrics({ entityId: 'hero-refresh', metrics: { fiveHourPct: 12 } });
+    emitMetrics({ entityId: 'hero-refresh', metrics: { contextPct: 46 } });
+
+    expect(useHiveStore.getState().metrics['hero-refresh']).toEqual({
+      fiveHourPct: 12,
+      contextPct: 46,
+    });
   });
 
   it('applies the branch main observed', () => {

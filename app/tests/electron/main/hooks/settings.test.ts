@@ -9,7 +9,12 @@ import {
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
 } from '../../../../electron/shared/hook-contract';
-import { hookSettings } from '../../../../electron/main/hooks/settings';
+import { METRICS_REFRESH_SECONDS } from '../../../../electron/shared/metrics-contract';
+import {
+  hookSettings,
+  metricsScript,
+  statusLineSettings,
+} from '../../../../electron/main/hooks/settings';
 
 /**
  * The settings file and the receiver are two halves of one contract (HIVE-62).
@@ -80,5 +85,83 @@ describe('hookSettings', () => {
   it('is serialisable — it is written to disk as JSON', () => {
     expect(() => JSON.stringify(settings)).not.toThrow();
     expect(JSON.parse(JSON.stringify(settings))).toEqual(settings);
+  });
+});
+
+/**
+ * The status line half (HIVE-79).
+ *
+ * This is the mechanism that makes the header's numbers real, and it is also
+ * the one part of this file a *user* can see the effect of: `--settings` sits
+ * at command-line precedence, so the entry written here replaces whatever
+ * status line they configured for themselves, inside Hive sessions only.
+ */
+describe('statusLineSettings', () => {
+  const scriptPath = '/Users/x/Library/Application Support/The Hive/hive/statusline.sh';
+
+  it('runs the script through a shell, quoted', () => {
+    const entry = statusLineSettings(scriptPath);
+
+    // The macOS userData path contains a space; an unquoted argument splits on
+    // it and Claude Code runs `/bin/sh /Users/x/Library/Application`.
+    expect(entry?.command).toBe(`/bin/sh '${scriptPath}'`);
+  });
+
+  it('survives a path containing a single quote', () => {
+    const entry = statusLineSettings("/Users/o'brien/hive/statusline.sh");
+
+    expect(entry?.command).toBe(`/bin/sh '/Users/o'\\''brien/hive/statusline.sh'`);
+  });
+
+  it('sets a refresh interval, because the event triggers go quiet when idle', () => {
+    expect(statusLineSettings(scriptPath)?.refreshInterval).toBe(
+      METRICS_REFRESH_SECONDS,
+    );
+  });
+});
+
+describe('metricsScript', () => {
+  const url = 'http://127.0.0.1:51234/statusline';
+  const script = metricsScript(url);
+
+  /**
+   * The single most important property of this script, and the reason it exists
+   * in this shape at all: Claude Code renders whatever a status line prints, and
+   * printing these numbers would duplicate the header six inches below it.
+   */
+  it('writes nothing to stdout on any path', () => {
+    // The response body is discarded and stderr is redirected; nothing echoes.
+    expect(script).toContain('-o /dev/null');
+    expect(script).toContain('2>/dev/null');
+    expect(script).not.toMatch(/^\s*(echo|printf)\b/m);
+  });
+
+  it('exits zero even when the receiver has gone away', () => {
+    // The app can quit while a session keeps running. A non-zero exit would
+    // surface in the user's terminal as a failing status line command.
+    expect(script.trimEnd().endsWith('exit 0')).toBe(true);
+  });
+
+  it('forwards stdin as the body rather than re-encoding it', () => {
+    expect(script).toContain('--data-binary @-');
+  });
+
+  it('carries both correlation headers from the pty environment', () => {
+    expect(script).toContain(`${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}`);
+    expect(script).toContain(`${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}`);
+  });
+
+  it('declines to POST at all when either variable is missing', () => {
+    // An empty header is an unattributable body the receiver answers 400 to.
+    expect(script).toContain(`[ -n "$${HOOK_ENV_SESSION}" ] || exit 0`);
+    expect(script).toContain(`[ -n "$${HOOK_ENV_TOKEN}" ] || exit 0`);
+  });
+
+  it('bounds the request, because it runs on a timer per live session', () => {
+    expect(script).toContain('-m 5');
+  });
+
+  it('bakes in the URL rather than adding a variable to every pty', () => {
+    expect(script).toContain(`'${url}'`);
   });
 });

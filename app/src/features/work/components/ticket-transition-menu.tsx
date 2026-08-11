@@ -1,12 +1,16 @@
 import { CaretDown } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { cn } from '@/lib/utils';
+import type { Ticket } from '@/types/ticket';
+
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@components/ui/dropdown-menu';
+import { CATEGORY_TEXT, STATUS_PILL } from '@features/work/ticket-presentation';
 import { applyJiraTransition, readJiraTransitions } from '@lib/jira';
 import type { JiraTransition } from '@shared/jira-contract';
 import { useUpdateTicket } from '@stores/hive-store';
@@ -39,6 +43,10 @@ import { useUpdateTicket } from '@stores/hive-store';
 interface TicketTransitionMenuProps {
   /** The issue to move. Also the key the store replaces on success. */
   issueKey: string;
+  /** The status the lozenge shows — Jira's own name, whatever the workflow calls it. */
+  status: string;
+  /** Which of Jira's three buckets colours it. */
+  statusCategory: Ticket['statusCategory'];
 }
 
 type MenuState =
@@ -58,7 +66,11 @@ type MenuState =
       transitions?: JiraTransition[];
     };
 
-export function TicketTransitionMenu({ issueKey }: TicketTransitionMenuProps) {
+export function TicketTransitionMenu({
+  issueKey,
+  status,
+  statusCategory,
+}: TicketTransitionMenuProps) {
   const updateTicket = useUpdateTicket();
   const [state, setState] = useState<MenuState>({ kind: 'idle' });
   /**
@@ -161,12 +173,34 @@ export function TicketTransitionMenu({ issueKey }: TicketTransitionMenuProps) {
         else setState({ kind: 'idle' });
       }}
     >
+      {/*
+        The status lozenge **is** the trigger (HIVE-79).
+
+        It used to be a separate `Move ⌄` control sitting between the key and
+        the lozenge, and on a 268px rail — 216px of card, 180px at compact
+        density — those three items did not fit: `INCORP-463` wrapped to a
+        second line whenever the status was as long as `IN PROGRESS`. Shrinking
+        the key was never an option, since it is the card's identity.
+
+        Folding the control into the lozenge frees the whole `Move` label and
+        its gap, and it is the honest shape besides: the thing you click to
+        change the status is the status. The caret's width is *reserved* rather
+        than revealed on hover, because a pill that grows under the pointer
+        would shift the row it sits in.
+
+        `bg-chip-hover` on hover, so the pill reads as pressable without a
+        border that would make it a second visual weight next to the key.
+      */}
       <DropdownMenuTrigger
         aria-label={`Move ${issueKey}`}
-        className="flex shrink-0 items-center gap-0.5 rounded-[5px] border border-transparent px-1 py-0.5 text-[10px] text-subtle hover:bg-hover hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+        className={cn(
+          STATUS_PILL,
+          CATEGORY_TEXT[statusCategory],
+          'flex items-center gap-1 hover:bg-chip-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand',
+        )}
       >
-        Move
-        <CaretDown size={9} />
+        {status}
+        <CaretDown size={9} aria-hidden="true" />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent

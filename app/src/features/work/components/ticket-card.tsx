@@ -6,27 +6,8 @@ import { TicketNewSessionLink } from '@features/work/components/ticket-new-sessi
 import { TicketPrRow } from '@features/work/components/ticket-pr-row';
 import { TicketSessionRow } from '@features/work/components/ticket-session-row';
 import { TicketTransitionMenu } from '@features/work/components/ticket-transition-menu';
+import { CATEGORY_TEXT, STATUS_PILL } from '@features/work/ticket-presentation';
 import { useTicketPrs, useTicketSessions } from '@stores/hive-store';
-
-/**
- * Colour by Jira's own category, never by the status *name* (HIVE-69).
- *
- * This map was keyed on a four-literal union until the `Ticket` widening, which
- * is precisely why the widening had to happen: real statuses are per-workflow
- * and arbitrary, so a project with "Blocked", "In QA" or "Awaiting deploy" would
- * have had no entry here and rendered unstyled — or, worse, been mapped onto one
- * of the four and told the user something false.
- *
- * Three buckets is the whole set, because `statusCategory` is
- * `new | indeterminate | done` at the source. Jira uses the same field to colour
- * its own lozenge, so this agrees with what the user sees in Jira and there is
- * no table to maintain as workflows change.
- */
-const CATEGORY_TEXT: Record<Ticket['statusCategory'], string> = {
-  todo: 'text-subtle',
-  'in-progress': 'text-brand',
-  done: 'text-green',
-};
 
 interface TicketCardProps {
   ticket: Ticket;
@@ -69,23 +50,30 @@ export function TicketCard({ ticket }: TicketCardProps) {
         <span className="flex-1" />
 
         {/*
-          Only on a real issue (HIVE-70). A fixture has no Jira behind it, so a
-          transition control on the browser demo would be a button that cannot
-          work — the same "absent rather than disabled" rule the notification
-          switches follow when the OS cannot show one.
-        */}
-        {ticket.url === undefined ? null : (
-          <TicketTransitionMenu issueKey={ticket.key} />
-        )}
+          One lozenge, two renderings (HIVE-79).
 
-        <span
-          className={cn(
-            'shrink-0 rounded-full bg-chip px-[9px] py-0.5 text-[10px] font-bold uppercase tracking-[0.05em]',
-            CATEGORY_TEXT[ticket.statusCategory],
-          )}
-        >
-          {ticket.status}
-        </span>
+          On a **real** issue the lozenge is the transition menu's trigger, so
+          the row holds the key and the status and nothing else — that is what
+          stopped the key wrapping on a 268px rail.
+
+          On a **fixture** it is inert text. A fixture has no Jira behind it, so
+          an interactive lozenge would be a control that cannot work — the same
+          "absent rather than disabled" rule the notification switches follow
+          when the OS cannot show one (HIVE-70). Both spellings share
+          `STATUS_PILL`, so the two are the same size and the card does not
+          resize depending on where its ticket came from.
+        */}
+        {ticket.url === undefined ? (
+          <span className={cn(STATUS_PILL, CATEGORY_TEXT[ticket.statusCategory])}>
+            {ticket.status}
+          </span>
+        ) : (
+          <TicketTransitionMenu
+            issueKey={ticket.key}
+            status={ticket.status}
+            statusCategory={ticket.statusCategory}
+          />
+        )}
       </div>
 
       <h3 className="text-[12.5px] leading-[1.4] text-ink">{ticket.title}</h3>

@@ -1,75 +1,138 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  contextMeter,
-  contextPct,
+  chipLabel,
+  clockLabel,
+  dayClockLabel,
+  DEFAULT_EFFORT,
   modelLabel,
-  utilisationPct,
+  pctLabel,
+  pctOrNull,
+  UNKNOWN,
 } from '@/lib/session-metrics';
 
-describe('session metrics', () => {
-  describe('modelLabel', () => {
-    it('maps every model id to its display name', () => {
-      expect(modelLabel('opus')).toBe('Opus 4.5');
-      expect(modelLabel('sonnet')).toBe('Sonnet 4.5');
-      expect(modelLabel('haiku')).toBe('Haiku 4.5');
-      expect(modelLabel('fable')).toBe('Fable 1');
-    });
-
-    it('falls back to Opus when a session carries no model', () => {
-      expect(modelLabel()).toBe('Opus 4.5');
-    });
+/**
+ * These used to assert a *derivation* — that `contextPct('sess-01')` was stable
+ * for an id. There is nothing left to derive: the numbers arrive from Claude
+ * Code's status line, so what is worth testing is the boundary between "we were
+ * told" and "we were not", and the formatting that has to survive both.
+ */
+describe('pctOrNull', () => {
+  it('rounds a reported percentage', () => {
+    expect(pctOrNull(46.4)).toBe(46);
+    expect(pctOrNull(46.6)).toBe(47);
   });
 
-  describe('contextPct', () => {
-    it('is deterministic — the same session always reads the same', () => {
-      expect(contextPct('hero-refresh', 'feat/hero-refresh')).toBe(
-        contextPct('hero-refresh', 'feat/hero-refresh'),
-      );
-    });
-
-    it('differs between sessions', () => {
-      expect(contextPct('hero-refresh', 'feat/hero-refresh')).not.toBe(
-        contextPct('nplusone', 'feat/nplusone'),
-      );
-    });
-
-    it('stays inside the 5–64% band for any input', () => {
-      for (const id of ['a', 'hero-refresh', 'x'.repeat(120), '']) {
-        const pct = contextPct(id, `feat/${id}`);
-        expect(pct).toBeGreaterThanOrEqual(5);
-        expect(pct).toBeLessThanOrEqual(64);
-      }
-    });
+  it('clamps a value outside 0–100 rather than trusting it', () => {
+    // The number crossed a process boundary; a 140% arc would wrap past itself.
+    expect(pctOrNull(140)).toBe(100);
+    expect(pctOrNull(-3)).toBe(0);
   });
 
-  describe('utilisationPct', () => {
-    it('stays inside the 1–8% band for any input', () => {
-      for (const id of ['a', 'hero-refresh', 'x'.repeat(120), '']) {
-        const pct = utilisationPct(id);
-        expect(pct).toBeGreaterThanOrEqual(1);
-        expect(pct).toBeLessThanOrEqual(8);
-      }
-    });
+  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])(
+    'answers null for %s — absence must never become a number',
+    (value) => {
+      expect(pctOrNull(value)).toBeNull();
+    },
+  );
+});
+
+describe('pctLabel', () => {
+  it('renders a known percentage', () => {
+    expect(pctLabel(46)).toBe('46%');
   });
 
-  describe('contextMeter', () => {
-    it('renders a ten-character bar proportional to the percentage', () => {
-      expect(contextMeter(0)).toBe('░░░░░░░░░░');
-      expect(contextMeter(32)).toBe('███░░░░░░░');
-      expect(contextMeter(50)).toBe('█████░░░░░');
-      expect(contextMeter(100)).toBe('██████████');
-    });
+  /**
+   * The single most important assertion in this file.
+   *
+   * `rate_limits` is absent until a session's first API response and absent for
+   * the whole life of an API-key session. Rendering `0%` there would tell the
+   * user they have a full week of headroom, which may be the opposite of true.
+   */
+  it('renders an em dash for a number nobody reported', () => {
+    expect(pctLabel(null)).toBe(UNKNOWN);
+    expect(pctLabel(null)).not.toContain('0');
+  });
+});
 
-    it('never changes width, whatever the input', () => {
-      for (const pct of [-40, 0, 4, 47, 99, 100, 250]) {
-        expect([...contextMeter(pct)]).toHaveLength(10);
-      }
-    });
+describe('clockLabel', () => {
+  /**
+   * Built from local components rather than a fixed epoch, because the label is
+   * local-time by design and a hardcoded instant would assert the runner's
+   * timezone instead of the formatting.
+   */
+  const at = (hours: number, minutes: number): number =>
+    new Date(2026, 7, 11, hours, minutes, 0, 0).getTime() / 1000;
 
-    it('clamps out-of-range percentages rather than repeating negatively', () => {
-      expect(contextMeter(-10)).toBe('░░░░░░░░░░');
-      expect(contextMeter(160)).toBe('██████████');
-    });
+  it('drops the minutes when a reset lands on the hour', () => {
+    expect(clockLabel(at(17, 0))).toBe('5p');
+  });
+
+  it('keeps them, zero-padded, when it does not', () => {
+    expect(clockLabel(at(14, 30))).toBe('2:30p');
+    expect(clockLabel(at(9, 5))).toBe('9:05a');
+  });
+
+  it('renders both noon and midnight as 12 rather than 0', () => {
+    expect(clockLabel(at(12, 0))).toBe('12p');
+    expect(clockLabel(at(0, 0))).toBe('12a');
+  });
+
+  /**
+   * `resets_at` is epoch **seconds**. Forgetting the multiplication is the one
+   * mistake in this area that silently produces a plausible-looking time in
+   * 1970, so the seconds-to-milliseconds conversion is asserted directly.
+   */
+  it('reads its input as seconds, not milliseconds', () => {
+    const seconds = at(14, 30);
+    expect(clockLabel(seconds)).toBe('2:30p');
+    // The same number read as milliseconds would land in January 1970.
+    expect(new Date(seconds * 1000).getFullYear()).toBe(2026);
+  });
+
+  it.each([undefined, Number.NaN])('answers null for %s', (value) => {
+    expect(clockLabel(value)).toBeNull();
+  });
+});
+
+describe('dayClockLabel', () => {
+  it('prefixes the weekday, because a weekly reset without one is not news', () => {
+    // 2026-08-13 is a Thursday.
+    const at = new Date(2026, 7, 13, 17, 0, 0, 0).getTime() / 1000;
+    expect(dayClockLabel(at)).toBe('Thu 5p');
+  });
+
+  it('answers null when the five-hour label would', () => {
+    expect(dayClockLabel(undefined)).toBeNull();
+  });
+});
+
+describe('chipLabel', () => {
+  it('prefers what the session says about itself over what it was started with', () => {
+    // `/model` and `/effort` change mid-conversation; the entity does not.
+    expect(
+      chipLabel({ model: 'Sonnet 4.5', effort: 'low' }, 'opus', 'high'),
+    ).toBe('Sonnet 4.5 · low');
+  });
+
+  it('falls back to the entity, then to the concept defaults', () => {
+    expect(chipLabel(undefined, 'haiku', 'low')).toBe('Haiku 4.5 · low');
+    expect(chipLabel(undefined, undefined, undefined)).toBe(
+      `${modelLabel()} · ${DEFAULT_EFFORT}`,
+    );
+  });
+
+  /**
+   * `(1M)` used to be hardcoded into the chip and was therefore wrong for every
+   * 200k session. It is now a fact the session reports.
+   */
+  it('names the extended window only when the session reports one', () => {
+    expect(chipLabel({ contextWindow: 1_000_000 }, 'opus', 'high')).toContain(
+      '(1M)',
+    );
+    expect(chipLabel({ contextWindow: 200_000 }, 'opus', 'high')).not.toContain(
+      '(1M)',
+    );
+    expect(chipLabel({}, 'opus', 'high')).not.toContain('(1M)');
   });
 });

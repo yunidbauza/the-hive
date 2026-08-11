@@ -65,6 +65,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from './jira-contract';
+import type { SessionMetricsEvent } from './metrics-contract';
 import type { HiveNotification } from './notification-contract';
 import type {
   SessionEffort,
@@ -324,6 +325,19 @@ export const CH = {
    */
   sessionTicketIntent: 'session:ticket-intent', // main → renderer
   /**
+   * What a session reports about its own usage (HIVE-79).
+   *
+   * Its own channel for the reason `session:branch` has one, and more strongly:
+   * these numbers arrive from Claude Code's **status line**, on a cadence set by
+   * that mechanism rather than by anything the Hive does. Folding them into
+   * `session:status` would make every status tick carry a context percentage
+   * observed at some other moment.
+   *
+   * See `metrics-contract.ts` for why the status line is the only source that
+   * carries rate limits at all.
+   */
+  sessionMetrics: 'session:metrics', // main → renderer
+  /**
    * The project filesystem — the explorer and the editor.
    *
    * Five verbs and one event. None of them takes a path: each names a
@@ -361,6 +375,7 @@ export const EVENT_CHANNELS = [
   CH.sessionCleared,
   CH.sessionBranch,
   CH.sessionTicketIntent,
+  CH.sessionMetrics,
   CH.configCloneDone,
   CH.notificationsActivate,
   CH.fsChanged,
@@ -949,6 +964,14 @@ export interface HiveBridge {
     onTicketIntent(
       callback: (event: SessionTicketIntentEvent) => void,
     ): () => void;
+    /**
+     * A session reported its context and rate-limit usage (HIVE-79).
+     *
+     * Every field on the payload is optional and absence is meaningful — see
+     * `metrics-contract.ts`. The renderer must not default a missing limit to
+     * zero.
+     */
+    onMetrics(callback: (event: SessionMetricsEvent) => void): () => void;
   };
 }
 
@@ -1021,6 +1044,13 @@ export const BRIDGE_SESSION_KEYS = [
    */
   'onBranch',
   'onTicketIntent',
+  /**
+   * HIVE-79's, and still a listener: main → renderer, nothing the page can
+   * call. What it newly exposes to a renderer is the active session's usage
+   * percentages and two reset timestamps — no prompt text, no transcript, and
+   * no token value.
+   */
+  'onMetrics',
 ] as const;
 
 /** The exact key set of `window.hive.integrations`. */

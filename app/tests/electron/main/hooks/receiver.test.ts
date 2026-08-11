@@ -7,6 +7,10 @@ import {
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '../../../../electron/shared/hook-contract';
+import {
+  METRICS_PATH,
+  type SessionMetrics,
+} from '../../../../electron/shared/metrics-contract';
 import { createReceiver, type Receiver } from '../../../../electron/main/hooks/receiver';
 
 /**
@@ -35,6 +39,7 @@ describe('hook receiver', () => {
       onTicketIntent: (event) => intents.push(event),
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
+      onMetrics: () => {},
     });
     const started = await receiver.start();
     expect(started).not.toBeNull();
@@ -380,6 +385,7 @@ describe('hook receiver', () => {
         onEvent: () => order.push('status'),
         onTicketIntent: () => order.push('intent'),
         knowsSession: () => true,
+        onMetrics: () => {},
       });
       const started = (await ordered.start()) as string;
 
@@ -477,6 +483,7 @@ describe('hook receiver', () => {
       onEvent: () => {},
       onTicketIntent: () => {},
       knowsSession: () => true,
+      onMetrics: () => {},
       port: 1,
     });
     await expect(doomed.start()).resolves.toBeNull();
@@ -491,6 +498,7 @@ describe('hook receiver', () => {
       },
       onTicketIntent: () => {},
       knowsSession: () => true,
+      onMetrics: () => {},
     });
     const started = await exploding.start();
     const response = await fetch(started as string, {
@@ -508,14 +516,152 @@ describe('hook receiver', () => {
 
 describe('hook receiver tokens', () => {
   it('gives each receiver a distinct token', () => {
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, knowsSession: () => true });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, knowsSession: () => true });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, knowsSession: () => true });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, knowsSession: () => true });
     expect(a.token).not.toBe(b.token);
     expect(a.token).toHaveLength(36);
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, knowsSession: () => true });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, knowsSession: () => true });
     expect(receiver.url).toBeNull();
+  });
+});
+
+
+/**
+ * The status line path (HIVE-79).
+ *
+ * Same socket, same token, same session header — a different body shape and a
+ * much smaller cap. These assertions are mostly about the ways it must *refuse*,
+ * because it is a second door on a socket the receiver's own header argues hard
+ * for the safety of.
+ */
+describe('the status line path', () => {
+  let receiver: Receiver;
+  let metrics: { entityId: string; reported: SessionMetrics }[];
+  let url: string;
+
+  beforeEach(async () => {
+    metrics = [];
+    receiver = createReceiver({
+      onEvent: () => {},
+      onCleared: () => {},
+      onTicketIntent: () => {},
+      onMetrics: (entityId, reported) => metrics.push({ entityId, reported }),
+      knowsSession: (entityId) => entityId !== 'sess-gone',
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = receiver.metricsUrl as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  const post = (
+    body: unknown,
+    headers: Record<string, string> = {
+      [HOOK_HEADER_TOKEN]: receiver.token,
+      [HOOK_HEADER_SESSION]: 'sess-01',
+    },
+  ) =>
+    fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+
+  it('is a second path on the same socket', () => {
+    expect(url.startsWith('http://127.0.0.1:')).toBe(true);
+    expect(url.endsWith(METRICS_PATH)).toBe(true);
+  });
+
+  it('is null before a successful bind', () => {
+    const unbound = createReceiver({
+      onEvent: () => {},
+      onCleared: () => {},
+      onTicketIntent: () => {},
+      onMetrics: () => {},
+      knowsSession: () => true,
+    });
+    expect(unbound.metricsUrl).toBeNull();
+  });
+
+  it('records what a session reported', async () => {
+    const response = await post({
+      model: { display_name: 'Opus 4.5' },
+      context_window: { used_percentage: 46, context_window_size: 1000000 },
+      rate_limits: {
+        five_hour: { used_percentage: 12, resets_at: 1786000000 },
+        seven_day: { used_percentage: 63, resets_at: 1786200000 },
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(metrics).toEqual([
+      {
+        entityId: 'sess-01',
+        reported: {
+          model: 'Opus 4.5',
+          contextPct: 46,
+          contextWindow: 1000000,
+          fiveHourPct: 12,
+          fiveHourResetsAt: 1786000000,
+          sevenDayPct: 63,
+          sevenDayResetsAt: 1786200000,
+        },
+      },
+    ]);
+  });
+
+  it('rejects a request with the wrong token, exactly as the hook path does', async () => {
+    const response = await post(
+      {},
+      { [HOOK_HEADER_TOKEN]: 'not-the-token', [HOOK_HEADER_SESSION]: 'sess-01' },
+    );
+
+    expect(response.status).toBe(403);
+    expect(metrics).toEqual([]);
+  });
+
+  it('rejects a request naming no session', async () => {
+    const response = await post({}, { [HOOK_HEADER_TOKEN]: receiver.token });
+
+    expect(response.status).toBe(400);
+    expect(metrics).toEqual([]);
+  });
+
+  it('refuses a session the app does not have', async () => {
+    const response = await post(
+      {},
+      { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+    );
+
+    expect(response.status).toBe(404);
+    expect(metrics).toEqual([]);
+  });
+
+  it('answers 400 for a body that is not an object', async () => {
+    expect((await post('{ not json')).status).toBe(400);
+    expect(metrics).toEqual([]);
+  });
+
+  /**
+   * A status line payload is a fixed set of scalars. Anything approaching the
+   * cap is not the document this endpoint is for — answered 204 rather than 413
+   * for the reason the hook path drains rather than refuses: the reply is
+   * visible in the user's terminal.
+   */
+  it('drops an oversized body without acting on it, and still answers 204', async () => {
+    const response = await post({ padding: 'x'.repeat(32 * 1024) });
+
+    expect(response.status).toBe(204);
+    expect(metrics).toEqual([]);
+  });
+
+  it('answers 404 on the metrics path for a method other than POST', async () => {
+    expect((await fetch(url, { method: 'GET' })).status).toBe(404);
   });
 });
