@@ -176,7 +176,19 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * `null`, and whose only effect is a flag on a row the renderer can already
    * see. None of them reaches the filesystem, a process, or the network.
    */
+  /**
+   * `delivery` is a **read of two booleans about this process**, and the
+   * narrowest verb on the bridge.
+   *
+   * It takes no argument, reaches no file, spawns nothing, and answers
+   * `Notification.isSupported()` plus the last refusal string the OS handed
+   * back. Deliberately *not* served by `integrations.status`, which carries the
+   * same two facts and executes `gh` to build the rest of its answer — the
+   * settings pane polls this one while it is open, and putting a subprocess on
+   * that timer is the thing the split exists to prevent.
+   */
   expect(surface.notifications).toEqual([
+    'delivery',
     'list',
     'markRead',
     'onActivate',

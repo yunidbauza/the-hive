@@ -16,6 +16,7 @@ import {
   renameProjectInConfig,
   reorderProjectsInConfig,
   repointProjectInConfig,
+  readNotificationDelivery,
   resetConfigToTemplate,
   resetProjectConfig,
   revealConfigFile,
@@ -303,6 +304,45 @@ describe('story 107 verbs', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  /**
+   * The verb the Notifications pane polls.
+   *
+   * It exists *because* it is polled: the same two facts are on
+   * `integrations.status()`, and that handler executes `gh`. Asking the wrong
+   * one on a four-second timer would spawn a subprocess every tick to read a
+   * variable — so which channel this reaches is the whole point of the
+   * function, and worth an assertion rather than a comment.
+   */
+  it('readNotificationDelivery asks the cheap channel, not integrations', async () => {
+    const delivery = vi
+      .fn()
+      .mockResolvedValue({ supported: true, refused: 'UNErrorDomain error 1.' });
+    const status = vi.fn();
+    (window as { hive?: unknown }).hive = {
+      notifications: { delivery },
+      integrations: { status },
+    };
+
+    await expect(readNotificationDelivery()).resolves.toEqual({
+      supported: true,
+      refused: 'UNErrorDomain error 1.',
+    });
+    expect(delivery).toHaveBeenCalledWith();
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('readNotificationDelivery answers null with no bridge and on a failed channel', async () => {
+    // The browser demo: no bridge, and so no OS to have an opinion.
+    await expect(readNotificationDelivery()).resolves.toBeNull();
+
+    (window as { hive?: unknown }).hive = {
+      notifications: {
+        delivery: vi.fn().mockRejectedValue(new Error('channel gone')),
+      },
+    };
+    await expect(readNotificationDelivery()).resolves.toBeNull();
   });
 
   it('revealConfigFile calls through, passing nothing', async () => {

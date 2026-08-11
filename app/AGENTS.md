@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e:web` | The browser specs — chrome, layout and empty states (story 070) |
 | `pnpm test:e2e:electron` | The built desktop app (story 085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` | Hook conformance — a real `claude`, real hooks, ~3½ min (HIVE-80) |
+| `pnpm test:hooks` | Hook conformance — a real `claude`, real hooks, ~3½ min |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -192,6 +192,6 @@ slice back — **the app boots empty**. Tests: `tests/support/`.
   processes leaks them. `__mocks__/node-pty.ts` records; assert spawn arguments,
   cwd, write/resize/kill routing, exit handling. What only a real process can
   show: terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks
-  actually send — `pnpm test:hooks` (HIVE-80).
+  actually send — `pnpm test:hooks`.
 - Never add a coverage-ignore comment to pass the gate. An untestable branch is
   usually a design smell — fix the shape instead.

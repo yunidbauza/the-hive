@@ -227,6 +227,20 @@ export const CH = {
    * the next window reload silently corrects it.
    */
   notificationsRead: 'notifications:read', // main → renderer
+  /**
+   * Whether the OS is actually accepting desktop notifications.
+   *
+   * Its own verb rather than a field read off {@link CH.integrationsStatus},
+   * which already carries both facts — because that handler **executes `gh`**.
+   * The Notifications pane has to re-ask while it is open (the refusal is only
+   * knowable after a delivery has been attempted and turned down), and asking
+   * the integrations handler on a timer would spawn a subprocess every few
+   * seconds to learn something that lives in a variable.
+   *
+   * So the pane that needs polling gets the cheap answer, and the pane that
+   * needs `gh` goes on paying for `gh` exactly once when it opens.
+   */
+  notificationsDelivery: 'notifications:delivery',
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
   configCloneDone: 'config:clone-done', // main → renderer
@@ -527,26 +541,6 @@ export interface IntegrationsStatus {
    * left as controls that quietly do nothing.
    */
   notificationsSupported: boolean;
-  /**
-   * Why the OS refused the last desktop notification, or `null` if none has
-   * been refused (HIVE-80).
-   *
-   * **`notificationsSupported` is not the same question, and believing it was
-   * is the bug this field exists for.** Measured on macOS 15 with Electron
-   * 43.2.0: `Notification.isSupported()` answers `true`, `show()` then emits
-   * `failed` with `UNErrorDomain error 1` — not authorized — and
-   * `com.github.Electron` never appears in Notification Center's own list of
-   * clients. Nothing threw, nothing logged, and the settings pane went on
-   * describing a "System" delivery that had never once been delivered.
-   *
-   * So support is what the API is willing to claim in advance, and this is what
-   * actually happened. Only the second one is evidence.
-   *
-   * A string rather than a boolean because the reason is the actionable part:
-   * "macOS refused it" sends a user to System Settings, and there is no entry
-   * there to find until the app is a signed bundle of its own.
-   */
-  systemNotificationsRefused: string | null;
 }
 
 /** A clicked notification, naming the session it was about (story 106). */
@@ -928,6 +922,13 @@ export interface HiveBridge {
     markRead(id: string | null): Promise<void>;
     /** The hub marked something read — including from a desktop toast click. */
     onRead(callback: (event: NotificationReadEvent) => void): () => void;
+    /**
+     * Whether the OS is accepting desktop notifications, and why not.
+     *
+     * Cheap by construction — two property reads, no subprocess — because it is
+     * the one thing in the settings pane that has to be re-asked on a timer.
+     */
+    delivery(): Promise<NotificationDeliveryStatus>;
   };
   /** Real session lifecycle, derived in main (story 096). */
   session: {
@@ -1093,6 +1094,24 @@ export interface NotificationReadEvent {
   id: string | null;
 }
 
+/**
+ * Answer to {@link CH.notificationsDelivery} — can the OS be reached, and if
+ * not, what did it say.
+ *
+ * The two fields answer genuinely different questions and the app spent a
+ * release conflating them. `supported` is what Electron is willing to claim
+ * *before* trying; `refused` is what the OS actually did. On macOS the first
+ * says `true` and the second has been observed to be `UNErrorDomain error 1`
+ * at the same moment, which is exactly the state a single boolean cannot
+ * express and the settings pane used to render as "everything is fine".
+ */
+export interface NotificationDeliveryStatus {
+  /** `Notification.isSupported()`. False where there is no daemon at all. */
+  supported: boolean;
+  /** Why the OS turned the last one down, or `null` if it never has. */
+  refused: string | null;
+}
+
 export const BRIDGE_NOTIFICATIONS_KEYS = [
   'onActivate',
   'onRead',
@@ -1102,6 +1121,9 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   'onNew',
   'list',
   'markRead',
+  // The one verb the settings pane may ask on a timer — see
+  // `CH.notificationsDelivery` for why it is not a field on integrations status.
+  'delivery',
 ] as const;
 
 /** The exact key set of `window.hive.config`. */

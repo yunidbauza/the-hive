@@ -28,7 +28,7 @@ import type { NotificationHub } from './hub';
  * table from channels to kinds, and it is the only thing that has to change when
  * a new channel becomes worth announcing.
  *
- * ## What changed in HIVE-80
+ * ## What changed when the `Notification` hook was added
  *
  * The translation table gained the event it was missing. Two of the three ways
  * a session blocks on a human were already here — a tool wanting approval, an
@@ -97,7 +97,7 @@ const WAITING_KIND: Record<string, NotificationKind> = {
 };
 
 /**
- * The third way, and the one that arrives on the `Notification` hook (HIVE-80).
+ * The third way, and the one that arrives on the `Notification` hook.
  *
  * Keyed on `notification_type` rather than folded into {@link WAITING_KIND},
  * because `Notification` is a single event that means two different things and
@@ -177,7 +177,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
   const { hub } = options;
 
   /**
-   * Sessions already announced as out of instructions (HIVE-80).
+   * Sessions already announced as out of instructions.
    *
    * `Notification/idle_prompt` is the only producer here that Claude may repeat
    * on its own: it fires sixty seconds after a turn ends with nothing typed, and

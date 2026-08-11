@@ -6,8 +6,11 @@ import {
 } from '@components/ui/segmented-control';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
-import { readIntegrationsStatus, setNotificationPrefs } from '@lib/project-config';
-import type { IntegrationsStatus } from '@shared/ipc-contract';
+import {
+  readNotificationDelivery,
+  setNotificationPrefs,
+} from '@lib/project-config';
+import type { NotificationDeliveryStatus } from '@shared/ipc-contract';
 import {
   NOTIFICATION_KIND_SPECS,
   NOTIFICATION_SOURCE_LABELS,
@@ -137,31 +140,31 @@ function DeliveryControl({
 
 export function NotificationsSection() {
   const snapshot = useProjectConfig();
-  const [status, setStatus] = useState<IntegrationsStatus | null>(null);
+  const [status, setStatus] = useState<NotificationDeliveryStatus | null>(null);
 
   /**
-   * Re-read while the pane is open, not once on mount (HIVE-80).
+   * Re-read while the pane is open, not once on mount.
    *
-   * `systemNotificationsRefused` is populated **lazily** in main — it cannot be
-   * known until a `both`-delivery notification has actually been attempted and
-   * turned down. A single read on mount therefore has a hole shaped exactly
-   * like the user this note exists for: they open Settings → Notifications to
-   * find out why nothing arrives, at which point nothing has been attempted
-   * this launch and the field is `null`; a session raises one thirty seconds
-   * later, macOS refuses it, and the pane they are still looking at goes on
-   * saying nothing. They would have to close and reopen Settings to be told.
+   * `refused` is populated **lazily** in main — it cannot be known until a
+   * `both`-delivery notification has actually been attempted and turned down.
+   * A single read on mount therefore has a hole shaped exactly like the user
+   * this note exists for: they open Settings → Notifications to find out why
+   * nothing arrives, at which point nothing has been attempted this launch and
+   * the field is `null`; a session raises one thirty seconds later, macOS
+   * refuses it, and the pane they are still looking at goes on saying nothing.
+   * They would have to close and reopen Settings to be told.
    *
-   * Polled rather than pushed. A channel would be exact, but it would put a
-   * bridge subscription in a settings pane for one lazily-discovered string,
-   * and the read is a cheap main-process property lookup. The interval only
-   * runs while this pane is mounted, which is the few seconds a year anyone
-   * has it open.
+   * **`notifications.delivery()`, not `integrations.status()`** — the two carry
+   * the same pair of facts, and the second one *executes `gh`* to build the
+   * rest of its answer. Polling that would spawn a subprocess every few seconds
+   * to read a variable, which is a worse bug than the staleness it fixes. The
+   * dedicated verb exists precisely so this loop is free.
    */
   useEffect(() => {
     let live = true;
 
     const read = (): void => {
-      void readIntegrationsStatus().then((next) => {
+      void readNotificationDelivery().then((next) => {
         if (live) setStatus(next);
       });
     };
@@ -183,7 +186,7 @@ export function NotificationsSection() {
    * worse answer than one that cannot save.
    */
   const prefs = snapshot?.notifications ?? {};
-  const desktopAvailable = status === null || status.notificationsSupported;
+  const desktopAvailable = status === null || status.supported;
 
   return (
     /*
@@ -200,7 +203,7 @@ export function NotificationsSection() {
         </p>
       </div>
 
-      {status !== null && !status.notificationsSupported ? (
+      {status !== null && !status.supported ? (
         <p className="text-[12.5px] text-amber">
           This system cannot show desktop notifications, so the
           &ldquo;System&rdquo; option would have no effect. On Linux this usually
@@ -209,21 +212,19 @@ export function NotificationsSection() {
       ) : null}
 
       {/*
-        Only when support was *claimed* and delivery was then refused
-        (HIVE-80). The two notes are mutually exclusive by construction, and
-        this is the one that describes the case the app used to hide: the API
+        Only when support was *claimed* and delivery was then refused. The two
+        notes are mutually exclusive by construction, and this is the one that
+        describes the case the app used to hide: the API
         says notifications are supported, the OS drops every one of them, and
         without this the pane goes on offering a switch that has never done
         anything. The dock badge and bounce still fire, which is why the last
         sentence is the useful part rather than an apology.
       */}
-      {status !== null &&
-      status.notificationsSupported &&
-      status.systemNotificationsRefused !== null ? (
+      {status !== null && status.supported && status.refused !== null ? (
         <p className="text-[12.5px] text-amber">
           The system refused this app&rsquo;s last desktop notification
           &mdash;&nbsp;
-          <span className="text-subtle">{status.systemNotificationsRefused}</span>
+          <span className="text-subtle">{status.refused}</span>
           . Notifications set to &ldquo;System&rdquo; still reach the inbox, and
           still badge and bounce the dock icon.
         </p>

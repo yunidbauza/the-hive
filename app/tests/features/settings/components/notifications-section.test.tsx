@@ -9,18 +9,15 @@ import {
 } from '@shared/notification-contract';
 
 const setNotificationPrefs = vi.fn((_request: unknown) => Promise.resolve());
-let status: {
-  notificationsSupported: boolean;
-  systemNotificationsRefused: string | null;
-} | null = {
-  notificationsSupported: true,
-  systemNotificationsRefused: null,
+let status: { supported: boolean; refused: string | null } | null = {
+  supported: true,
+  refused: null,
 };
 let snapshot: unknown = { notifications: {} };
 
 vi.mock('@lib/project-config', () => ({
   setNotificationPrefs: (request: unknown) => setNotificationPrefs(request),
-  readIntegrationsStatus: () => Promise.resolve(status),
+  readNotificationDelivery: () => Promise.resolve(status),
 }));
 
 vi.mock('@hooks/use-project-config', () => ({
@@ -29,7 +26,7 @@ vi.mock('@hooks/use-project-config', () => ({
 
 beforeEach(() => {
   setNotificationPrefs.mockClear();
-  status = { notificationsSupported: true, systemNotificationsRefused: null };
+  status = { supported: true, refused: null };
   snapshot = { notifications: {} };
 });
 
@@ -121,7 +118,7 @@ describe('NotificationsSection', () => {
    * between two machines without saying so.
    */
   it('disables the desktop option when the OS cannot present one', async () => {
-    status = { notificationsSupported: false, systemNotificationsRefused: null };
+    status = { supported: false, refused: null };
     render(<NotificationsSection />);
 
     const group = await screen.findByRole('radiogroup', {
@@ -134,7 +131,7 @@ describe('NotificationsSection', () => {
   });
 
   /**
-   * The case the pane used to hide (HIVE-80).
+   * The case the pane used to hide.
    *
    * `Notification.isSupported()` answers `true` on macOS and every send is then
    * refused — measured, `UNErrorDomain error 1`. Without this the pane went on
@@ -142,10 +139,7 @@ describe('NotificationsSection', () => {
    * user had no way to find out.
    */
   it('says so when the OS claimed support and then refused delivery', async () => {
-    status = {
-      notificationsSupported: true,
-      systemNotificationsRefused: 'UNErrorDomain error 1.',
-    };
+    status = { supported: true, refused: 'UNErrorDomain error 1.' };
     render(<NotificationsSection />);
 
     const note = await screen.findByText(/refused this app/i);
@@ -157,10 +151,7 @@ describe('NotificationsSection', () => {
 
   /** Two notes describing one system would be one note too many. */
   it('shows only the unsupported note when the OS never claimed support', async () => {
-    status = {
-      notificationsSupported: false,
-      systemNotificationsRefused: 'UNErrorDomain error 1.',
-    };
+    status = { supported: false, refused: 'UNErrorDomain error 1.' };
     render(<NotificationsSection />);
 
     expect(
@@ -172,7 +163,7 @@ describe('NotificationsSection', () => {
   /**
    * The hole a single mount-time read leaves.
    *
-   * `systemNotificationsRefused` is only knowable in main *after* a
+   * `refused` is only knowable in main *after* a
    * `both`-delivery notification has been attempted and refused — so the user
    * who opens this pane to find out why nothing arrives is, at that instant,
    * looking at `null`. Without the poll they would have to close and reopen
@@ -190,10 +181,7 @@ describe('NotificationsSection', () => {
       expect(screen.queryByText(/refused this app/i)).toBeNull();
 
       // A session raises one, and the OS turns it down — while the pane is open.
-      status = {
-        notificationsSupported: true,
-        systemNotificationsRefused: 'UNErrorDomain error 1.',
-      };
+      status = { supported: true, refused: 'UNErrorDomain error 1.' };
 
       await vi.advanceTimersByTimeAsync(5_000);
 

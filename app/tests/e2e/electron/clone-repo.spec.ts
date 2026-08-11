@@ -153,7 +153,7 @@ test('clones a repository and registers it as a project', async ({}, testInfo) =
 });
 
 /**
- * What a raised notification does *outside* the window (HIVE-80).
+ * What a raised notification does *outside* the window.
  *
  * A clone is the one producer this suite can drive end to end, and it is a
  * `both` kind — so finishing one exercises the whole delivery path in the real
@@ -212,19 +212,24 @@ test('badges the dock and reports how the OS answered', async ({}, testInfo) => 
       await expect.poll(() => dockBadge(app), { timeout: 10_000 }).toBe('1');
     }
 
+    /**
+     * Asked through `notifications.delivery()`, which is the verb the pane
+     * itself polls — so this exercises the real path rather than a second one
+     * that happens to carry the same two facts.
+     */
     const status = await page.evaluate(() =>
       (
         window as unknown as {
           hive: {
-            integrations: {
-              status: () => Promise<{
-                notificationsSupported: boolean;
-                systemNotificationsRefused: string | null;
+            notifications: {
+              delivery: () => Promise<{
+                supported: boolean;
+                refused: string | null;
               }>;
             };
           };
         }
-      ).hive.integrations.status(),
+      ).hive.notifications.delivery(),
     );
 
     /**
@@ -233,21 +238,20 @@ test('badges the dock and reports how the OS answered', async ({}, testInfo) => 
      * whether this platform delivered the notification or refused it.
      */
     console.info(
-      `[hive-e2e] desktop notifications: supported=${status.notificationsSupported} refused=${String(status.systemNotificationsRefused)} badge=${String(badge)}`,
+      `[hive-e2e] desktop notifications: supported=${status.supported} refused=${String(status.refused)} badge=${String(badge)}`,
     );
 
     // The field exists and carries a real answer — the thing that was silence.
-    expect(status).toHaveProperty('systemNotificationsRefused');
+    expect(status).toHaveProperty('refused');
     expect(
-      status.systemNotificationsRefused === null ||
-        typeof status.systemNotificationsRefused === 'string',
+      status.refused === null || typeof status.refused === 'string',
     ).toBe(true);
 
     /**
      * And when it *is* a refusal, the pane says so rather than going on
      * offering a delivery that has never been delivered.
      */
-    if (status.systemNotificationsRefused !== null) {
+    if (status.refused !== null) {
       await page
         .getByRole('navigation', { name: 'Settings sections' })
         .getByRole('button', { name: 'Notifications' })

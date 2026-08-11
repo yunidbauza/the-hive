@@ -51,7 +51,7 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
 /**
  * Every kind of thing the app will raise.
  *
- * ## Why `session.input_needed` is a third waiting kind (HIVE-80)
+ * ## Why `session.input_needed` is a third waiting kind
  *
  * The two below cover a session blocked *mid-turn* — a tool wants a yes, an MCP
  * server wants a sentence. Neither covers the commonest way a session ends up

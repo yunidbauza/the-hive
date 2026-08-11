@@ -293,7 +293,7 @@ events reach it, and they are three genuinely different facts about the user:
 | --- | --- |
 | `PermissionRequest` | a tool wants a yes |
 | `Elicitation` | an MCP server wants a sentence |
-| `Notification` + `notification_type: idle_prompt` | the turn ended and sixty seconds passed with nothing typed (HIVE-80) |
+| `Notification` + `notification_type: idle_prompt` | the turn ended and sixty seconds passed with nothing typed |
 
 The third is the commonest and was the last to arrive. `Stop` is not a
 substitute for it: `Stop` fires at the end of *every* turn, including the ones

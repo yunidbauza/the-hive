@@ -522,7 +522,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     event?: StatusHookEvent,
     /**
-     * What kind of interruption, when `event` is `Notification` (HIVE-80).
+     * What kind of interruption, when `event` is `Notification`.
      *
      * Passed through for the reason `event` is: the hub decides that a
      * `permission_prompt` is already covered by the `PermissionRequest` ahead of

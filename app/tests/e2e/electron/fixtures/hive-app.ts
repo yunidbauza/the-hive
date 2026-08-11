@@ -104,7 +104,7 @@ export const test = base.extend<{ hive: ElectronApplication; page: Page }>({
 export { expect };
 
 /**
- * What the dock icon is currently badged with (HIVE-80).
+ * What the dock icon is currently badged with.
  *
  * Only readable from the **main** process, which is why it lives here with
  * every other Electron-specific call. `''` when nothing is badged, and

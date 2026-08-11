@@ -186,7 +186,7 @@ test('a second choice does not restate the first', async ({}, testInfo) => {
 });
 
 /**
- * The kind HIVE-80 added, driven end to end.
+ * The waiting-on-you kind, driven end to end.
  *
  * Worth its own case rather than folding into the one above: it is the newest
  * entry in the registry, so a control that never reached the pane — a missing

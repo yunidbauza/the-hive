@@ -194,7 +194,7 @@ describe('read-state reaches the renderer', () => {
 });
 
 /**
- * The dock badge (HIVE-80).
+ * The dock badge.
  *
  * Not decoration beside the toast — measured on macOS 15 / Electron 43.2.0, the
  * OS refuses this app's notifications outright, so the badge is the only thing

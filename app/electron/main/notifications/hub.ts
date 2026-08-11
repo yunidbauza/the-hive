@@ -90,7 +90,7 @@ export interface NotificationHubOptions {
    */
   announceRead: (id: string | null) => void;
   /**
-   * How many are still unread, after every change to the buffer (HIVE-80).
+   * How many are still unread, after every change to the buffer.
    *
    * Pushed rather than offered as a getter, because the consumer is the **dock
    * badge** and a badge is only ever wrong in one direction: nobody notices a

@@ -179,7 +179,7 @@ describe('hook receiver', () => {
   });
 
   /**
-   * The `Notification` hook (HIVE-80) — the only event whose status is not a
+   * The `Notification` hook — the only event whose status is not a
    * property of the event.
    *
    * Measured against Claude Code 2.1.227 in a real pty: `idle_prompt` sixty

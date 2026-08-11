@@ -121,7 +121,7 @@ describe('session status', () => {
 });
 
 /**
- * The gap HIVE-80 closes.
+ * The gap the `Notification` subscription closes.
  *
  * Measured against Claude Code 2.1.227 in a real pty: a turn ends with `Stop`,
  * and sixty seconds later — if nobody has typed — `Notification` arrives with

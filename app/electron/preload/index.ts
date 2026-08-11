@@ -47,6 +47,7 @@ import {
   type HiveBridge,
   type IntegrationsStatus,
   type NotificationActivateEvent,
+  type NotificationDeliveryStatus,
   type NotificationReadEvent,
   type ResizeRequest,
   type SessionLostEvent,
@@ -304,6 +305,11 @@ const bridge: HiveBridge = {
     /** The hub marked something read — including from a desktop toast click. */
     onRead: (callback: (event: NotificationReadEvent) => void) =>
       subscribe<NotificationReadEvent>(CH.notificationsRead, callback),
+    /** Whether the OS is accepting notifications. Cheap — safe to poll. */
+    delivery: (): Promise<NotificationDeliveryStatus> =>
+      ipcRenderer.invoke(
+        CH.notificationsDelivery,
+      ) as Promise<NotificationDeliveryStatus>,
   },
   session: {
     onStatus: (callback: (event: SessionStatusEvent) => void) =>

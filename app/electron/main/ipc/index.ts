@@ -61,6 +61,7 @@ import {
   type AppInfo,
   type IntegrationsStatus,
   type NotificationActivateEvent,
+  type NotificationDeliveryStatus,
   type NotificationReadEvent,
 } from '@shared/ipc-contract';
 import type {
@@ -160,7 +161,7 @@ function handle<T>(
 }
 
 /**
- * Why the OS last refused a desktop notification, or `null` (HIVE-80).
+ * Why the OS last refused a desktop notification, or `null`.
  *
  * Module scope rather than a field on the hub, because it is not a fact about
  * notifications — it is a fact about **this operating system's answer to this
@@ -227,7 +228,7 @@ export function registerIpcHandlers(): void {
       const notification = new Notification({ title, body });
       notification.on('click', onClick);
       /**
-       * The failure that was being thrown away (HIVE-80).
+       * The failure that was being thrown away.
        *
        * `show()` is fire-and-forget and its refusal arrives here, on an event
        * nothing was listening to. Measured on macOS 15 / Electron 43.2.0:
@@ -302,7 +303,7 @@ export function registerIpcHandlers(): void {
       }
     },
     /**
-     * The count on the dock icon (HIVE-80).
+     * The count on the dock icon.
      *
      * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
      * reading `0` is a worse lie than no badge, because it says the app has
@@ -355,6 +356,24 @@ export function registerIpcHandlers(): void {
   });
 
   const notifier = createNotifier({ hub });
+
+  /**
+   * Two property reads and no subprocess, which is the entire point.
+   *
+   * `integrationsStatus` carries the same two facts and **executes `gh`** to
+   * build the rest of its answer. The Notifications pane has to re-ask this
+   * while it is open — `systemNotificationRefusal` is only knowable once a
+   * delivery has been attempted and turned down — and putting that on the
+   * integrations handler would spawn a process every few seconds to read a
+   * variable.
+   */
+  handle(
+    CH.notificationsDelivery,
+    (): NotificationDeliveryStatus => ({
+      supported: Notification.isSupported(),
+      refused: systemNotificationRefusal,
+    }),
+  );
 
   handle(CH.notificationsList, () => hub.list());
   handle(CH.notificationsMarkRead, (_event, payload) =>
@@ -619,7 +638,6 @@ export function registerIpcHandlers(): void {
     return {
       gh: readGhStatus(env, runCommand),
       notificationsSupported: Notification.isSupported(),
-      systemNotificationsRefused: systemNotificationRefusal,
     };
   });
 

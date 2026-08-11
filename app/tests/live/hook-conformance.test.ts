@@ -17,7 +17,7 @@ import type { HiveNotification } from '../../electron/shared/notification-contra
 import type { SessionStatusEvent } from '../../electron/shared/session-contract';
 
 /**
- * Hook conformance: the whole chain against a real `claude` (HIVE-80).
+ * Hook conformance: the whole chain against a real `claude`.
  *
  * ## Why this is not a unit test, and not deleted either
  *

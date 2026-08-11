@@ -100,7 +100,7 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-x-circle': XCircle,
   'ph-download-simple': DownloadSimple,
 
-  // HIVE-80's kind: a session that has run out of instructions and is waiting
+  // A session that has run out of instructions and is waiting
   // on the user to type. A keyboard, because that is what it wants.
   'ph-keyboard': Keyboard,
 

@@ -13,7 +13,11 @@ import type {
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
-import type { AppInfo, IntegrationsStatus } from '@shared/ipc-contract';
+import type {
+  AppInfo,
+  IntegrationsStatus,
+  NotificationDeliveryStatus,
+} from '@shared/ipc-contract';
 
 /**
  * The workspace config, as the renderer sees it (story 090).
@@ -189,6 +193,31 @@ export async function readIntegrationsStatus(): Promise<IntegrationsStatus | nul
     return await bridge.integrations.status();
   } catch (cause) {
     console.error('[hive] reading integrations status failed:', cause);
+    return null;
+  }
+}
+
+/**
+ * Whether the OS is actually accepting desktop notifications.
+ *
+ * Deliberately **not** read off {@link readIntegrationsStatus}, which carries
+ * the same two facts: that one executes `gh` to build the rest of its answer,
+ * and this is the value the Notifications pane has to re-ask on a timer,
+ * because a refusal is only knowable once a delivery has been attempted and
+ * turned down. Polling the other verb would spawn a subprocess every few
+ * seconds to read a variable.
+ *
+ * `null` with no bridge — the browser demo has no OS to ask, and the pane
+ * renders its controls without a verdict rather than inventing one.
+ */
+export async function readNotificationDelivery(): Promise<NotificationDeliveryStatus | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.notifications.delivery();
+  } catch (cause) {
+    console.error('[hive] reading notification delivery status failed:', cause);
     return null;
   }
 }
