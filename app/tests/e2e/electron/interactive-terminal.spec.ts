@@ -177,9 +177,16 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
      * child process group exists, so SIGINT reaches a real job whether it
      * arrives during the `echo` or during the `sleep`. Either way the `&&`
      * short-circuits and `finished` stays absent.
+     *
+     * The path travels as `sh -c '…' '<path>'` and is read back as `"$0"`,
+     * rather than being interpolated into the command string. Every level that
+     * sees it has it in single quotes, so the outer interactive shell never
+     * expands it — a `$`, a backtick or a backslash in the Playwright output
+     * path would otherwise redirect the marker to a different file, and the
+     * timeout would read as "the shell never ran the command".
      */
     await page.keyboard.type(
-      `sh -c "echo started > '${started}'; sleep 100" && echo finished > '${finished}'`,
+      `sh -c 'echo started > "$0"; sleep 100' '${started}' && echo finished > '${finished}'`,
     );
     await page.keyboard.press('Enter');
 
@@ -529,11 +536,41 @@ test('a focused terminal keeps the keyboard across a lost GPU context', async ({
 
   try {
     const page = await app.firstWindow();
-    await openLiveSession(page, {
+    const terminal = await openLiveSession(page, {
       ready: testInfo.outputPath('ready.txt'),
       bootstrap: bootstrapped,
     });
 
+    /**
+     * Give the addon time to attach before looking for its canvases.
+     *
+     * Without this a machine that *does* have WebGL can be caught mid-attach,
+     * find nothing to lose, and take the skip below — reporting "no context"
+     * for what was only an early look. Absence after the wait is the real
+     * answer, so the wait is tolerant rather than asserted.
+     */
+    await terminal
+      .locator('canvas')
+      .first()
+      .waitFor({ state: 'attached', timeout: 10_000 })
+      .catch(() => {});
+
+    /**
+     * Count the loss as *delivered*, not merely requested.
+     *
+     * `loseContext()` dispatches `webglcontextlost` asynchronously, so typing
+     * straight after it races the very handler this spec exists to guard: the
+     * keystrokes could land, the marker could appear, and the assertion could
+     * pass without `onContextLoss` having run at all. A spec that passes
+     * without exercising its subject is worse than no spec.
+     *
+     * The listener is installed before the loss is forced and resolves when the
+     * event actually arrives, which is the same event xterm wires
+     * `onContextLoss` to — so waiting on it waits for the app's handler to have
+     * been reachable. Deliberately not a canvas-count assertion: disposing this
+     * addon leaves its canvas elements in the DOM (unlike the hide path, where
+     * the whole effect tears down), so counting them proves nothing here.
+     */
     const lost = await page.evaluate((sessionId) => {
       const canvases = Array.from(
         document.querySelectorAll<HTMLCanvasElement>(
@@ -541,17 +578,26 @@ test('a focused terminal keeps the keyboard across a lost GPU context', async ({
         ),
       );
       let forced = 0;
+      const delivered: Promise<void>[] = [];
       for (const canvas of canvases) {
         const gl =
           canvas.getContext('webgl2') ??
           (canvas.getContext('webgl') as WebGLRenderingContext | null);
         const extension = gl?.getExtension('WEBGL_lose_context');
         if (extension) {
+          delivered.push(
+            new Promise<void>((resolve) => {
+              canvas.addEventListener('webglcontextlost', () => resolve(), {
+                once: true,
+              });
+            }),
+          );
           extension.loseContext();
           forced += 1;
         }
       }
-      return forced;
+      if (forced === 0) return 0;
+      return Promise.all(delivered).then(() => forced);
     }, SESSION);
 
     /**

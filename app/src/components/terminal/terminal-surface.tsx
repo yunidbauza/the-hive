@@ -584,6 +584,15 @@ export function TerminalSurface({
      * Nine of ten terminals in this app are hidden kept-alive instances; one
      * that grabbed the caret because its GPU context went away would yank the
      * user out of whatever they were typing into.
+     *
+     * Its reach is narrow, and worth stating rather than leaving to be
+     * discovered: focusing an already-focused element is a no-op, so this only
+     * ever *does* anything if a future `dispose()` blurs the textarea
+     * synchronously, inside this callback. A change that blurred it a
+     * microtask or a frame later would slip past — catching that would mean
+     * re-asserting on a timer, which is a worse trade than it sounds, because
+     * a deferred `focus()` can land after the user has deliberately clicked
+     * somewhere else.
      */
     const lost = addon.onContextLoss(() => {
       const hadFocus = document.activeElement === terminal.textarea;

@@ -1032,15 +1032,20 @@ describe('TerminalSurface', () => {
       render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
 
       const textarea = document.createElement('textarea');
-      document.body.append(textarea);
-      terminal().textarea = textarea;
-      textarea.focus();
+      // Removed in `finally`: a stray focused element left behind by a failing
+      // assertion would follow every later test in this file.
+      try {
+        document.body.append(textarea);
+        terminal().textarea = textarea;
+        textarea.focus();
 
-      const focusCallsBefore = terminal().focus.mock.calls.length;
-      webglAddonInstances[0]!.emitContextLoss();
+        const focusCallsBefore = terminal().focus.mock.calls.length;
+        webglAddonInstances[0]!.emitContextLoss();
 
-      expect(terminal().focus.mock.calls.length).toBe(focusCallsBefore + 1);
-      textarea.remove();
+        expect(terminal().focus.mock.calls.length).toBe(focusCallsBefore + 1);
+      } finally {
+        textarea.remove();
+      }
     });
 
     it('does not steal the caret when the terminal did not have it', () => {
@@ -1053,16 +1058,19 @@ describe('TerminalSurface', () => {
       render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
 
       const elsewhere = document.createElement('input');
-      document.body.append(elsewhere);
-      terminal().textarea = document.createElement('textarea');
-      elsewhere.focus();
+      try {
+        document.body.append(elsewhere);
+        terminal().textarea = document.createElement('textarea');
+        elsewhere.focus();
 
-      const focusCallsBefore = terminal().focus.mock.calls.length;
-      webglAddonInstances[0]!.emitContextLoss();
+        const focusCallsBefore = terminal().focus.mock.calls.length;
+        webglAddonInstances[0]!.emitContextLoss();
 
-      expect(terminal().focus.mock.calls.length).toBe(focusCallsBefore);
-      expect(document.activeElement).toBe(elsewhere);
-      elsewhere.remove();
+        expect(terminal().focus.mock.calls.length).toBe(focusCallsBefore);
+        expect(document.activeElement).toBe(elsewhere);
+      } finally {
+        elsewhere.remove();
+      }
     });
 
     it('drops its context-loss listener on unmount', () => {
