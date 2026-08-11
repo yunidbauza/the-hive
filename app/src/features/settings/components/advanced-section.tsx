@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { ConfigResetConfirm } from '@features/settings/components/config-reset-confirm';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
   readAppInfo,
@@ -190,10 +191,10 @@ export function AdvancedSection() {
   if (!snapshot) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        <h2 className="text-[13px] text-ink">Advanced</h2>
-        <p className="text-[11.5px] text-subtle">
-          Diagnostics are only available in the desktop app.
-        </p>
+        <SettingsSectionHeader
+          title="Advanced"
+          description="Diagnostics are only available in the desktop app."
+        />
       </div>
     );
   }
@@ -205,12 +206,10 @@ export function AdvancedSection() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] text-ink">Advanced</h2>
-        <p className="text-[11.5px] text-subtle">
-          The config file itself, and what this build is made of.
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Advanced"
+        description="The config file itself, and what this build is made of."
+      />
 
       {/*
         Verbatim, like every other section renders them. Main writes these in

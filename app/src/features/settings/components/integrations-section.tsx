@@ -6,6 +6,7 @@ import { JiraCredentialGroup } from '@features/settings/components/jira-credenti
 import { JiraQueryGroup } from '@features/settings/components/jira-query-group';
 import { PathProbes } from '@features/settings/components/path-probes';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { readJiraStatus } from '@lib/jira';
 import { readIntegrationsStatus } from '@lib/project-config';
@@ -181,22 +182,20 @@ export function IntegrationsSection() {
   if (!snapshot) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        <h2 className="text-[13px] text-ink">Integrations</h2>
-        <p className="text-[11.5px] text-subtle">
-          Integrations are only available in the desktop app.
-        </p>
+        <SettingsSectionHeader
+          title="Integrations"
+          description="Integrations are only available in the desktop app."
+        />
       </div>
     );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] text-ink">Integrations</h2>
-        <p className="text-[11.5px] text-subtle">
-          What this app can see outside itself, and when it should interrupt you.
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Integrations"
+        description="What this app can see outside itself, and when it should interrupt you."
+      />
 
       {snapshot.errors.map((error) => (
         <p

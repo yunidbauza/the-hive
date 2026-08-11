@@ -5,6 +5,7 @@ import { addProjectToConfig, chooseProjectDirectory } from '@/lib/project-config
 
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
 import { ProjectsList } from '@features/settings/components/projects-list';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 
 /**
@@ -72,12 +73,10 @@ export function ProjectsSection() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[14px] text-ink">Projects</h2>
-        <p className="text-[11.5px] text-subtle">
-          Repositories The Hive can open a session in
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Projects"
+        description="Repositories The Hive can open a session in"
+      />
 
       {declared.length === 0 ? (
         <div className="flex flex-col items-center gap-1 rounded-[7px] border border-dashed border-border px-4 py-6 text-center">

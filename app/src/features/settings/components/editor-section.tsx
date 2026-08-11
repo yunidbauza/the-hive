@@ -5,6 +5,7 @@ import {
 import { SelectField, type SelectFieldOption } from '@components/ui/select-field';
 import { Switch } from '@components/ui/switch';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { TERMINAL_FONTS, type TerminalFontId } from '@lib/terminal/fonts';
 import {
   EDITOR_FONT_SIZES,
@@ -77,12 +78,10 @@ export function EditorSection() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] text-ink">Editor</h2>
-        <p className="text-[11.5px] text-subtle">
-          Opened from the Explorer tab in the right rail.
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Editor"
+        description="Opened from the Explorer tab in the right rail."
+      />
 
       <SettingsGroup
         title="Placement"

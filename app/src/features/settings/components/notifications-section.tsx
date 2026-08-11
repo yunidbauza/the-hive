@@ -5,6 +5,7 @@ import {
   type SegmentedOption,
 } from '@components/ui/segmented-control';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
   readNotificationDelivery,
@@ -196,12 +197,10 @@ export function NotificationsSection() {
       scrolls the wrong box — which is exactly what this one did.
     */
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] text-ink">Notifications</h2>
-        <p className="text-[11.5px] text-subtle">
-          Which events reach you, and which are allowed to interrupt.
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Notifications"
+        description="Which events reach you, and which are allowed to interrupt."
+      />
 
       {status !== null && !status.supported ? (
         <p className="text-[12.5px] text-amber">

@@ -5,6 +5,7 @@ import { TextField } from '@components/ui/text-field';
 import { CommandDiagnosticView } from '@features/settings/components/command-diagnostic-view';
 import { EnvEditor } from '@features/settings/components/env-editor';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
   diagnoseAgentCommand,
@@ -51,10 +52,10 @@ export function RuntimeSection() {
   if (!snapshot) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        <h2 className="text-[13px] text-ink">Runtime</h2>
-        <p className="text-[11.5px] text-subtle">
-          Runtime settings are only available in the desktop app.
-        </p>
+        <SettingsSectionHeader
+          title="Runtime"
+          description="Runtime settings are only available in the desktop app."
+        />
       </div>
     );
   }
@@ -94,12 +95,10 @@ export function RuntimeSection() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] text-ink">Runtime</h2>
-        <p className="text-[11.5px] text-subtle">
-          What a session spawns, and where its agent command comes from.
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Runtime"
+        description="What a session spawns, and where its agent command comes from."
+      />
 
       {snapshot.errors.map((error) => (
         <p

@@ -5,6 +5,7 @@ import { TerminalSurface } from '@/components/terminal/terminal-surface';
 import { cancelClone, onCloneDone, startClone } from '@/lib/clone-repo';
 import { chooseProjectDirectory } from '@/lib/project-config';
 
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import {
   createCloneTransport,
   resetCloneChannel,
@@ -138,16 +139,18 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
         </button>
       )}
 
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[14px] text-ink">
-          {phase === 'compose' ? 'Clone a repository' : `Cloning ${preview ?? ''}`}
-        </h2>
-        <p className="text-[11.5px] text-subtle">
-          {phase === 'compose'
+      {/* The same header the pane it replaced was wearing — this is a *view* of
+          Projects, not a level below it, so it takes the section's own type. */}
+      <SettingsSectionHeader
+        title={
+          phase === 'compose' ? 'Clone a repository' : `Cloning ${preview ?? ''}`
+        }
+        description={
+          phase === 'compose'
             ? 'The Hive runs git in a terminal, so it can ask you for credentials'
-            : (targetPath ?? '')}
-        </p>
-      </div>
+            : (targetPath ?? '')
+        }
+      />
 
       {phase === 'compose' ? (
         <>

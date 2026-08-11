@@ -1,6 +1,7 @@
 import { SegmentedControl, type SegmentedOption } from '@components/ui/segmented-control';
 import { SelectField, type SelectFieldOption } from '@components/ui/select-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import {
   TERMINAL_FONTS,
   TERMINAL_FONT_SIZES,
@@ -61,12 +62,10 @@ export function AppearanceSection() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] text-ink">Appearance</h2>
-        <p className="text-[11.5px] text-subtle">
-          Stored on this machine, applied immediately.
-        </p>
-      </div>
+      <SettingsSectionHeader
+        title="Appearance"
+        description="Stored on this machine, applied immediately."
+      />
 
       <SettingsGroup
         title="Theme"
