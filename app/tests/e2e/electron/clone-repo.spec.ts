@@ -174,8 +174,18 @@ test('badges the dock and reports how the OS answered', async ({}, testInfo) => 
   );
 
   try {
-    // Nothing has happened yet, so nothing is claimed. `undefined` off macOS.
-    expect(await dockBadge(app)).toMatch(/^$|^undefined$/);
+    /**
+     * Nothing has happened yet, so nothing is claimed.
+     *
+     * Coalesced rather than matched against a `/undefined/` pattern: off macOS
+     * `dockBadge` resolves the real `undefined`, and `expect(undefined)
+     * .toMatch()` fails outright with "received value must be a string" — it
+     * never stringifies the value, so the pattern could not match however it
+     * was written. That would have errored this spec on its first assertion on
+     * Linux and Windows instead of skipping the dock checks below, which is the
+     * intent.
+     */
+    expect((await dockBadge(app)) ?? '').toBe('');
 
     const remote = makeBareRemote();
     const parent = mkdtempSync(join(tmpdir(), 'hive-parent-'));

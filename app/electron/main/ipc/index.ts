@@ -266,8 +266,17 @@ export function registerIpcHandlers(): void {
        * lost, since the refusal is not known until a send has already failed.
        * `dock` is undefined off macOS, where the badge and bounce have no
        * equivalent and the toast is expected to work.
+       *
+       * **`informational`, not `critical`.** `critical` maps to
+       * `NSCriticalRequest`, which bounces *until the app is activated* — and
+       * nothing here ever calls `cancelBounce`. A fleet left overnight would
+       * start bouncing at the first session to go quiet and not stop until
+       * somebody came back to it, which is not an interruption, it is a fault
+       * light. `informational` bounces once, which is the whole of what a
+       * notification is entitled to; the **badge** is the part that persists,
+       * and it persists honestly because it is a count rather than an alarm.
        */
-      app.dock?.bounce('critical');
+      app.dock?.bounce('informational');
     },
     /**
      * Straight to the renderer, not through `send` (HIVE-75).

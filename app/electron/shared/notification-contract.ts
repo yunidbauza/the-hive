@@ -224,12 +224,32 @@ export const NOTIFICATION_KIND_SPECS: Record<
     icon: 'ph-keyboard',
     tone: 'amber',
     /**
-     * `both`, and the least arguable default in this record.
+     * `both`, and the argument for it is narrower than it first looks.
      *
-     * The sixty-second debounce is Claude's, not the app's, and it has already
-     * established the one fact that makes an interruption reasonable: the user
-     * is not looking. A kind that only ever fires when nobody is watching is a
-     * kind whose whole purpose is the desktop toast.
+     * The tempting version — "the sixty-second debounce proves the user is not
+     * looking, so a toast is always warranted" — is **wrong, and worth writing
+     * down so nobody re-derives it.** Claude's debounce measures typing into
+     * *that session*, not the user's presence. In a fleet only one terminal has
+     * focus at a time, so a session the user read and deliberately moved on
+     * from reaches sixty seconds exactly as a session they walked away from
+     * does, and the app cannot tell the two apart — there is no focus
+     * suppression anywhere in this pipeline, on purpose (see
+     * `notifications/index.ts`).
+     *
+     * What actually carries the default is the **shape of the repeat**, not the
+     * debounce. `session.input_needed` is announced once per stretch of
+     * waiting: the notifier suppresses it until the session has visibly stopped
+     * waiting, so a parked session costs one toast, not one a minute and not
+     * one per turn. That is the whole distance between this and `Stop`, which
+     * has no such cap and would fire on every turn including the watched ones.
+     *
+     * The honest cost, then: a user working across a dozen sessions gets a
+     * toast for each one they leave alone for a minute — once each. That is
+     * loud on a busy afternoon and precisely right at the end of one, and the
+     * per-kind control exists so the judgement is theirs rather than this
+     * record's. Defaulting quiet would answer the bug this kind was added for —
+     * "my session was waiting and nothing told me" — with a row in a panel
+     * nobody had open.
      */
     defaultDelivery: 'both',
   },

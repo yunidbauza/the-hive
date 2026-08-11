@@ -167,6 +167,33 @@ describe('the Notification hook', () => {
     expect(raise).not.toHaveBeenCalled();
   });
 
+  /**
+   * Both lookups are object literals indexed by a string off an IPC payload, so
+   * a bare index walks the prototype: `'constructor'` answers with an inherited
+   * *function*, which passes the `=== undefined` guard and then throws when the
+   * copy table has no entry for it. `observe`'s try swallows that, so the cost
+   * is one silently dropped notification — the kind of fault nobody reports.
+   *
+   * Unreachable through the receiver, which validates the closed vocabulary
+   * first. Asserted anyway: that validation is one refactor away from moving,
+   * and `waitingKind` advertises that it copes with `unknown`.
+   */
+  it.each(['constructor', 'toString', '__proto__', 'valueOf'])(
+    'treats the inherited property %s as no kind at all',
+    (notificationType) => {
+      const n = notifier();
+
+      n.observe(CH.sessionStatus, waiting('lead-form', notificationType));
+      n.observe(CH.sessionStatus, {
+        entityId: 'lead-form',
+        status: 'waiting',
+        event: notificationType,
+      });
+
+      expect(raise).not.toHaveBeenCalled();
+    },
+  );
+
   it('ignores a Notification carrying no type at all', () => {
     notifier().observe(CH.sessionStatus, {
       entityId: 'lead-form',

@@ -147,12 +147,30 @@ function waitingKind(
   event: unknown,
   notificationType: unknown,
 ): NotificationKind | undefined {
+  /**
+   * `Object.hasOwn`, not a bare index.
+   *
+   * Both arguments arrive as `unknown` off an IPC payload, and a plain lookup
+   * on an object literal walks the prototype — so `'constructor'` or
+   * `'toString'` answers with an inherited *function*, which sails past a
+   * `=== undefined` guard and then throws two lines later when the copy table
+   * has no entry for it. `observe`'s try would catch it, so the cost is one
+   * dropped notification rather than a crash, which is precisely why it would
+   * never be noticed.
+   *
+   * The receiver already validates against the closed vocabulary before any of
+   * this runs, so nothing reachable today gets here. That is an argument for
+   * leaving the guard in, not out: the validation is one refactor away from
+   * moving, and this function's signature promises to cope with anything.
+   */
   if (event === 'Notification') {
     if (typeof notificationType !== 'string') return undefined;
-    return NOTIFICATION_TYPE_KIND[notificationType];
+    return Object.hasOwn(NOTIFICATION_TYPE_KIND, notificationType)
+      ? NOTIFICATION_TYPE_KIND[notificationType]
+      : undefined;
   }
   if (typeof event !== 'string') return undefined;
-  return WAITING_KIND[event];
+  return Object.hasOwn(WAITING_KIND, event) ? WAITING_KIND[event] : undefined;
 }
 
 export function createNotifier(options: NotifierOptions): Notifier {

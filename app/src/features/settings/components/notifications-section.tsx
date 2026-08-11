@@ -72,6 +72,16 @@ const DELIVERY_OPTIONS: readonly SegmentedOption<NotificationDelivery>[] = [
 /** Module scope so the ten rows share one array instead of each building its own. */
 const NO_DESKTOP: readonly NotificationDelivery[] = ['both'];
 
+/**
+ * How often the pane re-asks main how the OS has been answering.
+ *
+ * Slow enough to be free — one property read per tick, only while the pane is
+ * mounted — and fast enough that a user who opens Settings, watches a session
+ * go quiet and sees nothing arrive is told why within a glance rather than
+ * after closing and reopening the overlay.
+ */
+const STATUS_POLL_MS = 4_000;
+
 interface DeliveryControlProps {
   kind: NotificationKind;
   value: NotificationDelivery;
@@ -129,13 +139,39 @@ export function NotificationsSection() {
   const snapshot = useProjectConfig();
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
 
+  /**
+   * Re-read while the pane is open, not once on mount (HIVE-80).
+   *
+   * `systemNotificationsRefused` is populated **lazily** in main — it cannot be
+   * known until a `both`-delivery notification has actually been attempted and
+   * turned down. A single read on mount therefore has a hole shaped exactly
+   * like the user this note exists for: they open Settings → Notifications to
+   * find out why nothing arrives, at which point nothing has been attempted
+   * this launch and the field is `null`; a session raises one thirty seconds
+   * later, macOS refuses it, and the pane they are still looking at goes on
+   * saying nothing. They would have to close and reopen Settings to be told.
+   *
+   * Polled rather than pushed. A channel would be exact, but it would put a
+   * bridge subscription in a settings pane for one lazily-discovered string,
+   * and the read is a cheap main-process property lookup. The interval only
+   * runs while this pane is mounted, which is the few seconds a year anyone
+   * has it open.
+   */
   useEffect(() => {
     let live = true;
-    void readIntegrationsStatus().then((next) => {
-      if (live) setStatus(next);
-    });
+
+    const read = (): void => {
+      void readIntegrationsStatus().then((next) => {
+        if (live) setStatus(next);
+      });
+    };
+
+    read();
+    const timer = setInterval(read, STATUS_POLL_MS);
+
     return () => {
       live = false;
+      clearInterval(timer);
     };
   }, []);
 

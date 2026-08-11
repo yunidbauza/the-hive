@@ -169,6 +169,42 @@ describe('NotificationsSection', () => {
     expect(screen.queryByText(/refused this app/i)).toBeNull();
   });
 
+  /**
+   * The hole a single mount-time read leaves.
+   *
+   * `systemNotificationsRefused` is only knowable in main *after* a
+   * `both`-delivery notification has been attempted and refused — so the user
+   * who opens this pane to find out why nothing arrives is, at that instant,
+   * looking at `null`. Without the poll they would have to close and reopen
+   * Settings to be told the thing the note exists to tell them.
+   */
+  it('picks up a refusal that only happens after the pane is open', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<NotificationsSection />);
+      await vi.waitFor(() =>
+        expect(
+          screen.getByRole('heading', { name: 'Notifications', level: 2 }),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.queryByText(/refused this app/i)).toBeNull();
+
+      // A session raises one, and the OS turns it down — while the pane is open.
+      status = {
+        notificationsSupported: true,
+        systemNotificationsRefused: 'UNErrorDomain error 1.',
+      };
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await vi.waitFor(() =>
+        expect(screen.getByText(/refused this app/i)).toBeInTheDocument(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('says nothing at all while delivery is working', async () => {
     render(<NotificationsSection />);
     // Awaited so the status fetch has resolved before the absence is asserted.
