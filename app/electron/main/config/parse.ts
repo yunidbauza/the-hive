@@ -47,6 +47,8 @@ export interface ParsedConfig {
   /** `null` when the file did not name one; the caller applies the default. */
   shell: string | null;
   claudeCommand: string | null;
+  /** Whether the app injects its own status line (HIVE-79). `null` = unstated. */
+  sessionMetrics: boolean | null;
   /**
    * Whether sessions authenticate on the Claude.ai plan (HIVE-79).
    *
@@ -123,6 +125,8 @@ const TOP_LEVEL_KEYS = [
   // HIVE-79. A boolean rather than a block, and the only key in this file that
   // changes how a session *authenticates* — see `AUTH_ENV_KEYS`.
   'subscriptionAuth',
+  // HIVE-79. Whether the app injects its own status line into sessions.
+  'sessionMetrics',
 ];
 /**
  * `shell`, `claudeCommand` and `env` are story 104's per-project overrides.
@@ -464,6 +468,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     shell: null,
     claudeCommand: null,
     subscriptionAuth: null,
+    sessionMetrics: null,
     projects: [],
     errors,
     version: null,
@@ -510,6 +515,12 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     label,
     errors,
   );
+  const sessionMetrics = optionalBoolean(
+    document,
+    'sessionMetrics',
+    label,
+    errors,
+  );
 
   const raw = document.projects;
   if (raw === undefined) {
@@ -517,6 +528,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       shell,
       claudeCommand,
       subscriptionAuth,
+      sessionMetrics,
       notifications,
       jira,
       projects: [],
@@ -531,6 +543,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       shell,
       claudeCommand,
       subscriptionAuth,
+      sessionMetrics,
       notifications,
       jira,
       projects: [],
@@ -620,6 +633,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     shell,
     claudeCommand,
     subscriptionAuth,
+    sessionMetrics,
     notifications,
     jira,
     projects,

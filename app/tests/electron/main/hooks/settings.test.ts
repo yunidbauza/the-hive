@@ -1,4 +1,8 @@
 // @vitest-environment node
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -14,6 +18,7 @@ import {
   hookSettings,
   metricsScript,
   statusLineSettings,
+  writeHookSettings,
 } from '../../../../electron/main/hooks/settings';
 
 /**
@@ -163,5 +168,63 @@ describe('metricsScript', () => {
 
   it('bakes in the URL rather than adding a variable to every pty', () => {
     expect(script).toContain(`'${url}'`);
+  });
+});
+
+
+/**
+ * The status line is the half that can be switched off (HIVE-79).
+ *
+ * Hooks and metrics share a file and a receiver, but only one of them has a
+ * visible cost inside the terminal: Claude Code drops most of its footer
+ * keyboard hints for *any* configured status line, whether or not it renders
+ * anything. A user who would rather keep those hints than see the header's
+ * gauges is making a reasonable trade, and this is what lets them.
+ */
+describe('writeHookSettings', () => {
+  it('omits statusLine entirely when no metrics URL is given', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const path = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      hooks: unknown;
+      statusLine?: unknown;
+    };
+
+    // The hooks half is unaffected — the two are separable, not coupled.
+    expect(written.hooks).toBeDefined();
+    expect(written).not.toHaveProperty('statusLine');
+  });
+
+  it('writes both halves when one is given', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const path = await writeHookSettings(
+      dir,
+      'http://127.0.0.1:1234/hook',
+      'http://127.0.0.1:1234/statusline',
+    );
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      hooks: unknown;
+      statusLine?: { type: string; command: string };
+    };
+
+    expect(written.hooks).toBeDefined();
+    expect(written.statusLine?.type).toBe('command');
+    expect(written.statusLine?.command).toContain('statusline.sh');
+  });
+
+  it('never reads or writes anything outside the directory it was given', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const path = await writeHookSettings(
+      dir,
+      'http://127.0.0.1:1234/hook',
+      'http://127.0.0.1:1234/statusline',
+    );
+
+    // The user's own ~/.claude/settings.json is theirs; this module has no
+    // business anywhere near it.
+    expect(path.startsWith(dir)).toBe(true);
   });
 });

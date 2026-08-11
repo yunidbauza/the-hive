@@ -93,6 +93,22 @@ describe('clockLabel', () => {
   it.each([undefined, Number.NaN])('answers null for %s', (value) => {
     expect(clockLabel(value)).toBeNull();
   });
+
+  /**
+   * `0` is what a null becomes on its way through anything that defaults, and
+   * it renders as a perfectly plausible `12a`. A confident wrong time is worse
+   * than an em dash in the one module whose whole discipline is refusing to
+   * invent numbers.
+   */
+  it('refuses epoch 0 rather than rendering it as midnight', () => {
+    expect(clockLabel(0)).toBeNull();
+    expect(dayClockLabel(0)).toBeNull();
+  });
+
+  it('refuses any timestamp from before this app could have produced one', () => {
+    // 2019-06-01 — well before the earliest plausible reset.
+    expect(clockLabel(1_559_347_200)).toBeNull();
+  });
 });
 
 describe('dayClockLabel', () => {
@@ -134,5 +150,17 @@ describe('chipLabel', () => {
       '(1M)',
     );
     expect(chipLabel({}, 'opus', 'high')).not.toContain('(1M)');
+  });
+
+  /**
+   * The suffix is derived, not the literal `(1M)` this first shipped as. The
+   * threshold is documented as future-proof; a hardcoded label would have made
+   * that only half true, announcing a 2M window as 1M in the one place the user
+   * cannot otherwise see the size.
+   */
+  it('derives the size rather than hardcoding one megatoken', () => {
+    expect(chipLabel({ contextWindow: 2_000_000 }, 'opus', 'high')).toContain(
+      '(2M)',
+    );
   });
 });

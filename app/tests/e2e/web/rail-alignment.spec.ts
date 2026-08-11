@@ -64,3 +64,46 @@ test('the counts stay on the header row', async ({ page }) => {
     headerBox!.y + headerBox!.height,
   );
 });
+
+/**
+ * Which zone gives when the header runs out of room.
+ *
+ * `model-chip.tsx` and `status-counts.tsx` both claim the chip is the thing
+ * that shrinks; nothing measured it, and at one point the flex sizing did the
+ * opposite. The counts carry no tooltip, so losing characters there loses
+ * information outright — where the chip keeps its whole string in a `title`.
+ */
+test('the counts survive a narrow window intact', async ({ page }) => {
+  await page.setViewportSize({ width: 1040, height: 800 });
+  await page.goto('/?sim=0');
+
+  const counts = page.getByTestId('status-counts');
+  await expect(counts).toBeVisible();
+
+  // Nothing ellipsised: the rendered text still carries every one of the four
+  // numbers, and the element is not narrower than the text it holds.
+  const text = (await counts.textContent()) ?? '';
+  expect(text).toContain('working');
+  expect(text).toContain('waiting');
+  expect(text).toContain('idle');
+  expect(text).toContain('ended');
+
+  const clipped = await counts.evaluate(
+    (el) => el.scrollWidth > el.clientWidth + 1,
+  );
+  expect(clipped).toBe(false);
+});
+
+test('the counts still end on the rail line when narrow', async ({ page }) => {
+  await page.setViewportSize({ width: 1040, height: 800 });
+  await page.goto('/?sim=0');
+
+  const countsBox = await page.getByTestId('status-counts').boundingBox();
+  const railBox = await page
+    .getByRole('complementary', { name: 'Activity' })
+    .boundingBox();
+
+  expect(
+    Math.abs(countsBox!.x + countsBox!.width - railBox!.x),
+  ).toBeLessThanOrEqual(1);
+});

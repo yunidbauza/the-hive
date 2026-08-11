@@ -1188,18 +1188,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }),
 
   /**
-   * Main observed where this session is working and what is checked out there
-   * (HIVE-78).
-   *
-   * The replacement for the `feat/<id>` fiction. Same shape and same guards as
-   * `setSessionStatus` — the terminal's *current* row, agents ignored, an
-   * unchanged value dropped — and the last of those matters more here than
-   * anywhere else: main already suppresses unchanged branches, so a write
-   * reaching this action twice means two observations genuinely differed, and
-   * dropping the no-op keeps a rail of thirteen rows from re-rendering when a
-   * fourteenth session's `git` call comes back with the same answer.
-   */
-  /**
    * Record what a session says about its own context and rate limits (HIVE-79).
    *
    * Resolved through {@link currentSessionIn} like every other session write, so
@@ -1247,6 +1235,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       return { ...state, metrics: { ...state.metrics, [target]: next } };
     }),
 
+  /**
+   * Main observed where this session is working and what is checked out there
+   * (HIVE-78).
+   *
+   * The replacement for the `feat/<id>` fiction. Same shape and same guards as
+   * `setSessionStatus` — the terminal's *current* row, agents ignored, an
+   * unchanged value dropped — and the last of those matters more here than
+   * anywhere else: main already suppresses unchanged branches, so a write
+   * reaching this action twice means two observations genuinely differed, and
+   * dropping the no-op keeps a rail of thirteen rows from re-rendering when a
+   * fourteenth session's `git` call comes back with the same answer.
+   */
   setSessionBranch: (id, branch, cwd) =>
     set((state) => {
       const target = currentSessionIn(state, id);

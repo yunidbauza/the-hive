@@ -30,6 +30,10 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
      * teaching the old rule, or a fresh install ships documentation that is
      * false the moment it is written.
      */
+    '//subscriptionAuth':
+      'Optional, default true. Sessions drop ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN so `claude` authenticates on your Claude.ai plan — which is what makes the header\'s session and weekly gauges work at all, since rate limits are reported only for subscriptions. Set false to inherit whatever you export and bill the API instead.',
+    '//sessionMetrics':
+      'Optional, default true. The app injects a blank status line into each session so it can read context and rate-limit usage for the header. Set false to keep your own status line and Claude Code\'s footer key hints; the header\'s gauges then stay empty.',
     '//projects':
       'id is stable and referenced by sessions; name is what you see. "~" is expanded; the path must be an existing directory.',
     '//example': [

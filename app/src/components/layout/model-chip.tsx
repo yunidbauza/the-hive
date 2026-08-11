@@ -75,13 +75,22 @@ function Stat({ pct, detail, label }: StatProps) {
  * `metrics-contract.ts`. Rendering `0%` there would tell the user they have a
  * full week of headroom, which may be the opposite of true.
  *
- * ## Width
+ * ## Width, and what actually happens when the header narrows
  *
- * `min-w-0 truncate` on the row, so this is what gives when the header narrows —
- * the counts hold their width and this ellipsises from the tail, which loses the
- * weekly window first. The full string stays in the `title`. The separators are
- * hairline borders rather than `│` glyphs so they do not change width with the
- * font.
+ * This chip is the thing that gives. `header.tsx` puts it inside the `flex-1`
+ * zone while the counts zone sizes to its content, so the deficit lands here —
+ * and `overflow-hidden` on the row lets the *stats* fall off the end rather
+ * than forcing the header to scroll.
+ *
+ * It **clips rather than ellipsises**, and that is deliberate rather than a
+ * `truncate` that failed. `text-overflow` acts on inline content; every child
+ * of this row is a flex item, so an ellipsis has nothing to attach to and
+ * `truncate` here would silently do nothing but hide the overflow. Clipping at a
+ * hairline separator reads as "there is more", which is the honest signal — and
+ * the full string, every label spelled out, stays in the `title`.
+ *
+ * The separators are hairline borders rather than `│` glyphs so they do not
+ * change width with the font.
  */
 export function ModelChip() {
   const entity = useActiveEntity();
@@ -112,7 +121,7 @@ export function ModelChip() {
   return (
     <Chip title={title} className="min-w-0">
       <Brain size={13} weight="regular" className="shrink-0 text-brand" />
-      <span className="flex min-w-0 items-center gap-2 truncate">
+      <span className="flex min-w-0 items-center gap-2 overflow-hidden">
         <span className="shrink-0">{label}</span>
 
         <span className="flex shrink-0 items-center gap-2 border-l border-border pl-2">

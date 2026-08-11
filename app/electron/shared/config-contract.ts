@@ -255,6 +255,13 @@ export interface ConfigSnapshot {
    */
   subscriptionAuth: boolean;
   /**
+   * Whether the app injects its status line, and so whether the header's gauges
+   * have anything to show (HIVE-79).
+   *
+   * See {@link DEFAULT_SESSION_METRICS} for what turning it off costs and buys.
+   */
+  sessionMetrics: boolean;
+  /**
    * Human-readable problems, in the order they were found.
    *
    * Populated for file-level failures (unreadable, malformed JSON, wrong
@@ -404,6 +411,23 @@ export const AUTH_ENV_KEYS: readonly string[] = [
  */
 export const DEFAULT_SUBSCRIPTION_AUTH = true;
 
+/**
+ * Whether the app injects its own status line into the sessions it spawns.
+ *
+ * On by default, because it is the only source of the context and rate-limit
+ * numbers the header renders — see `metrics-contract.ts`. Off restores the
+ * user's own status line inside Hive sessions and leaves all three header
+ * gauges empty.
+ *
+ * It is switchable at all because injecting a status line is **not free inside
+ * the terminal**: Claude Code drops most of its footer keyboard hints (`esc to
+ * interrupt`, `? for shortcuts`, the voice-dictation hint) whenever one is
+ * configured, whether or not it renders anything. A user who would rather keep
+ * those hints than see the gauges is making a reasonable trade, and before this
+ * key existed they had no way to make it.
+ */
+export const DEFAULT_SESSION_METRICS = true;
+
 /** Why an environment variable name was refused, or `null` if it is fine. */
 export function unsafeEnvReason(key: string): string | null {
   if (RESERVED_ENV_KEYS.includes(key)) {
@@ -450,6 +474,7 @@ export function emptySnapshot(
     shell,
     claudeCommand: DEFAULT_CLAUDE_COMMAND,
     subscriptionAuth: DEFAULT_SUBSCRIPTION_AUTH,
+    sessionMetrics: DEFAULT_SESSION_METRICS,
     projects: [],
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },

@@ -80,6 +80,7 @@ const CONFIG: ConfigSnapshot = {
   notifications: { ...DEFAULT_NOTIFICATIONS },
   jira: { ...DEFAULT_JIRA },
   subscriptionAuth: true,
+  sessionMetrics: true,
   errors: [],
 };
 
@@ -138,7 +139,15 @@ const TEST_UUID = '00000000-0000-4000-8000-000000000000';
  * deterministic. No `--settings`, because this harness passes no hook runtime —
  * which is itself the "hooks unavailable" case, and it must still spawn.
  */
-const BOOT = `claude --name hero-refresh --session-id ${TEST_UUID} && exit`;
+/**
+ * The bootstrap line a plain spawn produces.
+ *
+ * The `unset` prefix is HIVE-79's: `stripEnv` sanitises the environment node-pty
+ * is handed, but `claude` is typed into a **login shell**, which re-sources the
+ * user's profile and re-exports anything they set there. Without this the whole
+ * subscription-auth feature is a no-op for the population it exists for.
+ */
+const BOOT = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --session-id ${TEST_UUID} && exit`;
 
 /** How long after a stage's text its submitting `\r` follows (HIVE-63). */
 const SUBMIT = 300;

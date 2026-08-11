@@ -56,6 +56,7 @@ function snapshot(
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
     subscriptionAuth: true,
+  sessionMetrics: true,
     errors: [],
     ...overrides,
   };

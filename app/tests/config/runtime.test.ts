@@ -100,6 +100,7 @@ describe('can', () => {
         notifications: { ...DEFAULT_NOTIFICATIONS },
         jira: { ...DEFAULT_JIRA },
         subscriptionAuth: true,
+  sessionMetrics: true,
         errors: [],
       });
 

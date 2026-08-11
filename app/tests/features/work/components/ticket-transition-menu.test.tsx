@@ -52,7 +52,7 @@ const movedIssue: JiraIssue = {
 const open = async (): Promise<ReturnType<typeof userEvent.setup>> => {
   const user = userEvent.setup();
   render(<TicketTransitionMenu issueKey="HIVE-70" status="In Progress" statusCategory="in-progress" />);
-  await user.click(screen.getByRole('button', { name: 'Move HIVE-70' }));
+  await user.click(screen.getByRole('button', { name: 'In Progress — move HIVE-70' }));
   return user;
 };
 

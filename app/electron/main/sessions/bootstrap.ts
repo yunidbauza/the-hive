@@ -1,3 +1,4 @@
+import { AUTH_ENV_KEYS } from '@shared/config-contract';
 import {
   BOOTSTRAP_DEBOUNCE_MS,
   BOOTSTRAP_FALLBACK_MS,
@@ -73,6 +74,15 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * user's own `claude` configuration says.
  */
 export interface SessionOptions {
+  /**
+   * Whether to unset the API credentials before invoking `claude` (HIVE-79).
+   *
+   * Defaults to `false` here rather than to the config's own default, so a
+   * caller that does not know about authentication cannot silently opt a
+   * session into a billing change. `sessions/index.ts` is the one caller that
+   * reads the config and passes it.
+   */
+  subscriptionAuth?: boolean;
   model?: SessionModel;
   effort?: SessionEffort;
   /**
@@ -182,7 +192,14 @@ export interface SessionOptions {
  */
 export const sessionCommand = (
   claudeCommand: string,
-  { model, effort, name, sessionUuid, settingsPath }: SessionOptions = {},
+  {
+    model,
+    effort,
+    name,
+    sessionUuid,
+    settingsPath,
+    subscriptionAuth = false,
+  }: SessionOptions = {},
 ): string => {
   const flags = [
     ...(model === undefined ? [] : ['--model', model]),
@@ -199,7 +216,31 @@ export const sessionCommand = (
       : []),
     ...(settingsPath === undefined ? [] : ['--settings', shellQuote(settingsPath)]),
   ];
-  return `${[claudeCommand, ...flags].join(' ')} && exit`;
+  /**
+   * Unset the API credentials **here**, not only in the spawned environment
+   * (HIVE-79).
+   *
+   * `stripEnv` removes them from the environment node-pty is handed, and that
+   * is necessary but not sufficient: a session runs `$SHELL -l` and `claude` is
+   * *typed into that shell*. A login shell sources the user's profile, so an
+   * `export ANTHROPIC_API_KEY=…` in `~/.zshrc` — the dominant way that variable
+   * is set, and precisely the population `AUTH_ENV_KEYS` exists for — is
+   * re-established before `claude` ever runs. Both limit gauges would then read
+   * `—` forever, which is the exact failure the feature exists to prevent.
+   *
+   * `env.ts` already documents this mechanism from the other direction: it
+   * notes that stripping `CLAUDE_*` in the host "is not lossy" *because* the
+   * login shell re-establishes anything the user genuinely exports. The same
+   * sentence, read as a warning rather than a reassurance, is this bug.
+   *
+   * `unset` rather than `env -u`: `claudeCommand` is user-configurable and may
+   * be a shell alias or function, which `env` cannot invoke. A `;` rather than
+   * `&&` so the `&&` that follows still binds `exit` to `claude`'s own status —
+   * and because `unset` on an already-unset name succeeds anyway.
+   */
+  const prefix = subscriptionAuth ? `unset ${AUTH_ENV_KEYS.join(' ')}; ` : '';
+
+  return `${prefix}${[claudeCommand, ...flags].join(' ')} && exit`;
 };
 
 export interface BootstrapOptions {

@@ -15,22 +15,23 @@ import { useCounts } from '@stores/hive-store';
  * much of the hive is no longer running — and a fifth number would cost the
  * header width it does not have (see below).
  *
- * `truncate` (with the `min-w-0` that actually lets a flex item shrink) is what
- * keeps this to one line, and it is load-bearing rather than defensive: this
- * paragraph is the widest thing in the header after the model chip, and the two
- * of them share whatever the brand and the control cluster leave.
- *
- * The ellipsis eats the **tail** — `ended`, the least urgent number — and the
- * full string stays in the `title`. That ordering is why `idle` and `ended` are
- * the pair that got merged into one `restText`: they are the two the user is
- * least likely to be missing when the window is narrow.
+ * `truncate` keeps this to one line. It is a backstop rather than the usual
+ * mechanism now: the chip beside it is what gives when the header narrows, so
+ * these numbers ordinarily render whole. If it ever does run out, the ellipsis
+ * eats the **tail** — `ended`, the least urgent number — and the full string
+ * stays in the `title`. That ordering is why `idle` and `ended` were merged into
+ * one `restText`: they are the two the user is least likely to be missing.
  *
  * ## Where its right edge lands
  *
  * On the activity rail's leading edge, which `header.tsx` arranges by giving the
- * control cluster the rail's own width. Nothing in this file participates in
- * that beyond being shrinkable — but the alignment is the reason there is no
- * right padding here, and adding some would quietly undo it.
+ * control cluster the rail's own width, and which `rail-alignment.spec.ts`
+ * measures in a real browser. The alignment is the reason there is no right
+ * padding here, and adding some would quietly undo it.
+ *
+ * This zone does **not** shrink — `header.tsx` marks it `shrink-0`. The model
+ * chip absorbs a narrow window instead, because it carries its full string in a
+ * `title` and these numbers carry nothing.
  */
 export function StatusCounts() {
   const { working, waiting, idle, done, terminated } = useCounts();

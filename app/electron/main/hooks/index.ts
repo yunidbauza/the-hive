@@ -28,6 +28,19 @@ import { writeHookSettings } from './settings';
 export interface HookRuntimeOptions {
   /** Where the settings file is written. Electron's `app.getPath('userData')`. */
   userDataPath: string;
+  /**
+   * Whether to inject the status line that reports usage (HIVE-79).
+   *
+   * A function rather than a boolean, read at `start()`, for the reason
+   * `SessionsOptions.config` is one: the config can be reloaded, and a value
+   * captured at construction would pin whatever it said when the app booted.
+   *
+   * Defaults to injecting. Hooks and metrics start and stop together
+   * *structurally* — one file, one receiver — but they are separable in this one
+   * respect, because the status line has a visible cost inside the terminal
+   * (Claude Code drops its footer key hints) and the hooks have none.
+   */
+  sessionMetrics?: () => boolean;
   /** Overridable for tests; `0` asks the OS for a free port. */
   port?: number;
 }
@@ -73,7 +86,7 @@ export interface HookRuntime {
 }
 
 export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
-  const { userDataPath, port } = options;
+  const { userDataPath, port, sessionMetrics = () => true } = options;
 
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
@@ -112,7 +125,13 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         settingsPath = await writeHookSettings(
           userDataPath,
           url,
-          created.metricsUrl ?? undefined,
+          /*
+            Omitted entirely when the user has turned metrics off, which is what
+            keeps `statusLine` out of the settings file — and therefore keeps
+            Claude Code's footer key hints, which it drops for any configured
+            status line whether or not that line renders anything.
+          */
+          sessionMetrics() ? (created.metricsUrl ?? undefined) : undefined,
         );
         receiver = created;
       } catch (cause) {

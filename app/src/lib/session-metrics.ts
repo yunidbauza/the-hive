@@ -56,6 +56,18 @@ export const UNKNOWN = '—';
  */
 const EXTENDED_WINDOW_TOKENS = 600_000;
 
+/**
+ * The earliest `resets_at` worth believing.
+ *
+ * `0` is the value a null becomes when it passes through something that
+ * defaults, and it renders as a perfectly plausible `12a` — a confident wrong
+ * time in the one place the design insists on an em dash. Anything before this
+ * app existed is not a reset time; it is a bug upstream or a field that meant
+ * nothing. 2020-01-01, chosen because it needs only to be *after* the epoch and
+ * *before* any real reset.
+ */
+const EARLIEST_PLAUSIBLE_RESET = 1_577_836_800;
+
 export function modelLabel(model: Model = DEFAULT_MODEL): string {
   return MODEL_LABELS[model];
 }
@@ -75,10 +87,17 @@ export function chipLabel(
 ): string {
   const name = metrics?.model ?? modelLabel(model);
   const level = metrics?.effort ?? effort ?? DEFAULT_EFFORT;
+  /*
+    Derived, not the literal `(1M)` this first shipped as. The threshold is
+    documented as future-proof — a later window "lands on the right side of it
+    without an edit" — which was only half true while the *label* was hardcoded:
+    a 2M window would have been announced as 1M, wrong, in the one place the
+    user cannot otherwise see the size.
+  */
+  const size = metrics?.contextWindow;
   const window =
-    metrics?.contextWindow !== undefined &&
-    metrics.contextWindow >= EXTENDED_WINDOW_TOKENS
-      ? ' (1M)'
+    size !== undefined && size >= EXTENDED_WINDOW_TOKENS
+      ? ` (${Math.round(size / 1_000_000)}M)`
       : '';
   return `${name}${window} · ${level}`;
 }
@@ -107,6 +126,9 @@ export function pctLabel(pct: number | null): string {
  */
 export function clockLabel(epochSeconds: number | undefined): string | null {
   if (epochSeconds === undefined || !Number.isFinite(epochSeconds)) return null;
+  // See EARLIEST_PLAUSIBLE_RESET: `0` would otherwise render as a confident
+  // `12a`, which is exactly the fabricated value this module refuses to emit.
+  if (epochSeconds < EARLIEST_PLAUSIBLE_RESET) return null;
   const at = new Date(epochSeconds * 1000);
   if (Number.isNaN(at.getTime())) return null;
 

@@ -960,6 +960,13 @@ export function createSessions(options: SessionsOptions): Sessions {
         name: request.name ?? request.entityId,
         sessionUuid: newSessionUuid(),
         ...(hooks?.settingsPath == null ? {} : { settingsPath: hooks.settingsPath }),
+        /*
+          Belt *and* braces, deliberately. `stripEnv` above covers the ambient
+          environment and a project's own `env` block; this covers the login
+          shell's profile, which re-exports whatever the user put in `~/.zshrc`
+          after the host has already sanitised. Neither one is sufficient alone.
+        */
+        subscriptionAuth: snapshot.subscriptionAuth,
       }),
       request.task,
     );

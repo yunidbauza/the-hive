@@ -242,7 +242,7 @@ describe('the header row', () => {
     // The word that used to sit between the key and the status is gone.
     expect(screen.queryByText('Move')).not.toBeInTheDocument();
 
-    const trigger = screen.getByRole('button', { name: 'Move GRAC-3018' });
+    const trigger = screen.getByRole('button', { name: 'In Progress — move GRAC-3018' });
     expect(trigger).toHaveTextContent('In Progress');
   });
 
@@ -266,7 +266,7 @@ describe('the header row', () => {
     render(<TicketCard ticket={ticket()} />);
 
     expect(screen.getByText('In Progress')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Move/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /move GRAC-3018/i })).not.toBeInTheDocument();
   });
 
   it('gives both spellings the same shape, so the row does not jump', () => {
@@ -275,7 +275,7 @@ describe('the header row', () => {
     unmount();
 
     render(<TicketCard ticket={ticket({ url: 'https://x/browse/HIVE-70' })} />);
-    const interactive = screen.getByRole('button', { name: 'Move GRAC-3018' })
+    const interactive = screen.getByRole('button', { name: 'In Progress — move GRAC-3018' })
       .className;
 
     for (const shape of ['rounded-full', 'bg-chip', 'px-[9px]', 'text-[10px]']) {

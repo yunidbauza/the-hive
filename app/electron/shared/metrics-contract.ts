@@ -102,6 +102,3 @@ export const METRICS_MAX_BODY_BYTES = 16 * 1024;
  * one), and each tick is one short-lived `curl` per live session.
  */
 export const METRICS_REFRESH_SECONDS = 30;
-
-/** The environment variable carrying the metrics endpoint into the status line script. */
-export const METRICS_ENV_URL = 'HIVE_METRICS_URL';

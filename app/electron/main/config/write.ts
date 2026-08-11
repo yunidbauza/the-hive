@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
   DEFAULT_SHELL,
@@ -222,6 +223,7 @@ export function writeConfig(mutate: Mutation): WriteResult {
       claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
       subscriptionAuth:
         validated.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
+      sessionMetrics: validated.sessionMetrics ?? DEFAULT_SESSION_METRICS,
       projects,
       // Re-resolved from the document that was just written, not carried over
       // from the caller's request: the snapshot every mutating verb returns has

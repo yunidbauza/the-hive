@@ -399,7 +399,11 @@ export function registerIpcHandlers(): void {
     supervisor,
     config: getConfig,
     send,
-    hooks: createHookRuntime({ userDataPath: app.getPath('userData') }),
+    hooks: createHookRuntime({
+      userDataPath: app.getPath('userData'),
+      // Read per call, so a config reload is picked up (HIVE-79).
+      sessionMetrics: () => getConfig().sessionMetrics,
+    }),
   });
 
   cloneFlow = createCloneFlow({

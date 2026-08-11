@@ -192,7 +192,16 @@ export function TicketTransitionMenu({
         border that would make it a second visual weight next to the key.
       */}
       <DropdownMenuTrigger
-        aria-label={`Move ${issueKey}`}
+        /*
+          The status leads, because the lozenge is now the only place it appears
+          on the card — the separate span `ticket-card.tsx` used to render for a
+          real issue is gone. An `aria-label` of just "Move HIVE-70" would
+          override the visible text and leave a screen-reader user unable to
+          learn the status at all, and it would fail WCAG 2.5.3 (Label in Name)
+          for speech input, since the accessible name would not contain the
+          words on screen.
+        */
+        aria-label={`${status} — move ${issueKey}`}
         className={cn(
           STATUS_PILL,
           CATEGORY_TEXT[statusCategory],

@@ -4,6 +4,7 @@ import { basename, dirname } from 'node:path';
 import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_JIRA,
+  DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
   DEFAULT_SHELL,
@@ -123,6 +124,7 @@ export function loadConfig(): ConfigSnapshot {
       An explicit `false` is a user keeping their exported API key.
     */
     subscriptionAuth: parsed.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
+    sessionMetrics: parsed.sessionMetrics ?? DEFAULT_SESSION_METRICS,
     // Defaults *under* whatever the file named, so a file declaring only a site
     // still answers for both fields (HIVE-67).
     jira: { ...DEFAULT_JIRA, ...parsed.jira },

@@ -172,11 +172,13 @@ export function Header() {
         the header. `chip-alignment.spec.ts` measures the two against each
         other, the same way it already measures the chips against the left rail.
 
-        `min-w-0` keeps them the thing that gives when the window narrows —
-        they already truncate from the tail and carry the full string in a
-        `title`.
+        `shrink-0`, not `shrink`. The counts are short, fixed-width and have no
+        tooltip; the model chip beside them is long and carries its whole string
+        in a `title`. So the chip is the right thing to absorb a narrow window,
+        and it can only do that if this zone declines to. Letting both shrink is
+        what made the two components' comments disagree about which one gave.
       */}
-      <div className="ml-[14px] flex min-w-0 shrink items-center">
+      <div className="ml-[14px] flex shrink-0 items-center">
         <StatusCounts />
       </div>
 
