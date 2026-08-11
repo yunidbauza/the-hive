@@ -44,6 +44,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
     })),
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
+    subscriptionAuth: true,
     errors: [],
   };
 }

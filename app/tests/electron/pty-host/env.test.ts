@@ -95,3 +95,58 @@ describe('buildEnv', () => {
     });
   });
 });
+
+
+/**
+ * The caller's own strip list (HIVE-79).
+ *
+ * Separate from the module's deny list because the two answer different
+ * questions: the deny list removes what *breaks* a child, and this removes what
+ * the **user** asked not to inherit. `AUTH_ENV_KEYS` is the only thing that
+ * uses it today, and it is a billing decision rather than a correctness fix —
+ * which is exactly why it is a parameter and not a constant in here.
+ */
+describe('buildEnv stripEnv', () => {
+  it('drops the names it is given', () => {
+    const env = buildEnv(
+      { ANTHROPIC_API_KEY: 'sk-ant-x', PATH: '/usr/bin' },
+      '/repo',
+      {},
+      ['ANTHROPIC_API_KEY'],
+    );
+
+    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(env.PATH).toBe('/usr/bin');
+  });
+
+  it('keeps them when the list is empty — the pre-HIVE-79 environment exactly', () => {
+    const env = buildEnv({ ANTHROPIC_API_KEY: 'sk-ant-x' }, '/repo');
+
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-x');
+  });
+
+  /**
+   * A project's own `env` block must not be able to re-add a name the user asked
+   * to have removed — that would make the setting silently conditional on which
+   * project happened to be open.
+   */
+  it('applies to injected variables as well as inherited ones', () => {
+    const env = buildEnv(
+      {},
+      '/repo',
+      { ANTHROPIC_API_KEY: 'sk-ant-from-project' },
+      ['ANTHROPIC_API_KEY'],
+    );
+
+    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+  });
+
+  it('still forces the terminal identity', () => {
+    const env = buildEnv({ PATH: '/usr/bin' }, '/repo', {}, ['PATH']);
+
+    // Stripping PATH is a bad idea, but it must not break the invariants the
+    // last three lines of buildEnv exist to guarantee.
+    expect(env.TERM).toBe(TERM);
+    expect(env.PWD).toBe('/repo');
+  });
+});

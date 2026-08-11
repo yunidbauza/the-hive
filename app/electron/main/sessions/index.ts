@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ConfigSnapshot } from '@shared/config-contract';
+import { AUTH_ENV_KEYS, type ConfigSnapshot } from '@shared/config-contract';
 import type {
   HookNotificationType,
   ObservedStatus,
@@ -800,6 +800,8 @@ export function createSessions(options: SessionsOptions): Sessions {
     rows: number;
     /** Per-project environment (story 104). Empty for a clone. */
     env?: Record<string, string>;
+    /** Names the host must drop from the inherited environment (HIVE-79). */
+    stripEnv?: readonly string[];
   }): void {
     if (registry.size() >= maxSessions) {
       throw new Error(spawnRefusal({ reason: 'at-capacity', limit: maxSessions }));
@@ -832,6 +834,15 @@ export function createSessions(options: SessionsOptions): Sessions {
        * guard rather than accepted and silently overwritten.
        */
       env: request.env ?? {},
+      /**
+       * The credentials a session must **not** inherit (HIVE-79).
+       *
+       * Decided here rather than in the host because the host has no config: it
+       * is told the names on each spawn. Empty when the user has turned
+       * `subscriptionAuth` off, which restores exactly the pre-HIVE-79
+       * environment.
+       */
+      ...(request.stripEnv === undefined ? {} : { stripEnv: request.stripEnv }),
       cols: request.cols,
       rows: request.rows,
     });
@@ -904,6 +915,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        * that does not exist would not.
        */
       env: { ...runtime.env, ...hooks?.envFor(request.entityId) },
+      /*
+        A session, unlike a clone, runs `claude` — so it is the one spawn whose
+        authentication matters. `snapshot` is the config already read for this
+        spawn, so this costs no extra read.
+      */
+      stripEnv: snapshot.subscriptionAuth ? AUTH_ENV_KEYS : [],
     });
 
     /**

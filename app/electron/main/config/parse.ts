@@ -47,6 +47,14 @@ export interface ParsedConfig {
   /** `null` when the file did not name one; the caller applies the default. */
   shell: string | null;
   claudeCommand: string | null;
+  /**
+   * Whether sessions authenticate on the Claude.ai plan (HIVE-79).
+   *
+   * `null` for "the file did not say", which `loadConfig` resolves to
+   * {@link DEFAULT_SUBSCRIPTION_AUTH}. Distinct from an explicit `false`, which
+   * is a user choosing to keep their exported API credentials.
+   */
+  subscriptionAuth: boolean | null;
   projects: RawProject[];
   /**
    * Story 106's notification block, exactly as the file declared it.
@@ -112,6 +120,9 @@ const TOP_LEVEL_KEYS = [
   // HIVE-67, for the same reason. The block holds the site and the account
   // email; the API token is a secret and is deliberately not in this file.
   'jira',
+  // HIVE-79. A boolean rather than a block, and the only key in this file that
+  // changes how a session *authenticates* — see `AUTH_ENV_KEYS`.
+  'subscriptionAuth',
 ];
 /**
  * `shell`, `claudeCommand` and `env` are story 104's per-project overrides.
@@ -262,6 +273,29 @@ function checkKeys(
     errors.push(`${label}: unknown key "${key}" — ignored`);
   }
   return safe;
+}
+
+/**
+ * An optional boolean, defaulted by the caller when absent or malformed.
+ *
+ * Same discipline as {@link optionalString}: a wrong type is *reported and
+ * ignored* rather than fatal, because one mistyped key must not stop the app
+ * launching — and for this key in particular, a fatal parse would leave the
+ * user with no sessions at all over a preference.
+ */
+function optionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+  errors: string[],
+): boolean | null {
+  const value = record[key];
+  if (value === undefined) return null;
+  if (typeof value !== 'boolean') {
+    errors.push(`${label}.${key}: expected true or false — using the default`);
+    return null;
+  }
+  return value;
 }
 
 function optionalString(
@@ -429,6 +463,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const empty: ParsedConfig = {
     shell: null,
     claudeCommand: null,
+    subscriptionAuth: null,
     projects: [],
     errors,
     version: null,
@@ -469,12 +504,19 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const claudeCommand = optionalString(document, 'claudeCommand', label, errors);
   const notifications = optionalNotifications(document, label, errors);
   const jira = optionalJira(document, label, errors);
+  const subscriptionAuth = optionalBoolean(
+    document,
+    'subscriptionAuth',
+    label,
+    errors,
+  );
 
   const raw = document.projects;
   if (raw === undefined) {
     return {
       shell,
       claudeCommand,
+      subscriptionAuth,
       notifications,
       jira,
       projects: [],
@@ -488,6 +530,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     return {
       shell,
       claudeCommand,
+      subscriptionAuth,
       notifications,
       jira,
       projects: [],
@@ -576,6 +619,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   return {
     shell,
     claudeCommand,
+    subscriptionAuth,
     notifications,
     jira,
     projects,

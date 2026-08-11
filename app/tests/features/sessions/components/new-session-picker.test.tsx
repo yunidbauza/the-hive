@@ -305,6 +305,7 @@ describe('NewSessionPicker · unmapped projects', () => {
       })),
       notifications: { ...DEFAULT_NOTIFICATIONS },
       jira: { ...DEFAULT_JIRA },
+      subscriptionAuth: true,
       errors: [],
       ...overrides,
     };

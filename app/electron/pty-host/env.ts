@@ -140,16 +140,32 @@ export function buildEnv(
   base: NodeJS.ProcessEnv,
   cwd: string,
   injected: Record<string, string> = {},
+  stripEnv: readonly string[] = [],
 ): Record<string, string> {
   const env: Record<string, string> = {};
+  /**
+   * The caller's names, on top of this module's own.
+   *
+   * Separate from {@link DENY_EXACT} rather than merged into it, and the
+   * distinction is worth keeping: everything on that list is removed because
+   * inheriting it *breaks* a child process, which is a fact about the
+   * environment. This list is whatever main was told to drop by the user's
+   * config, which is a preference — see `AUTH_ENV_KEYS`.
+   *
+   * Applied to `injected` as well as to the ambient copy, exactly as the deny
+   * list is. A project that could re-add a name the user asked to have removed
+   * would make the setting silently conditional on which project was open.
+   */
+  const stripped = new Set(stripEnv);
+  const isRemoved = (key: string): boolean => isDenied(key) || stripped.has(key);
 
   for (const [key, value] of Object.entries(base)) {
-    if (value === undefined || isDenied(key)) continue;
+    if (value === undefined || isRemoved(key)) continue;
     env[key] = value;
   }
 
   for (const [key, value] of Object.entries(injected)) {
-    if (isDenied(key)) continue;
+    if (isRemoved(key)) continue;
     env[key] = value;
   }
 

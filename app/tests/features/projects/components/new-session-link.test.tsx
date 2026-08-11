@@ -47,6 +47,7 @@ function snapshot(
     })),
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
+    subscriptionAuth: true,
     errors: [],
   };
 }

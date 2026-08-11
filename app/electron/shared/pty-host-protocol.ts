@@ -23,6 +23,15 @@ export interface SpawnCommand {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  /**
+   * Variable names to drop from the inherited environment (HIVE-79).
+   *
+   * Per-spawn rather than a constant in the host's own deny list, because this
+   * one is a **user decision** — see `AUTH_ENV_KEYS` in `config-contract.ts` —
+   * and the host has no access to the config that carries it. Absent means drop
+   * nothing beyond the host's unconditional list.
+   */
+  stripEnv?: readonly string[];
   cols: number;
   rows: number;
 }

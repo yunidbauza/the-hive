@@ -385,7 +385,7 @@ export function createSessionManager(
           // option here.
           name: TERM,
           cwd,
-          env: buildEnv(baseEnv, cwd, command.env),
+          env: buildEnv(baseEnv, cwd, command.env, command.stripEnv),
           cols: Math.max(1, cols),
           rows: Math.max(1, rows),
           /**

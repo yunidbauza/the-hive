@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  AUTH_ENV_KEYS,
   DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
@@ -29,7 +30,14 @@ interface Sent {
 }
 
 let sent: Sent[];
-let spawned: { sessionId: string; shell: string; args: string[]; cwd: string }[];
+let spawned: {
+  sessionId: string;
+  shell: string;
+  args: string[];
+  cwd: string;
+  /** Absent for a command session, which has no authentication to decide. */
+  stripEnv?: readonly string[];
+}[];
 let killed: string[];
 let sessions: Sessions;
 let supervisor: PtyHostSupervisor;
@@ -71,14 +79,23 @@ const CONFIG: ConfigSnapshot = {
   ],
   notifications: { ...DEFAULT_NOTIFICATIONS },
   jira: { ...DEFAULT_JIRA },
+  subscriptionAuth: true,
   errors: [],
 };
 
 function fakeSupervisor(): PtyHostSupervisor {
   return {
-    spawn: vi.fn((request: { sessionId: string; shell: string; args: string[]; cwd: string }) => {
-      spawned.push(request);
-    }),
+    spawn: vi.fn(
+      (request: {
+        sessionId: string;
+        shell: string;
+        args: string[];
+        cwd: string;
+        stripEnv?: readonly string[];
+      }) => {
+        spawned.push(request);
+      },
+    ),
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn((sessionId: string) => killed.push(sessionId)),
@@ -856,5 +873,62 @@ describe('openCommand', () => {
     ).toThrow(/capacity|limit/i);
 
     capped.dispose();
+  });
+});
+
+
+/**
+ * Which credentials a session inherits (HIVE-79).
+ *
+ * The removal itself happens in the pty host's `buildEnv`; what is asserted
+ * here is the **decision** — that main reads the config and tells the host
+ * which names to drop. The two halves are tested apart because only this one
+ * knows about a config file and only that one knows about an environment.
+ *
+ * This is a billing change, which is why the "off" case matters as much as the
+ * default: a user who sets `subscriptionAuth: false` must get exactly the
+ * environment they got before this feature existed.
+ */
+describe('session authentication', () => {
+  it('strips the API credentials by default, so rate limits are reported', () => {
+    sessions.open(OPEN);
+
+    // Without this, `claude` bills the API account and its status line carries
+    // no `rate_limits` at all — the header's two limit gauges stay empty for
+    // the whole life of the session, with nothing on screen to explain it.
+    expect(spawned[0]!.stripEnv).toEqual(AUTH_ENV_KEYS);
+  });
+
+  it('inherits them when the user has turned subscription auth off', () => {
+    const off = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => ({ ...CONFIG, subscriptionAuth: false }),
+      newSessionUuid: () => TEST_UUID,
+    });
+
+    off.open(OPEN);
+
+    expect(spawned[0]!.stripEnv).toEqual([]);
+    off.dispose();
+  });
+
+  /**
+   * A clone runs `git`, not `claude`. It has no authentication to make a
+   * decision about, and naming credentials for it would be cargo cult.
+   */
+  it('says nothing about a command session', () => {
+    sessions.openCommand({
+      entityId: 'clone-1',
+      cwd: '/tmp',
+      file: 'git',
+      args: ['clone'],
+      cols: 80,
+      rows: 24,
+      onExit: () => {},
+    });
+
+    expect(spawned[0]!.stripEnv).toBeUndefined();
   });
 });
