@@ -9,6 +9,7 @@ import {
   HOOK_HEADER_TOKEN,
 } from '@shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '@shared/metrics-contract';
+import { SESSION_THEMES, type SessionTheme } from '@shared/session-contract';
 
 /**
  * The settings file the app hands every session (HIVE-62, HIVE-79).
@@ -48,11 +49,28 @@ import { METRICS_REFRESH_SECONDS } from '@shared/metrics-contract';
  * by one entry every time a session starts.
  */
 
-/** Where the file lives inside userData. */
-export const HOOK_SETTINGS_FILE = join('hive', 'claude-hooks.settings.json');
+/**
+ * Where the files live inside userData — one per theme.
+ *
+ * Two files rather than one rewritten in place, because the theme is decided
+ * per **spawn** and the file has to still be true for every session already
+ * reading it. Rewriting would make a theme toggle reach backwards into sessions
+ * that started under the other one, on a file whose other half — the hooks — is
+ * load-bearing. Two immutable files cost one extra `writeFile` per launch and
+ * make the choice a matter of which path goes on the command line. See
+ * {@link hookSettingsFile}.
+ */
+export const hookSettingsFile = (theme: SessionTheme): string =>
+  join('hive', `claude-hooks.settings.${theme}.json`);
 
-/** The status line script, beside the settings file that names it. */
+/** The dark file, which is the default a caller with no theme gets. */
+export const HOOK_SETTINGS_FILE = hookSettingsFile('dark');
+
+/** The status line script, beside the settings files that name it. */
 export const METRICS_SCRIPT_FILE = join('hive', 'statusline.sh');
+
+/** Both settings files, by the theme each one dresses a session in. */
+export type HookSettingsPaths = Record<SessionTheme, string>;
 
 export interface HookSettings {
   hooks: Record<string, unknown[]>;
@@ -61,6 +79,37 @@ export interface HookSettings {
     command: string;
     refreshInterval: number;
   };
+  /**
+   * Claude Code's own UI theme, which the Hive sets to match the app's.
+   *
+   * The terminal's palette already follows the app theme — `ansi.ts` owns that
+   * — but a palette only decides what the *named* colours mean. Claude Code
+   * paints its own chrome with explicit colours from this setting, so in the
+   * app's light theme a dark-themed Claude drew the user's own prompt as a
+   * near-black bar across a white terminal. Measured against 2.1.228: the
+   * submitted-prompt row is `#373737` under `dark` and `#f0f0f0` under `light`.
+   */
+  theme?: SessionTheme;
+  /**
+   * Claude Code's agent view, which the Hive turns off in every session.
+   *
+   * **The Hive is the fleet view.** Claude Code's own agent list is a second,
+   * competing one inside a single tab of the first, and `←` — the app's own
+   * "back to the orchestrator" key — is what opens it. `keymap.ts` intercepts
+   * that key at an empty prompt, which leaves the race to be won on every
+   * keystroke; this removes the thing being raced for.
+   *
+   * Verified against 2.1.228: with this set the footer's `← 2 agents`
+   * affordance is gone and a bare `←` at the prompt does nothing at all.
+   *
+   * **What it costs**, and it is not nothing: the same switch disables
+   * `claude agents`, `--bg`, `/background` and the on-demand daemon inside
+   * these sessions. The Hive drives none of them — it spawns its own ptys and
+   * watches them through hooks — so the loss is confined to a user who wanted
+   * Claude Code's background agents *inside* a Hive session, which is the
+   * fleet-within-a-fleet this exists to prevent.
+   */
+  disableAgentView?: boolean;
 }
 
 /**
@@ -90,7 +139,7 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * a receiver that answers 403 to everything, which is a confusing way to
  * discover a missing field.
  */
-export function hookSettings(url: string): HookSettings {
+export function hookSettings(url: string, theme?: SessionTheme): HookSettings {
   const handler = {
     type: 'http',
     url,
@@ -115,6 +164,14 @@ export function hookSettings(url: string): HookSettings {
     hooks: Object.fromEntries(
       HOOK_EVENTS.map((event) => [event, [{ matcher: '*', hooks: [handler] }]]),
     ),
+    /*
+      Unconditional, where `theme` is optional. The agent view is wrong for
+      every Hive session regardless of how it was started or what the app looks
+      like; the theme is a match to something the app knows and a caller may
+      not. See the two fields on `HookSettings` for what each one costs.
+    */
+    disableAgentView: true,
+    ...(theme === undefined ? {} : { theme }),
   };
 }
 
@@ -202,7 +259,7 @@ exit 0
 }
 
 /**
- * Write the settings file and its script, and return the settings path.
+ * Write one settings file per theme, plus the script, and return both paths.
  *
  * The script is written **first**. A settings file naming a script that is not
  * there yet is a window in which every session's status line fails; the reverse
@@ -211,16 +268,22 @@ exit 0
  * `metricsUrl` is optional so a caller that only wants hooks can have them. In
  * practice both come from the same receiver, but the settings file is the one
  * artifact a session sees and it should not become all-or-nothing.
+ *
+ * The two files differ in exactly one key. Writing both up front means the
+ * spawn path never writes anything — it picks a path — so a theme toggle can
+ * never race a session that is starting, and a session's settings stay the
+ * bytes it was started with for as long as it runs.
  */
 export async function writeHookSettings(
   userDataPath: string,
   url: string,
   metricsUrl?: string,
-): Promise<string> {
-  const path = join(userDataPath, HOOK_SETTINGS_FILE);
-  await mkdir(dirname(path), { recursive: true });
+): Promise<HookSettingsPaths> {
+  await mkdir(join(userDataPath, dirname(HOOK_SETTINGS_FILE)), {
+    recursive: true,
+  });
 
-  const settings = hookSettings(url);
+  let statusLine: HookSettings['statusLine'];
 
   if (metricsUrl !== undefined) {
     const scriptPath = join(userDataPath, METRICS_SCRIPT_FILE);
@@ -232,9 +295,18 @@ export async function writeHookSettings(
       because nothing but this user's sessions should be running it.
     */
     await chmod(scriptPath, 0o700);
-    settings.statusLine = statusLineSettings(scriptPath);
+    statusLine = statusLineSettings(scriptPath);
   }
 
-  await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-  return path;
+  const paths = {} as HookSettingsPaths;
+
+  for (const theme of SESSION_THEMES) {
+    const path = join(userDataPath, hookSettingsFile(theme));
+    const settings = hookSettings(url, theme);
+    if (statusLine !== undefined) settings.statusLine = statusLine;
+    await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+    paths[theme] = path;
+  }
+
+  return paths;
 }

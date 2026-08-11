@@ -41,6 +41,7 @@ import {
   SESSION_EFFORTS,
   SESSION_MODELS,
   SESSION_NAME_MAX,
+  SESSION_THEMES,
   isSendableSessionName,
 } from './session-contract';
 
@@ -227,7 +228,7 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     input,
     ['sessionId', 'projectId', 'cols', 'rows'],
     'spawn',
-    ['task', 'model', 'effort', 'name'],
+    ['task', 'model', 'effort', 'name', 'theme'],
   );
   return {
     sessionId: assertId(raw.sessionId, 'spawn.sessionId'),
@@ -269,6 +270,17 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     ...(raw.name === undefined
       ? {}
       : { name: assertSessionName(raw.name, 'spawn.name') }),
+    /**
+     * A closed list, like `model` and `effort` and for the same reason: it
+     * chooses a **path on a command line** — which of the two settings files
+     * the session is started with — and a value outside the list would name a
+     * file that does not exist. Rejecting is right rather than defaulting: a
+     * renderer sending an unknown theme has a bug, and silently dressing the
+     * session in dark would hide it.
+     */
+    ...(raw.theme === undefined
+      ? {}
+      : { theme: assertOneOf(raw.theme, SESSION_THEMES, 'spawn.theme') }),
   };
 }
 

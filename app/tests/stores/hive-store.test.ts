@@ -7,6 +7,7 @@ import { resetProjectConfig } from '@lib/project-config';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 
+import { useAppearanceStore } from '@stores/appearance-store';
 import { ACK_DELAY_MS, useHiveStore } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
@@ -697,6 +698,40 @@ describe('hive-store', () => {
             expect.any(String),
             'apfm-web',
             expect.objectContaining({ model: 'opus', effort: 'high' }),
+          );
+        });
+
+        /**
+         * The app's own theme rides along, because `claude` paints its UI from
+         * its settings file rather than from the terminal's palette.
+         *
+         * Without it a light-themed Hive started dark-themed agents, and the
+         * user's own submitted prompt came back as a near-black bar across a
+         * white terminal — the palette in `ansi.ts` decides what the *named*
+         * colours mean and cannot touch a colour Claude states outright.
+         */
+        it('carries the app’s resolved theme', () => {
+          useAppearanceStore.setState({ theme: 'light' });
+
+          run('spawn apfm-web tidy the footer');
+
+          expect(requestSpawn).toHaveBeenCalledWith(
+            expect.any(String),
+            'apfm-web',
+            expect.objectContaining({ theme: 'light' }),
+          );
+        });
+
+        /** `system` is a preference, not a palette — it must arrive resolved. */
+        it('resolves the system preference before sending it', () => {
+          useAppearanceStore.setState({ theme: 'system', systemDark: false });
+
+          run('spawn apfm-web tidy the footer');
+
+          expect(requestSpawn).toHaveBeenCalledWith(
+            expect.any(String),
+            'apfm-web',
+            expect.objectContaining({ theme: 'light' }),
           );
         });
 

@@ -257,6 +257,24 @@ export type SessionModel = (typeof SESSION_MODELS)[number];
 export const SESSION_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 export type SessionEffort = (typeof SESSION_EFFORTS)[number];
 
+/**
+ * Which way round a session's own UI is painted.
+ *
+ * A wire value for the same reason `SessionModel` is one: the renderer owns the
+ * app's theme — it lives in `appearance-store`, in `localStorage`, where main
+ * cannot see it — and main owns the settings file `claude` reads at startup. So
+ * the theme has to cross, and the boundary that validates it has to be able to
+ * name every acceptable value.
+ *
+ * Deliberately **not** the app's own theme type. `appearance-store` is free to
+ * grow a third option, a system-follows mode, or a named palette; this list is
+ * the two things Claude Code's `theme` setting is being told, and the mapping
+ * between them belongs to whoever spawns, not to this contract. It is passed
+ * to `claude` verbatim through its settings file, so the spellings are its.
+ */
+export const SESSION_THEMES = ['dark', 'light'] as const;
+export type SessionTheme = (typeof SESSION_THEMES)[number];
+
 /** Silence for this long means idle. */
 export const ACTIVITY_IDLE_MS = 2_000;
 

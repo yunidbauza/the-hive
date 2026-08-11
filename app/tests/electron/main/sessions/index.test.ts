@@ -238,6 +238,51 @@ describe('what a session runs', () => {
     expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
   });
 
+  /**
+   * The theme picks which settings file the session is started with.
+   *
+   * The last link in a chain that starts in `localStorage`: the renderer
+   * resolves the app's theme, the guard admits it, and this is where it becomes
+   * a path on a command line. `claude` paints its own chrome from that file, so
+   * getting it wrong is what drew a user's submitted prompt as a near-black bar
+   * across a light terminal.
+   */
+  it('starts a session with the settings file for its theme', () => {
+    const asked: (string | undefined)[] = [];
+    const themed = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: (theme?: string) => {
+          asked.push(theme);
+          return `/userData/hive/claude-hooks.settings.${theme ?? 'dark'}.json`;
+        },
+        envFor: () => ({}),
+        start: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    themed.open({ ...OPEN, theme: 'light' });
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(SUBMIT);
+
+    expect(asked).toEqual(['light']);
+    const written = vi
+      .mocked(supervisor.write)
+      .mock.calls.map(([, data]) => data)
+      .join('');
+    expect(written).toContain('claude-hooks.settings.light.json');
+    expect(written).not.toContain('claude-hooks.settings.dark.json');
+  });
+
   it('delivers a spawn task as the session’s first message', () => {
     /**
      * Two stages, one mechanism (story 097): the shell settles and `claude`

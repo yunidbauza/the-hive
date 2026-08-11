@@ -9,7 +9,11 @@ import type {
   TerminalTransport,
 } from '@lib/terminal/terminal-transport';
 import { CLONE_ENTITY_ID } from '@shared/config-contract';
-import type { SessionEffort, SessionModel } from '@shared/session-contract';
+import type {
+  SessionEffort,
+  SessionModel,
+  SessionTheme,
+} from '@shared/session-contract';
 
 /**
  * The desktop transport: a real PTY, behind the same three methods (story 094).
@@ -317,6 +321,18 @@ export interface SpawnOptions {
    * and the store owns the collision-free construction.
    */
   name?: string;
+  /**
+   * Which way round to paint `claude`'s own UI inside the terminal.
+   *
+   * The one option here that describes the *app* rather than the session. It
+   * exists because the app's theme lives in `localStorage`, which main cannot
+   * read, and `claude` decides its own chrome from a settings file main writes
+   * — so without this a light-themed Hive ran dark-themed agents and drew the
+   * user's own submitted prompt as a near-black bar across a white terminal.
+   *
+   * Absent means dark, which is both defaults agreeing rather than a guess.
+   */
+  theme?: SessionTheme;
 }
 
 /**
@@ -335,7 +351,7 @@ export interface SpawnOptions {
 export function requestSpawn(
   entityId: string,
   projectId: string,
-  { task, model, effort, name }: SpawnOptions = {},
+  { task, model, effort, name, theme }: SpawnOptions = {},
 ): Promise<SpawnOutcome> {
   /**
    * The bridge is read inside the try, not before it.
@@ -394,6 +410,8 @@ export function requestSpawn(
        * refusal in the console instead of a session that quietly opens unnamed.
        */
       ...(name === undefined ? {} : { name }),
+      /** Same spread, same reason. A closed set, so the guard owns the rest. */
+      ...(theme === undefined ? {} : { theme }),
     })
     .then((): SpawnOutcome => ({ ok: true }))
     .catch((cause: unknown): SpawnOutcome => {

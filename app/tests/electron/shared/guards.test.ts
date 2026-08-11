@@ -94,6 +94,40 @@ describe('parseSpawnRequest', () => {
     });
   });
 
+  /**
+   * The theme is a closed set for a sharper reason than `model` is.
+   *
+   * It does not become a flag *value* — it chooses which of two settings files
+   * goes on the command line, so a value outside the list names a path that was
+   * never written and starts a session with no hooks at all. Rejecting is right
+   * rather than defaulting: a renderer sending an unknown theme has a bug, and
+   * quietly dressing the session in dark would hide it.
+   */
+  describe('theme', () => {
+    it.each(['dark', 'light'])('accepts %s', (theme) => {
+      expect(parseSpawnRequest({ ...validSpawn, theme })).toEqual({
+        ...validSpawn,
+        theme,
+      });
+    });
+
+    it('omits the key entirely when it was not sent', () => {
+      expect(parseSpawnRequest({ ...validSpawn })).not.toHaveProperty('theme');
+    });
+
+    it.each([
+      ['the unresolved preference', { theme: 'system' }],
+      ['a theme differing only in case', { theme: 'Dark' }],
+      ['one of Claude Code’s other themes', { theme: 'dark-daltonized' }],
+      ['a non-string', { theme: 1 }],
+      ['a path fragment', { theme: '../claude-hooks.settings.dark.json' }],
+    ])('rejects %s', (_label, patch) => {
+      expect(() => parseSpawnRequest({ ...validSpawn, ...patch })).toThrow(
+        IpcValidationError,
+      );
+    });
+  });
+
   describe('model and effort (story 109)', () => {
     it('accepts a member of each closed set', () => {
       expect(

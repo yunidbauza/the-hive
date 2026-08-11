@@ -19,6 +19,7 @@ import {
   spawnRefusal,
   type SessionEffort,
   type SessionModel,
+  type SessionTheme,
   SESSION_NAME_DISPLAY_MAX,
   type SessionBranchEvent,
   type SessionClearedEvent,
@@ -125,6 +126,17 @@ export interface OpenRequest {
    * fails either simply omits the flag.
    */
   name?: string;
+  /**
+   * Which way round `claude` paints its own UI (see `hooks/settings.ts`).
+   *
+   * Carried on `restart` for the same reason `model` is: it is a property of
+   * how the session is dressed rather than an instruction it may have acted on.
+   * A restart is also the *only* moment a running session can pick up a theme
+   * toggle, because the settings file is read once at startup.
+   *
+   * Absent means dark, which is Claude Code's default and the app's.
+   */
+  theme?: SessionTheme;
 }
 
 /**
@@ -928,6 +940,13 @@ export function createSessions(options: SessionsOptions): Sessions {
      * login shell with it and the session settles to `done`. See its own
      * comment for why that reverses story 096, and why it is `&&`.
      */
+    /*
+      Resolved once, before the command is assembled, because it is the one
+      argument that depends on something the renderer told us about *itself*
+      rather than about the session.
+    */
+    const settingsPath = hooks?.settingsPathFor(request.theme);
+
     bootstrap.arm(
       request.entityId,
       /**
@@ -959,7 +978,13 @@ export function createSessions(options: SessionsOptions): Sessions {
          */
         name: request.name ?? request.entityId,
         sessionUuid: newSessionUuid(),
-        ...(hooks?.settingsPath == null ? {} : { settingsPath: hooks.settingsPath }),
+        /*
+          The theme rides in from the renderer, which is the only side that
+          knows it, and picks which of the two settings files this session
+          reads. Absent means dark — `settingsPathFor`'s own default — so a
+          spawn from main's own paths is byte-identical to what it was.
+        */
+        ...(settingsPath == null ? {} : { settingsPath }),
         /*
           Belt *and* braces, deliberately. `stripEnv` above covers the ambient
           environment and a project's own `env` block; this covers the login

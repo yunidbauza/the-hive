@@ -837,6 +837,11 @@ export function registerIpcHandlers(): void {
       model: request.model,
       effort: request.effort,
       name: request.name,
+      /**
+       * The app's theme, which decides which settings file `claude` is started
+       * with and therefore how it paints its own UI inside the terminal.
+       */
+      theme: request.theme,
     });
   });
 
@@ -868,6 +873,12 @@ export function registerIpcHandlers(): void {
        * back as `sess-07` would rename a row the user has been watching.
        */
       name: request.name,
+      /**
+       * Forwarded too, and a restart is the one moment a *running* session can
+       * change theme: `claude` reads its settings file once, at startup, so a
+       * session started before a theme toggle keeps its old chrome until this.
+       */
+      theme: request.theme,
     });
   });
 

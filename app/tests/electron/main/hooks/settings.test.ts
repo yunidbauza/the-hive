@@ -185,8 +185,8 @@ describe('writeHookSettings', () => {
   it('omits statusLine entirely when no metrics URL is given', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const path = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
-    const written = JSON.parse(await readFile(path, 'utf8')) as {
+    const paths = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
+    const written = JSON.parse(await readFile(paths.dark, 'utf8')) as {
       hooks: unknown;
       statusLine?: unknown;
     };
@@ -199,12 +199,12 @@ describe('writeHookSettings', () => {
   it('writes both halves when one is given', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const path = await writeHookSettings(
+    const paths = await writeHookSettings(
       dir,
       'http://127.0.0.1:1234/hook',
       'http://127.0.0.1:1234/statusline',
     );
-    const written = JSON.parse(await readFile(path, 'utf8')) as {
+    const written = JSON.parse(await readFile(paths.dark, 'utf8')) as {
       hooks: unknown;
       statusLine?: { type: string; command: string };
     };
@@ -217,7 +217,7 @@ describe('writeHookSettings', () => {
   it('never reads or writes anything outside the directory it was given', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const path = await writeHookSettings(
+    const paths = await writeHookSettings(
       dir,
       'http://127.0.0.1:1234/hook',
       'http://127.0.0.1:1234/statusline',
@@ -225,6 +225,61 @@ describe('writeHookSettings', () => {
 
     // The user's own ~/.claude/settings.json is theirs; this module has no
     // business anywhere near it.
-    expect(path.startsWith(dir)).toBe(true);
+    expect(paths.dark.startsWith(dir)).toBe(true);
+    expect(paths.light.startsWith(dir)).toBe(true);
+  });
+
+  /**
+   * One file per theme, differing in exactly one key.
+   *
+   * Two immutable files rather than one rewritten at spawn: a theme toggle must
+   * not reach backwards into a session already reading the file, whose other
+   * half — the hooks — is what makes its status reportable at all.
+   */
+  it('writes a file for each theme, and only the theme differs', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const paths = await writeHookSettings(
+      dir,
+      'http://127.0.0.1:1234/hook',
+      'http://127.0.0.1:1234/statusline',
+    );
+
+    expect(paths.dark).not.toBe(paths.light);
+
+    const dark = JSON.parse(await readFile(paths.dark, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    const light = JSON.parse(await readFile(paths.light, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+
+    expect(dark.theme).toBe('dark');
+    expect(light.theme).toBe('light');
+    expect({ ...dark, theme: null }).toEqual({ ...light, theme: null });
+  });
+
+  /**
+   * The agent view is off in every session, whatever else the file says.
+   *
+   * `←` is the app's own "back to the orchestrator" key, and Claude Code binds
+   * the same key at an empty prompt to its own agent list — a second fleet view
+   * inside one tab of the first. `keymap.ts` races for that keystroke; this
+   * removes what it is racing for. Verified against Claude Code 2.1.228: the
+   * footer's `← 2 agents` affordance disappears and a bare `←` does nothing.
+   */
+  it('disables the agent view in both files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const paths = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
+
+    for (const path of [paths.dark, paths.light]) {
+      const written = JSON.parse(await readFile(path, 'utf8')) as {
+        disableAgentView?: boolean;
+      };
+      expect(written.disableAgentView).toBe(true);
+    }
   });
 });

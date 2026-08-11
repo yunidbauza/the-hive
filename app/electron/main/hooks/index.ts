@@ -5,9 +5,10 @@ import {
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
+import type { SessionTheme } from '@shared/session-contract';
 
 import { createReceiver, type Receiver } from './receiver';
-import { writeHookSettings } from './settings';
+import { writeHookSettings, type HookSettingsPaths } from './settings';
 
 /**
  * The hook pipeline, as one thing the session layer can hold (HIVE-62).
@@ -17,7 +18,7 @@ import { writeHookSettings } from './settings';
  * every session's hooks at a closed port — so they start together, fail
  * together, and are switched off together.
  *
- * **Everything here degrades rather than throws.** `settingsPath` is `null`
+ * **Everything here degrades rather than throws.** `settingsPathFor` answers `null`
  * until the receiver is listening and the file is on disk, and a session spawned
  * while it is `null` simply gets no `--settings` flag. That session's status
  * comes from `activity.ts` exactly as it did before this story. The rule is that
@@ -69,12 +70,20 @@ export interface HookRuntime {
   /**
    * Bind, write the settings file, and begin reporting.
    *
-   * Resolves either way. `settingsPath` afterwards is the honest answer to
+   * Resolves either way. `settingsPathFor` afterwards is the honest answer to
    * whether it worked.
    */
   start(handlers: HookHandlers): Promise<void>;
-  /** The `--settings` argument, or `null` when hooks are not available. */
-  readonly settingsPath: string | null;
+  /**
+   * The `--settings` argument for a session dressed in `theme`, or `null` when
+   * hooks are not available.
+   *
+   * A function rather than a property because there is now one file per theme
+   * — see `settings.ts` for why both are written up front rather than one
+   * rewritten. `theme` is optional and omitting it answers with the dark file,
+   * which is what every caller got before the light one existed.
+   */
+  settingsPathFor(theme?: SessionTheme): string | null;
   /**
    * The environment a session's pty needs for its hooks to be attributable.
    *
@@ -89,11 +98,11 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
   const { userDataPath, port, sessionMetrics = () => true } = options;
 
   let receiver: Receiver | null = null;
-  let settingsPath: string | null = null;
+  let settingsPaths: HookSettingsPaths | null = null;
 
   return {
-    get settingsPath() {
-      return settingsPath;
+    settingsPathFor(theme = 'dark') {
+      return settingsPaths?.[theme] ?? null;
     },
 
     async start({ knowsSession, onEvent, onTicketIntent, onCleared, onMetrics }) {
@@ -122,7 +131,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           construction — the bind succeeded — but it is read rather than rebuilt
           so the path lives in exactly one place.
         */
-        settingsPath = await writeHookSettings(
+        settingsPaths = await writeHookSettings(
           userDataPath,
           url,
           /*
@@ -149,7 +158,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 
     envFor(entityId): Record<string, string> {
       const running = receiver;
-      if (running === null || settingsPath === null) return {};
+      if (running === null || settingsPaths === null) return {};
       return {
         [HOOK_ENV_SESSION]: entityId,
         [HOOK_ENV_TOKEN]: running.token,
@@ -159,7 +168,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     async stop() {
       const running = receiver;
       receiver = null;
-      settingsPath = null;
+      settingsPaths = null;
       if (running !== null) await running.stop();
     },
   };

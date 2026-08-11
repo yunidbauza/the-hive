@@ -452,6 +452,24 @@ const appearanceSettingsSelector = (state: AppearanceState) => ({
 export const useTheme = (): ResolvedTheme =>
   useAppearanceStore((state) => resolveTheme(state.theme, state.systemDark));
 
+/**
+ * The same answer as {@link useTheme}, for a caller that is not a component.
+ *
+ * A hook cannot be called from a store action, and the one caller that needs
+ * this is exactly that: `hive-store` reads the theme when it spawns a session,
+ * so `claude` can be told which way round to paint its own UI in the terminal
+ * it is about to draw into.
+ *
+ * Exported as a function rather than leaving the caller to `getState()` and
+ * `resolveTheme` for itself, so `system` is resolved in the one place that
+ * knows how — a caller that read `state.theme` directly would hand `'system'`
+ * to something expecting a palette.
+ */
+export const currentTheme = (): ResolvedTheme => {
+  const { theme, systemDark } = useAppearanceStore.getState();
+  return resolveTheme(theme, systemDark);
+};
+
 /** The stored preference — the appearance section's radio group, and nothing else. */
 export const useThemePreference = () => useAppearanceStore((state) => state.theme);
 

@@ -33,6 +33,7 @@ import type { PrRecord } from '@shared/github-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
+import { currentTheme } from '@stores/appearance-store';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -701,6 +702,20 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * one HIVE-61 shipped.
          */
         ...(name === undefined ? {} : { name }),
+        /**
+         * The app's own theme, so `claude` dresses its UI to match the terminal
+         * it is drawing into.
+         *
+         * **Read, not subscribed.** `appearance-store` is another store and
+         * this is a one-shot read inside an action, which is the shape the
+         * architecture allows — what it forbids is a store *subscribing* to
+         * another, and a subscription here would re-spawn nothing and mean
+         * nothing: the value is consumed at this instant and written into a
+         * file the session reads once, at startup. Toggling the theme repaints
+         * the app and every terminal palette; agents already running keep the
+         * chrome they were started with until they are restarted.
+         */
+        theme: currentTheme(),
       }).then((outcome) => {
         if (outcome.ok) return;
         set((state) => ({
