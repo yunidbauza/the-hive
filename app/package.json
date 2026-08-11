@@ -36,7 +36,8 @@
     "test:e2e": "playwright test",
     "test:e2e:web": "playwright test --project=web",
     "test:e2e:electron": "PW_ELECTRON_ONLY=1 playwright test --project=electron",
-    "test:pty": "electron-vite build && ELECTRON_RUN_AS_NODE=1 electron scripts/run-pty-conformance.mjs"
+    "test:pty": "electron-vite build && ELECTRON_RUN_AS_NODE=1 electron scripts/run-pty-conformance.mjs",
+    "test:hooks": "HIVE_LIVE_HOOK_PROOF=1 vitest run tests/live/hook-conformance.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

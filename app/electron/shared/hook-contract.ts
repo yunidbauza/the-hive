@@ -73,11 +73,34 @@ export const HOOK_EVENTS = [
   'UserPromptSubmit',
   'PermissionRequest',
   'Elicitation',
+  'Notification',
   'Stop',
   'SessionEnd',
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+/**
+ * `SessionStart` is subscribed and does not arrive. Measured, not assumed.
+ *
+ * Claude Code 2.1.227, real pty, both handlers on the same event:
+ *
+ * ```
+ * SessionStart  command hook  -> ran
+ * SessionStart  http hook     -> never reached the receiver
+ * ```
+ *
+ * Every other subscribed event delivers over `http` normally, so this is
+ * specific to `SessionStart` — plausibly a hook dispatched before the http
+ * transport is up. It is left subscribed rather than removed: the entry costs
+ * one key in a file the app writes once per launch, and a future release that
+ * starts delivering it would mark a session {@link HOOK_STATUS}-driven from the
+ * moment it opens, which is strictly better than the current floor.
+ *
+ * The consequence today is the thing worth knowing: a session is **not**
+ * hook-driven until its first `UserPromptSubmit`, so until the user types,
+ * status comes from `activity.ts`'s pty inference.
+ */
 
 /**
  * The `SessionEnd` reason that means "the conversation ended, the process did
@@ -128,7 +151,62 @@ export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
   UserPromptSubmit: 'working',
   PermissionRequest: 'waiting',
   Elicitation: 'waiting',
+  /**
+   * Not a status on its own — see {@link NOTIFICATION_TYPE_STATUS}.
+   *
+   * `Notification` is the only subscribed event whose meaning depends on a
+   * second field, and the entry here is the *floor*: a type this build does not
+   * recognise still means Claude raised something at the user, and `waiting` is
+   * the honest reading of that. The receiver refuses to publish an unrecognised
+   * type anyway, so this value is reached only if that guard is ever relaxed.
+   */
+  Notification: 'waiting',
   Stop: 'idle',
+};
+
+/**
+ * What Claude Code calls the thing it is interrupting the user about.
+ *
+ * Measured against 2.1.227 in a real pty, and the two observed values are the
+ * two that matter:
+ *
+ * ```
+ * turn ends            -> Stop
+ * +60s, no input       -> Notification  idle_prompt        "Claude is waiting for your input"
+ * tool needs approval  -> PermissionRequest
+ * +6s                  -> Notification  permission_prompt  "Claude needs your permission"
+ * ```
+ *
+ * **`idle_prompt` is the event this whole subscription exists for.** It is the
+ * only signal Claude emits for the most common way a session blocks on a human —
+ * the turn ended and nobody typed — which `Stop` cannot express, because `Stop`
+ * fires on every turn including the ones the user is sitting and watching. The
+ * sixty seconds are Claude's own debounce, and they are exactly the difference
+ * between "waiting" and "you walked away".
+ */
+export const NOTIFICATION_TYPES = ['idle_prompt', 'permission_prompt'] as const;
+
+export type HookNotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+export const isHookNotificationType = (
+  value: unknown,
+): value is HookNotificationType =>
+  typeof value === 'string' &&
+  (NOTIFICATION_TYPES as readonly string[]).includes(value);
+
+/**
+ * Both recognised types mean the same thing about the *session*: it is blocked
+ * on a human. They mean different things about the **inbox**, and that split is
+ * `notifications/index.ts`'s to make — `permission_prompt` arrives behind a
+ * `PermissionRequest` that has already raised a row, and must not raise a
+ * second.
+ */
+export const NOTIFICATION_TYPE_STATUS: Record<
+  HookNotificationType,
+  ObservedStatus
+> = {
+  idle_prompt: 'waiting',
+  permission_prompt: 'waiting',
 };
 
 
@@ -169,6 +247,20 @@ export interface HookStatusEvent {
   entityId: string;
   event: StatusHookEvent;
   status: ObservedStatus;
+  /**
+   * Which kind of interruption, for a `Notification` event only.
+   *
+   * On the event rather than folded into `event` because the two answer
+   * different questions and only one of them is a status: `event` says *which
+   * hook spoke*, which is what makes `waiting` distinguishable at all, and this
+   * says *what it said*. Flattening them into a widened `StatusHookEvent` would
+   * put synthetic members into a union whose whole value is that it names real
+   * Claude Code events.
+   *
+   * Absent for every other event, which is the same discipline `cwd` follows:
+   * absence is the honest answer, not a default.
+   */
+  notificationType?: HookNotificationType;
   /**
    * The directory the agent is working in, as the payload reported it (HIVE-78).
    *

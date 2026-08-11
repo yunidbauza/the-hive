@@ -28,6 +28,19 @@ import type { NotificationHub } from './hub';
  * table from channels to kinds, and it is the only thing that has to change when
  * a new channel becomes worth announcing.
  *
+ * ## What changed in HIVE-80
+ *
+ * The translation table gained the event it was missing. Two of the three ways
+ * a session blocks on a human were already here — a tool wanting approval, an
+ * MCP server wanting a sentence — and the commonest one was not: the turn ended
+ * and nobody typed. Nothing reported it, so the app said nothing, which is the
+ * bug the story was opened for.
+ *
+ * `Stop` was never the answer. It fires at the end of every turn, including the
+ * many the user is watching, and a row per turn is the notification stream
+ * people stop reading. Claude's `Notification/idle_prompt` fires sixty seconds
+ * later with nobody having typed, and that debounce is the whole difference.
+ *
  * ## No focus suppression
  *
  * The obvious rule — stay quiet while the app is focused — is not implementable
@@ -83,6 +96,28 @@ const WAITING_KIND: Record<string, NotificationKind> = {
   Elicitation: 'session.asked',
 };
 
+/**
+ * The third way, and the one that arrives on the `Notification` hook (HIVE-80).
+ *
+ * Keyed on `notification_type` rather than folded into {@link WAITING_KIND},
+ * because `Notification` is a single event that means two different things and
+ * only one of them belongs in the inbox:
+ *
+ * - `idle_prompt` — the turn ended and sixty seconds passed with nothing typed.
+ *   Nothing else reports this, and it is the commonest way a session ends up
+ *   waiting on a human.
+ * - `permission_prompt` — mapped to `undefined` **on purpose**. It arrives about
+ *   six seconds behind the `PermissionRequest` that already raised
+ *   `session.waiting`, so raising anything here would be the same interruption
+ *   twice, six seconds apart, with two different glyphs. The status still moves
+ *   to `waiting` — that path runs before this one — which is the whole of what
+ *   this event adds once the first has been seen.
+ */
+const NOTIFICATION_TYPE_KIND: Record<string, NotificationKind | undefined> = {
+  idle_prompt: 'session.input_needed',
+  permission_prompt: undefined,
+};
+
 /** What each blocked kind says, keyed so the copy sits beside the mapping. */
 const WAITING_COPY: Record<string, { title: string; body: string }> = {
   'session.waiting': {
@@ -93,16 +128,61 @@ const WAITING_COPY: Record<string, { title: string; body: string }> = {
     title: 'asked a question',
     body: 'It cannot carry on until you answer.',
   },
+  'session.input_needed': {
+    title: 'is waiting on you',
+    body: 'It finished its turn and has nothing left to do.',
+  },
 };
+
+/**
+ * Which inbox kind a `waiting` status is, or `undefined` for none.
+ *
+ * A free function so the two-step lookup reads as one question. `undefined` is
+ * a real answer twice over and the two are deliberately indistinguishable here:
+ * a hook this build has no reading of, and `permission_prompt`, which is a
+ * second sighting of something already announced. Both mean "move the dot, say
+ * nothing", and the caller needs no more than that.
+ */
+function waitingKind(
+  event: unknown,
+  notificationType: unknown,
+): NotificationKind | undefined {
+  if (event === 'Notification') {
+    if (typeof notificationType !== 'string') return undefined;
+    return NOTIFICATION_TYPE_KIND[notificationType];
+  }
+  if (typeof event !== 'string') return undefined;
+  return WAITING_KIND[event];
+}
 
 export function createNotifier(options: NotifierOptions): Notifier {
   const { hub } = options;
 
+  /**
+   * Sessions already announced as out of instructions (HIVE-80).
+   *
+   * `Notification/idle_prompt` is the only producer here that Claude may repeat
+   * on its own: it fires sixty seconds after a turn ends with nothing typed, and
+   * a session left alone all afternoon is a session that can reach that
+   * condition again without anything having changed. The hub's own dedup cannot
+   * help — it keys on an id, and every repeat is a genuinely new event at a new
+   * time.
+   *
+   * So the suppression is stated in terms of the *session* rather than the
+   * event: announced once, and not again until the session has visibly stopped
+   * waiting. Any non-`waiting` status clears it — the user typed and it went
+   * `working`, or it exited — which makes the next `idle_prompt` a new fact
+   * rather than the same one restated.
+   */
+  const announcedInputNeeded = new Set<string>();
+
   const sessionEvent = (payload: Record<string, unknown>): void => {
-    const { entityId, status, event } = payload;
+    const { entityId, status, event, notificationType } = payload;
     if (typeof entityId !== 'string' || typeof status !== 'string') return;
 
     const action = { type: 'session', entityId } as const;
+
+    if (status !== 'waiting') announcedInputNeeded.delete(entityId);
 
     if (status === 'waiting') {
       /**
@@ -113,8 +193,13 @@ export function createNotifier(options: NotifierOptions): Notifier {
        * show the user a glyph and a sentence describing a different question
        * than the one their session is actually asking.
        */
-      const kind = typeof event === 'string' ? WAITING_KIND[event] : undefined;
+      const kind = waitingKind(event, notificationType);
       if (kind === undefined) return;
+
+      if (kind === 'session.input_needed') {
+        if (announcedInputNeeded.has(entityId)) return;
+        announcedInputNeeded.add(entityId);
+      }
 
       const copy = WAITING_COPY[kind];
       hub.raise({

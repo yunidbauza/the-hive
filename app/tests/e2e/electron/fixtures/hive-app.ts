@@ -104,6 +104,25 @@ export const test = base.extend<{ hive: ElectronApplication; page: Page }>({
 export { expect };
 
 /**
+ * What the dock icon is currently badged with (HIVE-80).
+ *
+ * Only readable from the **main** process, which is why it lives here with
+ * every other Electron-specific call. `''` when nothing is badged, and
+ * `undefined` off macOS, where `app.dock` does not exist — the two are kept
+ * distinct so a spec can tell "cleared" from "not applicable" rather than
+ * asserting a falsy value and passing on Linux for the wrong reason.
+ *
+ * It matters more than a badge usually would. Measured on macOS 15 with
+ * Electron 43.2.0, the OS refuses this app's desktop notifications outright, so
+ * the badge is the only thing a user sees from outside the window.
+ */
+export function dockBadge(
+  app: ElectronApplication,
+): Promise<string | undefined> {
+  return app.evaluate(({ app: electronApp }) => electronApp.dock?.getBadge());
+}
+
+/**
  * Read the terminal the only honest way.
  *
  * The gotchas from `docs/terminal-architecture.md` carry over, and cost time

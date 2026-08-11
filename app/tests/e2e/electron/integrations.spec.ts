@@ -84,7 +84,50 @@ test('reports a gh state without throwing, installed or not', async ({}, testInf
   await app.close();
 });
 
-test('offers only the three classes that have a real event behind them', async ({}, testInfo) => {
+/**
+ * The notification preferences moved out of this pane in HIVE-75 and the specs
+ * below did not follow them.
+ *
+ * They were written for story 106's three switches — `sessionDone`,
+ * `sessionIdle`, `cloneDone`, each a boolean — living in Integrations. HIVE-75
+ * replaced all of that: ten registered kinds, each a three-way delivery, in a
+ * Notifications pane of their own. The specs went on asking Integrations for
+ * switches that were no longer anywhere, and had been failing ever since.
+ *
+ * Rewritten rather than deleted, because what they were *for* is untouched by
+ * any of that and is still only checkable here: a click in the renderer has to
+ * reach main, main's write has to produce a file the reader accepts, and the
+ * write has to be **partial** — a user's comments, unrelated keys and untouched
+ * preferences all survive it. Fakes cannot answer any of those.
+ */
+const openNotifications = async (page: Page): Promise<void> => {
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await page
+    .getByRole('navigation', { name: 'Settings sections' })
+    .getByRole('button', { name: 'Notifications' })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Notifications', level: 2 }),
+  ).toBeVisible();
+};
+
+/** Choose a delivery on the control for one kind, by its registry label. */
+const choose = async (
+  page: Page,
+  label: RegExp,
+  delivery: 'Off' | 'Inbox' | 'System',
+): Promise<void> => {
+  await page
+    .getByRole('radiogroup', { name: label })
+    .getByRole('radio', { name: delivery, exact: true })
+    .click();
+};
+
+const prefs = (path: string): Record<string, unknown> =>
+  (read(path).notifications ?? {}) as Record<string, unknown>;
+
+test('a chosen delivery lands in the file, comments intact', async ({}, testInfo) => {
   const { configPath } = seed((name) => testInfo.outputPath(name));
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -93,42 +136,21 @@ test('offers only the three classes that have a real event behind them', async (
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openNotifications(page);
 
-  await expect(page.getByRole('switch')).toHaveCount(3);
-  // `waiting` is not derivable from a pty (story 096), so it must not appear —
-  // not even disabled.
-  await expect(page.getByRole('switch', { name: /waiting/i })).toHaveCount(0);
-
-  await app.close();
-});
-
-test('a toggled switch lands in the file, comments intact', async ({}, testInfo) => {
-  const { configPath } = seed((name) => testInfo.outputPath(name));
-  const app = await launchHive({
-    userDataDir: testInfo.outputPath('user-data'),
-    configPath,
-  });
-  const page = await app.firstWindow();
-  await page.waitForSelector('header');
-
-  await openIntegrations(page);
-
-  // The file starts with no block at all: reading applies the defaults in
-  // memory and writes nothing.
+  // The file starts with no block at all: reading applies the registry defaults
+  // in memory and writes nothing.
   expect(read(configPath).notifications).toBeUndefined();
 
-  await page.getByRole('switch', { name: /session finishes/i }).click();
+  await choose(page, /session finishes/i, 'Off');
 
-  await expect
-    .poll(() => (read(configPath).notifications as Record<string, unknown>)?.sessionDone)
-    .toBe(false);
+  await expect.poll(() => prefs(configPath)['session.ended']).toBe('off');
 
   const written = read(configPath);
   expect(written['//']).toBe('a comment the UI must not eat');
-  // Only the class the user moved is written. The other two are defaulted in
+  // Only the kind the user moved is written. Every other kind is defaulted in
   // memory, so a later change to the defaults still reaches this user.
-  expect(written.notifications).toEqual({ sessionDone: false });
+  expect(written.notifications).toEqual({ 'session.ended': 'off' });
   // And nothing else in the file was restated.
   expect(written.claudeCommand).toBe('claude');
   expect((written.projects as unknown[])?.length).toBe(1);
@@ -136,7 +158,7 @@ test('a toggled switch lands in the file, comments intact', async ({}, testInfo)
   await app.close();
 });
 
-test('a second toggle does not restate the first', async ({}, testInfo) => {
+test('a second choice does not restate the first', async ({}, testInfo) => {
   const { configPath } = seed((name) => testInfo.outputPath(name));
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -145,37 +167,71 @@ test('a second toggle does not restate the first', async ({}, testInfo) => {
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openNotifications(page);
 
-  await page.getByRole('switch', { name: /session goes quiet/i }).click();
-  await expect
-    .poll(() => (read(configPath).notifications as Record<string, unknown>)?.sessionIdle)
-    .toBe(true);
+  await choose(page, /session goes quiet/i, 'Inbox');
+  await expect.poll(() => prefs(configPath)['session.idle']).toBe('inbox');
 
-  await page.getByRole('switch', { name: /clone finishes/i }).click();
-  await expect
-    .poll(() => (read(configPath).notifications as Record<string, unknown>)?.cloneDone)
-    .toBe(false);
+  await choose(page, /clone finishes/i, 'Off');
+  await expect.poll(() => prefs(configPath)['clone.done']).toBe('off');
 
-  // `sessionDone` was never touched, so it must still be absent — the partial
-  // write is what keeps an untouched class out of the user's file.
+  // `session.ended` was never touched, so it must still be absent — the partial
+  // write is what keeps an untouched kind out of the user's file.
   expect(read(configPath).notifications).toEqual({
-    sessionIdle: true,
-    cloneDone: false,
+    'session.idle': 'inbox',
+    'clone.done': 'off',
   });
 
   await app.close();
 });
 
-test('a hand-written class survives a save made through the UI', async ({}, testInfo) => {
+/**
+ * The kind HIVE-80 added, driven end to end.
+ *
+ * Worth its own case rather than folding into the one above: it is the newest
+ * entry in the registry, so a control that never reached the pane — a missing
+ * glyph, a kind the section iterates past — would show up here and nowhere
+ * else in this suite.
+ */
+test('offers the waiting-on-you kind, and saves it', async ({}, testInfo) => {
   const { configPath } = seed((name) => testInfo.outputPath(name));
-  // The interesting conformance case: a block written by hand, including a key
-  // this build has never heard of.
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openNotifications(page);
+
+  await choose(page, /runs out of instructions/i, 'Inbox');
+
+  await expect
+    .poll(() => prefs(configPath)['session.input_needed'])
+    .toBe('inbox');
+
+  await app.close();
+});
+
+test('a hand-written block survives a save made through the UI', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  /**
+   * The interesting conformance case: a block written by hand, holding both a
+   * current key and one of the **legacy booleans** story 106 wrote.
+   *
+   * The legacy key is the point. `resolveNotificationPrefs` migrates it on read
+   * and `parse.ts` tolerates it rather than reporting it, precisely so a config
+   * written before HIVE-75 is not quietly reset — and the only way to know that
+   * still holds through a real load and a real save is to do one.
+   */
   const document = read(configPath);
   writeFileSync(
     configPath,
     JSON.stringify(
-      { ...document, notifications: { sessionDone: false, waiting: true } },
+      {
+        ...document,
+        notifications: { 'session.ended': 'off', sessionIdle: true },
+      },
       null,
       2,
     ),
@@ -188,25 +244,25 @@ test('a hand-written class survives a save made through the UI', async ({}, test
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openNotifications(page);
 
-  // The hand-written value is what the switch shows.
+  // The hand-written value is what the control shows, not the registry default.
   await expect(
-    page.getByRole('switch', { name: /session finishes/i }),
-  ).toHaveAttribute('aria-checked', 'false');
+    page
+      .getByRole('radiogroup', { name: /session finishes/i })
+      .getByRole('radio', { name: 'Off', exact: true }),
+  ).toBeChecked();
 
-  await page.getByRole('switch', { name: /clone finishes/i }).click();
+  await choose(page, /clone finishes/i, 'Off');
 
-  await expect
-    .poll(() => (read(configPath).notifications as Record<string, unknown>)?.cloneDone)
-    .toBe(false);
+  await expect.poll(() => prefs(configPath)['clone.done']).toBe('off');
 
-  // The unknown key survives: the mutation spreads the block rather than
-  // rebuilding it, so a class a later story adds is not eaten by this one.
+  // Both prior keys survive: the mutation spreads the block rather than
+  // rebuilding it, so neither the current key nor the legacy one is eaten.
   expect(read(configPath).notifications).toEqual({
-    sessionDone: false,
-    waiting: true,
-    cloneDone: false,
+    'session.ended': 'off',
+    sessionIdle: true,
+    'clone.done': 'off',
   });
 
   await app.close();

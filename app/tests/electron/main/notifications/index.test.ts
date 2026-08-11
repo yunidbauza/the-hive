@@ -120,6 +120,105 @@ describe('session status', () => {
   });
 });
 
+/**
+ * The gap HIVE-80 closes.
+ *
+ * Measured against Claude Code 2.1.227 in a real pty: a turn ends with `Stop`,
+ * and sixty seconds later — if nobody has typed — `Notification` arrives with
+ * `notification_type: "idle_prompt"`. Nothing else reports it, and before this
+ * the app raised nothing at all for the commonest way a session waits on a
+ * human.
+ */
+describe('the Notification hook', () => {
+  const waiting = (
+    entityId: string,
+    notificationType: string,
+  ): Parameters<ReturnType<typeof notifier>['observe']>[1] => ({
+    entityId,
+    status: 'waiting',
+    event: 'Notification',
+    notificationType,
+  });
+
+  it('raises session.input_needed for an idle prompt', () => {
+    notifier().observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+
+    expect(raised().kind).toBe('session.input_needed');
+    expect(raised().title).toBe('lead-form is waiting on you');
+    expect(raised().action).toEqual({ type: 'session', entityId: 'lead-form' });
+  });
+
+  /**
+   * It arrives about six seconds behind the `PermissionRequest` that already
+   * said so. Two rows, two glyphs, one interruption.
+   */
+  it('raises nothing for a permission prompt — PermissionRequest already did', () => {
+    notifier().observe(
+      CH.sessionStatus,
+      waiting('lead-form', 'permission_prompt'),
+    );
+
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('ignores a notification type this build has no reading of', () => {
+    notifier().observe(CH.sessionStatus, waiting('lead-form', 'auth_needed'));
+
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('ignores a Notification carrying no type at all', () => {
+    notifier().observe(CH.sessionStatus, {
+      entityId: 'lead-form',
+      status: 'waiting',
+      event: 'Notification',
+    });
+
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Claude may repeat `idle_prompt` for a session left alone, and every repeat
+   * is a genuinely new event at a new time — so the hub's id dedup cannot see
+   * it. Said once per stretch of waiting, or the inbox fills with one fact.
+   */
+  it('says it once while the session stays waiting', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+    n.observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+    n.observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+
+    expect(raise).toHaveBeenCalledTimes(1);
+  });
+
+  it('says it again once the session has visibly stopped waiting', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+    // The user came back and typed.
+    n.observe(CH.sessionStatus, {
+      entityId: 'lead-form',
+      status: 'working',
+      event: 'UserPromptSubmit',
+    });
+    n.observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+
+    expect(raise).toHaveBeenCalledTimes(2);
+  });
+
+  /** The suppression is per session, not global. */
+  it('does not let one waiting session silence another', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
+    n.observe(CH.sessionStatus, waiting('call-notes', 'idle_prompt'));
+
+    expect(raise).toHaveBeenCalledTimes(2);
+    expect(raise.mock.calls[1][0].title).toBe('call-notes is waiting on you');
+  });
+});
+
 describe('clone', () => {
   it('raises clone.done on success, with nowhere to go', () => {
     notifier().observe(CH.configCloneDone, { ok: true });

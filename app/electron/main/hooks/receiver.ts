@@ -9,6 +9,8 @@ import {
   HOOK_PATH,
   HOOK_STATUS,
   HOOK_EVENTS,
+  NOTIFICATION_TYPE_STATUS,
+  isHookNotificationType,
   type HookEvent,
   type HookStatusEvent,
   type HookTicketIntentEvent,
@@ -133,6 +135,17 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    */
   const CWD_IN_PREFIX = /"cwd"\s*:\s*"([^"\\]*)"/;
 
+  /**
+   * And once more for `notification_type`, which decides what a `Notification`
+   * means.
+   *
+   * A closed vocabulary like the event name, so the same fixed shape and the
+   * same justification apply — and it has to survive truncation for a reason
+   * the others do not share: a `Notification` payload carries the `message`
+   * Claude would have shown, which is unbounded prose.
+   */
+  const NOTIFICATION_TYPE_IN_PREFIX = /"notification_type"\s*:\s*"([a-z_]+)"/;
+
   function handle(
     headers: Record<string, string | string[] | undefined>,
     body: string,
@@ -162,6 +175,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     let event: unknown;
     let reason: unknown;
     let cwd: unknown;
+    let notificationType: unknown;
     /**
      * Only ever set on a body that parsed whole.
      *
@@ -179,6 +193,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       event = EVENT_IN_PREFIX.exec(body)?.[1];
       reason = REASON_IN_PREFIX.exec(body)?.[1];
       cwd = CWD_IN_PREFIX.exec(body)?.[1];
+      notificationType = NOTIFICATION_TYPE_IN_PREFIX.exec(body)?.[1];
     } else {
       let parsed: unknown;
       try {
@@ -193,12 +208,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               reason?: unknown;
               cwd?: unknown;
               prompt?: unknown;
+              notification_type?: unknown;
             })
           : undefined;
       event = fields?.hook_event_name;
       reason = fields?.reason;
       cwd = fields?.cwd;
       prompt = fields?.prompt;
+      notificationType = fields?.notification_type;
     }
 
     /**
@@ -237,6 +254,31 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (event === 'UserPromptSubmit' && typeof prompt === 'string') {
       const key = ticketKeyFromPrompt(prompt);
       if (key !== null) onTicketIntent({ entityId, key });
+    }
+
+    /**
+     * A `Notification` is the one event whose status is not a property of the
+     * event.
+     *
+     * An **unrecognised** type is answered 204 and published as nothing, which
+     * is the same treatment an unsubscribed event gets and for the same reason:
+     * Claude raises notifications this app has no reading of — an auth prompt,
+     * something added in a later release — and moving a session to `waiting` on
+     * one would put a dot on the rail that no amount of looking at the terminal
+     * explains. The vocabulary is closed here so that a new member is a decision
+     * someone makes, not a guess this code makes on their behalf.
+     */
+    if (event === 'Notification') {
+      if (!isHookNotificationType(notificationType)) return 204;
+
+      onEvent({
+        entityId,
+        event,
+        status: NOTIFICATION_TYPE_STATUS[notificationType],
+        notificationType,
+        ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+      });
+      return 204;
     }
 
     onEvent({

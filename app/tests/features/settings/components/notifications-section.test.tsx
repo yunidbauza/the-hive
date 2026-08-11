@@ -9,8 +9,12 @@ import {
 } from '@shared/notification-contract';
 
 const setNotificationPrefs = vi.fn((_request: unknown) => Promise.resolve());
-let status: { notificationsSupported: boolean } | null = {
+let status: {
+  notificationsSupported: boolean;
+  systemNotificationsRefused: string | null;
+} | null = {
   notificationsSupported: true,
+  systemNotificationsRefused: null,
 };
 let snapshot: unknown = { notifications: {} };
 
@@ -25,7 +29,7 @@ vi.mock('@hooks/use-project-config', () => ({
 
 beforeEach(() => {
   setNotificationPrefs.mockClear();
-  status = { notificationsSupported: true };
+  status = { notificationsSupported: true, systemNotificationsRefused: null };
   snapshot = { notifications: {} };
 });
 
@@ -117,7 +121,7 @@ describe('NotificationsSection', () => {
    * between two machines without saying so.
    */
   it('disables the desktop option when the OS cannot present one', async () => {
-    status = { notificationsSupported: false };
+    status = { notificationsSupported: false, systemNotificationsRefused: null };
     render(<NotificationsSection />);
 
     const group = await screen.findByRole('radiogroup', {
@@ -127,6 +131,51 @@ describe('NotificationsSection', () => {
       within(group).getByRole('radio', { name: 'System' }),
     ).toBeDisabled();
     expect(within(group).getByRole('radio', { name: 'Inbox' })).toBeEnabled();
+  });
+
+  /**
+   * The case the pane used to hide (HIVE-80).
+   *
+   * `Notification.isSupported()` answers `true` on macOS and every send is then
+   * refused — measured, `UNErrorDomain error 1`. Without this the pane went on
+   * describing a "System" delivery that had never once been delivered, and the
+   * user had no way to find out.
+   */
+  it('says so when the OS claimed support and then refused delivery', async () => {
+    status = {
+      notificationsSupported: true,
+      systemNotificationsRefused: 'UNErrorDomain error 1.',
+    };
+    render(<NotificationsSection />);
+
+    const note = await screen.findByText(/refused this app/i);
+    expect(note).toHaveTextContent('UNErrorDomain error 1.');
+    // The actionable half: nothing was lost, and the dock still reacts.
+    expect(note).toHaveTextContent(/inbox/i);
+    expect(note).toHaveTextContent(/dock/i);
+  });
+
+  /** Two notes describing one system would be one note too many. */
+  it('shows only the unsupported note when the OS never claimed support', async () => {
+    status = {
+      notificationsSupported: false,
+      systemNotificationsRefused: 'UNErrorDomain error 1.',
+    };
+    render(<NotificationsSection />);
+
+    expect(
+      await screen.findByText(/cannot show desktop notifications/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/refused this app/i)).toBeNull();
+  });
+
+  it('says nothing at all while delivery is working', async () => {
+    render(<NotificationsSection />);
+    // Awaited so the status fetch has resolved before the absence is asserted.
+    await screen.findByRole('heading', { name: 'Notifications', level: 2 });
+
+    expect(screen.queryByText(/refused this app/i)).toBeNull();
+    expect(screen.queryByText(/cannot show desktop notifications/i)).toBeNull();
   });
 
   /** Slack has no producer, so it must not appear (HIVE-77). */

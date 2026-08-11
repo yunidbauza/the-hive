@@ -51,6 +51,22 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
 /**
  * Every kind of thing the app will raise.
  *
+ * ## Why `session.input_needed` is a third waiting kind (HIVE-80)
+ *
+ * The two below cover a session blocked *mid-turn* — a tool wants a yes, an MCP
+ * server wants a sentence. Neither covers the commonest way a session ends up
+ * waiting on a human: the turn finished and nobody typed. That is not a
+ * question and not an approval; nothing was asked, and the session is simply
+ * done talking and out of instructions.
+ *
+ * It had no producer until this story because there was no event to hang it on.
+ * `Stop` is not it — `Stop` fires at the end of *every* turn, including the many
+ * the user is sitting and watching, and a row per turn is the notification
+ * stream nobody trusts. Claude's `Notification/idle_prompt` fires sixty seconds
+ * after `Stop` with nobody having typed, and that debounce is exactly the
+ * difference between "the turn ended" and "you walked away". Measured, not
+ * assumed — see `hook-contract.ts`.
+ *
  * ## Why `session.waiting` and `session.asked` are two kinds
  *
  * Both map to the *status* `waiting` — `hook-contract.ts` maps
@@ -71,6 +87,7 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
 export const NOTIFICATION_KINDS = [
   'session.waiting',
   'session.asked',
+  'session.input_needed',
   'session.ended',
   'session.idle',
   'clone.done',
@@ -197,6 +214,23 @@ export const NOTIFICATION_KIND_SPECS: Record<
       'An agent needs an answer before it can carry on. Blocked, like an approval, but it wants words rather than a yes.',
     icon: 'ph-chat-circle-dots',
     tone: 'amber',
+    defaultDelivery: 'both',
+  },
+  'session.input_needed': {
+    source: 'session',
+    label: 'When a session runs out of instructions',
+    description:
+      'Its turn ended and a minute passed with nothing typed. Not a question — it has simply finished and is waiting on you.',
+    icon: 'ph-keyboard',
+    tone: 'amber',
+    /**
+     * `both`, and the least arguable default in this record.
+     *
+     * The sixty-second debounce is Claude's, not the app's, and it has already
+     * established the one fact that makes an interruption reasonable: the user
+     * is not looking. A kind that only ever fires when nobody is watching is a
+     * kind whose whole purpose is the desktop toast.
+     */
     defaultDelivery: 'both',
   },
   'session.ended': {

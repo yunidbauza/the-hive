@@ -29,6 +29,7 @@ import {
   GitPullRequest,
   GlobeHemisphereWest,
   HandPalm,
+  Keyboard,
   Lightning,
   Moon,
   PaperPlaneTilt,
@@ -98,6 +99,10 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-moon': Moon,
   'ph-x-circle': XCircle,
   'ph-download-simple': DownloadSimple,
+
+  // HIVE-80's kind: a session that has run out of instructions and is waiting
+  // on the user to type. A keyboard, because that is what it wants.
+  'ph-keyboard': Keyboard,
 
   /**
    * The project explorer and the editor.

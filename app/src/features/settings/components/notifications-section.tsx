@@ -172,6 +172,27 @@ export function NotificationsSection() {
         </p>
       ) : null}
 
+      {/*
+        Only when support was *claimed* and delivery was then refused
+        (HIVE-80). The two notes are mutually exclusive by construction, and
+        this is the one that describes the case the app used to hide: the API
+        says notifications are supported, the OS drops every one of them, and
+        without this the pane goes on offering a switch that has never done
+        anything. The dock badge and bounce still fire, which is why the last
+        sentence is the useful part rather than an apology.
+      */}
+      {status !== null &&
+      status.notificationsSupported &&
+      status.systemNotificationsRefused !== null ? (
+        <p className="text-[12.5px] text-amber">
+          The system refused this app&rsquo;s last desktop notification
+          &mdash;&nbsp;
+          <span className="text-subtle">{status.systemNotificationsRefused}</span>
+          . Notifications set to &ldquo;System&rdquo; still reach the inbox, and
+          still badge and bounce the dock icon.
+        </p>
+      ) : null}
+
       {NOTIFICATION_SOURCE_ORDER.map((source) => {
         const kinds = kindsForSource(source);
         // A source with no registered kinds renders nothing rather than an

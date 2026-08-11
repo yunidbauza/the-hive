@@ -3,8 +3,8 @@
 Guidance for anyone — human or agent — working in this codebase.
 
 This file is deliberately **thin**: the rules that always apply, plus a table
-routing to deep-dives. Load the deep-dive that matches what you are working on
-rather than carrying all of it every turn.
+routing to deep-dives. Load the one matching what you are working on rather than
+carrying all of it every turn.
 
 ## Project overview
 
@@ -16,9 +16,9 @@ sessions. **The most important component is the embedded terminal at the center 
 the screen** — everything else exists to route the user's attention to the right
 terminal at the right moment.
 
-Current phase: terminals are **real PTYs**, projects come from a config file and
-tickets from **Jira**, PRs from `gh`; notifications are the last seeded surface. The
-right rail's third tab is a **project explorer** over the active session's
+Current phase: terminals are **real PTYs**, projects come from a config file,
+tickets from **Jira**, PRs from `gh`, and notifications from Claude Code's hooks.
+The right rail's third tab is a **project explorer** over the active session's
 repository, opening files into a CodeMirror editor on the centre stage. Full
 context and scope: the **HIVE project in Jira**, the backlog.
 
@@ -42,14 +42,13 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e:web` | The browser specs — chrome, layout and empty states (story 070) |
 | `pnpm test:e2e:electron` | The built desktop app (story 085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
+| `pnpm test:hooks` | Hook conformance — a real `claude`, real hooks, ~3½ min (HIVE-80) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
 done.** Neither is optional, and no rule may be disabled inline to make a task pass.
 
 ## Deep-dive docs
-
-Load the one that matches the surface you are working on.
 
 | When you are working on… | Load |
 | --- | --- |
@@ -189,10 +188,10 @@ slice back — **the app boots empty**. Tests: `tests/support/`.
   plumbing only. Colours, selection and scrollback belong in Playwright.
   **CodeMirror is the opposite**: it renders without measuring first, so
   `.cm-content` really holds the text. Do not add a mock for it.
-- **`node-pty` is never loaded for real** — not because it cannot load, but
-  because a unit test that spawns real processes leaks them.
-  `__mocks__/node-pty.ts` holds a recording fake; assert spawn arguments, cwd,
-  write/resize/kill routing and exit handling. Terminal *semantics* — signals,
-  resize, alt-screen, exit codes — need Electron's ABI: `pnpm test:pty` (098).
+- **`node-pty` is never loaded for real** — a unit test that spawns real
+  processes leaks them. `__mocks__/node-pty.ts` records; assert spawn arguments,
+  cwd, write/resize/kill routing, exit handling. What only a real process can
+  show: terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks
+  actually send — `pnpm test:hooks` (HIVE-80).
 - Never add a coverage-ignore comment to pass the gate. An untestable branch is
   usually a design smell — fix the shape instead.

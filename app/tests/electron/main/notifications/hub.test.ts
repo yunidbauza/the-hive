@@ -18,6 +18,7 @@ let present: Mock<(options: PresentOptions) => void>;
 let broadcast: Mock<(notification: HiveNotification) => void>;
 let activate: Mock<(action: NotificationAction) => void>;
 let announceRead: Mock<(id: string | null) => void>;
+let announceUnread: Mock<(count: number) => void>;
 
 let now: number;
 let hub: NotificationHub;
@@ -28,6 +29,7 @@ beforeEach(() => {
   broadcast = vi.fn();
   activate = vi.fn();
   announceRead = vi.fn();
+  announceUnread = vi.fn();
   now = 1_700_000_000_000;
 
   hub = createNotificationHub({
@@ -36,9 +38,14 @@ beforeEach(() => {
     broadcast: (notification) => broadcast(notification),
     activate: (action) => activate(action),
     announceRead: (id) => announceRead(id),
+    announceUnread: (count) => announceUnread(count),
     now: () => now,
   });
 });
+
+/** The most recent count pushed at the dock badge. */
+const lastUnread = (): number | undefined =>
+  announceUnread.mock.calls.at(-1)?.[0];
 
 const raise = (over: Partial<Parameters<NotificationHub['raise']>[0]> = {}) =>
   hub.raise({ kind: 'session.waiting', title: 'blocked', ...over });
@@ -186,6 +193,74 @@ describe('read-state reaches the renderer', () => {
   });
 });
 
+/**
+ * The dock badge (HIVE-80).
+ *
+ * Not decoration beside the toast — measured on macOS 15 / Electron 43.2.0, the
+ * OS refuses this app's notifications outright, so the badge is the only thing
+ * a user sees from outside the window. A count that lags is therefore the whole
+ * signal being wrong, not a cosmetic slip.
+ */
+describe('the unread count', () => {
+  it('announces the new count as each notification is raised', () => {
+    raise({ id: 'a' });
+    expect(lastUnread()).toBe(1);
+
+    raise({ id: 'b' });
+    expect(lastUnread()).toBe(2);
+  });
+
+  it('announces nothing for a notification that was dropped', () => {
+    raise({ id: 'a' });
+    announceUnread.mockClear();
+
+    // A duplicate id, and then a kind switched off.
+    raise({ id: 'a' });
+    prefs = { 'session.waiting': 'off' };
+    raise({ id: 'c' });
+
+    expect(announceUnread).not.toHaveBeenCalled();
+  });
+
+  it('counts down as rows are read, one at a time and all at once', () => {
+    raise({ id: 'a' });
+    raise({ id: 'b' });
+
+    hub.markRead('a');
+    expect(lastUnread()).toBe(1);
+
+    hub.markRead(null);
+    expect(lastUnread()).toBe(0);
+  });
+
+  /**
+   * The reason the count is derived from the buffer rather than tallied. An
+   * unread row falling off the end of the cap is exactly the transition a
+   * hand-maintained counter forgets.
+   */
+  it('never exceeds the cap, however many are raised', () => {
+    for (let i = 0; i < NOTIFICATION_CAP + 10; i += 1) raise({ id: `n${i}` });
+    expect(lastUnread()).toBe(NOTIFICATION_CAP);
+  });
+
+  it('announces zero when the buffer is cleared', () => {
+    raise({ id: 'a' });
+    hub.clear();
+
+    expect(lastUnread()).toBe(0);
+  });
+
+  /** A toast click is a read, and the badge has to hear about it too. */
+  it('counts down when a toast is clicked', () => {
+    raise({ id: 'a' });
+    announceUnread.mockClear();
+
+    present.mock.calls[0][0].onClick();
+
+    expect(lastUnread()).toBe(0);
+  });
+});
+
 describe('robustness', () => {
   /**
    * The regression: `raise` used to reach its own `markRead` through `this`, so
@@ -227,6 +302,7 @@ describe('robustness', () => {
       broadcast: (notification) => broadcast(notification),
       activate: (action) => activate(action),
       announceRead: (id) => announceRead(id),
+      announceUnread: (count) => announceUnread(count),
       now: () => now,
     });
 

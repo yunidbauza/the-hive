@@ -159,6 +159,23 @@ function handle<T>(
   });
 }
 
+/**
+ * Why the OS last refused a desktop notification, or `null` (HIVE-80).
+ *
+ * Module scope rather than a field on the hub, because it is not a fact about
+ * notifications — it is a fact about **this operating system's answer to this
+ * process**, learned the only way it can be learned, by trying. The hub is
+ * deliberately ignorant of how a notification is presented, and giving it
+ * somewhere to store a macOS authorization error would be the first crack in
+ * that.
+ *
+ * Never reset. A refusal is not transient in the case that produces it — an
+ * unsigned bundle stays unsigned for the life of the process — and clearing it
+ * on the next successful send would mean the settings pane flickered between
+ * two accounts of the same system.
+ */
+let systemNotificationRefusal: string | null = null;
+
 let sessions: Sessions | null = null;
 /** The clone flow (story 102), or `null` before registration. */
 let cloneFlow: CloneFlow | null = null;
@@ -209,7 +226,48 @@ export function registerIpcHandlers(): void {
 
       const notification = new Notification({ title, body });
       notification.on('click', onClick);
+      /**
+       * The failure that was being thrown away (HIVE-80).
+       *
+       * `show()` is fire-and-forget and its refusal arrives here, on an event
+       * nothing was listening to. Measured on macOS 15 / Electron 43.2.0:
+       * `isSupported()` returns `true`, this event fires with `UNErrorDomain
+       * error 1` — not authorized — and the app carried on reporting desktop
+       * delivery as available. Every "System" notification since has been
+       * dropped in silence.
+       *
+       * Recorded rather than merely logged, because the honest place for it is
+       * the settings pane that offers the switch. Logged once per distinct
+       * reason so a fleet of blocked sessions cannot fill a terminal with the
+       * same line.
+       */
+      notification.on('failed', (_event, error) => {
+        const reason = String(error);
+        if (systemNotificationRefusal === reason) return;
+        systemNotificationRefusal = reason;
+        console.error(
+          `[hive] the OS refused a desktop notification — the inbox still has it (${reason})`,
+        );
+      });
       notification.show();
+
+      /**
+       * The dock is what still works when the OS says no.
+       *
+       * Measured on the same machine that refuses notifications outright:
+       * `app.dock.bounce('critical')` and `setBadge` both succeed, because
+       * neither needs notification authorization. So the app is not out of ways
+       * to reach someone in another window — it was only using the one that was
+       * being rejected.
+       *
+       * Unconditional rather than only on a recorded refusal. A bounce is what
+       * `both` already means — *interrupt me* — and gating it on a failure
+       * would make the first interruption of every launch the one that gets
+       * lost, since the refusal is not known until a send has already failed.
+       * `dock` is undefined off macOS, where the badge and bounce have no
+       * equivalent and the toast is expected to work.
+       */
+      app.dock?.bounce('critical');
     },
     /**
      * Straight to the renderer, not through `send` (HIVE-75).
@@ -233,6 +291,21 @@ export function registerIpcHandlers(): void {
           id,
         } satisfies NotificationReadEvent);
       }
+    },
+    /**
+     * The count on the dock icon (HIVE-80).
+     *
+     * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
+     * reading `0` is a worse lie than no badge, because it says the app has
+     * something to report and the something is nothing.
+     *
+     * Off macOS `app.dock` is undefined and this is a no-op. Windows has a
+     * taskbar overlay that would serve the same purpose and needs an icon
+     * rather than a string, so it is left for whoever ships a Windows build
+     * rather than approximated here.
+     */
+    announceUnread: (count) => {
+      app.dock?.setBadge(count > 0 ? String(count) : '');
     },
     activate: (action) => {
       /**
@@ -537,6 +610,7 @@ export function registerIpcHandlers(): void {
     return {
       gh: readGhStatus(env, runCommand),
       notificationsSupported: Notification.isSupported(),
+      systemNotificationsRefused: systemNotificationRefusal,
     };
   });
 

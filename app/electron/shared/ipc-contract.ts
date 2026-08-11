@@ -527,6 +527,26 @@ export interface IntegrationsStatus {
    * left as controls that quietly do nothing.
    */
   notificationsSupported: boolean;
+  /**
+   * Why the OS refused the last desktop notification, or `null` if none has
+   * been refused (HIVE-80).
+   *
+   * **`notificationsSupported` is not the same question, and believing it was
+   * is the bug this field exists for.** Measured on macOS 15 with Electron
+   * 43.2.0: `Notification.isSupported()` answers `true`, `show()` then emits
+   * `failed` with `UNErrorDomain error 1` — not authorized — and
+   * `com.github.Electron` never appears in Notification Center's own list of
+   * clients. Nothing threw, nothing logged, and the settings pane went on
+   * describing a "System" delivery that had never once been delivered.
+   *
+   * So support is what the API is willing to claim in advance, and this is what
+   * actually happened. Only the second one is evidence.
+   *
+   * A string rather than a boolean because the reason is the actionable part:
+   * "macOS refused it" sends a user to System Settings, and there is no entry
+   * there to find until the app is a signed bundle of its own.
+   */
+  systemNotificationsRefused: string | null;
 }
 
 /** A clicked notification, naming the session it was about (story 106). */

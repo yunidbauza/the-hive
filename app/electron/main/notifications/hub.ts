@@ -89,6 +89,20 @@ export interface NotificationHubOptions {
    * write it back again.
    */
   announceRead: (id: string | null) => void;
+  /**
+   * How many are still unread, after every change to the buffer (HIVE-80).
+   *
+   * Pushed rather than offered as a getter, because the consumer is the **dock
+   * badge** and a badge is only ever wrong in one direction: nobody notices a
+   * count that was never set, everybody notices one that is stale. A getter puts
+   * the obligation to re-read on four call sites that have no reason to know a
+   * badge exists; this puts it on the one place the number changes.
+   *
+   * It matters more than it looks. On this machine — measured — macOS refuses
+   * Electron's notifications outright, so the dock badge is not decoration
+   * beside the toast, it is the only thing the user sees from outside the app.
+   */
+  announceUnread: (count: number) => void;
   now: () => number;
 }
 
@@ -133,10 +147,31 @@ function mintId(kind: NotificationKind, at: number): string {
 export function createNotificationHub(
   options: NotificationHubOptions,
 ): NotificationHub {
-  const { prefs, present, broadcast, activate, announceRead, now } = options;
+  const {
+    prefs,
+    present,
+    broadcast,
+    activate,
+    announceRead,
+    announceUnread,
+    now,
+  } = options;
 
   let buffer: HiveNotification[] = [];
   const seen = new Set<string>();
+
+  /**
+   * Counted from the buffer rather than kept as a tally.
+   *
+   * The codebase's own rule — derived values are computed, never stored — and
+   * the reason it applies here is `NOTIFICATION_CAP`: a counter incremented on
+   * raise and decremented on read would have to also notice an *eviction*, and
+   * an unread row falling off the end of a fifty-deep buffer is exactly the
+   * event a hand-maintained tally forgets. Fifty entries is nothing to walk.
+   */
+  const announce = (): void => {
+    announceUnread(buffer.reduce((n, entry) => n + (entry.unread ? 1 : 0), 0));
+  };
 
   /**
    * A free function, deliberately, rather than a method reached through `this`.
@@ -161,6 +196,15 @@ export function createNotificationHub(
         : buffer.map((entry) =>
             entry.id === id ? { ...entry, unread: false } : entry,
           );
+    /**
+     * After the buffer, never before.
+     *
+     * `announceRead` above may go first — the renderer applies read state from
+     * the id and never asks this side for a count — but the badge is a
+     * *derivation of the buffer*, so announcing it before the map runs would
+     * publish the count from before the read every single time.
+     */
+    announce();
   };
 
   const remember = (id: string): void => {
@@ -210,6 +254,7 @@ export function createNotificationHub(
         };
 
         buffer = [notification, ...buffer].slice(0, NOTIFICATION_CAP);
+        announce();
         broadcast(notification);
 
         if (delivery === 'both') {
@@ -247,6 +292,7 @@ export function createNotificationHub(
     clear() {
       buffer = [];
       seen.clear();
+      announce();
     },
   };
 }

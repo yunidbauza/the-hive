@@ -178,6 +178,94 @@ describe('hook receiver', () => {
     expect(events).toEqual([]);
   });
 
+  /**
+   * The `Notification` hook (HIVE-80) — the only event whose status is not a
+   * property of the event.
+   *
+   * Measured against Claude Code 2.1.227 in a real pty: `idle_prompt` sixty
+   * seconds after a turn ended with nothing typed, `permission_prompt` about
+   * six seconds after a permission prompt appears. Both mean the session is
+   * blocked on a human; what they mean for the *inbox* is decided downstream.
+   */
+  describe('the Notification hook', () => {
+    it.each(['idle_prompt', 'permission_prompt'])(
+      'maps %s to waiting, carrying the type through',
+      async (notificationType) => {
+        const response = await post({
+          hook_event_name: 'Notification',
+          notification_type: notificationType,
+          message: 'Claude is waiting for your input',
+        });
+
+        expect(response.status).toBe(204);
+        expect(events).toEqual([
+          {
+            entityId: 'sess-01',
+            event: 'Notification',
+            status: 'waiting',
+            notificationType,
+          },
+        ]);
+      },
+    );
+
+    /**
+     * Claude raises notifications this build has no reading of. Moving a
+     * session to `waiting` on one would put a dot on the rail that no amount of
+     * looking at the terminal explains — and a 4xx would print a hook failure
+     * in the user's session for something the app simply does not care about.
+     */
+    it('publishes nothing for a type it does not know, and still answers 204', async () => {
+      const response = await post({
+        hook_event_name: 'Notification',
+        notification_type: 'something_new',
+      });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([]);
+    });
+
+    it('publishes nothing for a Notification carrying no type', async () => {
+      const response = await post({ hook_event_name: 'Notification' });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([]);
+    });
+
+    /**
+     * A `Notification` payload carries the prose Claude would have shown, which
+     * is unbounded — so the type has to survive the same truncation the event
+     * name does, or the biggest ones would silently stop reporting.
+     */
+    it('reads the type out of an oversized body', async () => {
+      const response = await post({
+        hook_event_name: 'Notification',
+        notification_type: 'idle_prompt',
+        message: 'x'.repeat(256 * 1024),
+      });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([
+        {
+          entityId: 'sess-01',
+          event: 'Notification',
+          status: 'waiting',
+          notificationType: 'idle_prompt',
+        },
+      ]);
+    });
+
+    it('carries the cwd along, as every other event does', async () => {
+      await post({
+        hook_event_name: 'Notification',
+        notification_type: 'idle_prompt',
+        cwd: '/repos/apfm-web',
+      });
+
+      expect(events[0].cwd).toBe('/repos/apfm-web');
+    });
+  });
+
   it('rejects a malformed body', async () => {
     const response = await post('not json at all');
     expect(response.status).toBe(400);

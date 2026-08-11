@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ConfigSnapshot } from '@shared/config-contract';
-import type { ObservedStatus, StatusHookEvent } from '@shared/hook-contract';
+import type {
+  HookNotificationType,
+  ObservedStatus,
+  StatusHookEvent,
+} from '@shared/hook-contract';
 import {
   CH,
   type DataEvent,
@@ -444,7 +448,12 @@ export function createSessions(options: SessionsOptions): Sessions {
   void hooks?.start({
     knowsSession: (entityId) => registry.sessionFor(entityId) !== undefined,
     onEvent: (event) => {
-      publishHookStatus(event.entityId, event.status, event.event);
+      publishHookStatus(
+        event.entityId,
+        event.status,
+        event.event,
+        event.notificationType,
+      );
       /**
        * The branch read is deliberately **after** the status (HIVE-78).
        *
@@ -512,11 +521,20 @@ export function createSessions(options: SessionsOptions): Sessions {
      * about the inbox it has managed to avoid having so far.
      */
     event?: StatusHookEvent,
+    /**
+     * What kind of interruption, when `event` is `Notification` (HIVE-80).
+     *
+     * Passed through for the reason `event` is: the hub decides that a
+     * `permission_prompt` is already covered by the `PermissionRequest` ahead of
+     * it and an `idle_prompt` is not, and that judgement has no business here.
+     */
+    notificationType?: HookNotificationType,
   ): void {
     send(CH.sessionStatus, {
       entityId,
       status,
       ...(event === undefined ? {} : { event }),
+      ...(notificationType === undefined ? {} : { notificationType }),
     } satisfies SessionStatusEvent);
   }
 
@@ -598,9 +616,10 @@ export function createSessions(options: SessionsOptions): Sessions {
     entityId: string,
     status: ObservedStatus,
     event?: StatusHookEvent,
+    notificationType?: HookNotificationType,
   ): void {
     hookDriven.add(entityId);
-    publishStatus(entityId, status, event);
+    publishStatus(entityId, status, event, notificationType);
   }
 
   /**

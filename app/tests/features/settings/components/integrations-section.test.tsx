@@ -52,6 +52,7 @@ const gh = (over: Partial<GhStatus> = {}): GhStatus => ({
 const status = (over: Partial<IntegrationsStatus> = {}): IntegrationsStatus => ({
   gh: gh(),
   notificationsSupported: true,
+  systemNotificationsRefused: null,
   ...over,
 });
 

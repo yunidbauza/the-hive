@@ -279,13 +279,35 @@ abandoned attempt and `/exit` after a merged PR produce byte-identical evidence.
 by accident. A `terminated` session's tab is also closed to new visits — its pty
 is gone — which is enforced once, in `hive-store`'s `openEntity`.
 
-`waiting` is **not derived, and the type main sends cannot express it.** A TUI
-that has asked a question and one that is thinking both produce no output;
-distinguishing them by scraping rendered text would be a heuristic that fails
-silently, and the entire inbox and attention model is built on this field.
-Fixture sessions still show `waiting`; no real session enters it. The real
-mechanism is a Claude Code notification hook — a first-class integration with its
-own design, named here so the gap is recorded rather than discovered.
+`waiting` is **not derived** — `DerivedStatus` cannot express it. A TUI that has
+asked a question and one that is thinking both produce no output; distinguishing
+them by scraping rendered text would be a heuristic that fails silently, and the
+entire inbox and attention model is built on this field.
+
+It is **reported** instead, by Claude Code's hooks (HIVE-62), which are a
+different observer with a vantage point a pty does not have — hence
+`ObservedStatus`, wider than `DerivedStatus` by exactly this member. Three
+events reach it, and they are three genuinely different facts about the user:
+
+| Hook | Means |
+| --- | --- |
+| `PermissionRequest` | a tool wants a yes |
+| `Elicitation` | an MCP server wants a sentence |
+| `Notification` + `notification_type: idle_prompt` | the turn ended and sixty seconds passed with nothing typed (HIVE-80) |
+
+The third is the commonest and was the last to arrive. `Stop` is not a
+substitute for it: `Stop` fires at the end of *every* turn, including the ones
+the user is sitting and watching, so it maps to `idle` and raises nothing. The
+sixty seconds are Claude's own debounce and are the whole difference between
+"the turn ended" and "you walked away".
+
+`Notification` also fires with `permission_prompt`, about six seconds behind the
+`PermissionRequest` that already announced the same block. It moves the status
+and raises nothing — see `notifications/index.ts`.
+
+All of this is measured rather than assumed, and `pnpm test:hooks` is what
+measures it: a real `claude` in a real pty, driven through the app's own
+receiver, notifier and hub. Run it when the targeted Claude Code version moves.
 
 ## Two ABI facts that produce unreadable errors when forgotten
 

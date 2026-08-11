@@ -1,4 +1,8 @@
-import type { ObservedStatus, StatusHookEvent } from './hook-contract';
+import type {
+  HookNotificationType,
+  ObservedStatus,
+  StatusHookEvent,
+} from './hook-contract';
 
 /**
  * The session lifecycle contract (story 096).
@@ -60,6 +64,17 @@ export interface SessionStatusEvent {
    * has no hook to name. Absent is the honest answer there, not a default.
    */
   event?: StatusHookEvent;
+  /**
+   * Which kind of interruption, when `event` is `Notification`.
+   *
+   * The third hook that can produce `waiting`, and the one that needed a second
+   * field: `Notification` fires both for a permission prompt — six seconds
+   * behind the `PermissionRequest` that already announced it — and for
+   * "Claude is waiting for your input", sixty seconds after a turn ended with
+   * nobody typing. One raises a row, the other must not raise a second, and the
+   * status alone cannot tell them apart.
+   */
+  notificationType?: HookNotificationType;
 }
 
 /**

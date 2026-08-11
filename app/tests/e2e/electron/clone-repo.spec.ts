@@ -16,7 +16,7 @@ import {
   type Page,
 } from '@playwright/test';
 
-import { launchHive } from './fixtures/hive-app';
+import { dockBadge, launchHive } from './fixtures/hive-app';
 
 /**
  * Cloning a repository, driven through the real app (story 102).
@@ -147,6 +147,103 @@ test('clones a repository and registers it as a project', async ({}, testInfo) =
     expect(entry).toBeDefined();
     expect(entry?.origin).toBe('cloned');
     expect(entry?.path).toBe(resolved);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * What a raised notification does *outside* the window (HIVE-80).
+ *
+ * A clone is the one producer this suite can drive end to end, and it is a
+ * `both` kind — so finishing one exercises the whole delivery path in the real
+ * app: the hub raises, the dock badge is pushed, and `present()` hands the OS a
+ * notification whose refusal, if there is one, must reach the settings pane
+ * rather than being swallowed.
+ *
+ * The refusal itself is **platform-dependent and asserted as such**. On the Mac
+ * this was written on, `Notification.isSupported()` answers `true` and every
+ * `show()` then fails with `UNErrorDomain error 1`; on a machine where delivery
+ * works it stays `null`. What is invariant — and what used to be missing
+ * entirely — is that the app now has an answer either way, and that the badge
+ * counts regardless.
+ */
+test('badges the dock and reports how the OS answered', async ({}, testInfo) => {
+  const { app, page } = await launchOnCloneForm((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    // Nothing has happened yet, so nothing is claimed. `undefined` off macOS.
+    expect(await dockBadge(app)).toMatch(/^$|^undefined$/);
+
+    const remote = makeBareRemote();
+    const parent = mkdtempSync(join(tmpdir(), 'hive-parent-'));
+
+    await page.getByLabel(/repository url/i).fill(remote);
+    await stubDirectoryDialog(app, [parent]);
+    await page.getByRole('button', { name: /choose/i }).click();
+    await page.getByRole('button', { name: 'Clone' }).click();
+
+    await expect(
+      page.getByRole('button', { name: /add project/i }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    /**
+     * One unread row, and the dock says so. Polled because the badge is pushed
+     * from main after the clone's own event, not before the button appears.
+     *
+     * Skipped where there is no dock at all rather than asserted loosely — a
+     * spec that passes on Linux because `undefined` is falsy is a spec that
+     * would go on passing after the badge stopped being set on macOS.
+     */
+    const badge = await dockBadge(app);
+    if (badge !== undefined) {
+      await expect.poll(() => dockBadge(app), { timeout: 10_000 }).toBe('1');
+    }
+
+    const status = await page.evaluate(() =>
+      (
+        window as unknown as {
+          hive: {
+            integrations: {
+              status: () => Promise<{
+                notificationsSupported: boolean;
+                systemNotificationsRefused: string | null;
+              }>;
+            };
+          };
+        }
+      ).hive.integrations.status(),
+    );
+
+    /**
+     * Printed, because the answer differs by machine and the run is the only
+     * record of which branch below was taken. A green tick alone cannot say
+     * whether this platform delivered the notification or refused it.
+     */
+    console.info(
+      `[hive-e2e] desktop notifications: supported=${status.notificationsSupported} refused=${String(status.systemNotificationsRefused)} badge=${String(badge)}`,
+    );
+
+    // The field exists and carries a real answer — the thing that was silence.
+    expect(status).toHaveProperty('systemNotificationsRefused');
+    expect(
+      status.systemNotificationsRefused === null ||
+        typeof status.systemNotificationsRefused === 'string',
+    ).toBe(true);
+
+    /**
+     * And when it *is* a refusal, the pane says so rather than going on
+     * offering a delivery that has never been delivered.
+     */
+    if (status.systemNotificationsRefused !== null) {
+      await page
+        .getByRole('navigation', { name: 'Settings sections' })
+        .getByRole('button', { name: 'Notifications' })
+        .click();
+      await expect(page.getByText(/refused this app/i)).toBeVisible();
+    }
   } finally {
     await app.close();
   }
