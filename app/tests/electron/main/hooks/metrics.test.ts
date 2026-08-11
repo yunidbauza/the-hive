@@ -84,10 +84,15 @@ describe('parseMetrics', () => {
 
   /**
    * `used_percentage` is documented as **null** — not absent — before the first
-   * API call and again after `/compact`. A key present with a null value is the
-   * shape a naive spread would happily forward.
+   * assistant turn and again after `/compact`.
+   *
+   * It is reported onward as an explicit `null`, which is the one place this
+   * parser does not simply omit what it could not read. The store preserves a
+   * field a payload omitted, and preserving *this* one leaves the pre-compact
+   * percentage on screen as though it were current — the single number the user
+   * just changed. A null says "gone", and the store clears it.
    */
-  it('omits a null percentage rather than forwarding it', () => {
+  it('reports a null percentage as null, so the store can clear it', () => {
     const parsed = parseMetrics(
       JSON.stringify({
         ...full,
@@ -95,8 +100,20 @@ describe('parseMetrics', () => {
       }),
     );
 
-    expect(parsed).not.toHaveProperty('contextPct');
+    expect(parsed).toHaveProperty('contextPct', null);
     expect(parsed?.contextWindow).toBe(200_000);
+  });
+
+  /**
+   * The distinction the null rests on. No `context_window` at all is not a
+   * report of ignorance — it is silence, and silence preserves what is known.
+   */
+  it('omits the key entirely when the payload carried no context window', () => {
+    const parsed = parseMetrics(
+      JSON.stringify({ model: { display_name: 'Opus 4.5' } }),
+    );
+
+    expect(parsed).not.toHaveProperty('contextPct');
   });
 
   it('never emits a key holding undefined, which the store would treat as a value', () => {
@@ -124,7 +141,9 @@ describe('parseMetrics', () => {
       }),
     );
 
-    expect(parsed).toEqual({});
+    // `contextPct` is null rather than absent: a `context_window` arrived, and
+    // an unreadable percentage inside one is a report that the number is gone.
+    expect(parsed).toEqual({ contextPct: null });
   });
 
   it('accepts a well-formed payload that simply carries nothing yet', () => {

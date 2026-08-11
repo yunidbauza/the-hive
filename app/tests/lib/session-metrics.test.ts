@@ -28,7 +28,14 @@ describe('pctOrNull', () => {
     expect(pctOrNull(-3)).toBe(0);
   });
 
-  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])(
+  /**
+   * `null` is in this list for a different reason than the rest: it is what the
+   * session says when it reports a context window it cannot put a percentage on
+   * (after `/compact`), rather than a value that failed to parse. By the time it
+   * reaches a gauge the two mean the same thing — not known — and only the store
+   * needs to tell them apart.
+   */
+  it.each([undefined, null, Number.NaN, Number.POSITIVE_INFINITY])(
     'answers null for %s — absence must never become a number',
     (value) => {
       expect(pctOrNull(value)).toBeNull();

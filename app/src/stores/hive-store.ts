@@ -1196,12 +1196,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    *
    * **Merged, not replaced.** Each status line payload is a complete
    * observation, but its fields drop in and out independently — `rate_limits` is
-   * absent until a session's first API response, and `context_window`'s
-   * percentage goes null again after `/compact`. Overwriting wholesale would
-   * make the chip flicker back to em dashes on the tick after a `/compact`,
-   * having already known the answer. Undefined fields are dropped from the patch
-   * so absence never overwrites knowledge; the receiver omits a field it did not
-   * read rather than sending `undefined`.
+   * absent until a session's first API response and for the whole life of an
+   * API-key session. Overwriting wholesale would drop the limits on every tick
+   * that happened not to carry them, having already known the answer. Undefined
+   * fields are dropped from the patch so absence never overwrites knowledge; the
+   * receiver omits a field it did not read rather than sending `undefined`.
+   *
+   * **`null` is not absence, and it does overwrite.** `contextPct` arrives as an
+   * explicit `null` when the session reported a context window it could not put
+   * a percentage on — before the first assistant turn, and again after
+   * `/compact`. Merging that away would leave the pre-compact reading on screen,
+   * confidently, as the one number the user just changed. So the patch filter
+   * drops `undefined` only, and a `null` writes through to clear it. See
+   * `metrics-contract.ts`, which is where the distinction is defined.
    */
   setSessionMetrics: (id, metrics) =>
     set((state) => {

@@ -16,6 +16,11 @@ import type { SessionMetrics } from '@shared/metrics-contract';
  * a finite number is **omitted** rather than defaulted. The store merges patches
  * and drops undefined keys, which means an omission preserves whatever was last
  * known — and a `0` invented here would instead be published as fact.
+ *
+ * `contextPct` is the single exception, and deliberately so: it emits an
+ * explicit `null` when a `context_window` arrived without a usable percentage,
+ * because there preserving the last value would leave a stale post-`/compact`
+ * reading on screen. See the note in `metrics-contract.ts`.
  */
 
 /** A finite number, or `undefined` for anything else — `null`, a string, `NaN`. */
@@ -76,8 +81,22 @@ export function parseMetrics(body: string): SessionMetrics | null {
   const level = stringOrUndefined(effort?.level);
   if (level !== undefined) metrics.effort = level;
 
-  const contextPct = numberOrUndefined(context?.used_percentage);
-  if (contextPct !== undefined) metrics.contextPct = contextPct;
+  /*
+    The one field that reports its own ignorance rather than staying quiet.
+
+    A `context_window` in the payload means the session had something to say
+    about this conversation's usage, so an unreadable `used_percentage` inside it
+    is news: the number is gone, not merely unmentioned. Claude Code nulls it
+    before the first assistant turn and again after `/compact`, and the store
+    would otherwise keep showing the pre-compact reading — the single number the
+    user just changed — as though it were current. See `metrics-contract.ts`.
+
+    No `context_window` at all still omits the key, which preserves what is
+    known. That is the shape every other field here uses.
+  */
+  if (context !== undefined) {
+    metrics.contextPct = numberOrUndefined(context.used_percentage) ?? null;
+  }
 
   const contextWindow = numberOrUndefined(context?.context_window_size);
   if (contextWindow !== undefined) metrics.contextWindow = contextWindow;

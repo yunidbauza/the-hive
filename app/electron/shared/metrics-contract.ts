@@ -31,8 +31,28 @@
  *   again after `/compact` until the next one.
  * - `effort` is absent for models with no reasoning-effort parameter.
  *
- * The renderer pairs each absence with an em dash. Zero would assert something
- * false about a limit the user may be close to.
+ * The renderer **renders no stat at all** for a value it does not have — no
+ * gauge, no percentage, no separator. It used to pair each absence with an em
+ * dash, which was the same refusal to invent a zero in a shape that reserved
+ * space for a number that may never come. Zero would assert something false
+ * about a limit the user may be close to; a placeholder asserts that an answer
+ * is imminent.
+ *
+ * ## Absent, and absent again: why one field says `null` out loud
+ *
+ * A field omitted from a patch means "this payload did not carry it", and the
+ * store keeps whatever it last knew. That is right for the rate limits, which
+ * are account-global, move slowly, and simply stop being reported under API-key
+ * auth — the last reading is still the best one available.
+ *
+ * It is wrong for the context percentage, which is a fact **about this
+ * conversation** and goes null again after `/compact`. Preserving the last
+ * reading there would show the pre-compact number — the one thing the user just
+ * changed — as though it were current. So {@link SessionMetrics.contextPct}
+ * carries an explicit `null` for "the session reported, and reported that it
+ * does not know", which the store writes through and the chip renders as no
+ * stat. Omission and `null` are different messages and this is the field that
+ * needs both.
  *
  * Types and constants only — both processes import it.
  */
@@ -43,8 +63,16 @@ export interface SessionMetrics {
   model?: string;
   /** `effort.level` — `low` … `max`. */
   effort?: string;
-  /** `context_window.used_percentage`, 0–100. */
-  contextPct?: number;
+  /**
+   * `context_window.used_percentage`, 0–100.
+   *
+   * **`null` is a value here, not an absence.** It means the payload carried a
+   * `context_window` whose percentage the session could not state — before the
+   * first assistant turn, and again after `/compact` — and it clears whatever
+   * the store last knew. The key is omitted only when the payload carried no
+   * `context_window` at all.
+   */
+  contextPct?: number | null;
   /** `context_window.context_window_size` in tokens — 200000, or 1000000 extended. */
   contextWindow?: number;
   /** `rate_limits.five_hour.used_percentage`, 0–100. */

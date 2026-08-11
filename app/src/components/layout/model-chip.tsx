@@ -95,6 +95,25 @@ function Stat({ pct, detail, label }: StatProps) {
  * tick that first carries it. The chip grows rather than filling in, which is
  * the honest direction: the header only ever claims what it has been told.
  *
+ * ### The percentage is what makes a stat, and a reset alone is not one
+ *
+ * Each window is gated on its **percentage**, so a payload carrying
+ * `resets_at` with no `used_percentage` renders nothing rather than a lone
+ * reset time. That is a deliberate trade and it does discard a reported fact.
+ *
+ * `↻ 2:30p` with no number beside it answers a question nobody asked: a reset
+ * time is only actionable as the deadline on a quantity, and on its own it
+ * reads as a countdown to something unstated. The old chip showed `— ↻ 2:30p`,
+ * which kept the fact by reintroducing the placeholder this section exists to
+ * remove.
+ *
+ * It is also not a state Claude Code produces: the two are emitted from one
+ * object literal per window, so a reset without its percentage would mean the
+ * payload shape had changed. The contract makes them independently optional and
+ * `metrics.ts` reads them independently, which is why the case is handled at
+ * all rather than assumed away — the tooltip drops it too, so nothing on screen
+ * half-reports a window.
+ *
  * ## Width, and what actually happens when the header narrows
  *
  * This chip is the thing that gives. `header.tsx` puts it inside the `flex-1`

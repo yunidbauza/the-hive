@@ -909,4 +909,65 @@ describe('hive-store', () => {
       );
     });
   });
+
+  /**
+   * The merge is the whole action, and it turns on a distinction the type
+   * system states but no test held: a field a payload **omitted** is preserved,
+   * and a field a payload set to **null** is cleared.
+   */
+  describe('setSessionMetrics', () => {
+    it('merges a partial report over what the session already said', () => {
+      const id = useHiveStore.getState().spawnSession('apfm-web');
+      useHiveStore.getState().setSessionMetrics(id, {
+        contextPct: 46,
+        fiveHourPct: 12,
+      });
+
+      useHiveStore.getState().setSessionMetrics(id, { fiveHourPct: 13 });
+
+      expect(useHiveStore.getState().metrics[id]).toEqual({
+        contextPct: 46,
+        fiveHourPct: 13,
+      });
+    });
+
+    /**
+     * `rate_limits` stops being reported under API-key auth and is absent until
+     * a session's first API response. The last reading is account-global and
+     * still the best available, so silence must not erase it.
+     */
+    it('keeps a value a later payload simply did not mention', () => {
+      const id = useHiveStore.getState().spawnSession('apfm-web');
+      useHiveStore.getState().setSessionMetrics(id, { sevenDayPct: 63 });
+
+      useHiveStore.getState().setSessionMetrics(id, { contextPct: 46 });
+
+      expect(useHiveStore.getState().metrics[id]?.sevenDayPct).toBe(63);
+    });
+
+    /**
+     * The assertion this describe block exists for.
+     *
+     * After `/compact` the session reports a context window it cannot put a
+     * percentage on, and `metrics.ts` forwards that as an explicit null.
+     * Preserving the old number would leave the pre-compact reading on screen —
+     * high, confident, and about a conversation that no longer exists.
+     */
+    it('clears the context percentage when the session reports it as null', () => {
+      const id = useHiveStore.getState().spawnSession('apfm-web');
+      useHiveStore.getState().setSessionMetrics(id, { contextPct: 92 });
+
+      useHiveStore.getState().setSessionMetrics(id, { contextPct: null });
+
+      expect(useHiveStore.getState().metrics[id]?.contextPct).toBeNull();
+    });
+
+    it('ignores a report for an id that is not a session', () => {
+      useHiveStore.getState().setSessionMetrics('slack-agent', {
+        contextPct: 46,
+      });
+
+      expect(useHiveStore.getState().metrics['slack-agent']).toBeUndefined();
+    });
+  });
 });

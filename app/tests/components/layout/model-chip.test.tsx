@@ -144,6 +144,32 @@ describe('ModelChip', () => {
     });
   });
 
+  /**
+   * The other direction, and the one a merge could get wrong.
+   *
+   * After `/compact` the session reports a context window with a null
+   * percentage. The stat must go away rather than keep showing the pre-compact
+   * number, which describes a conversation that no longer exists — see the null
+   * handling in `metrics-contract.ts` and the store's merge.
+   */
+  it('drops the context stat when a later report nulls it', () => {
+    useUiStore.setState({ activeTab: 'hero-refresh' });
+    useHiveStore.getState().setSessionMetrics('hero-refresh', {
+      contextPct: 92,
+    });
+
+    const { rerender } = render(<ModelChip />);
+    expect(screen.getByText('92%')).toBeInTheDocument();
+
+    useHiveStore.getState().setSessionMetrics('hero-refresh', {
+      contextPct: null,
+    });
+    rerender(<ModelChip />);
+
+    expect(screen.queryByText('92%')).not.toBeInTheDocument();
+    expect(screen.queryByText('ctx')).not.toBeInTheDocument();
+  });
+
   describe('once it has', () => {
     /** 2026-08-11 14:30 and 2026-08-13 17:00 local, in epoch seconds. */
     const fiveHourResetsAt = new Date(2026, 7, 11, 14, 30).getTime() / 1000;
