@@ -180,7 +180,7 @@ export {
   metricsScript,
   statusLineSettings,
   writeHookSettings,
-  HOOK_SETTINGS_FILE,
+  HOOK_SETTINGS_DIR,
   METRICS_SCRIPT_FILE,
 } from './settings';
 export { parseMetrics } from './metrics';

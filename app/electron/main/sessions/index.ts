@@ -935,18 +935,18 @@ export function createSessions(options: SessionsOptions): Sessions {
       stripEnv: snapshot.subscriptionAuth ? AUTH_ENV_KEYS : [],
     });
 
+    /*
+      Resolved before the command is assembled, because it is the one argument
+      that depends on something the renderer told us about *itself* rather than
+      about the session.
+    */
+    const settingsPath = hooks?.settingsPathFor(request.theme);
+
     /**
      * `sessionCommand` wraps the configured binary so a clean `/exit` takes the
      * login shell with it and the session settles to `done`. See its own
      * comment for why that reverses story 096, and why it is `&&`.
      */
-    /*
-      Resolved once, before the command is assembled, because it is the one
-      argument that depends on something the renderer told us about *itself*
-      rather than about the session.
-    */
-    const settingsPath = hooks?.settingsPathFor(request.theme);
-
     bootstrap.arm(
       request.entityId,
       /**

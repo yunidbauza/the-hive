@@ -5,6 +5,7 @@ import {
   SessionRefusedError,
   restartSession,
 } from '@features/sessions/session-control';
+import { useAppearanceStore } from '@stores/appearance-store';
 
 const REQUEST = {
   entityId: 'hero-refresh',
@@ -21,6 +22,9 @@ function withBridge() {
 
 afterEach(() => {
   delete (window as { hive?: unknown }).hive;
+  // `appearance-store` persists, so a test that dresses the app in light has to
+  // undress it again or every later assertion inherits the change.
+  useAppearanceStore.getState().reset();
   vi.clearAllMocks();
 });
 
@@ -36,7 +40,38 @@ describe('restartSession', () => {
       projectId: 'apfm-web',
       cols: 80,
       rows: 24,
+      // The app's theme, always sent — see the assertions below for why it is
+      // read here rather than carried on the request.
+      theme: 'dark',
     });
+  });
+
+  /**
+   * A restart is the only moment a running session can change theme: `claude`
+   * reads its settings file once, at startup. Three comments in main say so,
+   * and for a while nothing sent the value that made them true.
+   */
+  it('dresses the new process in the app’s current theme', () => {
+    const restart = withBridge();
+    useAppearanceStore.setState({ theme: 'light' });
+
+    void restartSession(REQUEST);
+
+    expect(restart).toHaveBeenCalledWith(
+      expect.objectContaining({ theme: 'light' }),
+    );
+  });
+
+  /** `system` is a preference, not a palette — the wire only takes resolved. */
+  it('resolves the system preference before sending it', () => {
+    const restart = withBridge();
+    useAppearanceStore.setState({ theme: 'system', systemDark: true });
+
+    void restartSession(REQUEST);
+
+    expect(restart).toHaveBeenCalledWith(
+      expect.objectContaining({ theme: 'dark' }),
+    );
   });
 
   it('refuses in the browser with the message for that refusal', async () => {

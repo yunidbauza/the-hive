@@ -4,6 +4,7 @@ import { isDesktop } from '@config/runtime';
 import { reopenChannel } from '@lib/terminal/pty-transport';
 import { isSendableSessionName } from '@shared/session-contract';
 import type { SpawnRefusal } from '@shared/session-contract';
+import { currentTheme } from '@stores/appearance-store';
 
 
 /**
@@ -117,6 +118,19 @@ export async function restartSession(request: RestartRequest): Promise<void> {
     ...(request.name !== undefined && isSendableSessionName(request.name)
       ? { name: request.name }
       : {}),
+    /**
+     * Read here rather than carried on {@link RestartRequest}, and that is the
+     * one thing on this payload which is *not* a property of the session.
+     *
+     * `model`, `effort` and `name` are what the session **is**, so they are
+     * carried across unchanged — a row that says Haiku must not come back as
+     * something else. The theme is what the *app* looks like now, and a restart
+     * is the only moment a running session can pick up a change to it: `claude`
+     * reads its settings file once, at startup. Taking it from a caller would
+     * mean every restart control had to remember to look it up, and one that
+     * forgot would silently restart a session into the wrong chrome.
+     */
+    theme: currentTheme(),
   });
 
   /**

@@ -67,8 +67,9 @@ describe('resolveTransport', () => {
       SESSION_ID,
       SESSION_PROJECT,
       // No fixture records a model, so nothing is claimed and the session gets
-      // the bare `claude` command (story 109).
-      {},
+      // the bare `claude` command (story 109). The theme is not the session's
+      // to record — it describes the app, and is read at spawn.
+      { theme: 'dark' },
     );
   });
 
@@ -95,6 +96,9 @@ describe('resolveTransport', () => {
     expect(createPtyTransport).toHaveBeenCalledWith(id, SESSION_PROJECT, {
       model: 'haiku',
       effort: 'low',
+      // Not recorded on the row like the two above: the theme describes the
+      // app, so this path reads it at spawn rather than replaying a choice.
+      theme: 'dark',
     });
   });
 

@@ -50,6 +50,13 @@ vi.mock('@lib/terminal/pty-transport', () => ({
 describe('hive-store', () => {
   beforeEach(() => {
     useHiveStore.getState().reset();
+    /*
+      `appearance-store` is the one store that persists, so a test that leaves
+      it on `light` leaks into every test declared after it. Harmless while
+      every spawn assertion uses `objectContaining`, and a trap for the first
+      one that asserts the dark default.
+    */
+    useAppearanceStore.getState().reset();
     seedDemoFleet();
     /**
      * The console's `spawn` verb validates its repo against the *config* now,

@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import {
   HOOK_ENV_SESSION,
@@ -50,6 +50,17 @@ import { SESSION_THEMES, type SessionTheme } from '@shared/session-contract';
  */
 
 /**
+ * The directory both settings files and the status line script live in.
+ *
+ * Named as a directory rather than kept as a `HOOK_SETTINGS_FILE` pointing at
+ * one of the two, which is what it briefly was: a constant called "the settings
+ * file" that silently meant *the dark one* is a trap for the next caller, and
+ * the only thing this value is actually used for is `mkdir`. Paths come from
+ * {@link hookSettingsFile}, which cannot be read without picking a theme.
+ */
+export const HOOK_SETTINGS_DIR = 'hive';
+
+/**
  * Where the files live inside userData — one per theme.
  *
  * Two files rather than one rewritten in place, because the theme is decided
@@ -61,13 +72,10 @@ import { SESSION_THEMES, type SessionTheme } from '@shared/session-contract';
  * {@link hookSettingsFile}.
  */
 export const hookSettingsFile = (theme: SessionTheme): string =>
-  join('hive', `claude-hooks.settings.${theme}.json`);
-
-/** The dark file, which is the default a caller with no theme gets. */
-export const HOOK_SETTINGS_FILE = hookSettingsFile('dark');
+  join(HOOK_SETTINGS_DIR, `claude-hooks.settings.${theme}.json`);
 
 /** The status line script, beside the settings files that name it. */
-export const METRICS_SCRIPT_FILE = join('hive', 'statusline.sh');
+export const METRICS_SCRIPT_FILE = join(HOOK_SETTINGS_DIR, 'statusline.sh');
 
 /** Both settings files, by the theme each one dresses a session in. */
 export type HookSettingsPaths = Record<SessionTheme, string>;
@@ -279,9 +287,7 @@ export async function writeHookSettings(
   url: string,
   metricsUrl?: string,
 ): Promise<HookSettingsPaths> {
-  await mkdir(join(userDataPath, dirname(HOOK_SETTINGS_FILE)), {
-    recursive: true,
-  });
+  await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
 
   let statusLine: HookSettings['statusLine'];
 
