@@ -9,7 +9,6 @@ import {
 } from '@/lib/session-metrics';
 import { isSession } from '@/types/entity';
 
-import { Chip } from '@components/ui/chip';
 import { GaugeRing, gaugeTone } from '@components/ui/gauge-ring';
 import { useActiveEntity, useSessionMetrics } from '@stores/hive-store';
 
@@ -57,8 +56,15 @@ function Stat({ pct, detail, label }: StatProps) {
  *
  * Renders nothing unless the active tab *is* a session: the orchestrator has no
  * model of its own, and agents are long-lived workers rather than a metered
- * conversation. Returning null rather than an empty chip lets the header's row
- * close the gap instead of holding an empty pill.
+ * conversation. Returning null rather than an empty element lets the header's
+ * row close the gap instead of holding a blank slot.
+ *
+ * ## It is a readout, not a chip
+ *
+ * The name is historical and the pill is gone. This is bare mono text now, cut
+ * to the same size and colour as the fleet counts at the other end of the bar,
+ * because the two report the same kind of thing and only one of them was ever
+ * dressed as an object. See the class list on the root span for the argument.
  *
  * ## Three stats, not two
  *
@@ -168,7 +174,26 @@ export function ModelChip() {
     .join(' · ');
 
   return (
-    <Chip title={title} className="min-w-0">
+    <span
+      title={title}
+      /*
+        Plain text, not a pill.
+
+        This used to be a `Chip` — `rounded-full bg-chip px-3 py-1` — which gave
+        the header two competing surfaces: a filled capsule on the left and the
+        fleet counts sitting as bare text on the right, both of them mono, muted
+        and reporting the same *kind* of thing. The fill implied the metrics were
+        a distinct object you could act on. They are a readout, exactly as the
+        counts are, so they now render like one and the header reads as one line
+        of status text broken by the centre.
+
+        The type matches `status-counts.tsx` (`font-mono text-xs text-muted`)
+        rather than the chip's `text-[11.5px]`: with no capsule to set them
+        apart, two mono sizes half a pixel apart across one 56px row is a
+        misalignment, not a distinction.
+      */
+      className="flex min-w-0 items-center gap-1.5 whitespace-nowrap font-mono text-xs text-muted"
+    >
       <Brain size={13} weight="regular" className="shrink-0 text-brand" />
       <span className="flex min-w-0 items-center gap-2 overflow-hidden">
         <span className="shrink-0">{label}</span>
@@ -199,6 +224,6 @@ export function ModelChip() {
           />
         )}
       </span>
-    </Chip>
+    </span>
   );
 }
