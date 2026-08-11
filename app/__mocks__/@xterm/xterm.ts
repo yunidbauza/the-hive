@@ -64,6 +64,16 @@ export class MockTerminal {
 
   readonly loadAddon = vi.fn();
   readonly focus = vi.fn();
+
+  /**
+   * xterm's helper textarea — the element that actually holds focus.
+   *
+   * Undefined until a test stages one, matching real xterm before `open()`.
+   * The surface compares it against `document.activeElement` to decide whether
+   * a terminal that just lost its GPU context should reclaim the caret
+   * (HIVE-53), so a fake with no textarea correctly reports "not focused".
+   */
+  textarea: HTMLTextAreaElement | undefined;
   readonly scrollToBottom = vi.fn();
   readonly clear = vi.fn();
   readonly paste = vi.fn();
