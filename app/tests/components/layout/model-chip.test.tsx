@@ -56,27 +56,91 @@ describe('ModelChip', () => {
 
   describe('before the session has reported anything', () => {
     /**
-     * The whole point of the rewrite. A session that has not reported — the
-     * first seconds of every session, and the entire life of one authenticated
-     * with an API key — must show that it does not know, not a zero.
+     * The whole point of this pass. A session that has not reported
+     * — the first seconds of every session, and the entire life of one
+     * authenticated with an API key — shows the model it is running and nothing
+     * else. It used to show three em dashes beside three empty rings, which is
+     * a promise of numbers rather than an absence of them.
      */
-    it('shows an em dash for all three stats and never a zero', () => {
+    it('renders the model alone — no stat, no placeholder, no zero', () => {
       useUiStore.setState({ activeTab: 'hero-refresh' });
 
       render(<ModelChip />);
 
-      expect(screen.getAllByText('—')).toHaveLength(3);
+      expect(screen.getByText(/Opus 4.5 · high/)).toBeInTheDocument();
+      expect(screen.queryByText('—')).not.toBeInTheDocument();
       expect(screen.queryByText('0%')).not.toBeInTheDocument();
+      expect(screen.queryByText('ctx')).not.toBeInTheDocument();
     });
 
-    it('marks every gauge unknown for assistive tech', () => {
+    it('draws no gauge for a number nobody reported', () => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
+
+      const { container } = render(<ModelChip />);
+
+      expect(container.querySelector('svg[role="img"]')).toBeNull();
+    });
+
+    /** Nothing to spell out, so the tooltip is the label and only the label. */
+    it('keeps the tooltip free of stats it does not have', () => {
       useUiStore.setState({ activeTab: 'hero-refresh' });
 
       render(<ModelChip />);
 
-      expect(screen.getByLabelText('context: unknown')).toBeInTheDocument();
-      expect(screen.getByLabelText('session limit: unknown')).toBeInTheDocument();
-      expect(screen.getByLabelText('weekly limit: unknown')).toBeInTheDocument();
+      expect(screen.getByTitle('Opus 4.5 · high')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The state a real session sits in for as long as the user takes to send a
+   * first prompt, and the one that prompted this change.
+   *
+   * Claude Code reports `rate_limits` within seconds of launch — they follow the
+   * session's first API response — while `context_window.used_percentage` stays
+   * null until the first **assistant turn**, because it is computed from the
+   * last message carrying a `usage` block. Verified against 2.1.228: an idle
+   * session reports both limits every thirty seconds and no context percentage
+   * at all. So the two windows must be able to appear without the context stat
+   * waiting on them, or dragging an em dash along beside them.
+   */
+  describe('when the limits have arrived but the context has not', () => {
+    beforeEach(() => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
+      useHiveStore.getState().setSessionMetrics('hero-refresh', {
+        model: 'Opus 4.5',
+        effort: 'high',
+        fiveHourPct: 3,
+        sevenDayPct: 46,
+      });
+    });
+
+    it('renders the two limits and omits the context stat entirely', () => {
+      render(<ModelChip />);
+
+      expect(screen.getByText('3%')).toBeInTheDocument();
+      expect(screen.getByText('46%')).toBeInTheDocument();
+      expect(screen.queryByText('ctx')).not.toBeInTheDocument();
+      expect(screen.queryByText('—')).not.toBeInTheDocument();
+    });
+
+    /**
+     * A percentage with no reset keeps the window's *name* as its detail. The
+     * two travel together in every payload observed, but the contract makes them
+     * independently optional and a lone number has to say which window it counts.
+     */
+    it('names each window when the payload carried no reset time', () => {
+      render(<ModelChip />);
+
+      expect(screen.getByText('session')).toBeInTheDocument();
+      expect(screen.getByText('week')).toBeInTheDocument();
+    });
+
+    it('leaves the context out of the tooltip too', () => {
+      render(<ModelChip />);
+
+      const title = screen.getByTitle(/weekly limit/).getAttribute('title');
+      expect(title).toContain('session limit 3%');
+      expect(title).not.toContain('context');
     });
   });
 

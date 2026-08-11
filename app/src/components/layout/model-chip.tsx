@@ -20,7 +20,7 @@ const TONE_TEXT = {
 } as const;
 
 interface StatProps {
-  pct: number | null;
+  pct: number;
   /** The word beside the number — `ctx`, or a reset time for the two limits. */
   detail: string;
   /** Names the quantity for assistive tech; never abbreviated. */
@@ -32,14 +32,16 @@ interface StatProps {
  *
  * The percentage takes the ring's own colour, so a limit going amber changes two
  * things that agree rather than one thing beside an unchanged number.
+ *
+ * It owns its own separator, because a section that renders only when its number
+ * exists must take its divider with it — a border left behind by an absent stat
+ * is a hairline against nothing.
  */
 function Stat({ pct, detail, label }: StatProps) {
   return (
-    <span className="flex shrink-0 items-center gap-1">
+    <span className="flex shrink-0 items-center gap-1 border-l border-border pl-2">
       <GaugeRing pct={pct} label={label} />
-      <span className={pct === null ? 'text-subtle' : TONE_TEXT[gaugeTone(pct)]}>
-        {pctLabel(pct)}
-      </span>
+      <span className={TONE_TEXT[gaugeTone(pct)]}>{pctLabel(pct)}</span>
       <span className="text-subtle">{detail}</span>
     </span>
   );
@@ -67,13 +69,31 @@ function Stat({ pct, detail, label }: StatProps) {
  * because "resets 5p" is the same string on a Monday and a Friday and completely
  * different news.
  *
- * ## What it does when it does not know
+ * ## What it does when it does not know: nothing at all
  *
- * An em dash and a dimmed, empty ring. `rate_limits` is absent until a session's
- * first API response, and absent for its whole life when the session
- * authenticated with an API key rather than a subscription — see
- * `metrics-contract.ts`. Rendering `0%` there would tell the user they have a
- * full week of headroom, which may be the opposite of true.
+ * A stat with no number is **not rendered**. This replaced an em dash beside a
+ * dimmed, empty ring, which was the right instinct — never invent a zero — and
+ * the wrong shape: three placeholders is what the chip looks like in the first
+ * seconds of *every* session, and each one is a labelled slot promising a number
+ * that may never come.
+ *
+ * The waits are real and they are not all short:
+ *
+ * - `rate_limits` is absent until a session's first API response — seconds — and
+ *   absent for the whole life of a session authenticated with an API key rather
+ *   than a subscription.
+ * - `context_window.used_percentage` is `null` until the session's **first
+ *   assistant turn**, which is however long the user takes to send a prompt.
+ *   Confirmed against Claude Code 2.1.228: a spawned session reports its rate
+ *   limits on a timer while the context percentage stays null the entire time,
+ *   because the number is computed from the last message carrying a `usage`
+ *   block and an idle session has none.
+ *
+ * So an empty slot beside `ctx` was, in the common case, telling the truth about
+ * a number the session simply has not produced yet. Absence says the same thing
+ * without holding the space, and the stat appears — with its separator — on the
+ * tick that first carries it. The chip grows rather than filling in, which is
+ * the honest direction: the header only ever claims what it has been told.
  *
  * ## Width, and what actually happens when the header narrows
  *
@@ -110,13 +130,23 @@ export function ModelChip() {
     The tooltip spells out what the chip abbreviates — every label in full, both
     resets, and the window size in tokens. A truncated chip loses pixels, not
     information.
+
+    It carries the same stats the chip does and no placeholder for the ones it
+    does not have: a tooltip reading `context —` would reintroduce, on hover,
+    the empty promise the chip stopped making.
   */
   const title = [
     label,
-    `context ${pctLabel(context)}`,
-    `session limit ${pctLabel(fiveHour)}${fiveHourReset === null ? '' : `, resets ${fiveHourReset}`}`,
-    `weekly limit ${pctLabel(sevenDay)}${sevenDayReset === null ? '' : `, resets ${sevenDayReset}`}`,
-  ].join(' · ');
+    context === null ? null : `context ${pctLabel(context)}`,
+    fiveHour === null
+      ? null
+      : `session limit ${pctLabel(fiveHour)}${fiveHourReset === null ? '' : `, resets ${fiveHourReset}`}`,
+    sevenDay === null
+      ? null
+      : `weekly limit ${pctLabel(sevenDay)}${sevenDayReset === null ? '' : `, resets ${sevenDayReset}`}`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
 
   return (
     <Chip title={title} className="min-w-0">
@@ -124,31 +154,31 @@ export function ModelChip() {
       <span className="flex min-w-0 items-center gap-2 overflow-hidden">
         <span className="shrink-0">{label}</span>
 
-        <span className="flex shrink-0 items-center gap-2 border-l border-border pl-2">
+        {context === null ? null : (
           <Stat pct={context} detail="ctx" label="context" />
-        </span>
+        )}
 
-        <span className="flex shrink-0 items-center gap-2 border-l border-border pl-2">
+        {fiveHour === null ? null : (
           <Stat
             pct={fiveHour}
             label="session limit"
             /*
-              The window's *name* when there is no reset to show, not a second
-              em dash. `— —` beside a dimmed ring is unreadable, and a session
-              that has not reported yet is exactly when the user most needs to
-              be told which of the two windows this is.
+              The window's *name* when the percentage arrived without a reset,
+              not a second em dash. The two travel together in every payload
+              observed, but they are independently optional in the contract, and
+              a lone number needs to say which of the two windows it counts.
             */
             detail={fiveHourReset === null ? 'session' : `↻ ${fiveHourReset}`}
           />
-        </span>
+        )}
 
-        <span className="flex shrink-0 items-center gap-2 border-l border-border pl-2">
+        {sevenDay === null ? null : (
           <Stat
             pct={sevenDay}
             label="weekly limit"
             detail={sevenDayReset === null ? 'week' : `↻ ${sevenDayReset}`}
           />
-        </span>
+        )}
       </span>
     </Chip>
   );

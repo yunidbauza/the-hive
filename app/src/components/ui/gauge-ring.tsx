@@ -18,8 +18,8 @@ const TONE_TEXT = {
 } as const;
 
 interface GaugeRingProps {
-  /** 0–100, or `null` when the number is not known yet. */
-  pct: number | null;
+  /** 0–100. A ring is only ever drawn for a number somebody reported. */
+  pct: number;
   /** Names the quantity for assistive tech — "context", "session limit", "weekly limit". */
   label: string;
   /** Diameter in px. */
@@ -52,25 +52,28 @@ interface GaugeRingProps {
  * takes {@link gaugeTone}, which is also what the neighbouring percentage text
  * uses so the two can never disagree.
  *
- * ## The unknown case
+ * ## There is no unknown case, and that is the point
  *
- * `pct === null` renders the **track only**, dimmed. That is not a styling
- * nicety: `rate_limits` is absent from Claude Code's status line payload until
- * the first API response of a session, and absent entirely when a session
- * authenticates with an API key rather than a subscription. A ring at zero
- * would assert "you have used none of your weekly limit", which is a different
- * and possibly false claim. Callers pair this with an em dash instead of a
- * number, so nothing on screen invents a value.
+ * This used to accept `null` and render the **track only**, dimmed, beside an em
+ * dash — the honest refusal to draw a ring at zero for a number nobody had
+ * reported. `rate_limits` is absent from Claude Code's status line payload until
+ * a session's first API response and absent for good under API-key auth, and
+ * `context_window.used_percentage` is null until the first assistant turn, so
+ * the empty ring was the *common* first impression of every session.
+ *
+ * The refusal now happens one level up: `model-chip.tsx` renders no stat at all
+ * for a number it does not have, so no caller has an unknown to pass. Taking
+ * `number` rather than `number | null` is what keeps it that way — a future
+ * caller cannot reintroduce the placeholder by handing this a null.
  */
 export function GaugeRing({ pct, label, size = 14, className }: GaugeRingProps) {
   const stroke = 2;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
 
-  const known = pct !== null;
   // Clamped rather than trusted: the payload is a number from another process,
   // and a value outside 0–100 would render as an arc wrapping past itself.
-  const value = known ? Math.min(Math.max(pct, 0), 100) : 0;
+  const value = Math.min(Math.max(pct, 0), 100);
   const offset = circumference * (1 - value / 100);
 
   return (
@@ -79,7 +82,7 @@ export function GaugeRing({ pct, label, size = 14, className }: GaugeRingProps) 
       height={size}
       viewBox={`0 0 ${size} ${size}`}
       role="img"
-      aria-label={known ? `${label}: ${Math.round(value)}%` : `${label}: unknown`}
+      aria-label={`${label}: ${Math.round(value)}%`}
       className={cn('shrink-0', className)}
     >
       <circle
@@ -89,24 +92,22 @@ export function GaugeRing({ pct, label, size = 14, className }: GaugeRingProps) 
         fill="none"
         stroke="currentColor"
         strokeWidth={stroke}
-        className={known ? 'text-border' : 'text-border-soft'}
+        className="text-border"
       />
-      {known ? (
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          /* Starts the sweep at twelve o'clock; SVG's own zero is three. */
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          className={TONE_TEXT[gaugeTone(value)]}
-        />
-      ) : null}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        /* Starts the sweep at twelve o'clock; SVG's own zero is three. */
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        className={TONE_TEXT[gaugeTone(value)]}
+      />
     </svg>
   );
 }

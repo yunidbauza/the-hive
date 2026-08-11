@@ -27,24 +27,17 @@ describe('gaugeTone', () => {
 describe('GaugeRing', () => {
   /**
    * happy-dom performs no layout, so the arc's *appearance* is not assertable
-   * here. What is: that the geometry is computed at all, that it moves with the
-   * value, and — most importantly — that an unknown value draws no arc.
+   * here. What is: that the geometry is computed at all, and that it moves with
+   * the value.
+   *
+   * There is no longer an unknown case to assert. This used to accept `null` and
+   * draw the track alone; a percentage nobody reported now has no gauge at all,
+   * because `model-chip.tsx` omits the whole stat.
    */
-  it('draws a track and an arc when the value is known', () => {
+  it('draws a track and an arc', () => {
     const { container } = render(<GaugeRing pct={46} label="context" />);
 
     expect(container.querySelectorAll('circle')).toHaveLength(2);
-  });
-
-  /**
-   * The assertion this component exists for. An empty ring must be empty, not a
-   * ring at zero — the difference between "not reported" and "none used".
-   */
-  it('draws only the track when the value is unknown', () => {
-    const { container } = render(<GaugeRing pct={null} label="weekly limit" />);
-
-    expect(container.querySelectorAll('circle')).toHaveLength(1);
-    expect(screen.getByLabelText('weekly limit: unknown')).toBeInTheDocument();
   });
 
   it('names the value for assistive tech', () => {

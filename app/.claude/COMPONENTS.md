@@ -263,12 +263,15 @@ Two things here are easy to get wrong:
   a text colour that flips per theme; using it would repaint the logo tile pale
   blue in dark mode. See the brand-fill note in
   [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md).
-- **The model chip's numbers are mock and *derived*, not stored** — see
-  `src/lib/session-metrics.ts`. A stored percentage would need a fake clock to
-  move it; a random one would jitter on every render. Deriving from the session's
-  own id keeps a chip stable for the session's life while differing between
-  sessions. When real metering arrives, `ctx`/`util` become `Session` fields and
-  only those functions change.
+- **The model chip's numbers are *observed*, and an unobserved one renders
+  nothing at all.** They arrive from Claude Code's own status line payload — see
+  `src/lib/session-metrics.ts` and `electron/main/hooks/settings.ts` — and each
+  stat carries its own gauge, percentage and separator, so a value nobody has
+  reported takes all three away with it rather than holding an em dash in a
+  labelled slot. That absence is routine, not exceptional:
+  `rate_limits` is missing until a session's first API response and for the whole
+  life of an API-key session, and the context percentage is null until the first
+  assistant turn. The chip grows as the session reports.
 
 The bell marks everything read rather than opening a dropdown — the inbox lives in
 the activity rail (story 051), and two places to read the same list is one too

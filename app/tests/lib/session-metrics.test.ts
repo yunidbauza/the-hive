@@ -8,7 +8,6 @@ import {
   modelLabel,
   pctLabel,
   pctOrNull,
-  UNKNOWN,
 } from '@/lib/session-metrics';
 
 /**
@@ -43,15 +42,16 @@ describe('pctLabel', () => {
   });
 
   /**
-   * The single most important assertion in this file.
+   * A reported zero is still a fact and still renders.
    *
-   * `rate_limits` is absent until a session's first API response and absent for
-   * the whole life of an API-key session. Rendering `0%` there would tell the
-   * user they have a full week of headroom, which may be the opposite of true.
+   * The em-dash case that used to live here is gone with the `null` argument
+   * with it: the refusal to invent a number moved up to `model-chip.tsx`,
+   * which renders no stat at all rather than a labelled empty one. What must
+   * never happen — an unreported limit reading `0%` — is now unrepresentable
+   * here rather than defended against.
    */
-  it('renders an em dash for a number nobody reported', () => {
-    expect(pctLabel(null)).toBe(UNKNOWN);
-    expect(pctLabel(null)).not.toContain('0');
+  it('renders a reported zero, which is not the same as no report', () => {
+    expect(pctLabel(0)).toBe('0%');
   });
 });
 
