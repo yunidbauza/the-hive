@@ -31,12 +31,12 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-red` | `#ff8d85` | `#d3372f` | errors, failing checks |
 | `--cc-chip` | `#1c2648` | `#edf2f4` | chips, pills, raised cards |
 | `--cc-chip-hover` | `#232e57` | `#e2eaee` | hover on a chip-filled card |
-| `--cc-term-bg` | `#0b1023` | *(unchanged)* | terminal background |
-| `--cc-term-input` | `#0e1430` | *(unchanged)* | terminal input bar |
-| `--cc-term-row-hover` | `#161f45` | *(unchanged)* | session-table row hover |
-| `--cc-term-row-active` | `#1a2450` | *(unchanged)* | session-table selected row |
-| `--cc-term-head` | `#4d5a86` | *(unchanged)* | session-table column headers |
-| `--cc-term-track` | `#3a4674` | *(unchanged)* | picker stepper track and dots |
+| `--cc-term-bg` | `#0b1023` | `#f7fafb` | terminal background |
+| `--cc-term-input` | `#0e1430` | `#ffffff` | terminal input bar |
+| `--cc-term-row-hover` | `#161f45` | `#f4f9ff` | session-table row hover |
+| `--cc-term-row-active` | `#1a2450` | `#e9f3fc` | session-table selected row |
+| `--cc-term-head` | `#4d5a86` | `#6b6e74` | session-table column headers |
+| `--cc-term-track` | `#3a4674` | `#d4dee3` | picker stepper track and dots |
 | `--cc-brand-fill` | `#5e76d0` | *(unchanged)* | primary button |
 | `--cc-brand-fill-hover` | `#4f6ac5` | *(unchanged)* | primary button hover |
 | `--cc-brand-fill-strong` | `#334fa9` | *(unchanged)* | hive-mark tile (Serenity) |
@@ -54,11 +54,13 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-code-active-line` | `#171e3c` | `#f4f9ff` | editor: current line |
 | `--cc-code-selection` | `#2b3768` | `#cfe3f7` | editor: selection |
 
-**The editor follows the theme; the terminal does not.** Both sit on the centre
-stage and they behave differently on purpose. A terminal is a terminal in every
-theme — the concept does it and so does every tool it resembles. An editor is a
-*document* surface, in the slot the settings pane and the picker occupy, and a
-dark slab in the middle of a light app reads as a panel that failed to paint.
+**The editor and the terminal both follow the theme.** They did not always. The
+terminal was pinned dark in both themes on the reasoning that a terminal is a
+terminal in every theme — true of a terminal *emulator*, whose window is the
+whole application, and false here. Once the editor landed on the same centre
+stage and adopted the theme properly, the argument inverted: a dark slab in the
+middle of a light app reads as a panel that failed to paint, and the seam is
+loudest exactly where the two surfaces meet.
 
 The eleven `--cc-code-*` tokens are also the one palette in the app that is
 reachable from a third-party component's own theming. CodeMirror emits real CSS
@@ -66,11 +68,18 @@ rules, so `color: var(--cc-code-keyword)` resolves at paint time and a theme
 switch repaints the editor with no JavaScript at all — which is exactly what
 xterm cannot do, and why the TERM palette lives in `ansi.ts` instead.
 
-**The terminal stays dark in light mode.** The six `--cc-term-*` tokens are
-deliberately not overridden — this matches the concept and most real terminal
-tools. The row, header, and track tokens exist because the orchestrator's session table
-(041) and the new-session picker (044) are **DOM, not xterm**, so they need real
-CSS for surfaces the TERM palette does not cover.
+**All six `--cc-term-*` tokens are overridden for light.** The row, header, and
+track tokens exist because the orchestrator's session table (041) and the
+new-session picker (044) are **DOM, not xterm**, so they need real CSS for
+surfaces the TERM palette does not cover — and they sit *on* the terminal
+ground, so they have to move with it or end up dark-on-light.
+
+`--cc-term-bg` is `--cc-panel-2`, the editor's ground, and that identity is
+load-bearing rather than tidy: it is also `TERM_LIGHT.bg` in `ansi.ts`, because
+xterm paints its own background while the DOM paints the padding around it. Two
+systems, one colour, or a rectangle appears at the terminal's edge.
+`--cc-term-head` is four steps darker than `--cc-muted`, which lands at 4.34:1
+on this ground — under AA.
 
 Note what they are *not*: terminal **text** colours. Those live only in
 `src/lib/terminal/ansi.ts` and never appear in this file or in `tokens.css` — a
@@ -128,27 +137,46 @@ never reaches CSS. xterm resolves colours from its own `theme` option and paints
 them into markup it owns, so a CSS custom property has no path to a terminal cell;
 this palette is consumed as JS by xterm and by the ANSI colorizer.
 
-In light mode the terminal stays dark (story 011). `buildXtermTheme(theme)` varies
-only `selectionBackground` (`#33407a`) and `cursor` (`TERM.green`), because the
-dark selection wash is nearly invisible against a bright surround.
+**There are two palettes, and `buildXtermTheme(theme)` picks one.** `TERM` is
+dark, `TERM_LIGHT` is light, and a single builder maps either into xterm's
+sixteen slots — so the themes can differ in colour but never in structure.
 
-| Key | Value | Used for |
-| --- | --- | --- |
-| `ink` | `#dbe4ff` | default foreground |
-| `dim` | `#7c88b8` | secondary / meta |
-| `green` | `#7ee2b8` | success, prompts |
-| `blue` | `#8fb5ff` | tool calls (Read/Edit/Bash lines) |
-| `amber` | `#ffc06e` | working spinner, questions |
-| `red` | `#ff8d85` | errors |
-| `cyan` | `#7edce2` | orchestrator-injected lines, PR refs |
-| `bg` | `#0b1023` | terminal background |
-| `selection` | `#222c55` | selection highlight |
+| Key | `TERM` (dark) | `TERM_LIGHT` | Mirrors (light) | Used for |
+| --- | --- | --- | --- | --- |
+| `ink` | `#dbe4ff` | `#2c2f34` | `--cc-ink` | default foreground |
+| `dim` | `#7c88b8` | `#6b6e74` | `--cc-term-head` | secondary / meta |
+| `green` | `#7ee2b8` | `#2e6b52` | `--cc-code-string` | success, prompts |
+| `blue` | `#8fb5ff` | `#334fa9` | `--cc-code-name` | tool calls (Read/Edit/Bash lines) |
+| `amber` | `#ffc06e` | `#a1541a` | `--cc-code-number` | working spinner, questions |
+| `red` | `#ff8d85` | `#b3271f` | `--cc-code-constant` | errors |
+| `cyan` | `#7edce2` | `#0b6b7d` | `--cc-code-type` | orchestrator-injected lines, PR refs |
+| `magenta` | `#7edce2` | `#6f42c1` | `--cc-code-keyword` | ANSI slot 35 |
+| `bg` | `#0b1023` | `#f7fafb` | `--cc-term-bg` | terminal background |
+| `selection` | `#222c55` | `#cfe3f7` | `--cc-code-selection` | selection highlight |
 
-The text colours are intentionally distinct from the UI palette — `TERM.green` is
-not `--cc-green` — because text on a dark canvas needs more lift than the same
-semantic colour does in chrome. Three surface values legitimately coincide with UI
-tokens: `bg` is `--cc-term-bg`, `selection` is `--cc-active`, and `red` is shared
-with `--cc-red`.
+`magenta` equals `cyan` in dark and always has: the concept never specified one,
+so slot 35 has always rendered as cyan. Naming it lets the light palette give
+the slot a real hue without moving a dark-mode pixel.
+
+**The two palettes follow opposite rules, on purpose.** The dark text colours are
+deliberately *not* the UI tokens — `TERM.green` is not `--cc-green` — because
+text on a dark canvas needs more lift than the same semantic colour does in
+chrome; only three surface values coincide (`bg` is `--cc-term-bg`, `selection`
+is `--cc-active`, `red` is shared with `--cc-red`). Every light value, by
+contrast, **is** a token, listed above: the light terminal shares the editor's
+ground, so the colours the editor already proved there are the right ones, and a
+second light identity would be the actual bug. xterm cannot read a custom
+property, so the value has to exist twice — `ansi.test.ts` reads `tokens.css`
+and fails if the copies drift.
+
+Every light pair clears WCAG AA on `#f7fafb` (lowest: `dim` at 4.87:1), asserted
+in `ansi.test.ts` rather than eyeballed.
+
+**Transcript colour is emitted as an ANSI *index*, not truecolor.** A baked
+`38;2;r;g;b` escape stores RGB in the cell and no later theme change can reach
+it; an index stores the slot and resolves at paint time. That is what lets a
+theme toggle repaint scrollback written minutes ago instead of stranding pastel
+text on a white page.
 
 ## Status → colour
 

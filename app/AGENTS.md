@@ -172,7 +172,7 @@ slice back — **the app boots empty**. Tests: `tests/support/`.
   Tailwind through `@theme inline`. Use the utilities (`bg-panel`, `text-muted`).
 - **Raw hex literals in component code are banned.** If a colour is missing, add a
   token.
-- The terminal keeps its dark background in light mode; the editor does not.
+- Terminal and editor both follow the theme — terminal colour from JS, editor from CSS.
 - Icons: `@phosphor-icons/react`. The app ships one icon library.
 
 ## Testing requirements

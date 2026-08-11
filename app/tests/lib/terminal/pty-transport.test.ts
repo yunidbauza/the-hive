@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TERM, toSgrForeground } from '@lib/terminal/ansi';
+import { toSgrIndexed } from '@lib/terminal/ansi';
 import {
   createCloneTransport,
   createPtyTransport,
@@ -91,9 +91,9 @@ function pushData(sessionId: string, chunk: string, seq: number): void {
   for (const cb of [...bridge.data]) cb({ sessionId, chunk, seq });
 }
 
-const dim = toSgrForeground(TERM.dim);
-const amber = toSgrForeground(TERM.amber);
-const red = toSgrForeground(TERM.red);
+const dim = toSgrIndexed('dim');
+const amber = toSgrIndexed('amber');
+const red = toSgrIndexed('red');
 
 beforeEach(() => {
   bridge = installBridge();

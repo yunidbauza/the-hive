@@ -67,12 +67,37 @@ describe('DESIGN-SYSTEM.md — colour tokens', () => {
     }
   });
 
-  it('keeps the terminal dark in light mode', () => {
-    // The concept and most real tools do this; the doc states it, so the code
-    // had better agree.
-    expect(lightTokens['--cc-term-bg']).toBeUndefined();
-    expect(lightTokens['--cc-term-input']).toBeUndefined();
+  it('gives the terminal a light surface in light mode', () => {
+    /**
+     * This assertion used to say the opposite — that `--cc-term-bg` and
+     * `--cc-term-input` had *no* light override, because the terminal stayed
+     * dark in both themes. It was inverted deliberately: the terminal shares
+     * the centre stage with an editor that follows the theme, and one dark slab
+     * in a light app reads as a panel that failed to load.
+     *
+     * Every `--cc-term-*` token is checked, not just the two surfaces. The
+     * chrome that sits *on* the terminal ground has to move with it, or the
+     * table headers and row highlights end up dark-on-light.
+     */
+    for (const token of [
+      '--cc-term-bg',
+      '--cc-term-input',
+      '--cc-term-row-hover',
+      '--cc-term-row-active',
+      '--cc-term-head',
+      '--cc-term-track',
+    ]) {
+      expect(
+        lightTokens[token],
+        `${token} has no light override — the terminal would stay dark`,
+      ).toBeDefined();
+      expect(lightTokens[token]).not.toBe(darkTokens[token]);
+    }
+
+    // Dark is untouched by the change.
     expect(darkTokens['--cc-term-bg']).toBe('#0b1023');
+    // And the light ground is the editor's, which is the whole point.
+    expect(lightTokens['--cc-term-bg']).toBe(lightTokens['--cc-panel-2']);
   });
 
   it('does not document a token that no longer exists', () => {

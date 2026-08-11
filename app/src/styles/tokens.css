@@ -56,8 +56,8 @@
    * file, and the test that enforces it). These three have no TERM equivalent
    * and would otherwise be raw hexes in a component, which is banned.
    *
-   * Like `--cc-term-bg`, they are not overridden for light mode: the terminal
-   * surface stays dark in both themes.
+   * Like `--cc-term-bg`, they are overridden for light mode: the terminal
+   * surface follows the theme, so the chrome sitting on it has to as well.
    */
   --cc-term-row-hover: #161f45;
   --cc-term-row-active: #1a2450;
@@ -180,17 +180,39 @@ body[data-theme='light'] {
      its hover continues down rather than back up toward the panel. */
   --cc-chip-hover: #e2eaee;
 
-  /* --cc-term-bg / --cc-term-input intentionally stay dark: the terminal keeps
-     its dark background in light mode, like the concept and most real tools. */
+  /**
+   * The terminal surface, which **does** follow the theme.
+   *
+   * It did not always, and the reversal is worth recording. Stories 011 and 042
+   * kept these dark in light mode on the reasoning that a terminal is dark
+   * because that is what a terminal is — true of a terminal *emulator*, whose
+   * window is the whole application. It stopped being true here once the editor
+   * landed on the same centre stage and adopted the theme properly: a light app
+   * with one dark slab in the middle reads as a panel that failed to load, and
+   * the seam is loudest exactly where the two surfaces meet.
+   *
+   * `--cc-term-bg` is `--cc-panel-2` — the editor's ground. That is not a
+   * coincidence and must not drift: it is also `TERM_LIGHT.bg` in `ansi.ts`,
+   * because xterm paints its own background and the DOM paints the padding
+   * around it. Two different systems, one colour, or a visible rectangle
+   * appears at the terminal's edge. `ansi.test.ts` asserts the two agree.
+   */
+  --cc-term-bg: #f7fafb;
+  --cc-term-input: #ffffff;
+  --cc-term-row-hover: #f4f9ff;
+  --cc-term-row-active: #e9f3fc;
+  --cc-term-head: #6b6e74;
+  --cc-term-track: #d4dee3;
 
   /**
-   * The editor, unlike the terminal, **does** follow the theme.
+   * The editor, which follows the theme — as, now, does the terminal above it.
    *
-   * The terminal stays dark in light mode because that is what a terminal is —
-   * the concept does it and so does every tool it resembles. An editor is not a
-   * terminal: it is a document surface, it sits where the settings pane and the
-   * picker sit, and a dark slab in the middle of a light app reads as a broken
-   * panel rather than as a deliberate one.
+   * This block used to open by explaining why the editor was the exception: a
+   * document surface follows the theme, a terminal does not. The terminal won
+   * that argument the other way round, and these nine roles turned out to be
+   * the light palette the terminal adopts, so `TERM_LIGHT` in `ansi.ts` mirrors
+   * six of them by name. Changing one of these now recolours both surfaces, and
+   * `ansi.test.ts` fails if only one of the two copies moves.
    *
    * Darkened for contrast on white rather than reused from above: `--cc-green`
    * at its dark-mode value clears nothing on `#ffffff`.

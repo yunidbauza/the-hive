@@ -44,7 +44,7 @@ import `features/`, `data/`, or `stores/` — the import zone in
 | `lib/terminal/static-transport.ts` | the store | recorded transcripts |
 | `lib/terminal/pty-transport.ts` | the bridge | a real pty (story 094) |
 | `lib/terminal/resolve-transport.ts` | the store, the target | which of the two |
-| `lib/terminal/ansi.ts` | the palette | `TermColor` → SGR truecolor |
+| `lib/terminal/ansi.ts` | both palettes | `TermColor` → indexed SGR; theme → xterm theme |
 | `lib/terminal/signals.ts` | nothing | signal number → name |
 | `lib/terminal/auto-scroll.ts` | nothing | the bottom-stick predicate |
 | `components/terminal/terminal-surface.tsx` | a transport | one live terminal |
@@ -127,9 +127,13 @@ property declared on `:root` has no path to a terminal cell.
 > paint to a canvas now — see below — but the palette has to be JS either way,
 > which is why the conclusion never depended on the reason.
 
-`TERM` and `XTERM_THEME` in `src/lib/terminal/ansi.ts` are the single
-definition, shared with the colorizer and `.claude/DESIGN-SYSTEM.md`. Never
-hand-write a hex into a terminal component.
+`TERM`, `TERM_LIGHT` and the themes built from them in
+`src/lib/terminal/ansi.ts` are the single definition, shared with the colorizer
+and `.claude/DESIGN-SYSTEM.md`. Never hand-write a hex into a terminal component.
+
+The light palette is the one place a terminal colour and a CSS token hold the
+same value — deliberately, and enforced by a test rather than by convention.
+See **Theming** below.
 
 ## Renderers: which terminal paints how
 
@@ -167,11 +171,32 @@ populated; the transcript lives in canvases. Two things follow:
 
 ### Theming
 
-The terminal keeps its dark background in light mode, like the concept and most
-real tools. `buildXtermTheme(theme)` returns the dark palette for both app
-themes and varies only selection and cursor: against a bright page the dark
-selection wash reads as almost no highlight at all, and selection is the one
-piece of terminal chrome the user drives directly.
+**The terminal follows the app theme.** `buildXtermTheme(theme)` picks between
+two palettes — `TERM` and `TERM_LIGHT` — and one builder maps either into
+xterm's sixteen slots, so the themes can differ in colour but never in structure.
+
+This reverses stories 011 and 042, which pinned the terminal dark in both themes
+and allowed only selection and cursor to vary. That reasoning — a terminal is
+dark because that is what a terminal is — describes a terminal *emulator*, whose
+window is the whole application. Here the terminal shares the centre stage with
+an editor that follows the theme properly, and a dark slab in the middle of a
+light app reads as a panel that failed to load. The seam was loudest exactly
+where the two surfaces meet, which is what made it worth reversing.
+
+Three details carry the change:
+
+- **The light palette mirrors `tokens.css`.** Every `TERM_LIGHT` value is also a
+  `--cc-*` token, because the light terminal shares the editor's ground and a
+  second light identity would be the bug. xterm cannot read a custom property,
+  so the value exists twice and `ansi.test.ts` fails if the copies drift. The
+  dark palette keeps the opposite rule, for the reason above it.
+- **`--cc-term-bg` must equal `TERM_LIGHT.bg`.** xterm paints its own
+  background; the DOM paints the padding around it. Disagreement shows up as a
+  rectangle at the terminal's edge.
+- **Transcript colour is emitted as an ANSI index, not truecolor.** `colorize`
+  writes `\e[32m`, not `\e[38;2;…m`. A baked RGB value lives in the cell
+  and no later theme change can reach it; an index resolves against the active
+  theme at paint time, so a toggle repaints scrollback written minutes ago.
 
 Re-theming assigns `terminal.options.theme` on the live instance rather than
 rebuilding it, so a theme toggle never costs a line of scrollback.

@@ -373,16 +373,22 @@ describe('TerminalSurface', () => {
       });
     });
 
-    it('lifts selection and cursor in light mode', () => {
+    it('applies the light palette in light mode', () => {
       const { transport } = fakeTransport();
       render(<TerminalSurface transport={transport} theme="light" />);
 
-      // The background deliberately does not change (story 011): the terminal
-      // stays dark. Only the chrome the user manipulates is brightened.
+      /**
+       * This test used to assert the background *stayed* `#0b1023` in light
+       * mode — story 011's rule, that only selection and cursor were lifted.
+       * The terminal now follows the app theme: it shares the centre stage with
+       * an editor that always did, and a dark slab in a light app reads as a
+       * panel that failed to load.
+       */
       expect(terminal().options.theme).toMatchObject({
-        background: '#0b1023',
-        selectionBackground: '#33407a',
-        cursor: '#7ee2b8',
+        background: '#f7fafb',
+        foreground: '#2c2f34',
+        selectionBackground: '#cfe3f7',
+        cursor: '#2c2f34',
       });
     });
 
@@ -398,8 +404,10 @@ describe('TerminalSurface', () => {
       // scrollback on a theme toggle.
       expect(terminalInstances).toHaveLength(1);
       expect(terminal().disposed).toBe(false);
+      // And the whole surface really did repaint, not just its chrome.
       expect(terminal().options.theme).toMatchObject({
-        selectionBackground: '#33407a',
+        background: '#f7fafb',
+        selectionBackground: '#cfe3f7',
       });
     });
   });
