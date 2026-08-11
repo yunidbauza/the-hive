@@ -18,7 +18,7 @@ export function SettingsGroup({
   return (
     <section className="flex flex-col gap-2 border-b border-border-soft pb-4 last:border-b-0 last:pb-0">
       <div className="flex flex-col gap-0.5">
-        <h3 className="text-[13px] text-ink">{title}</h3>
+        <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
         <p className="text-[11.5px] text-subtle">{description}</p>
       </div>
       {children}
