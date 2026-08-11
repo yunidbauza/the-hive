@@ -569,10 +569,36 @@ export function TerminalSurface({
      * frozen session, and sends the user hunting for a hung process that is
      * running perfectly. Disposing the addon drops xterm back to the DOM
      * renderer with the buffer intact.
+     *
+     * ## And the keyboard survives the renderer swap (HIVE-53)
+     *
+     * Swapping renderers must not cost the user their caret. It does not today:
+     * a forced `webglcontextlost` was driven against a live session and focus
+     * stayed on the xterm textarea, because disposing the addon touches the
+     * canvases and not the helper textarea. **This re-assertion therefore fixes
+     * nothing that is currently broken** — it makes an accidental property an
+     * intentional one, so a future renderer change cannot quietly take the
+     * keyboard away mid-command.
+     *
+     * Conditional on having held focus, and that condition is the whole point.
+     * Nine of ten terminals in this app are hidden kept-alive instances; one
+     * that grabbed the caret because its GPU context went away would yank the
+     * user out of whatever they were typing into.
+     *
+     * Its reach is narrow, and worth stating rather than leaving to be
+     * discovered: focusing an already-focused element is a no-op, so this only
+     * ever *does* anything if a future `dispose()` blurs the textarea
+     * synchronously, inside this callback. A change that blurred it a
+     * microtask or a frame later would slip past — catching that would mean
+     * re-asserting on a timer, which is a worse trade than it sounds, because
+     * a deferred `focus()` can land after the user has deliberately clicked
+     * somewhere else.
      */
     const lost = addon.onContextLoss(() => {
+      const hadFocus = document.activeElement === terminal.textarea;
       addon?.dispose();
       addon = null;
+      if (hadFocus) terminal.focus();
     });
 
     try {

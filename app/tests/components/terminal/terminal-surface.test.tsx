@@ -1025,6 +1025,62 @@ describe('TerminalSurface', () => {
       expect(terminal().disposed).toBe(false);
     });
 
+    it('keeps the keyboard when a focused terminal loses its context', () => {
+      /**
+       * Swapping renderers mid-command must not cost the user their caret
+       * (HIVE-53).
+       *
+       * Focus survives this today — a forced `webglcontextlost` against a live
+       * session leaves `document.activeElement` on the xterm textarea — so this
+       * asserts an intention rather than repairing a break. The intention is
+       * what stops a future renderer change from silently taking the keyboard
+       * away from a terminal the user is typing into.
+       */
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+
+      const textarea = document.createElement('textarea');
+      // Removed in `finally`: a stray focused element left behind by a failing
+      // assertion would follow every later test in this file.
+      try {
+        document.body.append(textarea);
+        terminal().textarea = textarea;
+        textarea.focus();
+
+        const focusCallsBefore = terminal().focus.mock.calls.length;
+        webglAddonInstances[0]!.emitContextLoss();
+
+        expect(terminal().focus.mock.calls.length).toBe(focusCallsBefore + 1);
+      } finally {
+        textarea.remove();
+      }
+    });
+
+    it('does not steal the caret when the terminal did not have it', () => {
+      /**
+       * The condition is the whole point. Most terminals in this app are hidden
+       * kept-alive instances; one that grabbed focus because its GPU context
+       * went away would yank the user out of whatever they were typing.
+       */
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+
+      const elsewhere = document.createElement('input');
+      try {
+        document.body.append(elsewhere);
+        terminal().textarea = document.createElement('textarea');
+        elsewhere.focus();
+
+        const focusCallsBefore = terminal().focus.mock.calls.length;
+        webglAddonInstances[0]!.emitContextLoss();
+
+        expect(terminal().focus.mock.calls.length).toBe(focusCallsBefore);
+        expect(document.activeElement).toBe(elsewhere);
+      } finally {
+        elsewhere.remove();
+      }
+    });
+
     it('drops its context-loss listener on unmount', () => {
       const { transport } = fakeTransport();
       const { unmount } = render(

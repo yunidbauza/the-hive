@@ -155,30 +155,48 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
 
   try {
     const page = await app.firstWindow();
-    const terminal = await openLiveSession(page, {
+    await openLiveSession(page, {
       ready: testInfo.outputPath('ready.txt'),
       bootstrap: bootstrapped,
     });
 
-    // Announces itself, then would write `finished` in 100 seconds if it were
-    // ever allowed to.
+    /**
+     * Announces itself from *inside* the long-running child, then would write
+     * `finished` in 100 seconds if it were ever allowed to.
+     *
+     * The subshell is the whole point, and it is what HIVE-53 turned out to be
+     * about. Written as `echo started > … && sleep 100 && …`, the marker comes
+     * from a shell **builtin** — it appears before `sleep` exists, so it proves
+     * the command line ran and not that a foreground job is running. Under
+     * parallel load the interrupt lands in that window, at a process group that
+     * is not yet the job: `sleep 100` then starts and the follow-up command
+     * queues behind it for a hundred seconds. That is the intermittent failure
+     * recorded on HIVE-48, measured at 14 runs in 48.
+     *
+     * Writing the marker inside `sh -c` makes its existence prove that the
+     * child process group exists, so SIGINT reaches a real job whether it
+     * arrives during the `echo` or during the `sleep`. Either way the `&&`
+     * short-circuits and `finished` stays absent.
+     *
+     * The path travels as `sh -c '…' '<path>'` and is read back as `"$0"`,
+     * rather than being interpolated into the command string. Every level that
+     * sees it has it in single quotes, so the outer interactive shell never
+     * expands it — a `$`, a backtick or a backslash in the Playwright output
+     * path would otherwise redirect the marker to a different file, and the
+     * timeout would read as "the shell never ran the command".
+     */
     await page.keyboard.type(
-      `echo started > '${started}' && sleep 100 && echo finished > '${finished}'`,
+      `sh -c 'echo started > "$0"; sleep 100' '${started}' && echo finished > '${finished}'`,
     );
     await page.keyboard.press('Enter');
 
     /**
      * Wait for the job to actually be running before interrupting it.
      *
-     * Without this the test races the shell: under load the keystrokes and the
-     * Enter can still be in flight when `Control+c` is pressed, so the
-     * interrupt lands on an empty prompt and does nothing, `sleep 100` then
-     * starts, and the follow-up command queues behind it for a hundred seconds.
-     * Both markers stay absent and the failure reads as "Ctrl-C did not work"
-     * when nothing was ever interrupted.
-     *
-     * It also makes the assertion stronger and more literally true to its own
-     * description: SIGINT is now known to have hit a *running foreground job*.
+     * With the marker written from inside the child, this is now the assertion
+     * it always claimed to be: SIGINT is known to hit a *running foreground
+     * job*, because the process group that wrote the marker is the one the
+     * interrupt goes to.
      */
     await expectMarker(started, 'started');
 
@@ -193,41 +211,24 @@ test('Ctrl+C interrupts a running command and leaves a usable prompt', async ({}
      * The shell is taking commands again — the only honest proof the interrupt
      * landed rather than the keystroke vanishing.
      *
-     * Re-focused and re-sent until it takes, rather than sent once.
+     * Sent **once**, and that is a deliberate strengthening (HIVE-53).
      *
-     * Under load this failed roughly one run in four, always the same way:
-     * `started` written, `finished` and `after` both absent — the job ran, and
-     * then nothing else did. Retrying the keystrokes alone did **not** fix it;
-     * adding `terminal.click()` before each attempt did, which points at focus
-     * leaving the terminal rather than at characters being dropped by the
-     * shell. The likeliest mechanism is a re-render: story 096 derives `idle`
-     * after two seconds of silence, and the message row below focuses itself
-     * when it mounts. Worth its own investigation — recorded on HIVE-48 — but
-     * not this story's to fix.
+     * This was a re-focus-and-retry loop, on the theory that a status-driven
+     * re-render was moving focus off the terminal. Instrumenting the failure
+     * refuted it: across 14 reproductions, `document.activeElement` was the
+     * xterm helper textarea every single time, `document.hasFocus()` was true,
+     * no `webglcontextlost` fired, nothing blurred, and every keystroke —
+     * `Control+c` included — was delivered to that textarea. Focus was never
+     * lost, so `terminal.click()` was never restoring it. The race was the
+     * readiness marker above, and fixing it took the failure rate from 14/48
+     * to 0/24 under the same parallel load.
      *
-     * The assertion is unchanged and still exact: within the deadline the shell
-     * must run a command, and `sleep 100` must not have survived.
+     * A single attempt is therefore the stronger claim: one interrupt, one
+     * follow-up command, and the shell must run it.
      */
-    await expect
-      .poll(
-        async () => {
-          if (readMarker(after) === 'interrupted') return 'interrupted';
-          /**
-           * Re-focus before each attempt. A status change (story 096 derives
-           * `idle` after two seconds of silence) re-renders the stage, and the
-           * message row below focuses itself on mount — so a terminal that had
-           * focus when the command was typed may not have it a moment later,
-           * and the interrupt or the retry would go to an input box.
-           */
-          await terminal.click();
-          await page.keyboard.press('Control+c');
-          await page.keyboard.type(`echo interrupted > '${after}'`);
-          await page.keyboard.press('Enter');
-          return readMarker(after);
-        },
-        { timeout: 15_000, intervals: [250, 500, 1_000, 2_000] },
-      )
-      .toBe('interrupted');
+    await page.keyboard.type(`echo interrupted > '${after}'`);
+    await page.keyboard.press('Enter');
+    await expectMarker(after, 'interrupted');
 
     // And the sleep really died rather than still running behind us.
     expect(readMarker(finished)).toBeNull();
@@ -502,6 +503,124 @@ test('a hidden terminal gives its GPU context back and takes one again on return
     await expect(terminal.locator('canvas').first()).toBeAttached({
       timeout: 10_000,
     });
+  } finally {
+    await app.close();
+  }
+});
+
+test('a focused terminal keeps the keyboard across a lost GPU context', async ({}, testInfo) => {
+  /**
+   * A renderer swap must not cost the user their caret (HIVE-53).
+   *
+   * This passes before the fix as well as after, and that is reported honestly
+   * rather than dressed up: disposing the WebGL addon touches the canvases and
+   * not xterm's helper textarea, so focus survives a context loss by accident.
+   * `onContextLoss` now re-asserts focus deliberately, and this spec is the
+   * guard that keeps the property true — a regression here would mean a live
+   * session going silently untypable mid-command, which is exactly the failure
+   * HIVE-53 was opened to chase.
+   *
+   * The loss is forced through `WEBGL_lose_context` rather than waited for.
+   * Real losses come from GPU pressure and driver resets, neither of which a
+   * spec can schedule.
+   */
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
+  const marker = testInfo.outputPath('after-context-loss.txt');
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    const terminal = await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
+
+    /**
+     * Give the addon time to attach before looking for its canvases.
+     *
+     * Without this a machine that *does* have WebGL can be caught mid-attach,
+     * find nothing to lose, and take the skip below — reporting "no context"
+     * for what was only an early look. Absence after the wait is the real
+     * answer, so the wait is tolerant rather than asserted.
+     */
+    await terminal
+      .locator('canvas')
+      .first()
+      .waitFor({ state: 'attached', timeout: 10_000 })
+      .catch(() => {});
+
+    /**
+     * Count the loss as *delivered*, not merely requested.
+     *
+     * `loseContext()` dispatches `webglcontextlost` asynchronously, so typing
+     * straight after it races the very handler this spec exists to guard: the
+     * keystrokes could land, the marker could appear, and the assertion could
+     * pass without `onContextLoss` having run at all. A spec that passes
+     * without exercising its subject is worse than no spec.
+     *
+     * The listener is installed before the loss is forced and resolves when the
+     * event actually arrives, which is the same event xterm wires
+     * `onContextLoss` to — so waiting on it waits for the app's handler to have
+     * been reachable. Deliberately not a canvas-count assertion: disposing this
+     * addon leaves its canvas elements in the DOM (unlike the hide path, where
+     * the whole effect tears down), so counting them proves nothing here.
+     */
+    const lost = await page.evaluate((sessionId) => {
+      const canvases = Array.from(
+        document.querySelectorAll<HTMLCanvasElement>(
+          `[data-terminal-id="${sessionId}"] canvas`,
+        ),
+      );
+      let forced = 0;
+      const delivered: Promise<void>[] = [];
+      for (const canvas of canvases) {
+        const gl =
+          canvas.getContext('webgl2') ??
+          (canvas.getContext('webgl') as WebGLRenderingContext | null);
+        const extension = gl?.getExtension('WEBGL_lose_context');
+        if (extension) {
+          delivered.push(
+            new Promise<void>((resolve) => {
+              canvas.addEventListener('webglcontextlost', () => resolve(), {
+                once: true,
+              });
+            }),
+          );
+          extension.loseContext();
+          forced += 1;
+        }
+      }
+      if (forced === 0) return 0;
+      return Promise.all(delivered).then(() => forced);
+    }, SESSION);
+
+    /**
+     * No context, nothing to lose — and that is a legitimate state, not a
+     * failure.
+     *
+     * Contexts are a capped, process-wide resource: `loadAddon` throws on a
+     * software-rendering VM or a blocklisted driver, and a machine already
+     * holding the browser's limit gives this terminal the DOM renderer instead
+     * (`terminal-surface.tsx`). Several Electron apps running in parallel is
+     * exactly that machine. Asserting a context exists would make this spec
+     * fail for the one condition the addon logic is designed to survive, so the
+     * premise is skipped rather than asserted — and never quietly passed.
+     */
+    test.skip(lost === 0, 'no WebGL context on this run — nothing to lose');
+
+    /**
+     * No click, deliberately. Re-focusing here would test the click rather than
+     * the invariant — the claim is that the keyboard never left.
+     */
+    await page.keyboard.type(`echo survived > '${marker}'`);
+    await page.keyboard.press('Enter');
+    await expectMarker(marker, 'survived');
   } finally {
     await app.close();
   }
