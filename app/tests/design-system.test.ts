@@ -100,6 +100,39 @@ describe('DESIGN-SYSTEM.md — colour tokens', () => {
     expect(lightTokens['--cc-term-bg']).toBe(lightTokens['--cc-panel-2']);
   });
 
+  /**
+   * "Different from dark" is not "visible", and the check above cannot tell
+   * them apart.
+   *
+   * The first cut of the light theme set `--cc-term-row-hover` to `--cc-hover`
+   * (#f4f9ff), which is calibrated against a **white** panel and is therefore
+   * *lighter* than the terminal's #f7fafb ground. It passed every assertion
+   * above while moving a hovered row by 1.008:1 — no affordance at all.
+   *
+   * Light lifts by deepening, so both row states must be darker than the
+   * ground, and the selected row must read stronger than a merely hovered one.
+   */
+  it('gives the light terminal row states that can actually be seen', () => {
+    const luminance = (hex: string) =>
+      [0, 2, 4]
+        .map((i) => Number.parseInt(hex.slice(1 + i, 3 + i), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, c, i) => sum + [0.2126, 0.7152, 0.0722][i] * c, 0);
+
+    const ground = luminance(lightTokens['--cc-term-bg']);
+    const hover = luminance(lightTokens['--cc-term-row-hover']);
+    const active = luminance(lightTokens['--cc-term-row-active']);
+
+    expect(hover, 'hover must deepen against the light ground').toBeLessThan(ground);
+    expect(active, 'active must deepen further than hover').toBeLessThan(hover);
+
+    // And the step has to be big enough to register: the app's own light hover
+    // moves 1.058:1 on a panel, so anything near 1.0 is a non-affordance.
+    const contrast = (a: number, b: number) =>
+      (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    expect(contrast(ground, hover)).toBeGreaterThan(1.03);
+  });
+
   it('does not document a token that no longer exists', () => {
     const documented = [
       ...designSystem.matchAll(/`(--cc-[a-z0-9-]+)`/g),

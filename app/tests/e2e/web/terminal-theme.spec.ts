@@ -56,6 +56,19 @@ const setTheme = async (page: Page, want: 'light' | 'dark') => {
 const backgroundOf = (target: Locator) =>
   target.evaluate((el) => getComputedStyle(el).backgroundColor);
 
+/**
+ * Polled, not sampled once.
+ *
+ * `setTheme` only waits on `body[data-theme]`, which the store writes
+ * *synchronously* before the state update. xterm repaints later — via a React
+ * passive effect and then xterm's own `onChangeColors` — so a single
+ * `expect(await backgroundOf(…))` can read the previous theme's colour a frame
+ * before the repaint lands. With `retries: 0` that is a flake, not a failure.
+ */
+const expectGround = async (target: Locator, colour: string) => {
+  await expect.poll(() => backgroundOf(target)).toBe(colour);
+};
+
 test.beforeEach(async ({ page }) => {
   await page.goto(APP_URL);
   await page.evaluate(() => localStorage.clear());
@@ -78,29 +91,29 @@ test('the terminal repaints with the app theme, and its padding agrees', async (
   await expect(viewport).toBeVisible();
 
   /**
-   * Dark is set explicitly rather than assumed from the default. The preference
-   * ships as `system`, so on a light-themed machine an unset default would
-   * already be light and the "toggle to light" claim below would pass without
-   * anything having changed.
+   * Dark is set explicitly rather than assumed. The store does boot to dark
+   * (`appearance-store.ts` ships `theme: 'dark'`), but a spec that leans on the
+   * boot default asserts nothing on its first leg — it would pass identically
+   * if the toggle did nothing at all.
    */
   await setTheme(page, 'dark');
-  expect(await backgroundOf(viewport)).toBe(DARK_GROUND);
-  expect(await backgroundOf(surface)).toBe(DARK_GROUND);
+  await expectGround(viewport, DARK_GROUND);
+  await expectGround(surface, DARK_GROUND);
   await surface.screenshot({ path: testInfo.outputPath('terminal-dark.png') });
 
   await setTheme(page, 'light');
 
   // The claim this whole change exists to make.
-  expect(await backgroundOf(viewport)).toBe(LIGHT_GROUND);
+  await expectGround(viewport, LIGHT_GROUND);
 
   // And the claim no unit test can make: xterm's ground and the DOM's padding
   // are the same colour, so there is no rectangle at the terminal's edge.
-  expect(await backgroundOf(surface)).toBe(LIGHT_GROUND);
+  await expectGround(surface, LIGHT_GROUND);
   await surface.screenshot({ path: testInfo.outputPath('terminal-light.png') });
 
   // Back again — a one-way theme switch would be a bug that only shows up here.
   await setTheme(page, 'dark');
-  expect(await backgroundOf(viewport)).toBe(DARK_GROUND);
+  await expectGround(viewport, DARK_GROUND);
 });
 
 test('the terminal survives the theme switch it just repainted through', async ({

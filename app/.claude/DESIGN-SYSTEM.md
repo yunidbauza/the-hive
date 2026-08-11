@@ -33,8 +33,8 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-chip-hover` | `#232e57` | `#e2eaee` | hover on a chip-filled card |
 | `--cc-term-bg` | `#0b1023` | `#f7fafb` | terminal background |
 | `--cc-term-input` | `#0e1430` | `#ffffff` | terminal input bar |
-| `--cc-term-row-hover` | `#161f45` | `#f4f9ff` | session-table row hover |
-| `--cc-term-row-active` | `#1a2450` | `#e9f3fc` | session-table selected row |
+| `--cc-term-row-hover` | `#161f45` | `#eef4f9` | session-table row hover |
+| `--cc-term-row-active` | `#1a2450` | `#e4edf5` | session-table selected row |
 | `--cc-term-head` | `#4d5a86` | `#6b6e74` | session-table column headers |
 | `--cc-term-track` | `#3a4674` | `#d4dee3` | picker stepper track and dots |
 | `--cc-brand-fill` | `#5e76d0` | *(unchanged)* | primary button |
@@ -151,12 +151,27 @@ sixteen slots — so the themes can differ in colour but never in structure.
 | `red` | `#ff8d85` | `#b3271f` | `--cc-code-constant` | errors |
 | `cyan` | `#7edce2` | `#0b6b7d` | `--cc-code-type` | orchestrator-injected lines, PR refs |
 | `magenta` | `#7edce2` | `#6f42c1` | `--cc-code-keyword` | ANSI slot 35 |
+| `black` | `#0b1023` | `#2c2f34` | `--cc-ink` | ANSI slot 30 |
 | `bg` | `#0b1023` | `#f7fafb` | `--cc-term-bg` | terminal background |
 | `selection` | `#222c55` | `#cfe3f7` | `--cc-code-selection` | selection highlight |
 
 `magenta` equals `cyan` in dark and always has: the concept never specified one,
 so slot 35 has always rendered as cyan. Naming it lets the light palette give
 the slot a real hue without moving a dark-mode pixel.
+
+`black` equals `bg` in dark for the same historical reason, and **deliberately
+does not in light**. On a dark ground, slot 30 being the background is invisible
+and harmless — no program picks black for body text against black. On a light
+ground it is the conventional choice, and xterm answers an OSC 11 background
+query with `theme.background`, so a background-detecting CLI will actively
+*choose* slot 30. Mapped to `bg` that renders at 1:1, and `minimumContrastRatio`
+defaults to `1`, so nothing would correct it.
+
+The xterm theme also sets **`cursorAccent` to the palette's `bg`** in both
+themes. It is the glyph under a block cursor; xterm defaults it to `#000000`,
+which was survivable only while every cursor was light. A light theme whose
+cursor is `#2c2f34` would otherwise hide the character under the caret at
+1.56:1.
 
 **The two palettes follow opposite rules, on purpose.** The dark text colours are
 deliberately *not* the UI tokens — `TERM.green` is not `--cc-green` — because

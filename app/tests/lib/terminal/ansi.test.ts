@@ -52,6 +52,7 @@ describe('TERM palette (dark)', () => {
       red: '#ff8d85',
       cyan: '#7edce2',
       magenta: '#7edce2',
+      black: '#0b1023',
       bg: '#0b1023',
       selection: '#222c55',
     });
@@ -103,6 +104,7 @@ describe('TERM_LIGHT palette', () => {
       red: '--cc-code-constant',
       cyan: '--cc-code-type',
       magenta: '--cc-code-keyword',
+      black: '--cc-ink',
       bg: '--cc-term-bg',
       selection: '--cc-code-selection',
     };
@@ -223,6 +225,7 @@ describe('XTERM_THEME', () => {
       foreground: '#dbe4ff',
       selectionBackground: '#222c55',
       cursor: '#dbe4ff',
+      cursorAccent: '#0b1023',
       black: '#0b1023',
       red: '#ff8d85',
       green: '#7ee2b8',
@@ -264,6 +267,38 @@ describe('XTERM_THEME_LIGHT', () => {
     expect(XTERM_THEME_LIGHT.white).toBe(TERM_LIGHT.ink);
     expect(XTERM_THEME_LIGHT.brightWhite).toBe(TERM_LIGHT.ink);
   });
+
+  /**
+   * The mirror-image failure, and the one that actually bites.
+   *
+   * xterm answers an OSC 11 background query with `theme.background`, so a CLI
+   * that detects a light terminal will *choose* ANSI 30 for body text. Mapped
+   * to the background — which is what mirroring dark's `black: bg` would do —
+   * that renders at 1:1, and `minimumContrastRatio` defaults to 1, so nothing
+   * corrects it.
+   */
+  it('never maps black to the background it is painted on', () => {
+    expect(XTERM_THEME_LIGHT.black).not.toBe(XTERM_THEME_LIGHT.background);
+    expect(XTERM_THEME_LIGHT.black).toBe(TERM_LIGHT.ink);
+  });
+});
+
+describe('the block cursor', () => {
+  /**
+   * `cursorAccent` is the glyph *under* a block cursor, and xterm defaults it
+   * to `#000000`. Dark mode was safe only by accident — its cursor is light, so
+   * a black glyph read fine. A light theme whose cursor is `#2c2f34` put
+   * near-black on near-black (1.56:1): the character under the caret vanished
+   * while you typed.
+   */
+  it.each(['dark', 'light'] as const)(
+    'punches the glyph out of the cursor in the surface colour (%s)',
+    (theme) => {
+      const built = buildXtermTheme(theme);
+      expect(built.cursorAccent).toBe(built.background);
+      expect(built.cursorAccent).not.toBe(built.cursor);
+    },
+  );
 });
 
 describe('buildXtermTheme', () => {

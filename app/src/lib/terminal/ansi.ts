@@ -31,6 +31,7 @@ export interface TermPalette {
   red: string;
   cyan: string;
   magenta: string;
+  black: string;
   bg: string;
   selection: string;
 }
@@ -53,6 +54,14 @@ export const TERM = {
    * hue without changing a single dark-mode pixel.
    */
   magenta: '#7edce2',
+  /**
+   * ANSI slot 30, which on a dark ground is the background — as it is in every
+   * dark terminal theme, and as it has always been here.
+   *
+   * Named rather than left as `black: bg` in the builder because the light
+   * palette cannot do the same thing: see `TERM_LIGHT.black`.
+   */
+  black: '#0b1023',
   bg: '#0b1023',
   selection: '#222c55',
 } as const satisfies TermPalette;
@@ -92,6 +101,19 @@ export const TERM_LIGHT = {
   red: '#b3271f', // --cc-code-constant
   cyan: '#0b6b7d', // --cc-code-type
   magenta: '#6f42c1', // --cc-code-keyword
+  /**
+   * ANSI slot 30 — dark ink here, **not** the background.
+   *
+   * This is the one slot where mirroring dark's mapping would be actively
+   * wrong. On a dark ground `black: bg` is invisible and harmless, because no
+   * program picks black for body text against black. On a light ground black is
+   * the conventional choice for exactly that — and xterm answers an OSC 11
+   * background query with the theme background, so a CLI that detects a light
+   * terminal will now *choose* slot 30 and, mapped to `bg`, render 1:1
+   * invisible text. `minimumContrastRatio` is at its default of 1 and would not
+   * rescue it.
+   */
+  black: '#2c2f34', // --cc-ink
   bg: '#f7fafb', // --cc-panel-2, and --cc-term-bg in light
   selection: '#cfe3f7', // --cc-code-selection
 } as const satisfies TermPalette;
@@ -101,11 +123,6 @@ export type { TermColor };
 /** App theme. Mirrors `Theme` in `stores/ui-store.ts`, without importing it. */
 export type TerminalTheme = 'dark' | 'light';
 
-/** The palette each app theme paints with. */
-export const TERM_BY_THEME: Record<TerminalTheme, TermPalette> = {
-  dark: TERM,
-  light: TERM_LIGHT,
-};
 
 const ESC = '\u001b';
 
@@ -158,12 +175,21 @@ export function colorize(text: string, color: TermColor): string {
  * doubling the palette would mean choosing and contrast-checking seven more
  * colours to serve programs that mostly emit the normal eight.
  *
- * `black: bg` and `white: ink` are the mapping worth explaining, because in the
- * light palette they read as inverted. They are not. A program emitting ANSI 37
- * ("white") means *ordinary text*, and it gets ordinary text — dark ink on the
- * light ground. ANSI 30 ("black") is the background in both themes, which is
- * the same near-invisibility dark mode has always had for that slot, and the
- * same one every dark terminal theme ships with.
+ * `white: ink` is the mapping worth explaining, because in the light palette it
+ * reads as inverted. It is not. A program emitting ANSI 37 ("white") means
+ * *ordinary text*, and it gets ordinary text — dark ink on the light ground.
+ * Invisible white-on-white is the classic light-terminal failure, and this is
+ * how it is avoided. `black` is per-palette for the mirror-image reason; see
+ * `TERM_LIGHT.black`.
+ *
+ * `cursorAccent` is the glyph *under* a block cursor, and it has to be set.
+ * xterm defaults it to `#000000` and emits
+ * `.xterm-cursor-block { background-color: cursor; color: cursorAccent }`, so
+ * leaving it unset put near-black text on the light theme's `#2c2f34` cursor —
+ * 1.56:1, i.e. the character under the caret disappears while you type. Dark
+ * was safe only by accident, its cursor being light. Binding it to `bg` is
+ * correct in both themes: the glyph is punched out of the cursor in the colour
+ * of the surface behind it.
  */
 function xtermThemeFor(palette: TermPalette) {
   return {
@@ -171,7 +197,8 @@ function xtermThemeFor(palette: TermPalette) {
     foreground: palette.ink,
     selectionBackground: palette.selection,
     cursor: palette.ink,
-    black: palette.bg,
+    cursorAccent: palette.bg,
+    black: palette.black,
     red: palette.red,
     green: palette.green,
     yellow: palette.amber,

@@ -199,8 +199,18 @@ body[data-theme='light'] {
    */
   --cc-term-bg: #f7fafb;
   --cc-term-input: #ffffff;
-  --cc-term-row-hover: #f4f9ff;
-  --cc-term-row-active: #e9f3fc;
+  /**
+   * Deepened, not borrowed from `--cc-hover`.
+   *
+   * `--cc-hover` (#f4f9ff) is calibrated against `--cc-panel` (#ffffff) and is
+   * *lighter* than the terminal's new ground (#f7fafb) — hovering a session-table
+   * row would have moved it 1.008:1, which is no affordance at all, against
+   * 1.183:1 in dark. These continue in the direction the light theme already
+   * lifts, and land on the steps the app's own chrome uses on a panel: hover
+   * 1.057:1 (app: 1.058), active 1.129:1 (app: 1.124).
+   */
+  --cc-term-row-hover: #eef4f9;
+  --cc-term-row-active: #e4edf5;
   --cc-term-head: #6b6e74;
   --cc-term-track: #d4dee3;
 
