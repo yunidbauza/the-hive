@@ -1,8 +1,8 @@
 /**
  * Design tokens — the single source of truth for colour in the app.
  *
- * The `--cc-*` custom properties come from the concept file
- * (`concept/Command Center.dc.html`) and keep its names. `@theme inline` binds
+ * The `--cc-*` custom properties come from the concept file (retired from the
+ * tree; `git log -- concept/` still has it) and keep its names. `@theme inline` binds
  * them to Tailwind's namespaces without copying the values, so a single
  * `data-theme` flip on <body> recolours the whole app.
  *

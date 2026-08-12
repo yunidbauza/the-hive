@@ -62,8 +62,8 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 | Any UI task — tokens, palette, type scale | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) |
 | Any UI task — atom inventory and props | [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
-The visual source of truth is [`../concept/`](../concept/); when a story is silent
-on a colour, size, or string, the concept file decides.
+The visual source of truth is [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md):
+it records what the retired concept mock fixed (`git log -- concept/` still has it).
 
 ## Architecture rules
 

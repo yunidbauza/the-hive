@@ -1,13 +1,14 @@
-# The Hive — app
+# The Hive
 
 A command center for multiple agentic terminal sessions running on a single machine.
-This package is the **static React prototype**: real xterm.js terminal surfaces fed by
+This repository is the **static React prototype**: real xterm.js terminal surfaces fed by
 an in-memory mock data layer, with no backend. The terminal transport is the designed
 seam for the future local-PTY daemon.
 
 Context, decision record, scope boundary and full backlog: the **HIVE project in
-Jira**. The visual source of truth is [`../concept/`](../concept/) — tickets quote
-its exact colors, sizes, and copy.
+Jira**. The visual source of truth is
+[`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) — it records the exact colors,
+sizes, and copy the concept mock fixed, and tickets quote them.
 
 ## Requirements
 

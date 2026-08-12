@@ -19,8 +19,8 @@ import { useHiveStore } from '@stores/hive-store';
  * mapped, and the WORK tab painted eight sample tickets for a frame before the
  * real Jira read replaced them.
  *
- * The data itself was never the problem — it is well-tuned, ported from
- * `concept/Command Center.dc.html`, and its status mix and half-finished
+ * The data itself was never the problem — it is well-tuned, ported from the
+ * concept file (retired from the tree), and its status mix and half-finished
  * transcripts are exactly what a panel test wants to assert against. So it moved
  * here rather than being deleted. **The product boots empty; the tests seed
  * themselves.**

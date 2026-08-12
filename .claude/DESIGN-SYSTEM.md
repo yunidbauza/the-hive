@@ -1,8 +1,9 @@
 # Design system
 
-Read this before any UI task. The visual source of truth is
-[`../../concept/`](../../concept/) — when a story is silent on a colour, size, or
-string, the concept file decides.
+Read this before any UI task. This file **is** the visual source of truth: it
+records what the concept mock fixed, and when a story is silent on a colour, size,
+or string, the values below decide. The mock itself is retired from the tree —
+`git log -- concept/` still has it.
 
 The values below are asserted against `src/styles/tokens.css` and
 `src/lib/terminal/ansi.ts` by `tests/design-system.test.ts`. Edit them together or

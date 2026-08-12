@@ -113,6 +113,13 @@ export default tseslint.config(
        * byte-identical to upstream.
        */
       'electron/main/integrations/jira/adf/vendor/**',
+      /**
+       * Git worktrees live under the repo now that the app sits at the root.
+       * Each one is a whole second checkout — linting them re-lints the app
+       * once per branch and walks their `node_modules`, which is what turned
+       * `pnpm lint` into a hang.
+       */
+      '.claude/worktrees/**',
     ],
   },
   js.configs.recommended,
