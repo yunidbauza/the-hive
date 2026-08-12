@@ -54,20 +54,27 @@ afterEach(() => {
 describe('devIconPath', () => {
   it('resolves the master beside the build output', () => {
     const root = treeWithIcon();
-    expect(devIconPath(join(root, 'out', 'main'))).toBe(
+    expect(devIconPath('icon.png', join(root, 'out', 'main'))).toBe(
       join(root, 'resources', 'icon.png'),
+    );
+  });
+
+  it('resolves the macOS master, which is a different file and not a variant', () => {
+    const root = treeWithIcon('icon-macos.png');
+    expect(devIconPath('icon-macos.png', join(root, 'out', 'main'))).toBe(
+      join(root, 'resources', 'icon-macos.png'),
     );
   });
 
   it('is undefined when packaged, whatever is on disk', () => {
     const root = treeWithIcon();
     appMock.isPackaged = true;
-    expect(devIconPath(join(root, 'out', 'main'))).toBeUndefined();
+    expect(devIconPath('icon.png', join(root, 'out', 'main'))).toBeUndefined();
   });
 
   it('is undefined when the asset is missing rather than returning a dead path', () => {
     const root = treeWithIcon('elsewhere.png');
-    expect(devIconPath(join(root, 'out', 'main'))).toBeUndefined();
+    expect(devIconPath('icon.png', join(root, 'out', 'main'))).toBeUndefined();
   });
 });
 
@@ -89,10 +96,10 @@ describe('applyDevDockIcon', () => {
    * asset is where the path expects it — the failure this test exists to catch
    * is someone moving `resources/icon.png`.
    */
-  it('sets the dock icon from the committed master in a dev run', () => {
+  it('sets the dock icon from the macOS master, not the full-bleed one', () => {
     applyDevDockIcon();
     expect(createFromPath).toHaveBeenCalledWith(
-      expect.stringContaining(join('resources', 'icon.png')),
+      expect.stringContaining(join('resources', 'icon-macos.png')),
     );
     expect(dock.setIcon).toHaveBeenCalledTimes(1);
   });

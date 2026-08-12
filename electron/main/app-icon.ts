@@ -17,10 +17,22 @@ import { app, nativeImage } from 'electron';
  * the whole of what it fixes.
  */
 
-/** The 1024 master, relative to `out/main/` — or `undefined` when packaged. */
-export function devIconPath(dirname: string = import.meta.dirname): string | undefined {
+/**
+ * A master in `resources/`, relative to `out/main/` — or `undefined` when
+ * packaged.
+ *
+ * Two masters, because the platforms disagree about the canvas. Windows and
+ * Linux draw the file as given, so they take the full-bleed `icon.png`. macOS
+ * arranges the dock on a grid where the icon occupies 824 of 1024 points and
+ * the margin is the alignment: hand it a full-bleed tile and it stands visibly
+ * taller than every neighbour. That is what `icon-macos.png` is for.
+ */
+export function devIconPath(
+  file: 'icon.png' | 'icon-macos.png' = 'icon.png',
+  dirname: string = import.meta.dirname,
+): string | undefined {
   if (app.isPackaged) return undefined;
-  const path = join(dirname, '../../resources/icon.png');
+  const path = join(dirname, '../../resources', file);
   /*
    * Absent is not a failure worth crashing a launch over: the file is a
    * committed asset, so a miss means someone is running from a tree where it
@@ -36,7 +48,7 @@ export function devIconPath(dirname: string = import.meta.dirname): string | und
  * before that there is no dock to set.
  */
 export function applyDevDockIcon(): void {
-  const path = devIconPath();
+  const path = devIconPath('icon-macos.png');
   if (!path || !app.dock) return;
   const image = nativeImage.createFromPath(path);
   // An unreadable PNG yields an empty image, and `setIcon` throws on one.

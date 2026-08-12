@@ -19,7 +19,8 @@ painted white on the screen.
 Outputs, all under `resources/`:
 
     icon.png          1024 master, full-bleed  (Linux, electron-builder source)
-    icon.icns         macOS, from a padded master via `iconutil`
+    icon-macos.png    1024 master on Apple's grid — 824 of 1024, margin around it
+    icon.icns         macOS, from the padded master via `iconutil`
     icon.ico          Windows, 16-256
     icons/<n>x<n>.png the Linux ladder
     ../public/favicon.png, apple-touch-icon.png   the browser target
@@ -61,9 +62,10 @@ CHEVRON = (0xC7, 0xD3, 0xFA)  # pale blue lifted, so it reads on Serenity
 GREEN = (0x74, 0xB7, 0x9C)
 WHITE = (0xFF, 0xFF, 0xFF)
 
-# macOS draws its own grid: a full-bleed icon sits visibly larger than its
-# neighbours in the dock. Apple's rounded rect occupies ~82% of the canvas.
-MACOS_TILE = 0.824
+# macOS draws its own grid, and a full-bleed icon ignores it: in the dock ours
+# stood a head taller than Docker and iTerm. Apple's rounded-rectangle app icon
+# is 824pt inside a 1024pt canvas — the rest is the margin the dock counts on.
+MACOS_TILE = 824 / 1024
 
 
 # --------------------------------------------------------------------- masks
@@ -255,9 +257,13 @@ def write_icns(source: Image.Image, target: Path) -> bool:
 
 def main() -> None:
     master = render()
+    macos = padded_for_macos(master)
     (RESOURCES / "icons").mkdir(parents=True, exist_ok=True)
 
     master.save(RESOURCES / "icon.png")
+    # The same art on Apple's grid, for anything that sets a macOS icon from a
+    # PNG rather than from the bundle — the dev dock, today.
+    macos.save(RESOURCES / "icon-macos.png")
     for size in LINUX_LADDER:
         master.resize((size, size), Image.LANCZOS).save(
             RESOURCES / "icons" / f"{size}x{size}.png"
@@ -269,7 +275,7 @@ def main() -> None:
         sizes=[(s, s) for s in ICO_LADDER],
     )
 
-    write_icns(padded_for_macos(master), RESOURCES / "icon.icns")
+    write_icns(macos, RESOURCES / "icon.icns")
 
     # The browser target's tab icon, so web and desktop agree.
     master.resize((32, 32), Image.LANCZOS).save(PUBLIC / "favicon.png")

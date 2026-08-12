@@ -17,7 +17,8 @@ generator too; the icon has no palette of its own.
 | File | For |
 | --- | --- |
 | `icon.png` | 1024px master, full-bleed. The source electron-builder resamples from. |
-| `icon.icns` | macOS. Inset to 82.4% of the canvas so the dock sizes it like a native app. |
+| `icon-macos.png` | The same art on Apple's grid — 824 of 1024 points, margin around it. |
+| `icon.icns` | macOS, cut from `icon-macos.png`. |
 | `icon.ico` | Windows. 16 · 24 · 32 · 48 · 64 · 128 · 256. |
 | `icons/<n>x<n>.png` | The Linux ladder, 16 → 1024. |
 
@@ -58,12 +59,19 @@ linux:
 
 | | Packaged app | `pnpm desktop:dev` |
 | --- | --- | --- |
-| macOS | the bundle's `.icns` | `app.dock.setIcon`, from `electron/main/app-icon.ts` |
-| Windows | the `.ico` compiled into the `.exe` | `BrowserWindow`'s `icon` option |
-| Linux | the `.desktop` entry | `BrowserWindow`'s `icon` option |
+| macOS | the bundle's `.icns` | `app.dock.setIcon` with `icon-macos.png` |
+| Windows | the `.ico` compiled into the `.exe` | `BrowserWindow`'s `icon`, `icon.png` |
+| Linux | the `.desktop` entry | `BrowserWindow`'s `icon`, `icon.png` |
 
 The packaged column is entirely the installer's doing — none of it can be set
-from inside a running process, which is why `app-icon.ts` returns nothing at all
-when `app.isPackaged`. The dev column exists only so a development run does not
-sit in the dock under Electron's default icon; it reads `resources/icon.png`
-straight from the working tree.
+from inside a running process, which is why `electron/main/app-icon.ts` returns
+nothing at all when `app.isPackaged`. The dev column exists only so a
+development run does not sit in the dock under Electron's default icon; it
+reads the masters straight from the working tree.
+
+**Which master matters.** macOS lays the dock out on a grid where an icon
+occupies 824 of 1024 points; the margin is how every icon lines up at the same
+apparent size. Hand the dock a full-bleed tile and it obeys — the app then
+stands a head taller than its neighbours, which is exactly what happened when
+the dev dock was pointed at `icon.png`. Windows and Linux draw the file as
+given and take the full-bleed master.
