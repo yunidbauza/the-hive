@@ -36,6 +36,7 @@ function snapshot(
     templateWritten: false,
     shell: '/bin/zsh',
     claudeCommand: 'claude',
+    env: {},
     projects: projects.map(({ id, status }) => ({
       id,
       path: status === 'ok' ? `/repos/${id}` : null,

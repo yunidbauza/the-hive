@@ -299,6 +299,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * environment nobody runs in.
      */
     'diagnoseCommand',
+    /**
+     * Story 108 added `diagnoseEnv` alongside it, and it is read-only for the
+     * identical reason: it spawns the resolved shell to observe what
+     * survived its rc file, but takes no destination and writes nothing back
+     * through the bridge — the same "safest kind of addition" this list
+     * already grants `diagnoseCommand` above.
+     */
+    'diagnoseEnv',
     'get',
     'onCloneDone',
     'reload',

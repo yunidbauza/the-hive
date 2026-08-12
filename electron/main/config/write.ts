@@ -18,7 +18,6 @@ import {
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
-  DEFAULT_SHELL,
   type ConfigSnapshot,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
@@ -26,6 +25,7 @@ import { resolveNotificationPrefs } from '@shared/notification-contract';
 import { parseConfig } from './parse';
 import { configPath, describe } from './paths';
 import { resolveProjects } from './resolve';
+import { defaultShell } from './shell';
 
 /**
  * The single write path for the workspace config (story 101).
@@ -219,11 +219,12 @@ export function writeConfig(mutate: Mutation): WriteResult {
     snapshot: {
       configPath: path,
       templateWritten: false,
-      shell: validated.shell ?? DEFAULT_SHELL,
+      shell: validated.shell ?? defaultShell(),
       claudeCommand: validated.claudeCommand ?? DEFAULT_CLAUDE_COMMAND,
       subscriptionAuth:
         validated.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
       sessionMetrics: validated.sessionMetrics ?? DEFAULT_SESSION_METRICS,
+      env: validated.env ?? {},
       projects,
       // Re-resolved from the document that was just written, not carried over
       // from the caller's request: the snapshot every mutating verb returns has

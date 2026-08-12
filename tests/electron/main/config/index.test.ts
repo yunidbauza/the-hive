@@ -13,6 +13,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { defaultShell } from '../../../../electron/main/config/shell';
 import { CONFIG_PATH_ENV } from '../../../../electron/shared/config-contract';
 
 /**
@@ -275,12 +276,19 @@ describe('first run', () => {
 });
 
 describe('defaults', () => {
-  it('falls back to $SHELL and the documented claude command', async () => {
+  it('falls back to the login shell, not $SHELL, and the documented claude command', async () => {
+    // `$SHELL` is unset in exactly the launch mode that matters most — a
+    // packaged app opened from Finder or the Dock, which inherits launchd's
+    // environment rather than a login shell's. Setting it here to a value
+    // `defaultShell()` would never produce proves the loader no longer reads
+    // it — see `electron/main/config/shell.ts` for why.
+    process.env.SHELL = '/bin/not-a-real-shell';
     writeConfig({ version: 1, projects: [] });
 
     const snapshot = await loadConfig();
 
-    expect(snapshot.shell).toBe('/bin/zsh');
+    expect(snapshot.shell).toBe(defaultShell());
+    expect(snapshot.shell).not.toBe('/bin/not-a-real-shell');
     expect(snapshot.claudeCommand).toBe('claude');
   });
 

@@ -57,6 +57,15 @@ export interface ParsedConfig {
    * is a user choosing to keep their exported API credentials.
    */
   subscriptionAuth: boolean | null;
+  /**
+   * The workspace environment block, exactly as the file declared it.
+   *
+   * `undefined` when absent — kept undefined rather than defaulted to `{}` for
+   * the same reason `notifications` is kept partial: the write path must be
+   * able to tell "the user chose this" from "the file said nothing", which is
+   * what stops an untouched file from growing a block it never had.
+   */
+  env?: Record<string, string>;
   projects: RawProject[];
   /**
    * Story 106's notification block, exactly as the file declared it.
@@ -114,6 +123,10 @@ const TOP_LEVEL_KEYS = [
   'version',
   'shell',
   'claudeCommand',
+  // Story 108's workspace environment. Listed for the same reason the
+  // per-project overrides below are: a hand-written block must be read, not
+  // reported as a mistake.
+  'env',
   'projects',
   // Story 106. Listed so a hand-written block is read rather than reported as
   // an unknown key — the same courtesy story 104 extended to the per-project
@@ -521,6 +534,11 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     label,
     errors,
   );
+  // Story 108. `optionalEnv` reads its target off `record.env` internally —
+  // the same call shape the per-project overrides below use (`optionalEnv(entry, at, errors)`)
+  // — so it is handed the document itself, not `document.env`, and it already
+  // returns `undefined` untouched when the file declares no block.
+  const env = optionalEnv(document, label, errors);
 
   const raw = document.projects;
   if (raw === undefined) {
@@ -529,6 +547,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       claudeCommand,
       subscriptionAuth,
       sessionMetrics,
+      env,
       notifications,
       jira,
       projects: [],
@@ -544,6 +563,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       claudeCommand,
       subscriptionAuth,
       sessionMetrics,
+      env,
       notifications,
       jira,
       projects: [],
@@ -634,6 +654,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     claudeCommand,
     subscriptionAuth,
     sessionMetrics,
+    env,
     notifications,
     jira,
     projects,

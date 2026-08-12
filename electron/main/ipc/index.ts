@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -12,10 +13,12 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 
+import { AUTH_ENV_KEYS } from '@shared/config-contract';
 import type {
   CloneStartResult,
   CommandDiagnostic,
   ConfigSnapshot,
+  EnvDiagnostic,
 } from '@shared/config-contract';
 import type {
   DirEntry,
@@ -35,6 +38,7 @@ import {
   parseReadFileRequest,
   parseWatchRequest,
   parseWriteFileRequest,
+  parseDiagnoseEnvRequest,
   parseSpawnRequest,
   parseKillRequest,
   parseRemoveProjectRequest,
@@ -91,6 +95,7 @@ import {
   setProjectRuntime,
   setRuntime,
 } from '../config';
+import { diagnoseEnv } from '../config/env-diagnostic';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { isSafeExternalUrl } from '../external-links';
 import {
@@ -182,6 +187,31 @@ let sessions: Sessions | null = null;
 let cloneFlow: CloneFlow | null = null;
 /** The single project watcher, or `null` before registration. */
 let fsWatch: FsWatchLayer | null = null;
+
+/**
+ * Guards the env diagnostic against concurrent invokes (story 108's fix
+ * round).
+ *
+ * Every invoke spawns a full interactive login shell that executes the
+ * user's rc file, held up to 5s with 512 KiB of buffering — the same shape
+ * of cost the pty spawn path caps with `maxSessions`
+ * (`pty-host/session-manager.ts`), and this channel had no equivalent cap.
+ * The renderer already disables its button while a probe is in flight
+ * (`envDiagnosticPending` in `runtime-section.tsx`), but that is renderer
+ * state and story 082's posture is that the renderer is untrusted input — a
+ * compromised or merely buggy renderer must not be able to multiply this
+ * into unbounded concurrent rc-file executions.
+ *
+ * **Refuses rather than shares the in-flight probe.** Sharing looked
+ * simpler at first — return the same promise to every caller while one is
+ * running — but the two concurrent requests are not necessarily for the
+ * same project: a renderer that fired one probe for project A and, before it
+ * resolved, another for project B would get project A's verdict back
+ * labelled as an answer to its second call. Refusing with a clear `error`
+ * (the exact shape a failed probe already uses) never risks handing back the
+ * wrong project's environment.
+ */
+let envDiagnosticInFlight = false;
 
 /** The live sessions layer, or `null` before registration. Test-only reach-in. */
 export function sessionsLayer(): Sessions | null {
@@ -586,6 +616,70 @@ export function registerIpcHandlers(): void {
       effectiveRuntime(snapshot, project),
       project?.id ?? null,
     );
+  });
+
+  /**
+   * The environment diagnostic (story 108) — read-only, so no write path.
+   *
+   * Resolved through the same `effectiveRuntime` as `configDiagnoseCommand`,
+   * for the identical reason: the shell probed must be the shell that
+   * project's sessions would actually spawn, or the diagnostic answers for an
+   * environment nobody is running in. An unknown id falls back to the
+   * top-level env rather than throwing, matching `configDiagnoseCommand`.
+   *
+   * **`cwd`** (story 108's second fix round): a real session for this project
+   * runs in `project.path` (`sessions/index.ts`), so the probe must too, or
+   * anything an rc file keys on the directory — direnv's `.envrc`,
+   * `asdf`/`nodenv`/`pyenv` version files — diverges from what a real session
+   * would see. When there is no such directory — no project selected
+   * (`project` is `null`), or a selected project whose `path` is `null`
+   * (broken: missing, not a directory, …) — a session could never actually
+   * spawn there either (`sessions/index.ts` refuses unless `status === 'ok'
+   * && path !== null`), so there is no "real session" to match. `homedir()`
+   * is the fallback: it is where a login shell opened outside this app would
+   * normally find itself, and it is a fixed, meaningful location rather than
+   * main's own `cwd` (unrelated to any project — `/` in a packaged build,
+   * the app bundle in dev).
+   */
+  handle(CH.configDiagnoseEnv, (_event, payload): Promise<EnvDiagnostic> => {
+    const request = parseDiagnoseEnvRequest(payload);
+    const snapshot = getConfig();
+    const project =
+      request.id === undefined
+        ? null
+        : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
+    const projectId = project?.id ?? null;
+    const runtime = effectiveRuntime(snapshot, project);
+    const cwd = project?.path ?? homedir();
+
+    if (envDiagnosticInFlight) {
+      return Promise.resolve({
+        projectId,
+        shell: runtime.shell,
+        error:
+          'another environment check is already running — wait for it to finish and try again',
+        vars: [],
+      });
+    }
+
+    envDiagnosticInFlight = true;
+    /**
+     * The same `stripEnv` a real session for this project would get
+     * (`sessions/index.ts`). Without it the probe reports `ANTHROPIC_API_KEY`
+     * as present in an environment every real session has it removed from —
+     * the divergence class story 108's fix round exists to close, one level up
+     * from `buildSessionEnv`.
+     */
+    const stripEnv = snapshot.subscriptionAuth ? AUTH_ENV_KEYS : [];
+    return diagnoseEnv(
+      runtime,
+      projectId,
+      cwd,
+      process.env,
+      stripEnv,
+    ).finally(() => {
+      envDiagnosticInFlight = false;
+    });
   });
 
   /**

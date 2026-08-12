@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +6,7 @@ import {
   emptySnapshot,
   type CommandDiagnostic,
   type ConfigSnapshot,
+  type EnvDiagnostic,
   type ProjectConfig,
 } from '@shared/config-contract';
 
@@ -15,6 +16,7 @@ import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config
 const setRuntimeConfig = vi.fn();
 const setProjectRuntimeConfig = vi.fn();
 const diagnoseAgentCommand = vi.fn();
+const diagnoseSessionEnv = vi.fn();
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -23,6 +25,7 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
     setRuntimeConfig: (request: unknown) => setRuntimeConfig(request),
     setProjectRuntimeConfig: (request: unknown) => setProjectRuntimeConfig(request),
     diagnoseAgentCommand: (request: unknown) => diagnoseAgentCommand(request),
+    diagnoseSessionEnv: (request: unknown) => diagnoseSessionEnv(request),
   };
 });
 
@@ -50,6 +53,7 @@ const install = (over: Partial<ConfigSnapshot> = {}) => {
 beforeEach(() => {
   vi.clearAllMocks();
   diagnoseAgentCommand.mockResolvedValue(null);
+  diagnoseSessionEnv.mockResolvedValue(null);
   resetProjectConfig();
 });
 
@@ -105,6 +109,85 @@ describe('RuntimeSection — defaults', () => {
     // cannot start — so the field snaps back instead of writing "".
     expect(setRuntimeConfig).not.toHaveBeenCalled();
     expect(field).toHaveValue('/bin/sh');
+  });
+});
+
+describe('RuntimeSection — workspace environment', () => {
+  it('saves a workspace variable through setRuntimeConfig', async () => {
+    const user = userEvent.setup();
+    install();
+    render(<RuntimeSection />);
+
+    // No project is selected, so this is the only EnvEditor on screen — the
+    // per-project one only mounts once `ProjectOverrides` renders.
+    await user.click(screen.getByRole('button', { name: 'Add variable' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Variable 1 name' }),
+      'AWS_PROFILE',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Variable 1 value' }),
+      'incorp',
+    );
+    await user.click(screen.getByRole('button', { name: 'Save variables' }));
+
+    expect(setRuntimeConfig).toHaveBeenCalledWith({
+      env: { AWS_PROFILE: 'incorp' },
+    });
+  });
+
+  it('states that the rc file runs afterward and can override these', () => {
+    install();
+    render(<RuntimeSection />);
+
+    expect(
+      screen.getByText(/rc file runs afterward and can override/i),
+    ).toBeInTheDocument();
+  });
+
+  it('warns that the config file is plain text, steering credentials elsewhere', () => {
+    install();
+    render(<RuntimeSection />);
+
+    // The full requirement is "plain text" *and* the steer toward the rc
+    // file for secrets — asserting "plain text" alone would still pass if a
+    // copy edit quietly dropped the "tokens and credentials" clause.
+    expect(
+      screen.getByText(/tokens and credentials.*plain text/i),
+    ).toBeInTheDocument();
+  });
+
+  it('gives each env editor a distinct accessible name once a project is also shown', async () => {
+    const user = userEvent.setup();
+    install({ projects: [entry({ id: 'apfm-web', env: { FOO: 'bar' } })] });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'apfm-web',
+    );
+
+    // Both groups are individually addressable by name — this is what lets
+    // a screen-reader user tell two identically-labelled "Save variables"
+    // buttons apart, since `EnvEditor` renders the same literal control
+    // names in both places and neither `<section>` wires an
+    // `aria-labelledby` down to its own heading.
+    const workspaceGroup = screen.getByRole('group', {
+      name: 'Workspace environment variables',
+    });
+    const projectGroup = screen.getByRole('group', {
+      name: 'Project environment variables',
+    });
+
+    // Each group contains exactly one save control — `getByRole` throws if
+    // it finds zero or more than one, which is exactly the ambiguity this
+    // test exists to catch.
+    expect(
+      within(workspaceGroup).getByRole('button', { name: 'Save variables' }),
+    ).toBeInTheDocument();
+    expect(
+      within(projectGroup).getByRole('button', { name: 'Save variables' }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -185,8 +268,17 @@ describe('RuntimeSection — per-project overrides', () => {
       screen.getByRole('combobox', { name: 'Project' }),
       'apfm-web',
     );
+    // Scoped to the project's own named group: the Defaults group now carries
+    // its own EnvEditor too (story 108), so an unscoped query would find two
+    // "Save variables" buttons once a project is selected.
+    const projectGroup = screen.getByRole('group', {
+      name: 'Project environment variables',
+    });
+
     await user.click(screen.getByRole('button', { name: 'Remove variable 1' }));
-    await user.click(screen.getByRole('button', { name: 'Save variables' }));
+    await user.click(
+      within(projectGroup).getByRole('button', { name: 'Save variables' }),
+    );
 
     // `null`, not `{}` — leaving `"env": {}` behind is litter in a file people
     // hand-edit.
@@ -252,7 +344,7 @@ describe('RuntimeSection — diagnostic', () => {
       'apfm-web',
     );
     await user.click(
-      screen.getByRole('button', { name: /Check this project/ }),
+      screen.getByRole('button', { name: /Check this project’s command/ }),
     );
 
     expect(diagnoseAgentCommand).toHaveBeenCalledWith({ id: 'apfm-web' });
@@ -266,13 +358,129 @@ describe('RuntimeSection — diagnostic', () => {
 
     const select = screen.getByRole('combobox', { name: 'Project' });
     await user.selectOptions(select, 'a');
-    await user.click(screen.getByRole('button', { name: /Check this project/ }));
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s command/ }),
+    );
     expect(await screen.findByText('/usr/bin/claude')).toBeInTheDocument();
 
     await user.selectOptions(select, 'b');
 
     // The old verdict describes the old project's PATH; leaving it on screen
     // next to a new selection would be actively misleading.
+    expect(screen.queryByText('/usr/bin/claude')).not.toBeInTheDocument();
+  });
+});
+
+describe('RuntimeSection — environment diagnostic', () => {
+  const kept: EnvDiagnostic = {
+    projectId: null,
+    shell: '/bin/zsh',
+    error: null,
+    vars: [{ key: 'AWS_PROFILE', configured: 'hive', actual: 'hive', overridden: false }],
+  };
+
+  it('asks about the default environment when no project is picked', async () => {
+    const user = userEvent.setup();
+    diagnoseSessionEnv.mockResolvedValue(kept);
+    install();
+    render(<RuntimeSection />);
+
+    await user.click(
+      screen.getByRole('button', { name: 'Check the default environment' }),
+    );
+
+    expect(diagnoseSessionEnv).toHaveBeenCalledWith({});
+    expect(await screen.findByText('AWS_PROFILE')).toBeInTheDocument();
+  });
+
+  it('asks about the selected project’s environment', async () => {
+    const user = userEvent.setup();
+    diagnoseSessionEnv.mockResolvedValue({ ...kept, projectId: 'apfm-web' });
+    install({ projects: [entry({ id: 'apfm-web' })] });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'apfm-web',
+    );
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s environment/ }),
+    );
+
+    expect(diagnoseSessionEnv).toHaveBeenCalledWith({ id: 'apfm-web' });
+  });
+
+  it('shows a pending state while the probe is in flight, and clears it after', async () => {
+    const user = userEvent.setup();
+    // A promise this test controls the resolution of, so the pending state
+    // between click and resolution is actually observable — a diagnostic
+    // that spawns a real shell can take a second or more, unlike the
+    // instant, file-stat-only command diagnostic.
+    let resolve!: (value: EnvDiagnostic) => void;
+    diagnoseSessionEnv.mockReturnValue(
+      new Promise<EnvDiagnostic>((r) => {
+        resolve = r;
+      }),
+    );
+    install();
+    render(<RuntimeSection />);
+
+    const button = screen.getByRole('button', { name: 'Check the default environment' });
+    await user.click(button);
+
+    expect(await screen.findByRole('button', { name: 'Checking…' })).toBeDisabled();
+
+    resolve(kept);
+
+    expect(
+      await screen.findByRole('button', { name: 'Check the default environment' }),
+    ).not.toBeDisabled();
+  });
+
+  it('drops a stale env verdict when the project changes', async () => {
+    const user = userEvent.setup();
+    diagnoseSessionEnv.mockResolvedValue(kept);
+    install({ projects: [entry({ id: 'a' }), entry({ id: 'b' })] });
+    render(<RuntimeSection />);
+
+    const select = screen.getByRole('combobox', { name: 'Project' });
+    await user.selectOptions(select, 'a');
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s environment/ }),
+    );
+    expect(await screen.findByText('AWS_PROFILE')).toBeInTheDocument();
+
+    await user.selectOptions(select, 'b');
+
+    // The old verdict describes the old project's shell; leaving it on
+    // screen next to a new selection would be actively misleading.
+    expect(screen.queryByText('AWS_PROFILE')).not.toBeInTheDocument();
+  });
+
+  it('also drops a stale command verdict when the project changes, independently', async () => {
+    const user = userEvent.setup();
+    diagnoseAgentCommand.mockResolvedValue({
+      projectId: null,
+      command: 'claude',
+      isPath: false,
+      resolved: '/usr/bin/claude',
+      path: '/usr/bin',
+      probes: [{ directory: '/usr/bin', found: true }],
+    });
+    install({ projects: [entry({ id: 'a' }), entry({ id: 'b' })] });
+    render(<RuntimeSection />);
+
+    const select = screen.getByRole('combobox', { name: 'Project' });
+    await user.selectOptions(select, 'a');
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s command/ }),
+    );
+    expect(await screen.findByText('/usr/bin/claude')).toBeInTheDocument();
+
+    await user.selectOptions(select, 'b');
+
+    // The two diagnostics are cleared independently — switching projects must
+    // not leave either verdict behind.
     expect(screen.queryByText('/usr/bin/claude')).not.toBeInTheDocument();
   });
 });

@@ -22,8 +22,10 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     '//': 'The Hive — workspace config. Declares the repositories you can open a session in.',
     '//docs': 'You do not have to edit this by hand: Settings → Projects adds and removes entries, and preserves these comments when it writes.',
     version: CONFIG_VERSION,
-    '//shell': 'Optional. The login shell every session runs. Defaults to $SHELL.',
+    '//shell': 'Optional. The login shell every session runs. Defaults to your account login shell.',
     '//claudeCommand': `Optional. The command a session bootstraps with. Defaults to "${DEFAULT_CLAUDE_COMMAND}".`,
+    '//env':
+      'Optional. { "NAME": "value" } applied to every session, under any project\'s own env, before the shell starts. A login shell\'s rc file runs afterward and can override these — Settings has a diagnostic that shows when it does.',
     /**
      * Story 090 required `id` to match a fixture project id. Story 101 reverses
      * that — the config now *declares* projects — so the template must stop

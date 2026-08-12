@@ -327,3 +327,45 @@ describe('env safety at the file boundary (story 104)', () => {
     });
   });
 });
+
+/**
+ * Story 108's workspace-level `env` block — read at the document's top level,
+ * one per file rather than one per project, but reusing the same
+ * `optionalEnv` the per-project overrides above go through: the same
+ * `FORBIDDEN_KEYS`, `ENV_NAME`, `unsafeEnvReason`, size caps and all-or-nothing
+ * rejection, because a hand-edited `LD_PRELOAD` is exactly as dangerous here as
+ * it is on a project entry.
+ */
+const doc = (extra: object) => JSON.stringify({ version: 2, projects: [], ...extra });
+
+describe('top-level env', () => {
+  it('reads a well-formed block', () => {
+    const parsed = parseConfig(doc({ env: { AWS_PROFILE: 'incorp' } }), 'cfg');
+    expect(parsed.env).toEqual({ AWS_PROFILE: 'incorp' });
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('is undefined when the file has no block', () => {
+    expect(parseConfig(doc({}), 'cfg').env).toBeUndefined();
+  });
+
+  it('is no longer reported as an unknown key', () => {
+    const parsed = parseConfig(doc({ env: {} }), 'cfg');
+    expect(parsed.errors.join(' ')).not.toMatch(/unknown/i);
+  });
+
+  it('rejects the whole map on an unsafe key, with the shared message', () => {
+    const parsed = parseConfig(
+      doc({ env: { PATH: '/x', DYLD_INSERT_LIBRARIES: '/evil' } }),
+      'cfg',
+    );
+    expect(parsed.env).toBeUndefined();
+    expect(parsed.errors.join(' ')).toMatch(/dynamic loader/);
+  });
+
+  it('rejects a reserved key', () => {
+    const parsed = parseConfig(doc({ env: { TERM: 'dumb' } }), 'cfg');
+    expect(parsed.env).toBeUndefined();
+    expect(parsed.errors.join(' ')).toMatch(/set by the terminal/);
+  });
+});

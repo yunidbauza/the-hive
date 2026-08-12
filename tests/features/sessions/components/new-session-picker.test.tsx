@@ -303,6 +303,7 @@ describe('NewSessionPicker · unmapped projects', () => {
         status,
         isRepo: true,
       })),
+      env: {},
       notifications: { ...DEFAULT_NOTIFICATIONS },
       jira: { ...DEFAULT_JIRA },
       subscriptionAuth: true,

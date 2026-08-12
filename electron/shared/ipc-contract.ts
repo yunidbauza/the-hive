@@ -25,6 +25,8 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   DiagnoseCommandRequest,
+  DiagnoseEnvRequest,
+  EnvDiagnostic,
   PathProbe,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -111,6 +113,13 @@ export const CH = {
   configSetRuntime: 'config:set-runtime',
   configSetProjectRuntime: 'config:set-project-runtime',
   configDiagnoseCommand: 'config:diagnose-command',
+  /**
+   * Story 108's env diagnostic. Read-only, alongside `configDiagnoseCommand`
+   * rather than folded into it: the two answer different questions (where a
+   * command was looked for vs. whether a variable survived the shell's rc
+   * file) and a project can be diagnosed for either independently.
+   */
+  configDiagnoseEnv: 'config:diagnose-env',
   /**
    * Story 106's channels.
    *
@@ -716,6 +725,16 @@ export interface HiveBridge {
      */
     diagnoseCommand(request: DiagnoseCommandRequest): Promise<CommandDiagnostic>;
     /**
+     * Explain which configured environment variables survived the shell's
+     * rc file (story 108).
+     *
+     * Read-only, and scoped by project through the same `effectiveRuntime`
+     * `diagnoseCommand` uses, so the shell probed is the shell that
+     * project's sessions would actually spawn. Only the variables the user
+     * configured are reported — never the shell's whole environment.
+     */
+    diagnoseEnv(request: DiagnoseEnvRequest): Promise<EnvDiagnostic>;
+    /**
      * Change which events raise an OS notification (story 106).
      *
      * Only the classes named are touched. Off is a value, not an absence, so
@@ -1190,6 +1209,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'setRuntime',
   'setProjectRuntime',
   'diagnoseCommand',
+  // Story 108.
+  'diagnoseEnv',
   // Story 106.
   'setNotifications',
   /**

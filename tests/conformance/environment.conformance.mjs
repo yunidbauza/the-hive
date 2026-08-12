@@ -148,4 +148,34 @@ describe('environment', () => {
     session.send('test -n "$PATH" && echo PATH-OK');
     await session.waitForOutput('PATH-OK');
   });
+
+  it('carries the workspace+project env merge into the child, project winning per key', async (context) => {
+    /**
+     * Story 108's workspace env layer (`effectiveRuntime`) computes
+     * `{ ...snapshot.env, ...(project?.env ?? {}) }` before a session ever
+     * spawns — the pty-host itself has no notion of two layers, it is handed
+     * one already-merged map. So this does not re-prove the merge (that's
+     * `runtime.test.ts`'s job, against fakes); it proves the merged map
+     * *survives the trip* through `buildEnv` and a real spawn unchanged: a
+     * workspace-only variable, and a variable both layers set, arriving with
+     * the value the project layer chose.
+     *
+     * Asserting only "both keys are present" would still pass under a
+     * reversed merge (project spread first, workspace over it) — so the
+     * shared key's assertion checks the *value*, not just presence.
+     */
+    const workspaceEnv = { HIVE_WORKSPACE_ONLY: 'workspace', HIVE_SHARED: 'workspace-value' };
+    const projectEnv = { HIVE_SHARED: 'project-value' };
+    // Mirrors `effectiveRuntime`'s own merge order exactly: workspace first,
+    // project spread over it. If this line were reversed the assertion below
+    // would fail against `workspace-value` — the mistake it exists to catch.
+    const merged = { ...workspaceEnv, ...projectEnv };
+
+    const session = await context.ready(context.open({ env: merged }));
+
+    session.send(
+      'echo "WS=[$HIVE_WORKSPACE_ONLY] SHARED=[$HIVE_SHARED]"',
+    );
+    await session.waitForOutput('WS=[workspace] SHARED=[project-value]');
+  });
 });

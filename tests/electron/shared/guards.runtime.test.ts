@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   parseDiagnoseCommandRequest,
+  parseDiagnoseEnvRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
 } from '../../../electron/shared/guards';
@@ -49,6 +50,52 @@ describe('parseSetRuntimeRequest', () => {
   it('refuses __proto__', () => {
     const payload = JSON.parse('{"shell":"/bin/zsh","__proto__":{"x":1}}') as unknown;
     expect(() => parseSetRuntimeRequest(payload)).toThrow(/forbidden key/);
+  });
+});
+
+describe('parseSetRuntimeRequest env', () => {
+  it('accepts a valid map', () => {
+    expect(parseSetRuntimeRequest({ env: { AWS_PROFILE: 'incorp' } })).toEqual({
+      env: { AWS_PROFILE: 'incorp' },
+    });
+  });
+
+  it('accepts an empty map — that is how the last variable is removed', () => {
+    expect(parseSetRuntimeRequest({ env: {} })).toEqual({ env: {} });
+  });
+
+  /*
+    Split by refusal *category*, not lumped under a bare `.toThrow()`. This is
+    the same rule as the project-layer tests below (`refuses the dynamic-loader
+    variables`, `refuses the interpreter hooks`, `refuses the variables the
+    terminal sets for itself`): `assertEnv` calls the *same* `unsafeEnvReason`
+    those tests pin, and a bare `.toThrow()` here cannot tell "refused for the
+    right reason" apart from "refused because of an unrelated bug" — e.g. a
+    typo that failed `ENV_NAME` instead of the dynamic-loader check. On a
+    security boundary the category is the actual contract, not just "it threw".
+  */
+  it('refuses the dynamic-loader variables', () => {
+    for (const key of ['LD_PRELOAD', 'DYLD_INSERT_LIBRARIES']) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow(
+        /dynamic loader/,
+      );
+    }
+  });
+
+  it('refuses the interpreter hooks', () => {
+    for (const key of ['NODE_OPTIONS', 'BASH_ENV']) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow(
+        /run code/,
+      );
+    }
+  });
+
+  it('refuses the variables the terminal sets for itself', () => {
+    for (const key of ['TERM', 'COLORTERM', 'PWD']) {
+      expect(() => parseSetRuntimeRequest({ env: { [key]: 'x' } })).toThrow(
+        /set by the terminal/,
+      );
+    }
   });
 });
 
@@ -242,5 +289,22 @@ describe('parseDiagnoseCommandRequest', () => {
     expect(() => parseDiagnoseCommandRequest({ nope: 1 })).toThrow(
       /unexpected key/,
     );
+  });
+});
+
+describe('parseDiagnoseEnvRequest', () => {
+  it('accepts an empty request — that means the top-level env', () => {
+    expect(parseDiagnoseEnvRequest({})).toEqual({});
+  });
+
+  it('accepts an id', () => {
+    expect(parseDiagnoseEnvRequest({ id: 'apfm-web' })).toEqual({
+      id: 'apfm-web',
+    });
+  });
+
+  it('rejects a malformed id and unknown keys', () => {
+    expect(() => parseDiagnoseEnvRequest({ id: '../etc' })).toThrow();
+    expect(() => parseDiagnoseEnvRequest({ nope: 1 })).toThrow(/unexpected key/);
   });
 });

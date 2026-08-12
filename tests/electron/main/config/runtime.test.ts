@@ -33,6 +33,7 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   templateWritten: false,
   shell: DEFAULT_SHELL,
   claudeCommand: DEFAULT_CLAUDE_COMMAND,
+  env: {},
   projects: [],
   notifications: { ...DEFAULT_NOTIFICATIONS },
   jira: { ...DEFAULT_JIRA },
@@ -122,6 +123,35 @@ describe('effectiveRuntime', () => {
     // The caller passes this to the pty-host; sharing the cached config's map
     // would let a mutation downstream edit the config the app is running on.
     expect(entry.env).toEqual({ FOO: 'bar' });
+  });
+});
+
+describe('effectiveRuntime env layering', () => {
+  it('uses the workspace env when the project has none', () => {
+    const runtime = effectiveRuntime(snapshot({ env: { A: '1' } }), null);
+
+    expect(runtime.env).toEqual({ A: '1' });
+  });
+
+  it('merges both layers, project winning per key', () => {
+    const runtime = effectiveRuntime(
+      snapshot({ env: { A: 'workspace', C: '3' } }),
+      project({ env: { A: 'project', B: '2' } }),
+    );
+
+    expect(runtime.env).toEqual({ A: 'project', B: '2', C: '3' });
+  });
+
+  it('returns a fresh object that does not alias the workspace map', () => {
+    const workspaceEnv = { A: '1' };
+    const runtime = effectiveRuntime(snapshot({ env: workspaceEnv }), null);
+
+    runtime.env.A = 'mutated';
+
+    // Same reasoning as the project-side aliasing test above: the caller
+    // passes this to the pty-host, and handing out the workspace's own map
+    // would let a mutation downstream edit the cached config.
+    expect(workspaceEnv.A).toBe('1');
   });
 });
 

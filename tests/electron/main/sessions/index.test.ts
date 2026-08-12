@@ -57,6 +57,7 @@ const CONFIG: ConfigSnapshot = {
   templateWritten: false,
   shell: '/bin/zsh',
   claudeCommand: 'claude',
+  env: {},
   projects: [
     {
       id: 'apfm-web',

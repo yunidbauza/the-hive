@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { parseConfig } from '../../../../electron/main/config/parse';
+import { defaultShell } from '../../../../electron/main/config/shell';
 import { writeConfig } from '../../../../electron/main/config/write';
 import { CONFIG_PATH_ENV } from '../../../../electron/shared/config-contract';
 
@@ -30,6 +31,7 @@ let dir: string;
 let path: string;
 let projectDir: string;
 const originalConfigPath = process.env[CONFIG_PATH_ENV];
+const originalShell = process.env.SHELL;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'hive-write-'));
@@ -43,6 +45,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
   if (originalConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
   else process.env[CONFIG_PATH_ENV] = originalConfigPath;
+  if (originalShell === undefined) delete process.env.SHELL;
+  else process.env.SHELL = originalShell;
 });
 
 /** Seed the config file and return exactly what was written. */
@@ -91,6 +95,26 @@ describe('writeConfig — the round trip', () => {
     expect(result.snapshot.shell).toBe('/bin/zsh');
     expect(result.snapshot.configPath).toBe(path);
     expect(result.snapshot.projects).toHaveLength(1);
+  });
+
+  it('defaults the shell to the login shell, not $SHELL, when the file names none', () => {
+    // Same technique as `index.test.ts`'s defaulting test: poison `$SHELL` with
+    // a value `defaultShell()` could never return, then assert the result
+    // equals `defaultShell()` and not the poisoned value. That proves both that
+    // the fallback landed and that `$SHELL` was not consulted, and it stays
+    // deterministic on any machine or CI runner regardless of the real login
+    // shell.
+    process.env.SHELL = '/bin/not-a-real-shell';
+    seed({ version: 2, projects: [] });
+
+    const result = writeConfig((draft) => ({
+      ...draft,
+      projects: [entry('repo', projectDir)],
+    }));
+
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.shell).toBe(defaultShell());
+    expect(result.snapshot.shell).not.toBe('/bin/not-a-real-shell');
   });
 
   it('ends the file with a trailing newline', () => {

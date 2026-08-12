@@ -9,6 +9,8 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   DiagnoseCommandRequest,
+  DiagnoseEnvRequest,
+  EnvDiagnostic,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
@@ -163,6 +165,9 @@ const bridge: HiveBridge = {
       request: DiagnoseCommandRequest,
     ): Promise<CommandDiagnostic> =>
       ipcRenderer.invoke(CH.configDiagnoseCommand, request),
+    // Story 108. Read-only, like `diagnoseCommand` just above.
+    diagnoseEnv: (request: DiagnoseEnvRequest): Promise<EnvDiagnostic> =>
+      ipcRenderer.invoke(CH.configDiagnoseEnv, request),
     // Story 106. One more mutating verb, returning the fresh snapshot.
     setNotifications: (
       request: SetNotificationsRequest,

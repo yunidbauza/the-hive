@@ -3,6 +3,8 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   DiagnoseCommandRequest,
+  DiagnoseEnvRequest,
+  EnvDiagnostic,
   ProjectStatus,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -299,6 +301,29 @@ export async function diagnoseAgentCommand(
     return await bridge.config.diagnoseCommand(request);
   } catch (cause) {
     console.error('[hive] the command diagnostic failed:', cause);
+    return null;
+  }
+}
+
+/**
+ * Ask which configured environment variables survived the shell's rc file
+ * (story 108).
+ *
+ * Not routed through `mutate`: it writes nothing, so there is no snapshot to
+ * install. Returns `null` when there is no bridge (the browser demo) or the
+ * channel fails, and the caller renders nothing rather than a fake verdict —
+ * for the identical reason {@link diagnoseAgentCommand} does.
+ */
+export async function diagnoseSessionEnv(
+  request: DiagnoseEnvRequest,
+): Promise<EnvDiagnostic | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.config.diagnoseEnv(request);
+  } catch (cause) {
+    console.error('[hive] the environment diagnostic failed:', cause);
     return null;
   }
 }

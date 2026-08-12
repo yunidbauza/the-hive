@@ -134,6 +134,78 @@ export interface CommandDiagnostic {
 }
 
 /**
+ * One configured variable, and what the shell actually ended up with (story
+ * 108).
+ *
+ * The design decision this exists to make observable: injected environment
+ * is applied before the shell starts, and a login shell's rc file — which
+ * runs afterward — can overwrite anything set here. `overridden` is the
+ * user-facing signal for exactly that; `actual: null` is the sub-case where
+ * the rc file did not merely change the value but dropped the variable
+ * entirely, which the view names differently ("dropped" vs "overridden by").
+ */
+export interface EnvVarVerdict {
+  key: string;
+  /** What was injected — the value from the merged workspace+project env. */
+  configured: string;
+  /** What the shell reported for this key, or `null` if it had none at all. */
+  actual: string | null;
+  /** True when the shell reported a different value than was injected. */
+  overridden: boolean;
+}
+
+/**
+ * Why a configured variable did or did not survive to reach the shell's own
+ * environment (story 108).
+ *
+ * Scoped to one project's runtime, exactly like {@link CommandDiagnostic} —
+ * the shell probed is the shell that project's sessions would actually spawn,
+ * via the same `effectiveRuntime`. Only the variables the user configured are
+ * reported; see {@link EnvVarVerdict} and `compareEnv` for why dumping the
+ * shell's whole environment would be the wrong answer.
+ */
+export interface EnvDiagnostic {
+  /** The project the diagnostic ran for, or `null` for the top-level env. */
+  projectId: string | null;
+  /** The shell that was probed — `effectiveRuntime(...).shell`. */
+  shell: string;
+  /**
+   * Present when the probe itself could not run — the shell could not be
+   * started, or did not exit cleanly. `vars` is always empty when this is
+   * set: a failed observation is not a partial one.
+   */
+  error: string | null;
+  vars: EnvVarVerdict[];
+}
+
+/**
+ * The exact argv the environment diagnostic runs the shell with (story 108).
+ *
+ * A shared constant rather than a string literal duplicated in
+ * `env-diagnostic.ts` (which runs it) and `env-diagnostic-view.tsx` (which
+ * displays it) — a second, hand-typed copy is exactly the kind of drift that
+ * turned a missing `-i` into a defect in the first place.
+ *
+ * **`-i`, not just `-l -c`.** zsh sources `.zshrc` only for *interactive*
+ * shells, and a real session's `<shell> -l` on a PTY is interactive — so a
+ * merely-login, non-interactive probe misses the exact file this diagnostic
+ * exists to expose, reporting a variable as "kept" while a real session would
+ * have gotten the rc file's value. Measured directly: `zsh -l -c printenv`
+ * does not see a variable set in `.zshrc`; `zsh -l -i -c printenv` does.
+ *
+ * **A residual gap remains, and is surfaced rather than hidden.** The probe
+ * has no TTY, so an rc file gated on `[[ -t 0 ]]` can still diverge from a
+ * real session. `EnvDiagnosticView` renders this exact argv next to the
+ * result precisely so the user can see what was, and was not, exercised.
+ */
+export const ENV_PROBE_ARGS: readonly string[] = ['-l', '-i', '-c', 'printenv'];
+
+/** Which project's environment to diagnose. Omitted id means the top-level env. */
+export interface DiagnoseEnvRequest {
+  id?: string;
+}
+
+/**
  * Which events raise an OS notification (story 106).
  *
  * Only classes backed by an event main can actually observe. There is
@@ -221,10 +293,18 @@ export interface ConfigSnapshot {
    * error: no config file is the normal state on a fresh machine.
    */
   templateWritten: boolean;
-  /** The login shell for every session, already defaulted from `$SHELL`. */
+  /** The login shell for every session, already defaulted by `defaultShell()`. */
   shell: string;
   /** The bootstrap command a session runs (story 096), already defaulted. */
   claudeCommand: string;
+  /**
+   * Environment applied to every session, under any project's own (story 108).
+   *
+   * Always fully resolved — `{}` rather than absent — for the reason
+   * `notifications` is: main reads this on every spawn, and a consumer that
+   * must remember to apply a default is one that will forget on one branch.
+   */
+  env: Record<string, string>;
   /** Every entry the file declared, in file order, each with its verdict. */
   projects: ProjectConfig[];
   /**
@@ -289,7 +369,7 @@ export const SUPPORTED_CONFIG_VERSIONS: readonly number[] = [1, 2];
 /** What a project entry gets when the file names no icon. */
 export const DEFAULT_PROJECT_ICON = 'ph-folder';
 
-/** Used when the file names no shell and `$SHELL` is unset. */
+/** The last-resort shell: used off darwin when the password database has no usable entry. */
 export const DEFAULT_SHELL = '/bin/sh';
 
 /** Used when the file names no bootstrap command (story 096). */
@@ -428,6 +508,148 @@ export const DEFAULT_SUBSCRIPTION_AUTH = true;
  */
 export const DEFAULT_SESSION_METRICS = true;
 
+/**
+ * The one definition of "what a spawned session's environment looks like"
+ * (story 092, extended by story 108's fix round).
+ *
+ * Originally lived only in `electron/pty-host/env.ts`, which is fine for the
+ * pty-host itself but was wrong for the env diagnostic
+ * (`electron/main/config/env-diagnostic.ts`): main may not import
+ * `electron/pty-host/**` (the process-boundary zone in `eslint.config.mjs`
+ * only grants it `electron/shared/**`), so the diagnostic had been building
+ * its own, slightly different environment by hand — `{ ...baseEnv,
+ * ...runtime.env }`, with none of what follows applied.
+ *
+ * That divergence was not cosmetic. A packaged app launched from Finder has
+ * no `TERM` in main's own environment (the same launch mode `shell.ts`
+ * already distrusts `$SHELL` for), while every real session gets
+ * `TERM=xterm-256color` forced on it below. An rc file that branches on
+ * `TERM` — `[[ $TERM == dumb ]] && return`, which oh-my-zsh and
+ * powerlevel10k both do — would take a different branch under the probe than
+ * under a real session, and the diagnostic would report a variable as "kept"
+ * that a real session would actually see overridden. Living here and being
+ * called by both `buildEnv` (pty-host) and `diagnoseEnv` (main) is what
+ * makes that impossible: there is exactly one place this logic can drift.
+ */
+export const TERM = 'xterm-256color';
+
+/** See {@link TERM} — advertises 24-bit colour so tools do not quantise to 256. */
+export const COLORTERM = 'truecolor';
+
+/**
+ * Variables stripped by exact name before a session's environment is built.
+ *
+ * `ELECTRON_RUN_AS_NODE` is Electron's own leakage — a child that itself
+ * launches Electron would silently become a Node process instead.
+ * `NODE_OPTIONS` and `NODE_PATH` point a `node` the user runs at Electron's
+ * own bundled runtime and `node_modules` rather than their project's.
+ *
+ * {@link SESSION_ENV_KEYS} is spread in rather than spelled out: the config
+ * layer refuses those names and this layer strips them, and two hand-maintained
+ * copies of the same list is how the message row and the terminal drifted apart
+ * in HIVE-65.
+ */
+export const SESSION_ENV_DENY_EXACT: readonly string[] = [
+  'ELECTRON_RUN_AS_NODE',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  ...SESSION_ENV_KEYS,
+];
+
+/**
+ * Variables stripped by prefix before a session's environment is built.
+ *
+ * `ELECTRON_*` is internal wiring never meaningful to a user shell;
+ * `GDK_PIXBUF_*` and `CHROME_*` are Chromium sandbox/runtime leakage.
+ *
+ * ## Why `CLAUDE_*` is on this list, and why it matters most here
+ *
+ * Launch The Hive from a terminal that is *itself* inside a Claude Code session
+ * — `pnpm desktop:dev` typed into one, which is exactly how it gets developed —
+ * and Electron inherits that session's variables: `CLAUDE_CODE_SESSION_ID`,
+ * `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDECODE=1`, and the rest. Every pty then
+ * hands them to `claude`, and every agent The Hive spawns **joins the launching
+ * session instead of starting its own**.
+ *
+ * The symptoms are bizarre until the cause is known, and were all observed:
+ *
+ * - Every new session opened already carrying the launching session's display
+ *   name, ignoring the `--name` the app passed it.
+ * - Renaming any one session renamed *all* of them, and the developer's own
+ *   outer session along with them, because there was only ever one session.
+ * - `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker`
+ *   in sessions nobody had configured that way.
+ *
+ * Stripping here is the right layer and is not lossy: {@link buildSessionEnv}
+ * seeds from the *ambient* environment, and sessions run a **login shell**, so
+ * any `CLAUDE_*` the user genuinely exports from their own profile is
+ * re-established by that shell. What is removed is only the leakage from
+ * however the app happened to be started. `unsafeEnvReason` refuses these names
+ * at the point they are typed so the removal is never *silent* — a setting that
+ * vanishes is worse than one that names itself.
+ */
+export const SESSION_ENV_DENY_PREFIXES: readonly string[] = [
+  'ELECTRON_',
+  'GDK_PIXBUF_',
+  'CHROME_',
+  ...SESSION_ENV_PREFIXES,
+];
+
+function isSessionEnvDenied(key: string): boolean {
+  return (
+    SESSION_ENV_DENY_EXACT.includes(key) ||
+    SESSION_ENV_DENY_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
+
+/**
+ * Build the environment a spawned session ends up with — and, since story
+ * 108's fix round, the environment the env diagnostic probes, so the two can
+ * never quietly diverge again.
+ *
+ * Start from a copy of the base environment, delete the deny-list, apply
+ * whatever was injected explicitly, then force `TERM`, `COLORTERM` and `PWD`.
+ * Those three are last on purpose: they are the terminal's identity, and an
+ * injected override of `TERM` is far more likely to be a mistake than an
+ * intention.
+ *
+ * `stripEnv` is the caller's own names, on top of the deny list, and the
+ * distinction is worth keeping: everything on {@link SESSION_ENV_DENY_EXACT} is
+ * removed because inheriting it *breaks* a child process, which is a fact about
+ * the environment. `stripEnv` is whatever the caller was told to drop by the
+ * user's config, which is a preference — see {@link AUTH_ENV_KEYS}. It applies
+ * to `injected` as well as to the ambient copy, exactly as the deny list does:
+ * a project that could re-add a name the user asked to have removed would make
+ * the setting silently conditional on which project was open.
+ */
+export function buildSessionEnv(
+  base: NodeJS.ProcessEnv,
+  cwd: string,
+  injected: Record<string, string> = {},
+  stripEnv: readonly string[] = [],
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  const stripped = new Set(stripEnv);
+  const isRemoved = (key: string): boolean =>
+    isSessionEnvDenied(key) || stripped.has(key);
+
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || isRemoved(key)) continue;
+    env[key] = value;
+  }
+
+  for (const [key, value] of Object.entries(injected)) {
+    if (isRemoved(key)) continue;
+    env[key] = value;
+  }
+
+  env.TERM = TERM;
+  env.COLORTERM = COLORTERM;
+  env.PWD = cwd;
+
+  return env;
+}
+
 /** Why an environment variable name was refused, or `null` if it is fine. */
 export function unsafeEnvReason(key: string): string | null {
   if (RESERVED_ENV_KEYS.includes(key)) {
@@ -475,6 +697,7 @@ export function emptySnapshot(
     claudeCommand: DEFAULT_CLAUDE_COMMAND,
     subscriptionAuth: DEFAULT_SUBSCRIPTION_AUTH,
     sessionMetrics: DEFAULT_SESSION_METRICS,
+    env: {},
     projects: [],
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
@@ -546,16 +769,25 @@ export interface ReorderProjectsRequest {
 }
 
 /**
- * Change the top-level runtime settings (story 104).
+ * Change the top-level runtime settings (story 104, extended by 108).
  *
- * Both fields are optional so the UI can save one without restating the other,
- * but a *present* field is always a real value — clearing a top-level setting
- * is not offered, because there is no lower level to fall back to and a session
- * with no shell cannot start.
+ * All fields are optional so the UI can save one without restating the
+ * others. `shell` and `claudeCommand` may not be cleared — there is no lower
+ * level to fall back to, and a session with no shell cannot start — but `env`
+ * is different: it is the whole map rather than a scalar, so `{}` is a real,
+ * offered value and is how the last workspace variable is removed. See
+ * {@link SetRuntimeRequest.env}.
  */
 export interface SetRuntimeRequest {
   shell?: string;
   claudeCommand?: string;
+  /**
+   * The whole map, replacing what is stored — not a patch.
+   *
+   * `{}` is meaningful and is how the last variable is removed. Unlike `shell`,
+   * there is no `null` case: absent already means "leave it alone".
+   */
+  env?: Record<string, string>;
 }
 
 /**
