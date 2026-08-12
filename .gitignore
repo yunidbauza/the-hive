@@ -33,3 +33,11 @@ blob-report/
 
 # Brainstorming visual companion (superpowers)
 .superpowers/
+
+# Superpowers plans and specs — working notes for one story at one moment,
+# not a record the repo maintains. They go stale the day their story ships
+# (paths that have since moved, links to a stories/ tree that no longer
+# exists), and a reader cannot tell which are current. What survives a story
+# belongs in AGENTS.md, the deep-dive docs, or the commit that shipped it.
+# Everything committed up to this point stays in history.
+docs/superpowers/
