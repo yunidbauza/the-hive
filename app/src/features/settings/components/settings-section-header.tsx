@@ -19,15 +19,22 @@
  *
  * ```
  * 15px semibold ink     ← this, the pane
- * 13px regular  ink     ← SettingsGroup, a group inside the pane
+ * 13px semibold ink     ← SettingsGroup, a group inside the pane
  * 11.5px        subtle  ← either one's description
  * ```
  *
- * Two steps and a weight change, on a base of 13px. Bigger would fight the
- * dialog's own 13px "Settings" title one row up — a pane heading may outrank
- * the window chrome around it, but it should not shout over it — and anything
- * smaller than 15px on a monospace face at this size is a difference you have
- * to measure rather than see.
+ * Two size steps on a base of 13px, both title levels holding the same weight.
+ * The group title earned that weight for the same reason this one did: at 13px
+ * regular it read as prose rather than as a heading, so a group was found by
+ * its bottom rule instead of by its name. Size alone separates the pane from
+ * the group, which is enough — bigger would fight the dialog's own 13px
+ * "Settings" title one row up, and anything smaller than 15px on a monospace
+ * face at this size is a difference you have to measure rather than see.
+ *
+ * That dialog title stays 13px regular, which now makes it the lightest 13px
+ * in the overlay. Deliberate: it names the window rather than the content, and
+ * it sits in its own bordered bar. Chrome recedes — a pane heading may outrank
+ * it, and so may the groups inside that pane.
  *
  * The description keeps the same 11.5px subtle it has always had. It is the
  * *title* that was under-weighted; making the sentence beneath it smaller too
