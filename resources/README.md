@@ -54,8 +54,16 @@ linux:
   icon: resources/icons
 ```
 
-macOS ignores `BrowserWindow`'s `icon` option entirely — the dock reads the
-bundle's `.icns` — so there is deliberately no icon wired into
-`electron/main/window.ts`. Windows and Linux take theirs from the packaged
-resources; a dev run on those platforms shows Electron's default until packaging
-exists.
+## Where the icon comes from at runtime
+
+| | Packaged app | `pnpm desktop:dev` |
+| --- | --- | --- |
+| macOS | the bundle's `.icns` | `app.dock.setIcon`, from `electron/main/app-icon.ts` |
+| Windows | the `.ico` compiled into the `.exe` | `BrowserWindow`'s `icon` option |
+| Linux | the `.desktop` entry | `BrowserWindow`'s `icon` option |
+
+The packaged column is entirely the installer's doing — none of it can be set
+from inside a running process, which is why `app-icon.ts` returns nothing at all
+when `app.isPackaged`. The dev column exists only so a development run does not
+sit in the dock under Electron's default icon; it reads `resources/icon.png`
+straight from the working tree.

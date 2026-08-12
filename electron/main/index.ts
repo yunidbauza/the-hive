@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { applyDevDockIcon } from './app-icon';
 import { installContentSecurityPolicy } from './csp';
 import { registerIpcHandlers } from './ipc';
 import { registerLifecycle } from './lifecycle';
@@ -36,7 +37,14 @@ if (!app.requestSingleInstanceLock()) {
    * The CSP has to be installed before any renderer loads, and
    * `session.defaultSession` is only available once the app is ready.
    */
-  void app.whenReady().then(() => installContentSecurityPolicy());
+  void app.whenReady().then(() => {
+    installContentSecurityPolicy();
+    /**
+     * Dev only, and macOS only: without it `pnpm desktop:dev` sits in the dock
+     * under Electron's default icon. A packaged app is the installer's job.
+     */
+    applyDevDockIcon();
+  });
 
   registerLifecycle({ createWindow });
 }

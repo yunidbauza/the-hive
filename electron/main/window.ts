@@ -9,6 +9,7 @@ import {
   WINDOW_BACKGROUND,
 } from '@shared/window';
 
+import { devIconPath } from './app-icon';
 import { isSafeExternalUrl } from './external-links';
 import {
   debounce,
@@ -106,10 +107,18 @@ export function createWindow(): BrowserWindow {
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   const rect = resolveRect(saved.rect, workAreas);
 
+  const icon = devIconPath();
+
   const win = new BrowserWindow({
     ...(rect
       ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
       : DEFAULT_WINDOW_SIZE),
+    /**
+     * The window and taskbar icon on Windows and Linux, during development
+     * only — a packaged app takes it from the executable or the `.desktop`
+     * entry, and macOS ignores this option entirely in both cases (`app-icon.ts`).
+     */
+    ...(icon ? { icon } : {}),
     minWidth: MIN_WINDOW_SIZE.width,
     minHeight: MIN_WINDOW_SIZE.height,
     /**
