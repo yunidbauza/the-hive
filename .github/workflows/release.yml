@@ -61,11 +61,54 @@ jobs:
           pnpm run type-check
           pnpm run test
 
+      - name: Create the draft release, so nothing has to race to create it
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # electron-builder runs **two** publishers concurrently, and each does a
+        # check-then-create on the release. Both see "doesn't exist", both POST,
+        # and one of them loses. Straight from the v0.1.4 log:
+        #
+        #   • publishing  publisher=Github …            (twice, 8ms apart)
+        #   • creating GitHub release  reason=release doesn't exist  tag=v0.1.4
+        #   • creating GitHub release  reason=release doesn't exist  tag=v0.1.4
+        #   HttpError: 422 … {"code":"already_exists","field":"tag_name"}
+        #
+        # The loser throws, which aborts the publish **after** the dmg and zip
+        # have uploaded but **before** `latest-mac.yml` does. That leaves a
+        # release the updater cannot read sitting at the top of the list as
+        # `latest`, so every installed copy's update check 404s. Measured: it
+        # did exactly that, until the release was deleted by hand.
+        #
+        # Creating it here first means `reason=release doesn't exist` is never
+        # true and there is nothing to race over.
+        #
+        # **A draft**, deliberately. A draft is invisible to the updater and to
+        # `releases/latest`, so the several minutes between "release exists" and
+        # "release has its assets" cannot break a running app — which is the
+        # very failure this step is here to prevent, and it would be absurd to
+        # reintroduce it in a smaller window. It is published at the end, once
+        # there is something worth publishing.
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "A release for $GITHUB_REF_NAME already exists — reusing it."
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --notes "Download the \`.dmg\` below. Once installed, The Hive checks for new versions itself and tells you in the Inbox."
+
       - name: Build and publish
         env:
-          # electron-builder creates the GitHub Release and uploads the dmg, the
-          # zip and latest-mac.yml. The default token has `contents: write` from
-          # the permissions block above.
+          # electron-builder uploads the dmg, the zip and latest-mac.yml to the
+          # draft created above. It no longer creates anything: `releaseType:
+          # draft` in electron-builder.yml means it also never flips the draft,
+          # so publication is one decision made in one place — the step below,
+          # and only when the build actually succeeded.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # There is no Developer ID. Told explicitly rather than left to be
           # inferred, so a runner that happens to have a keychain entry cannot
@@ -73,40 +116,54 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: pnpm run desktop:publish
 
-      - name: Collapse duplicate releases for this tag
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish the release
+        # Only on success, and only once `latest-mac.yml` is actually there. A
+        # release without it is not a release — the updater reads that file and
+        # nothing else to decide a new version exists.
+        if: success() && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # electron-builder's GitHub publisher races itself: the asset uploads
-        # each create-or-find the release, and more than one can win. Observed
-        # on both v0.1.0 runs — two releases for one tag, with a lone
-        # `.dmg.blockmap` stranded on the loser. `releaseType: release` did not
-        # fix it (GitHub does not enforce one release per tag through the API),
-        # and there is no electron-builder switch to turn the second uploader
-        # off, so the workflow cleans up after it rather than leaving a
-        # confusing half-release in the list every time.
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]')
+          echo "assets: $assets"
+          echo "$assets" | jq -e 'index("latest-mac.yml")' >/dev/null \
+            || { echo "ABORT: latest-mac.yml is missing — refusing to publish a release no app can use."; exit 1; }
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          echo "Published $GITHUB_REF_NAME."
+
+      - name: Tidy the releases for this tag
+        # `always()`, because the case that hurt was a **failed** run leaving an
+        # unusable release behind. Runs after both outcomes.
+        if: always() && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # One rule, which covers every way this can go wrong: **keep exactly the
+        # release that carries `latest-mac.yml`, delete every other release for
+        # this tag.**
         #
-        # The keeper is identified by the asset that actually matters: a release
-        # without `latest-mac.yml` cannot serve an update, so it is never the
-        # one to keep. If no release carries it, nothing is deleted and the step
-        # says so — cleaning up on an unrecognised shape is how you delete the
-        # good one.
+        # A release without that file cannot serve an update, so it is never
+        # worth keeping — whether it is a duplicate the publisher raced into
+        # existence, or the half-finished remains of a build that failed. And a
+        # good release from an earlier run is never at risk, because it has the
+        # file.
         run: |
           set -euo pipefail
           releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
             --jq "[.[] | select(.tag_name == \"${GITHUB_REF_NAME}\")]")
           keep=$(echo "$releases" | jq -r \
             'map(select([.assets[].name] | index("latest-mac.yml"))) | .[0].id // empty')
-          if [ -z "$keep" ]; then
-            echo "No release for ${GITHUB_REF_NAME} carries latest-mac.yml — leaving everything alone."
-            exit 0
-          fi
-          echo "Keeping release $keep."
-          echo "$releases" | jq -r --arg keep "$keep" '.[] | select(.id != ($keep | tonumber)) | .id' \
+          echo "$releases" | jq -r --arg keep "${keep:-0}" \
+            '.[] | select(.id != ($keep | tonumber)) | .id' \
           | while read -r stray; do
-              echo "Deleting duplicate release $stray"
+              echo "Deleting unusable release $stray for ${GITHUB_REF_NAME}"
               gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$stray"
             done
+          if [ -z "$keep" ]; then
+            echo "Nothing for ${GITHUB_REF_NAME} carries latest-mac.yml — kept nothing."
+          else
+            echo "Kept release $keep."
+          fi
 
       - name: Record what shipped
         # The signature state of the shipped bundle, in the build log, on every

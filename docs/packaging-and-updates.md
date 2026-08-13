@@ -31,29 +31,55 @@ publishes three assets to a GitHub Release:
 re-cutting a release under the same tag fails the integrity check on any client
 that is mid-download. `workflow_dispatch` exists for rebuilds.
 
-### `releaseType: release` is load-bearing
+### Who publishes the release, and why it is not electron-builder
 
-electron-builder's GitHub provider defaults to `draft`. The first v0.1.0 run
-shipped that default and produced two failures at once:
+**electron-builder runs two publishers concurrently, and each does a
+check-then-create on the GitHub release.** That single fact caused two
+different production failures, so the workflow now takes the decision away from
+it entirely.
+
+The first symptom was duplicates. With the provider's `draft` default, both
+publishers created a release — drafts have no tag until published, so GitHub
+cannot dedupe them — and the assets split across the two.
+
+Switching to `releaseType: release` replaced that with something worse. Now the
+loser's create is rejected and **throws**:
 
 ```
-{"id":369616527,"tag":"v0.1.0","draft":true,"assets":["The-Hive-0.1.0-arm64.dmg.blockmap"]}
-{"id":369616528,"tag":"v0.1.0","draft":true,"assets":["latest-mac.yml","…zip","…dmg","…zip.blockmap"]}
+• publishing  publisher=Github …               (twice, 8ms apart)
+• creating GitHub release  reason=release doesn't exist  tag=v0.1.4
+• creating GitHub release  reason=release doesn't exist  tag=v0.1.4
+HttpError: 422 … {"code":"already_exists","field":"tag_name"}
 ```
 
-A draft is **invisible to the updater** — the releases API will not serve one to
-an unauthenticated client — so a release that looks published in the web UI
-reaches nobody, and every running app reports itself up to date. Do not change
-this back.
+The throw aborts the publish *after* the dmg and zip have uploaded and *before*
+`latest-mac.yml` does. The result is a release with no `latest-mac.yml` sitting
+at the top of the list as `latest` — and since that is the only file the updater
+reads, **every installed copy's update check 404s**. v0.1.4 shipped exactly that
+and had to be deleted by hand.
 
-The duplicate is a **separate** bug and `releaseType` does not fix it: the
-second run produced two non-draft releases for the same tag, because GitHub does
-not enforce one release per tag through the API and electron-builder's parallel
-asset uploads each create-or-find one. There is no switch to turn the second
-uploader off, so the workflow's *Collapse duplicate releases* step cleans up
-after it — keeping whichever release carries `latest-mac.yml`, since a release
-without it cannot serve an update. Confirmed working on the v0.1.1 run:
-`Keeping release 369619750. Deleting duplicate release 369619747`.
+So the sequence is now:
+
+| Step | Who | What |
+| --- | --- | --- |
+| 1 | workflow | Create the release **as a draft**, before the build |
+| 2 | electron-builder | Upload dmg, zip, `latest-mac.yml` into it (`releaseType: draft` — it creates nothing and flips nothing) |
+| 3 | workflow | Assert `latest-mac.yml` is present, then publish (`--draft=false --latest`) |
+| 4 | workflow | Tidy: keep the release carrying `latest-mac.yml`, delete any other for this tag |
+
+Two properties fall out of that, and both are the point:
+
+- **Nothing races**, because `reason=release doesn't exist` is never true.
+- **A failed build cannot break a running app.** What it leaves behind is a
+  draft — invisible to the updater and to `releases/latest` — and step 4 sweeps
+  it up. The window in which an incomplete release is visible is zero, not
+  "short".
+
+Step 4's rule is worth stating on its own, because it is what makes every
+failure mode converge: *keep exactly the release that carries `latest-mac.yml`,
+delete every other release for this tag.* A release without that file cannot
+serve an update, so it is never worth keeping — and a good release from an
+earlier run is never at risk, because it has the file.
 
 ## What is in the bundle, and one thing that is not
 

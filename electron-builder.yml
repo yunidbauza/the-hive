@@ -101,18 +101,24 @@ publish:
   provider: github
   owner: yunidbauza
   repo: the-hive
-  # electron-builder's GitHub provider defaults to `draft`, and a draft release
-  # is invisible to the updater: it is not served by the releases API to an
-  # unauthenticated client, so every running app would go on reporting itself up
-  # to date while the release sat there looking published in the web UI. The tag
-  # is already the deliberate act — a second manual step to make it real would
-  # only be a step to forget.
+  # **The workflow owns publication, not electron-builder.**
   #
-  # It also fixes a duplicate the draft default produces. Observed on the first
-  # v0.1.0 run: **two** draft releases for one tag, assets split across them —
-  # one holding a lone `.blockmap`, the other the dmg, the zip and
-  # `latest-mac.yml`. Parallel asset uploads each create-or-find the release, and
-  # GitHub cannot dedupe drafts by tag because a draft has no tag until it is
-  # published. A non-draft release is tagged at creation, so the second uploader
-  # finds the first rather than making another.
-  releaseType: release
+  # `draft` here does not mean "ship drafts". `.github/workflows/release.yml`
+  # creates the draft before the build, electron-builder uploads into it, and a
+  # later step flips it to published — but only after checking that
+  # `latest-mac.yml` actually made it. Publication becomes one decision, taken
+  # in one place, once there is something worth publishing.
+  #
+  # This replaced `releaseType: release`, which was itself a fix for the draft
+  # default and made things worse in a new way. electron-builder runs two
+  # publishers concurrently and each does a check-then-create on the release;
+  # under `release` the loser's POST comes back
+  # `422 already_exists` and **throws**, aborting the publish after the dmg and
+  # zip have uploaded but before `latest-mac.yml` does. The v0.1.4 run did
+  # exactly that, and the resulting assetless-but-`latest` release 404'd the
+  # update check of every installed copy until it was deleted by hand.
+  #
+  # With the draft pre-created by the workflow there is nothing left to race
+  # over, and a build that fails leaves behind a draft — invisible to the
+  # updater and to `releases/latest`, and swept up by the tidy step.
+  releaseType: draft
