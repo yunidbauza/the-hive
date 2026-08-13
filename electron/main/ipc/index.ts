@@ -1001,8 +1001,26 @@ export function registerIpcHandlers(): void {
    * directions. Project resolution and every refusal message moved there with
    * it, so this handler is now only validation and delegation.
    */
-  handle(CH.ptySpawn, (_event, payload) => {
+  handle(CH.ptySpawn, async (_event, payload) => {
     const request = parseSpawnRequest(payload);
+    /**
+     * Wait for the login-shell import before the pty-host can be forked
+     * (HIVE-84).
+     *
+     * This is the one await in this file that is about a *child process's*
+     * environment rather than a reply. `forkPtyHost` passes no `env`, so the
+     * utility process snapshots `process.env` **at fork time**, and the host is
+     * forked lazily on the first spawn and then reused for the life of the app.
+     * Without this, a user who clicks a project inside the first second — the
+     * machine with the slow rc file, which is exactly the population the 5s
+     * timeout exists for — forks the host with launchd's four-entry `PATH` and
+     * freezes it there permanently, while Settings correctly reports that the
+     * import succeeded.
+     *
+     * Costs nothing in the ordinary case: the probe starts at boot and has
+     * long since resolved by the time anyone opens a session.
+     */
+    await loginEnvStatus();
     sessions?.open({
       entityId: request.sessionId,
       projectId: request.projectId,
@@ -1022,6 +1040,9 @@ export function registerIpcHandlers(): void {
 
   handle(CH.ptyRestart, async (_event, payload) => {
     const request = parseSpawnRequest(payload);
+    // Same fork race as `ptySpawn` above: a restart can be the call that first
+    // brings the host up, so it has to wait for the same reason.
+    await loginEnvStatus();
     /**
      * The task is deliberately **not** forwarded (story 097).
      *

@@ -94,26 +94,29 @@ function TokenSourceLine({ gh }: { gh: GhStatus }) {
  * looking for a problem they do not have.
  *
  * Three genuinely different situations, three answers.
+ *
+ * **Branch on why the PATH is what it is, never on `imported`.** A first pass
+ * led with `imported`, which quietly misfiled the most ordinary state of all:
+ * launched from a terminal, the login shell is asked, and it has nothing to
+ * add — so `imported` is `false` with no error, and the PATH is nonetheless
+ * exactly the shell's. That fell through to the failure copy, so this pane
+ * said "the import did not run" directly above PATH source saying "already
+ * your login shell's", and sent a user who had simply not installed `gh` off
+ * hunting an environment problem. The two states that mean *the PATH is the
+ * login shell's* — imported, and identical-so-nothing-to-import — must give
+ * the same answer, so `error` and `enabled` are what the branches test.
  */
 function NotFoundReason({ loginEnv }: { loginEnv: LoginEnvStatus }) {
-  if (loginEnv.imported) {
+  if (loginEnv.error !== null) {
     return (
       <p className="text-[11.5px] text-subtle">
-        This is your login shell&rsquo;s own{' '}
-        <code className="font-mono">PATH</code>, imported at startup — the same one
-        a terminal would search. So <code className="font-mono">gh</code> is not
-        installed anywhere this app can reach:{' '}
-        <code className="font-mono">brew install gh</code> is the fix.
+        The <code className="font-mono">PATH</code> below is the one this app was
+        launched with, not your shell&rsquo;s — the import did not run, and PATH
+        source says why.
       </p>
     );
   }
 
-  /**
-   * The remaining two cases say the *same* operational thing — the searched
-   * `PATH` is the launched-with one — and differ only in what to do about it.
-   * PATH source, directly below, carries the detail; repeating it here would
-   * put the same sentence on screen twice.
-   */
   if (!loginEnv.enabled) {
     return (
       <p className="text-[11.5px] text-subtle">
@@ -126,11 +129,14 @@ function NotFoundReason({ loginEnv }: { loginEnv: LoginEnvStatus }) {
     );
   }
 
+  // Enabled, and the probe succeeded — whether or not it had anything to add.
   return (
     <p className="text-[11.5px] text-subtle">
-      The <code className="font-mono">PATH</code> below is the one this app was
-      launched with, not your shell&rsquo;s — the import did not run, and PATH
-      source says why.
+      This is your login shell&rsquo;s own <code className="font-mono">PATH</code>
+      {loginEnv.imported ? ', imported at startup' : ''} — the same one a terminal
+      would search. So <code className="font-mono">gh</code> is not installed
+      anywhere this app can reach:{' '}
+      <code className="font-mono">brew install gh</code> is the fix.
     </p>
   );
 }

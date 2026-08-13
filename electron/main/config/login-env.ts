@@ -36,10 +36,17 @@ import { describeProbeFailure } from './env-diagnostic';
  * Every consumer already reads `process.env` **lazily, at call time** — the
  * `gh` probe (`integrations/gh.ts`), `resolveGit` (`sessions/git.ts`), the
  * command diagnostic (`config/runtime.ts`), and the base environment of every
- * session and of the pty-host fork (`sessions/index.ts`). Repairing the one
- * value they all derive from fixes all of them with no change at any call
- * site, and — because the pty-host is forked after this resolves — without a
- * second mechanism for the process that actually spawns terminals.
+ * session (`sessions/index.ts`). Repairing the one value they all derive from
+ * fixes all of them with no change at any call site.
+ *
+ * **The pty-host is the exception, and it is enforced rather than assumed.**
+ * `forkPtyHost` passes no `env`, so the utility process snapshots
+ * `process.env` at fork time and keeps it for the life of the app — a lazy
+ * read that happens exactly once, unlike every other consumer above. So the
+ * `ptySpawn` and `ptyRestart` handlers `await` {@link loginEnvStatus} before
+ * the host can come up. An earlier draft of this comment claimed the ordering
+ * held on its own; it did not, and a fast click on a slow machine would have
+ * frozen launchd's `PATH` into every terminal the app ever opened.
  *
  * The alternative, threading an "effective PATH" parameter through those four
  * call chains, would have produced the same behaviour plus a permanent

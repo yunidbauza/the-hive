@@ -335,6 +335,39 @@ describe('startLoginEnvImport', () => {
     expect(target.PATH).toBe(['/opt/homebrew/bin', '/usr/bin'].join(delimiter));
   });
 
+  /**
+   * The property the pty-host fork depends on (HIVE-84).
+   *
+   * `forkPtyHost` passes no `env`, so the utility process snapshots
+   * `process.env` once, at fork time, and keeps it for the life of the app.
+   * The `ptySpawn` handler therefore awaits `loginEnvStatus()` before the host
+   * can come up — which is only worth anything if awaiting it genuinely blocks
+   * until the environment has been repaired. This asserts exactly that: the
+   * await does not resolve early, and by the time it does, `target` is already
+   * fixed.
+   */
+  it('does not resolve until the environment has actually been repaired', async () => {
+    const shell = script(
+      'slow-shell',
+      [
+        '/bin/sleep 0.3',
+        `echo '${LOGIN_ENV_DELIMITER}'`,
+        "echo 'PATH=/opt/homebrew/bin'",
+        `echo '${LOGIN_ENV_DELIMITER}'`,
+      ].join('\n'),
+    );
+    const target: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
+
+    startLoginEnvImport({ enabled: true, shell, target, cwd: dir });
+
+    // Synchronously after starting, nothing has been repaired yet.
+    expect(target.PATH).toBe('/usr/bin');
+
+    await loginEnvStatus();
+
+    expect(target.PATH).toBe(['/opt/homebrew/bin', '/usr/bin'].join(delimiter));
+  });
+
   it('answers "disabled" when nothing ever started an import', async () => {
     // The honest answer for a harness that skipped boot — never a claim that
     // an import happened.

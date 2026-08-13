@@ -289,6 +289,37 @@ describe('IntegrationsSection — the PATH source', () => {
     expect(screen.getByText(/not installed anywhere this app can reach/)).toBeInTheDocument();
   });
 
+  /**
+   * The branch that was wrong on the first pass.
+   *
+   * Launched from a terminal: the probe ran, the shell had nothing to add, so
+   * `imported` is false with **no error** — and the PATH is nevertheless
+   * exactly the login shell's. Leading the branches with `imported` filed this
+   * under "the import did not run", which contradicted the PATH source group
+   * one box below and sent a user who had simply not installed `gh` hunting an
+   * environment problem.
+   */
+  it('blames the missing binary when there was simply nothing to import', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        gh: notInstalled(),
+        loginEnv: loginEnv({
+          imported: false,
+          varsImported: [],
+          inheritedEntries: 12,
+          effectiveEntries: 12,
+          error: null,
+        }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(await screen.findByText(/brew install gh/)).toBeInTheDocument();
+    // And it must not contradict the group directly below it.
+    expect(screen.queryByText(/the import did not run/)).not.toBeInTheDocument();
+  });
+
   it('blames the environment when the import is off', async () => {
     readIntegrationsStatus.mockResolvedValue(
       status({
