@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   APPEARANCE_STORAGE_KEY,
+  DEFAULT_TEAM_NAME,
   resolveTheme,
   useAppearanceStore,
   watchSystemTheme,
@@ -142,6 +143,30 @@ describe('appearance-store — density', () => {
   });
 });
 
+describe('appearance-store — team name', () => {
+  it('defaults to the app\'s own room, not to anybody\'s team', () => {
+    expect(useAppearanceStore.getState().teamName).toBe(DEFAULT_TEAM_NAME);
+  });
+
+  /**
+   * The field writes on every keystroke, so a setter that trimmed would eat
+   * the space the moment it was typed and "Assimilation Team" could never be
+   * entered. Trimming is the reader's job — see `useTeamName`.
+   */
+  it('stores exactly what was typed, space and all', () => {
+    useAppearanceStore.getState().setTeamName('Zergling ');
+    expect(useAppearanceStore.getState().teamName).toBe('Zergling ');
+
+    useAppearanceStore.getState().setTeamName('Zergling Battalion');
+    expect(useAppearanceStore.getState().teamName).toBe('Zergling Battalion');
+  });
+
+  it('takes empty as an answer rather than restoring the default', () => {
+    useAppearanceStore.getState().setTeamName('');
+    expect(useAppearanceStore.getState().teamName).toBe('');
+  });
+});
+
 describe('appearance-store — terminal appearance', () => {
   it('defaults match what the terminal has always used', () => {
     const state = useAppearanceStore.getState();
@@ -182,6 +207,7 @@ describe('appearance-store — persistence', () => {
       terminalFontSize: 12.5,
       terminalScrollback: 5000,
       density: 'compact',
+      teamName: 'Swarm Command',
       editorPlacement: 'full',
       editorSplitAxis: 'vertical',
       editorSplitRatio: 0.5,

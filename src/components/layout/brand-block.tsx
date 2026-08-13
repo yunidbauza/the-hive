@@ -1,3 +1,5 @@
+import { useTeamName } from '@stores/appearance-store';
+
 /**
  * The hive tile and wordmark, top-left and always present.
  *
@@ -15,6 +17,8 @@
  * from the concept and the family does not.
  */
 export function BrandBlock() {
+  const teamName = useTeamName();
+
   return (
     <div className="flex min-w-0 items-center gap-2.5">
       <img
@@ -33,9 +37,17 @@ export function BrandBlock() {
 
       <div className="flex min-w-0 flex-col leading-[1.15]">
         <span className="text-[17px] tracking-[-0.02em]">The Hive</span>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle">
-          APFM Engineering
-        </span>
+        {/*
+         * Whose hive this is — set in Appearance, blank by choice as often as
+         * by default. An empty line is not rendered rather than rendered
+         * empty: a 10px span with nothing in it still takes a row, and the
+         * wordmark would sit off-centre against the tile for no reason.
+         */}
+        {teamName ? (
+          <span className="truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle">
+            {teamName}
+          </span>
+        ) : null}
       </div>
     </div>
   );

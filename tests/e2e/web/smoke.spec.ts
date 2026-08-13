@@ -43,7 +43,11 @@ test('renders the header chrome', async ({ page }) => {
   const header = page.getByRole('banner');
 
   await expect(header.getByText('The Hive')).toBeVisible();
-  await expect(header.getByText('APFM Engineering')).toBeVisible();
+  /*
+   * The sublabel is the team name from Appearance, and a fresh profile has
+   * never set one — so what a first launch shows is the store's default.
+   */
+  await expect(header.getByText('Swarm Command')).toBeVisible();
   await expect(header.getByRole('button', { name: 'New session', exact: true })).toBeVisible();
 
   /**

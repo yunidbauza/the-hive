@@ -1,14 +1,39 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { BrandBlock } from '@components/layout/brand-block';
+import { DEFAULT_TEAM_NAME, useAppearanceStore } from '@stores/appearance-store';
 
 describe('BrandBlock', () => {
-  it('renders the wordmark and the eyebrow', () => {
+  afterEach(() => {
+    useAppearanceStore.setState({ teamName: DEFAULT_TEAM_NAME });
+  });
+
+  it('renders the wordmark and the team name under it', () => {
     render(<BrandBlock />);
 
     expect(screen.getByText('The Hive')).toBeInTheDocument();
-    expect(screen.getByText('APFM Engineering')).toBeInTheDocument();
+    expect(screen.getByText(DEFAULT_TEAM_NAME)).toBeInTheDocument();
+  });
+
+  it('shows whatever team was set, trimmed', () => {
+    useAppearanceStore.setState({ teamName: '  Zergling Battalion  ' });
+    render(<BrandBlock />);
+
+    expect(screen.getByText('Zergling Battalion')).toBeInTheDocument();
+  });
+
+  /**
+   * An empty line is not rendered rather than rendered empty: a 10px span with
+   * nothing in it still occupies a row, and the wordmark would sit off-centre
+   * against the tile for no reason the user could see.
+   */
+  it('drops the line entirely when the team name is cleared', () => {
+    useAppearanceStore.setState({ teamName: '   ' });
+    const { container } = render(<BrandBlock />);
+
+    expect(container.querySelectorAll('span')).toHaveLength(1);
+    expect(screen.getByText('The Hive')).toBeInTheDocument();
   });
 
   it('hides the tile from screen readers — the wordmark already says it', () => {

@@ -1,5 +1,6 @@
 import { SegmentedControl, type SegmentedOption } from '@components/ui/segmented-control';
 import { SelectField, type SelectFieldOption } from '@components/ui/select-field';
+import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import {
@@ -10,6 +11,7 @@ import {
   type TerminalFontId,
 } from '@lib/terminal/fonts';
 import {
+  DEFAULT_TEAM_NAME,
   useAppearanceActions,
   useAppearanceSettings,
   type Density,
@@ -58,6 +60,7 @@ export function AppearanceSection() {
     setTerminalFontSize,
     setTerminalScrollback,
     setDensity,
+    setTeamName,
   } = useAppearanceActions();
 
   return (
@@ -108,6 +111,27 @@ export function AppearanceSection() {
             className="col-span-2 max-w-[204px]"
           />
         </div>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Team"
+        description="The line under the wordmark, top-left. Your team's name — “Assimilation Team”, “Zergling Battalion”."
+      >
+        <TextField
+          label="Team name"
+          value={settings.teamName}
+          placeholder={DEFAULT_TEAM_NAME}
+          onChange={setTeamName}
+          /*
+           * Written on every keystroke so the header reads back what is being
+           * typed — this store persists to `localStorage`, so there is no cost
+           * to pay for that. The commit only tidies the trailing space, which
+           * is why the field cannot trim as it goes.
+           */
+          onCommit={() => setTeamName(settings.teamName.trim())}
+          hint="Leave it empty to drop the line and show the wordmark alone."
+          className="max-w-[280px]"
+        />
       </SettingsGroup>
 
       <SettingsGroup

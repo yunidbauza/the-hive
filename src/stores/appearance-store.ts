@@ -74,6 +74,19 @@ interface AppearanceState {
   density: Density;
 
   /**
+   * The line under the wordmark, top-left — whose hive this is.
+   *
+   * Appearance rather than config, on this store's own test: it is a fact about
+   * the person looking at the screen, it is needed on the first paint of the
+   * header, and the browser target has no config file to read it from. That it
+   * happens to name a team does not make it workspace state — no session, PTY
+   * or ticket ever reads it.
+   *
+   * Empty is a legitimate answer, and means the line is not drawn at all.
+   */
+  teamName: string;
+
+  /**
    * The editor block.
    *
    * Here rather than in a store of its own for the reason this store exists at
@@ -122,6 +135,7 @@ interface AppearanceState {
   setTerminalFontSize: (size: number) => void;
   setTerminalScrollback: (lines: number) => void;
   setDensity: (density: Density) => void;
+  setTeamName: (name: string) => void;
   setSystemDark: (dark: boolean) => void;
 
   setEditorPlacement: (placement: EditorPlacement) => void;
@@ -158,6 +172,15 @@ export const EDITOR_TAB_WIDTHS: readonly number[] = [2, 4, 8] as const;
 export const EDITOR_FONT_SIZES: readonly number[] = [
   10, 11, 12, 13, 14, 15, 16, 18,
 ] as const;
+
+/**
+ * What the header says under "The Hive" until someone says otherwise.
+ *
+ * A hive's workers are a swarm and this app is a command centre for them, so
+ * the default names the room rather than any real team — anyone who has not
+ * set theirs still gets a line that belongs to this app.
+ */
+export const DEFAULT_TEAM_NAME = 'Swarm Command';
 
 /** The terminal's share of a split stage, clamped to something usable. */
 export const MIN_SPLIT_RATIO = 0.2;
@@ -250,6 +273,7 @@ const initialAppearanceState = {
   terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
   terminalScrollback: DEFAULT_TERMINAL_SCROLLBACK,
   density: 'comfortable' as Density,
+  teamName: DEFAULT_TEAM_NAME,
 
   /** Full stage: the editor is a place you go, not a permanent tax on the terminal. */
   editorPlacement: 'full' as EditorPlacement,
@@ -311,6 +335,20 @@ export const useAppearanceStore = create<AppearanceState>()(
       },
 
       /**
+       * Stored exactly as typed.
+       *
+       * Not trimmed here, though it is tempting: the field writes on every
+       * keystroke so the header updates live, and trimming on the way in eats
+       * the space between two words as it is typed. The header trims for
+       * display and the settings field trims when it commits.
+       *
+       * No fallback to the default on empty either — clearing the field is how
+       * the line is turned off, and quietly refilling it would make that
+       * impossible.
+       */
+      setTeamName: (teamName) => set({ teamName }),
+
+      /**
        * The OS changed its mind while the app was open.
        *
        * Only repaints when the preference is actually `system`; a user pinned to
@@ -362,6 +400,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         terminalFontSize: state.terminalFontSize,
         terminalScrollback: state.terminalScrollback,
         density: state.density,
+        teamName: state.teamName,
         editorPlacement: state.editorPlacement,
         editorSplitAxis: state.editorSplitAxis,
         editorSplitRatio: state.editorSplitRatio,
@@ -433,6 +472,7 @@ const appearanceActionsSelector = (state: AppearanceState) => ({
   setTerminalFontSize: state.setTerminalFontSize,
   setTerminalScrollback: state.setTerminalScrollback,
   setDensity: state.setDensity,
+  setTeamName: state.setTeamName,
 });
 
 const appearanceSettingsSelector = (state: AppearanceState) => ({
@@ -441,6 +481,7 @@ const appearanceSettingsSelector = (state: AppearanceState) => ({
   terminalFontSize: state.terminalFontSize,
   terminalScrollback: state.terminalScrollback,
   density: state.density,
+  teamName: state.teamName,
 });
 
 /**
@@ -489,6 +530,15 @@ export const useTerminalAppearance = () =>
 
 /** Rail density. */
 export const useDensity = () => useAppearanceStore((state) => state.density);
+
+/**
+ * The header's sublabel, trimmed — empty means the line is not drawn.
+ *
+ * Trimming here rather than in the setter keeps the settings field typable
+ * (see `setTeamName`), and keeps every reader from having to remember it.
+ */
+export const useTeamName = (): string =>
+  useAppearanceStore((state) => state.teamName.trim());
 
 /** The appearance section's current values and its setters. */
 export const useAppearanceSettings = () =>
