@@ -46,7 +46,7 @@ import './splash.css';
  * that begins by *starting* a 512 KB load has to finish it before anything
  * appears, and the window it has to do that in is measured against a floor that
  * is already running. Loading it up front is a local file read the splash has
- * two and a half seconds of nothing else to do during, and it makes the
+ * several seconds of nothing else to do during, and it makes the
  * fallback instantaneous instead of merely eventual.
  */
 

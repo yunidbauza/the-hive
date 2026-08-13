@@ -19,7 +19,7 @@ import { WINDOW_BACKGROUND } from '@shared/window';
  * plays for {@link SPLASH_MIN_MS}, and is destroyed.
  *
  * That flatness is the design. Anything the splash could be *told* would have
- * to arrive over a channel that exists only for the two and a half seconds
+ * to arrive over a channel that exists only for the few seconds
  * before the app is up, and the app's own window is a better place to say
  * anything true. So the copy is fixed and the clock lives here.
  *

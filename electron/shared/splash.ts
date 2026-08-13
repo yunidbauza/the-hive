@@ -26,11 +26,19 @@ export const SPLASH_SIZE = { width: 960, height: 600 } as const;
  * The animation reaches its resting state at about 2.4s — the creature settled,
  * all five lines landed, the progress ring closed. Dismissing before then shows
  * a sequence caught mid-motion, which reads as a bug rather than as a fast
- * boot. So the floor is the *animation's* length, not a guess at how long the
- * app takes: if the renderer is ready in 400ms the splash still finishes its
- * sentence, and if it takes four seconds the splash leaves the moment it can.
+ * boot. That is the lower bound, and the floor used to sit exactly on it.
+ *
+ * It sits a second past it instead, because landing on the last frame of the
+ * animation and leaving in the same instant reads as being hurried out of the
+ * room: the chamber arrives at its composition and is gone before it can be
+ * looked at. The extra second is the creature breathing at rest, which is a
+ * state the design already has and was never given time to show.
+ *
+ * Still a floor, not a duration. If the renderer is ready in 400ms the splash
+ * finishes its sentence and holds the beat; if it takes five seconds the splash
+ * leaves the moment it can.
  */
-export const SPLASH_MIN_MS = 2500;
+export const SPLASH_MIN_MS = 3500;
 
 /**
  * The fade out, run by the main process as an opacity ramp on the window.

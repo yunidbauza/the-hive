@@ -106,7 +106,7 @@ describe('createSplashWindow', () => {
     const web = created[0].options.webPreferences as Record<string, unknown>;
 
     // The splash has nothing to talk to. A preload here would be a security
-    // surface bought for a window that is destroyed after 2.5 seconds.
+    // surface bought for a window that is destroyed seconds later.
     expect(web.preload).toBeUndefined();
     expect(web).toMatchObject({
       contextIsolation: true,
