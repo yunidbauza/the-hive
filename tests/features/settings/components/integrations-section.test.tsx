@@ -6,7 +6,11 @@ import {
   type ConfigSnapshot,
   type NotificationPrefs,
 } from '@shared/config-contract';
-import type { GhStatus, IntegrationsStatus } from '@shared/ipc-contract';
+import type {
+  GhStatus,
+  IntegrationsStatus,
+  LoginEnvStatus,
+} from '@shared/ipc-contract';
 import type { JiraStatus } from '@shared/jira-contract';
 
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
@@ -49,8 +53,28 @@ const gh = (over: Partial<GhStatus> = {}): GhStatus => ({
   ...over,
 });
 
+/**
+ * The ordinary post-HIVE-84 state: the import ran and replaced the `PATH`.
+ *
+ * Defaulted to the *succeeded* case because that is what every pre-existing
+ * assertion in this file is implicitly about — a `gh` that was found, on a
+ * `PATH` that was imported. The failure and disabled shapes are passed
+ * explicitly by the tests that are about them.
+ */
+const loginEnv = (over: Partial<LoginEnvStatus> = {}): LoginEnvStatus => ({
+  enabled: true,
+  imported: true,
+  shell: '/bin/zsh',
+  inheritedEntries: 4,
+  effectiveEntries: 12,
+  varsImported: ['PATH'],
+  error: null,
+  ...over,
+});
+
 const status = (over: Partial<IntegrationsStatus> = {}): IntegrationsStatus => ({
   gh: gh(),
+  loginEnv: loginEnv(),
   notificationsSupported: true,
   ...over,
 });
@@ -136,6 +160,149 @@ describe('IntegrationsSection — the GitHub CLI', () => {
     render(<IntegrationsSection />);
 
     expect(await screen.findByText(/ETIMEDOUT/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The PATH source group (HIVE-84).
+ *
+ * Four states, and the distinction between them is the whole feature: a user
+ * who cannot tell an imported `PATH` from an inherited one cannot tell a
+ * broken import from a genuinely missing binary.
+ */
+describe('IntegrationsSection — the PATH source', () => {
+  const notInstalled = () =>
+    gh({
+      installed: false,
+      resolved: null,
+      version: null,
+      authenticated: false,
+      account: null,
+      tokenSource: 'none',
+      probes: [{ directory: '/usr/bin', found: false }],
+    });
+
+  it('names the shell it imported from, and both entry counts', async () => {
+    render(<IntegrationsSection />);
+
+    expect(await screen.findByText(/Imported from your login shell/)).toBeInTheDocument();
+    expect(screen.getByText('/bin/zsh')).toBeInTheDocument();
+    expect(
+      screen.getByText(/12 entries · the inherited PATH had 4/),
+    ).toBeInTheDocument();
+  });
+
+  it('names an imported token variable but never a value', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({ loginEnv: loginEnv({ varsImported: ['PATH', 'GH_TOKEN'] }) }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(await screen.findByText(/Also taken from it/)).toBeInTheDocument();
+    expect(screen.getByText('GH_TOKEN')).toBeInTheDocument();
+    expect(screen.getByText(/never what they contain/)).toBeInTheDocument();
+  });
+
+  it('reports a clean run that changed nothing as success, not a warning', async () => {
+    // Launched from a terminal. The users with nothing wrong must not be shown
+    // a warning.
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        loginEnv: loginEnv({
+          imported: false,
+          varsImported: [],
+          inheritedEntries: 12,
+          effectiveEntries: 12,
+        }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByText(/Already your login shell/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/could not be read/)).not.toBeInTheDocument();
+  });
+
+  it('surfaces a failed import, and says the app kept what it had', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        gh: notInstalled(),
+        loginEnv: loginEnv({
+          imported: false,
+          varsImported: [],
+          effectiveEntries: 4,
+          error: 'the shell did not finish within 5s and was killed (SIGKILL)',
+        }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByText(/Your login shell could not be read/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/was killed \(SIGKILL\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/kept the environment it was launched with/),
+    ).toBeInTheDocument();
+    // The gh group states the consequence; it does not restate the cause.
+    expect(screen.getByText(/PATH source says why/)).toBeInTheDocument();
+  });
+
+  it('says the import is off, and where to turn it on', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        loginEnv: loginEnv({
+          enabled: false,
+          imported: false,
+          shell: null,
+          varsImported: [],
+          effectiveEntries: 4,
+        }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByText(/Inherited from whatever launched this app/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/turned off in Settings/)).toBeInTheDocument();
+  });
+
+  /**
+   * The copy that HIVE-84 made conditional.
+   *
+   * The old fixed sentence — "installing gh where that PATH can see it is the
+   * fix" — is now wrong in the ordinary case, and sends a user who simply has
+   * not installed `gh` looking for an environment problem they do not have.
+   */
+  it('blames the missing binary when the PATH really is the login shell’s', async () => {
+    readIntegrationsStatus.mockResolvedValue(status({ gh: notInstalled() }));
+
+    render(<IntegrationsSection />);
+
+    expect(await screen.findByText(/brew install gh/)).toBeInTheDocument();
+    expect(screen.getByText(/not installed anywhere this app can reach/)).toBeInTheDocument();
+  });
+
+  it('blames the environment when the import is off', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        gh: notInstalled(),
+        loginEnv: loginEnv({ enabled: false, imported: false, shell: null }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByText(/Switch the login-shell import on/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/brew install gh/)).not.toBeInTheDocument();
   });
 });
 

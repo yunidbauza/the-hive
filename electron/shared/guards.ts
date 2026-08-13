@@ -199,6 +199,20 @@ function assertText(value: unknown, label: string): string {
 }
 
 /**
+ * A boolean, and **never a coercion** of one (HIVE-84).
+ *
+ * `Boolean('false')` is `true`, and `Boolean(0)` is `false` — a bridge that
+ * coerced would turn a renderer bug into a silently inverted setting, which for
+ * a switch that governs whether this app runs the user's rc file is the wrong
+ * way to be lenient. The notification guard already states this rule in prose;
+ * this is the first payload that needs it enforced.
+ */
+function assertBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') return fail(`${label}: expected a boolean`);
+  return value;
+}
+
+/**
  * One of a closed set of literals, or a refusal naming what was allowed.
  *
  * **The only guard in this file whose output reaches a command line**
@@ -576,11 +590,13 @@ export function parseSetRuntimeRequest(input: unknown): SetRuntimeRequest {
     'shell',
     'claudeCommand',
     'env',
+    'importLoginEnv',
   ]);
   if (
     raw.shell === undefined &&
     raw.claudeCommand === undefined &&
-    raw.env === undefined
+    raw.env === undefined &&
+    raw.importLoginEnv === undefined
   ) {
     return fail('setRuntime: nothing to change');
   }
@@ -603,6 +619,14 @@ export function parseSetRuntimeRequest(input: unknown): SetRuntimeRequest {
     // the same code. A second validator would drift, and the drifted copy is
     // the one nobody tests.
     ...(raw.env !== undefined ? { env: assertEnv(raw.env, 'setRuntime.env') } : {}),
+    ...(raw.importLoginEnv !== undefined
+      ? {
+          importLoginEnv: assertBoolean(
+            raw.importLoginEnv,
+            'setRuntime.importLoginEnv',
+          ),
+        }
+      : {}),
   };
 }
 

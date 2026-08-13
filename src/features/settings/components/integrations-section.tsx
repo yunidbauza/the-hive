@@ -10,7 +10,11 @@ import { SettingsSectionHeader } from '@features/settings/components/settings-se
 import { useProjectConfig } from '@hooks/use-project-config';
 import { readJiraStatus } from '@lib/jira';
 import { readIntegrationsStatus } from '@lib/project-config';
-import type { GhStatus, IntegrationsStatus } from '@shared/ipc-contract';
+import type {
+  GhStatus,
+  IntegrationsStatus,
+  LoginEnvStatus,
+} from '@shared/ipc-contract';
 import type { JiraStatus } from '@shared/jira-contract';
 
 /**
@@ -79,7 +83,166 @@ function TokenSourceLine({ gh }: { gh: GhStatus }) {
   );
 }
 
-function GhSummary({ gh }: { gh: GhStatus }) {
+/**
+ * Why `gh` was not found — which depends on *which* `PATH` was searched.
+ *
+ * Before HIVE-84 this was one fixed sentence explaining that a desktop app
+ * inherits launchd's environment. That sentence was true, and it is now the
+ * wrong advice in the ordinary case: the app imports the login shell's `PATH`
+ * at startup, so a failed search usually means `gh` really is not installed —
+ * and telling that user to "install it where the PATH can see it" sends them
+ * looking for a problem they do not have.
+ *
+ * Three genuinely different situations, three answers.
+ */
+function NotFoundReason({ loginEnv }: { loginEnv: LoginEnvStatus }) {
+  if (loginEnv.imported) {
+    return (
+      <p className="text-[11.5px] text-subtle">
+        This is your login shell&rsquo;s own{' '}
+        <code className="font-mono">PATH</code>, imported at startup — the same one
+        a terminal would search. So <code className="font-mono">gh</code> is not
+        installed anywhere this app can reach:{' '}
+        <code className="font-mono">brew install gh</code> is the fix.
+      </p>
+    );
+  }
+
+  /**
+   * The remaining two cases say the *same* operational thing — the searched
+   * `PATH` is the launched-with one — and differ only in what to do about it.
+   * PATH source, directly below, carries the detail; repeating it here would
+   * put the same sentence on screen twice.
+   */
+  if (!loginEnv.enabled) {
+    return (
+      <p className="text-[11.5px] text-subtle">
+        The <code className="font-mono">PATH</code> below is the one this app was
+        launched with — for a desktop app opened from Finder, launchd&rsquo;s
+        four entries rather than your shell&rsquo;s. Switch the login-shell
+        import on in Settings → Runtime, or install{' '}
+        <code className="font-mono">gh</code> where this PATH can see it.
+      </p>
+    );
+  }
+
+  return (
+    <p className="text-[11.5px] text-subtle">
+      The <code className="font-mono">PATH</code> below is the one this app was
+      launched with, not your shell&rsquo;s — the import did not run, and PATH
+      source says why.
+    </p>
+  );
+}
+
+/**
+ * Where the `PATH` came from (HIVE-84).
+ *
+ * The pane's job here is to make an invisible difference visible: launchd's
+ * environment and a login shell's differ by everything a developer installed,
+ * and a user who cannot tell which is in force cannot distinguish a broken
+ * import from a genuinely missing binary. The entry counts are shown as a
+ * *pair* for the same reason — "38 entries" alone means nothing; "38, and the
+ * inherited one had 4" is the whole story in one line.
+ *
+ * Never renders a value. `varsImported` is names only, by contract.
+ */
+function PathSourceLine({ loginEnv }: { loginEnv: LoginEnvStatus }) {
+  const counts = (
+    <span className="text-subtle">
+      {loginEnv.effectiveEntries}{' '}
+      {loginEnv.effectiveEntries === 1 ? 'entry' : 'entries'}
+      {loginEnv.imported
+        ? ` · the inherited PATH had ${loginEnv.inheritedEntries}`
+        : null}
+      .
+    </span>
+  );
+
+  // The failure case first: it is the only one that changes what the user
+  // should do next.
+  if (loginEnv.error !== null) {
+    return (
+      <>
+        <p className="flex items-start gap-2 text-[12.5px]">
+          <WarningCircle size={14} className="mt-px shrink-0 text-amber" />
+          <span className="text-amber">
+            Your login shell could not be read: {loginEnv.error}.
+          </span>
+        </p>
+        <p className="text-[11.5px] text-subtle">
+          The app kept the environment it was launched with — {counts} Nothing is
+          broken by this beyond what it could not find.
+        </p>
+      </>
+    );
+  }
+
+  if (!loginEnv.enabled) {
+    return (
+      <>
+        <p className="text-[12.5px] text-ink">
+          Inherited from whatever launched this app. {counts}
+        </p>
+        <p className="text-[11.5px] text-subtle">
+          Importing your login shell&rsquo;s environment is turned off in Settings →
+          Runtime.
+        </p>
+      </>
+    );
+  }
+
+  if (!loginEnv.imported) {
+    return (
+      <>
+        <p className="flex items-start gap-2 text-[12.5px]">
+          <CheckCircle size={14} className="mt-px shrink-0 text-green" />
+          <span className="text-ink">
+            Already your login shell&rsquo;s. {counts}
+          </span>
+        </p>
+        <p className="text-[11.5px] text-subtle">
+          <code className="font-mono">{loginEnv.shell ?? 'Your shell'}</code> was
+          asked and had nothing to add — which is the normal answer when the app
+          was started from a terminal.
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="flex items-start gap-2 text-[12.5px]">
+        <CheckCircle size={14} className="mt-px shrink-0 text-green" />
+        <span className="text-ink">
+          Imported from your login shell (
+          <code className="font-mono text-muted">{loginEnv.shell}</code>). {counts}
+        </span>
+      </p>
+      {loginEnv.varsImported.some((name) => name !== 'PATH') ? (
+        <p className="text-[11.5px] text-subtle">
+          Also taken from it:{' '}
+          {loginEnv.varsImported
+            .filter((name) => name !== 'PATH')
+            .map((name) => (
+              <code key={name} className="font-mono">
+                {name}{' '}
+              </code>
+            ))}
+          — the app records that these are set, never what they contain.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function GhSummary({
+  gh,
+  loginEnv,
+}: {
+  gh: GhStatus;
+  loginEnv: LoginEnvStatus;
+}) {
   if (!gh.installed) {
     return (
       <>
@@ -89,12 +252,7 @@ function GhSummary({ gh }: { gh: GhStatus }) {
             <code className="font-mono">gh</code> was not found.
           </span>
         </p>
-        <p className="text-[11.5px] text-subtle">
-          This app searches its own <code className="font-mono">PATH</code>, which is
-          usually not the one your login shell builds — a desktop app inherits the
-          environment it was launched from. Installing{' '}
-          <code className="font-mono">gh</code> where that PATH can see it is the fix.
-        </p>
+        <NotFoundReason loginEnv={loginEnv} />
         <PathProbes probes={gh.probes} />
       </>
     );
@@ -214,7 +372,20 @@ export function IntegrationsSection() {
           {status === null ? (
             <p className="text-[12.5px] text-subtle">Checking…</p>
           ) : (
-            <GhSummary gh={status.gh} />
+            <GhSummary gh={status.gh} loginEnv={status.loginEnv} />
+          )}
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="PATH source"
+        description="Which environment this app is searching, and where it came from."
+      >
+        <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
+          {status === null ? (
+            <p className="text-[12.5px] text-subtle">Checking…</p>
+          ) : (
+            <PathSourceLine loginEnv={status.loginEnv} />
           )}
         </div>
       </SettingsGroup>

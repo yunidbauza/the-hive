@@ -117,8 +117,17 @@ export function compareEnv(
  * order). Here there is only ever one failure path, so `killed` is checked
  * first only because a killed process can also carry a stale, misleading
  * `code` — not because of an ordering hazard between two separate results.
+ *
+ * Exported since HIVE-84: `config/login-env.ts` runs a shell under the same
+ * `execFile` + `SIGKILL` discipline and can fail in exactly these three ways.
+ * Shared rather than copied — two hand-written descriptions of the same three
+ * failures would drift, and the drift would surface as two Settings panes
+ * explaining one broken rc file differently.
  */
-function describeProbeFailure(cause: unknown, timeoutMs: number): string {
+export function describeProbeFailure(
+  cause: unknown,
+  timeoutMs: number,
+): string {
   if (!(cause instanceof Error)) return String(cause);
 
   const err = cause as NodeJS.ErrnoException & {

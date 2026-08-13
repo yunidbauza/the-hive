@@ -58,6 +58,14 @@ export interface ParsedConfig {
    */
   subscriptionAuth: boolean | null;
   /**
+   * Whether the app imports its `PATH` from the login shell (HIVE-84).
+   *
+   * `null` for "the file did not say", resolved to
+   * {@link DEFAULT_IMPORT_LOGIN_ENV}. An explicit `false` is a user who has
+   * decided this app should not run their rc file once per launch.
+   */
+  importLoginEnv: boolean | null;
+  /**
    * The workspace environment block, exactly as the file declared it.
    *
    * `undefined` when absent — kept undefined rather than defaulted to `{}` for
@@ -140,6 +148,8 @@ const TOP_LEVEL_KEYS = [
   'subscriptionAuth',
   // HIVE-79. Whether the app injects its own status line into sessions.
   'sessionMetrics',
+  // HIVE-84. Whether the app asks the login shell for its `PATH` at startup.
+  'importLoginEnv',
 ];
 /**
  * `shell`, `claudeCommand` and `env` are story 104's per-project overrides.
@@ -482,6 +492,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     claudeCommand: null,
     subscriptionAuth: null,
     sessionMetrics: null,
+    importLoginEnv: null,
     projects: [],
     errors,
     version: null,
@@ -534,6 +545,12 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     label,
     errors,
   );
+  const importLoginEnv = optionalBoolean(
+    document,
+    'importLoginEnv',
+    label,
+    errors,
+  );
   // Story 108. `optionalEnv` reads its target off `record.env` internally —
   // the same call shape the per-project overrides below use (`optionalEnv(entry, at, errors)`)
   // — so it is handed the document itself, not `document.env`, and it already
@@ -547,6 +564,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       claudeCommand,
       subscriptionAuth,
       sessionMetrics,
+      importLoginEnv,
       env,
       notifications,
       jira,
@@ -563,6 +581,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       claudeCommand,
       subscriptionAuth,
       sessionMetrics,
+      importLoginEnv,
       env,
       notifications,
       jira,
@@ -654,6 +673,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     claudeCommand,
     subscriptionAuth,
     sessionMetrics,
+    importLoginEnv,
     env,
     notifications,
     jira,

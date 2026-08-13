@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_JIRA,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
@@ -126,6 +127,9 @@ export function loadConfig(): ConfigSnapshot {
     */
     subscriptionAuth: parsed.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
     sessionMetrics: parsed.sessionMetrics ?? DEFAULT_SESSION_METRICS,
+    // Absent means on (HIVE-84) — see `DEFAULT_IMPORT_LOGIN_ENV` for why the
+    // default has to be the one that makes a packaged build work.
+    importLoginEnv: parsed.importLoginEnv ?? DEFAULT_IMPORT_LOGIN_ENV,
     // Defaults *under* whatever the file named, so a file declaring only a site
     // still answers for both fields (HIVE-67).
     jira: { ...DEFAULT_JIRA, ...parsed.jira },
@@ -487,6 +491,9 @@ export function setRuntime(request: SetRuntimeRequest): ConfigSnapshot {
         ? { claudeCommand: request.claudeCommand }
         : {}),
       ...(request.env !== undefined ? { env: request.env } : {}),
+      ...(request.importLoginEnv !== undefined
+        ? { importLoginEnv: request.importLoginEnv }
+        : {}),
     })),
   );
 }

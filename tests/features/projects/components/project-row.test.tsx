@@ -47,6 +47,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
     jira: { ...DEFAULT_JIRA },
     subscriptionAuth: true,
   sessionMetrics: true,
+  importLoginEnv: true,
     errors: [],
   };
 }

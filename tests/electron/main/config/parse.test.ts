@@ -71,6 +71,38 @@ describe('parseConfig — schema versions', () => {
   });
 });
 
+describe('parseConfig — importLoginEnv (HIVE-84)', () => {
+  it('reads the key, and distinguishes an explicit false from silence', () => {
+    const off = parseConfig(
+      JSON.stringify({ version: 2, importLoginEnv: false }),
+      'config',
+    );
+    expect(off.importLoginEnv).toBe(false);
+    // Listed as a known key, so a hand-written one is read rather than
+    // reported — the courtesy every other top-level key gets.
+    expect(off.errors).toEqual([]);
+
+    const on = parseConfig(
+      JSON.stringify({ version: 2, importLoginEnv: true }),
+      'config',
+    );
+    expect(on.importLoginEnv).toBe(true);
+
+    // `null` means "the file did not say", which `loadConfig` resolves to the
+    // default. Distinct from `false`, which is a user's decision.
+    expect(parseConfig(JSON.stringify({ version: 2 }), 'config').importLoginEnv).toBeNull();
+  });
+
+  it('reports a non-boolean rather than coercing it', () => {
+    const parsed = parseConfig(
+      JSON.stringify({ version: 2, importLoginEnv: 'yes' }),
+      'config',
+    );
+    expect(parsed.errors.join('\n')).toMatch(/importLoginEnv/);
+    expect(parsed.importLoginEnv).toBeNull();
+  });
+});
+
 describe('parseConfig — fatal versus advisory', () => {
   it('marks malformed JSON fatal', () => {
     expect(parseConfig('{oops', 'config').fatal).toBe(true);

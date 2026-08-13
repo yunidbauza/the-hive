@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { SelectField } from '@components/ui/select-field';
+import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
 import { CommandDiagnosticView } from '@features/settings/components/command-diagnostic-view';
 import { EnvDiagnosticView } from '@features/settings/components/env-diagnostic-view';
@@ -256,6 +257,31 @@ export function RuntimeSection() {
             inheritedCommand={snapshot.claudeCommand}
           />
         ) : null}
+      </SettingsGroup>
+
+      {/*
+        HIVE-84. An escape hatch, deliberately phrased as one.
+
+        The default is on, and the overwhelming majority of users should leave
+        it there — without it a Finder-launched build cannot find anything they
+        installed. What earns the switch a place in Settings is the rc file this
+        app should not fight: one that is slow, prompts, or has side effects
+        worth not triggering once per launch. The description says what turning
+        it off costs, because a switch whose consequence is invisible is one
+        people flip to see what happens.
+      */}
+      <SettingsGroup
+        title="Login shell environment"
+        description="Whether this app adopts the PATH your terminal uses."
+      >
+        <Switch
+          label="Import my login shell's PATH at startup"
+          checked={snapshot.importLoginEnv}
+          onCheckedChange={(next) => {
+            void setRuntimeConfig({ importLoginEnv: next });
+          }}
+          description="Runs your login shell once when the app starts and adopts its PATH, plus GH_TOKEN or GITHUB_TOKEN if this app does not already have them. Off means the app searches only the environment it was launched with — which, opened from Finder, is launchd's four-entry PATH. Takes effect on the next launch."
+        />
       </SettingsGroup>
 
       <SettingsGroup

@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { app } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
+import { getConfig } from './config';
+import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
 import { registerIpcHandlers } from './ipc';
 import { registerLifecycle } from './lifecycle';
@@ -79,6 +81,35 @@ if (!app.requestSingleInstanceLock()) {
    * lazily on the first session, because most launches land on the
    * orchestrator console, which owns no PTY.
    */
+  /**
+   * Ask the login shell what this app's `PATH` should be — first, and without
+   * waiting for the answer (HIVE-84).
+   *
+   * **Before `registerIpcHandlers`** so the probe is already in flight by the
+   * time any handler can be called, and **not awaited** so a slow rc file
+   * cannot delay the first window. The handlers that actually depend on the
+   * repaired `PATH` await the memoised promise themselves; everything else
+   * carries on. `void` rather than a `.catch` because `importLoginEnv` never
+   * rejects — every failure comes back as a reported status.
+   *
+   * Inside the single-instance branch: a second launch quits immediately, and
+   * running the user's rc file on the way out would be work for a process that
+   * is about to stop existing.
+   */
+  void startLoginEnvImport({
+    enabled: getConfig().importLoginEnv,
+    /**
+     * The **configured** shell, which `loadConfig` has already defaulted to
+     * `defaultShell()` when the file names none.
+     *
+     * Asking `defaultShell()` directly here would ignore a user who set
+     * `"shell"` in their config — and that is precisely the shell whose
+     * environment their sessions get, so importing from a different one would
+     * hand the app a `PATH` no session of theirs actually has.
+     */
+    shell: getConfig().shell,
+  });
+
   registerIpcHandlers();
 
   /**

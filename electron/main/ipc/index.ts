@@ -98,6 +98,7 @@ import {
   setRuntime,
 } from '../config';
 import { diagnoseEnv } from '../config/env-diagnostic';
+import { loginEnvStatus } from '../config/login-env';
 import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { isSafeExternalUrl } from '../external-links';
 import {
@@ -657,19 +658,26 @@ export function registerIpcHandlers(): void {
    * concurrent hand-edit has since removed, and answering for the top-level
    * command is more useful than throwing at a user who only pressed a button.
    */
-  handle(CH.configDiagnoseCommand, (_event, payload): CommandDiagnostic => {
-    const request = parseDiagnoseCommandRequest(payload);
-    const snapshot = getConfig();
-    const project =
-      request.id === undefined
-        ? null
-        : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
+  handle(
+    CH.configDiagnoseCommand,
+    async (_event, payload): Promise<CommandDiagnostic> => {
+      const request = parseDiagnoseCommandRequest(payload);
+      // The same wait `integrations:status` makes, for the same reason: a
+      // diagnostic whose whole job is to report the `PATH` that was searched
+      // must not report the one that was about to be replaced (HIVE-84).
+      await loginEnvStatus();
+      const snapshot = getConfig();
+      const project =
+        request.id === undefined
+          ? null
+          : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
 
-    return diagnoseCommand(
-      effectiveRuntime(snapshot, project),
-      project?.id ?? null,
-    );
-  });
+      return diagnoseCommand(
+        effectiveRuntime(snapshot, project),
+        project?.id ?? null,
+      );
+    },
+  );
 
   /**
    * The environment diagnostic (story 108) — read-only, so no write path.
@@ -779,7 +787,19 @@ export function registerIpcHandlers(): void {
    * process's raw environment — the same discipline story 104's diagnostic
    * applies, so what is reported is what would actually run.
    */
-  handle(CH.integrationsStatus, (): IntegrationsStatus => {
+  handle(CH.integrationsStatus, async (): Promise<IntegrationsStatus> => {
+    /**
+     * Wait for the login-shell import before looking for `gh` (HIVE-84).
+     *
+     * This is the whole point of the memoised promise: the probe was started
+     * at boot, so by the time a settings pane is open it has almost always
+     * resolved and this `await` costs nothing. What it buys is that the answer
+     * can never be the *pre-import* `PATH` — a race that would report "gh was
+     * not found" on a machine where it is about to be found, which is exactly
+     * the confusing half-truth this story exists to remove.
+     */
+    const loginEnv = await loginEnvStatus();
+
     // Merged the way `diagnoseCommand` merges: the config's env wins, and
     // `process.env` supplies the `PATH` when it names none. `gh` is a
     // workspace-level tool, so the top-level runtime is the right scope — there
@@ -788,6 +808,7 @@ export function registerIpcHandlers(): void {
 
     return {
       gh: readGhStatus(env, runCommand),
+      loginEnv,
       notificationsSupported: Notification.isSupported(),
     };
   });
@@ -841,7 +862,14 @@ export function registerIpcHandlers(): void {
     now: () => Date.now(),
   });
 
-  handle(CH.githubPrs, (): Promise<GhResult<PrsSnapshot>> => github.prs());
+  handle(CH.githubPrs, async (): Promise<GhResult<PrsSnapshot>> => {
+    // The poller's first tick can land before the boot-time import resolves,
+    // and a `gh` "not found" cached from that tick would outlive the race
+    // (HIVE-84). The `env` thunk above is lazy precisely so this await is all
+    // that is needed.
+    await loginEnvStatus();
+    return github.prs();
+  });
 
   handle(CH.jiraStatus, (): JiraStatus => jira.status());
   handle(CH.jiraSetToken, (_event, payload): JiraStatus =>

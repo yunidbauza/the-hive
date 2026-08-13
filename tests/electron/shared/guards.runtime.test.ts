@@ -51,6 +51,31 @@ describe('parseSetRuntimeRequest', () => {
     const payload = JSON.parse('{"shell":"/bin/zsh","__proto__":{"x":1}}') as unknown;
     expect(() => parseSetRuntimeRequest(payload)).toThrow(/forbidden key/);
   });
+
+  it('accepts importLoginEnv on its own, in both positions', () => {
+    expect(parseSetRuntimeRequest({ importLoginEnv: true })).toEqual({
+      importLoginEnv: true,
+    });
+    // `false` is a value, not an absence — a guard that treated it as one
+    // would make the switch impossible to turn off (HIVE-84).
+    expect(parseSetRuntimeRequest({ importLoginEnv: false })).toEqual({
+      importLoginEnv: false,
+    });
+  });
+
+  it('refuses a coerced boolean rather than guessing what was meant', () => {
+    // `Boolean('false')` is `true`. For a switch that governs whether this app
+    // runs the user's rc file, silently inverting is the wrong leniency.
+    expect(() => parseSetRuntimeRequest({ importLoginEnv: 'false' })).toThrow(
+      /expected a boolean/,
+    );
+    expect(() => parseSetRuntimeRequest({ importLoginEnv: 0 })).toThrow(
+      /expected a boolean/,
+    );
+    expect(() => parseSetRuntimeRequest({ importLoginEnv: null })).toThrow(
+      /expected a boolean/,
+    );
+  });
 });
 
 describe('parseSetRuntimeRequest env', () => {

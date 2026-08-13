@@ -58,6 +58,7 @@ function snapshot(
     jira: { ...DEFAULT_JIRA },
     subscriptionAuth: true,
   sessionMetrics: true,
+  importLoginEnv: true,
     errors: [],
     ...overrides,
   };

@@ -39,6 +39,7 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   jira: { ...DEFAULT_JIRA },
   subscriptionAuth: true,
   sessionMetrics: true,
+  importLoginEnv: true,
   errors: [],
   ...over,
 });

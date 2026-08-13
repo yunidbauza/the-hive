@@ -112,6 +112,61 @@ describe('RuntimeSection — defaults', () => {
   });
 });
 
+/**
+ * The login-shell import switch (HIVE-84).
+ *
+ * An escape hatch rather than a preference, so what is worth asserting is that
+ * it reflects the stored value, writes the boolean the guard expects, and can
+ * actually be turned *off* — a control that only ever writes `true` would look
+ * fine and be useless.
+ */
+describe('RuntimeSection — login shell environment', () => {
+  const findSwitch = () =>
+    screen.getByRole('switch', { name: /Import my login shell/ });
+
+  it('reflects the stored value in both directions', () => {
+    install({ importLoginEnv: true });
+    const { unmount } = render(<RuntimeSection />);
+    expect(findSwitch()).toBeChecked();
+    unmount();
+
+    install({ importLoginEnv: false });
+    render(<RuntimeSection />);
+    expect(findSwitch()).not.toBeChecked();
+  });
+
+  it('writes the boolean, and writes false when switched off', async () => {
+    const user = userEvent.setup();
+    install({ importLoginEnv: true });
+    render(<RuntimeSection />);
+
+    await user.click(findSwitch());
+
+    // `false`, not an absent field: the guard refuses a coerced value, and an
+    // omitted one would mean "leave it alone".
+    expect(setRuntimeConfig).toHaveBeenCalledWith({ importLoginEnv: false });
+  });
+
+  it('writes true when switched on', async () => {
+    const user = userEvent.setup();
+    install({ importLoginEnv: false });
+    render(<RuntimeSection />);
+
+    await user.click(findSwitch());
+
+    expect(setRuntimeConfig).toHaveBeenCalledWith({ importLoginEnv: true });
+  });
+
+  it('says the change lands on the next launch, because the import runs at boot', () => {
+    install();
+    render(<RuntimeSection />);
+
+    expect(
+      screen.getByText(/Takes effect on the next launch/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('RuntimeSection — workspace environment', () => {
   it('saves a workspace variable through setRuntimeConfig', async () => {
     const user = userEvent.setup();

@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import {
   CONFIG_VERSION,
   DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
@@ -224,6 +225,7 @@ export function writeConfig(mutate: Mutation): WriteResult {
       subscriptionAuth:
         validated.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
       sessionMetrics: validated.sessionMetrics ?? DEFAULT_SESSION_METRICS,
+      importLoginEnv: validated.importLoginEnv ?? DEFAULT_IMPORT_LOGIN_ENV,
       env: validated.env ?? {},
       projects,
       // Re-resolved from the document that was just written, not carried over

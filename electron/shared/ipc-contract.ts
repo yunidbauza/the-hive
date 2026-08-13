@@ -597,13 +597,60 @@ export interface GhStatus {
 }
 
 /**
+ * Where the `PATH` this app searches actually came from (HIVE-84).
+ *
+ * Reported for the reason story 104 reports the `PATH` itself: the difference
+ * between launchd's environment and the login shell's is invisible, and a user
+ * who cannot see which one is in force cannot tell a broken import from a
+ * missing binary. Naming the source turns both into something actionable.
+ *
+ * **Names, never values.** `varsImported` carries variable *names* only — the
+ * same rule `GhStatus` follows for `envVar`, and for the same reason: two of
+ * the three importable variables are credentials.
+ */
+export interface LoginEnvStatus {
+  /** Whether the import was attempted at all — `importLoginEnv` in the config. */
+  enabled: boolean;
+  /** Whether it succeeded and the environment was actually replaced. */
+  imported: boolean;
+  /** The shell that was run, or `null` when the import was disabled. */
+  shell: string | null;
+  /** How many `PATH` entries were inherited from the launching process. */
+  inheritedEntries: number;
+  /**
+   * How many the app searches now. Equal to `inheritedEntries` when the import
+   * did not happen — the pane renders the pair, so a no-op has to be visible
+   * as one rather than as a suspiciously round number.
+   */
+  effectiveEntries: number;
+  /**
+   * Which allowlisted variables the login shell supplied that this process did
+   * not already have. Names only, in {@link LOGIN_ENV_IMPORT_KEYS} order.
+   */
+  varsImported: string[];
+  /**
+   * Why the import did not happen, in one sentence. A failed probe is a failed
+   * *observation*, never a configuration error — the inherited environment is
+   * kept and the app carries on, exactly as `diagnoseEnv` treats its own
+   * failures.
+   */
+  error: string | null;
+}
+
+/**
  * Answer to {@link CH.integrationsStatus}.
  *
- * Both facts in one round trip because the section needs both on open, and two
- * verbs would paint the pane twice.
+ * All three facts in one round trip because the section needs them together on
+ * open, and separate verbs would paint the pane in stages.
  */
 export interface IntegrationsStatus {
   gh: GhStatus;
+  /**
+   * Where the `PATH` `gh` was looked for on came from. Adjacent to `gh` rather
+   * than in its own verb because it is the *explanation* of the `gh` result —
+   * the two are read as one sentence or not at all.
+   */
+  loginEnv: LoginEnvStatus;
   /**
    * `Notification.isSupported()`. False on a Linux box with no notification
    * daemon, where the switches must be replaced by an explanation rather than

@@ -36,6 +36,8 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
       'Optional, default true. Sessions drop ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN so `claude` authenticates on your Claude.ai plan — which is what makes the header\'s session and weekly gauges work at all, since rate limits are reported only for subscriptions. Set false to inherit whatever you export and bill the API instead.',
     '//sessionMetrics':
       'Optional, default true. The app injects a blank status line into each session so it can read context and rate-limit usage for the header. Set false to keep your own status line and Claude Code\'s footer key hints; the header\'s gauges then stay empty.',
+    '//importLoginEnv':
+      'Optional, default true. At startup the app runs your login shell once and adopts its PATH (plus GH_TOKEN / GITHUB_TOKEN if it has them, and this process does not). Without it a Finder-launched app inherits launchd\'s four-entry PATH and cannot find gh, claude, or anything else you installed. Set false if you would rather this app never ran your rc file.',
     '//projects':
       'id is stable and referenced by sessions; name is what you see. "~" is expanded; the path must be an existing directory.',
     '//example': [

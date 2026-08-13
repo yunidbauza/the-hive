@@ -308,6 +308,7 @@ describe('NewSessionPicker · unmapped projects', () => {
       jira: { ...DEFAULT_JIRA },
       subscriptionAuth: true,
   sessionMetrics: true,
+  importLoginEnv: true,
       errors: [],
       ...overrides,
     };
