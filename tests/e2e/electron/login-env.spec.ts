@@ -37,6 +37,23 @@ const DELIMITER = '__hive_login_env_boundary__';
 /** A directory name distinctive enough that finding it proves the import ran. */
 const IMPORTED_DIR = '/opt/hive-fixture/bin';
 
+/**
+ * A single `PATH` entry whose text contains newlines (HIVE-86).
+ *
+ * Not a contrivance — this is the shape `~/.zshrc` produces when a command
+ * substitution inside the value fails, which `export PATH="$PATH:$(npm bin -g)"`
+ * does on npm 9+. It is placed **before** {@link IMPORTED_DIR} in the stub's
+ * `PATH` on purpose: a parser that ended a variable at the first newline would
+ * drop everything after it, so `IMPORTED_DIR` would never arrive and every
+ * assertion in the first test would fail. That makes this the end-to-end guard
+ * for the truncation defect, through the real main process rather than a unit.
+ *
+ * No colons — it must stay one entry — and no double quotes, since the stub
+ * interpolates it into a double-quoted shell word.
+ */
+const NOISY_ENTRY =
+  '/opt/hive-noisy/bin\nUnknown command - bin\n\nTo see a list of supported npm commands, run\n  npm help';
+
 const openIntegrations = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
@@ -54,6 +71,13 @@ const openIntegrations = async (page: Page): Promise<void> => {
  *
  * It prints a banner first, deliberately: a real rc file does, and the parser
  * has to survive it here and not only in the unit test.
+ *
+ * The transcript is **NUL-delimited** (HIVE-86), matching
+ * `LOGIN_ENV_PROBE_ARGS`. The `PATH` it reports deliberately carries an
+ * embedded newline — the shape a real `~/.zshrc` produces when a command
+ * substitution in the value fails — so this proves end-to-end, through the
+ * real main process and the real Settings pane, that such a `PATH` arrives
+ * whole rather than truncated at the newline.
  */
 function writeStubShell(path: string): string {
   writeFileSync(
@@ -61,10 +85,10 @@ function writeStubShell(path: string): string {
     [
       '#!/bin/sh',
       "echo 'nvm: Now using node v22.14.0'",
-      `echo '${DELIMITER}'`,
-      `echo "PATH=${IMPORTED_DIR}:/usr/bin:/bin"`,
-      'echo "GH_TOKEN=a-value-that-must-never-be-rendered"',
-      `echo '${DELIMITER}'`,
+      `printf '\\0%s\\0' '${DELIMITER}'`,
+      `printf '%s\\0' "PATH=${NOISY_ENTRY}:${IMPORTED_DIR}:/usr/bin:/bin" \\`,
+      '  "GH_TOKEN=a-value-that-must-never-be-rendered" \\',
+      `  '${DELIMITER}'`,
       '',
     ].join('\n'),
     'utf8',
@@ -122,13 +146,18 @@ test('adopts the login shell PATH when launched with launchd’s', async ({}, te
   /**
    * The counts, which are the part a user reads to know it worked.
    *
-   * Five, from a stub `PATH` of three and an inherited one of four: the union
+   * Six, from a stub `PATH` of four and an inherited one of four: the union
    * keeps `/usr/sbin` and `/sbin`, which the shell did not mention, and
    * de-duplicates `/usr/bin` and `/bin`, which both had. That is the merge
    * behaving as specified — nothing launchd supplied is lost, and the `PATH`
    * does not grow by a duplicate on every launch.
+   *
+   * The stub's fourth entry is {@link NOISY_ENTRY}, which contains newlines and
+   * still counts as exactly one entry. Under the pre-HIVE-86 parser it would
+   * have been the *last* entry to survive, taking `IMPORTED_DIR` with it, and
+   * this count would read 4.
    */
-  await expect(page.getByText(/5 entries · the inherited PATH had 4/)).toBeVisible();
+  await expect(page.getByText(/6 entries · the inherited PATH had 4/)).toBeVisible();
 
   await app.close();
 });

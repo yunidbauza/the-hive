@@ -13,7 +13,12 @@ import {
   resetLoginEnvImport,
   startLoginEnvImport,
 } from '../../../../electron/main/config/login-env';
-import { LOGIN_ENV_DELIMITER } from '../../../../electron/shared/config-contract';
+import {
+  LOGIN_ENV_DELIMITER,
+  LOGIN_ENV_IMPORT_KEYS,
+  LOGIN_ENV_PROBE_ARGS,
+  LOGIN_ENV_RECORD_SEPARATOR,
+} from '../../../../electron/shared/config-contract';
 
 /**
  * The login-environment import (HIVE-84).
@@ -55,28 +60,56 @@ function script(name: string, body: string): string {
   return path;
 }
 
+const NUL = LOGIN_ENV_RECORD_SEPARATOR;
+
+/**
+ * A transcript shaped exactly as {@link LOGIN_ENV_PROBE_ARGS} emits one.
+ *
+ * Banner text ends at a newline and is followed by the probe's *leading* NUL,
+ * so the banner is a record of its own rather than being glued to the opening
+ * marker. That leading NUL is the whole reason the marker can be matched by
+ * equality instead of by "ends with".
+ */
+function transcript(records: readonly string[], banner = ''): string {
+  return (
+    banner +
+    NUL +
+    [LOGIN_ENV_DELIMITER, ...records, LOGIN_ENV_DELIMITER].join(NUL) +
+    NUL
+  );
+}
+
+/**
+ * The shell lines that print a well-formed NUL-delimited transcript.
+ *
+ * Shared by every fake shell below, so the protocol is stated once — a
+ * hand-typed second copy is what let the old `echo`-per-line shape linger in
+ * two tests after the parser had moved on.
+ */
+function emit(records: readonly string[]): string[] {
+  const quoted = records.map((record) => `'${record}'`).join(' ');
+  return [
+    `printf '\\0%s\\0' '${LOGIN_ENV_DELIMITER}'`,
+    `printf '%s\\0' ${quoted}`,
+    `printf '%s\\0' '${LOGIN_ENV_DELIMITER}'`,
+  ];
+}
+
 /** A shell that prints a well-formed transcript, wrapped in rc-file noise. */
-function goodShell(lines: readonly string[]): string {
-  const body = [
-    "echo 'nvm: Now using node v22.14.0'",
-    `echo '${LOGIN_ENV_DELIMITER}'`,
-    ...lines.map((line) => `echo '${line}'`),
-    `echo '${LOGIN_ENV_DELIMITER}'`,
-  ].join('\n');
-  return script('good-shell', body);
+function goodShell(records: readonly string[]): string {
+  return script(
+    'good-shell',
+    ["echo 'nvm: Now using node v22.14.0'", ...emit(records)].join('\n'),
+  );
 }
 
 describe('parseLoginEnv', () => {
   it('reads only what falls between the markers', () => {
-    const stdout = [
-      'Last login: Tue Aug 12',
-      'MOTD=this line is before the marker',
-      LOGIN_ENV_DELIMITER,
-      'PATH=/opt/homebrew/bin',
-      'HOME=/Users/someone',
-      LOGIN_ENV_DELIMITER,
-      'TRAILING=after the marker',
-    ].join('\n');
+    const stdout =
+      transcript(
+        ['PATH=/opt/homebrew/bin', 'HOME=/Users/someone'],
+        'Last login: Tue Aug 12\nMOTD=this line is before the marker\n',
+      ) + 'TRAILING=after the marker';
 
     expect(parseLoginEnv(stdout)).toEqual({
       PATH: '/opt/homebrew/bin',
@@ -85,32 +118,89 @@ describe('parseLoginEnv', () => {
   });
 
   it('splits on the first = only, so a value may contain one', () => {
-    const stdout = [
-      LOGIN_ENV_DELIMITER,
-      'URL=https://example.com/?a=1&b=2',
-      LOGIN_ENV_DELIMITER,
-    ].join('\n');
-
-    expect(parseLoginEnv(stdout).URL).toBe('https://example.com/?a=1&b=2');
+    expect(
+      parseLoginEnv(transcript(['URL=https://example.com/?a=1&b=2'])).URL,
+    ).toBe('https://example.com/?a=1&b=2');
   });
 
   it('yields nothing when a marker is missing, rather than guessing', () => {
-    // A shell that never printed the closing marker did not reach `printenv`
-    // either — parsing its banner would invent variables.
-    expect(parseLoginEnv(`${LOGIN_ENV_DELIMITER}\nPATH=/opt/bin`)).toEqual({});
-    expect(parseLoginEnv('PATH=/opt/bin')).toEqual({});
+    // A shell that never printed the closing marker did not get as far as
+    // reporting its environment either — parsing what it did print would
+    // invent variables.
+    expect(
+      parseLoginEnv(`${NUL}${LOGIN_ENV_DELIMITER}${NUL}PATH=/opt/bin${NUL}`),
+    ).toEqual({});
+    expect(parseLoginEnv(`PATH=/opt/bin${NUL}`)).toEqual({});
   });
 
-  it('ignores lines that are not assignments', () => {
-    const stdout = [
-      LOGIN_ENV_DELIMITER,
-      'not an assignment',
-      '=leading equals is not a name',
-      'GOOD=yes',
-      LOGIN_ENV_DELIMITER,
-    ].join('\n');
+  it('ignores records that are not assignments', () => {
+    expect(
+      parseLoginEnv(
+        transcript(['not an assignment', '=leading equals is not a name', 'GOOD=yes']),
+      ),
+    ).toEqual({ GOOD: 'yes' });
+  });
 
-    expect(parseLoginEnv(stdout)).toEqual({ GOOD: 'yes' });
+  /**
+   * The regression this protocol exists for (HIVE-86).
+   *
+   * A `PATH` may legitimately *contain newlines*. The case that produced this
+   * test is real and ordinary: `~/.zshrc` doing
+   * `export PATH="$PATH:$(npm bin -g)"`, where `npm bin` was removed in npm 9+
+   * and substitutes its multi-line "Unknown command" error straight into the
+   * value. The line-oriented `printenv` protocol this replaced truncated `PATH`
+   * at the first newline and silently dropped every entry after it.
+   */
+  it('keeps a value that contains newlines whole', () => {
+    const brokenPath = [
+      '/Users/someone/.bun/bin',
+      '/Users/someone/.local/bin',
+      '/usr/bin',
+      // Exactly what npm 9+ substitutes into the value.
+      'Unknown command: "bin"\n\nTo see a list of supported npm commands, run:\n  npm help',
+      '/Users/someone/.nvm/versions/node/v22.14.0/bin/npx',
+    ].join(':');
+
+    const vars = parseLoginEnv(transcript([`PATH=${brokenPath}`]));
+
+    expect(vars.PATH).toBe(brokenPath);
+    // The tail after the embedded newlines is what used to be lost.
+    expect(vars.PATH?.split(':')).toContain(
+      '/Users/someone/.nvm/versions/node/v22.14.0/bin/npx',
+    );
+  });
+
+  /**
+   * A newline-bearing value must not be able to *forge* a variable either.
+   *
+   * Under the old protocol a continuation line of the form `NAME=value` was
+   * indistinguishable from a real assignment, so any process able to influence
+   * one variable could inject another — including one on the import allowlist.
+   */
+  it('cannot be made to invent a variable from inside a value', () => {
+    const vars = parseLoginEnv(
+      transcript([`MOTD=harmless\nGH_TOKEN=forged\nPATH=/injected`]),
+    );
+
+    expect(vars).toEqual({ MOTD: 'harmless\nGH_TOKEN=forged\nPATH=/injected' });
+    expect(vars.GH_TOKEN).toBeUndefined();
+    expect(vars.PATH).toBeUndefined();
+  });
+});
+
+describe('LOGIN_ENV_PROBE_ARGS', () => {
+  it('asks only for the allowlist, so no other value is ever emitted', () => {
+    const command = LOGIN_ENV_PROBE_ARGS.at(-1) ?? '';
+
+    for (const key of LOGIN_ENV_IMPORT_KEYS) {
+      expect(command).toContain(`"${key}=\${${key}-}"`);
+    }
+    // The old protocol dumped the entire environment and filtered afterwards.
+    expect(command).not.toContain('printenv');
+  });
+
+  it('is still a login, interactive shell — .zshrc is where PATH is built', () => {
+    expect(LOGIN_ENV_PROBE_ARGS.slice(0, 3)).toEqual(['-l', '-i', '-c']);
   });
 });
 
@@ -315,12 +405,9 @@ describe('startLoginEnvImport', () => {
     const marker = join(dir, 'runs');
     const shell = script(
       'counting-shell',
-      [
-        `echo run >> '${marker}'`,
-        `echo '${LOGIN_ENV_DELIMITER}'`,
-        "echo 'PATH=/opt/homebrew/bin'",
-        `echo '${LOGIN_ENV_DELIMITER}'`,
-      ].join('\n'),
+      [`echo run >> '${marker}'`, ...emit(['PATH=/opt/homebrew/bin'])].join(
+        '\n',
+      ),
     );
     const target: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
     const options = { enabled: true, shell, target, cwd: dir };
@@ -349,12 +436,7 @@ describe('startLoginEnvImport', () => {
   it('does not resolve until the environment has actually been repaired', async () => {
     const shell = script(
       'slow-shell',
-      [
-        '/bin/sleep 0.3',
-        `echo '${LOGIN_ENV_DELIMITER}'`,
-        "echo 'PATH=/opt/homebrew/bin'",
-        `echo '${LOGIN_ENV_DELIMITER}'`,
-      ].join('\n'),
+      ['/bin/sleep 0.3', ...emit(['PATH=/opt/homebrew/bin'])].join('\n'),
     );
     const target: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
 

@@ -204,12 +204,12 @@ export const ENV_PROBE_ARGS: readonly string[] = ['-l', '-i', '-c', 'printenv'];
  * The marker that brackets the login-env probe's own output (HIVE-84).
  *
  * A login shell is *expected* to print things this app did not ask for — a
- * version-manager banner, an oh-my-zsh update notice, a motd. Parsing
- * `printenv` output that has been prefixed by a banner would read the banner's
- * last line as a variable, and a banner containing an `=` would silently
- * produce a plausible-looking bogus entry. Taking only what falls between the
- * first and last marker removes that whole class of failure rather than trying
- * to filter it line by line.
+ * version-manager banner, an oh-my-zsh update notice, a motd. Reading a
+ * transcript that has been prefixed by a banner would treat the banner's tail
+ * as a variable, and a banner containing an `=` would silently produce a
+ * plausible-looking bogus entry. Taking only what falls between the first and
+ * last marker removes that whole class of failure rather than trying to filter
+ * it record by record.
  *
  * Deliberately not a value anybody would set: it exists to be absent from a
  * real environment.
@@ -217,28 +217,18 @@ export const ENV_PROBE_ARGS: readonly string[] = ['-l', '-i', '-c', 'printenv'];
 export const LOGIN_ENV_DELIMITER = '__hive_login_env_boundary__';
 
 /**
- * The exact argv the login-environment import runs the shell with (HIVE-84).
+ * What separates one variable from the next in the login-env transcript
+ * (HIVE-86).
  *
- * The same `-l -i -c` as {@link ENV_PROBE_ARGS}, and for the same measured
- * reason: zsh sources `.zshrc` only for *interactive* shells, and `.zshrc` is
- * overwhelmingly where a developer's `PATH` is actually assembled — Homebrew's
- * shellenv, nvm, mise, pyenv. A merely-login, non-interactive probe would come
- * back with a `PATH` missing exactly the entries this import exists to
- * recover.
+ * **NUL, because it is the one byte an environment variable cannot contain.**
+ * `execve` stores the environment as NUL-terminated strings, so a value holding
+ * a NUL is not representable — which makes it the only separator a value can
+ * never counterfeit. A newline is *not* such a byte, and assuming it was is the
+ * defect this replaced.
  *
- * The command is a single `-c` string, which is the one place in this codebase
- * a shell is handed a string to interpret — unavoidable, since asking a shell
- * what its environment is means asking the shell. It is safe because the
- * string is a **compile-time constant**: nothing from the renderer, the config
- * file, or the environment is interpolated into it. The shell *path* is still
- * an argv entry, never part of this string.
+ * @see LOGIN_ENV_PROBE_ARGS for the transcript this delimits.
  */
-export const LOGIN_ENV_PROBE_ARGS: readonly string[] = [
-  '-l',
-  '-i',
-  '-c',
-  `printf '%s\\n' '${LOGIN_ENV_DELIMITER}'; printenv; printf '%s\\n' '${LOGIN_ENV_DELIMITER}'`,
-];
+export const LOGIN_ENV_RECORD_SEPARATOR = '\0';
 
 /**
  * The only variables the login shell is allowed to hand back (HIVE-84).
@@ -257,11 +247,91 @@ export const LOGIN_ENV_PROBE_ARGS: readonly string[] = [
  * **Presence, never value, leaves this process.** The values are written into
  * `process.env` so `gh` can use them; what the renderer is told is which names
  * were imported. See `integrations/gh.ts` for the same rule stated for reads.
+ *
+ * Since HIVE-86 this list is also enforced **at the shell**, not merely
+ * filtered after the fact — see {@link LOGIN_ENV_PROBE_ARGS}.
  */
 export const LOGIN_ENV_IMPORT_KEYS: readonly string[] = [
   'PATH',
   'GH_TOKEN',
   'GITHUB_TOKEN',
+];
+
+/**
+ * One `KEY=$KEY` record, as a shell word the probe can print.
+ *
+ * `${KEY-}` rather than `$KEY` so an unset variable expands to empty instead of
+ * erroring under an rc file that runs `set -u` — the probe must survive a
+ * stricter shell than the one that wrote it.
+ *
+ * The name is checked rather than trusted. Every caller today passes a
+ * compile-time constant, so this can only fire during development — which is
+ * exactly when a key like `FOO"; rm -rf ~; :"` should stop the build instead of
+ * becoming a shell command. It is the guard that lets the interpolation below
+ * be read as safe without having to re-derive that fact from the call site.
+ */
+function loginEnvRecordExpr(key: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new Error(
+      `LOGIN_ENV_IMPORT_KEYS: ${JSON.stringify(key)} is not a shell-safe variable name`,
+    );
+  }
+  return `"${key}=\${${key}-}"`;
+}
+
+/**
+ * The exact argv the login-environment import runs the shell with (HIVE-84,
+ * reshaped by HIVE-86).
+ *
+ * The same `-l -i -c` as {@link ENV_PROBE_ARGS}, and for the same measured
+ * reason: zsh sources `.zshrc` only for *interactive* shells, and `.zshrc` is
+ * overwhelmingly where a developer's `PATH` is actually assembled — Homebrew's
+ * shellenv, nvm, mise, pyenv. A merely-login, non-interactive probe would come
+ * back with a `PATH` missing exactly the entries this import exists to
+ * recover.
+ *
+ * ## Why not `printenv` (HIVE-86)
+ *
+ * The original protocol printed the whole environment, one `KEY=VALUE` per
+ * line, and split the transcript on newlines. That is only lossless while no
+ * value contains a newline — and values do. The case that broke it is
+ * completely ordinary: `~/.zshrc` running
+ * `export PATH="$PATH:$(npm bin -g)"`, where `npm bin` was removed in npm 9+
+ * and substitutes a multi-line error message *into `PATH` itself*. `printenv`
+ * emitted it faithfully; the parser then truncated `PATH` at the first newline
+ * and dropped every entry after it. A continuation line that happened to read
+ * `GH_TOKEN=…` would have been adopted as a real variable.
+ *
+ * So the transcript is now **NUL-delimited** — see
+ * {@link LOGIN_ENV_RECORD_SEPARATOR} for why that byte in particular — and the
+ * shell is asked for {@link LOGIN_ENV_IMPORT_KEYS} **by name** rather than for
+ * everything. Naming them moves the allowlist to the only place it is fully
+ * effective: a value this app never asked for is now never printed, never
+ * buffered, and never in reach of a parsing mistake. The JS-side filter in
+ * `importLoginEnv` stays as the second line of defence.
+ *
+ * The leading `\0` before the opening marker keeps rc-file banner output — a
+ * version-manager notice, a motd — in a record of its own instead of glued to
+ * the marker, so the marker is still matched by equality.
+ *
+ * The command is a single `-c` string, which is the one place in this codebase
+ * a shell is handed a string to interpret — unavoidable, since asking a shell
+ * what its environment is means asking the shell. It is safe because every
+ * part of the string is a **compile-time constant**: the marker, and the
+ * allowlist's own key names, each checked by {@link loginEnvRecordExpr}.
+ * Nothing from the renderer, the config file, or the environment reaches it.
+ * The shell *path* is still an argv entry, never part of this string.
+ */
+export const LOGIN_ENV_PROBE_ARGS: readonly string[] = [
+  '-l',
+  '-i',
+  '-c',
+  [
+    `printf '\\0%s\\0' '${LOGIN_ENV_DELIMITER}';`,
+    `printf '%s\\0'`,
+    ...LOGIN_ENV_IMPORT_KEYS.map(loginEnvRecordExpr),
+    `'${LOGIN_ENV_DELIMITER}'`,
+  ].join(' '),
 ];
 
 /**

@@ -7,6 +7,7 @@ import {
   LOGIN_ENV_DELIMITER,
   LOGIN_ENV_IMPORT_KEYS,
   LOGIN_ENV_PROBE_ARGS,
+  LOGIN_ENV_RECORD_SEPARATOR,
 } from '@shared/config-contract';
 import type { LoginEnvStatus } from '@shared/ipc-contract';
 
@@ -135,29 +136,39 @@ export const runLoginShell: RunLoginShell = async (
  * Pull the variables out of a transcript that may be wrapped in shell noise.
  *
  * Pure, and exported, because *this* is the part worth testing: what a banner,
- * a `=`-bearing motd, or a value containing an `=` does to the result.
+ * a `=`-bearing motd, or a value containing an `=` — or a newline — does to
+ * the result.
  *
- * Only the text between the first and last {@link LOGIN_ENV_DELIMITER} is
+ * **Records are separated by {@link LOGIN_ENV_RECORD_SEPARATOR}, not by
+ * newlines (HIVE-86).** Splitting on newlines was correct only for values that
+ * contain none, and `PATH` is routinely not one of them: an rc file running
+ * `export PATH="$PATH:$(npm bin -g)"` on npm 9+ embeds a multi-line error
+ * message in the value. That truncated `PATH` at the first newline, and left a
+ * continuation line reading `NAME=value` indistinguishable from a real
+ * assignment. NUL cannot appear in an environment value at all, so neither
+ * failure is reachable through this parser now.
+ *
+ * Only the records between the first and last {@link LOGIN_ENV_DELIMITER} are
  * read. A transcript missing either marker yields nothing at all rather than a
  * best effort — a shell that did not get as far as printing both markers did
- * not get as far as `printenv` either, and parsing its banner would invent
- * variables.
+ * not get as far as reporting its environment either, and parsing its banner
+ * would invent variables.
  */
 export function parseLoginEnv(stdout: string): Record<string, string> {
-  const lines = stdout.split('\n');
-  const first = lines.indexOf(LOGIN_ENV_DELIMITER);
-  const last = lines.lastIndexOf(LOGIN_ENV_DELIMITER);
+  const records = stdout.split(LOGIN_ENV_RECORD_SEPARATOR);
+  const first = records.indexOf(LOGIN_ENV_DELIMITER);
+  const last = records.lastIndexOf(LOGIN_ENV_DELIMITER);
 
   if (first === -1 || last === first) return {};
 
   const vars: Record<string, string> = {};
-  for (const line of lines.slice(first + 1, last)) {
+  for (const record of records.slice(first + 1, last)) {
     // Split on the FIRST `=` only: a value legitimately contains one — a URL
     // with a query string, a base64 blob — and splitting anywhere else would
     // truncate it. The same rule `compareEnv` follows.
-    const at = line.indexOf('=');
+    const at = record.indexOf('=');
     if (at <= 0) continue;
-    vars[line.slice(0, at)] = line.slice(at + 1);
+    vars[record.slice(0, at)] = record.slice(at + 1);
   }
   return vars;
 }
