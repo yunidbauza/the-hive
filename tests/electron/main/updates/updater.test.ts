@@ -281,6 +281,100 @@ describe('createUpdater — download and install', () => {
   });
 });
 
+describe('createUpdater — a staged update is not lost', () => {
+  it('does not let a later check knock a ready update back to available', async () => {
+    /**
+     * The server keeps reporting the newer version until it is *installed*, and
+     * nothing is installed until the user restarts — so the six-hourly timer, or
+     * a press of "Check now", used to find 0.2.0 again after 0.2.0 had already
+     * been staged and reset `state` from `ready` to `available`.
+     *
+     * The damage lands later and looks unrelated: the "Update ready" row's
+     * `install()` sees a state that is no longer `ready`, declines, and opens a
+     * web page for an update already sitting on disk.
+     */
+    const h = harness(SELF_INSTALL);
+    const updater = createUpdater(h.deps);
+
+    await updater.check('auto');
+    await updater.download();
+    expect(updater.status().state).toBe('ready');
+
+    await updater.check('auto');
+
+    expect(updater.status().state).toBe('ready');
+    expect(updater.status().availableVersion).toBe('0.2.0');
+
+    void updater.install();
+    expect(h.engine.install).toHaveBeenCalledTimes(1);
+    expect(h.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('tells a menu check that the update is already waiting, rather than re-offering it', async () => {
+    const h = harness(SELF_INSTALL);
+    const updater = createUpdater(h.deps);
+
+    await updater.check('auto');
+    await updater.download();
+    h.confirm.mockClear();
+
+    await updater.check('menu');
+
+    expect(h.confirm).not.toHaveBeenCalled();
+    expect(h.inform.mock.calls.at(-1)?.[0]).toMatchObject({
+      message: 'The Hive 0.2.0 is ready to install.',
+    });
+  });
+
+  it('starts one download however many times the row is clicked', async () => {
+    // `autoUpdater.downloadUpdate()` is not re-entrant and electron-updater does
+    // not guard it, so a double-click on the inbox row was two transfers.
+    const h = harness(SELF_INSTALL);
+    let finish: () => void = () => undefined;
+    h.engine.download.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const updater = createUpdater(h.deps);
+    await updater.check('auto');
+
+    const first = updater.download();
+    const second = updater.download();
+
+    expect(h.engine.download).toHaveBeenCalledTimes(1);
+
+    finish();
+    await Promise.all([first, second]);
+    expect(updater.status().state).toBe('ready');
+  });
+
+  it('refuses to check while a download is running, so the two cannot collide', async () => {
+    /**
+     * `autoUpdater` is one emitter and emits `error` for a failed *check* as
+     * well as a failed download — so a background check that failed mid-download
+     * would reject the download's promise and permanently demote the capability.
+     * Keeping them from overlapping is a stronger fix than telling the two
+     * errors apart after the fact.
+     */
+    const h = harness(SELF_INSTALL);
+    h.engine.download.mockReturnValue(new Promise<void>(() => undefined));
+    const updater = createUpdater(h.deps);
+    await updater.check('auto');
+    void updater.download();
+    h.engine.check.mockClear();
+
+    await updater.check('auto');
+    expect(h.engine.check).not.toHaveBeenCalled();
+
+    await updater.check('menu');
+    expect(h.engine.check).not.toHaveBeenCalled();
+    expect(h.inform.mock.calls.at(-1)?.[0]).toMatchObject({
+      message: 'An update is already downloading.',
+    });
+  });
+});
+
 describe('createUpdater — a swap macOS refuses', () => {
   /**
    * The safety net, and the bug it was written for.

@@ -54,6 +54,16 @@ function parentWindow(): BrowserWindow | undefined {
 
 export async function ensureUpdater(): Promise<Updater> {
   if (updater !== null) return updater;
+  /**
+   * The in-flight promise is cached; a **failed** one is not.
+   *
+   * `starting ??=` on its own caches the rejection too, so a single failure in
+   * the probe, in `app.getVersion()`, or in `createElectronUpdaterEngine` —
+   * which touches `electronUpdater.autoUpdater`, a getter that constructs a
+   * `MacUpdater` and can throw — would leave every later call rejecting for the
+   * life of the process. The menu item, both Inbox actions and the Settings
+   * button would all be dead with no way back short of a relaunch.
+   */
   starting ??= (async () => {
     const capability = await probeUpdateCapability();
     const currentVersion = app.getVersion();
@@ -111,7 +121,10 @@ export async function ensureUpdater(): Promise<Updater> {
     });
     updater = built;
     return built;
-  })();
+  })().catch((cause: unknown) => {
+    starting = null;
+    throw cause;
+  });
   return starting;
 }
 
@@ -140,11 +153,24 @@ export function setUpdateNotificationSink(sink: NotifySink): void {
   notifySink = sink;
 }
 
-/** Begin the background schedule. Called once, after `whenReady`. */
+/**
+ * Begin the background schedule. Called once, after `whenReady`.
+ *
+ * The `catch` is not decoration. This is the one caller with nobody to return a
+ * rejection to, and an unhandled rejection on the main process is fatal under
+ * Node 22's default `--unhandled-rejections=throw` — so a failure to *schedule
+ * an update check* could take the whole app down at launch. Logged and
+ * swallowed: the app runs perfectly well without an updater, and the Settings
+ * pane still reports what it knows.
+ */
 export function startUpdateChecks(): void {
-  void ensureUpdater().then((instance) => {
-    instance.start();
-  });
+  void ensureUpdater()
+    .then((instance) => {
+      instance.start();
+    })
+    .catch((cause: unknown) => {
+      console.error('[hive] the updater could not start:', cause);
+    });
 }
 
 /** The menu item and the Settings pane both land here. */

@@ -130,6 +130,24 @@ export function createUpdater(deps: UpdaterDeps): Updater {
    */
   let inFlight = false;
 
+  /**
+   * A download is running.
+   *
+   * Separate from `inFlight`, which guards *checking*. Both exist because both
+   * are reachable from more than one place: `download()` is called by the menu
+   * path and by a clicked Inbox row, and nothing between them was stopping a
+   * double-click from starting `autoUpdater.downloadUpdate()` twice —
+   * electron-updater does not guard that itself.
+   *
+   * It also closes the nastier hole. `autoUpdater` is a singleton emitter and
+   * emits `error` for a failed *check* as well as a failed download, so a
+   * background check that fails while a download is in flight would reject the
+   * download's promise and permanently demote the capability. Refusing to check
+   * while downloading means the two can never overlap, which is a stronger fix
+   * than trying to tell one `error` from another after the fact.
+   */
+  let downloading = false;
+
   const releaseUrl = (): string =>
     availableVersion === null ? RELEASES_URL : releaseUrlFor(availableVersion);
 
@@ -210,6 +228,11 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       return;
     }
 
+    // Already running, or already finished and waiting on the restart. Either
+    // way a second `downloadUpdate()` is not what the click meant.
+    if (downloading || state === 'ready') return;
+
+    downloading = true;
     state = 'downloading';
     percent = 0;
     error = null;
@@ -223,6 +246,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       announceReady(availableVersion);
     } catch (cause) {
       fallBackToManual(cause);
+    } finally {
+      downloading = false;
     }
   };
 
@@ -237,11 +262,41 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       return;
     }
 
-    if (inFlight) {
+    if (inFlight || downloading) {
       if (origin === 'menu') {
         inform({
-          message: 'Already checking for updates.',
-          detail: 'A check is in progress. Give it a moment and try again.',
+          message: downloading
+            ? 'An update is already downloading.'
+            : 'Already checking for updates.',
+          detail: downloading
+            ? `${
+                availableVersion === null
+                  ? 'It'
+                  : `The Hive ${availableVersion}`
+              } is on its way. You'll be told when it is ready to install.`
+            : 'A check is in progress. Give it a moment and try again.',
+        });
+      }
+      return;
+    }
+
+    /**
+     * A staged update is not re-opened by a later look.
+     *
+     * The server goes on reporting the newer version until it is *installed*,
+     * and nothing is installed until the user restarts — so the six-hourly
+     * timer, or a press of "Check now", would find 0.2.0 again after 0.2.0 had
+     * already been downloaded and would knock `state` back from `ready` to
+     * `available`. The visible damage lands later and looks unrelated: the
+     * "Update ready" row's `install()` sees a state that is no longer `ready`,
+     * declines, and opens a web page for an update already sitting on disk —
+     * while Settings re-offers the whole download.
+     */
+    if (state === 'ready' && availableVersion !== null) {
+      if (origin === 'menu') {
+        inform({
+          message: `The Hive ${availableVersion} is ready to install.`,
+          detail: 'Restart the app to finish updating.',
         });
       }
       return;
@@ -295,8 +350,17 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       });
 
       if (!wanted) return;
-      inFlight = false;
-      await download();
+      /**
+       * Started, not awaited.
+       *
+       * The dialog the user just accepted says the update downloads in the
+       * background, and awaiting here would make that a lie in the one place it
+       * is visible: Settings' "Check now" button stays disabled reading
+       * "Checking…" for the whole multi-hundred-megabyte transfer, because the
+       * pane only re-reads once this resolves. `download()` has its own
+       * re-entrancy guard, so releasing the check lock underneath it is safe.
+       */
+      void download();
     } catch (cause) {
       state = 'error';
       error = cause instanceof Error ? cause.message : String(cause);

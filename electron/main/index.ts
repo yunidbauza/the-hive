@@ -50,8 +50,16 @@ app.setName('The Hive');
  * side by side. Had both landed on one directory, `requestSingleInstanceLock`
  * would treat a development run and the installed app as the same app, and
  * launching one while the other was open would just focus the wrong window.
+ *
+ * **`--user-data-dir` wins.** An explicit profile is a deliberate choice and
+ * this default must not silently overrule it. Learned the hard way: without the
+ * switch check, the Playwright suite — which gives every spec its own profile
+ * for exactly the isolation reason above — had all five workers land on one
+ * directory, so `requestSingleInstanceLock` failed in four of them and they
+ * quit before opening a window. Ninety-odd specs failed in about half a second
+ * each, none of them saying anything about a profile.
  */
-if (!app.isPackaged) {
+if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', join(app.getPath('appData'), 'the-hive'));
 }
 

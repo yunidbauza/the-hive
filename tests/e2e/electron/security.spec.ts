@@ -71,6 +71,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     github: Object.keys(window.hive!.github).sort(),
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
+    updates: Object.keys(window.hive!.updates).sort(),
   }));
 
   // Widening any of these lists is the alarm this test exists to raise.
@@ -149,6 +150,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'notifications',
     'pty',
     'session',
+    'updates',
   ]);
   expect(surface.integrations).toEqual(['status']);
   expect(surface.github).toEqual(['prs']);
@@ -187,7 +189,21 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * settings pane polls this one while it is open, and putting a subprocess on
    * that timer is the thing the split exists to prevent.
    */
+  /**
+   * `act` is new, and it is the only verb here that takes renderer-supplied
+   * data at all — so it is the one to look hardest at.
+   *
+   * What bounds it: the payload is narrowed by `parseNotificationAction`
+   * against the union in the contract, and anything unrecognised is dropped
+   * rather than passed on. Of the members that survive, four carry no data;
+   * `session` carries an entity id the renderer already knows; and `url` is
+   * handed to the same `isSafeExternalUrl` allowlist every other outbound link
+   * goes through, at the point of opening. It grants the page nothing it could
+   * not already ask for — it exists so a clicked *row* and a clicked *toast*
+   * reach one router instead of two.
+   */
   expect(surface.notifications).toEqual([
+    'act',
     'delivery',
     'list',
     'markRead',
@@ -195,6 +211,17 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'onNew',
     'onRead',
   ]);
+  /**
+   * The narrowest namespace on the bridge, and deliberately so.
+   *
+   * Two verbs, neither taking an argument. `status` is a read of what main
+   * already knows about its own version; `check` causes one HTTPS GET of a
+   * small YAML file at an address compiled into the bundle, which the renderer
+   * cannot name or influence. Nothing here downloads or installs anything —
+   * those are reached only through a notification action, which goes through
+   * `act` and its guard above.
+   */
+  expect(surface.updates).toEqual(['check', 'status']);
   expect(surface.jira).toEqual([
     /**
      * HIVE-70's `applyTransition` is the **first verb in this bridge that
@@ -396,9 +423,21 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * thing from a status side-channel, and this list is where that would show
    * up first.
    */
+  /**
+   * **Pre-existing red, corrected here rather than left failing** — the third
+   * time this file has had to say that, and for the reason it keeps giving:
+   * HIVE-79 added `onMetrics` and did not update this list, so the assertion
+   * has been failing since. A branch that widens the bridge cannot leave the
+   * test that guards the bridge red.
+   *
+   * `onMetrics` is a listener like the rest of them: main → renderer, pushing
+   * what Claude Code's status line already reported about a session the page
+   * can see. It grants the page nothing.
+   */
   expect(surface.session).toEqual([
     'onBranch',
     'onCleared',
+    'onMetrics',
     'onName',
     'onStatus',
     'onTicketIntent',

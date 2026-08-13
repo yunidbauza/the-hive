@@ -5,6 +5,7 @@ import {
   BRIDGE_CONFIG_KEYS,
   BRIDGE_INTEGRATIONS_KEYS,
   BRIDGE_JIRA_KEYS,
+  BRIDGE_UPDATES_KEYS,
   BRIDGE_FS_KEYS,
   BRIDGE_GITHUB_KEYS,
   BRIDGE_KEYS,
@@ -70,6 +71,8 @@ const github = () =>
   exposed.github as Record<string, (...args: unknown[]) => unknown>;
 const fs = () =>
   exposed.fs as Record<string, (...args: unknown[]) => unknown>;
+const updates = () =>
+  exposed.updates as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
@@ -92,6 +95,14 @@ describe('exposed surface', () => {
       ...BRIDGE_NOTIFICATIONS_KEYS,
     ].sort());
     expect(Object.keys(jira()).sort()).toEqual([...BRIDGE_JIRA_KEYS].sort());
+    /**
+     * The fourth time, avoided. `BRIDGE_UPDATES_KEYS` shipped exported and
+     * unimported — exactly the shape the note above describes — and was caught
+     * in review before it could become another list nothing reads.
+     */
+    expect(Object.keys(updates()).sort()).toEqual([
+      ...BRIDGE_UPDATES_KEYS,
+    ].sort());
   });
 
   /**
