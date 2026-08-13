@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Cut the desktop app icon from the header mark.
+"""Cut the desktop app icon, and the header tile beside it, from the hive mark.
 
 The icon is the app in miniature: a terminal window in the app's own chrome,
 with the prompt line as the screen's only content — a pale-blue chevron and the
 hive mark standing on a cursor underscore, the mark playing the character the
 caret is holding.
+
+The header tile is the same window with the prompt line taken out and the mark
+recentred, so the top-left of the app and the dock show one design at two
+sizes rather than two designs. Both come out of `window()`, which is the point:
+they cannot drift apart.
 
 Every colour comes from `src/styles/tokens.css`; nothing is invented here:
 
@@ -13,17 +18,19 @@ Every colour comes from `src/styles/tokens.css`; nothing is invented here:
     pale blue    #8FA7F2   --cc-brand / the chevron and one title-bar dot
     green        #74B79C   --cc-ok / the live title-bar dot
 
-The mark itself is `public/hive-mark.png`, used as an alpha mask so it can be
-painted white on the screen.
+The mark itself is `resources/hive-mark.png`, used as an alpha mask so it can be
+painted white on the screen. It lives beside the icons rather than in `public/`
+because nothing serves it any more — the app loads the finished tile.
 
-Outputs, all under `resources/`:
+Outputs:
 
-    icon.png          1024 master, full-bleed  (Linux, electron-builder source)
-    icon-macos.png    1024 master on Apple's grid — 824 of 1024, margin around it
-    icon.icns         macOS, from the padded master via `iconutil`
-    icon.ico          Windows, 16-256
-    icons/<n>x<n>.png the Linux ladder
-    ../public/favicon.png, apple-touch-icon.png   the browser target
+    resources/icon.png          1024 master, full-bleed (Linux, builder source)
+    resources/icon-macos.png    on Apple's grid — 824 of 1024, margin around it
+    resources/icon.icns         macOS, from the padded master via `iconutil`
+    resources/icon.ico          Windows, 16-256
+    resources/icons/<n>x<n>.png the Linux ladder
+    public/favicon.png, apple-touch-icon.png   the browser tab
+    public/hive-tile.png        the header tile (`brand-block.tsx`)
 
 Requires Pillow (`pip install pillow`) and, for the `.icns`, macOS `iconutil`.
 It is a one-off asset step, not part of `pnpm build` — run it only when the
@@ -47,7 +54,7 @@ except ImportError:  # pragma: no cover - operator feedback, not app code
     sys.exit("Pillow is required: pip install pillow")
 
 ROOT = Path(__file__).resolve().parents[2]
-MARK = ROOT / "public" / "hive-mark.png"
+MARK = ROOT / "resources" / "hive-mark.png"
 RESOURCES = ROOT / "resources"
 PUBLIC = ROOT / "public"
 
@@ -120,7 +127,7 @@ def clipped(layer: Image.Image, mask: Image.Image) -> Image.Image:
 def load_mark() -> Image.Image:
     """The mark's alpha, cropped, with the source file's artefact removed.
 
-    `public/hive-mark.png` carries a transparency-preview checkerboard baked in
+    `hive-mark.png` shipped a transparency-preview checkerboard baked in
     at alpha 17. Left alone it prints a faint grid over whatever sits behind the
     mark, so everything at or below 24 is floored to fully transparent.
     """
@@ -190,8 +197,18 @@ MARK_CX, MARK_CY = 618, 530
 CARET_GAP = 78  # air between the character and its cursor — deliberate, not tight
 CARET_H, CARET_W = 46, 350
 
+# The header tile is the same window with the prompt line taken out, so the mark
+# recentres on the glass and grows into the room the chevron and caret leave.
+TILE_MARK_SIZE = 560
+TILE_MARK_CY = 636
 
-def render() -> Image.Image:
+
+def window(mark_size: float, mark_cx: float, mark_cy: float) -> Image.Image:
+    """The window itself: Serenity screen, ink title bar, three dots, the mark.
+
+    Everything both the app icon and the header tile have in common — which is
+    everything except the prompt line.
+    """
     tile = squircle(S)
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
 
@@ -203,8 +220,19 @@ def render() -> Image.Image:
     for i, colour in enumerate((PALE, PALE, GREEN)):
         img.alpha_composite(dot(150 + i * 96, 105, 26, colour))
 
+    centre(img, mark(mark_size, WHITE), mark_cx, mark_cy)
+    return img
+
+
+def render_tile() -> Image.Image:
+    """The header tile — the icon without its prompt line (`brand-block.tsx`)."""
+    return window(TILE_MARK_SIZE, S / 2, TILE_MARK_CY)
+
+
+def render() -> Image.Image:
+    img = window(MARK_SIZE, MARK_CX, MARK_CY)
+
     img.alpha_composite(chevron(258, MARK_CY + 8, 132, 50))
-    centre(img, mark(MARK_SIZE, WHITE), MARK_CX, MARK_CY)
 
     top = MARK_CY + MARK_SIZE / 2 + CARET_GAP
     img.alpha_composite(
@@ -231,6 +259,7 @@ def padded_for_macos(master: Image.Image) -> Image.Image:
 
 # ------------------------------------------------------------------ output
 
+TILE_PX = 120  # the header tile's 30px slot, at 4×
 LINUX_LADDER = (16, 32, 48, 64, 128, 256, 512, 1024)
 ICO_LADDER = (16, 24, 32, 48, 64, 128, 256)
 ICNS_LADDER = ((16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2))
@@ -281,11 +310,8 @@ def main() -> None:
     master.resize((32, 32), Image.LANCZOS).save(PUBLIC / "favicon.png")
     master.resize((180, 180), Image.LANCZOS).save(PUBLIC / "apple-touch-icon.png")
 
-    # The header mark, with the baked-in checkerboard taken out at source.
-    cleaned = Image.open(MARK).convert("RGBA")
-    r, g, b, a = cleaned.split()
-    cleaned = Image.merge("RGBA", (r, g, b, a.point(lambda v: 0 if v <= 24 else v)))
-    cleaned.save(MARK)
+    # The header tile, at 4× its 30px slot so it stays sharp on any display.
+    render_tile().resize((TILE_PX, TILE_PX), Image.LANCZOS).save(PUBLIC / "hive-tile.png")
 
     print(f"wrote {RESOURCES.relative_to(ROOT)}/ and {PUBLIC.relative_to(ROOT)}/ icons")
 

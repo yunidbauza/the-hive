@@ -91,8 +91,8 @@ export default defineConfig({
      * `loadFile` and its document origin is `file://`.
      *
      * Vite's default `base: '/'` emits root-relative URLs, and under `file://`
-     * the root is the *filesystem* root — `/hive-mark.png` resolves to
-     * `file:///hive-mark.png` and 404s silently as a broken image. The browser
+     * the root is the *filesystem* root — `/hive-tile.png` resolves to
+     * `file:///hive-tile.png` and 404s silently as a broken image. The browser
      * target keeps `base: '/'` and is unaffected.
      */
     base: './',

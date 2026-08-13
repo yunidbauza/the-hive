@@ -5,8 +5,8 @@ chrome, and on the screen a prompt line — a pale-blue chevron and the hive mar
 standing on a cursor underscore, the mark playing the character the caret is
 holding.
 
-Nothing here is hand-drawn. Everything is cut from `public/hive-mark.png` — the
-same file the header renders — and painted in tokens from
+Nothing here is hand-drawn. Everything is cut from `hive-mark.png`, kept beside
+these files because nothing serves it any more — and painted in tokens from
 `src/styles/tokens.css`: ink `#10152A` for the chrome, Serenity `#334FA9` for
 the screen, `#8FA7F2` for the chevron and two of the title-bar dots, `#74B79C`
 for the live one. If a colour changes in the tokens it must change in the
@@ -21,9 +21,14 @@ generator too; the icon has no palette of its own.
 | `icon.icns` | macOS, cut from `icon-macos.png`. |
 | `icon.ico` | Windows. 16 · 24 · 32 · 48 · 64 · 128 · 256. |
 | `icons/<n>x<n>.png` | The Linux ladder, 16 → 1024. |
+| `hive-mark.png` | The mark itself, the source every one of the above is cut from. |
 
-`public/favicon.png` and `public/apple-touch-icon.png` come off the same master,
-so the browser tab and the desktop app show one icon rather than two designs.
+Three more come off the same master and land in `public/`, because the renderer
+serves them: `favicon.png` and `apple-touch-icon.png` for the browser tab, and
+`hive-tile.png` — the header's top-left tile, which is this icon with its prompt
+line taken out and the mark recentred. Top-left, browser tab and dock are one
+design at three sizes; none of them can drift, because one script writes them
+all.
 
 ## Regenerating
 
@@ -34,9 +39,9 @@ design changes and commit what it writes. It needs Pillow (`pip install
 pillow`); the `.icns` additionally needs macOS's `iconutil`, and the script says
 so and skips that one file rather than failing on another platform.
 
-The script also floors `public/hive-mark.png`'s alpha: the original carried a
-baked-in transparency checkerboard at alpha 17, which printed a faint grid
-behind the mark wherever it was composited, the header tile included.
+The script also floors `hive-mark.png`'s alpha on the way in: the original
+carried a baked-in transparency checkerboard at alpha 17, which printed a faint
+grid behind the mark wherever it was composited, the header tile included.
 
 ## Wiring the installer
 

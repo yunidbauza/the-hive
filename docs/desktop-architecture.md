@@ -422,7 +422,7 @@ build and serve a browser bundle it never touches. `pnpm test:e2e:electron` sets
   position. Which lines are on screen is the only honest observable — read
   `.xterm-rows > div` text via `waitForTerminalText`.
 - **Assets must not use root-relative URLs.** A built app loads its renderer over
-  `file://`, where `/hive-mark.png` resolves against the *filesystem* root and
+  `file://`, where `/hive-tile.png` resolves against the *filesystem* root and
   404s as a broken image. The renderer builds with `base: './'`; reference public
   assets through `import.meta.env.BASE_URL`.
 
