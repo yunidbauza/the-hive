@@ -154,7 +154,16 @@ function updateLine(status: UpdateStatus): string {
     case 'error':
       return 'The last check did not complete.';
     default:
-      return `Version ${status.currentVersion} — up to date.`;
+      /**
+       * `idle` is also the state before the first check has run — thirty
+       * seconds of every launch — so "up to date" has to be earned by an actual
+       * answer from the server. Saying it unconditionally was a claim the app
+       * had not established, and it was visibly wrong in Settings while a newer
+       * release sat published.
+       */
+      return status.checked
+        ? `Version ${status.currentVersion} — up to date.`
+        : `Version ${status.currentVersion}.`;
   }
 }
 

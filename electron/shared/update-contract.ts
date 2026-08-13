@@ -94,6 +94,19 @@ export type UpdateState =
 /** Everything a consumer needs to render the update surface. */
 export interface UpdateStatus {
   state: UpdateState;
+  /**
+   * Whether a check has actually completed since launch.
+   *
+   * Distinct from `state: 'idle'`, and the distinction is not pedantic: idle is
+   * *also* the state before the first check has run, thirty seconds of every
+   * launch. Rendering that as "up to date" tells the user something the app has
+   * not established — and it was doing exactly that, observed in Settings with
+   * a newer release already published.
+   *
+   * A boolean rather than a timestamp because nothing displays *when*; the pane
+   * only needs to tell "nothing newer exists" from "nobody has looked".
+   */
+  checked: boolean;
   /** What is running now. `app.getVersion()`. */
   currentVersion: string;
   /** What is on the server, when something newer exists. */
@@ -114,6 +127,7 @@ export function idleUpdateStatus(
 ): UpdateStatus {
   return {
     state: capability.canCheck ? 'idle' : 'unsupported',
+    checked: false,
     currentVersion,
     availableVersion: null,
     percent: null,

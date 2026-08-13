@@ -114,6 +114,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
 
   let capability = deps.capability;
   let state: UpdateStatus['state'] = capability.canCheck ? 'idle' : 'unsupported';
+  let checked = false;
   let availableVersion: string | null = null;
   let percent: number | null = null;
   let error: string | null = null;
@@ -134,6 +135,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
 
   const status = (): UpdateStatus => ({
     state,
+    checked,
     currentVersion,
     availableVersion,
     percent,
@@ -254,6 +256,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
 
       if (found === null) {
         state = 'idle';
+        checked = true;
         availableVersion = null;
         if (origin === 'menu') {
           inform({
@@ -265,6 +268,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       }
 
       availableVersion = found.version;
+      checked = true;
       state = 'available';
 
       if (origin === 'auto') {

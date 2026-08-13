@@ -149,6 +149,23 @@ describe('createUpdater — background checks', () => {
     });
   });
 
+  it('does not claim to be up to date before it has looked', async () => {
+    /**
+     * `idle` is the state before the first check as well as after a check that
+     * found nothing, and the Settings pane rendered both as "up to date" — a
+     * claim the app had not established. Caught by opening the pane in the
+     * packaged app while a newer release was already published.
+     */
+    const h = harness(SELF_INSTALL, null);
+    const updater = createUpdater(h.deps);
+
+    expect(updater.status()).toMatchObject({ state: 'idle', checked: false });
+
+    await updater.check('auto');
+
+    expect(updater.status()).toMatchObject({ state: 'idle', checked: true });
+  });
+
   it('does not schedule anything at all in a build that cannot check', () => {
     const h = harness(DEV);
     createUpdater(h.deps).start();
