@@ -93,6 +93,53 @@ Comments in the file are `"//"`-prefixed keys, the same convention
 `package.json` already uses here — JSON has no comment syntax, and the first-run
 template has to explain itself in the file the user opens.
 
+## The environment this process actually has (HIVE-84)
+
+A macOS app launched from Finder, the Dock or Spotlight inherits **launchd's**
+environment, not the one a login shell assembles. In a packaged build `PATH` is
+therefore exactly `/usr/bin:/bin:/usr/sbin:/sbin` — four entries, none of which
+is where anybody installs a developer tool. `gh` at `/opt/homebrew/bin/gh` is
+genuinely invisible to this process while being obviously present in the user's
+terminal.
+
+`electron/main/config/login-env.ts` runs the configured login shell once at
+startup and merges an allowlist — `PATH`, `GH_TOKEN`, `GITHUB_TOKEN` — back into
+`process.env`. `main/index.ts` starts it before the handlers are registered and
+never awaits it, so a slow rc file cannot delay the first window.
+
+**`process.env` is the seam on purpose.** Every consumer already reads it lazily,
+at call time — the `gh` probe, `resolveGit`, the command diagnostic, and the base
+environment of every session — so repairing the one value they derive from fixes
+all of them with no change at any call site.
+
+**The pty host is the exception, and it is enforced.** `forkPtyHost` passes no
+`env`, so the utility process snapshots `process.env` at fork time and keeps it
+for the life of the app — a lazy read that happens exactly once. `ptySpawn` and
+`ptyRestart` therefore `await loginEnvStatus()` before the host can come up.
+Without that, a click inside the first second on a machine with a slow rc file
+freezes launchd's `PATH` into every terminal the app ever opens, while Settings
+correctly reports the import succeeded.
+
+The rules the module holds to:
+
+- an **allowlist**, never the whole environment — an rc file exporting
+  `NODE_OPTIONS` or a proxy setting must not silently change how this app runs
+- it never overwrites a variable the process already has; `PATH` is **merged**,
+  login-shell order first, de-duplicated, so nothing the launching process
+  supplied is lost and the value cannot grow by a duplicate each launch
+- **presence, never value**, leaves the process: two of the three variables are
+  credentials, so the renderer is told which *names* were imported
+- bounded exactly as the env diagnostic is — `execFile`, a timeout, and an
+  untrappable `SIGKILL` — because this runs on the main process at boot, where a
+  `trap '' TERM` rc file would be a hang before the first window
+- a failed probe is a failed *observation*: the inherited environment is kept and
+  the reason is reported, never treated as a configuration error
+
+`importLoginEnv` in the config file turns it off (Settings → Runtime), for the rc
+file this app should not fight. Settings → Integrations reports which environment
+is in force, because the difference is otherwise invisible and a user who cannot
+see it cannot tell a broken import from a missing binary.
+
 ## The pty host
 
 **PTYs run in a dedicated `utilityProcess`, not in main.** `node-pty` is a
