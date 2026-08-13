@@ -1,0 +1,363 @@
+@import './splash-tokens.css';
+
+/**
+ * The Overmind Chamber.
+ *
+ * Authored at exactly `SPLASH_SIZE` — 960×600 — because the window is that size
+ * and nothing here reflows. Every position below is a coordinate in that frame.
+ *
+ * No Tailwind, no reset beyond what this file sets, no raw hex: colour comes
+ * from `splash-tokens.css`, which is checked against `src/styles/tokens.css` by
+ * a test. The rule the app follows applies here too.
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 960px;
+  height: 600px;
+  overflow: hidden;
+  background: var(--cc-bg);
+  font-family: var(--font-mono);
+  /* The window is frameless and undraggable; a caret or a selection in it would
+     be an interaction the splash cannot honour. */
+  cursor: default;
+  user-select: none;
+}
+
+.chamber {
+  position: relative;
+  width: 960px;
+  height: 600px;
+  overflow: hidden;
+  /* The chamber falls away from the creature toward the edges. */
+  background: radial-gradient(
+    120% 95% at 68% 44%,
+    var(--cc-hover) 0%,
+    var(--cc-bg) 46%,
+    var(--cc-term-bg) 100%
+  );
+}
+
+/* ---------------------------------------------------------------- the light */
+
+.bloom {
+  position: absolute;
+  left: 660px;
+  top: 286px;
+  width: 520px;
+  height: 340px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    50% 50%,
+    color-mix(in srgb, var(--cc-brand-fill-strong) 55%, transparent),
+    transparent 70%
+  );
+  filter: blur(6px);
+  opacity: 0;
+  animation: fade-in 0.9s ease-out 0.25s both;
+}
+
+.pool {
+  position: absolute;
+  left: 660px;
+  top: 432px;
+  width: 430px;
+  height: 74px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    50% 50%,
+    color-mix(in srgb, var(--cc-brand-fill) 42%, transparent),
+    transparent 72%
+  );
+  opacity: 0;
+  animation: pool-in 1.1s ease-out 0.35s both;
+}
+
+/* --------------------------------------------------------------- the rings */
+
+.rings {
+  position: absolute;
+  left: 660px;
+  top: 276px;
+  width: 470px;
+  height: 470px;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  animation: fade-in 0.7s ease-out 0.5s both;
+}
+
+.rings .chitin {
+  transform-origin: 235px 235px;
+  animation: spin 26s linear infinite;
+}
+
+/* Closes as the boot proceeds, and completes with the last line. */
+.rings .progress {
+  animation: draw 2.05s cubic-bezier(0.3, 0.1, 0.2, 1) 0.35s both;
+}
+
+/* ------------------------------------------------------------- the creature */
+
+.sprite {
+  position: absolute;
+  left: 660px;
+  top: 290px;
+  height: 352px;
+  width: auto;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  animation:
+    rise-in 1s cubic-bezier(0.16, 0.9, 0.3, 1) 0.3s both,
+    breathe 3.2s ease-in-out 1.3s infinite;
+}
+
+/* The fallback is the same art at the same size; only the source differs. */
+.sprite[hidden] {
+  display: none;
+}
+
+/* ----------------------------------------------------------------- the room */
+
+.scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0 2px,
+    color-mix(in srgb, var(--cc-term-bg) 50%, transparent) 2px 3px
+  );
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 90% at 50% 45%,
+    transparent 40%,
+    color-mix(in srgb, var(--cc-term-bg) 85%, transparent) 100%
+  );
+}
+
+/* ----------------------------------------------------------------- the copy */
+
+.copy {
+  position: absolute;
+  left: 64px;
+  bottom: 96px;
+  width: 400px;
+}
+
+.kicker {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cc-brand);
+  margin-bottom: 14px;
+  opacity: 0;
+  animation: fade-in 0.5s ease-out 0.55s both;
+}
+
+.wordmark {
+  display: flex;
+  gap: 0.14em;
+  margin-bottom: 24px;
+  font-size: 52px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  color: var(--cc-ink);
+}
+
+/* Per-letter so the wordmark assembles rather than fades. Delays are set in
+   `splash.ts` from one clock, so they cannot drift from the log below. */
+.wordmark span {
+  display: inline-block;
+  opacity: 0;
+  animation: glyph-in 0.5s cubic-bezier(0.16, 0.9, 0.3, 1) both;
+}
+
+.log {
+  display: grid;
+  gap: 9px;
+}
+
+.log li {
+  display: flex;
+  gap: 9px;
+  font-size: 13.5px;
+  color: var(--cc-muted);
+  opacity: 0;
+  animation: line-in 0.45s ease-out both;
+}
+
+.log li::before {
+  content: '▸';
+  color: var(--cc-term-head);
+  flex: none;
+}
+
+.log .attention {
+  color: var(--cc-amber);
+}
+
+.log .attention::before {
+  content: '◆';
+  color: var(--cc-amber);
+}
+
+.log .online {
+  color: var(--cc-green);
+}
+
+.log .online::before {
+  content: '◆';
+  color: var(--cc-green);
+}
+
+.rule {
+  position: absolute;
+  left: 64px;
+  bottom: 52px;
+  width: 0;
+  height: 1px;
+  background: var(--cc-border);
+  animation: rule-out 1.6s cubic-bezier(0.16, 0.9, 0.3, 1) 0.7s both;
+}
+
+.build {
+  position: absolute;
+  right: 64px;
+  bottom: 52px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--cc-term-head);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  animation: fade-in 0.5s ease-out 2.3s both;
+}
+
+/* ------------------------------------------------------------------ motion */
+
+@keyframes fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pool-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scaleX(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scaleX(1);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 26px)) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    filter: drop-shadow(0 18px 34px color-mix(in srgb, var(--cc-term-bg) 75%, transparent))
+      brightness(1);
+  }
+  50% {
+    filter: drop-shadow(0 22px 40px color-mix(in srgb, var(--cc-term-bg) 85%, transparent))
+      brightness(1.07);
+  }
+}
+
+@keyframes glyph-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes line-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rule-out {
+  from {
+    width: 0;
+  }
+  to {
+    width: 832px;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1131;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/**
+ * Reduced motion lands on the resting state immediately.
+ *
+ * The window still holds for `SPLASH_MIN_MS` — the floor is the main process's
+ * and does not consult this — so the chamber is simply composed rather than
+ * assembling. That is the honest reading of the preference here: the user asked
+ * for no motion, not for a shorter launch.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .bloom,
+  .pool,
+  .rings,
+  .sprite,
+  .kicker,
+  .wordmark span,
+  .log li,
+  .build {
+    animation: none;
+    opacity: 1;
+  }
+
+  .rule {
+    animation: none;
+    width: 832px;
+  }
+
+  .rings .progress {
+    stroke-dashoffset: 0;
+  }
+}

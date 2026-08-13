@@ -23,6 +23,21 @@ export const PRODUCTION_CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
+  /**
+   * The splash's sprite, and the only reason this directive exists.
+   *
+   * `data:` is not a convenience here. The splash keys the video's white ground
+   * away on a canvas, and `getImageData` throws `SecurityError` once a canvas
+   * has drawn a `file://` resource — which is how the packaged app loads its
+   * renderer. So the mp4 is inlined as a `data:` URI, which is same-origin and
+   * never taints, and this directive is what admits it. Without the line the
+   * fallback GIF would carry every launch and nobody would know why.
+   *
+   * Narrow on purpose: `data:` media is a local literal in our own bundle, it
+   * cannot be a network fetch, and `connect-src` — the directive that actually
+   * governs exfiltration — is untouched.
+   */
+  "media-src 'self' data:",
   "font-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",
@@ -47,6 +62,8 @@ export const DEVELOPMENT_CSP = [
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
+  /** Same as production — the splash is identical in both. */
+  "media-src 'self' data:",
   "font-src 'self' data:",
   "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*",
   "object-src 'none'",

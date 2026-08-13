@@ -16,9 +16,12 @@ import {
  *
  * Playwright's Electron support is officially **experimental**. The mitigation
  * is not optimism: `@playwright/test` is pinned exactly, the used surface is
- * kept small (`launch`, `firstWindow`, `evaluate`, `close`), and every call
- * into it is confined here — so a breaking change upstream is a one-file fix
- * rather than a suite-wide one.
+ * kept small (`launch`, `firstWindow`, `windows`, `evaluate`, `close`), and
+ * every call into it is confined here — so a breaking change upstream is a
+ * one-file fix rather than a suite-wide one.
+ *
+ * `windows` joined that list with the splash. The app can now have two windows
+ * at once, and "the first one" stopped being a synonym for "the app".
  */
 
 const APP_ROOT = join(import.meta.dirname, '../../../..');
@@ -95,11 +98,38 @@ export const test = base.extend<{ hive: ElectronApplication; page: Page }>({
   },
 
   page: async ({ hive }, use) => {
-    const window = await hive.firstWindow();
+    const window = await mainWindow(hive);
     await window.waitForLoadState('domcontentloaded');
     await use(window);
   },
 });
+
+/** A window is the splash if it is showing `splash.html`. Nothing else is. */
+const isSplash = (page: Page): boolean => page.url().includes('splash.html');
+
+/**
+ * The app's own window, which is not always the first one.
+ *
+ * Every spec but `splash.spec.ts` launches with `HIVE_E2E=1`, which turns the
+ * splash off, so in practice `firstWindow()` would still be right. It is not
+ * used anyway: a fixture that is only correct because of an environment
+ * variable set somewhere else is a trap for whoever writes the next spec.
+ */
+export async function mainWindow(app: ElectronApplication): Promise<Page> {
+  const existing = app.windows().find((page) => !isSplash(page));
+  if (existing) return existing;
+
+  // `firstWindow()` resolves immediately if any window is open — including the
+  // splash — so wait for a *new* one rather than asking again.
+  let page = await app.firstWindow();
+  while (isSplash(page)) page = await app.waitForEvent('window');
+  return page;
+}
+
+/** The splash window, or `undefined` if it has already gone. */
+export function splashWindow(app: ElectronApplication): Page | undefined {
+  return app.windows().find(isSplash);
+}
 
 export { expect };
 

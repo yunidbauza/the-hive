@@ -102,6 +102,22 @@ export default defineConfig({
      */
     plugins: [react(), tailwindcss()],
     resolve: { alias: aliases },
-    build: { rollupOptions: { input: 'index.html' } },
+    /**
+     * Two documents, not two targets — the same move `main` makes for the pty
+     * host, and for the same reason: `splash.html` needs this target's plugins,
+     * its aliases, its `base: './'` and its output directory, and gets all four
+     * by being another input rather than another config.
+     *
+     * The splash shares no code with the app. Rollup will still hoist anything
+     * they both import into a common chunk, which is exactly why `splash.ts`
+     * imports nothing from `src/` outside its own directory: a shared chunk
+     * between the two would put the app's module graph in front of the very
+     * window that exists to cover the app's loading time.
+     */
+    build: {
+      rollupOptions: {
+        input: { index: 'index.html', splash: 'splash.html' },
+      },
+    },
   },
 });

@@ -14,7 +14,7 @@ import { checkForUpdatesInteractively } from './updates';
 
 export interface LifecycleDeps {
   /** Injected so tests do not need a real `BrowserWindow`. */
-  createWindow: () => unknown;
+  createWindow: (options?: { withSplash?: boolean }) => unknown;
   platform?: NodeJS.Platform;
   isDev?: boolean;
 }
@@ -63,10 +63,19 @@ export function registerLifecycle({
         onCheckForUpdates: () => void checkForUpdatesInteractively(),
       });
     }
-    createWindow();
+    /**
+     * The only launch that gets the splash — this is the cold start it covers.
+     */
+    createWindow({ withSplash: true });
   });
 
-  /** macOS: clicking the dock icon with no windows open re-creates one. */
+  /**
+   * macOS: clicking the dock icon with no windows open re-creates one.
+   *
+   * Deliberately without the splash. The app is already running; there is no
+   * boot to cover, and a chamber that opened every time the dock was clicked
+   * would turn a two-and-a-half second launch flourish into a recurring toll.
+   */
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

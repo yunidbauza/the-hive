@@ -11,6 +11,7 @@ import {
 
 import { devIconPath } from './app-icon';
 import { isSafeExternalUrl } from './external-links';
+import { createSplashWindow, splashEnabled, type SplashController } from './splash';
 import {
   debounce,
   readWindowState,
@@ -101,7 +102,34 @@ export function trackWindowState(win: BrowserWindow, statePath: string): void {
   win.on('close', () => persist.flush());
 }
 
-export function createWindow(): BrowserWindow {
+export interface CreateWindowOptions {
+  /**
+   * Open the cold-start splash in front of this window (the Overmind Chamber).
+   *
+   * Only the first window of a launch asks for it. `activate` — the macOS dock
+   * click that re-creates a window after the last one closed — does not: the
+   * app is already running, so there is nothing to cover, and a splash there
+   * would read as a second launch. Neither does `second-instance`, which never
+   * creates a window at all.
+   */
+  withSplash?: boolean;
+  /** Injected by the unit test. */
+  createSplash?: typeof createSplashWindow;
+  setTimeoutFn?: typeof setTimeout;
+}
+
+export function createWindow({
+  withSplash = false,
+  createSplash = createSplashWindow,
+  setTimeoutFn = setTimeout,
+}: CreateWindowOptions = {}): BrowserWindow {
+  /**
+   * Before the main window, so the chamber is on screen while the renderer
+   * boots rather than after it — which is the entire point.
+   */
+  const splash: SplashController | null =
+    withSplash && splashEnabled() ? createSplash() : null;
+
   const statePath = windowStatePath();
   const saved = readWindowState(statePath);
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
@@ -155,7 +183,27 @@ export function createWindow(): BrowserWindow {
 
   if (saved.maximized) win.maximize();
 
-  win.once('ready-to-show', () => win.show());
+  /**
+   * With no splash this is the original behaviour, unchanged.
+   *
+   * With one, the window is ready but stays hidden until the chamber has had
+   * its {@link SPLASH_MIN_MS} floor. The order inside the timeout matters: the
+   * main window is shown *first*, underneath the splash — which is
+   * `alwaysOnTop` — and the splash then fades off it. Destroying first and
+   * showing second leaves a frame or two of bare desktop between the two, which
+   * is the one visible artefact this whole handover exists to avoid.
+   */
+  win.once('ready-to-show', () => {
+    if (!splash) {
+      win.show();
+      return;
+    }
+    setTimeoutFn(() => {
+      win.show();
+      void splash.dismiss();
+    }, splash.remaining());
+  });
+
   applyWebContentsPolicy(win);
   trackWindowState(win, statePath);
   loadRenderer(win);

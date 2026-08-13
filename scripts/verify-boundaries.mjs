@@ -146,6 +146,21 @@ const CASES = [
     },
   },
   /**
+   * The splash is a standalone document, and the fence is about load time
+   * rather than layering: anything it imports from the app is a chunk it has to
+   * parse before it can paint. `stores/` stands in for the whole app here — the
+   * zone lists six directories and one planted violation is enough to prove the
+   * rule fires, which is what this script exists to show.
+   */
+  {
+    name: 'zone: splash/ may not import the app',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/splash/probe.ts':
+        "import { useHiveStore } from '@stores/hive-store';\nexport const probe = useHiveStore;\n",
+    },
+  },
+  /**
    * Test scaffolding never ships.
    *
    * `tests/support/demo-fleet.ts` holds the sample fleet the store used to seed

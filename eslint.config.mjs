@@ -202,6 +202,32 @@ export default tseslint.config(
                 'components/editor/ knows only its props. It may not import features/, data/, or stores/.',
             },
 
+            /**
+             * THE SPLASH, which is a seam of a different kind.
+             *
+             * `src/splash/` is a second renderer document, opened before the
+             * app and destroyed when it arrives. Its constraint is not layering
+             * but *time*: anything it imports from the app is a module Rollup
+             * puts in a chunk the splash then has to parse before it can paint,
+             * which is the exact wait the window exists to cover. The ban is
+             * wider than the component seams for that reason — it includes
+             * `components/`, `lib/` and `hooks/`, none of which the splash has
+             * any business reaching for.
+             */
+            {
+              target: './src/splash/**/*',
+              from: [
+                './src/features/**/*',
+                './src/components/**/*',
+                './src/data/**/*',
+                './src/stores/**/*',
+                './src/hooks/**/*',
+                './src/lib/**/*',
+              ],
+              message:
+                'splash/ is a standalone document that must paint before the app loads. It may not import from the app at all.',
+            },
+
             // Library code is leaf-level.
             {
               target: './src/lib/**/*',

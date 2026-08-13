@@ -1,0 +1,43 @@
+/**
+ * The splash's palette — a copy of the `--cc-*` values it uses, and the second
+ * place in this repo where a colour is duplicated on purpose.
+ *
+ * `src/styles/tokens.css` opens with `@import 'tailwindcss'`. Importing it here
+ * would pull the whole framework — preflight, the theme layer, every generated
+ * utility — into a document whose entire job is to paint before the app can.
+ * The splash uses thirteen colours and no utilities; it should not wait for
+ * three thousand it will never name.
+ *
+ * So the values are copied, exactly as `ansi.ts` copies the terminal's light
+ * background out of `--cc-term-bg`, and for the same reason: two systems that
+ * cannot share a definition still have to agree. And like that case, the
+ * agreement is a test rather than a promise —
+ * `tests/splash/splash-tokens.test.ts` parses both files and fails if any value
+ * here has drifted from `:root` in `tokens.css`.
+ *
+ * The dark values only. The splash does not follow the theme: it opens before
+ * anything has read the user's preference, and `WINDOW_BACKGROUND` has already
+ * committed the window to `#10152a` for exactly that reason.
+ */
+
+:root {
+  --cc-bg: #10152a;
+  --cc-hover: #1b2344;
+  --cc-term-bg: #0b1023;
+  --cc-border: #273159;
+  --cc-border-soft: #1e2747;
+  --cc-ink: #e9effc;
+  --cc-muted: #98a3cc;
+  --cc-brand: #8fa7f2;
+  --cc-green: #74b79c;
+  --cc-amber: #ffac47;
+  --cc-term-head: #4d5a86;
+  --cc-brand-fill: #5e76d0;
+  --cc-brand-fill-strong: #334fa9;
+
+  /**
+   * The one face the app uses, copied from `--font-mono` in `tokens.css` and
+   * checked by the same test. A system stack, so nothing is fetched.
+   */
+  --font-mono: ui-monospace, Menlo, 'SF Mono', monospace;
+}

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>The Hive</title>
+  </head>
+  <body>
+    <!--
+      The cold-start splash — a second renderer entry beside `index.html`, and
+      the whole reason `electron.vite.config.ts` names two inputs.
+
+      It shares nothing with the app: no React, no stores, no `src/main.tsx`. A
+      splash that imports the app bundle is a splash that waits for the app
+      bundle, which is precisely the wait it exists to cover.
+
+      The copy is fixed. Every value here would have to arrive over a channel
+      that lives only for the two and a half seconds before the real window
+      opens, and the real window is a better place to say anything true.
+    -->
+    <div class="chamber">
+      <div class="bloom"></div>
+      <div class="pool"></div>
+
+      <svg class="rings" viewBox="0 0 470 470" aria-hidden="true">
+        <circle
+          class="chitin"
+          cx="235"
+          cy="235"
+          r="222"
+          fill="none"
+          stroke="var(--cc-border-soft)"
+          stroke-width="1"
+          stroke-dasharray="3 9"
+        />
+        <circle
+          cx="235"
+          cy="235"
+          r="180"
+          fill="none"
+          stroke="var(--cc-border-soft)"
+          stroke-width="2"
+        />
+        <!-- 1131 is the circumference at r=180, and the dash length the
+             `draw` keyframe counts down from. -->
+        <circle
+          class="progress"
+          cx="235"
+          cy="235"
+          r="180"
+          fill="none"
+          stroke="var(--cc-brand-fill-strong)"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-dasharray="1131"
+          stroke-dashoffset="1131"
+          transform="rotate(-90 235 235)"
+        />
+      </svg>
+
+      <!--
+        Two ways to draw one creature. The canvas is the mp4 with its white
+        ground keyed away frame by frame; the image is the same loop with the
+        transparency already baked in, shown only if the video never produces
+        a frame. `splash.ts` picks, and exactly one is ever visible.
+      -->
+      <canvas class="sprite" id="sprite" width="486" height="526"></canvas>
+      <img class="sprite" id="sprite-fallback" alt="" hidden />
+
+      <div class="vignette"></div>
+      <div class="scanlines"></div>
+
+      <div class="copy">
+        <p class="kicker">overmind · cold start</p>
+        <p class="wordmark" aria-label="The Hive">
+          <span>T</span><span>H</span><span>E</span><span>&nbsp;</span><span>H</span
+          ><span>I</span><span>V</span><span>E</span>
+        </p>
+        <ul class="log">
+          <li>spawning drones · 4 sessions attached</li>
+          <li>PATH inherited from zsh · 42 entries</li>
+          <li>creep spread · 3 repositories</li>
+          <li class="attention">2 awaiting your command</li>
+          <li class="online">hive cluster online</li>
+        </ul>
+      </div>
+
+      <div class="rule"></div>
+      <p class="build">darwin arm64</p>
+    </div>
+
+    <script type="module" src="/src/splash/splash.ts"></script>
+  </body>
+</html>
