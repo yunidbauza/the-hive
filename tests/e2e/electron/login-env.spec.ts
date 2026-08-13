@@ -40,16 +40,22 @@ const IMPORTED_DIR = '/opt/hive-fixture/bin';
 /**
  * A single `PATH` entry whose text contains newlines (HIVE-86).
  *
- * Not a contrivance — this is the shape `~/.zshrc` produces when a command
- * substitution inside the value fails, which `export PATH="$PATH:$(npm bin -g)"`
- * does on npm 9+. It is placed **before** {@link IMPORTED_DIR} in the stub's
- * `PATH` on purpose: a parser that ended a variable at the first newline would
- * drop everything after it, so `IMPORTED_DIR` would never arrive and every
- * assertion in the first test would fail. That makes this the end-to-end guard
- * for the truncation defect, through the real main process rather than a unit.
+ * Modelled on what `~/.zshrc` produces when a command substitution inside the
+ * value fails — `export PATH="$PATH:$(npm bin -g)"` on npm 9+ — but **not a
+ * verbatim copy of it**. npm's real message contains colons
+ * (`Unknown command: "bin"`), which `PATH` would split into several junk
+ * entries; the colon-bearing original is used in the unit fixture, where entry
+ * counting is not what is being asserted. Here the colons are removed so this
+ * stays exactly one entry and the pane's count is a fixed number. The property
+ * under test — a newline inside a value — is unaffected by that edit.
  *
- * No colons — it must stay one entry — and no double quotes, since the stub
- * interpolates it into a double-quoted shell word.
+ * It is placed **before** {@link IMPORTED_DIR} on purpose: a parser that ended
+ * a variable at the first newline would drop everything after it, so
+ * `IMPORTED_DIR` would never arrive. That makes this the end-to-end guard for
+ * the truncation defect, through the real main process rather than a unit.
+ *
+ * No double quotes either, since the stub interpolates it into a double-quoted
+ * shell word.
  */
 const NOISY_ENTRY =
   '/opt/hive-noisy/bin\nUnknown command - bin\n\nTo see a list of supported npm commands, run\n  npm help';

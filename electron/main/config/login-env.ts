@@ -162,7 +162,21 @@ export function parseLoginEnv(stdout: string): Record<string, string> {
   if (first === -1 || last === first) return {};
 
   const vars: Record<string, string> = {};
-  for (const record of records.slice(first + 1, last)) {
+  for (const raw of records.slice(first + 1, last)) {
+    /**
+     * Drop the newline `printenv` adds, and only that one.
+     *
+     * The probe prints each value with `printenv KEY`, which terminates its
+     * output with a newline of its own — so every record arrives as
+     * `KEY=value\n` and that last byte is the command's punctuation, not part
+     * of the value. Exactly one is removed: a value that genuinely ends in a
+     * newline arrives as `value\n\n` and must keep one.
+     *
+     * An unset variable prints nothing at all, so its record is a bare `KEY=`
+     * with no newline to remove — which `isSet` then reads as unset.
+     */
+    const record = raw.endsWith('\n') ? raw.slice(0, -1) : raw;
+
     // Split on the FIRST `=` only: a value legitimately contains one — a URL
     // with a query string, a base64 blob — and splitting anywhere else would
     // truncate it. The same rule `compareEnv` follows.

@@ -258,15 +258,33 @@ export const LOGIN_ENV_IMPORT_KEYS: readonly string[] = [
 ];
 
 /**
- * One `KEY=$KEY` record, as a shell word the probe can print.
+ * The shell commands that print one `KEY=VALUE` record, NUL-terminated.
  *
- * `${KEY-}` rather than `$KEY` so an unset variable expands to empty instead of
- * erroring under an rc file that runs `set -u` — the probe must survive a
- * stricter shell than the one that wrote it.
+ * **Deliberately free of variable-expansion syntax.** An earlier draft used
+ * `"KEY=${KEY-}"`, which is POSIX and reads better — and which fish rejects at
+ * parse time (`${` is not a variable there; fish spells it `{$VAR}`), aborting
+ * the whole `-c` string before a single byte is printed. `defaultShell()` reads
+ * `getpwuid`, so a fish user's login shell is genuinely what gets probed, and
+ * that draft would have handed them no markers, no import, and the HIVE-84
+ * defect back — a regression, since the `printenv` protocol it replaced used
+ * only `printf`, `printenv` and `;`, all of which fish supports.
+ *
+ * So the value is fetched by `printenv KEY`, an external command, and the `=`
+ * is printed separately. Nothing here is interpreted as syntax by any shell
+ * this app can be pointed at.
+ *
+ * Two consequences the parser must know about, both handled in `parseLoginEnv`:
+ *
+ * - `printenv` terminates its output with a newline of its own, so every record
+ *   carries exactly one trailing `\n` that is not part of the value.
+ * - An **unset** variable makes `printenv` print nothing and exit non-zero. The
+ *   record is then bare `KEY=` with no trailing newline, which reads as unset —
+ *   the answer we want. (An rc file running `set -e` would abort the probe at
+ *   that point; the result is a reported failure, never a wrong value.)
  *
  * The name is checked rather than trusted. Every caller today passes a
  * compile-time constant, so this can only fire during development — which is
- * exactly when a key like `FOO"; rm -rf ~; :"` should stop the build instead of
+ * exactly when a key like `FOO'; rm -rf ~; :'` should stop the build instead of
  * becoming a shell command. It is the guard that lets the interpolation below
  * be read as safe without having to re-derive that fact from the call site.
  */
@@ -276,7 +294,7 @@ function loginEnvRecordExpr(key: string): string {
       `LOGIN_ENV_IMPORT_KEYS: ${JSON.stringify(key)} is not a shell-safe variable name`,
     );
   }
-  return `"${key}=\${${key}-}"`;
+  return `printf '%s=' '${key}'; printenv '${key}'; printf '\\0';`;
 }
 
 /**
@@ -328,9 +346,8 @@ export const LOGIN_ENV_PROBE_ARGS: readonly string[] = [
   '-c',
   [
     `printf '\\0%s\\0' '${LOGIN_ENV_DELIMITER}';`,
-    `printf '%s\\0'`,
     ...LOGIN_ENV_IMPORT_KEYS.map(loginEnvRecordExpr),
-    `'${LOGIN_ENV_DELIMITER}'`,
+    `printf '%s\\0' '${LOGIN_ENV_DELIMITER}'`,
   ].join(' '),
 ];
 
