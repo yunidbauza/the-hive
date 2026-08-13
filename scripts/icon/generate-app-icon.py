@@ -199,8 +199,13 @@ CARET_H, CARET_W = 46, 350
 
 # The header tile is the same window with the prompt line taken out, so the mark
 # recentres on the glass and grows into the room the chevron and caret leave.
+#
+# Centred on the *screen*, not on the tile: the glass runs from the bottom of
+# the title bar to the bottom edge, so its middle is `(CHROME_H + S) / 2`. A few
+# points above that, because the bottom corners round away and a mark sitting on
+# the true centre reads as sitting low.
 TILE_MARK_SIZE = 560
-TILE_MARK_CY = 636
+TILE_MARK_CY = (CHROME_H + S) / 2 - 5
 
 
 def window(mark_size: float, mark_cx: float, mark_cy: float) -> Image.Image:

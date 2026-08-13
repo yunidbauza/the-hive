@@ -115,7 +115,7 @@ export function AppearanceSection() {
 
       <SettingsGroup
         title="Team"
-        description="The line under the wordmark, top-left. Your team's name — “Assimilation Team”, “Zergling Battalion”."
+        description="Your team's name — “Assimilation Team”, “Zergling Battalion”."
       >
         <TextField
           label="Team name"
