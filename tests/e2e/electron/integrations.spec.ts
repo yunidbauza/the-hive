@@ -73,10 +73,13 @@ test('reports a gh state without throwing, installed or not', async ({}, testInf
   /**
    * Whether this runner has `gh` is not something to assert — both are valid
    * answers and CI machines differ. What must hold on every machine is that the
-   * pane reaches a *verdict* rather than sitting on "Checking…" or crashing,
+   * pane reaches a *verdict* rather than sitting on its probing line or
+   * crashing,
    * which is what would happen if executing a subprocess from main went wrong.
    */
-  await expect(page.getByText('Checking…').first()).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator('[data-probing]').first()).toBeHidden({
+    timeout: 15_000,
+  });
 
   // And whichever way it went, the token-source group states the promise.
   await expect(page.getByText(/does not store a token/i)).toBeVisible();

@@ -161,9 +161,9 @@ function updateLine(
     case 'available':
       return `Version ${status.availableVersion} is available.`;
     case 'downloading':
-      return `${phrases.downloading} ${status.availableVersion}…`;
+      return `Downloading ${status.availableVersion}… · ${phrases.downloading}`;
     case 'ready':
-      return `${phrases.ready} — restart to install Version ${status.availableVersion}.`;
+      return `Version ${status.availableVersion} is ready — restart to install. · ${phrases.ready}`;
     case 'error':
       return 'The last check did not complete.';
     default:

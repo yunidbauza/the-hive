@@ -125,11 +125,18 @@ export const PHRASES = {
     'The scan returns nothing.',
     'Detection field is clear.',
   ],
+  /**
+   * The two update pools are trailing asides — "Downloading 0.2.0… ·
+   * incubating" — not standalone labels, so they carry no ellipsis and no
+   * capital. The update line has to keep saying "Downloading" during a
+   * multi-hundred-megabyte transfer; the flavour leads nowhere here, it
+   * follows.
+   */
   'loading.directory': ['Spreading creep…', 'Scanning the sector…'],
   'loading.file': ['Splicing…', 'Reading the strand…'],
   'loading.connection': ['Establishing psionic link…', 'Probing…'],
   'loading.diagnostics': ['Probing…', 'Scanning the sector…'],
-  'loading.update': ['Incubating…', 'Morphing…'],
+  'loading.update': ['incubating', 'morphing'],
   'loading.transitions': ['Reading the strain…', 'Burrowing…'],
   'working.session': [
     'Metamorphosing…',
@@ -138,7 +145,7 @@ export const PHRASES = {
     'Spreading creep…',
     'Morphing…',
   ],
-  'complete.update': ['Metamorphosis ready', 'Evolution complete'],
+  'complete.update': ['metamorphosis complete', 'evolution complete'],
   'failed.sessionExit': ['the strain did not take', 'the mutation was rejected'],
   'failed.hostLost': ['unit lost', 'psionic link severed'],
 } as const satisfies Record<PhraseKey, readonly [string, string, ...string[]]>;

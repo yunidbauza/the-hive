@@ -49,7 +49,13 @@ test('the projects tab explains that nothing is mapped', async ({ page }) => {
 test('the orchestrator says its fleet is empty', async ({ page }) => {
   await page.waitForSelector('header');
 
-  await expect(page.getByTestId('session-table-empty')).toHaveText(
+  /**
+   * `toContainText`, not `toHaveText`: the block leads with a drawn flavour
+   * line and a creature now, and pinning the whole string would make this spec
+   * a coin flip. The sentence telling the user what to do is the part that must
+   * not move — `tests/e2e/web/swarm.spec.ts` asserts the flavour half.
+   */
+  await expect(page.getByTestId('session-table-empty')).toContainText(
     'No sessions running — start one with New session.',
   );
 

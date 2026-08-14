@@ -384,7 +384,7 @@ export function IntegrationsSection() {
       >
         <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
           {status === null ? (
-            <p className="text-[12.5px] text-subtle">{probing}</p>
+            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
           ) : (
             <GhSummary gh={status.gh} loginEnv={status.loginEnv} />
           )}
@@ -397,7 +397,7 @@ export function IntegrationsSection() {
       >
         <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
           {status === null ? (
-            <p className="text-[12.5px] text-subtle">{probing}</p>
+            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
           ) : (
             <PathSourceLine loginEnv={status.loginEnv} />
           )}
@@ -410,7 +410,7 @@ export function IntegrationsSection() {
       >
         <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
           {status === null ? (
-            <p className="text-[12.5px] text-subtle">{probing}</p>
+            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
           ) : (
             <TokenSourceLine gh={status.gh} />
           )}
@@ -425,7 +425,7 @@ export function IntegrationsSection() {
 
       {jira === null ? (
         <SettingsGroup title="Jira" description="Real tickets in the WORK tab.">
-          <p className="text-[12.5px] text-subtle">{probing}</p>
+          <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
         </SettingsGroup>
       ) : (
         <>

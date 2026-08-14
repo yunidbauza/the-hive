@@ -144,7 +144,9 @@ test('adopts the login shell PATH when launched with launchd’s', async ({}, te
   await page.waitForSelector('header');
 
   await openIntegrations(page);
-  await expect(page.getByText('Checking…').first()).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator('[data-probing]').first()).toBeHidden({
+    timeout: 15_000,
+  });
 
   // The headline claim: the pane says the PATH came from the shell, naming it.
   await expect(page.getByText(/Imported from your login shell/)).toBeVisible();
@@ -181,7 +183,9 @@ test('names an imported token but never renders its value', async ({}, testInfo)
   await page.waitForSelector('header');
 
   await openIntegrations(page);
-  await expect(page.getByText('Checking…').first()).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator('[data-probing]').first()).toBeHidden({
+    timeout: 15_000,
+  });
 
   await expect(page.getByText('GH_TOKEN')).toBeVisible();
 
@@ -206,7 +210,9 @@ test('honours importLoginEnv: false, and says the PATH is the inherited one', as
   await page.waitForSelector('header');
 
   await openIntegrations(page);
-  await expect(page.getByText('Checking…').first()).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator('[data-probing]').first()).toBeHidden({
+    timeout: 15_000,
+  });
 
   await expect(
     page.getByText(/Inherited from whatever launched this app/),
@@ -235,7 +241,9 @@ test('reports a broken login shell without breaking the pane', async ({}, testIn
   await page.waitForSelector('header');
 
   await openIntegrations(page);
-  await expect(page.getByText('Checking…').first()).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator('[data-probing]').first()).toBeHidden({
+    timeout: 15_000,
+  });
 
   // A failed probe is a failed observation: the app still runs, the pane still
   // renders, and it says what happened rather than showing a broken section.
