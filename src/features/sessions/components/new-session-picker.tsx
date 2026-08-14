@@ -39,16 +39,21 @@ const PINNED_COUNT = 4;
  * header stay visible, exactly as the concept shows — so it is composed from
  * the primitive directly and rendered in place.
  *
- * What the story actually asks for is Radix's *behaviour*, and the parts that
- * matter here are kept: the focus trap, Escape, and the `aria-modal` semantics
- * that hide the rest of the tree from assistive tech — all of which live in
- * `Content`.
+ * What the story actually asks for is Radix's *behaviour*, and what is kept is
+ * Escape, the dialog role, and the managed open/close lifecycle — all of which
+ * live in `Content`.
  *
  * Not kept: scroll locking. Radix implements that in `Dialog.Overlay`, which
  * this picker deliberately omits — an overlay would paint a scrim across the
  * whole app and destroy the full-stage look the concept specifies. Nothing is
  * lost: the shell is a fixed-height, non-scrolling layout, so there is no page
  * scroll to lock.
+ *
+ * Also not kept, and this one was a bug rather than a choice: the focus trap
+ * and the `aria-modal` semantics that hide the rest of the tree. Both come
+ * from modality, and modality is wrong for a surface that leaves the header
+ * and rails visible — it made them inert while they still looked live. See the
+ * note on `modal` below.
  */
 export function NewSessionPicker() {
   const projects = useProjects();
@@ -97,6 +102,14 @@ export function NewSessionPicker() {
   return (
     <DialogPrimitive.Root
       open
+      /**
+       * Not modal — the same reason the settings overlay is not. This fills the
+       * center stage and leaves the header and rails visible on purpose, and
+       * Radix's modality made that visible chrome `aria-hidden` and
+       * `pointer-events: none`. The theme toggle and the bell looked live and
+       * were not; clicking one dismissed the picker rather than acting.
+       */
+      modal={false}
       onOpenChange={(open) => {
         if (!open) closePicker();
       }}
@@ -108,6 +121,10 @@ export function NewSessionPicker() {
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           searchRef.current?.focus();
+        }}
+        // A header or rail click acts; it does not dismiss. Escape still closes.
+        onInteractOutside={(event) => {
+          event.preventDefault();
         }}
         className="flex min-h-0 flex-1 flex-col items-center gap-7 overflow-y-auto bg-term-bg px-6 py-10 outline-none"
       >

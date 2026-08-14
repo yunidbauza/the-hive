@@ -28,17 +28,19 @@ export const SPLASH_SIZE = { width: 960, height: 600 } as const;
  * a sequence caught mid-motion, which reads as a bug rather than as a fast
  * boot. That is the lower bound, and the floor used to sit exactly on it.
  *
- * It sits a second past it instead, because landing on the last frame of the
+ * It sits two seconds past it instead, because landing on the last frame of the
  * animation and leaving in the same instant reads as being hurried out of the
  * room: the chamber arrives at its composition and is gone before it can be
- * looked at. The extra second is the creature breathing at rest, which is a
- * state the design already has and was never given time to show.
+ * looked at. Those seconds are the creature breathing at rest, which is a state
+ * the design already has and was never given time to show. The second of them
+ * was added after living with the first — the beat was there but too short to
+ * register as deliberate.
  *
  * Still a floor, not a duration. If the renderer is ready in 400ms the splash
  * finishes its sentence and holds the beat; if it takes five seconds the splash
  * leaves the moment it can.
  */
-export const SPLASH_MIN_MS = 3500;
+export const SPLASH_MIN_MS = 4500;
 
 /**
  * The fade out, run by the main process as an opacity ramp on the window.

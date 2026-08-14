@@ -98,6 +98,29 @@ export function SettingsOverlay() {
   return (
     <DialogPrimitive.Root
       open
+      /**
+       * Not modal, and not for a11y-purity reasons — because it was breaking
+       * the header.
+       *
+       * This overlay fills the **center stage** and deliberately leaves the
+       * header and both rails on screen. Radix's default modality then marked
+       * that visible chrome `aria-hidden` and gave it `pointer-events: none`,
+       * so the theme toggle, the notification bell, New session and every rail
+       * tab looked live and did nothing. Clicking one dismissed the overlay
+       * instead of acting, which is why toggling the theme from here needed two
+       * clicks — the first was spent closing settings.
+       *
+       * Visible chrome that ignores the pointer is the worst of both designs. A
+       * real modal would have to dim the surroundings to earn that; this is a
+       * stage *view*, closer to a route than a dialog, so it stops claiming to
+       * be modal. Escape and the close button still close it — see
+       * `onInteractOutside` below for the third route that used to.
+       *
+       * The cost, stated plainly: no focus trap. For a view whose surrounding
+       * chrome is legitimately interactive that is the correct behaviour, and
+       * it hands the header back to screen readers, which modality had removed.
+       */
+      modal={false}
       onOpenChange={(open) => {
         if (!open) closeSettings();
       }}
@@ -122,6 +145,18 @@ export function SettingsOverlay() {
         onEscapeKeyDown={(event) => {
           const target = event.target as HTMLElement | null;
           if (target?.closest?.('[data-escape-scope]')) event.preventDefault();
+        }}
+        /**
+         * A click on the header is a click on the header, not a dismissal.
+         *
+         * Without this, `modal={false}` would restore the pointer but Radix
+         * would still treat the same click as an outside-interaction and close
+         * the overlay — so the theme would toggle *and* settings would vanish,
+         * which is half the reported bug still standing. Settings is left by
+         * its close button or Escape.
+         */
+        onInteractOutside={(event) => {
+          event.preventDefault();
         }}
         className="flex min-h-0 flex-1 flex-col bg-panel-2 outline-none"
       >

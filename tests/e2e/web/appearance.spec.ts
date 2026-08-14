@@ -78,10 +78,12 @@ test('compact density narrows the rail and survives a reload', async ({ page }) 
   await expect(page.locator('body')).toHaveAttribute('data-density', 'compact');
 
   /**
-   * Closed before measuring, and not merely for tidiness: the overlay is
-   * `aria-modal`, so Radix marks the rest of the tree `aria-hidden` while it is
-   * open — exactly as the overlay's own comment says it should. A role query
-   * for the left rail cannot resolve until it is dismissed.
+   * Closed before measuring, though no longer because it has to be: the
+   * overlay used to be `aria-modal`, which marked the rest of the tree
+   * `aria-hidden` and made a role query for the left rail unresolvable until
+   * it was dismissed. It is non-modal now — see `overlay-chrome.spec.ts` for
+   * why — so this is ordinary tidiness, and measuring the rail with the
+   * overlay open would work too.
    */
   await page.getByRole('button', { name: 'Close settings' }).click();
 
