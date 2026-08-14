@@ -156,7 +156,6 @@ export function NotificationCard({ notif }: NotificationCardProps) {
     <button
       ref={ref}
       type="button"
-      data-leaving={leaving ? '' : undefined}
       onClick={onClick}
       className={cn(
         'flex items-start gap-2.5 rounded-xl border px-3 py-[var(--cc-card-py)] text-left hover:bg-hover',
