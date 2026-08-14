@@ -9,6 +9,7 @@ import { useProjectAccess } from '@hooks/use-project-config';
 import { baseName, hasFsBridge } from '@lib/explorer/fs-client';
 import { useEditorLayout } from '@stores/appearance-store';
 import { useEditorActions } from '@stores/editor-store';
+import { useProjects } from '@stores/hive-store';
 import {
   useBumpFsRevision,
   useCollapseExplorer,
@@ -36,6 +37,8 @@ import {
  */
 export function ExplorerPanel() {
   const { project, root: subRoot } = useExplorerProject();
+  // Only to tell the two empty states apart — see the branch below.
+  const projects = useProjects();
   const access = useProjectAccess(project?.id ?? '');
   const collapseAll = useCollapseExplorer();
   const { openFile, closeAll } = useEditorActions();
@@ -110,18 +113,42 @@ export function ExplorerPanel() {
     );
   }
 
+  /**
+   * Two different reasons for an empty tree, and they need different sentences
+   * (HIVE-93).
+   *
+   * `useExplorerProject` now answers `null` whenever the stage is not showing a
+   * session with a mapped project — the overmind tab, an agent tab, a session
+   * whose project was removed from the config. Blaming that on "no projects
+   * mapped" would be false in the common case and would send the user to
+   * Settings to fix something that is not broken.
+   *
+   * So the config is asked first: nothing mapped is a setup problem with a
+   * destination, and anything else is simply "you are not in a session", whose
+   * way out is to open one.
+   */
   if (!project) {
     return (
       <div data-panel="explorer" className="flex flex-col gap-0.5">
-        <EmptyState
-          action={
-            <>
-              Add one in <EmptyStatePath>Settings → Projects</EmptyStatePath>.
-            </>
-          }
-        >
-          No projects mapped.
-        </EmptyState>
+        {projects.length === 0 ? (
+          <EmptyState
+            action={
+              <>
+                Add one in <EmptyStatePath>Settings → Projects</EmptyStatePath>.
+              </>
+            }
+          >
+            No projects mapped.
+          </EmptyState>
+        ) : (
+          <EmptyState
+            phrase="empty.explorer"
+            creature="hive"
+            action="Open one from the fleet, or start a new session."
+          >
+            No session open — the explorer follows the session you are watching.
+          </EmptyState>
+        )}
       </div>
     );
   }

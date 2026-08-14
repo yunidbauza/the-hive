@@ -72,6 +72,18 @@ beforeEach(() => {
   seedDemoProjectConfig();
   useUiStore.getState().reset();
   useEditorStore.getState().reset();
+  /**
+   * A session has to be open for there to be a tree at all (HIVE-93).
+   *
+   * The explorer used to fall back to the last-visited project, and then to the
+   * first mapped one — so these tests got a tree on the overmind tab, which is
+   * exactly the behaviour that was removed: a file tree for a repository no
+   * session on screen was working in. `hero-refresh` is the demo fleet's session
+   * on `apfm-web`, which is the project `seedTree` above describes.
+   *
+   * The no-session state has its own test in the degraded-states block below.
+   */
+  useUiStore.getState().openTab('hero-refresh');
 });
 
 afterEach(() => {
@@ -102,6 +114,35 @@ describe('ExplorerPanel — degraded states', () => {
 
     expect(screen.getByText(/No projects mapped/i)).toBeInTheDocument();
     expect(screen.getByText(/Settings → Projects/)).toBeInTheDocument();
+  });
+
+  /**
+   * The tree follows the session, or shows nothing (HIVE-93).
+   *
+   * This is the behaviour the two fallbacks used to hide. On the overmind tab the
+   * explorer showed the last-visited project — or, on a cold start, the first
+   * mapped one — so every row in it opened a file from a repository nothing on
+   * screen was working in.
+   */
+  it('shows no tree on the overmind tab, and says why', () => {
+    useUiStore.getState().backToOrch();
+    render(<ExplorerPanel />);
+
+    expect(screen.getByText(/No session open/i)).toBeInTheDocument();
+    // The distinction that matters: projects *are* mapped, so this must not be
+    // the setup message that sends the user to Settings.
+    expect(screen.queryByText(/No projects mapped/i)).not.toBeInTheDocument();
+    // And nothing was read from disk for a project nobody is in.
+    expect(readDir).not.toHaveBeenCalled();
+  });
+
+  it('shows no tree on an agent tab either', () => {
+    // Agents name no project, so they are the same case as the overmind tab.
+    useUiStore.getState().openTab('slack-agent');
+    render(<ExplorerPanel />);
+
+    expect(screen.getByText(/No session open/i)).toBeInTheDocument();
+    expect(readDir).not.toHaveBeenCalled();
   });
 
   it("renders the config's own reason when the project folder is unusable", async () => {

@@ -690,6 +690,21 @@ export function parseMarkReadRequest(input: unknown): string | null {
 }
 
 /**
+ * The `notifications:dismiss` payload (HIVE-93).
+ *
+ * An id and only an id. Unlike {@link parseMarkReadRequest}, `null` is **not**
+ * meaningful here and is rejected: there is no "dismiss them all", so accepting
+ * `null` could only ever mean a caller lost an argument on the way in — and the
+ * quiet outcome of guessing would be an emptied inbox.
+ */
+export function parseDismissRequest(input: unknown): string {
+  if (typeof input !== 'string' || input === '') {
+    return fail('dismiss: expected a notification id');
+  }
+  return input;
+}
+
+/**
  * The `notifications:act` payload — a notification's action, handed back by
  * the renderer for main to carry out.
  *

@@ -10,9 +10,10 @@ import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
 import { isDesktop } from '@config/runtime';
 import { useTheme, useThemeActions } from '@stores/appearance-store';
-import { useMarkAllRead, useUnreadCount } from '@stores/hive-store';
+import { useUnreadCount } from '@stores/hive-store';
 import {
   usePickerActions,
+  useRevealRailTab,
   useSettingsActions,
   useShowActivityRail,
 } from '@stores/ui-store';
@@ -65,7 +66,9 @@ export function Header() {
   const theme = useTheme();
   const { toggleTheme } = useThemeActions();
   const unread = useUnreadCount();
-  const markAllRead = useMarkAllRead();
+  const revealRailTab = useRevealRailTab();
+  // Named rather than inlined, so the bell's JSX reads as what it does.
+  const showInbox = () => revealRailTab('inbox');
   const { openPicker } = usePickerActions();
   const { openSettings } = useSettingsActions();
 
@@ -143,7 +146,7 @@ export function Header() {
           The model chip sits here too, not in a centred track. On desktop there
           is no `demo` chip, so it starts exactly on the rail's edge; in the
           browser it follows the `demo` chip. It renders nothing on the
-          orchestrator and agent tabs, and because this is a flex row rather
+          overmind and agent tabs, and because this is a flex row rather
           than a fixed grid, its absence simply closes the gap instead of
           leaving a hole.
         */}
@@ -236,16 +239,33 @@ export function Header() {
         </button>
 
         {/*
-          The bell marks everything read rather than opening a dropdown — the
-          inbox itself lives in the activity rail (story 051), and two places to
-          read the same list is one too many.
+          The bell **shows** the inbox rather than marking it read (HIVE-93).
+
+          It still does not open a dropdown — the inbox lives in the activity
+          rail (story 051) and two places to read one list is one too many — so
+          this reveals that rail's INBOX tab instead of duplicating it.
+
+          What changed is what the click *means*. Marking everything read was the
+          one action that destroyed the information the badge carries, from a
+          control whose icon promises navigation: a user reaching for the bell to
+          see what happened cleared the record of what happened. The badge now
+          survives until a card is clicked, which is the point at which the user
+          has actually seen the thing — see `notification-card.tsx`.
+
+          The bell was `markAllRead`'s only caller. The store action and its
+          bridge call (`notifications.markRead(null)`) are deliberately kept —
+          they are a real capability of the notification hub and still covered by
+          the store's own spec — but no control invokes them today, and inventing
+          a second one here would re-create the problem this removes. The list
+          now drains a card at a time, which is the behaviour the cards
+          themselves provide.
         */}
         <button
           type="button"
-          onClick={markAllRead}
+          onClick={showInbox}
           aria-label={
             unread > 0
-              ? `Mark ${unread} unread notifications as read`
+              ? `Inbox — ${unread} unread`
               : 'Inbox — nothing unread'
           }
           className="relative flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink [-webkit-app-region:no-drag]"

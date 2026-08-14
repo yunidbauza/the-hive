@@ -46,8 +46,8 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
       <button
         type="button"
         onClick={backToOrch}
-        title="Back to orchestrator (←)"
-        aria-label="Back to orchestrator"
+        title="Back to overmind (←)"
+        aria-label="Back to overmind"
         className="flex shrink-0 items-center gap-1 rounded-full bg-chip px-2.5 py-1 font-mono text-[11.5px] text-muted hover:text-ink"
       >
         <ArrowLeft size={12} weight="bold" aria-hidden="true" />

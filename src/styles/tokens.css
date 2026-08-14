@@ -302,4 +302,16 @@ body[data-theme='light'] {
   --font-display: ui-serif, Georgia, 'Times New Roman', serif;
   --animate-ccpulse: ccpulse 1.6s ease-in-out infinite;
   --animate-ccblink: ccblink 1s step-end infinite;
+  /*
+    An acted-on inbox card leaving the list (HIVE-93).
+
+    `forwards` so the card holds its final collapsed state for the frame between
+    the animation ending and React unmounting it — without it the row snaps back
+    to full height and full opacity first, which reads as a flicker.
+
+    The duration is also a magic number the component has to know, because the
+    unmount is scheduled from JS. It is named once here and imported there from
+    `CARD_EXIT_MS`, so the two cannot drift.
+  */
+  --animate-ccslideout: ccslideout 220ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
 }

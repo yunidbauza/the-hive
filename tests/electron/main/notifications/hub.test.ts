@@ -142,6 +142,60 @@ describe('the buffer', () => {
     expect(hub.list().every((n) => !n.unread)).toBe(true);
   });
 
+  /**
+   * Dismissal (HIVE-93) — the half that has to happen in main.
+   *
+   * `list()` is what a mounting renderer hydrates from, so this is the assertion
+   * that makes a dismissal outlive a reload. Dropping the row in the renderer
+   * alone would look right until the next hydration handed it straight back.
+   */
+  describe('dismiss', () => {
+    it('takes the row out of list() for good, leaving the others', () => {
+      raise({ id: 'a' });
+      raise({ id: 'b' });
+
+      hub.dismiss('a');
+
+      expect(hub.list().map((n) => n.id)).toEqual(['b']);
+    });
+
+    it('stops counting a dismissed row that was still unread', () => {
+      raise({ id: 'a' });
+      raise({ id: 'b' });
+      expect(lastUnread()).toBe(2);
+
+      hub.dismiss('a');
+
+      // The badge is a derivation of the buffer, so nothing else recomputes it.
+      expect(lastUnread()).toBe(1);
+    });
+
+    it('does not re-raise a dismissed notification on a duplicate event', () => {
+      /**
+       * The id stays in the dedup set on purpose. Forgetting it there would let
+       * the very next duplicate event resurrect the row the user just dismissed,
+       * which is the one outcome that would make the gesture feel broken.
+       */
+      raise({ id: 'a' });
+      hub.dismiss('a');
+
+      expect(raise({ id: 'a' })).toBeNull();
+      expect(hub.list()).toEqual([]);
+    });
+
+    it('is a no-op for an id it does not hold', () => {
+      // Reachable: the renderer may act on a row the cap has since trimmed.
+      raise({ id: 'a' });
+      announceUnread.mockClear();
+
+      hub.dismiss('nope');
+
+      expect(hub.list().map((n) => n.id)).toEqual(['a']);
+      // No spurious badge announcement for a buffer that did not change.
+      expect(announceUnread).not.toHaveBeenCalled();
+    });
+  });
+
   it('stamps createdAt from the clock, and defaults the rest', () => {
     const raised = raise({ id: 'a' }) as HiveNotification;
 

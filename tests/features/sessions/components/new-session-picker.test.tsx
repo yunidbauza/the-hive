@@ -54,6 +54,26 @@ describe('NewSessionPicker', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The ordinary picker leads with a spire (HIVE-93).
+   *
+   * The surface is cast twice on purpose, and this is the half that had no sprite
+   * at all: the **first run** keeps its 120px hive as territory on a screen with
+   * nothing on it, and once projects exist the picker is a *lifecycle* surface —
+   * you are about to bring a session into being — which is the spire's register.
+   * `swarm-creature.tsx` documents both.
+   */
+  it('leads with a spire at the full-stage size', () => {
+    render(<NewSessionPicker />);
+
+    const img = screen.getByRole('presentation', { hidden: true });
+
+    expect(img).toHaveAttribute('data-creature', 'spire');
+    // The quieter end of the documented 72–120 full-stage register: it sits above
+    // a title rather than standing in for missing content.
+    expect(img).toHaveStyle({ height: '96px' });
+  });
+
   it('focuses the search box on open', () => {
     render(<NewSessionPicker />);
 
@@ -420,6 +440,25 @@ describe('NewSessionPicker · unmapped projects', () => {
       screen.getByRole('button', { name: /add project/i }),
     ).toBeInTheDocument();
     expect(screen.queryByText(new RegExp(CONFIG_PATH))).not.toBeInTheDocument();
+  });
+
+  /**
+   * First run keeps the hive, and gets **only** the hive (HIVE-93).
+   *
+   * The condition guarding the header spire is the whole of this: two creatures
+   * stacked in one dialog reads as a bug rather than as atmosphere. The surface
+   * has two states and each gets exactly one sprite — hive as territory when
+   * there is nothing to pick, spire as lifecycle once there is.
+   */
+  it('shows the hive hero alone on first run, with no second creature', () => {
+    setProjectConfigForTest(snapshot([], { templateWritten: true }));
+    render(<NewSessionPicker />);
+
+    const creatures = screen.getAllByRole('presentation', { hidden: true });
+
+    expect(creatures).toHaveLength(1);
+    expect(creatures[0]).toHaveAttribute('data-creature', 'hive');
+    expect(creatures[0]).toHaveStyle({ height: '120px' });
   });
 
   it('opens settings when the first-run button is pressed', async () => {

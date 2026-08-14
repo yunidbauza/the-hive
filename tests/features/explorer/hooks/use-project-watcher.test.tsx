@@ -58,6 +58,13 @@ beforeEach(() => {
   seedDemoProjectConfig();
   useUiStore.getState().reset();
   useEditorStore.getState().reset();
+  /**
+   * The watcher watches whatever the explorer is rooted at, and since HIVE-93
+   * that is the **active session's** project or nothing at all. Without a session
+   * open there is no project to watch — which is correct, and is asserted
+   * directly by "does not watch on the overmind tab" below.
+   */
+  useUiStore.getState().openTab('hero-refresh');
 });
 
 afterEach(() => {
@@ -141,6 +148,20 @@ describe('useProjectWatcher', () => {
       ],
     });
 
+    render(<Watcher />);
+
+    expect(watchProject).not.toHaveBeenCalled();
+  });
+
+  /**
+   * No session, no watcher (HIVE-93).
+   *
+   * The explorer shows nothing on the overmind tab, so there is nothing to keep
+   * fresh — and a watcher running against a project the user is not looking at is
+   * an fs subscription with no reader.
+   */
+  it('does not watch on the overmind tab', () => {
+    useUiStore.getState().backToOrch();
     render(<Watcher />);
 
     expect(watchProject).not.toHaveBeenCalled();

@@ -54,6 +54,7 @@ import {
   parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
+  parseDismissRequest,
   parseMarkReadRequest,
   parseNotificationAction,
   parseSetNotificationsRequest,
@@ -438,6 +439,11 @@ export function registerIpcHandlers(): void {
     // follows. Coercing an accidental `undefined` to `null` would turn a single
     // dismissal into "mark all fifty read", silently and with no error anywhere.
     hub.markRead(parseMarkReadRequest(payload)),
+  );
+  // Same rule as above, one notch stricter: `parseDismissRequest` refuses
+  // `null`, so a lost argument cannot be read as "drop everything".
+  handle(CH.notificationsDismiss, (_event, payload) =>
+    hub.dismiss(parseDismissRequest(payload)),
   );
 
   /**

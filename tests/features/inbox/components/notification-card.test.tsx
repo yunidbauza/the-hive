@@ -1,17 +1,52 @@
-import { render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { NotificationCard } from '@features/inbox/components/notification-card';
+import {
+  CARD_EXIT_MS,
+  NotificationCard,
+} from '@features/inbox/components/notification-card';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
 import { notif, resetNotifIds } from '../../../support/notifications';
 
+/**
+ * The exit path branches on the motion preference, so the hook is mocked rather
+ * than the media query — `matchMedia` in jsdom would have to be stubbed per test
+ * anyway, and the branch under test is "what did the component decide", not "how
+ * did it read the preference".
+ */
+const reducedMotion = vi.hoisted(() => vi.fn(() => false));
+vi.mock('@hooks/use-reduced-motion', () => ({
+  useReducedMotion: reducedMotion,
+}));
+
 beforeEach(() => {
   useHiveStore.getState().reset();
   useUiStore.getState().reset();
   resetNotifIds();
+  reducedMotion.mockReturnValue(false);
+});
+
+afterEach(() => {
+  /**
+   * Unmount **before** the timers are swapped back, and do it here rather than
+   * leaving it to auto-cleanup.
+   *
+   * The card holds a live `setTimeout` for its exit animation, and Testing
+   * Library's automatic cleanup runs in its own `afterEach` — registered by the
+   * setup file, so it runs *after* this one. Restoring real timers first left the
+   * card's unmount calling `clearTimeout` on a **fake** handle against Node's real
+   * timer list, which surfaces later as an uncaught
+   * `TypeError: timer._onTimeout is not a function` from `listOnTimeout` — in
+   * whichever unrelated test happened to be running when Node next swept its
+   * timers.
+   *
+   * `cleanup()` is idempotent, so the automatic pass afterwards is a no-op.
+   */
+  cleanup();
+  vi.useRealTimers();
 });
 
 describe('NotificationCard', () => {
@@ -57,8 +92,26 @@ describe('NotificationCard', () => {
     expect(screen.getByRole('button')).not.toHaveClass('bg-chip');
   });
 
-  it('opens the session it names and marks only this card read', async () => {
-    const user = userEvent.setup();
+  /**
+   * An acted-on card leaves the list (HIVE-93).
+   *
+   * It used to mark itself read and stay. Read-and-kept is right for something
+   * you glance at and wrong for something you act on: the click already navigated
+   * the user somewhere, so the row has spent its purpose, and keeping it makes the
+   * inbox a log to prune by hand.
+   *
+   * Fake timers because the removal is scheduled behind the exit animation —
+   * `CARD_EXIT_MS` is the component's own constant, so this cannot drift from the
+   * duration it actually waits.
+   */
+  it('opens the session it names and then removes only this card', async () => {
+    /*
+      `shouldAdvanceTime` so `userEvent`'s own awaits still resolve — a plain
+      `useFakeTimers()` freezes the clock its internal delays wait on, and the
+      click never completes.
+    */
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const first = notif({ id: 'a' });
     const second = notif({ id: 'b' });
     useHiveStore.getState().hydrateNotifs([first, second]);
@@ -66,10 +119,15 @@ describe('NotificationCard', () => {
     render(<NotificationCard notif={first} />);
     await user.click(screen.getByRole('button'));
 
+    // Navigation is immediate; the row's removal waits for the animation.
     expect(useUiStore.getState().activeTab).toBe('lead-form');
-    const notifs = useHiveStore.getState().notifs;
-    expect(notifs.find((n) => n.id === 'a')?.unread).toBe(false);
-    expect(notifs.find((n) => n.id === 'b')?.unread).toBe(true);
+    expect(useHiveStore.getState().notifs.map((n) => n.id)).toEqual(['a', 'b']);
+
+    await act(async () => {
+      vi.advanceTimersByTime(CARD_EXIT_MS);
+    });
+
+    expect(useHiveStore.getState().notifs.map((n) => n.id)).toEqual(['b']);
   });
 
   /**
@@ -78,8 +136,14 @@ describe('NotificationCard', () => {
    * A notification landing between render and click used to shift every row
    * down one, so the click dismissed the row above the one the user aimed at.
    */
-  it('marks the card that was clicked even when the list changed underneath', async () => {
-    const user = userEvent.setup();
+  it('removes the card that was clicked even when the list changed underneath', async () => {
+    /*
+      `shouldAdvanceTime` so `userEvent`'s own awaits still resolve — a plain
+      `useFakeTimers()` freezes the clock its internal delays wait on, and the
+      click never completes.
+    */
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const target = notif({ id: 'target' });
     useHiveStore.getState().hydrateNotifs([target]);
 
@@ -88,23 +152,85 @@ describe('NotificationCard', () => {
     // Something arrives and takes position zero.
     useHiveStore.getState().pushNotif(notif({ id: 'newcomer' }));
     await user.click(screen.getByRole('button'));
+    await act(async () => {
+      vi.advanceTimersByTime(CARD_EXIT_MS);
+    });
 
-    const notifs = useHiveStore.getState().notifs;
-    expect(notifs.find((n) => n.id === 'target')?.unread).toBe(false);
-    expect(notifs.find((n) => n.id === 'newcomer')?.unread).toBe(true);
+    expect(useHiveStore.getState().notifs.map((n) => n.id)).toEqual(['newcomer']);
   });
 
-  /** A clone has nowhere to go, so the click dismisses and stays put. */
-  it('marks read without navigating for an action with no destination', async () => {
-    const user = userEvent.setup();
+  /**
+   * A clone has nowhere to go, and is still dismissed.
+   *
+   * Nothing was navigated to, but the click is the user dealing with it — and now
+   * that the header bell no longer marks everything read, refusing to dismiss
+   * would leave no way to clear such a row at all.
+   */
+  it('removes a card whose action has no destination, without navigating', async () => {
+    /*
+      `shouldAdvanceTime` so `userEvent`'s own awaits still resolve — a plain
+      `useFakeTimers()` freezes the clock its internal delays wait on, and the
+      click never completes.
+    */
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const entry = notif({ id: 'c', kind: 'clone.done', action: { type: 'none' } });
     useHiveStore.getState().hydrateNotifs([entry]);
 
     render(<NotificationCard notif={entry} />);
     await user.click(screen.getByRole('button'));
+    await act(async () => {
+      vi.advanceTimersByTime(CARD_EXIT_MS);
+    });
 
     expect(useUiStore.getState().activeTab).toBe('orch');
-    expect(useHiveStore.getState().notifs[0].unread).toBe(false);
+    expect(useHiveStore.getState().notifs).toEqual([]);
+  });
+
+  /**
+   * The exit animation is wired, and hands the keyframes a **measured** height.
+   *
+   * jsdom runs no animations, so this pins the wiring rather than the result:
+   * the class that carries `--animate-ccslideout`, and the inline
+   * `--cc-card-h` the keyframes collapse from. `max-height` cannot animate from
+   * `auto`, and a hard-coded start value would either clip a two-line body or
+   * collapse a taller card from a height it never had.
+   *
+   * The visual result itself is not asserted anywhere: producing a real
+   * notification needs a real hub event, which the e2e suite has no way to raise.
+   */
+  it('arms the slide-out with the card’s own height', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    useHiveStore.getState().hydrateNotifs([notif({ id: 'a' })]);
+
+    render(<NotificationCard notif={notif({ id: 'a' })} />);
+    const card = screen.getByRole('button');
+    await user.click(card);
+
+    expect(card).toHaveClass('animate-ccslideout');
+    // Also inert while it leaves, so a second click cannot act twice.
+    expect(card).toHaveClass('pointer-events-none');
+    expect(card.style.getPropertyValue('--cc-card-h')).toMatch(/^\d+px$/);
+  });
+
+  /**
+   * Under `prefers-reduced-motion` the row goes at once (HIVE-93).
+   *
+   * `global.css` already collapses animation durations under the query, so the
+   * slide would not play — but the timer would still hold the row on screen for
+   * 220ms with nothing happening, which reads as lag rather than as restraint.
+   */
+  it('removes the card immediately when motion is reduced', async () => {
+    reducedMotion.mockReturnValue(true);
+    const user = userEvent.setup();
+    useHiveStore.getState().hydrateNotifs([notif({ id: 'a' })]);
+
+    render(<NotificationCard notif={notif({ id: 'a' })} />);
+    await user.click(screen.getByRole('button'));
+
+    // No timer advance anywhere in this test.
+    expect(useHiveStore.getState().notifs).toEqual([]);
   });
 
   /** The count is what the badges read; an unread card must say so out loud. */

@@ -233,6 +233,22 @@ export const CH = {
   /** Mark one read, or all of them when the id is null. */
   notificationsMarkRead: 'notifications:mark-read',
   /**
+   * Drop one notification from the hub for good (HIVE-93).
+   *
+   * Distinct from `mark-read`, which leaves the row in the list. A card the user
+   * has *acted on* has served its whole purpose — it navigated them somewhere —
+   * and leaving it behind makes the inbox a log to be pruned by hand rather than
+   * a queue that drains.
+   *
+   * It has to reach main because `notifications:list` is what a mounting
+   * renderer hydrates from: dropping the row locally would bring it straight
+   * back on the next reload, with the hub still holding it.
+   *
+   * Takes one id and never `null` — there is no "dismiss everything", because
+   * dismissal follows an action and you cannot act on fifty rows at once.
+   */
+  notificationsDismiss: 'notifications:dismiss',
+  /**
    * Read-state changed in the hub (HIVE-75). main → renderer.
    *
    * Needed because main can mark a notification read on its own: clicking the
@@ -1046,6 +1062,14 @@ export interface HiveBridge {
     list(): Promise<HiveNotification[]>;
     /** Mark one read, or every one when `id` is null. */
     markRead(id: string | null): Promise<void>;
+    /**
+     * Drop one notification from the hub for good (HIVE-93).
+     *
+     * What an *acted-on* card does, as opposed to `markRead`, which leaves the
+     * row in the list. It goes to main because `list()` is the hydration source:
+     * a locally-dropped row returns on the next reload.
+     */
+    dismiss(id: string): Promise<void>;
     /** The hub marked something read — including from a desktop toast click. */
     onRead(callback: (event: NotificationReadEvent) => void): () => void;
     /**
@@ -1282,6 +1306,10 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   'onNew',
   'list',
   'markRead',
+  // HIVE-93. Deliberately alongside `markRead` rather than folded into it: read
+  // and dismissed are different facts about a notification, and only one of them
+  // takes the row out of `list`.
+  'dismiss',
   // The one verb the settings pane may ask on a timer — see
   // `CH.notificationsDelivery` for why it is not a field on integrations status.
   'delivery',

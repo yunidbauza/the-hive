@@ -271,18 +271,52 @@ describe('the explorer tree', () => {
     expect(useUiStore.getState().explorerExpanded).toEqual({});
   });
 
-  it('remembers the project the tree was rooted at', () => {
-    useUiStore.getState().setExplorerProjectId('referral-api');
-    expect(useUiStore.getState().explorerProjectId).toBe('referral-api');
-  });
-
-  it('starts with nothing expanded and no sticky project', () => {
+  /**
+   * The sticky project is gone (HIVE-93).
+   *
+   * It existed so the tree kept its last repository on the overmind tab. The
+   * explorer now follows the active session or shows nothing, so there is
+   * nothing to remember — see `use-explorer-project.ts` for why showing the
+   * wrong repository is worse than showing none.
+   */
+  it('starts with nothing expanded', () => {
     useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
-    useUiStore.getState().setExplorerProjectId('apfm-web');
 
     useUiStore.getState().reset();
 
     expect(useUiStore.getState().explorerExpanded).toEqual({});
-    expect(useUiStore.getState().explorerProjectId).toBeNull();
+  });
+});
+
+describe('revealRailTab (HIVE-93)', () => {
+  it('selects the tab and opens the rail', () => {
+    useUiStore.setState({ railTab: 'prs', showActivityRail: false });
+
+    useUiStore.getState().revealRailTab('inbox');
+
+    expect(useUiStore.getState().railTab).toBe('inbox');
+    expect(useUiStore.getState().showActivityRail).toBe(true);
+  });
+
+  it('is idempotent, so a second click does not hide the rail', () => {
+    /**
+     * The distinction from `toggleActivityRail`, which is what the header bell
+     * must not do: a user clicking the bell twice is asking for the inbox twice,
+     * not asking for it and then asking for it to go away.
+     */
+    useUiStore.getState().revealRailTab('inbox');
+    useUiStore.getState().revealRailTab('inbox');
+
+    expect(useUiStore.getState().showActivityRail).toBe(true);
+    expect(useUiStore.getState().railTab).toBe('inbox');
+  });
+
+  it('does not disturb the rail when only the tab differs', () => {
+    useUiStore.setState({ railTab: 'explorer', showActivityRail: true });
+
+    useUiStore.getState().revealRailTab('inbox');
+
+    expect(useUiStore.getState().railTab).toBe('inbox');
+    expect(useUiStore.getState().showActivityRail).toBe(true);
   });
 });

@@ -117,6 +117,16 @@ export interface NotificationHub {
   /** Mark one read, or every one when `id` is null. */
   markRead(id: string | null): void;
   /**
+   * Drop one notification from the buffer for good (HIVE-93).
+   *
+   * `list()` is what a mounting renderer hydrates from, so this is what makes a
+   * dismissal outlive a reload rather than reappearing with the next hydration.
+   *
+   * The id stays in the dedup set on purpose — a dismissed notification must not
+   * be raised again by the very next event that would have been a duplicate.
+   */
+  dismiss(id: string): void;
+  /**
    * Carry out an action, exactly as clicking the desktop toast would.
    *
    * Exposed so a clicked *inbox row* reaches the same router. Before this the
@@ -221,6 +231,25 @@ export function createNotificationHub(
     announce();
   };
 
+  /**
+   * Removed from the buffer, but **not** from `seen`.
+   *
+   * Forgetting it there would let the next duplicate event re-raise the very
+   * notification the user just dismissed, which is the one outcome that would
+   * make the gesture feel broken.
+   *
+   * `announce()` afterwards because the badge is a derivation of the buffer: a
+   * dismissed row that was still unread has to stop being counted, and nothing
+   * else recomputes that.
+   */
+  const dismiss = (id: string): void => {
+    const before = buffer.length;
+    buffer = buffer.filter((entry) => entry.id !== id);
+    // An unknown id is a no-op rather than an error: the renderer may be acting
+    // on a row from a buffer that has since been trimmed by the cap.
+    if (buffer.length !== before) announce();
+  };
+
   const remember = (id: string): void => {
     seen.add(id);
     if (seen.size <= SEEN_CAP) return;
@@ -302,6 +331,8 @@ export function createNotificationHub(
     },
 
     markRead,
+
+    dismiss,
 
     activate,
 

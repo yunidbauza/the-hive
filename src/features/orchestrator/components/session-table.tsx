@@ -1,6 +1,12 @@
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { cn } from '@/lib/utils';
-import { branchLabel, entityLabel, isEnded, isSession } from '@/types/entity';
+import {
+  branchLabel,
+  endedReason,
+  entityLabel,
+  isEnded,
+  isSession,
+} from '@/types/entity';
 
 import { STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
 import { SwarmCreature } from '@components/ui/swarm-creature';
@@ -195,16 +201,15 @@ function SessionTableRow({ id }: { id: string }) {
    * its own any more.
    */
   const ended = isEnded(entity.status);
-  const endedReason =
-    entity.status === 'terminated'
-      ? `${entityLabel(entity)} has terminated — its process is gone`
-      : `${entityLabel(entity)} was cleared — its terminal continues as a new session`;
+  // The sentence itself moved to `types/entity.ts` (HIVE-93) — the console needs
+  // the same one, and the store cannot import from `features/`.
+  const reason = endedReason(entity);
 
   return (
     <button
       type="button"
       disabled={ended}
-      title={ended ? endedReason : undefined}
+      title={ended ? reason : undefined}
       onClick={() => {
         // Click both selects and opens: the caret should follow the user's
         // last action, or the keyboard and the mouse end up disagreeing about

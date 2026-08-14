@@ -112,12 +112,12 @@ describe('SessionMetaBar', () => {
   });
 
   describe('the back button', () => {
-    it('returns to the orchestrator', async () => {
+    it('returns to the overmind', async () => {
       const user = userEvent.setup();
       useUiStore.getState().openTab('hero-refresh');
       render(<SessionMetaBar entity={entity('hero-refresh')} />);
 
-      await user.click(screen.getByRole('button', { name: 'Back to orchestrator' }));
+      await user.click(screen.getByRole('button', { name: 'Back to overmind' }));
 
       expect(useUiStore.getState().activeTab).toBe('orch');
     });
@@ -128,8 +128,8 @@ describe('SessionMetaBar', () => {
       // Story 060 binds ArrowLeft to the same action; the hint is how anyone
       // discovers it.
       expect(
-        screen.getByRole('button', { name: 'Back to orchestrator' }),
-      ).toHaveAttribute('title', 'Back to orchestrator (←)');
+        screen.getByRole('button', { name: 'Back to overmind' }),
+      ).toHaveAttribute('title', 'Back to overmind (←)');
     });
   });
 });

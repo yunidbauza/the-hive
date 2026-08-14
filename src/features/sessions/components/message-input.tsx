@@ -6,7 +6,7 @@ import { isBareBack } from '@lib/terminal/keymap';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
-const PLACEHOLDER = 'message this session — routed by the orchestrator';
+const PLACEHOLDER = 'message this session — routed by the overmind';
 
 /**
  * `←` from an empty prompt goes back, and that is the only binding this row

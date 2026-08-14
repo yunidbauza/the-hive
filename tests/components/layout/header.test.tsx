@@ -197,14 +197,21 @@ describe('Header', () => {
       expect(screen.getByText('3')).toBeInTheDocument();
       // The badge is decoration here; the button's label carries the meaning.
       expect(
-        screen.getByRole('button', {
-          name: 'Mark 3 unread notifications as read',
-        }),
+        screen.getByRole('button', { name: 'Inbox — 3 unread' }),
       ).toBeInTheDocument();
     });
 
-    it('marks everything read and hides the badge at zero', async () => {
+    /**
+     * The bell **shows** the inbox and leaves the count alone (HIVE-93).
+     *
+     * It used to mark everything read, which is the one action that destroys the
+     * information the badge carries — from a control whose icon promises
+     * navigation. A user reaching for the bell to see what happened wiped the
+     * record of what happened.
+     */
+    it('opens the Inbox tab without touching the unread count', async () => {
       const user = userEvent.setup();
+      useUiStore.setState({ railTab: 'prs', showActivityRail: false });
       useHiveStore
         .getState()
         .hydrateNotifs([
@@ -214,12 +221,22 @@ describe('Header', () => {
         ]);
       render(<Header />);
 
-      await user.click(screen.getByRole('button', { name: /Mark 3 unread/ }));
+      await user.click(screen.getByRole('button', { name: 'Inbox — 3 unread' }));
 
+      expect(useUiStore.getState().railTab).toBe('inbox');
+      // And it reveals the rail, or the tab it selected would be off screen.
+      expect(useUiStore.getState().showActivityRail).toBe(true);
+
+      // Nothing was read: the badge still says 3, and every row is still unread.
       expect(
-        useHiveStore.getState().notifs.every((notif) => !notif.unread),
+        useHiveStore.getState().notifs.every((notif) => notif.unread),
       ).toBe(true);
-      expect(screen.queryByText('3')).not.toBeInTheDocument();
+      expect(screen.getByText('3')).toBeInTheDocument();
+    });
+
+    it('still names itself when there is nothing unread', () => {
+      render(<Header />);
+
       expect(
         screen.getByRole('button', { name: 'Inbox — nothing unread' }),
       ).toBeInTheDocument();

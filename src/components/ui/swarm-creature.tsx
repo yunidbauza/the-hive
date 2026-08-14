@@ -60,17 +60,31 @@ export function SwarmCreature({
    * Which one. The casting is a second channel, not decoration, so it is fixed
    * per surface rather than chosen per render:
    *
-   * - **Hive** — the orchestrator's empty fleet, the picker's first run, the
+   * - **Hive** — the overmind's empty fleet, the picker's **first run**, the
    *   settings projects card, and the explorer's empty repository. The app's own
    *   face, territory, and the thing that leads the main screen.
    * - **Overlord** — the projects rail, and the inbox. It hovers and watches
    *   without acting, which is what both of those states are.
-   * - **Spire** — work, pull requests, and the editor with no file. Things with
-   *   a lifecycle, caught mid-morph.
+   * - **Spire** — work, pull requests, the editor with no file, and the
+   *   **ordinary picker**. Things with a lifecycle, caught mid-morph.
    * - **Hydralisk** — agents. The unit that does the work.
    *
-   * That is all ten call sites; a reviewer should be able to check any one of
-   * them against this list and find it here.
+   * That is every call site; a reviewer should be able to check any one of them
+   * against this list and find it here.
+   *
+   * ## The picker is cast twice, on purpose (HIVE-93)
+   *
+   * Its two states are genuinely different surfaces. **First run** has no
+   * projects and nothing to do, so the hive stands in for the missing content as
+   * territory — the app's face on a screen that is otherwise empty. Once
+   * projects exist, the picker is a *lifecycle* surface: you are about to bring a
+   * session into being, which is the spire's register, and the sprite is a mark
+   * above a title rather than a substitute for content. Only ever one of the two
+   * renders; see the condition in `new-session-picker.tsx`.
+   *
+   * This was a deliberate revision, not drift. An earlier version of this list
+   * assigned the picker to Hive outright and said so here, which stopped being
+   * true the moment the ordinary picker got its own sprite.
    *
    * A surface that picks a different creature than its neighbours in the same
    * state turns the channel back into noise, which is the whole reason this is

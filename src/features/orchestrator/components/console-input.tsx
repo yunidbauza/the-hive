@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { CONSOLE_VERBS } from '@/types/command';
+
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import {
   useNavOrder,
@@ -12,11 +14,22 @@ const PLACEHOLDER = 'help · status · send <session> <message> · spawn <repo> 
 const KEY_HINT = '↑↓ select · → open · ↵ run';
 
 /**
- * The orchestrator's command row, and the hint bar under it (story 041).
+ * The overmind's command row, and the hint bar under it (story 041).
  *
- * Both are kept, as the concept shows: the input is how you drive the fleet,
- * the hint bar says what the keyboard does and reminds you the console is
- * read-only — the orchestrator works in the background whether or not you type.
+ * Both are kept, as the concept shows: the input is how you drive the fleet, and
+ * the hint bar says what the keyboard does.
+ *
+ * ## Why the third hint is the grammar and no longer "read-only" (HIVE-93)
+ *
+ * It used to read `read-only — the orchestrator coordinates in the background`,
+ * which spent the one remaining slot in the bar on a reassurance nobody needed:
+ * the console is visibly a prompt, and "it works whether or not you type" is not
+ * something a user is worried about. Worse, "read-only" is now simply wrong —
+ * `send` and `spawn` both act on the fleet from this row.
+ *
+ * The verbs go there instead, because the grammar was otherwise discoverable
+ * only by typing `help` — which you have to already know exists. Listing them is
+ * the cheapest possible fix for that and costs no extra height.
  */
 export function ConsoleInput() {
   const [value, setValue] = useState('');
@@ -90,8 +103,14 @@ export function ConsoleInput() {
   return (
     <>
       <div className="flex shrink-0 items-center gap-2.5 border-t border-border-soft bg-term-input px-[18px] py-2.5">
+        {/*
+          The prompt glyph — the most visible instance of the name, and the one
+          the string inventory nearly missed, because it is bare JSX text rather
+          than a quoted literal. The test below greps the rendered output for
+          `/orchestrator/i` precisely so a seventh copy cannot hide the same way.
+        */}
         <span className="shrink-0 font-mono text-[13px] text-green">
-          orchestrator ❯
+          overmind ❯
         </span>
         <input
           ref={inputRef}
@@ -100,7 +119,7 @@ export function ConsoleInput() {
           onKeyDown={onKeyDown}
           placeholder={PLACEHOLDER}
           spellCheck={false}
-          aria-label="Orchestrator command"
+          aria-label="Overmind command"
           className="min-w-0 flex-1 border-none bg-transparent font-mono text-[12.5px] text-ink caret-green outline-none placeholder:text-subtle"
         />
         <span className="shrink-0 font-mono text-[10.5px] whitespace-nowrap text-subtle">
@@ -111,7 +130,7 @@ export function ConsoleInput() {
       <div className="flex shrink-0 items-center justify-center gap-5 border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-subtle">
         <span>↑↓ select</span>
         <span>→ or ↵ open session</span>
-        <span>read-only — the orchestrator coordinates in the background</span>
+        <span>{CONSOLE_VERBS.join(' · ')}</span>
       </div>
     </>
   );

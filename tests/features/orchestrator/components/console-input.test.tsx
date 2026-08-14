@@ -2,12 +2,13 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { CONSOLE_VERBS } from '@/types/command';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { useHiveStore, useNavOrder } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
-const input = () => screen.getByRole('textbox', { name: 'Orchestrator command' });
+const input = () => screen.getByRole('textbox', { name: 'Overmind command' });
 
 const transcript = () =>
   useHiveStore
@@ -124,15 +125,32 @@ describe('ConsoleInput', () => {
     );
   });
 
-  it('keeps the hint bar beneath the prompt', () => {
+  /**
+   * The hint bar lists the grammar instead of claiming to be read-only
+   * (HIVE-93).
+   *
+   * The old third hint — `read-only — the orchestrator coordinates in the
+   * background` — spent the one remaining slot on a reassurance nobody needed,
+   * and was also simply wrong: `send` and `spawn` both act on the fleet from this
+   * row. The verbs go there because the grammar was otherwise discoverable only
+   * by typing `help`, which you have to already know exists.
+   */
+  it('keeps the hint bar beneath the prompt, listing every verb', () => {
     render(<ConsoleInput />);
 
-    // The concept shows both; the hint bar is what says the console is
-    // read-only and the orchestrator keeps working regardless.
     expect(screen.getByText('↑↓ select')).toBeInTheDocument();
+
+    /*
+      Asserted against `CONSOLE_VERBS` rather than a copy of the string: the whole
+      point of that constant is that the footer and the grammar cannot drift, and
+      a literal here would be a third place to update.
+    */
     expect(
-      screen.getByText('read-only — the orchestrator coordinates in the background'),
+      screen.getByText(CONSOLE_VERBS.join(' · ')),
     ).toBeInTheDocument();
+    // The claim that is gone, pinned so it cannot come back by accident.
+    expect(screen.queryByText(/read-only/)).toBeNull();
+    expect(screen.queryByText(/orchestrator/i)).toBeNull();
   });
 });
 

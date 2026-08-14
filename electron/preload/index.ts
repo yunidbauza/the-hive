@@ -312,6 +312,9 @@ const bridge: HiveBridge = {
     /** Mark one read, or every one when `id` is null. */
     markRead: (id: string | null): Promise<void> =>
       ipcRenderer.invoke(CH.notificationsMarkRead, id) as Promise<void>,
+    /** Drop one notification from the hub for good (HIVE-93). */
+    dismiss: (id: string) =>
+      ipcRenderer.invoke(CH.notificationsDismiss, id) as Promise<void>,
     /** The hub marked something read — including from a desktop toast click. */
     onRead: (callback: (event: NotificationReadEvent) => void) =>
       subscribe<NotificationReadEvent>(CH.notificationsRead, callback),

@@ -40,11 +40,25 @@ function SourceNotice({
     GitHub repository — and main writes the sentence for each, because it is
     the side that knows which one happened.
   */
+  /*
+    Through `EmptyState`, so it looks like the other empty PR state (HIVE-93).
+
+    This branch was a bare `<p>` while the *no open PRs* state a few dozen lines
+    down already had `phrase` + `creature="spire"`. Both are "this panel has
+    nothing to show you", so the panel contradicted itself depending on *why* —
+    an unconfigured setup got a plain sentence on a blank column, and a
+    configured one with no PRs got the full treatment.
+
+    `source.message` is passed through untouched: main writes it because main is
+    the side that knows which of the three setups happened — no `gh`, a `gh` that
+    is not logged in, or no project that is a GitHub repository. This adds the
+    frame around that sentence and does not second-guess it.
+  */
   if (source.kind === 'unconfigured') {
     return (
-      <p className="px-1 pb-1 text-[11.5px] leading-[1.45] text-subtle">
+      <EmptyState phrase="empty.pullRequests" creature="spire">
         {source.message}
-      </p>
+      </EmptyState>
     );
   }
 

@@ -50,15 +50,6 @@ interface UiState {
    */
   explorerExpanded: Record<string, boolean>;
   /**
-   * The project the explorer is rooted at while no session is open.
-   *
-   * The tree follows the active session, and the orchestrator tab names no
-   * session — so this remembers the last one it was rooted at. Falling back to
-   * "the first mapped project" every time you visit the orchestrator would
-   * yank the tree away from what you were reading, once per navigation.
-   */
-  explorerProjectId: string | null;
-  /**
    * Bumped whenever the filesystem is known to have changed — by the watcher,
    * and by the explorer's ↻ button.
    *
@@ -77,6 +68,19 @@ interface UiState {
   setSelIdx: (index: number) => void;
   setLeftTab: (tab: LeftTab) => void;
   setRailTab: (tab: RailTab) => void;
+  /**
+   * Show a rail tab, revealing the rail if it was hidden (HIVE-93).
+   *
+   * Distinct from `setRailTab` because that one only changes which tab is
+   * selected — on a collapsed rail it selects a tab nobody can see. And distinct
+   * from `toggleActivityRail`, which would *hide* the rail when it is already
+   * open: exactly the wrong outcome for the header bell, whose job is "show me
+   * the inbox" rather than "flip the rail".
+   *
+   * Idempotent, so a second click on the bell leaves the inbox up instead of
+   * playing peekaboo with it.
+   */
+  revealRailTab: (tab: RailTab) => void;
   toggleProject: (id: string) => void;
   openPicker: (ticketKey?: string) => void;
   closePicker: () => void;
@@ -89,7 +93,6 @@ interface UiState {
   toggleActivityRail: () => void;
   toggleExplorerDir: (projectId: string, relPath: string) => void;
   collapseExplorer: () => void;
-  setExplorerProjectId: (projectId: string) => void;
   bumpFsRevision: () => void;
   reset: () => void;
 }
@@ -108,7 +111,6 @@ const initialUiState = {
   newEffort: 'high' as Effort,
   showActivityRail: true,
   explorerExpanded: {} as Record<string, boolean>,
-  explorerProjectId: null as string | null,
   fsRevision: 0,
 };
 
@@ -133,6 +135,10 @@ export const useUiStore = create<UiState>()((set) => ({
   setSelIdx: (index) => set({ selIdx: index }),
   setLeftTab: (tab) => set({ leftTab: tab }),
   setRailTab: (tab) => set({ railTab: tab }),
+
+  // `showActivityRail: true` unconditionally rather than a toggle — see the
+  // interface note for why the bell must not flip it.
+  revealRailTab: (tab) => set({ railTab: tab, showActivityRail: true }),
 
   toggleProject: (id) =>
     set((state) => ({
@@ -224,7 +230,6 @@ export const useUiStore = create<UiState>()((set) => ({
    */
   collapseExplorer: () => set({ explorerExpanded: {} }),
 
-  setExplorerProjectId: (explorerProjectId) => set({ explorerProjectId }),
 
   bumpFsRevision: () =>
     set((state) => ({ fsRevision: state.fsRevision + 1 })),
@@ -272,6 +277,10 @@ const pickerActionsSelector = (state: UiState) => ({
 
 /** Dismiss a full-stage overlay when the destination is already correct. */
 export const useRevealStage = () => useUiStore((state) => state.revealStage);
+
+/** Show a rail tab, opening the rail if it was hidden (HIVE-93). */
+export const useRevealRailTab = () =>
+  useUiStore((state) => state.revealRailTab);
 
 /** Which tab the center stage is showing. */
 export const useActiveTab = () => useUiStore((state) => state.activeTab);
@@ -355,12 +364,6 @@ export const useCollapseExplorer = () =>
   useUiStore((state) => state.collapseExplorer);
 
 /** The sticky root for the orchestrator tab. See the field's comment. */
-export const useExplorerProjectId = () =>
-  useUiStore((state) => state.explorerProjectId);
-
-export const useSetExplorerProjectId = () =>
-  useUiStore((state) => state.setExplorerProjectId);
-
 /** The filesystem-change counter the tree re-reads on. */
 export const useFsRevision = () => useUiStore((state) => state.fsRevision);
 

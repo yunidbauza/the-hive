@@ -72,7 +72,7 @@ describe('MessageInput', () => {
 
       expect(input()).toHaveAttribute(
         'placeholder',
-        'message this session — routed by the orchestrator',
+        'message this session — routed by the overmind',
       );
     } finally {
       delete (window as { hive?: unknown }).hive;

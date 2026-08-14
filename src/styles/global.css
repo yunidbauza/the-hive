@@ -62,6 +62,40 @@ label[for] {
   }
 }
 
+/**
+ * An inbox card sliding out to the right, with the list closing over it.
+ *
+ * The height/margin collapse is what pulls the cards below it up; animating only
+ * `transform` would slide the card away and leave a hole. That does mean
+ * animating layout properties, which is normally the thing to avoid — but the
+ * reflow *is* the effect here, it runs on one row at a time, and the alternative
+ * (measuring every following card and transforming each) is far more machinery
+ * for the same 220ms.
+ *
+ * Under `prefers-reduced-motion` this never runs: the card is unmounted straight
+ * away instead. See `notification-card.tsx`.
+ */
+@keyframes ccslideout {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+    max-height: var(--cc-card-h, 200px);
+  }
+  60% {
+    opacity: 0;
+    transform: translateX(60%);
+    max-height: var(--cc-card-h, 200px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(60%);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
 @keyframes ccblink {
   0%,
   100% {

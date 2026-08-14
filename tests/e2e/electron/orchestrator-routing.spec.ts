@@ -147,7 +147,7 @@ test.afterAll(async () => {
 });
 
 const consoleCommand = () =>
-  page.getByRole('textbox', { name: 'Orchestrator command' });
+  page.getByRole('textbox', { name: 'Overmind command' });
 
 const messageInput = (id: string) =>
   page.getByRole('textbox', { name: `Message ${id}` });
@@ -173,7 +173,7 @@ async function run(command: string): Promise<void> {
  * correctly absent.
  */
 async function backToOrchestrator(): Promise<void> {
-  const back = page.getByRole('button', { name: 'Back to orchestrator' });
+  const back = page.getByRole('button', { name: 'Back to overmind' });
   if (await back.isVisible()) await back.click();
   await expect(terminalRows('orch')).toBeVisible();
 }

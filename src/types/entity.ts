@@ -294,6 +294,26 @@ export const entityLabel = (entity: Entity): string => {
 };
 
 /**
+ * Why an ended session cannot be visited or typed into — one sentence, named
+ * once (HIVE-93).
+ *
+ * The two endings are **not** interchangeable and the sentence has to say which:
+ * a terminated session's process is gone, while a cleared one's is very much
+ * alive and simply is not its own any more. See {@link isTerminated} for the
+ * same distinction from the other direction.
+ *
+ * It lives here rather than in the session table because there are now three
+ * consumers and one of them is the store, which may not import from
+ * `features/`. Two copies of this sentence is how the console came to report a
+ * *cleared* row as "has terminated — its process is gone", which is the one
+ * reading that is false in both halves.
+ */
+export const endedReason = (session: Session): string =>
+  session.status === 'terminated'
+    ? `${entityLabel(session)} has terminated — its process is gone`
+    : `${entityLabel(session)} was cleared — its terminal continues as a new session`;
+
+/**
  * The outcome of looking an entity up by what the user typed.
  *
  * Three cases rather than `string | undefined`, because "two sessions answer to

@@ -205,6 +205,8 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   expect(surface.notifications).toEqual([
     'act',
     'delivery',
+    // HIVE-93 — a deliberate widening; see BRIDGE_NOTIFICATIONS_KEYS.
+    'dismiss',
     'list',
     'markRead',
     'onActivate',
