@@ -281,151 +281,76 @@ describe('bootstrap lifecycle', () => {
 });
 
 /**
- * Delivering a spawn's task as the session's first message (story 097).
+ * One stage, always — the task is an argument, not a second write (HIVE-91).
  *
- * The renderer cannot time this — `session:status` carries
- * `working | idle | done` and nothing finer — so main does, by applying the
- * mechanism above a second time: the command settles, then the TUI's own
- * output settles, then the task goes in.
+ * Story 097 delivered a spawn's task as a *second stage*: the command settled,
+ * then the TUI's own output settled, then the task was typed in. That is a
+ * timing guess about another program's startup, and it had no safe failure. When
+ * `claude` did not start, the thing reading the pty was the login shell, so the
+ * user's instruction was run as a command line:
+ *
+ * ```
+ * $ claude --model opus … && exit
+ * zsh: command not found: claude
+ * $ what time is it
+ * what: time: No such file or directory
+ * ```
+ *
+ * The task now rides *inside* the command as `claude`'s initial prompt, so these
+ * tests assert the absence the fix creates: whatever the TUI does, and whatever
+ * the command contains, the pty sees one stage and never a second.
  */
-describe('the task stage', () => {
+describe('the single stage (HIVE-91)', () => {
   const DEBOUNCE = 150;
   const FALLBACK = 5_000;
-  /**
-   * Settle a stage *and* send its carriage return.
-   *
-   * Stage two is armed inside the submit timer, after the `\r` — nothing
-   * follows a stage until that stage has actually been submitted (HIVE-63) —
-   * so a bare debounce no longer reaches the next stage.
-   */
   const SETTLE = DEBOUNCE + SUBMIT_DELAY_MS;
   const armed = () =>
     bootstrap({ debounceMs: DEBOUNCE, fallbackMs: FALLBACK });
 
-  it('writes the task after the TUI settles, not alongside the command', () => {
+  /** A command carrying its task, as `sessionCommand` now builds it. */
+  const WITH_TASK = "claude --name sess-a 'fix the hero' && exit";
+
+  it('writes the command carrying its task, and nothing after it', () => {
     const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.arm('sess-a', WITH_TASK);
 
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(SETTLE);
-    expect(submitted()).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
+    expect(submitted()).toEqual([{ entityId: 'sess-a', data: `${WITH_TASK}\r` }]);
 
-    // The TUI paints; that is the signal the second stage waits for.
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-    expect(submitted()).toEqual([
-      { entityId: 'sess-a', data: 'claude\r' },
-      { entityId: 'sess-a', data: 'fix the hero\r' },
-    ]);
-  });
-
-  it('submits the task with a carriage return too', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-
-    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
-    vi.advanceTimersByTime(SUBMIT_DELAY_MS);
-    expect(written.at(-1)?.data).toBe('\r');
-  });
-
-  it('writes the task exactly once, however much the TUI paints', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-
-    boot.sawOutput('sess-a');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(FALLBACK * 2);
-
-    expect(submitted()).toHaveLength(2);
-  });
-
-  it('writes the task even if the TUI prints nothing at all', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-
-    vi.advanceTimersByTime(FALLBACK);
-
-    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
-  });
-
-  it('drops a pending task when the session dies between the stages', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-
-    boot.cancel('sess-a');
-    vi.advanceTimersByTime(FALLBACK * 2);
-
-    // Only the command went in. `cancel` reaches the second stage for free,
-    // which is the reason it is a re-arm rather than a chained timer.
-    expect(submitted()).toHaveLength(1);
-  });
-
-  it('reports the task as still pending until it has been written', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-
-    expect(boot.isPending('sess-a')).toBe(true);
-
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-    expect(boot.isPending('sess-a')).toBe(false);
-  });
-
-  it('drops the second stage on dispose, so nothing outlives the app', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-
-    boot.dispose();
-    vi.advanceTimersByTime(FALLBACK * 2);
-
-    expect(submitted()).toHaveLength(1);
-  });
-
-  it('waits for the TUI to go quiet, not for its echo of the command', () => {
     /**
-     * The defect this pins: the first output after `claude\r` is the line
-     * discipline's echo of the command itself, arriving in milliseconds. A
-     * first-chunk-plus-debounce clock therefore fired ~150ms after `claude` was
-     * invoked — long before its TUI could accept input, which is exactly the
-     * failure this module exists to prevent.
+     * The TUI paints — which is what the old second stage waited for. Nothing
+     * may follow, because there is no longer anything to follow with.
+     */
+    boot.sawOutput('sess-a');
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(FALLBACK * 2);
+    expect(submitted()).toEqual([{ entityId: 'sess-a', data: `${WITH_TASK}\r` }]);
+  });
+
+  it('never writes the task as pty input of its own', () => {
+    /**
+     * The regression guard for the reported defect, asserted on the byte stream
+     * rather than on write counts — the failure was that `fix the hero` reached
+     * the pty as a line in its own right, whoever happened to be reading it.
      */
     const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.arm('sess-a', WITH_TASK);
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(SETTLE);
-    expect(submitted()).toHaveLength(1);
 
-    // The echo, then a TUI that keeps painting for a while.
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 40; i += 1) {
       boot.sawOutput('sess-a');
       vi.advanceTimersByTime(DEBOUNCE - 20);
     }
-    expect(submitted()).toHaveLength(1);
+    vi.advanceTimersByTime(FALLBACK * 2);
 
-    // It goes quiet — now, and only now, the task goes in.
-    vi.advanceTimersByTime(SETTLE);
-    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
+    expect(stream('sess-a')).toBe(`${WITH_TASK}\r`);
   });
 
-  it('caps the wait, so a TUI that never stops painting still gets its task', () => {
+  it('a TUI that never stops painting still adds no second write', () => {
     const boot = armed();
-    boot.arm('sess-a', 'claude', 'fix the hero');
+    boot.arm('sess-a', WITH_TASK);
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(SETTLE);
 
@@ -434,11 +359,10 @@ describe('the task stage', () => {
       vi.advanceTimersByTime(DEBOUNCE - 20);
     }
 
-    expect(submitted()).toHaveLength(2);
-    expect(submitted().at(-1)?.data).toBe('fix the hero\r');
+    expect(submitted()).toHaveLength(1);
   });
 
-  it('reports completion once, after the last stage', () => {
+  it('reports completion after the stage’s carriage return', () => {
     const done: string[] = [];
     const boot = createBootstrap({
       write: (entityId, data) => written.push({ entityId, data }),
@@ -447,28 +371,7 @@ describe('the task stage', () => {
       fallbackMs: FALLBACK,
     });
 
-    boot.arm('sess-a', 'claude', 'fix the hero');
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(SETTLE);
-    // Stage one is done but the task is still pending — not complete yet.
-    expect(done).toEqual([]);
-
-    boot.sawOutput('sess-a');
-    vi.advanceTimersByTime(FALLBACK);
-
-    expect(done).toEqual(['sess-a']);
-  });
-
-  it('reports completion for a bootstrap with no task at all', () => {
-    const done: string[] = [];
-    const boot = createBootstrap({
-      write: (entityId, data) => written.push({ entityId, data }),
-      onComplete: (entityId) => done.push(entityId),
-      debounceMs: DEBOUNCE,
-      fallbackMs: FALLBACK,
-    });
-
-    boot.arm('sess-a', 'claude');
+    boot.arm('sess-a', WITH_TASK);
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
 
@@ -484,55 +387,85 @@ describe('the task stage', () => {
     expect(done).toEqual(['sess-a']);
   });
 
-  it('is still a single write when there is no task', () => {
-    const boot = armed();
-    boot.arm('sess-a', 'claude');
+  it('completes exactly once, however much the TUI paints afterwards', () => {
+    const done: string[] = [];
+    const boot = createBootstrap({
+      write: (entityId, data) => written.push({ entityId, data }),
+      onComplete: (entityId) => done.push(entityId),
+      debounceMs: DEBOUNCE,
+      fallbackMs: FALLBACK,
+    });
+
+    boot.arm('sess-a', WITH_TASK);
+    boot.sawOutput('sess-a');
+    vi.advanceTimersByTime(SETTLE);
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(FALLBACK * 2);
 
-    expect(submitted()).toEqual([{ entityId: 'sess-a', data: 'claude\r' }]);
+    expect(done).toEqual(['sess-a']);
   });
 
-  it('keeps two sessions’ task stages independent', () => {
+  it('a session that dies before settling writes nothing at all', () => {
     const boot = armed();
-    boot.arm('sess-a', 'claude', 'first');
-    boot.arm('sess-b', 'claude', 'second');
+    boot.arm('sess-a', WITH_TASK);
+    boot.cancel('sess-a');
+    vi.advanceTimersByTime(FALLBACK * 2);
+
+    expect(submitted()).toEqual([]);
+  });
+
+  it('drops a pending stage on dispose, so nothing outlives the app', () => {
+    const boot = armed();
+    boot.arm('sess-a', WITH_TASK);
+    boot.dispose();
+    vi.advanceTimersByTime(FALLBACK * 2);
+
+    expect(submitted()).toEqual([]);
+  });
+
+  it('keeps two sessions’ stages independent', () => {
+    const boot = armed();
+    boot.arm('sess-a', "claude 'first' && exit");
+    boot.arm('sess-b', "claude 'second' && exit");
 
     for (const id of ['sess-a', 'sess-b']) {
       boot.sawOutput(id);
       vi.advanceTimersByTime(SETTLE);
-      boot.sawOutput(id);
-      vi.advanceTimersByTime(SETTLE);
     }
 
-    expect(submitted().filter((entry) => entry.data === 'first\r')).toHaveLength(1);
-    expect(submitted().filter((entry) => entry.data === 'second\r')).toHaveLength(1);
+    expect(stream('sess-a')).toBe("claude 'first' && exit\r");
+    expect(stream('sess-b')).toBe("claude 'second' && exit\r");
   });
 });
 
-describe('byte order across stages (HIVE-63)', () => {
+describe('byte order (HIVE-63)', () => {
   const DEBOUNCE = 150;
   const FALLBACK = 5_000;
 
-  it('never writes a stage before the previous one has been submitted', () => {
+  it('the text goes in before its carriage return, and nothing between', () => {
     /**
-     * The regression this file previously could not see.
+     * The window this pins used to be a two-stage ordering bug.
      *
      * `SUBMIT_DELAY_MS` (300) is longer than `BOOTSTRAP_DEBOUNCE_MS` (150), and
-     * the pty echoes the text just written — which is output, which starts the
-     * next stage's clock. Arming stage two beside the *text* therefore fired it
+     * the pty echoes the text just written — which is output, which started the
+     * *next* stage's clock. Arming stage two beside the text therefore fired it
      * inside the gap before stage one's `\r`, and the shell received
      * `…&& exitfix the hero`: the command corrupted and the task lost.
      *
-     * Asserted on the concatenated byte stream rather than on write counts,
-     * because the whole failure is an ordering one.
+     * HIVE-91 removed the second stage, so the ordering hazard is gone by
+     * construction rather than by arithmetic between two constants. What remains
+     * worth asserting is that the surviving stage is still two writes in the
+     * right order, and that output arriving in the gap adds nothing — which is
+     * the same observation, now with the stronger expected value.
      */
     const boot = bootstrap({ debounceMs: DEBOUNCE, fallbackMs: FALLBACK });
-    boot.arm('sess-a', 'claude --name sess-a && exit', 'fix the hero');
+    const command = "claude --name sess-a 'fix the hero' && exit";
+    boot.arm('sess-a', command);
 
-    // The shell speaks; stage one settles and its text goes in.
+    // The shell speaks; the stage settles and its text goes in.
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(DEBOUNCE);
+    expect(stream('sess-a')).toBe(command);
 
     // The echo of that text arrives while the `\r` is still pending — this is
     // the exact window the bug lived in.
@@ -541,7 +474,7 @@ describe('byte order across stages (HIVE-63)', () => {
     boot.sawOutput('sess-a');
     vi.advanceTimersByTime(SUBMIT_DELAY_MS * 4);
 
-    expect(stream('sess-a')).toBe('claude --name sess-a && exit\rfix the hero\r');
+    expect(stream('sess-a')).toBe(`${command}\r`);
   });
 
   it('holds a stage as pending until its carriage return has gone', () => {
@@ -737,6 +670,83 @@ describe('sessionCommand', () => {
        */
       expect(sessionCommand('clauded', { model: 'sonnet', effort: 'high' })).toBe(
         'clauded --model sonnet --effort high && exit',
+      );
+    });
+  });
+
+  describe('the task becomes the initial prompt (HIVE-91)', () => {
+    it('passes the task as a positional argument, after the flags', () => {
+      /**
+       * Position is the assertion. Before the `&&` so it binds to `claude` and
+       * not to `exit`, and after the flags so it is read as the prompt rather
+       * than as a value for whichever flag it happened to follow.
+       */
+      expect(
+        sessionCommand('claude', { model: 'opus', task: 'fix the hero' }),
+      ).toBe("claude --model opus 'fix the hero' && exit");
+    });
+
+    it('quotes it, because it is the one value with no closed list behind it', () => {
+      /**
+       * `--model`/`--effort`/`--name` are validated against closed lists, so the
+       * module's no-quoting rule covers them. The task is free text from the
+       * console and the picker, so it is the second argument here — after
+       * `settingsPath` — that genuinely needs quoting.
+       */
+      expect(sessionCommand('claude', { task: 'rm -rf / ; echo $HOME' })).toBe(
+        "claude 'rm -rf / ; echo $HOME' && exit",
+      );
+    });
+
+    it('survives a task containing a single quote', () => {
+      // `'\''` closes, escapes and reopens — the same mechanism `settingsPath`
+      // relies on for `/Users/o'brien/…`.
+      expect(sessionCommand('claude', { task: "don't break" })).toBe(
+        "claude 'don'\\''t break' && exit",
+      );
+    });
+
+    it('omits an empty task rather than passing an empty argument', () => {
+      /**
+       * The picker spawns with `''`, not `undefined`, so this is the common path.
+       * `claude ''` is a request to open with a blank prompt, which is not the
+       * same as opening with none.
+       */
+      expect(sessionCommand('claude', { task: '' })).toBe('claude && exit');
+      expect(sessionCommand('claude', { task: '   ' })).toBe('claude && exit');
+      expect(sessionCommand('claude', {})).toBe('claude && exit');
+    });
+
+    it('flattens newlines, which would submit the line early', () => {
+      /**
+       * The command is written into a pty and terminated by one `\r`. An embedded
+       * newline would submit at that point and leave the tail of the task — and
+       * the `&& exit` — to be read by the shell as a second command line.
+       */
+      expect(
+        sessionCommand('claude', { task: 'first line\nsecond line' }),
+      ).toBe("claude 'first line second line' && exit");
+      expect(sessionCommand('claude', { task: 'trailing\r\n' })).toBe(
+        "claude 'trailing' && exit",
+      );
+    });
+
+    it('rides alongside every other flag, in a full spawn', () => {
+      // The shape main actually builds, so the ordering of all five is pinned.
+      expect(
+        sessionCommand('claude', {
+          model: 'sonnet',
+          effort: 'high',
+          name: 'INCORP-455',
+          settingsPath: '/Users/x/Application Support/hooks.json',
+          task: 'what time is it',
+          subscriptionAuth: true,
+        }),
+      ).toBe(
+        'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ' +
+          'claude --model sonnet --effort high --name INCORP-455 ' +
+          "--settings '/Users/x/Application Support/hooks.json' " +
+          "'what time is it' && exit",
       );
     });
   });

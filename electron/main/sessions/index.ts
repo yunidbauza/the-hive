@@ -992,8 +992,19 @@ export function createSessions(options: SessionsOptions): Sessions {
           after the host has already sanitised. Neither one is sufficient alone.
         */
         subscriptionAuth: snapshot.subscriptionAuth,
+        /**
+         * The opening instruction becomes `claude`'s initial prompt, on this
+         * command line, rather than a second write into the pty afterwards
+         * (HIVE-91).
+         *
+         * It moved *into* `sessionCommand` from `arm`'s third argument. The old
+         * shape waited for the TUI to settle and then typed the task in, which
+         * meant a `claude` that failed to start handed the user's instruction to
+         * the login shell to run as a command. See `sessionCommand`'s own
+         * comment for the transcript that produced.
+         */
+        ...(request.task === undefined ? {} : { task: request.task }),
       }),
-      request.task,
     );
 
     /**

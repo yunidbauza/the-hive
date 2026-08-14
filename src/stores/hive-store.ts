@@ -12,7 +12,14 @@ import type {
   Session,
   SessionStatus,
 } from '@/types/entity';
-import { branchLabel, isEnded, isSession, terminalOf } from '@/types/entity';
+import {
+  branchLabel,
+  entityLabel,
+  isEnded,
+  isSession,
+  resolveEntityRef,
+  terminalOf,
+} from '@/types/entity';
 import type { HiveNotification } from '@/types/notification';
 import type { Pr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
@@ -890,6 +897,46 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         orchLines: capLines([...state.orchLines, line(text, color)]),
       }));
 
+    /**
+     * Turn what the user typed into an entity, or print why it could not be
+     * (HIVE-92).
+     *
+     * Shared by `open` and `send` because they failed identically and must go on
+     * doing so — two copies of a three-branch refusal is how one of them ends up
+     * accepting a name the other rejects. Returns `null` once the refusal has
+     * been printed, so each caller's happy path stays a single `if`.
+     *
+     * The label comes back alongside the id because every line the console
+     * prints afterwards should name the session the way the fleet does, not the
+     * way it was typed. See {@link resolveEntityRef} for why an exact id wins and
+     * why ambiguity is reported rather than resolved.
+     */
+    const resolve = (ref: string): { id: string; label: string } | null => {
+      const match = resolveEntityRef(ref, get().entities);
+
+      if (match.kind === 'none') {
+        pushOrch(`  no such session: ${ref}`, 'red');
+        return null;
+      }
+
+      if (match.kind === 'ambiguous') {
+        pushOrch(
+          `  ${ref} matches ${match.labels.join(', ')} — use a session id`,
+          'red',
+        );
+        return null;
+      }
+
+      const entity = get().entities[match.id];
+      return {
+        id: match.id,
+        // Non-null in practice: `resolveEntityRef` only reports ids it found in
+        // this same map. Narrowed rather than asserted so a future refactor that
+        // breaks that cannot render `undefined` into the transcript.
+        label: entity === undefined ? match.id : entityLabel(entity),
+      };
+    };
+
     pushOrch(`❯ ${command.raw}`, 'green');
 
     switch (command.kind) {
@@ -917,7 +964,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
              * the optional field raw printed the literal `undefined` for every
              * session whose branch had not been observed yet.
              */
-            `  ${entity.id.padEnd(16)}${STATUS_WORD[entity.status].padEnd(13)}${entity.project} · ${branchLabel(entity)}`,
+            /**
+             * `entityLabel`, not `entity.id` (HIVE-92).
+             *
+             * This column is what tells the user what to type at `send` and
+             * `open`, so printing the id while every other surface printed the
+             * name made the console disagree with the app *and* with itself —
+             * `status` named `sess-04`, the rails named `INCORP-455`, and only
+             * one of the two was accepted. Now the column and the argument are
+             * the same string.
+             */
+            `  ${entityLabel(entity).padEnd(16)}${STATUS_WORD[entity.status].padEnd(13)}${entity.project} · ${branchLabel(entity)}`,
             STATUS_COLOR[entity.status],
           );
         }
@@ -930,33 +987,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       }
 
       case 'open': {
-        if (!get().entities[command.target]) {
-          pushOrch(`  no such session: ${command.target}`, 'red');
-          return;
-        }
+        const match = resolve(command.target);
+        if (match === null) return;
         /**
          * The refusal is printed, not swallowed (story 108). A console that
          * answered `opened sess-02` and then did not open it would be worse
          * than one that said nothing at all.
          */
-        if (!get().openEntity(command.target)) {
+        if (!get().openEntity(match.id)) {
           pushOrch(
-            `  ${command.target} has terminated — its process is gone`,
+            `  ${match.label} has terminated — its process is gone`,
             'red',
           );
           return;
         }
-        pushOrch(`  opened ${command.target}`, 'dim');
+        pushOrch(`  opened ${match.label}`, 'dim');
         return;
       }
 
       case 'send': {
-        if (!get().entities[command.target]) {
-          pushOrch(`  no such session: ${command.target}`, 'red');
-          return;
-        }
+        const match = resolve(command.target);
+        if (match === null) return;
 
-        const outcome = get().sendToEntity(command.target, command.message);
+        const outcome = get().sendToEntity(match.id, command.message);
         if (outcome?.kind === 'refused') {
           /**
            * Verbatim. The console prints failures; it does not translate or
@@ -967,7 +1020,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           pushOrch(`  ${outcome.reason}`, 'red');
           return;
         }
-        pushOrch(`  routed → ${command.target}`, 'dim');
+        /**
+         * The **resolved** label, not what was typed. A user who typed
+         * `incorp-455` is told it went to `INCORP-455`, which is the row they
+         * can see — echoing their own casing back would leave them unsure
+         * whether it matched at all.
+         */
+        pushOrch(`  routed → ${match.label}`, 'dim');
         return;
       }
 
@@ -1513,7 +1572,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     set((state) => ({
       orchLines: capLines([
         ...state.orchLines,
-        line(`  ✓ ${current.name ?? current.id} done — cleared`, 'green'),
+        // `entityLabel`, not a hand-spelled `?? ` — the fallback also has to
+        // catch an *empty* name, which is the one case `??` lets through, and
+        // spelling it here is the duplication that function exists to prevent.
+        line(`  ✓ ${entityLabel(current)} done — cleared`, 'green'),
         line(`  ▸ ${successorId} started in the same terminal`, 'dim'),
       ]),
     }));

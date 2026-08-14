@@ -144,6 +144,70 @@ describe('bootstrap', () => {
     await session.waitForOutput('RECOVERABLE', { timeout: 8_000 });
   });
 
+  /**
+   * The task reaches `claude` as **one** argument (HIVE-91).
+   *
+   * The command string is spelled out rather than imported, deliberately, and the
+   * split is what makes this cheap: `bootstrap.test.ts` already pins
+   * `sessionCommand`'s exact output — including the `'\''` quoting — with fake
+   * timers and no processes. What no unit test can show is the half that happens
+   * *after* that string exists, in a real login shell with real word splitting:
+   * that the quoting survives it and the task lands as a single positional
+   * argument rather than as five.
+   *
+   * That half is the whole reason the task is an argument now. Written as a
+   * second line into the pty, an unstarted `claude` left the shell to run it; as
+   * a mis-quoted argument, `rm -rf /` in a task would be run by the shell
+   * instead. Both are the same class of defect and this is the layer that can
+   * see the second one.
+   */
+  it('passes a task to claude as a single argument, quoting and all', async (context) => {
+    // `$#` is the count the shell actually split it into; `$1` is the first.
+    writeStub(
+      context.scratch,
+      'claude',
+      `printf 'ARGC=%s ARG1=[%s]\\n' "$#" "$1"`,
+    );
+
+    const session = context.open({
+      shell: '/bin/sh',
+      args: LOGIN_SHELL_ARGS,
+      env: { PATH: `${context.scratch}:${process.env.PATH ?? ''}` },
+    });
+
+    // Exactly what `sessionCommand('claude', { task: "don't break it" })` builds.
+    await bootstrap(session, `claude 'don'\\''t break it'`);
+
+    await session.waitForOutput("ARGC=1 ARG1=[don't break it]", {
+      timeout: 15_000,
+    });
+  });
+
+  it('a task with shell metacharacters is data, never a command', async (context) => {
+    /**
+     * The quoting rule stated as the consequence that matters. A task is free
+     * text from the console and the picker, so it is the one value on this
+     * command line a user can fill with `;`, `$(…)` or `&&`.
+     */
+    writeStub(context.scratch, 'claude', `printf 'ARGC=%s ARG1=[%s]\\n' "$#" "$1"`);
+    writeStub(context.scratch, 'pwned', "printf 'PWNED\\n'");
+
+    const session = context.open({
+      shell: '/bin/sh',
+      args: LOGIN_SHELL_ARGS,
+      env: { PATH: `${context.scratch}:${process.env.PATH ?? ''}` },
+    });
+
+    await bootstrap(session, `claude '; pwned' && ${emitSentinel('QUOTING-CHECKED')}`);
+    await session.waitForOutput('QUOTING-CHECKED', { timeout: 15_000 });
+
+    assert.equal(
+      session.output.includes('PWNED'),
+      false,
+      'the task must reach claude as data, not run as a command',
+    );
+  });
+
   it('a missing command reports itself and leaves the shell alive', async (context) => {
     const session = context.open({
       shell: '/bin/sh',

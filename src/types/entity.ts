@@ -292,3 +292,63 @@ export const entityLabel = (entity: Entity): string => {
    */
   return name === undefined || name === '' ? entity.id : name;
 };
+
+/**
+ * The outcome of looking an entity up by what the user typed.
+ *
+ * Three cases rather than `string | undefined`, because "two sessions answer to
+ * that" is a different thing to tell the user than "nothing does", and a
+ * resolver that collapsed them would have to pick one silently.
+ */
+export type EntityRefMatch =
+  | { kind: 'found'; id: string }
+  | { kind: 'none' }
+  | { kind: 'ambiguous'; labels: string[] };
+
+/**
+ * Find an entity by the identifier a user can actually see (HIVE-92).
+ *
+ * The orchestrator console used to index `entities` directly, which means it
+ * accepted **only the entity id** — `sess-02`. Every other surface in the app
+ * renders {@link entityLabel}, and for a session spawned from a ticket card that
+ * is the Jira key. So the fleet showed `INCORP-455` in the rails, the session
+ * table, the meta bar and the WORK card, and the one place you can type at it
+ * answered `no such session: INCORP-455`.
+ *
+ * ## Why an exact id match wins outright
+ *
+ * Ids are the `entities` map keys, so an exact hit is unique by construction and
+ * cannot be argued with. Checking it first is also what keeps `send sess-02`
+ * byte-identical to its old behaviour, including the case where some *other*
+ * session has been renamed to `sess-02` by its agent — the id's owner wins, and
+ * deterministically, rather than the answer depending on map order.
+ *
+ * ## Why the name match is case-insensitive
+ *
+ * A Jira key is upper-case and a shell prompt is where people type lower-case.
+ * `send incorp-455` is unambiguously about `INCORP-455`, and refusing it teaches
+ * nothing. Ids come along for free: `entityLabel` falls back to the id, so
+ * `SESS-02` resolves too.
+ *
+ * ## Why ambiguity is reported rather than resolved
+ *
+ * `ticketSessionName` already prevents two sessions sharing a name, so this
+ * should be rare — but it is reachable, because an agent can rename itself over
+ * the title stream to whatever it likes, case included. Routing a message to a
+ * coin-flip between two agents is the one outcome worse than refusing it.
+ */
+export const resolveEntityRef = (
+  ref: string,
+  entities: Record<string, Entity>,
+): EntityRefMatch => {
+  if (entities[ref] !== undefined) return { kind: 'found', id: ref };
+
+  const needle = ref.toLowerCase();
+  const hits = Object.values(entities).filter(
+    (entity) => entityLabel(entity).toLowerCase() === needle,
+  );
+
+  if (hits.length === 0) return { kind: 'none' };
+  if (hits.length === 1) return { kind: 'found', id: hits[0]!.id };
+  return { kind: 'ambiguous', labels: hits.map(entityLabel) };
+};

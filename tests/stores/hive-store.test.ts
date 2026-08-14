@@ -590,6 +590,140 @@ describe('hive-store', () => {
       });
     });
 
+    /**
+     * Addressing a session by the identifier on screen (HIVE-92).
+     *
+     * The console indexed `entities` directly, so it accepted only the entity id.
+     * Every other surface renders `entityLabel`, and for a ticket session that is
+     * the Jira key — so the fleet showed `INCORP-455` everywhere and the one
+     * place you can type at it answered `no such session: INCORP-455`.
+     */
+    describe('addressing by name', () => {
+      /** A ticket spawn, which is the only path that names a session up front. */
+      const ticketSession = () =>
+        useHiveStore
+          .getState()
+          .spawnSession('apfm-web', '', 'opus', 'high', 'INCORP-455');
+
+      it('routes to a ticket session by its key', () => {
+        const id = ticketSession();
+
+        run('send INCORP-455 what time is it');
+
+        const entity = useHiveStore.getState().entities[id];
+        expect(entity?.lines.at(-1)?.text).toBe(
+          '❯ [orchestrator] what time is it',
+        );
+        expect(lastLine()).toMatchObject({
+          text: '  routed → INCORP-455',
+          color: 'dim',
+        });
+      });
+
+      it('accepts the key in any case, and echoes back the real one', () => {
+        // A Jira key is upper-case; a prompt is where people type lower-case.
+        const id = ticketSession();
+
+        run('send incorp-455 hello');
+
+        const entity = useHiveStore.getState().entities[id];
+        expect(entity?.lines.at(-1)?.text).toBe('❯ [orchestrator] hello');
+        // The resolved label, not what was typed — otherwise the user cannot
+        // tell whether it matched.
+        expect(lastLine()).toMatchObject({ text: '  routed → INCORP-455' });
+      });
+
+      it('still routes by entity id, which is what it always accepted', () => {
+        const id = ticketSession();
+
+        run(`send ${id} hello`);
+
+        expect(lastLine()).toMatchObject({ text: '  routed → INCORP-455' });
+      });
+
+      it('opens a session by name too, not only send', () => {
+        const id = ticketSession();
+
+        run('open INCORP-455');
+
+        expect(useUiStore.getState().activeTab).toBe(id);
+        expect(lastLine()).toMatchObject({
+          text: '  opened INCORP-455',
+          color: 'dim',
+        });
+      });
+
+      it('prefers an exact id over another session’s name', () => {
+        /**
+         * Reachable because an agent can rename itself to anything over the
+         * title stream, including another row's id. The id is the `entities` map
+         * key, so an exact hit is unique by construction — resolving to its owner
+         * is the only answer that does not depend on map order.
+         */
+        // A ticket key that happens to equal a fixture session's id. The spawn
+        // path is the only thing needed — no rename, so no title-stream guards.
+        useHiveStore
+          .getState()
+          .spawnSession('apfm-web', '', 'opus', 'high', 'lead-form');
+
+        run('send lead-form hello');
+
+        expect(useHiveStore.getState().entities['lead-form']?.lines.at(-1)?.text).toBe(
+          '❯ [orchestrator] hello',
+        );
+        expect(lastLine()).toMatchObject({ text: '  routed → lead-form' });
+      });
+
+      it('refuses an ambiguous target instead of guessing', () => {
+        /**
+         * Two rows answering to one string, which the case-insensitive match
+         * makes reachable even though `ticketSessionName` prevents duplicate
+         * names. Routing a message to a coin flip between two agents is the one
+         * outcome worse than refusing it.
+         */
+        const store = useHiveStore.getState();
+        // `ticketSessionName` de-duplicates case-*sensitively*, so two keys that
+        // differ only in case both keep their name — and both then answer to one
+        // case-insensitive target.
+        const first = store.spawnSession('apfm-web', '', 'opus', 'high', 'Duplicate');
+        const second = store.spawnSession('apfm-web', '', 'opus', 'high', 'duplicate');
+
+        run('send DUPLICATE hello');
+
+        expect(lastLine()).toMatchObject({ color: 'red' });
+        expect(lastLine()?.text).toContain('matches');
+        expect(lastLine()?.text).toContain('use a session id');
+        // Nothing was routed.
+        expect(useHiveStore.getState().entities[first]?.lines.at(-1)?.text).not.toContain(
+          'hello',
+        );
+        expect(useHiveStore.getState().entities[second]?.lines.at(-1)?.text).not.toContain(
+          'hello',
+        );
+      });
+
+      it('still reports a genuinely unknown target', () => {
+        ticketSession();
+        run('send INCORP-999 hello');
+
+        expect(lastLine()).toMatchObject({
+          text: '  no such session: INCORP-999',
+          color: 'red',
+        });
+      });
+
+      it('status prints the name, so the column names what send accepts', () => {
+        ticketSession();
+        run('status');
+
+        const rows = useHiveStore
+          .getState()
+          .orchLines.map((l) => l.text);
+
+        expect(rows.some((row) => row.includes('INCORP-455'))).toBe(true);
+      });
+    });
+
     describe('spawn', () => {
       it('creates a session on a known project and opens it', () => {
         const before = useHiveStore.getState().order.length;

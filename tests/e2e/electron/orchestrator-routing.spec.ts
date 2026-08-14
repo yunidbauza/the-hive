@@ -61,7 +61,11 @@ let out: (name: string) => string;
  * routing and is nothing of the sort. So the bootstrap announces itself into a
  * marker, and `openSession` waits for it.
  */
-function writeConfig(path: string, bootstrapMarker: string): void {
+function writeConfig(
+  path: string,
+  bootstrapMarker: string,
+  argvMarker: string,
+): void {
   writeFileSync(
     path,
     JSON.stringify({
@@ -81,8 +85,23 @@ function writeConfig(path: string, bootstrapMarker: string): void {
        *
        * `false` rather than `exit 1`: the stub is interpolated into a command
        * line, where `exit` would run in the session's own shell and close it.
+       *
+       * ## Why the stub now records its arguments (HIVE-91)
+       *
+       * The session's task is a **positional argument** to `claude` rather than a
+       * line typed into the shell afterwards, so the only way to observe it is to
+       * be the process that receives it. `capture` writes one line per argument,
+       * which makes both halves of the property checkable from a file: that the
+       * task arrived at all, and that it arrived as *one* argument rather than
+       * word-split into several.
+       *
+       * A shell function because the flags and the task are appended *after*
+       * `claudeCommand` by `sessionCommand` — so whatever this string ends with is
+       * what receives them.
        */
-      claudeCommand: `printf bootstrapped > '${bootstrapMarker}'; false`,
+      claudeCommand:
+        `printf bootstrapped > '${bootstrapMarker}'; ` +
+        `capture() { printf '%s\\n' "$@" > '${argvMarker}'; false; }; capture`,
       projects: [
         { id: PROJECT, path: REAL_DIRECTORY },
         /**
@@ -112,7 +131,7 @@ async function expectMarker(path: string, contents: string): Promise<void> {
 test.beforeAll(async ({}, testInfo) => {
   out = (name) => testInfo.outputPath(name);
   const configPath = out('hive-config.json');
-  writeConfig(configPath, out('bootstrapped.txt'));
+  writeConfig(configPath, out('bootstrapped.txt'), out('argv.txt'));
 
   app = await launchHive({
     userDataDir: out('user-data'),
@@ -269,16 +288,61 @@ test('an unmapped spawn prints main’s refusal in the console, verbatim', async
   expect(await consoleText()).toContain('hive-config.json');
 });
 
-test('spawn delivers its task as the session’s first message', async () => {
+test('spawn delivers its task to the agent, as one argument', async () => {
   await backToOrchestrator();
-  const marker = out('task.txt');
-
-  await run(`spawn ${PROJECT} echo task-delivered > '${marker}'`);
 
   /**
-   * The task rides the `SpawnRequest` and is written by main's bootstrap after
-   * the stub's own output settles — the second stage. The renderer never sends
-   * it, because the renderer cannot know when the TUI is ready.
+   * A task that is *also* a valid shell command, which is the whole point.
+   *
+   * If it reaches the agent as an argument — what HIVE-91 made it — the marker
+   * is never written and the task appears verbatim in the argv record. If it is
+   * ever typed into the pty again, the shell runs it and the marker appears.
+   * One task, two mutually exclusive outcomes, and the file system says which.
    */
-  await expectMarker(marker, 'task-delivered');
+  const pwned = out('pwned.txt');
+  const task = `echo pwned > '${pwned}'`;
+
+  await run(`spawn ${PROJECT} ${task}`);
+
+  // Arrived, and as a single argument: the argv record has it on one line.
+  await expect
+    .poll(() => readMarker(out('argv.txt'))?.split('\n'), { timeout: 20_000 })
+    .toContain(task);
+
+  /**
+   * And the shell never ran it. This is the reported defect, at the only layer
+   * that can see it: a real pty, a real login shell, and a `claude` that
+   * exits non-zero — the exact state a missing or broken binary leaves behind.
+   */
+  expect(existsSync(pwned)).toBe(false);
+});
+
+test('send resolves a target that is not a key in the entities map', async () => {
+  /**
+   * HIVE-92 through the UI, and the case-insensitive form is what makes it a
+   * *behavioural* assertion rather than a tautological one.
+   *
+   * The console used to do `entities[target]`, so only an exact key resolved.
+   * `SESS-01` is not a key — it would have answered `no such session: SESS-01`
+   * and routed nothing. That it now reaches the same pty is proof the lookup is
+   * a resolver rather than an index, which is the whole of the fix; the
+   * name-carrying cases a ticket spawn produces are pinned in
+   * `tests/stores/hive-store.test.ts`, where a ticket can be spawned without a
+   * Jira fixture.
+   *
+   * The confirmation is asserted too: it must name the row (`sess-01`) rather
+   * than echo the typing, or a user cannot tell a match from a miss.
+   */
+  await backToOrchestrator();
+  const marker = out('by-case.txt');
+
+  await run(`send ${SESSION.toUpperCase()} echo case-ok > '${marker}'`);
+
+  await expect
+    .poll(consoleText, { timeout: 15_000 })
+    .toContain(`routed → ${SESSION}`);
+  expect(await consoleText()).not.toContain(
+    `no such session: ${SESSION.toUpperCase()}`,
+  );
+  await expectMarker(marker, 'case-ok');
 });

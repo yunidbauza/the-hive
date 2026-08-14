@@ -151,6 +151,14 @@ const TEST_UUID = '00000000-0000-4000-8000-000000000000';
  */
 const BOOT = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --session-id ${TEST_UUID} && exit`;
 
+/**
+ * The same command line for a spawn that carries a task (HIVE-91).
+ *
+ * The task is a positional argument on `BOOT`, not a second thing written into
+ * the pty after it — which is why there is a constant for it at all.
+ */
+const BOOT_WITH_TASK = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --session-id ${TEST_UUID} 'fix the hero' && exit`;
+
 /** How long after a stage's text its submitting `\r` follows (HIVE-63). */
 const SUBMIT = 300;
 
@@ -285,11 +293,13 @@ describe('what a session runs', () => {
     expect(written).not.toContain('claude-hooks.settings.dark.json');
   });
 
-  it('delivers a spawn task as the session’s first message', () => {
+  it('delivers a spawn task as claude’s initial prompt, on the command line', () => {
     /**
-     * Two stages, one mechanism (story 097): the shell settles and `claude`
-     * goes in, then the TUI settles and the task goes in. Timed here rather
-     * than in the renderer, which has no signal for "the TUI is ready".
+     * One stage, not two (HIVE-91). Story 097 wrote the task as a *second*
+     * stage once the TUI's output had settled, which meant a `claude` that
+     * failed to start handed the user's instruction to the login shell to run
+     * as a command. It is now an argument, so it cannot exist as pty input on
+     * its own.
      */
     sessions.open({ ...OPEN, task: 'fix the hero' });
     const sessionId = mintedFor('hero-refresh');
@@ -297,28 +307,43 @@ describe('what a session runs', () => {
     emitData({ sessionId, chunk: '$ ' });
     vi.advanceTimersByTime(8);
     vi.advanceTimersByTime(150);
-    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, BOOT);
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, BOOT_WITH_TASK);
+
+    vi.advanceTimersByTime(SUBMIT);
+    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
 
     /**
-     * Stage one's `\r` first. Stage two is armed inside the submit timer, so
-     * until this elapses there is no second stage to settle — the ordering that
-     * keeps the task off the command line (HIVE-63).
+     * The TUI paints — the signal the removed second stage waited for. Nothing
+     * further may be written, however long we wait.
      */
-    vi.advanceTimersByTime(SUBMIT);
-    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
-
     emitData({ sessionId, chunk: '╭─ claude ─╮' });
-    vi.advanceTimersByTime(8);
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(6_000);
 
-    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, 'fix the hero');
-    vi.advanceTimersByTime(SUBMIT);
-    expect(supervisor.write).toHaveBeenLastCalledWith(sessionId, '\r');
-
-    // And the whole exchange, in order.
+    // The whole exchange, in order: one command, one carriage return.
     expect(vi.mocked(supervisor.write).mock.calls.map((call) => call[1]).join('')).toBe(
-      `${BOOT}\rfix the hero\r`,
+      `${BOOT_WITH_TASK}\r`,
     );
+  });
+
+  it('never writes the task as a line of its own', () => {
+    /**
+     * The reported defect, pinned at the layer that assembles the command. A
+     * bare `fix the hero` reaching the pty is a task the shell will run if
+     * `claude` is not there to read it.
+     */
+    sessions.open({ ...OPEN, task: 'fix the hero' });
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(158 + SUBMIT);
+    emitData({ sessionId, chunk: 'zsh: command not found: claude' });
+    vi.advanceTimersByTime(6_000);
+
+    expect(
+      vi.mocked(supervisor.write).mock.calls.filter(
+        (call) => call[1] === 'fix the hero',
+      ),
+    ).toHaveLength(0);
   });
 
   it('does not deliver the task again when a surface reattaches', () => {
@@ -336,7 +361,7 @@ describe('what a session runs', () => {
 
     expect(
       vi.mocked(supervisor.write).mock.calls.filter(
-        (call) => call[1] === 'fix the hero',
+        (call) => call[1] === BOOT_WITH_TASK,
       ),
     ).toHaveLength(1);
   });

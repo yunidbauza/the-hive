@@ -125,6 +125,20 @@ export interface SessionOptions {
    * so the unquoted version split into two arguments on every Mac.
    */
   settingsPath?: string;
+  /**
+   * The session's opening instruction, as `claude`'s initial prompt.
+   *
+   * An **argument**, not a second thing typed into the shell afterwards, and
+   * that distinction is the whole of HIVE-91. See {@link sessionCommand} for
+   * what the two-stage version did when `claude` failed to start.
+   *
+   * Untrusted free text — it comes from the console's `spawn <repo> <task…>` and
+   * from the picker's message box — so unlike every other value here it is
+   * {@link shellQuote}d rather than covered by a closed-list guard. It is the
+   * second argument on this command line to need that, for the same reason
+   * `settingsPath` does and a much more obvious one.
+   */
+  task?: string;
 }
 
 /**
@@ -181,7 +195,7 @@ export interface SessionOptions {
  * six months later. If a value with a space, a quote or a `$` is ever added,
  * this is the line that breaks.
  *
- * ## Why the flags go *before* `&&`, and nothing goes after
+ * ## Why the flags and the task go *before* `&&`, and nothing goes after
  *
  * They are arguments to `claude`, so they bind to it and not to `exit`. The
  * short-circuit still measures what it always measured: `claude` ending
@@ -189,6 +203,40 @@ export interface SessionOptions {
  * fire, and the login shell stays up with the CLI's own complaint on screen —
  * which is the right outcome for a mistyped model and the same failure mode a
  * mistyped `claudeCommand` already has.
+ *
+ * ## Why the task is an argument, and not typed in afterwards (HIVE-91)
+ *
+ * It used to be a **second stage**: this command went in, `createBootstrap`
+ * waited for `claude`'s TUI to stop painting, and then wrote the task as a
+ * separate line. That is a timing guess about another program's startup, and
+ * when the guess is wrong there is no safe failure — the task is written into
+ * whatever is reading the pty. When `claude` does not start at all the thing
+ * reading the pty is **the login shell**, so it ran the user's instruction as a
+ * command line:
+ *
+ * ```
+ * $ claude --model opus … && exit
+ * zsh: command not found: claude          # or a recursive ~/.zshrc wrapper
+ * $ what time is it
+ * what: time: No such file or directory
+ * ```
+ *
+ * Which is both a lost task and arbitrary text handed to a shell. Passing it as
+ * `claude <flags> '<task>'` closes the window structurally rather than making
+ * the guess better: there is only one write, so there is no moment at which the
+ * task exists as pty input on its own. If `claude` never starts, the task never
+ * goes anywhere — it was an argument to a process that failed.
+ *
+ * Verified against Claude Code 2.1.232 on a real pty before this was written:
+ * the positional argument is read as the initial prompt, it is **submitted**
+ * rather than merely typed into the box, and the session stays interactive
+ * afterwards instead of exiting once it has answered. All three matter — the
+ * middle one is what the removed stage existed to achieve, and the last is what
+ * makes it safe to keep `&& exit` bound to a clean quit.
+ *
+ * This also retires the paste-threshold problem HIVE-63 worked around. A task
+ * longer than ~64 characters was treated by the TUI as a paste, which swallowed
+ * its own carriage return; an argument has no input box to be pasted into.
  */
 export const sessionCommand = (
   claudeCommand: string,
@@ -199,6 +247,7 @@ export const sessionCommand = (
     sessionUuid,
     settingsPath,
     subscriptionAuth = false,
+    task,
   }: SessionOptions = {},
 ): string => {
   const flags = [
@@ -240,7 +289,27 @@ export const sessionCommand = (
    */
   const prefix = subscriptionAuth ? `unset ${AUTH_ENV_KEYS.join(' ')}; ` : '';
 
-  return `${prefix}${[claudeCommand, ...flags].join(' ')} && exit`;
+  /**
+   * An empty task is **omitted**, not quoted into an empty argument.
+   *
+   * The picker spawns with `''` rather than `undefined` — see
+   * `new-session-picker.tsx` — so this is the common path, not a defensive
+   * flourish. `claude ''` is a positional argument that happens to be empty,
+   * which is a request to open with a blank prompt rather than no prompt at all.
+   *
+   * Newlines are flattened for the reason the whole module exists: this string
+   * is written into a pty and terminated by one `\r`, so an embedded newline
+   * would submit the line early and leave the tail of the task to be read by the
+   * shell. The console's grammar cannot produce one (`parse-command.ts` splits on
+   * whitespace) but the picker's message box can, and "cannot happen today" is a
+   * weaker guarantee than one `replaceAll` here.
+   */
+  const initialPrompt =
+    task === undefined || task.trim() === ''
+      ? []
+      : [shellQuote(task.replaceAll(/[\r\n]+/g, ' ').trim())];
+
+  return `${prefix}${[claudeCommand, ...flags, ...initialPrompt].join(' ')} && exit`;
 };
 
 export interface BootstrapOptions {
@@ -273,10 +342,12 @@ export interface Bootstrap {
   /**
    * Arm a freshly spawned session. Idempotent per entity.
    *
-   * With a `task`, the session gets a second stage: the command goes in first,
-   * then the task once *its* output has settled. See {@link createBootstrap}.
+   * One stage, always: the command goes in once the shell has settled and that
+   * is the end of it. The session's task rides *inside* `command` as `claude`'s
+   * initial prompt — see {@link sessionCommand} — rather than following it as a
+   * second write, which is what HIVE-91 removed.
    */
-  arm(entityId: string, command: string, task?: string): void;
+  arm(entityId: string, command: string): void;
   /** Report output. The first one starts the debounce. */
   sawOutput(entityId: string): void;
   /** Abandon a pending bootstrap — the session died before it ran. */
@@ -288,29 +359,6 @@ export interface Bootstrap {
 
 interface Pending {
   command: string;
-  /**
-   * Restart the debounce on **every** chunk rather than only the first.
-   *
-   * Set for the task stage, and the difference is the whole correctness of it.
-   * Stage one's first output genuinely is the shell's prompt, so first-chunk +
-   * debounce is right there — and restarting on every chunk would let a long
-   * motd postpone the bootstrap indefinitely, which is what the fallback and
-   * this flag's absence guard against.
-   *
-   * Stage two has no such luck: the first output after `claude\r` is the line
-   * discipline's **echo of the command**, arriving in milliseconds, so a
-   * first-chunk clock fires ~150ms after `claude` was invoked and long before
-   * its TUI has painted. Waiting for the output to go *quiet* is the observable
-   * that "the TUI has finished starting" actually has, and `fallbackMs` still
-   * caps it for a TUI that never stops animating.
-   */
-  settleOnEveryChunk?: boolean;
-  /**
-   * Written after the *next* settle, once `command`'s own output has quietened
-   * (story 097). Undefined for an ordinary bootstrap and for the second stage
-   * itself, which is what makes the re-arm terminate.
-   */
-  task?: string;
   timer: ReturnType<typeof setTimeout>;
   /** True once the first chunk has arrived and the debounce is running. */
   settling: boolean;
@@ -327,8 +375,6 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
   } = options;
 
   const pending = new Map<string, Pending>();
-  /** Absolute cap for a stage that restarts its debounce. See `Pending`. */
-  const deadlines = new Map<string, number>();
   /** Stages whose text is written and whose `\r` has not gone yet (HIVE-63). */
   const submits = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -336,7 +382,6 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
     const entry = pending.get(entityId);
     if (!entry) return;
     pending.delete(entityId);
-    deadlines.delete(entityId);
     if (silent) onSilentStart?.(entityId);
     /**
      * The text and its `\r` go in as **two** writes (HIVE-63).
@@ -371,65 +416,29 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
         /**
          * **Everything after the stage happens here, after the `\r`.**
          *
-         * The first version of this split armed the next stage — and released
-         * held input — beside the *text* write, while the `\r` was still 300ms
-         * away. That is longer than the 150ms settle, and the pty's echo of the
-         * text is itself output, so the second stage's debounce started and
-         * fired inside the gap. The shell then received
-         * `…&& exitRefactor the checkout flow…`: the task appended to the
-         * command line, the command corrupted, the task lost. Which is
-         * precisely the defect the split exists to fix, reintroduced one level
-         * up and harder to see, because the text is not even left in an input
-         * box to look at.
+         * Held input is released only now. Releasing it beside the *text* write
+         * would leave a 300ms window in which a user's keystrokes are appended
+         * to the command line itself — the shell then ran
+         * `claude --name sess-01 && exithello`.
          *
-         * So the ordering rule is now structural rather than a matter of
-         * arithmetic between two constants: nothing follows a stage until that
-         * stage has actually been submitted.
+         * That window is also what made the old second stage unfixable by
+         * timing: its debounce was started by the pty's echo of *this* text and
+         * fired inside the gap, appending the task to the command line
+         * (`…&& exitRefactor the checkout flow…`). The task is now an argument
+         * inside `entry.command`, so there is no second stage to order against
+         * this one, and the rule reduces to: submit, then release.
          */
-        if (entry.task === undefined) {
-          // Held input is released only now — releasing it beside the text
-          // would append the user's keystrokes to the command line itself.
-          onComplete?.(entityId);
-          return;
-        }
-
-        /**
-         * The task is the same problem one level down, so it gets the same
-         * answer.
-         *
-         * `claude` has to start and paint its prompt before it will accept
-         * input, and writing into that window loses the text exactly as writing
-         * into the shell's startup would. The renderer cannot time it —
-         * `session:status` carries `working | idle | done` and deliberately
-         * nothing finer — so main does, with the mechanism it already has.
-         *
-         * Re-arming rather than chaining is what makes this cheap: `settling:
-         * false` means the TUI's first paint restarts the identical debounce,
-         * the fallback still covers a TUI that prints nothing, and `cancel`
-         * already reaches it — a session that dies between the two stages drops
-         * its task with everything else. The new entry carries no `task` of its
-         * own, which is what terminates the recursion.
-         */
-        pending.set(entityId, {
-          command: entry.task,
-          settleOnEveryChunk: true,
-          settling: false,
-          timer: setTimeout(() => fire(entityId, true), fallbackMs),
-        });
-        // The fallback is the cap on "quiet": a TUI that never stops painting
-        // still gets its instruction, once, rather than never.
-        deadlines.set(entityId, Date.now() + fallbackMs);
+        onComplete?.(entityId);
       }, submitDelayMs),
     );
   }
 
   return {
-    arm(entityId, command, task) {
+    arm(entityId, command) {
       // Re-arming would stack a second timer and write the command twice.
       if (pending.has(entityId)) return;
       pending.set(entityId, {
         command,
-        ...(task === undefined ? {} : { task }),
         settling: false,
         timer: setTimeout(() => fire(entityId, true), fallbackMs),
       });
@@ -438,21 +447,6 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
     sawOutput(entityId) {
       const entry = pending.get(entityId);
       if (!entry) return;
-
-      if (entry.settleOnEveryChunk) {
-        /**
-         * Wait for quiet, capped by the fallback the stage was armed with.
-         *
-         * Without the cap this could be postponed forever by a TUI that paints
-         * continuously; without the restart it fires on the command's own echo.
-         */
-        const deadline = deadlines.get(entityId);
-        if (deadline !== undefined && Date.now() >= deadline) return;
-        entry.settling = true;
-        clearTimeout(entry.timer);
-        entry.timer = setTimeout(() => fire(entityId, false), debounceMs);
-        return;
-      }
 
       // Only the *first* chunk starts the clock. Restarting the debounce on
       // every chunk would postpone the bootstrap indefinitely behind a shell
@@ -484,7 +478,6 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
       if (!entry) return;
       clearTimeout(entry.timer);
       pending.delete(entityId);
-      deadlines.delete(entityId);
     },
 
     /**
@@ -506,7 +499,6 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
       for (const entry of pending.values()) clearTimeout(entry.timer);
       for (const submit of submits.values()) clearTimeout(submit);
       pending.clear();
-      deadlines.clear();
       submits.clear();
     },
   };
