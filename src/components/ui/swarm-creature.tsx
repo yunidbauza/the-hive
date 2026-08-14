@@ -61,10 +61,16 @@ export function SwarmCreature({
    * per surface rather than chosen per render:
    *
    * - **Hive** — the orchestrator's empty fleet, the picker's first run, the
-   *   settings card. The app's own face, and it leads the main screen.
-   * - **Overlord** — projects. It hovers and watches without acting.
-   * - **Spire** — work and pull requests. Things with a lifecycle, mid-morph.
+   *   settings projects card, and the explorer's empty repository. The app's own
+   *   face, territory, and the thing that leads the main screen.
+   * - **Overlord** — the projects rail, and the inbox. It hovers and watches
+   *   without acting, which is what both of those states are.
+   * - **Spire** — work, pull requests, and the editor with no file. Things with
+   *   a lifecycle, caught mid-morph.
    * - **Hydralisk** — agents. The unit that does the work.
+   *
+   * That is all ten call sites; a reviewer should be able to check any one of
+   * them against this list and find it here.
    *
    * A surface that picks a different creature than its neighbours in the same
    * state turns the channel back into noise, which is the whole reason this is

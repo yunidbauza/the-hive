@@ -2,9 +2,7 @@ import { ArrowClockwise } from '@phosphor-icons/react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
 
-import { RAIL_CREATURE_SIZE } from '@components/ui/empty-state';
-import { SwarmCreature } from '@components/ui/swarm-creature';
-import { SwarmLine } from '@components/ui/swarm-line';
+import { EmptyState } from '@components/ui/empty-state';
 import { PrCard } from '@features/pull-requests/components/pr-card';
 import { PrListSkeleton } from '@features/pull-requests/components/pr-card-skeleton';
 import { usePrs, usePrSource, useRefreshPrs, type PrSource } from '@stores/hive-store';
@@ -141,19 +139,13 @@ export function PrsPanel() {
         the app is looking in the wrong place.
       */}
       {prs.length === 0 && source.kind === 'live' ? (
-        <div className="flex flex-col gap-[3px]">
-          <div className="px-1 pb-0.5">
-            <SwarmCreature creature="spire" size={RAIL_CREATURE_SIZE} />
-          </div>
-          <SwarmLine phraseKey="empty.pullRequests" />
-          <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
-            No open pull requests of yours across{' '}
-            {source.repos === 1
-              ? '1 repository'
-              : `${String(source.repos)} repositories`}
-            .
-          </p>
-        </div>
+        <EmptyState phrase="empty.pullRequests" creature="spire">
+          No open pull requests of yours across{' '}
+          {source.repos === 1
+            ? '1 repository'
+            : `${String(source.repos)} repositories`}
+          .
+        </EmptyState>
       ) : null}
     </div>
   );

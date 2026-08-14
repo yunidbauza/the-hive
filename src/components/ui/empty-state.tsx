@@ -15,6 +15,29 @@ import type { PhraseKey } from '@lib/swarm/phrases';
 export const RAIL_CREATURE_SIZE = 44;
 
 /**
+ * A creature without a phrase is a compile error, not a silent no-op.
+ *
+ * The sprite is rendered inside the flavoured branch, so `creature` alone would
+ * type-check, lint, and draw nothing — with no error to explain why. Twenty-odd
+ * call sites still pass neither, and they keep working; what the union removes
+ * is the one combination that looks correct and isn't.
+ */
+type EmptyStateProps = {
+  /** What is missing. One sentence. */
+  children: ReactNode;
+  /** How to fix it. One sentence, or a control. */
+  action?: ReactNode;
+} & (
+  | {
+      /** Which pool to draw a flavour line from. */
+      phrase: PhraseKey;
+      /** The sprite above the flavour line. 44px — see the note above. */
+      creature?: Creature;
+    }
+  | { phrase?: undefined; creature?: never }
+);
+
+/**
  * What a left-rail panel says when it has nothing to list.
  *
  * ## Why this exists at all
@@ -58,16 +81,7 @@ export function EmptyState({
   action,
   phrase,
   creature,
-}: {
-  /** What is missing. One sentence. */
-  children: ReactNode;
-  /** How to fix it. One sentence, or a control. */
-  action?: ReactNode;
-  /** Which pool to draw a flavour line from. Omit for no flavour line. */
-  phrase?: PhraseKey;
-  /** The sprite above the flavour line. Requires `phrase`; 44px in a rail. */
-  creature?: Creature;
-}) {
+}: EmptyStateProps) {
   const body = (
     <p className="px-1 py-1 text-[11.5px] leading-[1.45] text-subtle">
       {children}

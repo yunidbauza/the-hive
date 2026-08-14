@@ -122,6 +122,13 @@ for (const { tab, rail, pool, cast, keeps } of RAILS) {
 
     await region.getByRole('tab', { name: tab }).click();
 
+    /**
+     * Exactly one sprite in the rail, and it is the cast one. The count is
+     * half the guarantee: bounding only the sprite this test expects would let
+     * a second, larger creature appear beside it and still pass.
+     */
+    await expect(region.locator('[data-creature]')).toHaveCount(1);
+
     const creature = region.locator(`[data-creature="${cast}"]`);
     await expect(creature).toBeVisible();
 
