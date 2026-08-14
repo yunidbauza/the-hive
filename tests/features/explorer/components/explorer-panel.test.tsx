@@ -220,6 +220,22 @@ describe('ExplorerPanel — the tree', () => {
     expect(useEditorStore.getState().activeKey).toBe('apfm-web:README.md');
   });
 
+  /**
+   * The rail is clickable behind a full-stage overlay now. Without this, the
+   * file opened *behind* settings: the row highlighted, the stage did not
+   * move, and the editor only appeared once the overlay was dismissed by hand.
+   */
+  it('dismisses a covering overlay so the file it opened is visible', async () => {
+    useUiStore.getState().openSettings();
+    render(<ExplorerPanel />);
+    await screen.findByText('README.md');
+
+    await userEvent.click(row('README.md'));
+
+    expect(useEditorStore.getState().activeKey).toBe('apfm-web:README.md');
+    expect(useUiStore.getState()).toMatchObject({ settings: false, picker: false });
+  });
+
   it('says when an expanded folder is empty', async () => {
     render(<ExplorerPanel />);
     await screen.findByText('README.md');

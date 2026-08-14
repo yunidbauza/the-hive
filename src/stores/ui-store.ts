@@ -80,6 +80,7 @@ interface UiState {
   toggleProject: (id: string) => void;
   openPicker: (ticketKey?: string) => void;
   closePicker: () => void;
+  revealStage: () => void;
   openSettings: () => void;
   closeSettings: () => void;
   setPickerQuery: (query: string) => void;
@@ -148,9 +149,41 @@ export const useUiStore = create<UiState>()((set) => ({
    * ticket key can never outlive the overlay it was set for, because the next
    * open overwrites it before anything can read it.
    */
+  /**
+   * `settings: false` is not defensive tidying — it is the other half of
+   * `openSettings`, which has always dismissed the picker.
+   *
+   * `resolveView` gives settings precedence, so setting `picker` while settings
+   * is open changed nothing on screen and then dropped the user into the picker
+   * whenever they next closed settings. That was unreachable while the header
+   * was `pointer-events: none` behind an overlay; making the chrome live is
+   * what exposed it.
+   */
   openPicker: (ticketKey) =>
-    set({ picker: true, pickerQuery: '', pickerTicket: ticketKey ?? null }),
+    set({
+      picker: true,
+      settings: false,
+      pickerQuery: '',
+      pickerTicket: ticketKey ?? null,
+    }),
   closePicker: () => set({ picker: false }),
+
+  /**
+   * Dismiss whatever full-stage overlay is covering the centre, without moving
+   * the user anywhere else.
+   *
+   * For an action taken in the chrome that *targets the stage* — opening a file
+   * from the explorer is the one today. `openTab` and `backToOrch` already do
+   * this as part of navigating; this is the case where the destination is
+   * already correct and only the overlay is in the way.
+   *
+   * It exists because the rails became clickable behind an overlay. Before
+   * that, opening a file from the explorer with settings open was unreachable;
+   * now it would open the file silently *behind* settings — the tree row
+   * highlights, the stage does not change, and the editor appears only once the
+   * overlay is dismissed by hand.
+   */
+  revealStage: () => set({ picker: false, settings: false }),
 
   /**
    * Open settings, dismissing the picker (story 101).
@@ -236,6 +269,9 @@ const pickerActionsSelector = (state: UiState) => ({
   setNewModel: state.setNewModel,
   setNewEffort: state.setNewEffort,
 });
+
+/** Dismiss a full-stage overlay when the destination is already correct. */
+export const useRevealStage = () => useUiStore((state) => state.revealStage);
 
 /** Which tab the center stage is showing. */
 export const useActiveTab = () => useUiStore((state) => state.activeTab);

@@ -33,6 +33,47 @@ describe('ui-store — view state', () => {
     expect(useUiStore.getState().picker).toBe(false);
   });
 
+  /**
+   * The other half of `openSettings`, which has always dismissed the picker.
+   *
+   * `resolveView` gives settings precedence, so a picker opened underneath it
+   * changed nothing on screen and then ambushed the user the next time they
+   * closed settings. Unreachable while the header was inert behind an overlay;
+   * reachable now that the chrome is live.
+   */
+  it('openPicker dismisses settings, the way openSettings dismisses the picker', () => {
+    useUiStore.getState().openSettings();
+
+    useUiStore.getState().openPicker();
+
+    expect(useUiStore.getState()).toMatchObject({ picker: true, settings: false });
+  });
+
+  it('openSettings still dismisses the picker', () => {
+    useUiStore.getState().openPicker();
+
+    useUiStore.getState().openSettings();
+
+    expect(useUiStore.getState()).toMatchObject({ picker: false, settings: true });
+  });
+
+  /**
+   * For an action in the chrome whose destination is already correct — opening
+   * a file from the explorer — where only the overlay is in the way.
+   */
+  it('revealStage clears both overlays and moves nothing else', () => {
+    useUiStore.getState().openTab('webhooks');
+    useUiStore.getState().openSettings();
+
+    useUiStore.getState().revealStage();
+
+    expect(useUiStore.getState()).toMatchObject({
+      picker: false,
+      settings: false,
+      activeTab: 'webhooks',
+    });
+  });
+
   it('backToOrch returns to the orchestrator from any tab', () => {
     useUiStore.getState().openTab('webhooks');
 

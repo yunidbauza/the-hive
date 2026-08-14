@@ -13,6 +13,7 @@ import {
   useBumpFsRevision,
   useCollapseExplorer,
   useFsRevision,
+  useRevealStage,
 } from '@stores/ui-store';
 
 /**
@@ -66,6 +67,7 @@ export function ExplorerPanel() {
    * session that has not moved (HIVE-78).
    */
   const root = useDirectory(projectId ?? '', subRoot, usable, refreshToken);
+  const revealStage = useRevealStage();
 
   const onOpenFile = useCallback(
     (relPath: string) => {
@@ -80,8 +82,16 @@ export function ExplorerPanel() {
        */
       if (nav === 'single') closeAll();
       openFile(projectId, relPath);
+      /**
+       * The rail is clickable behind a full-stage overlay now, so a file opened
+       * from here would otherwise land *behind* settings or the picker: the row
+       * highlights, the stage does not move, and the editor only turns up when
+       * the overlay is dismissed by hand. Opening a file is a request to look
+       * at it.
+       */
+      revealStage();
     },
-    [projectId, nav, closeAll, openFile],
+    [projectId, nav, closeAll, openFile, revealStage],
   );
 
   /**

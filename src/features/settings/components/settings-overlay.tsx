@@ -81,6 +81,35 @@ const PANES: Record<SectionId, ComponentType> = {
   advanced: AdvancedSection,
 };
 
+/**
+ * Has some control inside this overlay claimed Escape for itself?
+ *
+ * ## Presence, not focus
+ *
+ * This used to ask only whether the *event target* sat inside an escape scope,
+ * which was correct only because the focus trap guaranteed focus was still
+ * inside the overlay. The overlay is not modal any more — it leaves the header
+ * and rails live — so a keyboard user can Tab out to the header with a rename
+ * editor still open. Escape pressed there has a target outside every scope, the
+ * guard would decline to fire, and the overlay would close and discard the
+ * edit: exactly the loss `data-escape-scope` was added to prevent.
+ *
+ * The marker lives on the claiming control itself and unmounts with it, so its
+ * presence anywhere is the signal. That keeps the property the attribute was
+ * chosen for — the overlay learns that Escape is spoken for without learning
+ * who spoke for it.
+ *
+ * Exported for its test: this is a document query inside a Radix callback, and
+ * the branch that matters is the one where focus has already left.
+ */
+export function escapeIsClaimed(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+
+  if (el?.closest?.('[data-escape-scope]')) return true;
+
+  return document.querySelector('[data-escape-scope]') !== null;
+}
+
 export function SettingsOverlay() {
   const { closeSettings } = useSettingsActions();
 
@@ -143,8 +172,7 @@ export function SettingsOverlay() {
          * wiring something through here.
          */
         onEscapeKeyDown={(event) => {
-          const target = event.target as HTMLElement | null;
-          if (target?.closest?.('[data-escape-scope]')) event.preventDefault();
+          if (escapeIsClaimed(event.target)) event.preventDefault();
         }}
         /**
          * A click on the header is a click on the header, not a dismissal.

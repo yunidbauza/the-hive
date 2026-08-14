@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { emptySnapshot } from '@shared/config-contract';
 
-import { SettingsOverlay } from '@features/settings/components/settings-overlay';
+import {
+  SettingsOverlay,
+  escapeIsClaimed,
+} from '@features/settings/components/settings-overlay';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
@@ -170,5 +173,59 @@ describe('SettingsOverlay', () => {
 
     // Closing settings returns the user to the terminal they were watching.
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+  });
+});
+
+/**
+ * The predicate behind that guard, on its own.
+ *
+ * It was inline until the overlay stopped being modal. The two tests above
+ * cover the focused cases; the branch that only exists *without* a focus trap —
+ * the key pressed after focus has already left — needs a target outside the
+ * dialog, which is easier to state here than to stage through the component.
+ */
+describe('escapeIsClaimed', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('is false when nothing has claimed the key', () => {
+    document.body.innerHTML = '<input id="plain" />';
+
+    expect(escapeIsClaimed(document.getElementById('plain'))).toBe(false);
+  });
+
+  it('is true for a target inside a claiming subtree', () => {
+    document.body.innerHTML = '<div data-escape-scope=""><input id="inner" /></div>';
+
+    expect(escapeIsClaimed(document.getElementById('inner'))).toBe(true);
+  });
+
+  /**
+   * The branch the non-modal overlay made reachable.
+   *
+   * With no focus trap a keyboard user can Tab out to the header while a rename
+   * editor is still open. Escape pressed there has a target outside every
+   * scope; keying off the target alone would let the overlay close and discard
+   * the edit — the exact loss `data-escape-scope` exists to prevent.
+   */
+  it('is true when focus has left the overlay but an editor is still open', () => {
+    document.body.innerHTML =
+      '<header><button id="theme">theme</button></header>' +
+      '<input id="editor" data-escape-scope="" />';
+
+    expect(escapeIsClaimed(document.getElementById('theme'))).toBe(true);
+  });
+
+  it('is false once the claiming control unmounts', () => {
+    document.body.innerHTML = '<header><button id="theme">theme</button></header>';
+
+    expect(escapeIsClaimed(document.getElementById('theme'))).toBe(false);
+  });
+
+  it('survives a null target, and one that is not an element', () => {
+    // `event.target` is typed `EventTarget`; `document` has no `closest`.
+    expect(escapeIsClaimed(null)).toBe(false);
+    expect(escapeIsClaimed(document)).toBe(false);
   });
 });
