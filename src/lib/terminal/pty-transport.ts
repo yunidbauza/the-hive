@@ -2,6 +2,7 @@
 import type { TermColor } from '@/types/terminal';
 
 
+import { pickPhrase } from '@lib/swarm/phrases';
 import { colorize } from '@lib/terminal/ansi';
 import { signalName } from '@lib/terminal/signals';
 import type {
@@ -92,11 +93,26 @@ function notice(text: string, color: TermColor): string {
  * systems, and only one of them has a path to a terminal cell (see `ansi.ts`).
  */
 const EXITED = notice('session exited', 'dim');
-const LOST = notice('session lost (pty host crashed)', 'red');
 const GAP = notice('output gap detected', 'amber');
 
+/**
+ * The two failure notices carry a phrase, and so must be built per event.
+ *
+ * `EXITED` and `GAP` above are still constants because their text is fixed.
+ * These two are not: `pickPhrase` at module scope would run once, when the
+ * bundle is first imported, and every session in the process for the rest of
+ * the app's life would fail with the same sentence — a bug that only shows up
+ * on the *second* crash, which is the worst kind to find in review.
+ *
+ * The phrase is appended to the existing text, never substituted for it. "code
+ * 1" is the part somebody debugging needs; the swarm half is decoration and is
+ * separated by a middot so it reads as an aside rather than as output.
+ */
 const exitedWithCode = (code: number): string =>
-  notice(`session exited (code ${code})`, 'amber');
+  notice(`session exited (code ${code}) · ${pickPhrase('failed.sessionExit')}`, 'amber');
+
+const hostLost = (): string =>
+  notice(`session lost (pty host crashed) · ${pickPhrase('failed.hostLost')}`, 'red');
 
 const terminatedBy = (signal: number): string =>
   notice(`session terminated (${signalName(signal)})`, 'amber');
@@ -259,7 +275,7 @@ function openChannel(entityId: string): EntityChannel {
       if (event.sessionId !== entityId) return;
       if (channel.closed) return;
       channel.closed = true;
-      emit(channel, LOST);
+      emit(channel, hostLost());
     }),
   ];
 

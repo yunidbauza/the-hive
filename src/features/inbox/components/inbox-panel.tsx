@@ -26,7 +26,10 @@ export function InboxPanel() {
   if (notifs.length === 0) {
     return (
       <div data-panel="inbox" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
-        <EmptyState action="Sessions and pull requests will show up here.">
+        <EmptyState
+          phrase="empty.inbox"
+          action="Sessions and pull requests will show up here."
+        >
           Nothing needs you.
         </EmptyState>
       </div>

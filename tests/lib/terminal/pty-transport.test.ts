@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PHRASES } from '@lib/swarm/phrases';
 import { toSgrIndexed } from '@lib/terminal/ansi';
 import {
   createCloneTransport,
@@ -341,7 +342,12 @@ describe('PtyTransport — lifecycle lines', () => {
       for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 130 });
     });
 
-    expect(text).toContain('── session exited (code 130) ──');
+    /**
+     * The code is asserted, the swarm half is not: it is drawn from a pool and
+     * pinning it here would make this test a coin flip. What matters is that
+     * the diagnostic half survives the decoration.
+     */
+    expect(text).toContain('session exited (code 130)');
     expect(text).toContain(amber);
   });
 
@@ -369,7 +375,7 @@ describe('PtyTransport — lifecycle lines', () => {
       }
     });
 
-    expect(text).toContain('── session exited (code 3) ──');
+    expect(text).toContain('session exited (code 3)');
     expect(text).not.toContain('terminated');
   });
 
@@ -380,8 +386,52 @@ describe('PtyTransport — lifecycle lines', () => {
       }
     });
 
-    expect(text).toContain('── session lost (pty host crashed) ──');
+    expect(text).toContain('session lost (pty host crashed)');
     expect(text).toContain(red);
+  });
+
+  /**
+   * The regression this change came closest to shipping.
+   *
+   * The lifecycle notices used to be module-level `const`s. Appending a drawn
+   * phrase to one of those would call `pickPhrase` exactly once — when the
+   * bundle was first imported — and every crash for the rest of the process
+   * would then read identically. It would look correct in review, look correct
+   * on the first crash, and only be wrong on the second.
+   *
+   * `Math.random` is walked rather than fixed so a frozen phrase fails loudly
+   * instead of occasionally colliding.
+   */
+  it('draws a fresh phrase for each failure, not one per process', () => {
+    /**
+     * The regression this change came closest to shipping.
+     *
+     * The lifecycle notices used to be module-level `const`s. Appending a drawn
+     * phrase to one of those would call `pickPhrase` exactly once — when the
+     * bundle was first imported — and every failure for the rest of the
+     * process would then read identically. It would look correct in review,
+     * look correct on the first crash, and only be wrong on the second.
+     *
+     * The rng is pinned to a different index either side of the reopen, so a
+     * frozen phrase cannot satisfy both halves and the test cannot pass by
+     * coincidence.
+     */
+    const pool = PHRASES['failed.sessionExit'];
+    const exitOnce = () => {
+      for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 1 });
+    };
+
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    transcriptAfter(exitOnce);
+
+    reopenChannel('sess-a');
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+    const text = transcriptAfter(exitOnce);
+
+    const present = pool.filter((candidate) => text.includes(candidate));
+
+    expect(present).toHaveLength(2);
   });
 
   it('reports an output gap when a sequence number is skipped', () => {

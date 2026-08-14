@@ -1,8 +1,10 @@
 import { GitBranch, Plus } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { addProjectToConfig, chooseProjectDirectory } from '@/lib/project-config';
 
+import { SwarmCreature } from '@components/ui/swarm-creature';
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
 import { ProjectsList } from '@features/settings/components/projects-list';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
@@ -30,6 +32,7 @@ import { useProjectConfig } from '@hooks/use-project-config';
  */
 export function ProjectsSection() {
   const snapshot = useProjectConfig();
+  const phrase = useSwarmPhrase('empty.settingsProjects');
 
   /**
    * Whether a dialog is open, so the button cannot be double-fired.
@@ -80,6 +83,8 @@ export function ProjectsSection() {
 
       {declared.length === 0 ? (
         <div className="flex flex-col items-center gap-1 rounded-[7px] border border-dashed border-border px-4 py-6 text-center">
+          <SwarmCreature creature="hive" size={72} />
+          <span className="text-[11.5px] text-muted">{phrase}</span>
           <span className="text-[13px] text-muted">No projects yet.</span>
           <span className="text-[11.5px] text-subtle">
             Add a folder to start a session in it.

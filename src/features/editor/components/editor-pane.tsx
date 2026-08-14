@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+
 import { EditorSurface } from '@components/editor/editor-surface';
 import { Icon } from '@components/ui/icon';
+import { SwarmCreature } from '@components/ui/swarm-creature';
 import {
   EditorNotice,
   NoticeAction,
@@ -56,6 +59,8 @@ export function EditorPane() {
   const appearance = useEditorAppearance();
   const { nav } = useEditorLayout();
   const { edit, save, reload, closeFile } = useEditorActions();
+  const emptyPhrase = useSwarmPhrase('empty.editor');
+  const readingPhrase = useSwarmPhrase('loading.file');
   /** Escape belongs to whichever overlay is up, not to this pane. */
   const settingsOpen = useSettingsOpen();
   const { picker } = usePickerState();
@@ -136,7 +141,32 @@ export function EditorPane() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [nav, key, overlayOpen, closeFile]);
 
-  if (!file) return null;
+  /**
+   * The pane is mounted but has no file to show.
+   *
+   * Reachable only while `activeKey` names a file that is no longer in
+   * `openFiles` — `center-stage` unmounts this whole subtree the moment
+   * `activeKey` goes null, deliberately, so the terminal gets every pixel back.
+   * So this is the inconsistent-for-one-frame case, not "the user closed
+   * everything", and it renders a held creature instead of the blank pane it
+   * used to.
+   *
+   * Making this state routinely visible would mean keeping the editor mounted
+   * with nothing in it, which is exactly the trade `center-stage` argues
+   * against. That is a product decision, not a copy one, and it is not this
+   * change's to make.
+   */
+  if (!file) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 bg-panel-2 px-6 text-center">
+        <SwarmCreature creature="spire" size={96} />
+        <p className="text-[12px] text-muted">{emptyPhrase}</p>
+        <p className="text-[12px] text-subtle">
+          Open a file from the explorer to edit it here.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-panel-2">
@@ -234,7 +264,7 @@ export function EditorPane() {
       ) : null}
 
       {file.refusal === null && file.text === null && file.loading ? (
-        <PaneMessage icon="ph-file">Reading…</PaneMessage>
+        <PaneMessage icon="ph-file">{readingPhrase}</PaneMessage>
       ) : null}
 
       {file.refusal === null && file.text !== null ? (

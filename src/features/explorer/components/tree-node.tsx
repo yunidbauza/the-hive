@@ -1,3 +1,4 @@
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { cn } from '@/lib/utils';
 
 import { Icon } from '@components/ui/icon';
@@ -56,6 +57,11 @@ export function TreeNode({
   const isActive = !isDir && activeKey === fileKey(projectId, relPath);
 
   const children = useDirectory(projectId, relPath, isDir && expanded, refreshToken);
+  /**
+   * Per node, so two folders opening at once do not read as a chorus. It holds
+   * for the life of the row, which outlives the read it labels.
+   */
+  const readingPhrase = useSwarmPhrase('loading.directory');
 
   return (
     <>
@@ -150,7 +156,7 @@ export function TreeNode({
               style={{ paddingLeft: `${8 + (depth + 1) * 12 + 17}px` }}
               className="py-[3px] text-[11.5px] text-subtle"
             >
-              Reading…
+              {readingPhrase}
             </p>
           ) : null}
         </>

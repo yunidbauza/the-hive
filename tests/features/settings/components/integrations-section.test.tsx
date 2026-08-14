@@ -13,6 +13,7 @@ import type {
 } from '@shared/ipc-contract';
 import type { JiraStatus } from '@shared/jira-contract';
 
+import { PHRASES } from '@lib/swarm/phrases';
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
@@ -438,7 +439,15 @@ describe('IntegrationsSection — Jira', () => {
 
     render(<IntegrationsSection />);
 
-    expect(screen.getAllByText('Checking\u2026').length).toBeGreaterThan(0);
+    /**
+     * The verb is drawn from a pool, so this asserts the section says it is
+     * busy — in whichever words it drew — rather than pinning one of them.
+     */
+    const busy = PHRASES['loading.diagnostics'].flatMap((verb) =>
+      screen.queryAllByText(verb),
+    );
+
+    expect(busy.length).toBeGreaterThan(0);
     resolve(null);
   });
 });

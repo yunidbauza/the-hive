@@ -1,6 +1,8 @@
 import { CheckCircle, Circle, WarningCircle, XCircle } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+
 import { SecretField } from '@components/ui/secret-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { clearJiraToken, saveJiraToken, testJiraConnection } from '@lib/jira';
@@ -106,6 +108,7 @@ export function JiraCredentialGroup({
   status,
   onChanged,
 }: JiraCredentialGroupProps) {
+  const testingPhrase = useSwarmPhrase('loading.connection');
   const [draft, setDraft] = useState('');
   const [verdict, setVerdict] = useState<JiraResult<JiraIdentity> | null>(null);
   const [testing, setTesting] = useState(false);
@@ -224,7 +227,7 @@ export function JiraCredentialGroup({
             disabled={testing}
             className="rounded-[6px] border border-border bg-panel-2 px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:cursor-not-allowed disabled:text-subtle disabled:hover:bg-panel-2"
           >
-            {testing ? 'Testing…' : 'Test connection'}
+            {testing ? testingPhrase : 'Test connection'}
           </button>
           <span className="text-[11.5px] text-subtle">
             Calls <code className="font-mono">/rest/api/3/myself</code>.

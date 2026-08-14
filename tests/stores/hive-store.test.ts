@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PHRASES } from '@lib/swarm/phrases';
 import { isSession } from '@/types/entity';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
@@ -250,7 +251,14 @@ describe('hive-store', () => {
 
       const entity = useHiveStore.getState().entities['lead-form'];
       expect(isSession(entity) && entity.status).toBe('working');
-      expect(entity.lines.at(-1)?.text).toBe('✱ Working…');
+      /**
+       * The verb is drawn from a pool now, so the assertion is on the shape of
+       * the line rather than its wording — the marker and the fact that a
+       * working verb is present.
+       */
+      const working = entity.lines.at(-1)?.text ?? '';
+      expect(working.startsWith('✱ ')).toBe(true);
+      expect(PHRASES['working.session']).toContain(working.slice(2));
       // One acknowledgement line for both origins (story 043): the message
       // means the same thing however it arrived.
       expect(entity.lines.at(-2)?.text).toBe('● Acknowledged — working on it');

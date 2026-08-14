@@ -2,6 +2,7 @@ import { ArrowClockwise } from '@phosphor-icons/react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
 
+import { SwarmLine } from '@components/ui/swarm-line';
 import { PrCard } from '@features/pull-requests/components/pr-card';
 import { PrListSkeleton } from '@features/pull-requests/components/pr-card-skeleton';
 import { usePrs, usePrSource, useRefreshPrs, type PrSource } from '@stores/hive-store';
@@ -138,10 +139,16 @@ export function PrsPanel() {
         the app is looking in the wrong place.
       */}
       {prs.length === 0 && source.kind === 'live' ? (
-        <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
-          No open pull requests of yours across{' '}
-          {source.repos === 1 ? '1 repository' : `${String(source.repos)} repositories`}.
-        </p>
+        <div className="flex flex-col gap-[3px]">
+          <SwarmLine phraseKey="empty.pullRequests" />
+          <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
+            No open pull requests of yours across{' '}
+            {source.repos === 1
+              ? '1 repository'
+              : `${String(source.repos)} repositories`}
+            .
+          </p>
+        </div>
       ) : null}
     </div>
   );

@@ -2,10 +2,12 @@ import { MagnifyingGlass } from '@phosphor-icons/react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useRef } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { cn } from '@/lib/utils';
 import type { Effort, Model } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
+import { SwarmCreature } from '@components/ui/swarm-creature';
 import { can } from '@config/runtime';
 import { OptionStepper } from '@features/sessions/components/option-stepper';
 import { useProjectAccess, useProjectConfig } from '@hooks/use-project-config';
@@ -57,6 +59,14 @@ export function NewSessionPicker() {
   const { closePicker, setPickerQuery, setNewModel, setNewEffort } =
     usePickerActions();
   const { openSettings } = useSettingsActions();
+  /**
+   * Two pools, because the two states are not the same thing: first run means
+   * nothing exists yet, and no-match means plenty exists and none of it is what
+   * was typed. Sharing a pool would let "the creep has not yet spread" answer a
+   * search, which is wrong about the world.
+   */
+  const firstRunPhrase = useSwarmPhrase('empty.projects');
+  const noMatchPhrase = useSwarmPhrase('noMatch.picker');
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -138,6 +148,10 @@ export function NewSessionPicker() {
         */}
         {config?.templateWritten ? (
           <div className="flex max-w-[560px] flex-col items-center gap-2.5">
+            <SwarmCreature creature="hive" size={120} />
+            <p className="text-center font-mono text-[11.5px] text-muted">
+              {firstRunPhrase}
+            </p>
             <p className="text-center font-mono text-[11.5px] text-subtle">
               no projects yet — add one of your repositories to open a session in it
             </p>
@@ -205,9 +219,12 @@ export function NewSessionPicker() {
 
           <div className="max-h-[220px] overflow-y-auto">
             {matches.length === 0 ? (
-              <p className="px-1 py-2 font-mono text-xs text-subtle">
-                {`no projects match "${pickerQuery.trim()}"`}
-              </p>
+              <div className="flex flex-col gap-[3px] px-1 py-2">
+                <p className="font-mono text-xs text-muted">{noMatchPhrase}</p>
+                <p className="font-mono text-xs text-subtle">
+                  {`no projects match "${pickerQuery.trim()}"`}
+                </p>
+              </div>
             ) : (
               matches.map((project) => (
                 <ProjectRow

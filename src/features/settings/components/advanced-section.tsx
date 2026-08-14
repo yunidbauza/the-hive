@@ -5,6 +5,8 @@ import {
 } from '@phosphor-icons/react';
 import { useCallback, useEffect, useState } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+
 import { ConfigResetConfirm } from '@features/settings/components/config-reset-confirm';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
@@ -139,7 +141,18 @@ function PtyCounters({ rows }: { rows: readonly PtyDiagnostics[] }) {
  * A function rather than a map, because two of the seven states need the
  * version interpolated and a map would either lose that or store a template.
  */
-function updateLine(status: UpdateStatus): string {
+function updateLine(
+  status: UpdateStatus,
+  /**
+   * Drawn by the caller, not here.
+   *
+   * This function runs on every render of the section, so a `pickPhrase` inside
+   * it would re-roll the wording while the user watched a download progress —
+   * the exact flicker `use-swarm-phrase` exists to prevent. The component holds
+   * the phrase steady and passes it down.
+   */
+  phrases: { downloading: string; ready: string },
+): string {
   switch (status.state) {
     case 'unsupported':
       return `Version ${status.currentVersion}.`;
@@ -148,9 +161,9 @@ function updateLine(status: UpdateStatus): string {
     case 'available':
       return `Version ${status.availableVersion} is available.`;
     case 'downloading':
-      return `Downloading ${status.availableVersion}…`;
+      return `${phrases.downloading} ${status.availableVersion}…`;
     case 'ready':
-      return `Version ${status.availableVersion} is ready — restart to install.`;
+      return `${phrases.ready} — restart to install Version ${status.availableVersion}.`;
     case 'error':
       return 'The last check did not complete.';
     default:
@@ -169,6 +182,8 @@ function updateLine(status: UpdateStatus): string {
 
 export function AdvancedSection() {
   const snapshot = useProjectConfig();
+  const downloadingPhrase = useSwarmPhrase('loading.update');
+  const readyPhrase = useSwarmPhrase('complete.update');
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -378,7 +393,7 @@ export function AdvancedSection() {
         ) : (
           <>
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[12.5px] text-muted">{updateLine(update)}</p>
+              <p className="text-[12.5px] text-muted">{updateLine(update, { downloading: downloadingPhrase, ready: readyPhrase })}</p>
               <button
                 type="button"
                 disabled={checking || !update.capability.canCheck}

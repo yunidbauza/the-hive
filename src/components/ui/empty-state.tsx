@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react';
 
+import { SwarmLine } from '@components/ui/swarm-line';
+import type { PhraseKey } from '@lib/swarm/phrases';
+
 /**
  * What a left-rail panel says when it has nothing to list.
  *
@@ -24,21 +27,51 @@ import type { ReactNode } from 'react';
  * No icon and no centred hero block. These sit in a 268px rail beside a
  * terminal the user is trying to read, and a decorative empty state would take
  * more of their attention than the thing it is apologising for.
+ *
+ * ## The flavour line
+ *
+ * `phrase` opts a panel into a line of swarm above the copy — and *above* is
+ * the whole design. The paragraph below it is untouched: what is missing, then
+ * the way out, exactly as before. Nothing became decorative instead of useful,
+ * which is the only reading under which the paragraph above stays true.
+ *
+ * The creature that goes with the phrase on the full-stage surfaces is
+ * deliberately not available here, for the reason already stated: a 268px rail
+ * beside a live terminal is not the place for an illustration.
  */
 export function EmptyState({
   children,
   action,
+  phrase,
 }: {
   /** What is missing. One sentence. */
   children: ReactNode;
   /** How to fix it. One sentence, or a control. */
   action?: ReactNode;
+  /** Which pool to draw a flavour line from. Omit for no flavour line. */
+  phrase?: PhraseKey;
 }) {
-  return (
+  const body = (
     <p className="px-1 py-1 text-[11.5px] leading-[1.45] text-subtle">
       {children}
       {action === undefined ? null : <> {action}</>}
     </p>
+  );
+
+  /**
+   * The un-flavoured case returns the bare paragraph rather than a wrapper
+   * around it. Twenty-odd call sites predate this prop and their layout was
+   * tuned against that exact element; introducing a flex container for all of
+   * them to add nothing would be a silent re-spacing of panels this change has
+   * no business touching.
+   */
+  if (phrase === undefined) return body;
+
+  return (
+    <div className="flex flex-col gap-[3px]">
+      <SwarmLine phraseKey={phrase} />
+      {body}
+    </div>
   );
 }
 

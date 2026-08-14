@@ -59,9 +59,23 @@ afterEach(() => {
 });
 
 describe('EditorPane', () => {
-  it('renders nothing when no file is active', () => {
+  /**
+   * The pane used to render nothing here. It now holds a creature and a line,
+   * which is strictly better than a blank rectangle — but it is still a state
+   * the user almost never reaches: `center-stage` unmounts this whole subtree
+   * the moment `activeKey` goes null, so this is the
+   * inconsistent-for-one-frame case rather than "the user closed everything".
+   */
+  it('holds a creature when it is mounted with no active file', () => {
     const { container } = render(<EditorPane />);
-    expect(container).toBeEmptyDOMElement();
+
+    expect(container).not.toBeEmptyDOMElement();
+    expect(
+      container.querySelector('[data-creature="spire"]'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Open a file from the explorer to edit it here.'),
+    ).toBeInTheDocument();
   });
 
   it('renders the file’s text', async () => {

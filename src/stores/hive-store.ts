@@ -27,6 +27,7 @@ import {
   projectConfigSnapshot,
   subscribeProjectConfig,
 } from '@lib/project-config';
+import { pickPhrase } from '@lib/swarm/phrases';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import type { PrRecord } from '@shared/github-contract';
@@ -645,7 +646,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ),
         line('● Reading CLAUDE.md, mapping repo…', 'blue'),
         task
-          ? line(`✱ Working… ${task}`, 'amber')
+          ? line(`✱ ${pickPhrase('working.session')} ${task}`, 'amber')
           : line('· Ready — type below to give this session its task', 'dim'),
       ],
     };
@@ -807,7 +808,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       timer: setTimeout(() => {
         get().appendEntityLines(
           id,
-          [line(ACK_LINE, 'blue'), line('✱ Working…', 'amber')],
+          [line(ACK_LINE, 'blue'), line(`✱ ${pickPhrase('working.session')}`, 'amber')],
           'working',
         );
       }, ACK_DELAY_MS),

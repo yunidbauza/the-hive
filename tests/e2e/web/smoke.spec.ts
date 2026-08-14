@@ -89,9 +89,16 @@ test('opens every panel on an empty state, not on sample data', async ({ page })
   await expect(page.getByText(/No agents running/i)).toBeVisible();
 });
 
-/** The orchestrator, on a machine where nothing is running. */
+/**
+ * The orchestrator, on a machine where nothing is running.
+ *
+ * `toContainText` rather than `toHaveText`: the block now leads with a drawn
+ * flavour line above this sentence, and pinning the whole string would make
+ * this spec a coin flip. The sentence that tells the user what to do is the
+ * part that must not move — `swarm.spec.ts` asserts the flavour half.
+ */
 test('the orchestrator says its fleet is empty', async ({ page }) => {
-  await expect(page.getByTestId('session-table-empty')).toHaveText(
+  await expect(page.getByTestId('session-table-empty')).toContainText(
     'No sessions running — start one with New session.',
   );
 });

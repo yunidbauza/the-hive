@@ -1,6 +1,8 @@
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+
 import { JiraConnectionGroup } from '@features/settings/components/jira-connection-group';
 import { JiraCredentialGroup } from '@features/settings/components/jira-credential-group';
 import { JiraQueryGroup } from '@features/settings/components/jira-query-group';
@@ -299,6 +301,12 @@ function GhSummary({
 
 export function IntegrationsSection() {
   const snapshot = useProjectConfig();
+  /**
+   * One phrase for the whole section, not one per probe. Four different verbs
+   * stacked down a settings pane reads as noise; the same one four times reads
+   * as a system doing four things.
+   */
+  const probing = useSwarmPhrase('loading.diagnostics');
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
   const [jira, setJira] = useState<JiraStatus | null>(null);
 
@@ -376,7 +384,7 @@ export function IntegrationsSection() {
       >
         <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
           {status === null ? (
-            <p className="text-[12.5px] text-subtle">Checking…</p>
+            <p className="text-[12.5px] text-subtle">{probing}</p>
           ) : (
             <GhSummary gh={status.gh} loginEnv={status.loginEnv} />
           )}
@@ -389,7 +397,7 @@ export function IntegrationsSection() {
       >
         <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
           {status === null ? (
-            <p className="text-[12.5px] text-subtle">Checking…</p>
+            <p className="text-[12.5px] text-subtle">{probing}</p>
           ) : (
             <PathSourceLine loginEnv={status.loginEnv} />
           )}
@@ -402,7 +410,7 @@ export function IntegrationsSection() {
       >
         <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
           {status === null ? (
-            <p className="text-[12.5px] text-subtle">Checking…</p>
+            <p className="text-[12.5px] text-subtle">{probing}</p>
           ) : (
             <TokenSourceLine gh={status.gh} />
           )}
@@ -417,7 +425,7 @@ export function IntegrationsSection() {
 
       {jira === null ? (
         <SettingsGroup title="Jira" description="Real tickets in the WORK tab.">
-          <p className="text-[12.5px] text-subtle">Checking…</p>
+          <p className="text-[12.5px] text-subtle">{probing}</p>
         </SettingsGroup>
       ) : (
         <>

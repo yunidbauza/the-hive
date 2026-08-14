@@ -25,7 +25,10 @@ export function AgentsPanel() {
   if (agentOrder.length === 0) {
     return (
       <div data-panel="agents" className="flex flex-col gap-0.5">
-        <EmptyState action="Background agents are not available yet.">
+        <EmptyState
+          phrase="empty.agents"
+          action="Background agents are not available yet."
+        >
           No agents running.
         </EmptyState>
       </div>

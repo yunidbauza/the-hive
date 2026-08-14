@@ -1,6 +1,8 @@
 import { CheckCircle, XCircle } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+
 import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { searchJiraIssues } from '@lib/jira';
@@ -35,6 +37,7 @@ type Verdict =
   | { kind: 'refused'; message: string };
 
 export function JiraQueryGroup({ jql, canTest }: JiraQueryGroupProps) {
+  const testingPhrase = useSwarmPhrase('loading.connection');
   const [draft, setDraft] = useState(jql ?? '');
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [testing, setTesting] = useState(false);
@@ -99,7 +102,7 @@ export function JiraQueryGroup({ jql, canTest }: JiraQueryGroupProps) {
             disabled={testing || !canTest}
             className="rounded-[6px] border border-border bg-panel-2 px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:cursor-not-allowed disabled:text-subtle disabled:hover:bg-panel-2"
           >
-            {testing ? 'Testing…' : 'Test query'}
+            {testing ? testingPhrase : 'Test query'}
           </button>
           {canTest ? null : (
             <span className="text-[11.5px] text-subtle">

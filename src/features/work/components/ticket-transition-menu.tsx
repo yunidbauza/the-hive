@@ -1,6 +1,7 @@
 import { CaretDown } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { cn } from '@/lib/utils';
 import type { Ticket } from '@/types/ticket';
 
@@ -72,6 +73,7 @@ export function TicketTransitionMenu({
   statusCategory,
 }: TicketTransitionMenuProps) {
   const updateTicket = useUpdateTicket();
+  const readingPhrase = useSwarmPhrase('loading.transitions');
   const [state, setState] = useState<MenuState>({ kind: 'idle' });
   /**
    * Controlled, so a failure can keep the menu open.
@@ -218,7 +220,7 @@ export function TicketTransitionMenu({
       >
         {state.kind === 'loading' || state.kind === 'applying' ? (
           <p className="px-2 py-1.5 text-[12px] text-subtle">
-            {state.kind === 'loading' ? 'Reading transitions…' : 'Moving…'}
+            {state.kind === 'loading' ? readingPhrase : 'Moving…'}
           </p>
         ) : null}
 

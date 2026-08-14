@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { EmptyState, EmptyStatePath } from '@components/ui/empty-state';
+import { PHRASES } from '@lib/swarm/phrases';
 
 /**
  * The atom the rail panels use to say why they have nothing to list.
@@ -42,6 +43,40 @@ describe('EmptyState', () => {
     // Trailing whitespace would be the tell that an absent action still
     // rendered its separator.
     expect(paragraph.textContent).toBe('No agents running.');
+  });
+
+  /**
+   * The flavour line is additive. The whole design rests on this: the sentence
+   * naming what is missing and the sentence naming the way out both survive
+   * verbatim, so nothing became decorative *instead of* useful.
+   */
+  it('adds a flavour line above the copy without disturbing it', () => {
+    render(
+      <EmptyState phrase="empty.inbox" action="Sessions will show up here.">
+        Nothing needs you.
+      </EmptyState>,
+    );
+
+    const paragraph = screen.getByText(/Nothing needs you/);
+
+    expect(paragraph).toHaveTextContent('Nothing needs you. Sessions will show up here.');
+
+    const flavour = document.querySelector('[data-swarm-line]');
+
+    expect(PHRASES['empty.inbox']).toContain(flavour?.textContent);
+  });
+
+  /**
+   * Twenty-odd call sites predate the prop, and their layout was tuned against
+   * a bare paragraph. Wrapping all of them in a flex container to add nothing
+   * would be a silent re-spacing of panels this change has no business
+   * touching.
+   */
+  it('renders the bare paragraph when no phrase is asked for', () => {
+    const { container } = render(<EmptyState>No agents running.</EmptyState>);
+
+    expect(container.firstElementChild?.tagName).toBe('P');
+    expect(document.querySelector('[data-swarm-line]')).toBeNull();
   });
 });
 

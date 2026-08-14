@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
 
+import { SwarmLine } from '@components/ui/swarm-line';
 import { TicketCard } from '@features/work/components/ticket-card';
 import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
 import {
@@ -58,10 +59,13 @@ function SourceNotice({
 
   if (source.kind === 'unconfigured') {
     return (
-      <p className="px-1 pb-1 text-[11.5px] leading-[1.45] text-subtle">
-        No Jira connection yet. Add your site and an API token in{' '}
-        <span className="text-muted">Settings → Integrations</span>.
-      </p>
+      <div className="flex flex-col gap-[3px] pb-1">
+        <SwarmLine phraseKey="empty.workUnconfigured" />
+        <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
+          No Jira connection yet. Add your site and an API token in{' '}
+          <span className="text-muted">Settings → Integrations</span>.
+        </p>
+      </div>
     );
   }
 
@@ -171,9 +175,12 @@ export function WorkPanel() {
         the panel says so rather than showing a blank column.
       */}
       {tickets.length === 0 && source.kind === 'live' ? (
-        <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
-          No issues matched your query.
-        </p>
+        <div className="flex flex-col gap-[3px]">
+          <SwarmLine phraseKey="empty.work" />
+          <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
+            No issues matched your query.
+          </p>
+        </div>
       ) : null}
     </div>
   );

@@ -180,7 +180,7 @@ export function ExplorerPanel() {
       ) : null}
 
       {usable && !root.error && root.entries?.length === 0 ? (
-        <EmptyState>This repository is empty.</EmptyState>
+        <EmptyState phrase="empty.explorer">This repository is empty.</EmptyState>
       ) : null}
 
       {usable
