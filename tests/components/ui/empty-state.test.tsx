@@ -66,6 +66,30 @@ describe('EmptyState', () => {
     expect(PHRASES['empty.inbox']).toContain(flavour?.textContent);
   });
 
+  it('holds a creature at rail size when one is cast', () => {
+    render(
+      <EmptyState phrase="empty.inbox" creature="overlord">
+        Nothing needs you.
+      </EmptyState>,
+    );
+
+    const img = screen.getByRole('presentation', { hidden: true });
+
+    expect(img).toHaveAttribute('data-creature', 'overlord');
+    /**
+     * The size is the whole argument for allowing a sprite in a 268px rail at
+     * all, so it is asserted rather than left to a call site.
+     */
+    expect(img).toHaveStyle({ height: '44px' });
+  });
+
+  it('takes the flavour line without a creature', () => {
+    render(<EmptyState phrase="empty.inbox">Nothing needs you.</EmptyState>);
+
+    expect(document.querySelector('[data-swarm-line]')).not.toBeNull();
+    expect(document.querySelector('[data-creature]')).toBeNull();
+  });
+
   /**
    * Twenty-odd call sites predate the prop, and their layout was tuned against
    * a bare paragraph. Wrapping all of them in a flex container to add nothing

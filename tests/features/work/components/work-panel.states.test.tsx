@@ -150,6 +150,16 @@ describe('the live state', () => {
 
     expect(screen.getByText(/No issues matched your query/i)).toBeInTheDocument();
   });
+
+  it('leads that answer with a spire at rail size', () => {
+    state().hydrateTickets([], false);
+    render(<WorkPanel />);
+
+    const img = screen.getByRole('presentation', { hidden: true });
+
+    expect(img).toHaveAttribute('data-creature', 'spire');
+    expect(img).toHaveStyle({ height: '44px' });
+  });
 });
 
 describe('the stale state', () => {

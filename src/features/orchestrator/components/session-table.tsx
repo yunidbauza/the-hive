@@ -122,7 +122,7 @@ export function SessionTable() {
           data-testid="session-table-empty"
           className="flex flex-col items-center gap-2 px-2 py-4"
         >
-          <SwarmCreature creature="overlord" size={96} />
+          <SwarmCreature creature="hive" size={96} />
           <p className="text-muted">{phrase}</p>
           <p className="text-term-head">
             No sessions running — start one with New session.

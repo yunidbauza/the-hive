@@ -2,7 +2,7 @@
 Cuts the swarm creature sprites the app ships.
 
 The sources are large animated WebPs (1.2–5 MB each). The app renders them at
-96–120 px on four full-stage surfaces, so it ships a 180 px cut — enough for a
+44 px in the rails and 72–120 px on the full-stage surfaces, so it ships a 180 px cut — enough for a
 2x display at that size and a fraction of the weight.
 
 Each creature is emitted twice:
@@ -21,7 +21,8 @@ neither is in this project's toolchain.
 
     python3 scripts/swarm/make-creatures.py <source-dir>
 
-where <source-dir> holds hive-180.webp, overlord-180.webp, spire-180.webp.
+where <source-dir> holds hive-180.webp, hydralisk-180.webp, overlord-180.webp
+and spire-180.webp.
 """
 
 import os
@@ -30,7 +31,7 @@ import sys
 
 from PIL import Image
 
-CREATURES = ("hive", "overlord", "spire")
+CREATURES = ("hive", "hydralisk", "overlord", "spire")
 OUT = os.path.join("src", "components", "ui", "swarm")
 
 

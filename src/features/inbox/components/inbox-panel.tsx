@@ -28,6 +28,7 @@ export function InboxPanel() {
       <div data-panel="inbox" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
         <EmptyState
           phrase="empty.inbox"
+          creature="overlord"
           action="Sessions and pull requests will show up here."
         >
           Nothing needs you.

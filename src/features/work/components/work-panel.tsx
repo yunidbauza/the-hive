@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
 
+import { RAIL_CREATURE_SIZE } from '@components/ui/empty-state';
+import { SwarmCreature } from '@components/ui/swarm-creature';
 import { SwarmLine } from '@components/ui/swarm-line';
 import { TicketCard } from '@features/work/components/ticket-card';
 import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
@@ -176,6 +178,9 @@ export function WorkPanel() {
       */}
       {tickets.length === 0 && source.kind === 'live' ? (
         <div className="flex flex-col gap-[3px]">
+          <div className="px-1 pb-0.5">
+            <SwarmCreature creature="spire" size={RAIL_CREATURE_SIZE} />
+          </div>
           <SwarmLine phraseKey="empty.work" />
           <p className="px-1 text-[11.5px] leading-[1.45] text-subtle">
             No issues matched your query.

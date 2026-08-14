@@ -24,7 +24,7 @@ test('the dormant orchestrator holds a creature and a line', async ({ page }) =>
   const empty = page.getByTestId('session-table-empty');
   await expect(empty).toBeVisible();
 
-  const creature = empty.locator('[data-creature="overlord"]');
+  const creature = empty.locator('[data-creature="hive"]');
   await expect(creature).toBeVisible();
 
   /**
@@ -67,23 +67,26 @@ const RAILS = [
     tab: 'Inbox',
     rail: 'Activity',
     pool: 'empty.inbox' as const,
+    cast: 'overlord',
     keeps: 'Nothing needs you.',
   },
   {
     tab: 'Projects',
     rail: 'Projects, work, and agents',
     pool: 'empty.projects' as const,
+    cast: 'overlord',
     keeps: 'No projects mapped.',
   },
   {
     tab: 'Agents',
     rail: 'Projects, work, and agents',
     pool: 'empty.agents' as const,
+    cast: 'hydralisk',
     keeps: 'No agents running.',
   },
 ];
 
-for (const { tab, rail, pool, keeps } of RAILS) {
+for (const { tab, rail, pool, cast, keeps } of RAILS) {
   test(`the ${tab.toLowerCase()} rail leads with a phrase and keeps its copy`, async ({
     page,
   }) => {
@@ -103,12 +106,14 @@ for (const { tab, rail, pool, keeps } of RAILS) {
     expect(PHRASES[pool], `"${drew}" is not in ${pool}`).toContain(drew);
   });
 
-  test(`the ${tab.toLowerCase()} rail keeps the creature out`, async ({ page }) => {
+  test(`the ${tab.toLowerCase()} rail holds its creature, small`, async ({ page }) => {
     /**
-     * The rails get the line and never the illustration. `empty-state.tsx`
-     * argues a decorative empty state in a 268px column beside a live terminal
-     * takes more attention than the thing it is apologising for, and this is
-     * the assertion that keeps a future change from quietly reversing that.
+     * The rails get a sprite, but only at rail size. `empty-state.tsx` argues a
+     * decorative empty state in a 268px column takes more attention than the
+     * thing it is apologising for, and the answer to that is the *size*: at
+     * 44px the creature is shorter than the copy beneath it. This asserts the
+     * ceiling, so a later change cannot quietly grow it into the illustration
+     * that argument rules out.
      */
     const region = page.getByRole(
       rail === 'Activity' ? 'complementary' : 'navigation',
@@ -116,8 +121,17 @@ for (const { tab, rail, pool, keeps } of RAILS) {
     );
 
     await region.getByRole('tab', { name: tab }).click();
-    await expect(region.locator('[data-swarm-line]').first()).toBeVisible();
 
-    await expect(region.locator('[data-creature]')).toHaveCount(0);
+    const creature = region.locator(`[data-creature="${cast}"]`);
+    await expect(creature).toBeVisible();
+
+    // Decoded, not merely resolved: a 404 still renders a visible <img>.
+    expect(
+      await creature.evaluate((img) => (img as HTMLImageElement).naturalWidth),
+    ).toBeGreaterThan(0);
+
+    const box = await creature.boundingBox();
+    expect(box?.height).toBeGreaterThan(20);
+    expect(box?.height).toBeLessThanOrEqual(48);
   });
 }

@@ -222,6 +222,28 @@ describe('PrsPanel', () => {
       ).toBeInTheDocument();
     });
 
+    /**
+     * The browser e2e cannot reach this state — it needs `gh` to be live — so
+     * the creature's presence and its rail size are pinned here instead. This
+     * is the panel the absence was first reported on.
+     */
+    it('leads the empty sweep with a spire at rail size', () => {
+      act(() => {
+        useHiveStore.setState({
+          prs: [],
+          prSource: { kind: 'live', stale: false, repos: 4 },
+        });
+      });
+
+      render(<PrsPanel />);
+
+      const img = screen.getByRole('presentation', { hidden: true });
+
+      expect(img).toHaveAttribute('data-creature', 'spire');
+      expect(img).toHaveStyle({ height: '44px' });
+      expect(document.querySelector('[data-swarm-line]')).not.toBeNull();
+    });
+
     it('says “1 repository”, not “1 repositories”', () => {
       act(() => {
         useHiveStore.setState({

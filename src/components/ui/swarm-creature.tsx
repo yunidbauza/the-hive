@@ -2,6 +2,8 @@ import { useReducedMotion } from '@hooks/use-reduced-motion';
 
 import hiveStill from './swarm/hive-still.webp';
 import hiveAnim from './swarm/hive.webp';
+import hydraliskStill from './swarm/hydralisk-still.webp';
+import hydraliskAnim from './swarm/hydralisk.webp';
 import overlordStill from './swarm/overlord-still.webp';
 import overlordAnim from './swarm/overlord.webp';
 import spireStill from './swarm/spire-still.webp';
@@ -10,15 +12,23 @@ import spireAnim from './swarm/spire.webp';
 /**
  * A small breathing creature, for the surfaces that have nothing else on them.
  *
- * ## Where this is allowed
+ * ## Where this is allowed, and at what size
  *
- * Full-stage surfaces only — the picker's first run, the dormant orchestrator,
- * the editor with no file, and the settings card. Those own the whole centre and
- * have nothing competing for attention.
+ * Two registers, and the size is what separates them:
  *
- * Not the rails. `empty-state.tsx` argues, correctly, that a decorative empty
- * state in a 268 px column beside a live terminal takes more attention than the
- * thing it is apologising for. The rails get the flavour *line* and no creature.
+ * - **Full-stage surfaces at 72–120 px** — the picker's first run, the dormant
+ *   orchestrator, the editor with no file, the settings card. Those own the
+ *   whole centre and have nothing to compete with.
+ * - **Rails at 44 px** — small enough to read as a mark rather than an
+ *   illustration.
+ *
+ * The rails were text-only when this shipped, on the argument that a decorative
+ * empty state in a 268 px column beside a live terminal takes more attention
+ * than the thing it is apologising for. That argument is about *size*, not about
+ * whether an image may appear at all: at 44 px the creature occupies less height
+ * than the two lines of copy beneath it, and the copy is still what the eye
+ * lands on. Anything larger in a rail is the thing the original argument
+ * correctly rules out.
  *
  * ## Why an <img> and not CSS
  *
@@ -35,6 +45,7 @@ import spireAnim from './swarm/spire.webp';
 
 const SPRITES = {
   hive: { animated: hiveAnim, still: hiveStill },
+  hydralisk: { animated: hydraliskAnim, still: hydraliskStill },
   overlord: { animated: overlordAnim, still: overlordStill },
   spire: { animated: spireAnim, still: spireStill },
 } as const;
@@ -46,9 +57,18 @@ export function SwarmCreature({
   size = 96,
 }: {
   /**
-   * Which one. The casting is meaning, not decoration: the Overlord waits, the
-   * Spire transforms, the Hive is home. A surface that picks a different
-   * creature than its state implies makes the second channel noise.
+   * Which one. The casting is a second channel, not decoration, so it is fixed
+   * per surface rather than chosen per render:
+   *
+   * - **Hive** — the orchestrator's empty fleet, the picker's first run, the
+   *   settings card. The app's own face, and it leads the main screen.
+   * - **Overlord** — projects. It hovers and watches without acting.
+   * - **Spire** — work and pull requests. Things with a lifecycle, mid-morph.
+   * - **Hydralisk** — agents. The unit that does the work.
+   *
+   * A surface that picks a different creature than its neighbours in the same
+   * state turns the channel back into noise, which is the whole reason this is
+   * a fixed prop and not a random draw like the phrase beneath it.
    */
   creature: Creature;
   /** Rendered height in px. The width follows the sprite's own ratio. */

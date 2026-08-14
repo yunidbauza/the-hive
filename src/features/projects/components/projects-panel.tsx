@@ -32,6 +32,7 @@ export function ProjectsPanel() {
         */}
         <EmptyState
           phrase="empty.projects"
+          creature="overlord"
           action={
             <>
               Add one in <EmptyStatePath>Settings → Projects</EmptyStatePath>.

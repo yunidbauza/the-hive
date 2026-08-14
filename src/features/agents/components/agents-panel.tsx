@@ -27,6 +27,7 @@ export function AgentsPanel() {
       <div data-panel="agents" className="flex flex-col gap-0.5">
         <EmptyState
           phrase="empty.agents"
+          creature="hydralisk"
           action="Background agents are not available yet."
         >
           No agents running.

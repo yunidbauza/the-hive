@@ -148,6 +148,21 @@ describe('ExplorerPanel — degraded states', () => {
 
     expect(await screen.findByText(/This repository is empty/)).toBeInTheDocument();
   });
+
+  /**
+   * The browser e2e cannot reach this state — the explorer needs the desktop
+   * fs bridge — so the creature is pinned here instead.
+   */
+  it('leads the empty repository with a hive at rail size', async () => {
+    readDir.mockResolvedValue({ ok: true, value: [] });
+    render(<ExplorerPanel />);
+
+    await screen.findByText(/This repository is empty/);
+    const img = screen.getByRole('presentation', { hidden: true });
+
+    expect(img).toHaveAttribute('data-creature', 'hive');
+    expect(img).toHaveStyle({ height: '44px' });
+  });
 });
 
 describe('ExplorerPanel — the tree', () => {
