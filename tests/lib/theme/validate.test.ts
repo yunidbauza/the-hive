@@ -99,6 +99,39 @@ describe('the terminal ground', () => {
     expect(result.detail).toContain('#2b303b');
     expect(result.detail).toContain('#0b1023');
   });
+
+  it('counts terminal.bg as inherited exactly once when the file omits it but supplies ui.termBg', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.dark.ui.termBg = '#2b303b';
+    delete modes.dark.terminal.bg;
+
+    const result = importTheme(fullTheme({ modes }), 'nord.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inherited).toBe(1);
+  });
+
+  it('counts two inherited keys when the file omits both terminal.bg and ui.termBg', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    delete modes.dark.ui.termBg;
+    delete modes.dark.terminal.bg;
+
+    const result = importTheme(fullTheme({ modes }), 'nord.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inherited).toBe(2);
+  });
+
+  it('counts zero inherited when the file supplies both and they agree', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.dark.ui.termBg = '#2b303b';
+    modes.dark.terminal.bg = '#2b303b';
+
+    const result = importTheme(fullTheme({ modes }), 'nord.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inherited).toBe(0);
+  });
 });
 
 describe('unknown keys', () => {

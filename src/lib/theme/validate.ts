@@ -191,9 +191,13 @@ export function importTheme(raw: string, fileName: string): ImportResult {
         }
       }
 
-      // Rule 7: inherit missing known keys from the built-in.
+      // Rule 7: inherit missing known keys from the built-in. `terminal.bg`
+      // is excluded here — rule 8 owns its counting exclusively, since it
+      // may re-derive that same key from `ui.termBg` a moment later. Letting
+      // both rules count it would inherit it twice for one logical key.
       const builtInGroup = builtInMode[group.name] as Record<string, string>;
       for (const key of group.keys) {
+        if (group.name === 'terminal' && key === 'bg') continue;
         if (!(key in merged)) {
           merged[key] = builtInGroup[key];
           inherited += 1;
