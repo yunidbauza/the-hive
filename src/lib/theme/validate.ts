@@ -225,6 +225,16 @@ export function importTheme(raw: string, fileName: string): ImportResult {
     modes[mode] = { ui, syntax, terminal };
   }
 
+  // Rule 7b: name the inheritance rule 7 (and rule 8) counted, as the first
+  // note — before the unknown-key notes already collected above and before
+  // rule 9's contrast notes below — so a partial theme never lands in the
+  // green "clean import" state it did not earn, and so the joined detail
+  // reads in the mock's own order: inheritance, then unknown keys, then
+  // contrast.
+  if (inherited > 0) {
+    notes.unshift(`${inherited} colours inherited from the built-in theme`);
+  }
+
   // Rule 9: contrast — always a note, never fatal.
   for (const mode of MODE_NAMES) {
     const { ui } = modes[mode];

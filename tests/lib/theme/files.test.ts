@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { pickThemeFile, saveThemeFile, sanitizeFileName } from '@lib/theme/files';
+import {
+  PICK_FAILURE_TITLE,
+  PickThemeFailure,
+  pickThemeFile,
+  saveThemeFile,
+  sanitizeFileName,
+} from '@lib/theme/files';
 
 afterEach(() => {
   delete (window as { hive?: unknown }).hive;
@@ -74,6 +80,38 @@ describe('with the desktop bridge', () => {
     };
 
     await expect(pickThemeFile()).rejects.toThrow("Couldn't import that file");
+  });
+
+  /**
+   * The seam a caller (Task 11's gallery) actually relies on: `.title` and
+   * `.detail` come back as their own fields, not just baked into `.message`
+   * — so a banner can render each once, rather than re-deriving a title and
+   * duplicating what `.message` already prefixed onto the detail.
+   */
+  it('rejects with a PickThemeFailure carrying title and detail as their own fields', async () => {
+    (window as never as { hive: unknown }).hive = {
+      theme: {
+        pick: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit',
+            ),
+          ),
+      },
+    };
+
+    await expect(pickThemeFile()).rejects.toBeInstanceOf(PickThemeFailure);
+    try {
+      await pickThemeFile();
+      expect.unreachable('pickThemeFile should have rejected');
+    } catch (error) {
+      if (!(error instanceof PickThemeFailure)) throw error;
+      expect(error.title).toBe(PICK_FAILURE_TITLE);
+      expect(error.detail).toBe(
+        '/Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit',
+      );
+    }
   });
 
   it('saves through the bridge and reports true when a path came back', async () => {
@@ -178,6 +216,31 @@ describe('without a bridge (the browser target)', () => {
     await expect(promise).rejects.toThrow('nope');
   });
 
+  it('rejects with a structured PickThemeFailure here too, not a bare Error', async () => {
+    let input: HTMLInputElement | undefined;
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      const el = create(tag);
+      if (tag === 'input') input = el as HTMLInputElement;
+      return el;
+    }) as typeof document.createElement);
+
+    const brokenFile = { name: 'broken.json', text: () => Promise.reject(new Error('nope')) };
+    const promise = pickThemeFile();
+    Object.defineProperty(input!, 'files', { value: [brokenFile], configurable: true });
+    input?.dispatchEvent(new Event('change'));
+
+    try {
+      await promise;
+      expect.unreachable('pickThemeFile should have rejected');
+    } catch (error) {
+      expect(error).toBeInstanceOf(PickThemeFailure);
+      if (!(error instanceof PickThemeFailure)) throw error;
+      expect(error.title).toBe(PICK_FAILURE_TITLE);
+      expect(error.detail).toBe('nope');
+    }
+  });
+
   it('saves through a Blob download', async () => {
     const create = vi
       .spyOn(URL, 'createObjectURL')
@@ -213,6 +276,21 @@ describe('without a bridge (the browser target)', () => {
     await saveThemeFile('日本語.json', '{}');
 
     expect(downloadName).toBe('theme.json');
+  });
+});
+
+describe('PickThemeFailure', () => {
+  it('defaults its title to PICK_FAILURE_TITLE and carries detail separately', () => {
+    const failure = new PickThemeFailure('the file is 300 KB, over the 256 KB limit.');
+    expect(failure.title).toBe(PICK_FAILURE_TITLE);
+    expect(failure.detail).toBe('the file is 300 KB, over the 256 KB limit.');
+    expect(failure).toBeInstanceOf(Error);
+  });
+
+  it('accepts an explicit title, still keeping it out of detail', () => {
+    const failure = new PickThemeFailure('nope', 'A different title');
+    expect(failure.title).toBe('A different title');
+    expect(failure.detail).toBe('nope');
   });
 });
 

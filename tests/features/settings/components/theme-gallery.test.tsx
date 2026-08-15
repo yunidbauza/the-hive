@@ -4,14 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ThemeGallery } from '@features/settings/components/theme-gallery';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
-import { pickThemeFile, saveThemeFile } from '@lib/theme/files';
+import { PickThemeFailure, pickThemeFile, saveThemeFile } from '@lib/theme/files';
 import { themeToJson } from '@lib/theme/template';
 import { useAppearanceStore } from '@stores/appearance-store';
 
-vi.mock('@lib/theme/files', () => ({
-  pickThemeFile: vi.fn(),
-  saveThemeFile: vi.fn(),
-}));
+// `importOriginal` keeps the real `PickThemeFailure` (and `sanitizeFileName`,
+// unused here but harmless) so a rejection built with `new PickThemeFailure(...)`
+// below is the exact class the component's `instanceof` check expects — only
+// `pickThemeFile` and `saveThemeFile` are swapped for controllable stubs.
+vi.mock('@lib/theme/files', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lib/theme/files')>();
+  return { ...actual, pickThemeFile: vi.fn(), saveThemeFile: vi.fn() };
+});
 
 const nordJson = themeToJson({
   ...BUILT_IN_THEME,
@@ -65,7 +69,7 @@ describe('ThemeGallery', () => {
 
   it('reports a rejected pick (oversize file) rather than treating it as a cancel', async () => {
     vi.mocked(pickThemeFile).mockRejectedValue(
-      new Error("Couldn't import that file — the file is 300 KB, over the 256 KB limit."),
+      new PickThemeFailure('the file is 300 KB, over the 256 KB limit.'),
     );
 
     render(<ThemeGallery />);
@@ -74,6 +78,12 @@ describe('ThemeGallery', () => {
     expect(
       await screen.findByText("Couldn't import that file"),
     ).toBeInTheDocument();
+    // The title and the detail render once each — not the title baked a
+    // second time into the detail line underneath it.
+    expect(
+      screen.getByText('the file is 300 KB, over the 256 KB limit.'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Couldn't import that file/)).toHaveLength(1);
     expect(useAppearanceStore.getState().activeThemeId).toBe('hive');
   });
 

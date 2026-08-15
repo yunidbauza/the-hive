@@ -25,6 +25,34 @@ export interface PickedThemeFile {
 }
 
 /**
+ * The one place the picker's own failure title is spelled out. `validate.ts`
+ * owns the equivalent title for a file that *was* read but failed to parse
+ * (`Couldn't import ${fileName}`) — this is that family's other member, for
+ * a file the picker never managed to hand back at all.
+ */
+export const PICK_FAILURE_TITLE = "Couldn't import that file";
+
+/**
+ * What `pickThemeFile()` rejects with — never a bare `Error`, so a caller
+ * (Task 11's gallery) can read `.title` and `.detail` straight into a banner
+ * without re-deriving or re-prefixing either. Still an `Error` (not a plain
+ * object) so `instanceof Error`, `.rejects.toThrow()` and ordinary crash
+ * logging keep working on it unchanged; `.message` carries both parts
+ * together for exactly that audience.
+ */
+export class PickThemeFailure extends Error {
+  readonly title: string;
+  readonly detail: string;
+
+  constructor(detail: string, title: string = PICK_FAILURE_TITLE) {
+    super(`${title} — ${detail}`);
+    this.name = 'PickThemeFailure';
+    this.title = title;
+    this.detail = detail;
+  }
+}
+
+/**
  * `window.hive.theme.pick()` rejects rather than resolving `null` when the
  * chosen file is over the byte cap (`electron/main/theme/index.ts`) —
  * deliberately, so "too big" can never be confused with "cancelled". That
@@ -33,10 +61,10 @@ export interface PickedThemeFile {
  * which belongs in a settings banner. This turns it into a message fit to
  * show a person, without discarding the information (the byte counts stay).
  */
-function toPickFailure(error: unknown): Error {
+function toPickFailure(error: unknown): PickThemeFailure {
   const raw = error instanceof Error ? error.message : String(error);
   const detail = raw.replace(/^theme:pick:\s*/, '');
-  return new Error(`Couldn't import that file — ${detail}`);
+  return new PickThemeFailure(detail);
 }
 
 function fileNameFromPath(path: string): string {
@@ -86,8 +114,10 @@ function pickThemeFileFromBrowser(): Promise<PickedThemeFile | null> {
       }
       file.text().then(
         (contents) => resolve({ name: file.name, contents }),
-        (error: unknown) =>
-          reject(error instanceof Error ? error : new Error(String(error))),
+        (error: unknown) => {
+          const detail = error instanceof Error ? error.message : String(error);
+          reject(new PickThemeFailure(detail));
+        },
       );
     });
     input.addEventListener('cancel', () => resolve(null));

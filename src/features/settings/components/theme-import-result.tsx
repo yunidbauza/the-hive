@@ -38,11 +38,21 @@ export function themeBannerOf(result: ImportResult): ThemeBanner {
 
   const { theme, inherited, notes } = result;
 
-  if (notes.length === 0) {
+  /**
+   * Both conditions, not just `notes.length === 0`. `validate.ts` always
+   * notes an inheritance (its own first note, story HIVE-80 review), so the
+   * two should never disagree — but the "N of 49" sentence below is only
+   * ever *true* when nothing was inherited, and checking that directly here
+   * means this component can't be fooled into claiming a complete import
+   * that wasn't, even if that invariant were ever broken upstream. There is
+   * no subtraction left to go wrong: with `inherited` excluded by the guard,
+   * the count is always the full total, never a value counted down from it.
+   */
+  if (notes.length === 0 && inherited === 0) {
     return {
       tone: 'ok',
       title: `${theme.name} imported and activated`,
-      detail: `${TOTAL_COLOUR_KEYS - inherited} of ${TOTAL_COLOUR_KEYS} colours set. Light and dark both complete.`,
+      detail: `${TOTAL_COLOUR_KEYS} of ${TOTAL_COLOUR_KEYS} colours set. Light and dark both complete.`,
     };
   }
 

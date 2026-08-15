@@ -4,7 +4,7 @@ import { ThemeCard } from '@features/settings/components/theme-card';
 import { ThemeImportResult } from '@features/settings/components/theme-import-result';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import { BUILT_IN_THEME_ID, type HiveTheme } from '@lib/theme/contract';
-import { pickThemeFile, saveThemeFile } from '@lib/theme/files';
+import { PickThemeFailure, pickThemeFile, saveThemeFile } from '@lib/theme/files';
 import { themeTemplateJson, themeToJson, TEMPLATE_FILE_NAME } from '@lib/theme/template';
 import { importTheme, type ImportResult } from '@lib/theme/validate';
 import {
@@ -84,8 +84,16 @@ export function ThemeGallery() {
     setImporting(true);
     try {
       const picked = await pickThemeFile().catch((error: unknown) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        setResult({ ok: false, title: "Couldn't import that file", detail });
+        // `pickThemeFile()` itself rejects with a `PickThemeFailure` on every
+        // path it controls (`files.ts`); the fallback below only guards
+        // against something genuinely unexpected reaching this catch, so the
+        // title it uses is the same one `PickThemeFailure` defaults to,
+        // never a second copy invented here.
+        const failure =
+          error instanceof PickThemeFailure
+            ? error
+            : new PickThemeFailure(error instanceof Error ? error.message : String(error));
+        setResult({ ok: false, title: failure.title, detail: failure.detail });
         return undefined;
       });
 

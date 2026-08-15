@@ -74,6 +74,53 @@ describe('inheritance', () => {
       BUILT_IN_THEME.modes.dark.ui.panel,
     );
   });
+
+  /**
+   * The bug this closes: a theme that inherits most of its colours from the
+   * built-in used to come back with zero notes, which put it in the green
+   * "clean import" state instead of amber — and separately let the banner's
+   * "N of 49" sentence go negative, since `inherited` sums across *both*
+   * modes (up to 98) while the sentence only ever had 49 to subtract from.
+   * A note is the fix at the source: it is what makes `notes.length > 0`
+   * true, which is what the banner's tone actually keys off.
+   */
+  it('notes the inherited count — the state that used to slip through as "clean"', () => {
+    // Every colour in both modes is missing: the file supplies nothing but
+    // the two empty mode blocks the pair rule requires.
+    const result = importTheme(
+      fullTheme({ modes: { light: {}, dark: {} } }),
+      'minimal.json',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inherited).toBe(98);
+    expect(result.notes[0]).toBe('98 colours inherited from the built-in theme');
+  });
+
+  it('is the first note, ahead of unknown-key and contrast notes', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    delete modes.dark.ui.panel; // inherited
+    modes.light.ui.accentHover = '#123456'; // unknown key
+    modes.light.ui.ink = '#f4f4f4'; // low contrast on panel
+
+    const result = importTheme(fullTheme({ modes }), 'mixed.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.notes[0]).toBe('1 colours inherited from the built-in theme');
+    expect(result.notes.some((note) => note.includes('accentHover'))).toBe(true);
+    expect(
+      result.notes.findIndex((note) => note.includes('accentHover')),
+    ).toBeLessThan(result.notes.findIndex((note) => note.includes(':1')));
+  });
+
+  it('adds no inheritance note when nothing was inherited', () => {
+    const result = importTheme(fullTheme(), 'complete.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inherited).toBe(0);
+    expect(result.notes).toEqual([]);
+  });
 });
 
 describe('the terminal ground', () => {
