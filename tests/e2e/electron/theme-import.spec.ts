@@ -130,20 +130,24 @@ test('an imported theme survives a reload, on the first painted frame', async ({
      * .target.id === 'root'` on a `childList` change is React's first commit,
      * by construction (nothing else ever writes to that element).
      *
-     * Two readings, kept independent:
+     * `firstContentPanel` is the real assertion: `--cc-panel`'s resolved
+     * value at the instant `#root` first gains content. This is the
+     * strongest claim achievable without capturing raster output (Playwright
+     * cannot time a screenshot to a literal compositor frame either), but it
+     * is still an instant in JS time, not a guarantee about what the
+     * compositor actually painted a frame later — read it as strong evidence
+     * against a visible flip, not as a formal proof.
      *
-     * - `history` is every distinct value `#hive-theme`'s stylesheet text has
-     *   ever held, in order. If the app ever painted the built-in theme and
-     *   then corrected itself, that would be a *second* entry here, ahead of
-     *   the imported theme's — direct evidence against a flip, regardless of
-     *   what was on screen when it happened.
-     * - `firstContentPanel` is `--cc-panel`'s resolved value at the instant
-     *   `#root` first gains content. This is the strongest claim achievable
-     *   without capturing raster output (Playwright cannot time a screenshot
-     *   to a literal compositor frame either), but it is still an instant in
-     *   JS time, not a guarantee about what the compositor actually painted a
-     *   frame later — read it as strong evidence against a visible flip, not
-     *   as a formal proof.
+     * `history` is a *different*, narrower claim, and it is not a flip
+     * detector — do not read it as one. `applyThemeColors(null)`
+     * (`src/lib/theme/apply.ts`) *removes* `#hive-theme` for the built-in
+     * theme rather than writing it with built-in colours, so "painted
+     * built-in, then corrected to the import" would leave **no** first
+     * entry to catch — `history` would read `['<nord css>']` in both the
+     * healthy world and a flashing one. What it actually pins: the theme
+     * stylesheet was written **exactly once** across the whole reload, which
+     * rules out a different bug — the store re-applying (and re-writing) the
+     * same or a different theme more than once during rehydration.
      */
     await page.addInitScript(() => {
       const w = window as unknown as {
@@ -197,8 +201,9 @@ test('an imported theme survives a reload, on the first painted frame', async ({
         ).__hiveThemeProbe,
     );
 
-    // Exactly one value was ever written for #hive-theme, and it is already
-    // the imported one — there is no earlier, wrong value it replaced.
+    // The theme stylesheet was written exactly once during the reload — a
+    // guard against double-application, not a flip detector (see the doc
+    // comment above for why the built-in theme can never appear here).
     expect(probe?.history).toHaveLength(1);
     expect(probe?.history[0]).toContain(`--cc-panel: ${NORD_PANEL_DARK}`);
     // And by the instant the app's own first pixel could exist — #root
@@ -312,14 +317,24 @@ test('activating a theme recolours a live terminal without clearing scrollback',
      * dark palette's `terminal.bg` in `#0b1023`, i.e. the built-in dark
      * palette).
      *
-     * Its **DOM node identity**, not just its colour, is the direct evidence
-     * for the scrollback claim. `terminal-surface.tsx`'s re-theme effect
-     * assigns `terminal.options.theme` on the *existing* instance; it never
-     * disposes and reopens it. If some future change did — a `key` prop tied
-     * to the palette, an effect that tears down and rebuilds — xterm would
-     * mint a brand-new scrollable element, and this reference-equality check
-     * would fail even though `.xterm-rows` cannot be read to notice the same
-     * regression on a live terminal.
+     * Its **DOM node identity**, not just its colour, is what this test can
+     * actually offer toward the scrollback claim — and it is worth being
+     * exact about what that does and does not prove. `terminal-surface.tsx`'s
+     * re-theme effect assigns `terminal.options.theme` on the *existing*
+     * instance; it never disposes and reopens it. If some future change did
+     * — a `key` prop tied to the palette, an effect that tears down and
+     * rebuilds — xterm would mint a brand-new scrollable element, and this
+     * reference-equality check would fail even though `.xterm-rows` cannot
+     * be read to notice the same regression on a live terminal. That proves
+     * the same *buffer object* survived, which is the regression class that
+     * actually matters here (a rebuild-on-re-theme). It does **not** prove
+     * the buffer's *contents* survived intact — `terminal.clear()`,
+     * `.reset()`, or a stray `\x1bc` write would empty the same buffer
+     * without touching this DOM node, and nothing below catches that. The
+     * marker-file round trip after the theme change (below) proves the
+     * shell side of "nothing was rebuilt"; nothing in this file re-reads the
+     * *marker line itself* out of the buffer, because a live terminal's
+     * WebGL rendering leaves no DOM text to read it from.
      */
     const scrollable = page.locator(`[data-terminal-id="${id}"] .xterm-scrollable-element`);
     const nodeBefore = await scrollable.elementHandle();
@@ -331,8 +346,10 @@ test('activating a theme recolours a live terminal without clearing scrollback',
     await page.getByRole('button', { name: 'Close settings' }).click();
 
     // The exact same scroll-wrapper node is still there — the instance was
-    // re-themed in place, never rebuilt, so its buffer (and the marker line
-    // already in it) was never at risk.
+    // re-themed in place, never rebuilt. This proves the same buffer object
+    // survived (the regression class that matters: a re-theme tearing xterm
+    // down and reopening it). It does not, on its own, prove the marker line
+    // is still readable inside that buffer — see the doc comment above.
     const nodeAfter = await scrollable.elementHandle();
     expect(await page.evaluate(([a, b]) => a === b, [nodeBefore, nodeAfter])).toBe(true);
 
