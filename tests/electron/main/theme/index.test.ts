@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * but the read and write themselves run against a real temp directory, the
  * same discipline `fs/write.test.ts` uses: a filesystem call is worth
  * exercising for real rather than trusting a mock of `node:fs/promises` to
- * agree with what `readFile`/`writeFile` actually do.
+ * agree with what `readFile`/`writeFile`/`stat` actually do.
+ *
+ * `node:fs/promises` is still partially mocked, but only to wrap `readFile`
+ * in a spy while forwarding every call to the real implementation — the
+ * point is not to fake a read, it is to prove `pickTheme` never *makes* one
+ * for a file the size check has already refused.
  */
 
 const showOpenDialog = vi.fn();
@@ -24,9 +29,18 @@ vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents },
 }));
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
+
 const { pickTheme, saveTheme, parseSaveThemeRequest } = await import(
   '../../../../electron/main/theme'
 );
+const { MAX_THEME_BYTES } = await import(
+  '../../../../electron/shared/theme-contract'
+);
+const { readFile: readFileSpy } = await import('node:fs/promises');
 
 let root: string;
 
@@ -56,6 +70,19 @@ describe('theme:pick', () => {
     expect(showOpenDialog).not.toHaveBeenCalled();
   });
 
+  /**
+   * `canceled: false` with an empty `filePaths` is not a shape the real
+   * dialog is documented to return, but nothing in this module assumes
+   * otherwise — the `path === undefined` branch exists precisely to treat it
+   * the same as a cancel rather than crash on `result.filePaths[0]`.
+   */
+  it('resolves null when not cancelled but no path was chosen', async () => {
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [] });
+
+    expect(await pickTheme({ sender: {} } as never)).toBeNull();
+    expect(readFileSpy).not.toHaveBeenCalled();
+  });
+
   it('reads the chosen file and returns its path and contents', async () => {
     const path = join(root, 'picked.json');
     const fs = await import('node:fs/promises');
@@ -65,6 +92,42 @@ describe('theme:pick', () => {
     const result = await pickTheme({ sender: {} } as never);
 
     expect(result).toEqual({ path, contents: '{"hiveThemeVersion":1}' });
+    expect(readFileSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The Important finding this test guards: `readFile` would otherwise
+   * buffer the whole file in the main process, and then push all of it
+   * across IPC, before anything got a chance to say no. `stat` runs first and
+   * the size check throws before `readFile` is ever reached — asserted here
+   * by spying on the real `readFile`, not by faking one.
+   *
+   * It is a **rejection**, not a resolved `null`, and that is the property
+   * the finding cares about most: a renderer that only checked "was it null"
+   * would report a cancellation for a file the user genuinely chose.
+   * `.rejects` only passes if the promise never resolves at all.
+   */
+  it('rejects a file over the byte cap without reading it into memory', async () => {
+    const path = join(root, 'big.json');
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(path, 'x'.repeat(MAX_THEME_BYTES + 1), 'utf8');
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [path] });
+
+    await expect(pickTheme({ sender: {} } as never)).rejects.toThrow(
+      new RegExp(`over the ${MAX_THEME_BYTES}-byte limit`),
+    );
+    expect(readFileSpy).not.toHaveBeenCalled();
+  });
+
+  it('still round-trips a file at exactly the byte cap', async () => {
+    const path = join(root, 'exactly-at-cap.json');
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(path, 'x'.repeat(MAX_THEME_BYTES), 'utf8');
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [path] });
+
+    const result = await pickTheme({ sender: {} } as never);
+
+    expect(result).toEqual({ path, contents: 'x'.repeat(MAX_THEME_BYTES) });
   });
 });
 
@@ -169,10 +232,7 @@ describe('parseSaveThemeRequest', () => {
     ).toThrow(/contents/);
   });
 
-  it('rejects contents over the byte cap', async () => {
-    const { MAX_THEME_BYTES } = await import(
-      '../../../../electron/shared/theme-contract'
-    );
+  it('rejects contents over the byte cap', () => {
     expect(() =>
       parseSaveThemeRequest({
         suggestedName: 'x.json',

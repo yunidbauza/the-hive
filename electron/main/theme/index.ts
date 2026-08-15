@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 
 import { BrowserWindow, dialog, type IpcMainInvokeEvent } from 'electron';
 
@@ -30,6 +30,9 @@ const THEME_FILE_FILTERS = [{ name: 'Hive theme', extensions: ['json'] }];
  * Resolves `null` for both a cancelled dialog and a window that no longer
  * exists by the time the dialog would have opened; the renderer treats the
  * two identically, so there is nothing to distinguish them for.
+ *
+ * An oversize file is **not** one of those `null` cases — see the size check
+ * below.
  */
 export async function pickTheme(
   event: IpcMainInvokeEvent,
@@ -45,6 +48,30 @@ export async function pickTheme(
 
   const path = result.filePaths[0];
   if (path === undefined) return null;
+
+  /**
+   * Sized before it is read — the same order `readFileContent` uses
+   * (`electron/main/fs/read.ts`), and for the same reason: `readFile` would
+   * otherwise buffer the whole file in the main process, and then push all of
+   * it across IPC, before anything got a chance to say no. The dialog already
+   * proves this path came from the user and not the renderer, so this is not
+   * a containment check the way `fs/read.ts`'s is — it is the same "do not
+   * stall or OOM the process on a file nobody meant to open this way" guard,
+   * reusing the cap the theme importer already carries.
+   *
+   * Thrown rather than resolved as `null`: cancelling the dialog and picking
+   * a file main then refuses are different facts, and collapsing both into
+   * `null` would have the picker report a cancellation for a file the user
+   * genuinely chose. `readFile` below can already reject this same promise —
+   * an unreadable path throws today — so a throw here is the existing failure
+   * mode for this verb, just reached one syscall earlier.
+   */
+  const stats = await stat(path);
+  if (stats.size > MAX_THEME_BYTES) {
+    throw new IpcValidationError(
+      `theme:pick: ${path} is ${stats.size} bytes, over the ${MAX_THEME_BYTES}-byte limit`,
+    );
+  }
 
   const contents = await readFile(path, 'utf8');
   return { path, contents };
