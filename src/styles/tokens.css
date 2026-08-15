@@ -16,6 +16,13 @@
 
 @import 'tailwindcss';
 
+/*
+ * These colour values are also expressed as data in `src/lib/theme/built-in.ts`,
+ * because a theme has to reach xterm — which cannot read a custom property.
+ * `tests/lib/theme/built-in.test.ts` reads this file and fails if the two
+ * drift, so change them together. Spacing tokens are deliberately NOT part of
+ * a theme; they belong to the density control.
+ */
 :root {
   --cc-bg: #10152a;
   --cc-panel: #141a33;
