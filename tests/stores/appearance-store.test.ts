@@ -2,14 +2,34 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import { type HiveTheme } from '@lib/theme/contract';
 import {
   APPEARANCE_STORAGE_KEY,
   DEFAULT_TEAM_NAME,
+  activeThemeOf,
+  migrateAppearance,
   resolveTheme,
   useAppearanceStore,
   useTerminalAppearance,
   watchSystemTheme,
 } from '@stores/appearance-store';
+
+/**
+ * A complete, valid theme distinguishable from the built-in — built the same
+ * way `validate.test.ts`'s `fullTheme` helper does, by recolouring it.
+ */
+const nordFixture: HiveTheme = {
+  ...structuredClone(BUILT_IN_THEME),
+  name: 'Nord',
+  author: 'Arctic Ice Studio',
+  modes: {
+    ...structuredClone(BUILT_IN_THEME.modes),
+    dark: {
+      ...structuredClone(BUILT_IN_THEME.modes.dark),
+      ui: { ...BUILT_IN_THEME.modes.dark.ui, panel: '#2e3440' },
+    },
+  },
+};
 
 /**
  * Appearance is the first persisted state in the app (story 105), so these
@@ -228,6 +248,20 @@ describe('appearance-store — the terminal palette', () => {
     expect(result.current.fontSize).toBe(16);
     expect(result.current.palette).toBe(first);
   });
+
+  /**
+   * The dark branch above only proves the guard holds for the default mode.
+   * A spread reintroduced on the light path would slip past it — this covers
+   * that branch explicitly.
+   */
+  it('is the stored object on the light branch too', () => {
+    const { result, rerender } = renderHook(() => useTerminalAppearance());
+
+    act(() => useAppearanceStore.getState().setTheme('light'));
+    rerender();
+
+    expect(result.current.palette).toBe(BUILT_IN_THEME.modes.light.terminal);
+  });
 });
 
 describe('appearance-store — persistence', () => {
@@ -257,6 +291,8 @@ describe('appearance-store — persistence', () => {
       editorWordWrap: true,
       editorLineNumbers: true,
       editorTabWidth: 2,
+      themes: {},
+      activeThemeId: 'hive',
     });
     // The environment is not a preference: persisting it would restore a stale
     // answer on a machine whose OS theme has since changed.
@@ -420,5 +456,53 @@ describe('appearance-store — the editor', () => {
       editorEditable: false,
       editorTabWidth: 2,
     });
+  });
+});
+
+describe('the theme library', () => {
+  it('starts with the built-in active and nothing imported', () => {
+    const s = useAppearanceStore.getState();
+    expect(s.activeThemeId).toBe('hive');
+    expect(s.themes).toEqual({});
+  });
+
+  it('activating an imported theme writes the style element', () => {
+    useAppearanceStore.getState().addTheme('nord', nordFixture);
+    useAppearanceStore.getState().activateTheme('nord');
+    expect(document.getElementById('hive-theme')).not.toBeNull();
+  });
+
+  it('removing the active theme falls back to Hive in the same action', () => {
+    useAppearanceStore.getState().addTheme('nord', nordFixture);
+    useAppearanceStore.getState().activateTheme('nord');
+    useAppearanceStore.getState().removeTheme('nord');
+
+    expect(useAppearanceStore.getState().activeThemeId).toBe('hive');
+    expect(useAppearanceStore.getState().themes).toEqual({});
+    // and the app is never left pointing at a theme that is not there
+    expect(document.getElementById('hive-theme')).toBeNull();
+  });
+
+  it('resolves a dangling activeThemeId to the built-in rather than throwing', () => {
+    useAppearanceStore.setState({ activeThemeId: 'gone', themes: {} });
+    expect(activeThemeOf(useAppearanceStore.getState())).toBeNull();
+  });
+});
+
+describe('the v1 → v2 migration', () => {
+  it('adds the two fields and keeps every existing one', () => {
+    const v1 = {
+      theme: 'light', terminalFont: 'menlo', terminalFontSize: 14,
+      terminalScrollback: 5000, density: 'compact', teamName: 'Swarm',
+      editorTabWidth: 4,
+    };
+    const migrated = migrateAppearance(v1, 1);
+
+    expect(migrated.themes).toEqual({});
+    expect(migrated.activeThemeId).toBe('hive');
+    expect(migrated.theme).toBe('light');
+    expect(migrated.density).toBe('compact');
+    expect(migrated.teamName).toBe('Swarm');
+    expect(migrated.editorTabWidth).toBe(4);
   });
 });
