@@ -25,7 +25,6 @@ import {
   useEditorLayout,
   useSetEditorSplitRatio,
   useTerminalAppearance,
-  useTheme,
 } from '@stores/appearance-store';
 import { useActiveFileKey, useHasOpenFiles } from '@stores/editor-store';
 import {
@@ -57,13 +56,16 @@ import {
  * precisely so `components/terminal/` never has to.
  */
 export function CenterStage() {
-  const theme = useTheme();
   /**
-   * The one place appearance crosses into the terminal (story 105).
+   * The one place appearance crosses into the terminal (story 105, extended by
+   * HIVE-80).
    *
    * `components/terminal/**` may not import `stores/**` — the lint zone fails
-   * the build — so the composition root reads the store and passes props, which
-   * is what it already does for `theme`. The seam stays a seam.
+   * the build — so the composition root reads the store and passes props. Since
+   * HIVE-80 that includes the colours: the terminal used to be told which *mode*
+   * was on and look the palette up for itself, and now it is handed the eleven
+   * colours the way it is handed a font stack. The seam stays a seam, and it got
+   * narrower.
    */
   const terminalAppearance = useTerminalAppearance();
   const activeTab = useActiveTab();
@@ -297,7 +299,7 @@ export function CenterStage() {
              */
             activeId={showingOverlay || editorFull ? null : activeTab}
             endedId={endedId}
-            theme={theme}
+            palette={terminalAppearance.palette}
             fontFamily={terminalAppearance.fontFamily}
             fontSize={terminalAppearance.fontSize}
             scrollback={terminalAppearance.scrollback}

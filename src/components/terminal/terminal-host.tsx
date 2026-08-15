@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { TerminalSurface } from '@components/terminal/terminal-surface';
-import type { TerminalTheme } from '@lib/terminal/ansi';
+import type { TermPalette } from '@lib/terminal/ansi';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 
 export interface TerminalHostEntry {
@@ -34,7 +34,13 @@ interface TerminalHostProps {
    * stdin are handled, and only the visible surface has focus.
    */
   endedId?: string | null;
-  theme: TerminalTheme;
+  /**
+   * The colours every surface paints in, already resolved (HIVE-80).
+   *
+   * Forwarded verbatim, like the font fields below — and like them it must be a
+   * stable reference, because each surface re-themes when its identity changes.
+   */
+  palette: TermPalette;
   /** Appearance, already resolved (story 105). Forwarded verbatim. */
   fontFamily?: string;
   fontSize?: number;
@@ -58,7 +64,7 @@ export function TerminalHost({
   entries,
   activeId,
   endedId = null,
-  theme,
+  palette,
   fontFamily,
   fontSize,
   scrollback,
@@ -122,7 +128,7 @@ export function TerminalHost({
           key={entry.terminalKey}
           id={entry.id}
           transport={entry.transport}
-          theme={theme}
+          palette={palette}
           fontFamily={fontFamily}
           fontSize={fontSize}
           scrollback={scrollback}

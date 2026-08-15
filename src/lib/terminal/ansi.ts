@@ -1,5 +1,7 @@
 import type { TermColor } from '@/types/terminal';
 
+import { BUILT_IN_THEME } from '@lib/theme/built-in';
+
 /**
  * Terminal text palettes and the ANSI colorizer.
  *
@@ -14,6 +16,13 @@ import type { TermColor } from '@/types/terminal';
  * One definition, three consumers: the transport, the xterm theme, and
  * `.claude/DESIGN-SYSTEM.md` (story 015, whose values are asserted against
  * these).
+ *
+ * Since HIVE-80 that one definition lives in `lib/theme/built-in.ts` — the two
+ * palettes below are its `terminal` groups under a name, not a second copy —
+ * because a user-supplied theme has to fill exactly the same eleven slots. What
+ * this module still owns is the *mapping*: eleven roles onto xterm's sixteen
+ * ANSI slots, which is {@link xtermThemeFor} and applies to any palette,
+ * built-in or imported.
  */
 
 /**
@@ -36,35 +45,33 @@ export interface TermPalette {
   selection: string;
 }
 
-/** The dark palette — the app's original terminal colours, unchanged. */
-export const TERM = {
-  ink: '#dbe4ff', // default foreground
-  dim: '#7c88b8', // secondary / meta
-  green: '#7ee2b8', // success, prompts
-  blue: '#8fb5ff', // tool calls (Read/Edit/Bash lines)
-  amber: '#ffc06e', // working spinner, questions
-  red: '#ff8d85', // errors
-  cyan: '#7edce2', // orchestrator-injected lines, PR refs
-  /**
-   * Equal to `cyan`, and that is not an oversight.
-   *
-   * The concept never specified a magenta, so the ANSI magenta slot has always
-   * rendered as cyan here. Naming it rather than leaving `magenta: TERM.cyan`
-   * buried in the theme builder lets the light palette give the slot a real
-   * hue without changing a single dark-mode pixel.
-   */
-  magenta: '#7edce2',
-  /**
-   * ANSI slot 30, which on a dark ground is the background — as it is in every
-   * dark terminal theme, and as it has always been here.
-   *
-   * Named rather than left as `black: bg` in the builder because the light
-   * palette cannot do the same thing: see `TERM_LIGHT.black`.
-   */
-  black: '#0b1023',
-  bg: '#0b1023',
-  selection: '#222c55',
-} as const satisfies TermPalette;
+/**
+ * The dark palette — the app's original terminal colours, unchanged.
+ *
+ * The values are the built-in theme's dark `terminal` group, byte for byte what
+ * this file spelled out before HIVE-80. Held as a reference rather than a copy
+ * for two reasons: one source of truth, and **referential stability** — the
+ * surface re-themes on a change of palette *identity*, so a palette rebuilt per
+ * render would re-theme every live terminal on every render.
+ *
+ * The roles, in the order the group declares them: `bg` ground, `ink` default
+ * foreground, `dim` secondary/meta, `black` ANSI slot 30, `green` success and
+ * prompts, `blue` tool calls (Read/Edit/Bash lines), `amber` the working
+ * spinner and questions, `red` errors, `cyan` orchestrator-injected lines and
+ * PR refs, `magenta`, `selection`.
+ *
+ * Two of those look like oversights and are not:
+ *
+ * - **`magenta` equals `cyan`.** The concept never specified a magenta, so the
+ *   ANSI magenta slot has always rendered as cyan here. The slot is named
+ *   rather than left as `magenta: TERM.cyan` in the theme builder so the light
+ *   palette can give it a real hue without changing a single dark-mode pixel.
+ * - **`black` equals `bg`.** ANSI slot 30, which on a dark ground is the
+ *   background — as it is in every dark terminal theme, and as it has always
+ *   been here. Named rather than left as `black: bg` in the builder because the
+ *   light palette cannot do the same thing: see {@link TERM_LIGHT}.
+ */
+export const TERM = BUILT_IN_THEME.modes.dark.terminal satisfies TermPalette;
 
 /**
  * The light palette.
@@ -80,48 +87,37 @@ export const TERM = {
  * the right ones, and inventing a second set would mean two light identities in
  * one app. The duplication is a *mirror*, not a fork — `ansi.test.ts` reads
  * `tokens.css` and fails if the two ever drift.
+ *
+ * The mapping, slot by slot: `ink` and `black` are `--cc-ink`, `green` is
+ * `--cc-code-string`, `blue` `--cc-code-name`, `amber` `--cc-code-number`,
+ * `red` `--cc-code-constant`, `cyan` `--cc-code-type`, `magenta`
+ * `--cc-code-keyword`, `bg` `--cc-panel-2` (and `--cc-term-bg` in light), and
+ * `selection` `--cc-code-selection`. Two of them need a reason:
+ *
+ * - **`dim` is `--cc-term-head`, not `--cc-muted`**, and the four-step
+ *   difference is a contrast fix rather than a preference. `--cc-muted`
+ *   (#73767c) is calibrated against `--cc-panel` (#ffffff), where it clears AA
+ *   at 4.55:1. The terminal's ground is `--cc-panel-2` (#f7fafb), and on it the
+ *   same grey falls to 4.34:1 — under the line. `dim` carries the
+ *   session-lifecycle notices ("── session exited ──"), which is text a user
+ *   has to read, so it gets a grey chosen for the surface it actually sits on:
+ *   4.87:1 here, 5.11:1 on the input bar.
+ * - **`black` is dark ink, *not* the background.** This is the one slot where
+ *   mirroring dark's mapping would be actively wrong. On a dark ground
+ *   `black: bg` is invisible and harmless, because no program picks black for
+ *   body text against black. On a light ground black is the conventional choice
+ *   for exactly that — and xterm answers an OSC 11 background query with the
+ *   theme background, so a CLI that detects a light terminal will *choose* slot
+ *   30 and, mapped to `bg`, render 1:1 invisible text. `minimumContrastRatio`
+ *   is at its default of 1 and would not rescue it.
+ *
+ * Sourced from the built-in theme, and held as a reference rather than a copy,
+ * for the reasons given on {@link TERM}.
  */
-export const TERM_LIGHT = {
-  ink: '#2c2f34', // --cc-ink
-  /**
-   * `--cc-term-head`, not `--cc-muted`, and the four-step difference is a
-   * contrast fix rather than a preference.
-   *
-   * `--cc-muted` (#73767c) is calibrated against `--cc-panel` (#ffffff), where
-   * it clears AA at 4.55:1. The terminal's ground is `--cc-panel-2` (#f7fafb),
-   * and on it the same grey falls to 4.34:1 — under the line. `dim` carries the
-   * session-lifecycle notices ("── session exited ──"), which is text a user
-   * has to read, so it gets a grey chosen for the surface it actually sits on:
-   * 4.87:1 here, 5.11:1 on the input bar.
-   */
-  dim: '#6b6e74', // --cc-term-head
-  green: '#2e6b52', // --cc-code-string
-  blue: '#334fa9', // --cc-code-name
-  amber: '#a1541a', // --cc-code-number
-  red: '#b3271f', // --cc-code-constant
-  cyan: '#0b6b7d', // --cc-code-type
-  magenta: '#6f42c1', // --cc-code-keyword
-  /**
-   * ANSI slot 30 — dark ink here, **not** the background.
-   *
-   * This is the one slot where mirroring dark's mapping would be actively
-   * wrong. On a dark ground `black: bg` is invisible and harmless, because no
-   * program picks black for body text against black. On a light ground black is
-   * the conventional choice for exactly that — and xterm answers an OSC 11
-   * background query with the theme background, so a CLI that detects a light
-   * terminal will now *choose* slot 30 and, mapped to `bg`, render 1:1
-   * invisible text. `minimumContrastRatio` is at its default of 1 and would not
-   * rescue it.
-   */
-  black: '#2c2f34', // --cc-ink
-  bg: '#f7fafb', // --cc-panel-2, and --cc-term-bg in light
-  selection: '#cfe3f7', // --cc-code-selection
-} as const satisfies TermPalette;
+export const TERM_LIGHT = BUILT_IN_THEME.modes.light
+  .terminal satisfies TermPalette;
 
 export type { TermColor };
-
-/** App theme. Mirrors `Theme` in `stores/ui-store.ts`, without importing it. */
-export type TerminalTheme = 'dark' | 'light';
 
 
 const ESC = '\u001b';
@@ -167,8 +163,31 @@ export function colorize(text: string, color: TermColor): string {
 /**
  * A palette → the xterm `theme` object.
  *
- * One mapping for both themes rather than two hand-written objects, so a light
- * theme cannot drift from the dark one in structure — only in colour.
+ * One mapping for every palette rather than a hand-written object per theme, so
+ * two palettes cannot drift in structure — only in colour. Since HIVE-80 that
+ * matters beyond the two built-in modes: an imported theme supplies eleven
+ * colours and gets xterm's twenty slots filled by this function, so a user
+ * theme can never be missing a slot or define one nobody reads.
+ *
+ * **This is the terminal seam's whole vocabulary.** The surface is handed a
+ * palette exactly as it is handed a font stack; it does not learn that themes
+ * exist, or that a user picked one.
+ *
+ * Returned fresh each call rather than memoised: xterm copies the object into
+ * its own colour manager on assignment, so sharing an instance buys nothing and
+ * an accidentally mutated singleton would corrupt every live terminal at once.
+ *
+ * ## The terminal follows the app theme
+ *
+ * It did not always: stories 011 and 042 fixed it dark in both, on the
+ * reasoning that a terminal is dark because that is what a terminal is, and
+ * only selection and cursor were allowed to vary. That held while the terminal
+ * was the whole centre of the screen. It stopped holding once the editor landed
+ * on the same stage and adopted the theme properly — a light app with one dark
+ * slab in the middle reads as a panel that failed to load, not as a deliberate
+ * choice, and the seam is most obvious exactly where the two surfaces meet.
+ * Which palette arrives is now the composition root's business, not this
+ * module's.
  *
  * Bright and normal share a hue on every slot but black. Sixteen distinguishable
  * colours is a terminal convention inherited from hardware, not a design goal:
@@ -191,7 +210,7 @@ export function colorize(text: string, color: TermColor): string {
  * correct in both themes: the glyph is punched out of the cursor in the colour
  * of the surface behind it.
  */
-function xtermThemeFor(palette: TermPalette) {
+export function xtermThemeFor(palette: TermPalette) {
   return {
     background: palette.bg,
     foreground: palette.ink,
@@ -217,28 +236,14 @@ function xtermThemeFor(palette: TermPalette) {
   };
 }
 
-/** The xterm `theme` object for dark mode. */
+/**
+ * The xterm `theme` object for the built-in dark palette.
+ *
+ * Kept as a named constant purely so the specs that pin every dark slot have
+ * one thing to compare against; nothing in the app reads it. Live surfaces call
+ * {@link xtermThemeFor} with whatever palette they were handed.
+ */
 export const XTERM_THEME = xtermThemeFor(TERM);
 
-/** The xterm `theme` object for light mode. */
+/** The same, for the built-in light palette. See {@link XTERM_THEME}. */
 export const XTERM_THEME_LIGHT = xtermThemeFor(TERM_LIGHT);
-
-/**
- * The xterm theme for an app theme.
- *
- * **The terminal follows the app theme.** It did not always: stories 011 and
- * 042 fixed it dark in both, on the reasoning that a terminal is dark because
- * that is what a terminal is, and only selection and cursor were allowed to
- * vary. That held while the terminal was the whole centre of the screen. It
- * stopped holding once the editor landed on the same stage and adopted the
- * theme properly — a light app with one dark slab in the middle reads as a
- * panel that failed to load, not as a deliberate choice, and the seam is most
- * obvious exactly where the two surfaces meet.
- *
- * Returned fresh each call rather than memoised: xterm copies the object into
- * its own colour manager on assignment, so sharing an instance buys nothing and
- * an accidentally mutated singleton would corrupt every live terminal at once.
- */
-export function buildXtermTheme(theme: TerminalTheme) {
-  return theme === 'light' ? { ...XTERM_THEME_LIGHT } : { ...XTERM_THEME };
-}

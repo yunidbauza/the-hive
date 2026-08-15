@@ -138,9 +138,12 @@ never reaches CSS. xterm resolves colours from its own `theme` option and paints
 them into markup it owns, so a CSS custom property has no path to a terminal cell;
 this palette is consumed as JS by xterm and by the ANSI colorizer.
 
-**There are two palettes, and `buildXtermTheme(theme)` picks one.** `TERM` is
-dark, `TERM_LIGHT` is light, and a single builder maps either into xterm's
-sixteen slots — so the themes can differ in colour but never in structure.
+**There are two built-in palettes, and the terminal is handed one.** `TERM` is
+dark, `TERM_LIGHT` is light — both are the built-in theme's `terminal` groups
+under a name — and `xtermThemeFor(palette)` maps *any* palette into xterm's
+sixteen slots, so palettes can differ in colour but never in structure. Which
+one a surface gets is decided by the composition root, not by the terminal, so
+an imported theme (HIVE-80) travels the same path these two do.
 
 | Key | `TERM` (dark) | `TERM_LIGHT` | Mirrors (light) | Used for |
 | --- | --- | --- | --- | --- |

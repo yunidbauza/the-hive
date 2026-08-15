@@ -12,6 +12,7 @@ import {
   TerminalHost,
   type TerminalHostEntry,
 } from '@components/terminal/terminal-host';
+import { TERM } from '@lib/terminal/ansi';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 
 vi.mock('@xterm/xterm');
@@ -60,7 +61,7 @@ describe('TerminalHost', () => {
   });
 
   it('mounts only the active entry on first render', () => {
-    render(<TerminalHost entries={entries} activeId="orch" theme="dark" />);
+    render(<TerminalHost entries={entries} activeId="orch" palette={TERM} />);
 
     // Lazily: opening the app must not construct a terminal for all thirteen
     // fixture entities.
@@ -70,11 +71,11 @@ describe('TerminalHost', () => {
 
   it('keeps a visited terminal alive after switching away', () => {
     const { rerender } = render(
-      <TerminalHost entries={entries} activeId="orch" theme="dark" />,
+      <TerminalHost entries={entries} activeId="orch" palette={TERM} />,
     );
 
     rerender(
-      <TerminalHost entries={entries} activeId="hero-refresh" theme="dark" />,
+      <TerminalHost entries={entries} activeId="hero-refresh" palette={TERM} />,
     );
 
     // Both exist; exactly one is on screen.
@@ -88,13 +89,13 @@ describe('TerminalHost', () => {
 
   it('does not rebuild a terminal when returning to it', () => {
     const { rerender } = render(
-      <TerminalHost entries={entries} activeId="orch" theme="dark" />,
+      <TerminalHost entries={entries} activeId="orch" palette={TERM} />,
     );
     rerender(
-      <TerminalHost entries={entries} activeId="hero-refresh" theme="dark" />,
+      <TerminalHost entries={entries} activeId="hero-refresh" palette={TERM} />,
     );
 
-    rerender(<TerminalHost entries={entries} activeId="orch" theme="dark" />);
+    rerender(<TerminalHost entries={entries} activeId="orch" palette={TERM} />);
 
     // Three switches, two instances. A third would mean the buffer was thrown
     // away and the user's scroll position with it.
@@ -103,7 +104,7 @@ describe('TerminalHost', () => {
 
   it('tears down a terminal whose entry disappears', () => {
     const { rerender } = render(
-      <TerminalHost entries={entries} activeId="hero-refresh" theme="dark" />,
+      <TerminalHost entries={entries} activeId="hero-refresh" palette={TERM} />,
     );
     const [instance] = terminalInstances;
 
@@ -111,7 +112,7 @@ describe('TerminalHost', () => {
       <TerminalHost
         entries={entries.filter((entry) => entry.id !== 'hero-refresh')}
         activeId="orch"
-        theme="dark"
+        palette={TERM}
       />,
     );
 
@@ -119,7 +120,7 @@ describe('TerminalHost', () => {
   });
 
   it('renders nothing when no entry is active', () => {
-    render(<TerminalHost entries={entries} activeId={null} theme="dark" />);
+    render(<TerminalHost entries={entries} activeId={null} palette={TERM} />);
 
     expect(surfaces()).toHaveLength(0);
     expect(terminalInstances).toHaveLength(0);
@@ -130,7 +131,7 @@ describe('TerminalHost', () => {
       <TerminalHost
         entries={[entry('orch', { readOnly: true })]}
         activeId="orch"
-        theme="dark"
+        palette={TERM}
       />,
     );
 
@@ -167,13 +168,13 @@ describe('TerminalHost', () => {
 
     it('mounts one surface, not two', () => {
       const { rerender } = render(
-        <TerminalHost entries={[live]} activeId="sess-01" theme="dark" />,
+        <TerminalHost entries={[live]} activeId="sess-01" palette={TERM} />,
       );
       rerender(
         <TerminalHost
           entries={[cleared, successor]}
           activeId="sess-02"
-          theme="dark"
+          palette={TERM}
         />,
       );
 
@@ -189,13 +190,13 @@ describe('TerminalHost', () => {
      */
     it('keeps the live row, not the retired one', () => {
       const { rerender } = render(
-        <TerminalHost entries={[live]} activeId="sess-01" theme="dark" />,
+        <TerminalHost entries={[live]} activeId="sess-01" palette={TERM} />,
       );
       rerender(
         <TerminalHost
           entries={[cleared, successor]}
           activeId="sess-02"
-          theme="dark"
+          palette={TERM}
         />,
       );
 
@@ -209,7 +210,7 @@ describe('TerminalHost', () => {
      */
     it('does not rebuild the xterm instance across the swap', () => {
       const { rerender } = render(
-        <TerminalHost entries={[live]} activeId="sess-01" theme="dark" />,
+        <TerminalHost entries={[live]} activeId="sess-01" palette={TERM} />,
       );
       const before = terminalInstances.length;
 
@@ -217,7 +218,7 @@ describe('TerminalHost', () => {
         <TerminalHost
           entries={[cleared, successor]}
           activeId="sess-02"
-          theme="dark"
+          palette={TERM}
         />,
       );
 

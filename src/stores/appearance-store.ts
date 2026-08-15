@@ -9,6 +9,7 @@ import {
   terminalFontStack,
   type TerminalFontId,
 } from '@lib/terminal/fonts';
+import { BUILT_IN_THEME } from '@lib/theme/built-in';
 
 /**
  * Appearance — the first *persisted* state in the app (story 105).
@@ -464,6 +465,22 @@ const terminalAppearanceSelector = (state: AppearanceState) => ({
   fontFamily: terminalFontStack(state.terminalFont),
   fontSize: state.terminalFontSize,
   scrollback: state.terminalScrollback,
+  /**
+   * The one place colour crosses into the terminal (story 105, extended by
+   * HIVE-80).
+   *
+   * `components/terminal/**` may not import `stores/**`, so the composition
+   * root reads this and passes it as a prop — the terminal is handed colours,
+   * exactly as it is handed a font stack, and never learns that a theme was
+   * picked.
+   *
+   * **A stored reference, never a copy.** `useTerminalAppearance` wraps this in
+   * `useShallow`, which compares one level deep, and the surface's re-theme
+   * effect depends on this object's identity: a spread here would hand every
+   * live terminal a new palette on every render.
+   */
+  palette: BUILT_IN_THEME.modes[resolveTheme(state.theme, state.systemDark)]
+    .terminal,
 });
 
 const appearanceActionsSelector = (state: AppearanceState) => ({
@@ -524,6 +541,9 @@ export const useThemeActions = () =>
  * Returns the font *stack* rather than the id: `components/terminal/**` may not
  * import from `lib` conventions it does not own, and more to the point it should
  * not know that "menlo" is a choice a user made. It takes a font stack.
+ *
+ * `palette` arrives on the same terms (HIVE-80) — eleven resolved colours, not
+ * the name of a mode and not the name of a theme.
  */
 export const useTerminalAppearance = () =>
   useAppearanceStore(useShallow(terminalAppearanceSelector));

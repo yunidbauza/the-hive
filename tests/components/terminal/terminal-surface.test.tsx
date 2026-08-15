@@ -21,6 +21,7 @@ import {
 } from '../../../__mocks__/@xterm/xterm';
 
 import { TerminalSurface } from '@components/terminal/terminal-surface';
+import { TERM, TERM_LIGHT } from '@lib/terminal/ansi';
 import type {
   TerminalDataHandler,
   TerminalTransport,
@@ -76,7 +77,7 @@ describe('TerminalSurface', () => {
   it('constructs one terminal and attaches it to its container', () => {
     const { transport } = fakeTransport();
     const { container } = render(
-      <TerminalSurface transport={transport} theme="dark" />,
+      <TerminalSurface transport={transport} palette={TERM} />,
     );
 
     expect(terminalInstances).toHaveLength(1);
@@ -87,7 +88,7 @@ describe('TerminalSurface', () => {
 
   it('configures xterm to the story-042 spec', () => {
     const { transport } = fakeTransport();
-    render(<TerminalSurface transport={transport} theme="dark" />);
+    render(<TerminalSurface transport={transport} palette={TERM} />);
 
     expect(terminal().options).toMatchObject({
       convertEol: true,
@@ -99,7 +100,7 @@ describe('TerminalSurface', () => {
 
   it('honours an explicit font size', () => {
     const { transport } = fakeTransport();
-    render(<TerminalSurface transport={transport} theme="dark" fontSize={16} />);
+    render(<TerminalSurface transport={transport} palette={TERM} fontSize={16} />);
 
     expect(terminal().options.fontSize).toBe(16);
   });
@@ -109,7 +110,7 @@ describe('TerminalSurface', () => {
     render(
       <TerminalSurface
         transport={transport}
-        theme="dark"
+        palette={TERM}
         fontFamily="Menlo, monospace"
         scrollback={1000}
       />,
@@ -135,14 +136,14 @@ describe('TerminalSurface', () => {
     it('applies a new font, size and scrollback without rebuilding', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" />,
+        <TerminalSurface transport={transport} palette={TERM} />,
       );
       const before = terminal();
 
       rerender(
         <TerminalSurface
           transport={transport}
-          theme="dark"
+          palette={TERM}
           fontFamily="Monaco, monospace"
           fontSize={16}
           scrollback={10_000}
@@ -161,13 +162,13 @@ describe('TerminalSurface', () => {
     it('refits afterwards, because the measured cell changed', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" />,
+        <TerminalSurface transport={transport} palette={TERM} />,
       );
       const [fitAddon] = fitAddonInstances as MockFitAddon[];
 
       expect(fitAddon.fit).toHaveBeenCalledTimes(1); // mount only
 
-      rerender(<TerminalSurface transport={transport} theme="dark" fontSize={16} />);
+      rerender(<TerminalSurface transport={transport} palette={TERM} fontSize={16} />);
 
       // Without this the terminal keeps the old cols/rows, reports stale
       // dimensions to its transport, and renders into a box that no longer fits.
@@ -177,7 +178,7 @@ describe('TerminalSurface', () => {
     it('applies the options to a hidden surface but does not fit it', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+        <TerminalSurface transport={transport} palette={TERM} visible={false} />,
       );
       const [fitAddon] = fitAddonInstances as MockFitAddon[];
 
@@ -188,7 +189,7 @@ describe('TerminalSurface', () => {
       rerender(
         <TerminalSurface
           transport={transport}
-          theme="dark"
+          palette={TERM}
           fontSize={16}
           visible={false}
         />,
@@ -207,7 +208,7 @@ describe('TerminalSurface', () => {
 
       // Revealing it fits once, with the new font already applied.
       rerender(
-        <TerminalSurface transport={transport} theme="dark" fontSize={16} visible />,
+        <TerminalSurface transport={transport} palette={TERM} fontSize={16} visible />,
       );
       expect(fitAddon.fit).toHaveBeenCalledTimes(1);
     });
@@ -215,11 +216,11 @@ describe('TerminalSurface', () => {
     it('does not refit when the appearance props are unchanged', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" fontSize={16} />,
+        <TerminalSurface transport={transport} palette={TERM} fontSize={16} />,
       );
       const [fitAddon] = fitAddonInstances as MockFitAddon[];
 
-      rerender(<TerminalSurface transport={transport} theme="light" fontSize={16} />);
+      rerender(<TerminalSurface transport={transport} palette={TERM_LIGHT} fontSize={16} />);
 
       // A theme change has its own effect and costs no geometry.
       expect(fitAddon.fit).toHaveBeenCalledTimes(1);
@@ -228,7 +229,7 @@ describe('TerminalSurface', () => {
 
   it('loads the fit and web-links addons and fits once on mount', () => {
     const { transport } = fakeTransport();
-    render(<TerminalSurface transport={transport} theme="dark" />);
+    render(<TerminalSurface transport={transport} palette={TERM} />);
 
     const [fitAddon] = fitAddonInstances as MockFitAddon[];
     expect(terminal().loadAddon).toHaveBeenCalledWith(fitAddon);
@@ -241,7 +242,7 @@ describe('TerminalSurface', () => {
   describe('read-only', () => {
     it('disables stdin and the cursor when read-only', () => {
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly />);
 
       expect(terminal().options).toMatchObject({
         disableStdin: true,
@@ -251,7 +252,7 @@ describe('TerminalSurface', () => {
 
     it('does not forward keystrokes while read-only', () => {
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly />);
 
       terminal().emitData('ls\r');
 
@@ -260,7 +261,7 @@ describe('TerminalSurface', () => {
 
     it('forwards keystrokes to the transport when writable', () => {
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
 
       terminal().emitData('ls\r');
 
@@ -272,7 +273,7 @@ describe('TerminalSurface', () => {
   describe('transport wiring', () => {
     it('writes backend output into the terminal', () => {
       const { transport, push } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
 
       push('hello\n');
 
@@ -282,7 +283,7 @@ describe('TerminalSurface', () => {
     it('unsubscribes on unmount, leaving nothing to leak', () => {
       const { transport, unsubscribe } = fakeTransport();
       const { unmount } = render(
-        <TerminalSurface transport={transport} theme="dark" />,
+        <TerminalSurface transport={transport} palette={TERM} />,
       );
 
       expect(unsubscribe).not.toHaveBeenCalled();
@@ -300,7 +301,7 @@ describe('TerminalSurface', () => {
        */
       const { transport, push } = fakeTransport();
       const parsed = vi.fn();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
 
       push('output', parsed);
 
@@ -311,7 +312,7 @@ describe('TerminalSurface', () => {
       // `StaticTransport` has no backpressure and passes nothing. The optional
       // argument is what keeps every existing caller working unchanged.
       const { transport, push } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
 
       expect(() => push('output')).not.toThrow();
       expect(terminal().written).toContain('output');
@@ -321,10 +322,10 @@ describe('TerminalSurface', () => {
       const first = fakeTransport();
       const second = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={first.transport} theme="dark" />,
+        <TerminalSurface transport={first.transport} palette={TERM} />,
       );
 
-      rerender(<TerminalSurface transport={second.transport} theme="dark" />);
+      rerender(<TerminalSurface transport={second.transport} palette={TERM} />);
 
       expect(first.unsubscribe).toHaveBeenCalledTimes(1);
       expect(second.transport.onData).toHaveBeenCalledTimes(1);
@@ -336,7 +337,7 @@ describe('TerminalSurface', () => {
   describe('the bottom-stick rule', () => {
     it('follows new output when the viewport is at the bottom', () => {
       const { transport, push } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
       terminal().buffer.active.viewportY = 40;
       terminal().buffer.active.baseY = 40;
       // The initial fit already stuck to the bottom; count only this write.
@@ -349,7 +350,7 @@ describe('TerminalSurface', () => {
 
     it('leaves the viewport alone while the user reads scrollback', () => {
       const { transport, push } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
       terminal().buffer.active.viewportY = 5;
       terminal().buffer.active.baseY = 40;
       terminal().scrollToBottom.mockClear();
@@ -365,7 +366,7 @@ describe('TerminalSurface', () => {
   describe('theming', () => {
     it('applies the dark palette rather than inheriting page colours', () => {
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
 
       expect(terminal().options.theme).toMatchObject({
         background: '#0b1023',
@@ -375,7 +376,7 @@ describe('TerminalSurface', () => {
 
     it('applies the light palette in light mode', () => {
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="light" />);
+      render(<TerminalSurface transport={transport} palette={TERM_LIGHT} />);
 
       /**
        * This test used to assert the background *stayed* `#0b1023` in light
@@ -395,10 +396,10 @@ describe('TerminalSurface', () => {
     it('re-themes in place without losing the terminal', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" />,
+        <TerminalSurface transport={transport} palette={TERM} />,
       );
 
-      rerender(<TerminalSurface transport={transport} theme="light" />);
+      rerender(<TerminalSurface transport={transport} palette={TERM_LIGHT} />);
 
       // One instance throughout: rebuilding it would drop every line of
       // scrollback on a theme toggle.
@@ -428,7 +429,7 @@ describe('TerminalSurface', () => {
       );
 
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
       const [fitAddon] = fitAddonInstances as MockFitAddon[];
 
       trigger();
@@ -454,7 +455,7 @@ describe('TerminalSurface', () => {
       );
 
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
       terminal().buffer.active.viewportY = 40;
       terminal().buffer.active.baseY = 40;
       terminal().scrollToBottom.mockClear();
@@ -488,7 +489,7 @@ describe('TerminalSurface', () => {
       );
 
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" />);
+      render(<TerminalSurface transport={transport} palette={TERM} />);
       terminal().buffer.active.viewportY = 5;
       terminal().buffer.active.baseY = 40;
       terminal().scrollToBottom.mockClear();
@@ -517,9 +518,9 @@ describe('TerminalSurface', () => {
       const first = fakeTransport();
       const second = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={first.transport} theme="dark" />,
+        <TerminalSurface transport={first.transport} palette={TERM} />,
       );
-      rerender(<TerminalSurface transport={second.transport} theme="dark" />);
+      rerender(<TerminalSurface transport={second.transport} palette={TERM} />);
 
       trigger();
 
@@ -537,13 +538,13 @@ describe('TerminalSurface', () => {
     it('refits when it becomes visible again', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+        <TerminalSurface transport={transport} palette={TERM} visible={false} />,
       );
       const [fitAddon] = fitAddonInstances as MockFitAddon[];
       const fitsWhileHidden = fitAddon.fit.mock.calls.length;
 
       rerender(
-        <TerminalSurface transport={transport} theme="dark" visible={true} />,
+        <TerminalSurface transport={transport} palette={TERM} visible={true} />,
       );
 
       // A terminal fitted while hidden measured a zero-height box; without this
@@ -580,12 +581,12 @@ describe('TerminalSurface', () => {
 
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" visible />,
+        <TerminalSurface transport={transport} palette={TERM} visible />,
       );
       const [fitAddon] = fitAddonInstances as MockFitAddon[];
 
       rerender(
-        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+        <TerminalSurface transport={transport} palette={TERM} visible={false} />,
       );
       const fitsBefore = fitAddon.fit.mock.calls.length;
       (transport.resize as ReturnType<typeof vi.fn>).mockClear();
@@ -602,7 +603,7 @@ describe('TerminalSurface', () => {
     it('hides rather than unmounts when not visible', () => {
       const { transport } = fakeTransport();
       const { container } = render(
-        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+        <TerminalSurface transport={transport} palette={TERM} visible={false} />,
       );
 
       // Kept alive: this is what preserves scrollback across tab switches.
@@ -619,12 +620,12 @@ describe('TerminalSurface', () => {
        */
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" visible={false} />,
+        <TerminalSurface transport={transport} palette={TERM} visible={false} />,
       );
 
       expect(terminal().focus).not.toHaveBeenCalled();
 
-      rerender(<TerminalSurface transport={transport} theme="dark" visible />);
+      rerender(<TerminalSurface transport={transport} palette={TERM} visible />);
 
       expect(terminal().focus).toHaveBeenCalled();
     });
@@ -636,7 +637,7 @@ describe('TerminalSurface', () => {
        * out of the input the whole console is driven from.
        */
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly visible />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly visible />);
 
       expect(terminal().focus).not.toHaveBeenCalled();
     });
@@ -644,7 +645,7 @@ describe('TerminalSurface', () => {
     it('disconnects its observer and disposes the terminal on unmount', () => {
       const { transport } = fakeTransport();
       const { unmount } = render(
-        <TerminalSurface transport={transport} theme="dark" />,
+        <TerminalSurface transport={transport} palette={TERM} />,
       );
 
       expect(terminal().disposed).toBe(false);
@@ -664,7 +665,7 @@ describe('TerminalSurface', () => {
     function renderInteractive() {
       const { transport } = fakeTransport();
       const result = render(
-        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+        <TerminalSurface transport={transport} palette={TERM} readOnly={false} />,
       );
       return { ...result, transport };
     }
@@ -676,7 +677,7 @@ describe('TerminalSurface', () => {
        * would be the first step toward the console quietly becoming a shell.
        */
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly />);
 
       expect(terminal().keyEventHandler).toBeNull();
     });
@@ -768,7 +769,7 @@ describe('TerminalSurface', () => {
       function renderEnded() {
         const { transport } = fakeTransport();
         const result = render(
-          <TerminalSurface transport={transport} theme="dark" ended />,
+          <TerminalSurface transport={transport} palette={TERM} ended />,
         );
         return { ...result, transport };
       }
@@ -794,11 +795,11 @@ describe('TerminalSurface', () => {
         // exit notice, the most useful thing on the screen.
         const { transport } = fakeTransport();
         const { rerender } = render(
-          <TerminalSurface transport={transport} theme="dark" />,
+          <TerminalSurface transport={transport} palette={TERM} />,
         );
         expect(terminal().options).toMatchObject({ disableStdin: false });
 
-        rerender(<TerminalSurface transport={transport} theme="dark" ended />);
+        rerender(<TerminalSurface transport={transport} palette={TERM} ended />);
 
         expect(terminal().options).toMatchObject({
           disableStdin: true,
@@ -946,7 +947,7 @@ describe('TerminalSurface', () => {
   describe('the WebGL renderer (story 095)', () => {
     it('attaches to a visible interactive terminal', () => {
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly={false} />);
 
       expect(webglAddonInstances).toHaveLength(1);
     });
@@ -955,7 +956,7 @@ describe('TerminalSurface', () => {
       // They render a recording, once. The DOM renderer was always right for
       // that workload.
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly />);
 
       expect(webglAddonInstances).toHaveLength(0);
     });
@@ -970,7 +971,7 @@ describe('TerminalSurface', () => {
       render(
         <TerminalSurface
           transport={transport}
-          theme="dark"
+          palette={TERM}
           readOnly={false}
           visible={false}
         />,
@@ -982,7 +983,7 @@ describe('TerminalSurface', () => {
     it('gives up its context when hidden and takes one again on reveal', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(
-        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+        <TerminalSurface transport={transport} palette={TERM} readOnly={false} />,
       );
 
       expect(webglAddonInstances).toHaveLength(1);
@@ -990,7 +991,7 @@ describe('TerminalSurface', () => {
       rerender(
         <TerminalSurface
           transport={transport}
-          theme="dark"
+          palette={TERM}
           readOnly={false}
           visible={false}
         />,
@@ -998,7 +999,7 @@ describe('TerminalSurface', () => {
       expect(webglAddonInstances[0]!.dispose).toHaveBeenCalled();
 
       rerender(
-        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+        <TerminalSurface transport={transport} palette={TERM} readOnly={false} />,
       );
       // A fresh context, and the buffer is untouched — the terminal itself was
       // never rebuilt.
@@ -1013,7 +1014,7 @@ describe('TerminalSurface', () => {
        * that is running perfectly.
        */
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly={false} />);
 
       const addon = webglAddonInstances[0]!;
       expect(addon.dispose).not.toHaveBeenCalled();
@@ -1037,7 +1038,7 @@ describe('TerminalSurface', () => {
        * away from a terminal the user is typing into.
        */
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly={false} />);
 
       const textarea = document.createElement('textarea');
       // Removed in `finally`: a stray focused element left behind by a failing
@@ -1063,7 +1064,7 @@ describe('TerminalSurface', () => {
        * went away would yank the user out of whatever they were typing.
        */
       const { transport } = fakeTransport();
-      render(<TerminalSurface transport={transport} theme="dark" readOnly={false} />);
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly={false} />);
 
       const elsewhere = document.createElement('input');
       try {
@@ -1084,7 +1085,7 @@ describe('TerminalSurface', () => {
     it('drops its context-loss listener on unmount', () => {
       const { transport } = fakeTransport();
       const { unmount } = render(
-        <TerminalSurface transport={transport} theme="dark" readOnly={false} />,
+        <TerminalSurface transport={transport} palette={TERM} readOnly={false} />,
       );
 
       const addon = webglAddonInstances[0]!;

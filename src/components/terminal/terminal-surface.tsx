@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
 
 import { isMacPlatform } from '@lib/platform';
-import { buildXtermTheme, type TerminalTheme } from '@lib/terminal/ansi';
+import { xtermThemeFor, type TermPalette } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
   LINE_MOTION_SEQUENCE,
@@ -42,7 +42,20 @@ export interface TerminalSurfaceProps {
    * survives a tab switch, which is the mechanism behind kept-alive scrollback.
    */
   id?: string;
-  theme: TerminalTheme;
+  /**
+   * The colours this terminal paints in, already resolved — eleven roles, no
+   * mode name (HIVE-80).
+   *
+   * Handed over exactly as {@link TerminalSurfaceProps.fontFamily} is: this
+   * component knows it was given colours, not that a theme exists or that a
+   * user imported one. Which palette arrives is the composition root's
+   * business.
+   *
+   * **Referential stability is part of the contract.** The re-theme effect
+   * below depends on this object's identity, so a caller that rebuilds the
+   * palette each render would re-theme every live terminal on every render.
+   */
+  palette: TermPalette;
   /** A CSS font stack, already resolved. This component knows nothing of fonts. */
   fontFamily?: string;
   fontSize?: number;
@@ -174,7 +187,7 @@ function fitPreservingBottom({ terminal, fitAddon }: Instance) {
 export function TerminalSurface({
   transport,
   id,
-  theme,
+  palette,
   fontFamily = DEFAULT_FONT_FAMILY,
   fontSize = DEFAULT_FONT_SIZE,
   scrollback = DEFAULT_SCROLLBACK,
@@ -268,7 +281,7 @@ export function TerminalSurface({
       fontSize,
       lineHeight: LINE_HEIGHT,
       scrollback,
-      theme: buildXtermTheme(theme),
+      theme: xtermThemeFor(palette),
     });
 
     const fitAddon = new FitAddon();
@@ -377,7 +390,7 @@ export function TerminalSurface({
     /**
      * Only `container` and `readOnly` rebuild.
      *
-     * `theme`, `transport`, and the three appearance options are absent because
+     * `palette`, `transport`, and the three appearance options are absent because
      * each is handled by an effect below — a rebuild disposes the terminal, and
      * disposing the terminal throws away the scrollback of a kept-alive
      * instance. Changing a font size should not clear thirteen transcripts.
@@ -392,11 +405,18 @@ export function TerminalSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [container, readOnly]);
 
-  /** Re-theme in place. Assigning `options.theme` preserves buffer content. */
+  /**
+   * Re-theme in place. Assigning `options.theme` preserves buffer content.
+   *
+   * Keyed on the palette's *identity*, which is why {@link
+   * TerminalSurfaceProps.palette} has to be a stored object rather than one
+   * built per render: a fresh reference every frame would rebuild and reassign
+   * the xterm theme on every unrelated re-render, for every kept-alive surface.
+   */
   useEffect(() => {
     if (!instance) return;
-    instance.terminal.options.theme = buildXtermTheme(theme);
-  }, [instance, theme]);
+    instance.terminal.options.theme = xtermThemeFor(palette);
+  }, [instance, palette]);
 
   /**
    * Appearance in place (story 105), buffer intact.

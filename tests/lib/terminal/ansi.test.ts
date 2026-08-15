@@ -5,14 +5,20 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SGR_RESET,
-  buildXtermTheme,
   TERM,
   TERM_LIGHT,
   XTERM_THEME,
   XTERM_THEME_LIGHT,
   colorize,
   toSgrIndexed,
+  xtermThemeFor,
 } from '@lib/terminal/ansi';
+import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import {
+  DARK_SELECTOR,
+  TOKENS_CSS,
+  parseTokenBlock,
+} from '@tests/support/css-tokens';
 
 const ESC = '\u001b';
 
@@ -291,19 +297,51 @@ describe('the block cursor', () => {
    * near-black on near-black (1.56:1): the character under the caret vanished
    * while you typed.
    */
-  it.each(['dark', 'light'] as const)(
+  it.each([
+    ['dark', TERM],
+    ['light', TERM_LIGHT],
+  ] as const)(
     'punches the glyph out of the cursor in the surface colour (%s)',
-    (theme) => {
-      const built = buildXtermTheme(theme);
+    (_name, palette) => {
+      const built = xtermThemeFor(palette);
       expect(built.cursorAccent).toBe(built.background);
       expect(built.cursorAccent).not.toBe(built.cursor);
     },
   );
 });
 
-describe('buildXtermTheme', () => {
-  it('returns the dark palette for the dark app theme', () => {
-    expect(buildXtermTheme('dark')).toEqual({ ...XTERM_THEME });
+describe('the terminal ground agrees with the DOM in both modes', () => {
+  /**
+   * Extends story 105's light-only assertion. Only the *background* check
+   * generalises to dark: `TERM`'s text colours are deliberately absent from
+   * tokens.css (see "keeps its text colours out of CSS" above), because dark
+   * terminal text needs more lift than the chrome around it.
+   */
+  it('matches --cc-term-bg in dark', () => {
+    const dark = parseTokenBlock(TOKENS_CSS, DARK_SELECTOR);
+    expect(TERM.bg).toBe(dark['--cc-term-bg']);
+  });
+
+  it('is sourced from the built-in theme', () => {
+    expect(TERM).toEqual(BUILT_IN_THEME.modes.dark.terminal);
+    expect(TERM_LIGHT).toEqual(BUILT_IN_THEME.modes.light.terminal);
+  });
+});
+
+describe('xtermThemeFor', () => {
+  it('is exported, and takes any palette', () => {
+    const custom = { ...TERM, bg: '#2b303b' };
+    expect(xtermThemeFor(custom).background).toBe('#2b303b');
+  });
+
+  it('returns a fresh object each call', () => {
+    // xterm copies the theme into its own colour manager; a shared singleton
+    // that someone mutated would corrupt every live terminal at once.
+    expect(xtermThemeFor(TERM)).not.toBe(xtermThemeFor(TERM));
+  });
+
+  it('builds the dark theme from the dark palette', () => {
+    expect(xtermThemeFor(TERM)).toEqual({ ...XTERM_THEME });
   });
 
   /**
@@ -316,20 +354,13 @@ describe('buildXtermTheme', () => {
    * panel that failed to load.
    */
   it('follows the app theme into light mode', () => {
-    expect(buildXtermTheme('light').background).toBe(TERM_LIGHT.bg);
-    expect(buildXtermTheme('light').foreground).toBe(TERM_LIGHT.ink);
+    expect(xtermThemeFor(TERM_LIGHT).background).toBe(TERM_LIGHT.bg);
+    expect(xtermThemeFor(TERM_LIGHT).foreground).toBe(TERM_LIGHT.ink);
   });
 
   it('gives light mode a light ground and dark mode a dark one', () => {
-    expect(buildXtermTheme('light').background).not.toBe(
-      buildXtermTheme('dark').background,
+    expect(xtermThemeFor(TERM_LIGHT).background).not.toBe(
+      xtermThemeFor(TERM).background,
     );
-  });
-
-  it('hands out a fresh object each call', () => {
-    // xterm copies the theme into its own colour manager; a shared singleton
-    // that someone mutated would corrupt every live terminal at once.
-    expect(buildXtermTheme('dark')).not.toBe(buildXtermTheme('dark'));
-    expect(buildXtermTheme('light')).not.toBe(buildXtermTheme('light'));
   });
 });

@@ -171,9 +171,13 @@ populated; the transcript lives in canvases. Two things follow:
 
 ### Theming
 
-**The terminal follows the app theme.** `buildXtermTheme(theme)` picks between
-two palettes — `TERM` and `TERM_LIGHT` — and one builder maps either into
-xterm's sixteen slots, so the themes can differ in colour but never in structure.
+**The terminal follows the app theme** — and since HIVE-80 it does so without
+knowing that. The surface takes a `palette` prop, exactly as it takes a font
+stack, and `xtermThemeFor(palette)` maps any eleven-colour palette into xterm's
+sixteen slots, so two palettes can differ in colour but never in structure.
+Which one arrives is the composition root's decision: `center-stage.tsx` reads
+`useTerminalAppearance()` and passes `palette` down. `TERM` and `TERM_LIGHT` are
+the built-in theme's two `terminal` groups under a name.
 
 This reverses stories 011 and 042, which pinned the terminal dark in both themes
 and allowed only selection and cursor to vary. That reasoning — a terminal is

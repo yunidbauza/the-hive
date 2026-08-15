@@ -1,10 +1,13 @@
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import {
   APPEARANCE_STORAGE_KEY,
   DEFAULT_TEAM_NAME,
   resolveTheme,
   useAppearanceStore,
+  useTerminalAppearance,
   watchSystemTheme,
 } from '@stores/appearance-store';
 
@@ -188,6 +191,42 @@ describe('appearance-store — terminal appearance', () => {
       terminalFontSize: 14,
       terminalScrollback: 10_000,
     });
+  });
+});
+
+describe('appearance-store — the terminal palette', () => {
+  it('hands over colours for the resolved mode, not the preference', () => {
+    const { result, rerender } = renderHook(() => useTerminalAppearance());
+
+    act(() => useAppearanceStore.getState().setTheme('light'));
+    rerender();
+    expect(result.current.palette).toEqual(BUILT_IN_THEME.modes.light.terminal);
+
+    act(() => useAppearanceStore.getState().setTheme('dark'));
+    rerender();
+    expect(result.current.palette).toEqual(BUILT_IN_THEME.modes.dark.terminal);
+  });
+
+  /**
+   * The referential guard, and it is not a micro-optimisation.
+   *
+   * `TerminalSurface` re-themes when the palette's *identity* changes, so a
+   * selector that spread or rebuilt the object would reassign the xterm theme
+   * of every kept-alive terminal on every unrelated render. `useShallow`
+   * compares one level deep and cannot save us: it is this field's reference
+   * that it compares.
+   */
+  it('is the stored object, so an unrelated change cannot re-theme terminals', () => {
+    const { result, rerender } = renderHook(() => useTerminalAppearance());
+
+    const first = result.current.palette;
+    expect(first).toBe(BUILT_IN_THEME.modes.dark.terminal);
+
+    act(() => useAppearanceStore.getState().setTerminalFontSize(16));
+    rerender();
+
+    expect(result.current.fontSize).toBe(16);
+    expect(result.current.palette).toBe(first);
   });
 });
 

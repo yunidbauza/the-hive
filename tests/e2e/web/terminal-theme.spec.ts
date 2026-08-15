@@ -6,7 +6,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
  * **This claim cannot be made anywhere else.** Vitest never instantiates xterm
  * — happy-dom performs no layout, so a terminal can never measure a cell, and
  * `__mocks__/@xterm/` records the theme object rather than painting it. A unit
- * test can therefore prove that `buildXtermTheme('light')` *returns* a light
+ * test can therefore prove that `xtermThemeFor(TERM_LIGHT)` *returns* a light
  * background and that the surface *assigns* it; only a browser can prove xterm
  * then painted it, and that the DOM padding around the canvas agrees.
  *

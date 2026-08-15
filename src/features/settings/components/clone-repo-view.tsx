@@ -10,7 +10,7 @@ import {
   createCloneTransport,
   resetCloneChannel,
 } from '@lib/terminal/pty-transport';
-import { useTheme } from '@stores/appearance-store';
+import { useTerminalAppearance } from '@stores/appearance-store';
 
 /**
  * Cloning a repository, as a focused sub-view of Settings (story 102).
@@ -56,7 +56,13 @@ function previewName(url: string): string | null {
 }
 
 export function CloneRepoView({ onDone }: { onDone: () => void }) {
-  const theme = useTheme();
+  /**
+   * Colours for the clone transcript, resolved by the store (HIVE-80).
+   *
+   * The same selector the centre stage uses, for the same reason: a surface is
+   * handed a palette, never the name of a mode.
+   */
+  const { palette } = useTerminalAppearance();
 
   const [url, setUrl] = useState('');
   const [parentPath, setParentPath] = useState<string | null>(null);
@@ -225,7 +231,7 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
           <div className="min-h-0 flex-1 overflow-hidden rounded-[7px] border border-border">
             <TerminalSurface
               transport={transport}
-              theme={theme}
+              palette={palette}
               /* Load-bearing: git's credential and host-key prompts are
                  answered by typing into this surface. */
               readOnly={false}
