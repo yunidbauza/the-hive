@@ -71,9 +71,6 @@ export function ThemeGallery() {
   const [result, setResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
 
-  const themeOf = (id: string): HiveTheme =>
-    id === BUILT_IN_THEME_ID ? BUILT_IN_THEME : themes[id];
-
   /**
    * No re-entrancy guard here: the button this drives sets `disabled` from
    * the same `importing` flag, so a second invocation while one is in flight
@@ -114,8 +111,16 @@ export function ThemeGallery() {
     }
   };
 
-  const onExport = (id: string) => {
-    void saveThemeFile(`${id}.json`, themeToJson(themeOf(id)));
+  /**
+   * The theme travels with the id rather than being looked up from it.
+   *
+   * Every card already holds the theme it renders, so each one can hand back
+   * both. Resolving `themes[id]` here instead would have to answer for a miss
+   * that no rendered card can produce — either by lying about the type or by
+   * carrying a branch nothing can exercise.
+   */
+  const onExport = (id: string, theme: HiveTheme) => {
+    void saveThemeFile(`${id}.json`, themeToJson(theme));
   };
 
   const onDownloadTemplate = () => {
@@ -159,7 +164,7 @@ export function ThemeGallery() {
           isActive={activeThemeId === BUILT_IN_THEME_ID}
           isBuiltIn
           onActivate={activateTheme}
-          onExport={onExport}
+          onExport={(id) => onExport(id, BUILT_IN_THEME)}
           onRemove={() => {}}
         />
         {Object.entries(themes).map(([id, theme]) => (
@@ -170,7 +175,7 @@ export function ThemeGallery() {
             isActive={activeThemeId === id}
             isBuiltIn={false}
             onActivate={activateTheme}
-            onExport={onExport}
+            onExport={(exportId) => onExport(exportId, theme)}
             onRemove={removeTheme}
           />
         ))}

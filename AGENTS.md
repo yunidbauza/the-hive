@@ -131,9 +131,9 @@ reason the seam exists.
 
 Corollary: xterm resolves colours from its own JS `theme` option and paints them
 into markup it owns, so a `--cc-*` custom property has no path to a terminal
-cell. Terminal colour comes from JS — `TERM` and `XTERM_THEME` in
-`src/lib/terminal/ansi.ts` are the single definition. Never hand-write a hex into
-a terminal component (`docs/terminal-architecture.md`).
+cell. Terminal colour comes from JS — the active theme's `terminal` group, whose
+built-in values are defined in `src/lib/theme/built-in.ts`. Never hand-write a
+hex into a terminal component (`docs/terminal-architecture.md`).
 
 `src/components/editor/` is the same seam with the colour rule **inverted**:
 CodeMirror emits real CSS, so its palette is `--cc-code-*` in `tokens.css`. The
