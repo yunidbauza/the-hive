@@ -72,6 +72,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
     updates: Object.keys(window.hive!.updates).sort(),
+    theme: Object.keys(window.hive!.theme).sort(),
   }));
 
   // Widening any of these lists is the alarm this test exists to raise.
@@ -140,6 +141,13 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * cannot name a repository, so this is a bounded read of what the user
    * already mapped rather than a general-purpose GitHub client.
    */
+  /**
+   * HIVE-80 adds `theme`, and the bound still holds: two verbs, neither
+   * taking a destination path from the renderer. `pick` reads whatever the
+   * open dialog chose; `save` writes to whatever the save dialog chose, with
+   * the renderer's own `suggestedName` only ever offered to that dialog as a
+   * default — never joined to a directory or trusted as a destination.
+   */
   expect(surface.top).toEqual([
     'appInfo',
     'config',
@@ -150,8 +158,10 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'notifications',
     'pty',
     'session',
+    'theme',
     'updates',
   ]);
+  expect(surface.theme).toEqual(['pick', 'save']);
   expect(surface.integrations).toEqual(['status']);
   expect(surface.github).toEqual(['prs']);
   expect(surface.fs).toEqual([

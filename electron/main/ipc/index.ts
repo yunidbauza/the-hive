@@ -119,6 +119,7 @@ import { createNotificationHub, createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import { onShutdown } from '../shutdown';
+import { parseSaveThemeRequest, pickTheme, saveTheme } from '../theme';
 import {
   checkForUpdatesInteractively,
   downloadUpdate,
@@ -990,6 +991,20 @@ export function registerIpcHandlers(): void {
   handle(CH.fsUnwatch, (): void => {
     fsWatch?.unwatch();
   });
+
+  /**
+   * Getting a theme file on and off disk (HIVE-80).
+   *
+   * Neither verb takes a payload that names a destination: `pick` returns
+   * whatever the open dialog chose, and `save`'s only renderer-supplied fields
+   * are the file's contents and a suggested name for the save dialog — see
+   * `parseSaveThemeRequest` for why both still need validating even though
+   * neither is a path.
+   */
+  handle(CH.themePick, (event) => pickTheme(event));
+  handle(CH.themeSave, (event, payload) =>
+    saveTheme(event, parseSaveThemeRequest(payload)),
+  );
 
   /**
    * The PTY channels (story 093).

@@ -82,6 +82,7 @@ import type {
   SessionStatusEvent,
   SessionTicketIntentEvent,
 } from './session-contract';
+import type { PickedTheme, SaveThemeRequest } from './theme-contract';
 import type { UpdateStatus } from './update-contract';
 
 export const CH = {
@@ -411,6 +412,13 @@ export const CH = {
   fsUnwatch: 'fs:unwatch',
   fsChanged: 'fs:changed', // main → renderer
   appInfo: 'app:info',
+  /**
+   * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
+   * it — so the epic's "no verb takes a destination path" rule still holds by
+   * construction.
+   */
+  themePick: 'theme:pick',
+  themeSave: 'theme:save',
 } as const;
 
 export type Channel = (typeof CH)[keyof typeof CH];
@@ -1127,6 +1135,20 @@ export interface HiveBridge {
      */
     onMetrics(callback: (event: SessionMetricsEvent) => void): () => void;
   };
+  /**
+   * Getting a theme file on and off disk (HIVE-80).
+   *
+   * Two verbs, and neither takes a destination path: the dialog chooses it in
+   * both directions, which is what keeps the epic's "no verb takes a
+   * destination path" rule true by construction rather than by a check that
+   * could be forgotten.
+   */
+  theme: {
+    /** Native open dialog filtered to .json. Resolves null when cancelled. */
+    pick(): Promise<PickedTheme | null>;
+    /** Native save dialog, then writes. Resolves the path, or null when cancelled. */
+    save(request: SaveThemeRequest): Promise<string | null>;
+  };
 }
 
 /**
@@ -1172,6 +1194,14 @@ export const RESIZE_THROTTLE_MS = 50;
  * request to the configured site. What it still cannot do: read a token back —
  * there is no verb for it — or choose the host, which comes from the config and
  * never from a payload.
+ *
+ * HIVE-80 adds `theme`. What a web page can now do that it could not before:
+ * ask the user, through a native dialog, to pick a `.json` file and read it
+ * back (`theme.pick`), and ask the user, through another native dialog, where
+ * to write one (`theme.save`). Neither verb takes a path from the renderer —
+ * both dialogs choose it — so this does not widen the bridge into a general
+ * file picker; it is bounded to the one round trip a theme import or export
+ * needs.
  */
 export const BRIDGE_KEYS = [
   'appInfo',
@@ -1183,6 +1213,7 @@ export const BRIDGE_KEYS = [
   'notifications',
   'pty',
   'session',
+  'theme',
   'updates',
 ] as const;
 
@@ -1320,6 +1351,9 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
 
 /** The exact key set of `window.hive.updates`. */
 export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
+
+/** The exact key set of `window.hive.theme` (HIVE-80). */
+export const BRIDGE_THEME_KEYS = ['pick', 'save'] as const;
 
 /** The exact key set of `window.hive.config`. */
 export const BRIDGE_CONFIG_KEYS = [
