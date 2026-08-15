@@ -51,4 +51,30 @@ describe('ThemeCard', () => {
       'true',
     );
   });
+
+  it('never nests a button inside a button', () => {
+    const { container } = render(
+      <ThemeCard {...base} id="nord" isActive={false} isBuiltIn={false} />,
+    );
+    const buttons = Array.from(container.querySelectorAll('button'));
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.querySelector('button')).toBeNull();
+    }
+  });
+
+  it('opening the menu does not also activate the card', async () => {
+    const onActivate = vi.fn();
+    render(
+      <ThemeCard
+        {...base}
+        id="nord"
+        isActive={false}
+        isBuiltIn={false}
+        onActivate={onActivate}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Theme actions' }));
+    expect(onActivate).not.toHaveBeenCalled();
+  });
 });

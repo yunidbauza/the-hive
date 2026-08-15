@@ -41,15 +41,30 @@ interface ThemeCardProps {
  * colours, which are runtime data with no token that could name them, via
  * inline `style` reading `theme.modes[mode].ui.*`.
  *
- * ## The footer's three-way slot
+ * ## The footer's three-way slot, and why it is not one `<button>`
  *
  * The approved mock's footer right slot holds exactly one element — the
- * active check or the `Imported` chip. This story adds a `⋯` menu, so the
- * slot now carries up to three things in practice: the `⋯` pins to the far
- * right, and the check-or-chip sits to its left. They are effectively
- * mutually exclusive (a card is rarely both active and imported-but-unnamed),
- * and the active state is already carried by the ring around the whole card,
- * so the footer never crowds.
+ * active check or the `Imported` chip — and the card itself is a `<button>`
+ * in the mock's activate variant. This story adds a `⋯` menu, and a `⋯`
+ * trigger is itself a button: nesting it inside the card's own `<button>`
+ * would be invalid HTML content model (the exact anti-pattern
+ * `pr-card.tsx` documents avoiding for its own two controls).
+ *
+ * So the outer element is a plain `<div>` carrying the card's visual chrome
+ * (border, background, hover, the active ring) — CSS `:hover` on a `<div>`
+ * still fires for the whole box even though the actual click target inside
+ * it is smaller, so the whole-card hover/ring reads exactly as before. Two
+ * real controls sit inside it, as siblings rather than nested:
+ *
+ * - the **activate button** wraps the swatch and the name/author text — the
+ *   accessible name and `aria-pressed` live here, so `getByRole('button',
+ *   { name: /Hive/ })` still resolves to it;
+ * - the **check-or-chip and the `⋯` trigger** are a second, absolutely
+ *   positioned cluster pinned to the card's bottom-right corner, sitting
+ *   *above* the activate button in stacking order. Because neither is a
+ *   descendant of the other, a click on the trigger has no bubble path to
+ *   the activate button's `onClick` at all — there is nothing for
+ *   `stopPropagation` to stop, so it was dropped (a test locks this in).
  */
 export function ThemeCard({
   theme,
@@ -76,20 +91,26 @@ export function ThemeCard({
   };
 
   return (
-    <button
-      type="button"
-      aria-pressed={isActive}
-      onClick={() => onActivate(id)}
-      className={`flex w-full flex-col gap-2 rounded-[7px] border bg-panel p-[9px] text-left hover:bg-hover ${
+    <div
+      className={`relative flex w-full flex-col gap-2 rounded-[7px] border bg-panel p-[9px] hover:bg-hover ${
         isActive
           ? 'border-brand-fill shadow-[0_0_0_1px_var(--cc-brand-fill)]'
           : 'border-border'
       }`}
     >
-      <ThemeSwatch theme={theme} />
+      <button
+        type="button"
+        aria-pressed={isActive}
+        onClick={() => onActivate(id)}
+        className="flex w-full flex-col gap-2 text-left"
+      >
+        <ThemeSwatch theme={theme} />
 
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1">
+        {/*
+          `pr-16` reserves room under the absolutely positioned cluster so a
+          long name never truncates underneath it instead of before it.
+        */}
+        <div className="min-w-0 pr-16">
           <div className="truncate text-[12.5px] font-medium text-ink">
             {theme.name}
           </div>
@@ -97,7 +118,9 @@ export function ThemeCard({
             {isBuiltIn ? 'Built in' : theme.author}
           </div>
         </div>
+      </button>
 
+      <div className="absolute right-[9px] bottom-[9px] flex items-center gap-2">
         {isActive ? (
           <span
             aria-hidden="true"
@@ -114,7 +137,6 @@ export function ThemeCard({
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="Theme actions"
-            onClick={(event) => event.stopPropagation()}
             className="shrink-0 rounded p-1 text-subtle hover:bg-hover hover:text-ink"
           >
             <DotsThreeVertical size={13} weight="bold" />
@@ -152,7 +174,7 @@ export function ThemeCard({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </button>
+    </div>
   );
 }
 
