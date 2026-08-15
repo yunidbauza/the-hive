@@ -64,6 +64,37 @@ describe('the built-in theme mirrors tokens.css', () => {
     }
   });
 
+  /**
+   * The other direction, and the one the guarantee was missing.
+   *
+   * Every test above walks a *key list* and looks the token up in the CSS, so
+   * a `--cc-*` colour added to the stylesheet and to no key list passed green:
+   * the built-in painted it from the sheet, and it was simply un-themeable —
+   * an imported theme could never set it, and would leave it at whatever the
+   * stylesheet said while everything around it changed. Walking the parsed CSS
+   * instead closes it.
+   *
+   * `parseTokenBlock` only captures declarations whose value is a hex colour,
+   * which is what keeps the spacing and density tokens (`268px`, `7px`) out of
+   * this by construction rather than by an exclusion list somebody has to
+   * maintain.
+   */
+  const THEMEABLE_TOKENS = new Set<string>([
+    ...UI_KEYS.map(uiTokenName),
+    ...SYNTAX_KEYS.map(syntaxTokenName),
+  ]);
+
+  it.each([
+    ['dark', dark],
+    ['light', light],
+  ] as const)('names every colour token the %s block declares', (_mode, block) => {
+    for (const token of Object.keys(block)) {
+      expect(THEMEABLE_TOKENS.has(token), `${token} is in tokens.css but in no key list`).toBe(
+        true,
+      );
+    }
+  });
+
   it('grounds each mode terminal on the same colour the DOM paints', () => {
     expect(BUILT_IN_THEME.modes.dark.terminal.bg).toBe(
       BUILT_IN_THEME.modes.dark.ui.termBg,

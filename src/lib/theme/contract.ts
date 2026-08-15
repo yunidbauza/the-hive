@@ -1,9 +1,15 @@
 /**
  * The theme format (HIVE-80).
  *
- * These three key lists are the format's single source of truth. `built-in.ts`
- * is checked against `tokens.css` by a test rather than by a comment, so a
- * token added to the stylesheet without being added here fails the build.
+ * These three key lists are the format's single source of truth, and
+ * `tests/lib/theme/built-in.test.ts` holds them to it in **both** directions:
+ * every key here must name a colour `tokens.css` declares, and every colour
+ * `tokens.css` declares must be named by a key here. One direction alone is not
+ * a drift guarantee — it was the missing half that let a `--cc-*` colour be
+ * added to the stylesheet and stay silently un-themeable, painting from the
+ * sheet in the built-in and reverting the moment any theme was imported.
+ * (Spacing and density tokens are deliberately not part of a theme and carry no
+ * colour value, which is exactly how the test tells them apart.)
  */
 
 /**

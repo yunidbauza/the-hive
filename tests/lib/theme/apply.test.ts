@@ -46,9 +46,16 @@ describe('applyThemeColors', () => {
 describe('themeCss', () => {
   const css = themeCss(BUILT_IN_THEME);
 
-  it('targets the same elements tokens.css does', () => {
-    expect(css).toContain(':root');
-    expect(css).toContain("body[data-theme='light']");
+  /**
+   * `toContain(':root')` was trivially true of `:root:root` — and of every
+   * other selector containing those five characters — so it asserted nothing
+   * about which elements the sheet actually declares on. The doubled root is
+   * the whole mechanism (see the block comment below), so the selectors are
+   * asserted whole.
+   */
+  it('declares on the doubled root that out-ranks tokens.css', () => {
+    expect(css).toContain(':root:root {');
+    expect(css).toContain(":root:root body[data-theme='light'] {");
   });
 
   it('emits both ui and syntax tokens', () => {

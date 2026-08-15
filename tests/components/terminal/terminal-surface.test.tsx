@@ -393,6 +393,46 @@ describe('TerminalSurface', () => {
       });
     });
 
+    /**
+     * The half of the palette contract only this side can prove.
+     *
+     * `terminal-surface.tsx` calls referential stability "part of the
+     * contract", and `appearance-store.test.ts` covers the store's end of it —
+     * that the selector hands back a *stored* object rather than a rebuilt one.
+     * Nothing asserted what the surface does with that, which is the reason the
+     * store bothers: a stable reference must leave `options.theme` alone, and
+     * an unstable one must not, or every kept-alive terminal is re-themed on
+     * every unrelated render of the shell.
+     */
+    it('leaves the xterm theme untouched when the same palette comes back', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} palette={TERM} />,
+      );
+      const themeOnMount = terminal().options.theme;
+
+      rerender(<TerminalSurface transport={transport} palette={TERM} />);
+
+      // `xtermThemeFor` builds a fresh object every call, so a re-run of the
+      // effect is visible as a new identity even though the values match.
+      expect(terminal().options.theme).toBe(themeOnMount);
+    });
+
+    it('re-themes when an equal but freshly built palette arrives', () => {
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface transport={transport} palette={TERM} />,
+      );
+      const themeOnMount = terminal().options.theme;
+
+      rerender(<TerminalSurface transport={transport} palette={{ ...TERM }} />);
+
+      // Identity is what the effect keys on — which is precisely why the store
+      // may never spread this object on its way out.
+      expect(terminal().options.theme).not.toBe(themeOnMount);
+      expect(terminal().options.theme).toEqual(themeOnMount);
+    });
+
     it('re-themes in place without losing the terminal', () => {
       const { transport } = fakeTransport();
       const { rerender } = render(

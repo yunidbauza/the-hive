@@ -20,8 +20,11 @@
  * These colour values are also expressed as data in `src/lib/theme/built-in.ts`,
  * because a theme has to reach xterm — which cannot read a custom property.
  * `tests/lib/theme/built-in.test.ts` reads this file and fails if the two
- * drift, so change them together. Spacing tokens are deliberately NOT part of
- * a theme; they belong to the density control.
+ * drift, in either direction: a colour named there and missing here, and a
+ * colour added here without a key there — which would otherwise be a token no
+ * theme can ever set. Spacing tokens are deliberately NOT part of a theme; they
+ * belong to the density control, and carrying a length rather than a colour is
+ * how that test leaves them alone.
  */
 :root {
   --cc-bg: #10152a;
