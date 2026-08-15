@@ -3,6 +3,7 @@ import { SelectField, type SelectFieldOption } from '@components/ui/select-field
 import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import { ThemeGallery } from '@features/settings/components/theme-gallery';
 import {
   TERMINAL_FONTS,
   TERMINAL_FONT_SIZES,
@@ -28,7 +29,7 @@ import {
  * mouse comes up.
  */
 
-const THEME_OPTIONS: readonly SegmentedOption<ThemePreference>[] = [
+const MODE_OPTIONS: readonly SegmentedOption<ThemePreference>[] = [
   { value: 'system', label: 'System' },
   { value: 'dark', label: 'Dark' },
   { value: 'light', label: 'Light' },
@@ -70,13 +71,15 @@ export function AppearanceSection() {
         description="Stored on this machine, applied immediately."
       />
 
+      <ThemeGallery />
+
       <SettingsGroup
-        title="Theme"
+        title="Mode"
         description="System follows your operating system and changes with it."
       >
         <SegmentedControl
-          label="Theme"
-          options={THEME_OPTIONS}
+          label="Mode"
+          options={MODE_OPTIONS}
           value={settings.theme}
           onChange={setTheme}
         />

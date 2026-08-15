@@ -1,0 +1,176 @@
+import { useState } from 'react';
+
+import { ThemeCard } from '@features/settings/components/theme-card';
+import { ThemeImportResult } from '@features/settings/components/theme-import-result';
+import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import { BUILT_IN_THEME_ID, type HiveTheme } from '@lib/theme/contract';
+import { pickThemeFile, saveThemeFile } from '@lib/theme/files';
+import { themeTemplateJson, themeToJson, TEMPLATE_FILE_NAME } from '@lib/theme/template';
+import { importTheme, type ImportResult } from '@lib/theme/validate';
+import {
+  useActiveThemeId,
+  useThemeLibraryActions,
+  useThemes,
+} from '@stores/appearance-store';
+
+/**
+ * The Themes gallery — the settings epic's first group (HIVE-80, story 11).
+ *
+ * Self-contained: it reads the theme library through the store's own selector
+ * hooks and owns the import flow end to end, so `appearance-section.tsx` only
+ * has to mount it.
+ *
+ * ## The import flow
+ *
+ * `pickThemeFile()` → `importTheme(contents, name)` → on success `addTheme`
+ * then `activateTheme`; on failure nothing in the store changes. Either way
+ * the result is kept in local state so `ThemeImportResult` can render it, and
+ * it stays until the person dismisses it — a fresh import overwrites whatever
+ * banner was showing, same as any other "latest result" state.
+ *
+ * `pickThemeFile()` can **reject** (an oversize file, per `files.ts`) as well
+ * as resolve `null` (the dialog was cancelled). Only the rejection produces a
+ * banner — a cancel is the person closing a dialog they opened, and showing
+ * them a card about it would be answering a question they did not ask.
+ */
+
+const VALID_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** A theme name, turned into something fit to be an object key and a filename stem. */
+function slugify(name: string): string {
+  const cleaned = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return VALID_ID.test(cleaned) ? cleaned : 'theme';
+}
+
+/**
+ * `slugify`'d and de-duplicated against every id already in use — the
+ * built-in's and every imported theme's. Never resolves to
+ * {@link BUILT_IN_THEME_ID} itself: that id is checked into `existingIds`
+ * below, so a theme literally named "Hive" collides with it on the first try
+ * and is pushed to `hive-2` the same as any other duplicate.
+ */
+function uniqueThemeId(name: string, existingIds: ReadonlySet<string>): string {
+  const base = slugify(name);
+  if (!existingIds.has(base)) return base;
+
+  let suffix = 2;
+  while (existingIds.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+export function ThemeGallery() {
+  const themes = useThemes();
+  const activeThemeId = useActiveThemeId();
+  const { addTheme, activateTheme, removeTheme } = useThemeLibraryActions();
+
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  const themeOf = (id: string): HiveTheme =>
+    id === BUILT_IN_THEME_ID ? BUILT_IN_THEME : themes[id];
+
+  /**
+   * No re-entrancy guard here: the button this drives sets `disabled` from
+   * the same `importing` flag, so a second invocation while one is in flight
+   * is not a state a click can reach — the guard would be dead code a test
+   * could only fake, not exercise.
+   */
+  const onImport = async () => {
+    setImporting(true);
+    try {
+      const picked = await pickThemeFile().catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        setResult({ ok: false, title: "Couldn't import that file", detail });
+        return undefined;
+      });
+
+      // `undefined` marks the rejection above (already banner'd);
+      // `null` is a cancel, which changes nothing and shows nothing.
+      if (picked === undefined || picked === null) return;
+
+      const imported = importTheme(picked.contents, picked.name);
+      if (imported.ok) {
+        const existingIds = new Set([BUILT_IN_THEME_ID, ...Object.keys(themes)]);
+        const id = uniqueThemeId(imported.theme.name, existingIds);
+        addTheme(id, imported.theme);
+        activateTheme(id);
+      }
+      setResult(imported);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const onExport = (id: string) => {
+    void saveThemeFile(`${id}.json`, themeToJson(themeOf(id)));
+  };
+
+  const onDownloadTemplate = () => {
+    void saveThemeFile(TEMPLATE_FILE_NAME, themeTemplateJson());
+  };
+
+  return (
+    <section className="flex flex-col gap-3 border-b border-border-soft pb-4 last:border-b-0 last:pb-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <h3 className="text-[13px] font-semibold text-ink">Themes</h3>
+          <p className="text-[11.5px] text-subtle">
+            Every theme carries a light and a dark mode. The switch below picks
+            which one you see.
+          </p>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onDownloadTemplate}
+            className="flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink"
+          >
+            Download template
+          </button>
+          <button
+            type="button"
+            onClick={() => void onImport()}
+            disabled={importing}
+            className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
+          >
+            Import theme…
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 max-[860px]:grid-cols-2">
+        <ThemeCard
+          theme={BUILT_IN_THEME}
+          id={BUILT_IN_THEME_ID}
+          isActive={activeThemeId === BUILT_IN_THEME_ID}
+          isBuiltIn
+          onActivate={activateTheme}
+          onExport={onExport}
+          onRemove={() => {}}
+        />
+        {Object.entries(themes).map(([id, theme]) => (
+          <ThemeCard
+            key={id}
+            theme={theme}
+            id={id}
+            isActive={activeThemeId === id}
+            isBuiltIn={false}
+            onActivate={activateTheme}
+            onExport={onExport}
+            onRemove={removeTheme}
+          />
+        ))}
+      </div>
+
+      {result ? (
+        <ThemeImportResult result={result} onDismiss={() => setResult(null)} />
+      ) : null}
+    </section>
+  );
+}

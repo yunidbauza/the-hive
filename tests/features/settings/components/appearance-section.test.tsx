@@ -28,7 +28,7 @@ describe('AppearanceSection', () => {
     expect(
       screen.getByRole('heading', { name: 'Appearance', level: 2 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Mode' })).toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Density' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Font' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Size' })).toBeInTheDocument();
@@ -133,5 +133,18 @@ describe('AppearanceSection', () => {
     await user.clear(screen.getByRole('textbox', { name: 'Team name' }));
 
     expect(useAppearanceStore.getState().teamName).toBe('');
+  });
+
+  it('puts Themes first and calls the switch Mode', () => {
+    render(<AppearanceSection />);
+    // Level 3: the group headings (Themes, Mode, Terminal, Team, Density) —
+    // not the pane's own level-2 "Appearance" title, which this task leaves
+    // untouched and which would otherwise always win first place.
+    const headings = screen
+      .getAllByRole('heading', { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings[0]).toBe('Themes');
+    expect(headings).toContain('Mode');
+    expect(headings).not.toContain('Theme');
   });
 });
