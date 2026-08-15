@@ -249,9 +249,28 @@ pnpm desktop:dist
 ```
 
 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` is the supported
-alternative when an App Store Connect key is not available. In CI the same
-values are repository secrets, plus `CSC_LINK` (a base64 `.p12` holding the
-certificate **and** its private key) and `CSC_KEY_PASSWORD`.
+alternative when an App Store Connect key is not available.
+
+**`APPLE_API_KEY` is a filesystem path to the `.p8`, not the key itself.**
+`@electron/notarize` types it as "file system path to the `.p8` private key",
+so a secret cannot hold it directly — the release workflow decodes
+`APPLE_API_KEY_P8` (base64) into `$RUNNER_TEMP` and exports the *path*. Passing
+the base64 through as `APPLE_API_KEY` looks correct, survives the whole build,
+and fails at notarization on a file that does not exist.
+
+The repository secrets are therefore:
+
+| Secret | Holds |
+| --- | --- |
+| `CSC_LINK` | base64 `.p12` — the certificate **and** its private key |
+| `CSC_KEY_PASSWORD` | the password set when exporting that `.p12` |
+| `APPLE_API_KEY_P8` | base64 of the `.p8` |
+| `APPLE_API_KEY_ID` | the key's ID |
+| `APPLE_API_ISSUER` | the team's issuer UUID |
+
+The three `APPLE_API_*` values are all-or-nothing: `getNotarizeOptions` throws
+when some are present and others are not. All unset is the skip path; a
+half-configured repository is the case worth failing on.
 
 Verify a build rather than trusting it:
 
