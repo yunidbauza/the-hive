@@ -12,6 +12,7 @@ import {
 import { applyThemeColors } from '@lib/theme/apply';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import { BUILT_IN_THEME_ID, type HiveTheme } from '@lib/theme/contract';
+import { isHiveTheme } from '@lib/theme/validate';
 
 /**
  * Appearance — the first *persisted* state in the app (story 105).
@@ -373,18 +374,61 @@ interface PersistedAppearanceState {
 }
 
 /**
+ * The theme library, revalidated on its way out of `localStorage`.
+ *
+ * **A user must never be able to reach a state the app cannot boot from**, and
+ * before this it could: `localStorage` is reachable by another tab, a devtools
+ * session, an older build of this app and a write that was interrupted, and a
+ * malformed theme that is still valid *JSON* sails through `JSON.parse`. A
+ * persisted `{ nord: { hiveThemeVersion: 1, name: 'Nord' } }` with
+ * `activeThemeId: 'nord'` then threw inside `applyThemeColors` (swallowed,
+ * because zustand swallows what `onRehydrateStorage` throws) and again in the
+ * terminal-palette selector, which crashed the centre stage on every render —
+ * and the entry stayed in storage, so every restart crashed identically, with
+ * no path back from inside the app.
+ *
+ * So each entry is re-checked against {@link isHiveTheme} — the same shape
+ * `importTheme` demands — and anything that fails is dropped. If the *active*
+ * theme is one of the dropped ones, the id goes back to the built-in rather
+ * than dangling: {@link activeThemeOf} tolerates a dangling id, but the gallery
+ * would still ring a card that is no longer there.
+ */
+export function sanitizeThemeState(state: Record<string, unknown>): {
+  themes: Record<string, HiveTheme>;
+  activeThemeId: string;
+} {
+  const raw = state.themes;
+  const themes: Record<string, HiveTheme> = {};
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    for (const [id, theme] of Object.entries(raw)) {
+      if (isHiveTheme(theme)) themes[id] = theme;
+    }
+  }
+
+  const requested = state.activeThemeId;
+  const activeThemeId =
+    typeof requested === 'string' && (requested === BUILT_IN_THEME_ID || requested in themes)
+      ? requested
+      : BUILT_IN_THEME_ID;
+
+  return { themes, activeThemeId };
+}
+
+/**
  * v1 → v2 (HIVE-80): the store gains a theme library.
  *
  * Exported for the test. Nobody's saved theme, font, size, scrollback,
  * density, team name or editor settings resets — the two new fields are simply
- * added, which is the whole job.
+ * added, which is the whole job. From v2 on there is nothing to add, only the
+ * library to re-check ({@link sanitizeThemeState}) — a v2 payload has been
+ * writable by anything with a `localStorage` handle since the day it existed.
  */
 export function migrateAppearance(
   persisted: unknown,
   version: number,
 ): Record<string, unknown> {
   const state = (persisted ?? {}) as Record<string, unknown>;
-  if (version >= 2) return state;
+  if (version >= 2) return { ...state, ...sanitizeThemeState(state) };
   return { ...state, themes: {}, activeThemeId: BUILT_IN_THEME_ID };
 }
 
@@ -509,6 +553,23 @@ export const useAppearanceStore = create<AppearanceState>()(
        */
       migrate: (persistedState, version) =>
         migrateAppearance(persistedState, version) as unknown as PersistedAppearanceState,
+      /**
+       * Where the theme library is actually re-checked.
+       *
+       * `migrate` only runs when the stored version differs from this one, so
+       * it can never be the gate: the overwhelmingly common case is a v2
+       * payload rehydrating into a v2 store, which skips migration entirely.
+       * `merge` runs on every rehydrate, whichever path got here, which is what
+       * makes {@link sanitizeThemeState} unskippable.
+       */
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState ?? {}) as Record<string, unknown>;
+        return {
+          ...currentState,
+          ...persisted,
+          ...sanitizeThemeState(persisted),
+        } as AppearanceState;
+      },
       storage: createJSONStorage(() => localStorage),
       /**
        * The whitelist is the point of this store existing. Actions are excluded
@@ -539,9 +600,14 @@ export const useAppearanceStore = create<AppearanceState>()(
        * before React renders anything. That is what makes the restored theme
        * paint on the first frame instead of flipping on the second.
        *
-       * A corrupt entry arrives here as an `error` and leaves `state` at the
-       * defaults, which is the right outcome and needs no branch of its own:
-       * `applyAll` is called with whatever the store actually holds.
+       * Whatever reaches this point is bootable, and that is a guarantee two
+       * different mechanisms have to make between them. A syntactically corrupt
+       * entry never parses, so it arrives as an `error` and leaves `state` at
+       * the defaults. Valid JSON of the *wrong shape* parses perfectly and used
+       * to arrive intact — so `merge` above re-checks the theme library and
+       * drops what is not a theme. Neither case needs a branch here:
+       * `applyAll` is called with whatever the store actually holds, and what it
+       * holds is now always paintable.
        */
       onRehydrateStorage: () => (state) => {
         if (state) applyAll(state);

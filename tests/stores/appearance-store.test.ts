@@ -9,6 +9,7 @@ import {
   activeThemeOf,
   migrateAppearance,
   resolveTheme,
+  sanitizeThemeState,
   useAppearanceStore,
   useTerminalAppearance,
   watchSystemTheme,
@@ -489,6 +490,97 @@ describe('the theme library', () => {
   });
 });
 
+/**
+ * The Critical fix from the whole-branch review.
+ *
+ * `localStorage` is reachable by another tab, a devtools session, an older
+ * build and a write that was interrupted, and a malformed theme that is still
+ * valid *JSON* used to rehydrate verbatim. `applyThemeColors` then threw inside
+ * `onRehydrateStorage` — where zustand swallows it — and the terminal-palette
+ * selector threw on `.modes[…].terminal`, crashing the centre stage on every
+ * render. The entry stayed in storage, so every restart crashed identically and
+ * there was no way back from inside the app.
+ */
+describe('a malformed persisted theme', () => {
+  const corrupt = JSON.stringify({
+    version: 2,
+    state: {
+      theme: 'dark',
+      themes: { nord: { hiveThemeVersion: 1, name: 'Nord' } },
+      activeThemeId: 'nord',
+    },
+  });
+
+  async function bootFrom(raw: string) {
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, raw);
+    vi.resetModules();
+    return import('@stores/appearance-store');
+  }
+
+  it('boots on the built-in rather than crashing', async () => {
+    const { useAppearanceStore: store } = await bootFrom(corrupt);
+
+    expect(store.getState().themes).toEqual({});
+    // Not merely dangling: the gallery would ring a card that is not there.
+    expect(store.getState().activeThemeId).toBe('hive');
+    // tokens.css is painting, and it is the only thing painting.
+    expect(document.getElementById('hive-theme')).toBeNull();
+  });
+
+  it('leaves the terminal palette readable, which is what crashed the stage', async () => {
+    const { useAppearanceStore: store, useTerminalAppearance: palette } =
+      await bootFrom(corrupt);
+
+    // Reading it at all is the assertion: this selector threw
+    // `Cannot read properties of undefined (reading 'dark')`.
+    const { result } = renderHook(() => palette());
+    expect(result.current.palette).toEqual(BUILT_IN_THEME.modes.dark.terminal);
+    expect(store.getState().activeThemeId).toBe('hive');
+  });
+
+  it('keeps the valid entries and drops only the broken one', async () => {
+    const { useAppearanceStore: store } = await bootFrom(
+      JSON.stringify({
+        version: 2,
+        state: {
+          themes: { nord: nordFixture, broken: { hiveThemeVersion: 1 } },
+          activeThemeId: 'nord',
+        },
+      }),
+    );
+
+    expect(Object.keys(store.getState().themes)).toEqual(['nord']);
+    expect(store.getState().activeThemeId).toBe('nord');
+  });
+
+  it('drops a theme whose colours are not colours', async () => {
+    const broken = structuredClone(nordFixture) as unknown as Record<string, any>;
+    broken.modes.light.ui.panel = 'rgba(0, 0, 0, 0.3)';
+
+    const { useAppearanceStore: store } = await bootFrom(
+      JSON.stringify({
+        version: 2,
+        state: { themes: { nord: broken }, activeThemeId: 'nord' },
+      }),
+    );
+
+    expect(store.getState().themes).toEqual({});
+    expect(store.getState().activeThemeId).toBe('hive');
+  });
+
+  it('survives a themes field that is not even an object', async () => {
+    const { useAppearanceStore: store } = await bootFrom(
+      JSON.stringify({
+        version: 2,
+        state: { themes: 'nord', activeThemeId: 42 },
+      }),
+    );
+
+    expect(store.getState().themes).toEqual({});
+    expect(store.getState().activeThemeId).toBe('hive');
+  });
+});
+
 describe('the v1 → v2 migration', () => {
   it('adds the two fields and keeps every existing one', () => {
     const v1 = {
@@ -504,5 +596,39 @@ describe('the v1 → v2 migration', () => {
     expect(migrated.density).toBe('compact');
     expect(migrated.teamName).toBe('Swarm');
     expect(migrated.editorTabWidth).toBe(4);
+  });
+
+  /**
+   * "Already at v2" is not "already trustworthy": a v2 payload has been
+   * writable by anything holding a `localStorage` handle since the day the
+   * field existed, and this used to copy `themes` through verbatim.
+   */
+  it('re-checks the library even when there is no version to migrate', () => {
+    const migrated = migrateAppearance(
+      { themes: { nord: { hiveThemeVersion: 1, name: 'Nord' } }, activeThemeId: 'nord' },
+      2,
+    );
+
+    expect(migrated.themes).toEqual({});
+    expect(migrated.activeThemeId).toBe('hive');
+  });
+});
+
+describe('sanitizeThemeState', () => {
+  it('keeps a whole theme and the id pointing at it', () => {
+    expect(
+      sanitizeThemeState({ themes: { nord: nordFixture }, activeThemeId: 'nord' }),
+    ).toEqual({ themes: { nord: nordFixture }, activeThemeId: 'nord' });
+  });
+
+  it('leaves an explicit built-in id alone even with nothing imported', () => {
+    expect(sanitizeThemeState({ themes: {}, activeThemeId: 'hive' })).toEqual({
+      themes: {},
+      activeThemeId: 'hive',
+    });
+  });
+
+  it('returns the built-in for a state with no theme fields at all', () => {
+    expect(sanitizeThemeState({})).toEqual({ themes: {}, activeThemeId: 'hive' });
   });
 });
