@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 
 import { BrowserWindow, dialog, type IpcMainInvokeEvent } from 'electron';
@@ -102,7 +103,17 @@ export async function saveTheme(
   return result.filePath;
 }
 
-/** A plain object with exactly these two keys, nothing prototype-polluting. */
+/**
+ * `ALLOWED_KEYS` is the gate: anything not in it is rejected, full stop.
+ *
+ * `FORBIDDEN_KEYS` is **not** a second gate, and it would be easy to read it as
+ * one. Every name in it is already absent from `ALLOWED_KEYS`, so the branch it
+ * drives changes only which sentence comes back — "forbidden key" rather than
+ * "unexpected key" — for the handful of names that would be alarming to see
+ * arrive. It is a message refinement, kept because a log line saying
+ * `theme:save: forbidden key "__proto__"` is worth more to whoever reads it
+ * than the generic one; deleting it would not weaken the check by one payload.
+ */
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const ALLOWED_KEYS = new Set(['suggestedName', 'contents']);
 
@@ -116,7 +127,11 @@ const SUGGESTED_NAME_PATTERN = /^[\w.-]{1,64}\.json$/;
  * `suggestedName` seeds the save dialog's default path — so neither may pass
  * unchecked. `contents` is bounded the same way `importTheme` bounds a file
  * read back in (`src/lib/theme/validate.ts`), against the one definition of
- * the cap in `@shared/theme-contract`. `suggestedName` is not a path: it is
+ * the cap in `@shared/theme-contract` — and in **bytes**, which is the unit the
+ * cap is named in. `String.length` counts UTF-16 code units, so measuring with
+ * it admitted up to four times the cap in non-ASCII text and wrote a file this
+ * app's own `pickTheme` would then refuse to read back.
+ * `suggestedName` is not a path: it is
  * never resolved or joined against a directory, only handed to
  * `dialog.showSaveDialog` as a suggestion the user can overwrite — but a
  * renderer that is compromised is still not free to hand the OS dialog
@@ -146,7 +161,7 @@ export function parseSaveThemeRequest(input: unknown): SaveThemeRequest {
       `theme:save.contents: expected a string, got ${describe(contents)}`,
     );
   }
-  if (contents.length > MAX_THEME_BYTES) {
+  if (Buffer.byteLength(contents, 'utf8') > MAX_THEME_BYTES) {
     throw new IpcValidationError(
       `theme:save.contents: exceeds the ${MAX_THEME_BYTES}-byte limit`,
     );

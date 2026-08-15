@@ -241,6 +241,21 @@ describe('parseSaveThemeRequest', () => {
     ).toThrow(/limit/);
   });
 
+  /**
+   * The cap is named in bytes and `String.length` counts UTF-16 code units.
+   * Measured with `.length`, this payload passed and `writeFile(…, 'utf8')`
+   * put roughly three times the cap on disk — a file `pickTheme` would then
+   * refuse to read back, so Export could write what Import could not open.
+   */
+  it('measures the cap in bytes, not code units', () => {
+    const underInUnits = '日'.repeat(MAX_THEME_BYTES - 1);
+    expect(underInUnits.length).toBeLessThan(MAX_THEME_BYTES);
+
+    expect(() =>
+      parseSaveThemeRequest({ suggestedName: 'x.json', contents: underInUnits }),
+    ).toThrow(/limit/);
+  });
+
   it('rejects a suggestedName that is not a bare .json filename', () => {
     expect(() =>
       parseSaveThemeRequest({ suggestedName: '../../etc/passwd', contents: '{}' }),
