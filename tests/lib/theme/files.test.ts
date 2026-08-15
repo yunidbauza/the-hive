@@ -13,6 +13,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * What the renderer actually receives, verbatim.
+ *
+ * `ipcRenderer.invoke` does not forward main's error — it constructs a new one
+ * quoting the channel and then the original, class name included. The strip
+ * used to be anchored (`/^theme:pick:/`) and so never matched a single real
+ * rejection: the banner showed both wrappers *and* an absolute path.
+ */
+const ELECTRON_OVERSIZE_ERROR =
+  "Error invoking remote method 'theme:pick': IpcValidationError: theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit";
+
 describe('with the desktop bridge', () => {
   it('uses the native dialog and returns the file name, not the path', async () => {
     (window as never as { hive: unknown }).hive = {
@@ -36,15 +47,7 @@ describe('with the desktop bridge', () => {
 
   it('rejects, not resolving null, when main refuses an oversize file', async () => {
     (window as never as { hive: unknown }).hive = {
-      theme: {
-        pick: vi
-          .fn()
-          .mockRejectedValue(
-            new Error(
-              'theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit',
-            ),
-          ),
-      },
+      theme: { pick: vi.fn().mockRejectedValue(new Error(ELECTRON_OVERSIZE_ERROR)) },
     };
 
     // Not null: cancelling and being refused are different facts, and
@@ -55,23 +58,24 @@ describe('with the desktop bridge', () => {
 
   it('cleans the rejection message for display — no channel name, no path noise', async () => {
     (window as never as { hive: unknown }).hive = {
-      theme: {
-        pick: vi
-          .fn()
-          .mockRejectedValue(
-            new Error(
-              'theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit',
-            ),
-          ),
-      },
+      theme: { pick: vi.fn().mockRejectedValue(new Error(ELECTRON_OVERSIZE_ERROR)) },
     };
 
-    await expect(pickThemeFile()).rejects.toThrow(
-      'is 999999 bytes, over the 262144-byte limit',
+    /**
+     * Asserted on `.detail` in full, not with `not.toThrow(/^theme:pick:/)`.
+     *
+     * That guard could never fail: `PickThemeFailure.message` is
+     * `` `${title} — ${detail}` ``, so it always starts with the title and
+     * never with the channel name, whatever the strip did or did not remove.
+     * The exact string is what actually catches a regression — either wrapper
+     * surviving, or the directory coming back.
+     */
+    const failure = await pickThemeFile().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(PickThemeFailure);
+    if (!(failure instanceof PickThemeFailure)) return;
+    expect(failure.detail).toBe(
+      'huge.json is 999999 bytes, over the 262144-byte limit',
     );
-    // The raw IPC channel prefix is an implementation detail, not something
-    // a settings banner should show.
-    await expect(pickThemeFile()).rejects.not.toThrow(/^theme:pick:/);
   });
 
   it('still surfaces a rejection that carries no useful message', async () => {
@@ -90,15 +94,7 @@ describe('with the desktop bridge', () => {
    */
   it('rejects with a PickThemeFailure carrying title and detail as their own fields', async () => {
     (window as never as { hive: unknown }).hive = {
-      theme: {
-        pick: vi
-          .fn()
-          .mockRejectedValue(
-            new Error(
-              'theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit',
-            ),
-          ),
-      },
+      theme: { pick: vi.fn().mockRejectedValue(new Error(ELECTRON_OVERSIZE_ERROR)) },
     };
 
     await expect(pickThemeFile()).rejects.toBeInstanceOf(PickThemeFailure);
@@ -108,10 +104,31 @@ describe('with the desktop bridge', () => {
     } catch (error) {
       if (!(error instanceof PickThemeFailure)) throw error;
       expect(error.title).toBe(PICK_FAILURE_TITLE);
+      /**
+       * The file's *name* survives and its directory does not — a deliberate
+       * choice, not an accident of the pattern. `huge.json is 999999 bytes` is
+       * the whole of what the message has to say; `/Users/somebody/…` is a home
+       * directory in a settings banner and in every screenshot of one.
+       */
       expect(error.detail).toBe(
-        '/Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit',
+        'huge.json is 999999 bytes, over the 262144-byte limit',
       );
     }
+  });
+
+  it('strips main’s prefix even without the Electron wrapper around it', async () => {
+    // The shape a direct caller (or a future non-`invoke` bridge) would send.
+    (window as never as { hive: unknown }).hive = {
+      theme: {
+        pick: vi
+          .fn()
+          .mockRejectedValue(new Error('theme:pick: /tmp/huge.json is too big')),
+      },
+    };
+
+    const failure = await pickThemeFile().catch((error: unknown) => error);
+    if (!(failure instanceof PickThemeFailure)) throw failure;
+    expect(failure.detail).toBe('huge.json is too big');
   });
 
   it('saves through the bridge and reports true when a path came back', async () => {
@@ -239,6 +256,88 @@ describe('without a bridge (the browser target)', () => {
       expect(error.title).toBe(PICK_FAILURE_TITLE);
       expect(error.detail).toBe('nope');
     }
+  });
+
+  /**
+   * `cancel` is not universal, and the promise used to settle on nothing else.
+   *
+   * In an engine that never fires it, dismissing the dialog left this pending
+   * forever — and `ThemeGallery` clears its `importing` flag in a `finally`,
+   * so Import stayed disabled for the rest of the session with two listeners
+   * and a live promise held behind it.
+   */
+  it('settles as a cancel when the window comes back with nothing chosen', async () => {
+    vi.useFakeTimers();
+    try {
+      let input: HTMLInputElement | undefined;
+      const create = document.createElement.bind(document);
+      vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+        const el = create(tag);
+        if (tag === 'input') input = el as HTMLInputElement;
+        return el;
+      }) as typeof document.createElement);
+
+      const promise = pickThemeFile();
+      Object.defineProperty(input!, 'files', { value: [], configurable: true });
+
+      // No `cancel` at all — only focus returning to the app.
+      window.dispatchEvent(new Event('focus'));
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(await promise).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a chosen file win the race against that fallback', async () => {
+    vi.useFakeTimers();
+    try {
+      let input: HTMLInputElement | undefined;
+      const create = document.createElement.bind(document);
+      vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+        const el = create(tag);
+        if (tag === 'input') input = el as HTMLInputElement;
+        return el;
+      }) as typeof document.createElement);
+
+      const promise = pickThemeFile();
+      const file = new File(['{}'], 'nord.json', { type: 'application/json' });
+      Object.defineProperty(input!, 'files', { value: [file], configurable: true });
+
+      // Focus returns first — the dialog closing is what gives it back — and
+      // the `change` follows within the grace period.
+      window.dispatchEvent(new Event('focus'));
+      input?.dispatchEvent(new Event('change'));
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(await promise).toEqual({ name: 'nord.json', contents: '{}' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('detaches its listeners once it has settled', async () => {
+    let input: HTMLInputElement | undefined;
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      const el = create(tag);
+      if (tag === 'input') input = el as HTMLInputElement;
+      return el;
+    }) as typeof document.createElement);
+
+    const text = vi.fn(() => Promise.resolve('{}'));
+    const file = { name: 'nord.json', text };
+    const promise = pickThemeFile();
+    Object.defineProperty(input!, 'files', { value: [file], configurable: true });
+
+    input?.dispatchEvent(new Event('change'));
+    await promise;
+
+    // A second `change` must not reach a handler at all. A `settled` flag
+    // alone would still have read the file a second time.
+    input?.dispatchEvent(new Event('change'));
+    expect(text).toHaveBeenCalledTimes(1);
   });
 
   it('saves through a Blob download', async () => {

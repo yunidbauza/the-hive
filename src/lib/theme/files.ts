@@ -53,17 +53,42 @@ export class PickThemeFailure extends Error {
 }
 
 /**
+ * Everything Electron and main wrap around the sentence worth showing.
+ *
+ * `ipcRenderer.invoke` does not hand the renderer main's error — it hands back
+ * a *new* one whose message quotes the channel and then the original, class
+ * name and all:
+ *
+ * ```
+ * Error invoking remote method 'theme:pick': IpcValidationError: theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit
+ * ```
+ *
+ * An anchored `/^theme:pick:/` therefore never matched in the running app, and
+ * the banner showed the whole chain. Stripping up to the *last* channel prefix
+ * takes both wrappers off in one pass, whatever Electron puts in front.
+ */
+const IPC_WRAPPERS = /^.*\btheme:pick:\s*/s;
+
+/**
+ * The directory the file came out of.
+ *
+ * Dropped deliberately, and the file's own name kept: `huge.json is 999999
+ * bytes, over the 262144-byte limit` says everything the message has to say,
+ * while `/Users/somebody/…` is a home directory in a settings banner — and in
+ * any screenshot of one. The byte counts, which are the actual content, stay.
+ */
+const LEADING_DIRECTORY = /^\/\S*\//;
+
+/**
  * `window.hive.theme.pick()` rejects rather than resolving `null` when the
  * chosen file is over the byte cap (`electron/main/theme/index.ts`) —
  * deliberately, so "too big" can never be confused with "cancelled". That
- * rejection is real, but its message is an implementation detail: it starts
- * with the IPC channel name and carries the file's absolute path, neither of
- * which belongs in a settings banner. This turns it into a message fit to
- * show a person, without discarding the information (the byte counts stay).
+ * rejection is real, but its message is an implementation detail: see the two
+ * patterns above for what comes off and why.
  */
 function toPickFailure(error: unknown): PickThemeFailure {
   const raw = error instanceof Error ? error.message : String(error);
-  const detail = raw.replace(/^theme:pick:\s*/, '');
+  const detail = raw.replace(IPC_WRAPPERS, '').replace(LEADING_DIRECTORY, '');
   return new PickThemeFailure(detail);
 }
 
@@ -93,34 +118,95 @@ export async function pickThemeFile(): Promise<PickedThemeFile | null> {
 }
 
 /**
+ * How long after the window regains focus a still-empty input counts as a
+ * dismissal.
+ *
+ * Long enough that a `change` on its way — it is dispatched after focus
+ * returns, not before — always wins the race; short enough that the Import
+ * button does not sit disabled while the user wonders what happened.
+ */
+const DISMISSAL_GRACE_MS = 400;
+
+/**
  * The browser fallback: an `<input type="file">` with no `<form>`, added to
  * nothing — clicking it is enough to open the native picker in every engine
- * this app targets. `change` carries the chosen file; `cancel` fires when the
- * dialog closes with none chosen, matching the bridge's own "cancelled ⇒
- * null" contract. `file.text()`'s rejection branch is handled explicitly
- * (not `void`-ed away) so a read failure becomes this promise's rejection
- * instead of an unhandled one.
+ * this app targets, and leaving it out of the document means there is no stray
+ * node to clean up afterwards. `change` carries the chosen file; `cancel` fires
+ * when the dialog closes with none chosen, matching the bridge's own
+ * "cancelled ⇒ null" contract. `file.text()`'s rejection branch is handled
+ * explicitly (not `void`-ed away) so a read failure becomes this promise's
+ * rejection instead of an unhandled one.
+ *
+ * ## Why it does not rely on `cancel` alone
+ *
+ * `cancel` is comparatively recent and not universal. In an engine that never
+ * fires it, dismissing the dialog settled this promise **never** — and since
+ * `ThemeGallery` clears its `importing` flag in a `finally`, that left Import
+ * disabled for the rest of the session, with two listeners and a live promise
+ * held alive behind it. The window regaining focus with the input still empty
+ * is the fallback signal; the grace period is what keeps it from beating a
+ * `change` that is about to arrive.
+ *
+ * Everything is torn down through one `finish`, so whichever of the three
+ * paths gets there first detaches every listener, cancels the timer, and makes
+ * the other two inert.
  */
 function pickThemeFileFromBrowser(): Promise<PickedThemeFile | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json,application/json';
-    input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (!file) {
-        resolve(null);
-        return;
-      }
-      file.text().then(
-        (contents) => resolve({ name: file.name, contents }),
-        (error: unknown) => {
-          const detail = error instanceof Error ? error.message : String(error);
-          reject(new PickThemeFailure(detail));
-        },
-      );
+
+    const listeners = new AbortController();
+    let dismissal: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (settle: () => void) => {
+      listeners.abort();
+      clearTimeout(dismissal);
+      settle();
+    };
+
+    input.addEventListener(
+      'change',
+      () => {
+        const file = input.files?.[0];
+        if (!file) {
+          finish(() => resolve(null));
+          return;
+        }
+        // The read is already holding `file`, so tearing the listeners down
+        // first costs nothing and stops the dismissal timer from firing
+        // underneath a file that is being read.
+        finish(() => {
+          file.text().then(
+            (contents) => resolve({ name: file.name, contents }),
+            (error: unknown) => {
+              const detail = error instanceof Error ? error.message : String(error);
+              reject(new PickThemeFailure(detail));
+            },
+          );
+        });
+      },
+      { signal: listeners.signal },
+    );
+
+    input.addEventListener('cancel', () => finish(() => resolve(null)), {
+      signal: listeners.signal,
     });
-    input.addEventListener('cancel', () => resolve(null));
+
+    window.addEventListener(
+      'focus',
+      () => {
+        // Focus can return more than once (another window, a devtools panel);
+        // only the most recent grace period may be pending.
+        clearTimeout(dismissal);
+        dismissal = setTimeout(() => {
+          if ((input.files?.length ?? 0) === 0) finish(() => resolve(null));
+        }, DISMISSAL_GRACE_MS);
+      },
+      { signal: listeners.signal },
+    );
+
     input.click();
   });
 }
