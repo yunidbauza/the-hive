@@ -44,8 +44,52 @@ import { execFileSync } from 'node:child_process';
  * degrades to the download page the moment macOS refuses. See
  * `docs/packaging-and-updates.md`.
  */
+/**
+ * Is a real signing identity going to be used for this build?
+ *
+ * Asked because this hook now has to **stand aside**, and asked from the same
+ * inputs electron-builder itself uses rather than from a flag someone has to
+ * remember to set:
+ *
+ * - `CSC_IDENTITY_AUTO_DISCOVERY=false` is the explicit "do not sign" switch,
+ *   and it wins over everything below.
+ * - `CSC_LINK` is how CI supplies a certificate that is not in the keychain
+ *   yet. It is checked *before* the keychain because at the moment this hook
+ *   runs the import may not have happened.
+ * - Otherwise the keychain is asked directly, which is exactly what
+ *   electron-builder's auto-discovery does.
+ *
+ * Answering "no" wrongly would ad-hoc sign a bundle that is about to be signed
+ * properly — wasted work rather than damage, since `afterPack` runs *before*
+ * electron-builder signs and the real signature would overwrite this one. The
+ * reason to get it right anyway is honesty: a build log that says "ad-hoc
+ * signed" about a Developer ID build teaches the reader something false, and
+ * this project's update path is built on knowing which signature it has.
+ */
+function developerIdAvailable() {
+  if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') return false;
+  if (process.env.CSC_LINK) return true;
+
+  try {
+    const out = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
+      encoding: 'utf8',
+    });
+    return out.includes('Developer ID Application');
+  } catch {
+    // No `security`, or a keychain that cannot be read. Neither is an error
+    // worth failing a build over: it simply means nothing was found, which is
+    // the same answer as an empty keychain.
+    return false;
+  }
+}
+
 export default async function adhocSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
+
+  if (developerIdAvailable()) {
+    console.log('  • Developer ID present — skipping the ad-hoc signature');
+    return;
+  }
 
   const app = `${context.appOutDir}/${context.packager.appInfo.productFilename}.app`;
 

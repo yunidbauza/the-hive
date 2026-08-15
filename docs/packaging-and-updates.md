@@ -139,8 +139,10 @@ itself in at the next quit — including a quit caused by a crash.
 
 ### The ad-hoc signature problem
 
-**This is the load-bearing constraint, and it cannot be solved without an Apple
-Developer ID.**
+**Historically the load-bearing constraint. It is solved by the Developer ID
+setup described in "Signing and notarization" below — this section is kept
+because it explains why the update code is shaped the way it is, and because a
+build made without a certificate still lands here.**
 
 The bundle is ad-hoc signed (`scripts/adhoc-sign.mjs`). Ad-hoc is the floor
 rather than a choice: Apple Silicon refuses to execute an unsigned binary at all.
@@ -194,18 +196,110 @@ So:
 - A Developer ID signature is classified `self-install` and the whole path
   works. Nothing in the app changes if one ever appears.
 
+### Signing and notarization
+
+The certificate is a **Developer ID Application** certificate issued to Behiques
+Consulting LLC. Not "Apple Distribution" and not "Developer ID Installer": the
+first is for the App Store, the second signs `.pkg` installers, and this app
+ships a `.dmg` and a `.zip`. Only `Developer ID Application` produces the
+`Authority=Developer ID Application` line that `capability.ts` looks for.
+
+**The build configures itself from what is present**, so there is one command
+either way:
+
+| On a machine with… | `pnpm desktop:dist` produces |
+| --- | --- |
+| a Developer ID and Apple credentials | signed, notarized, self-updating |
+| a Developer ID only | signed, not notarized — updates work, a downloaded dmg warns |
+| neither | the ad-hoc build, exactly as before |
+
+Nothing branches on a flag. Both switches in `electron-builder.yml` degrade on
+their own, which was read out of electron-builder 26's source rather than
+assumed:
+
+- **`identity` is absent, not `null`.** `null` means "do not look for one" —
+  that is what produced the unsigned bundle this document used to describe.
+  Absent enables auto-discovery, which signs when the keychain has a certificate
+  and logs `skipped macOS application code signing` when it does not.
+- **`notarize: true` is safe with no credentials.** `notarizeIfProvided` asks
+  for options, and when the environment supplies none it logs
+  `skipped macOS notarization` and returns. It is also only called from inside
+  the signing step, so an unsigned build never reaches it.
+
+`hardenedRuntime: true` is required by notarization, and it is what makes
+entitlements matter. electron-builder's default `entitlements.mac.plist` already
+grants the three this app needs — `allow-jit` and
+`allow-unsigned-executable-memory` for V8, and `disable-library-validation` for
+`node-pty`, whose `.node` and `spawn-helper` are loaded and executed out of
+`app.asar.unpacked`. No custom plist is carried until one proves insufficient.
+
+`scripts/adhoc-sign.mjs` skips itself when a real identity is available. It runs
+in `afterPack`, which electron-builder documents as happening *before* signing,
+so a stale ad-hoc signature would be overwritten rather than left behind — the
+skip is about not logging something false, in a project whose update path turns
+on knowing which signature it has.
+
+Credentials never live in this repo. Locally:
+
+```bash
+export APPLE_API_KEY=~/private_keys/AuthKey_XXXXXXXXXX.p8
+export APPLE_API_KEY_ID=XXXXXXXXXX
+export APPLE_API_ISSUER=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+pnpm desktop:dist
+```
+
+`APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` is the supported
+alternative when an App Store Connect key is not available. In CI the same
+values are repository secrets, plus `CSC_LINK` (a base64 `.p12` holding the
+certificate **and** its private key) and `CSC_KEY_PASSWORD`.
+
+Verify a build rather than trusting it:
+
+```bash
+codesign -d --verbose=2 "dist/mac-arm64/The Hive.app"   # Authority=Developer ID Application: …
+xcrun stapler validate  "dist/mac-arm64/The Hive.app"   # the notarization ticket
+```
+
+And then verify the thing those two cannot prove: publish a later version and
+let an installed copy update **itself**. Signing is what the commands above
+check; the swap is where this app failed before, and only a real update exercises
+it.
+
+#### The bundle identifier is part of this
+
+`appId` is `com.behiques.the-hive`, changed from `dev.yunidbauza.the-hive` in the
+release that introduced signing. For a Developer ID build the identifier is part
+of the designated requirement Squirrel enforces, so changing it breaks in-place
+updating across exactly one release. That release required a manual install
+anyway — the only moment the change is free.
+
+Two consequences of moving to a certificate, both one-time and both expected:
+
+- The first signed release must be installed by hand. The ad-hoc copy in
+  `/Applications` cannot self-update to it, by the cdhash argument above.
+- macOS may prompt for Keychain access on first launch. The `safeStorage` key
+  protecting the stored Jira credential is bound by ACL to the app's code
+  signature, and that identity has changed. Allowing it, or re-entering the
+  token once, resolves it permanently.
+
 ### Gatekeeper
 
 Quarantine is applied by whatever *downloads* a file. A dmg pulled from a
-browser is quarantined, and an unsigned app inside it is refused with "damaged
-and can't be opened" — which is a lie, but a load-bearing one. The escape:
+browser is quarantined, and macOS then checks what is inside it:
+
+- **Signed and notarized** — opens normally. This is what notarization buys, and
+  it is the only reason to care about it: signing alone is enough for updates.
+- **Signed but not notarized** — "cannot be opened because Apple cannot check it
+  for malicious software". Right-click → Open, once, gets past it.
+- **Unsigned or ad-hoc** — "damaged and can't be opened", which is a lie, but a
+  load-bearing one. The escape:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/The Hive.app"
 ```
 
-An update the app fetches itself is not quarantined, which is a real argument
-for the in-app path even while the swap is refused.
+An update the app fetches itself is never quarantined, which was a real argument
+for the in-app path even back when the swap was refused.
 
 ## Where the code lives
 

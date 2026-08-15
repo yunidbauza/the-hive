@@ -4,7 +4,15 @@
 # into a `.app` inside a `.dmg`, plus the `.zip` and `latest-mac.yml` that
 # `electron-updater` needs to find a newer one. See `docs/packaging-and-updates.md`.
 
-appId: dev.yunidbauza.the-hive
+# The bundle identifier, and **not** a cosmetic string.
+#
+# For a Developer ID build it is part of the *designated requirement* Squirrel
+# checks before swapping one version for the next, so changing it after signed
+# releases begin breaks in-place updating across exactly one release. It was
+# changed from `dev.yunidbauza.the-hive` in the same release that introduced
+# signing, because that release already required a manual install — the one
+# moment the change costs nothing.
+appId: com.behiques.the-hive
 
 # The name macOS shows — in the menu bar, the dock, the About box and the
 # Applications folder. It lands in the bundle's `Info.plist` as `CFBundleName`,
@@ -13,7 +21,7 @@ appId: dev.yunidbauza.the-hive
 # and under `pnpm desktop:dev` the running bundle is Electron's own.
 productName: The Hive
 
-copyright: Copyright © 2026 Yunid Bauza
+copyright: Copyright © 2026 Behiques Consulting LLC
 
 directories:
   # The icons are already here and already named what electron-builder looks
@@ -60,14 +68,42 @@ mac:
     - target: zip
       arch: [arm64]
 
-  # No Developer ID exists to sign with, so electron-builder is told not to look
-  # for one — and it then does not sign at all. Verified on the first build:
-  # what survives is Electron's own `linker-signed` stub, reading
-  # `Identifier=Electron` with `Sealed Resources=none`. That is an unsigned app
-  # containing one signed file. `afterPack` below replaces it with a real ad-hoc
-  # bundle signature.
-  identity: null
-  notarize: false
+  # **Signing configures itself from what is present.** There is no flag to flip
+  # and no second command to remember: a machine that has a Developer ID
+  # produces a signed, notarized build, and one that does not produces the
+  # ad-hoc build this project shipped before, from the same `pnpm desktop:dist`.
+  #
+  # That works because both switches below degrade rather than fail, which was
+  # read out of electron-builder 26's own source rather than assumed:
+  #
+  # - **`identity` is deliberately absent, not `null`.** `null` means "do not
+  #   look", which is what produced the unsigned bundle this file used to
+  #   describe. Absent means auto-discovery: electron-builder searches the
+  #   keychain, signs with a `Developer ID Application` certificate if it finds
+  #   one, and logs `skipped macOS application code signing` if it does not.
+  # - **`notarize: true` is safe with no credentials.** `notarizeIfProvided`
+  #   asks for notarization options and, when the environment supplies none,
+  #   logs `skipped macOS notarization` and returns. It is also only reached
+  #   from inside the signing step, so an unsigned build never attempts it.
+  #
+  # Credentials come from the environment, never from this file:
+  # `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` (App Store Connect
+  # key), or `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`. CI
+  # adds `CSC_LINK` and `CSC_KEY_PASSWORD` to import the certificate.
+  notarize: true
+
+  # Required by notarization — Apple rejects a submission without it.
+  #
+  # It is what makes entitlements load-bearing: under the hardened runtime a
+  # process may not allocate write-then-execute memory, load unsigned libraries,
+  # or be injected into unless it says so. electron-builder's default
+  # `entitlements.mac.plist` already grants the three this app needs —
+  # `allow-jit` and `allow-unsigned-executable-memory` for V8, and
+  # `disable-library-validation` for `node-pty`, whose `.node` binary and
+  # `spawn-helper` are loaded and executed out of `app.asar.unpacked`. No custom
+  # entitlements file is carried until one of them proves insufficient, because
+  # a hand-copied plist is a thing that silently rots against Electron upgrades.
+  hardenedRuntime: true
 
   # Gatekeeper's quarantine flag is set by whatever *downloads* a file, so a dmg
   # pulled from a browser is quarantined and an unsigned app inside it is
@@ -77,10 +113,11 @@ mac:
   # manually downloaded copy.
   darkModeSupport: true
 
-# Give the bundle a real ad-hoc signature, since `identity: null` leaves it
-# with none. Read `scripts/adhoc-sign.mjs` before removing this: it also records
-# why a correct ad-hoc signature still does not make the app self-updating, and
-# that limitation is the reason `electron/main/updates/capability.ts` exists.
+# The fallback signature, for builds made without a Developer ID.
+#
+# It **skips itself** when a real identity is available, so this is now the
+# unsigned-machine path only — see `scripts/adhoc-sign.mjs` for how it decides
+# and why it must not run in front of a certificate build.
 afterPack: scripts/adhoc-sign.mjs
 
 dmg:

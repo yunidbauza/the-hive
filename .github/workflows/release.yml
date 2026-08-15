@@ -110,10 +110,31 @@ jobs:
           # so publication is one decision made in one place — the step below,
           # and only when the build actually succeeded.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # There is no Developer ID. Told explicitly rather than left to be
-          # inferred, so a runner that happens to have a keychain entry cannot
-          # change what gets built.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # The Developer ID certificate, as a base64 `.p12` plus its password.
+          # electron-builder imports it into a temporary keychain it creates and
+          # destroys per run, so nothing is left on the runner.
+          #
+          # **Both halves of the export matter**: the `.p12` has to contain the
+          # certificate *and* its private key, or the import succeeds and the
+          # signature step then fails with an identity it cannot use.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # Notarization, via an App Store Connect API key. Apple staples the
+          # ticket to the app, which is what stops a downloaded dmg being
+          # refused as "damaged".
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # `CSC_IDENTITY_AUTO_DISCOVERY: 'false'` used to live here, when there
+          # was no certificate to find. It is deliberately gone: it would now
+          # override every secret above and silently publish an unsigned build
+          # that no installed copy could update to.
+          #
+          # A run with the secrets unset does not fail — electron-builder skips
+          # signing and notarization and produces the ad-hoc build, exactly as
+          # a developer machine without a certificate does. That is a release
+          # worth noticing rather than one worth aborting, and the smoke check
+          # below still runs against it.
         run: pnpm run desktop:publish
 
       - name: Publish the release

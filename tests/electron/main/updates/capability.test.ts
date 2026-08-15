@@ -17,14 +17,14 @@ const base = {
 
 /** What `codesign --display --verbose=2` prints for a Developer ID build. */
 const DEVELOPER_ID = `Executable=/Applications/The Hive.app/Contents/MacOS/The Hive
-Identifier=dev.yunidbauza.the-hive
+Identifier=com.behiques.the-hive
 Format=app bundle with Mach-O thin (arm64)
 Authority=Developer ID Application: Someone (TEAMID)
 Authority=Developer ID Certification Authority`;
 
 /** …and for an ad-hoc one, which is what this project actually ships. */
 const ADHOC = `Executable=/Applications/The Hive.app/Contents/MacOS/The Hive
-Identifier=dev.yunidbauza.the-hive
+Identifier=com.behiques.the-hive
 Format=app bundle with Mach-O thin (arm64)
 Signature=adhoc
 Info.plist entries=32`;
