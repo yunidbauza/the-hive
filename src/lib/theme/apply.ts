@@ -19,13 +19,33 @@ function declarations(theme: HiveTheme, mode: ThemeModeName): string {
 }
 
 /**
- * The same shape `tokens.css` uses, so `data-theme` keeps doing exactly the job
- * it does today and nothing about how components read colour changes.
+ * The selectors the generated sheet declares on — deliberately **not** the ones
+ * `tokens.css` uses, though they match the same elements.
+ *
+ * `:root` and `body[data-theme='light']` would tie with the stylesheet's own
+ * blocks, and a tie is settled by document order — which the theme cannot
+ * control. Rehydrating the appearance store appends this `<style>` during
+ * module evaluation, before Vite's dev server has injected `tokens.css` at all,
+ * so the equal-specificity dark block lost every reload and an imported theme
+ * silently reverted to the built-in in dark mode (light survived only because
+ * `body[data-theme='light']` happens to outrank `:root`).
+ *
+ * Repeating `:root` raises specificity without changing what is matched, so the
+ * theme wins wherever the element lands. The light block keeps its lead over the
+ * dark one — that relationship is what makes `data-theme` switch modes at all —
+ * by qualifying the same `body` selector with the raised root.
+ */
+const DARK_SELECTOR = ':root:root';
+const LIGHT_SELECTOR = ":root:root body[data-theme='light']";
+
+/**
+ * `data-theme` keeps doing exactly the job it does today, and nothing about how
+ * components read colour changes.
  */
 export function themeCss(theme: HiveTheme): string {
   return [
-    `:root {\n${declarations(theme, 'dark')}\n}`,
-    `body[data-theme='light'] {\n${declarations(theme, 'light')}\n}`,
+    `${DARK_SELECTOR} {\n${declarations(theme, 'dark')}\n}`,
+    `${LIGHT_SELECTOR} {\n${declarations(theme, 'light')}\n}`,
   ].join('\n\n');
 }
 
