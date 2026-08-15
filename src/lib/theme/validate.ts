@@ -1,5 +1,6 @@
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import {
+  HIVE_THEME_VERSION,
   MAX_THEME_BYTES,
   SYNTAX_KEYS,
   TERMINAL_KEYS,
@@ -38,7 +39,16 @@ export interface ImportFailed {
 export type ImportResult = ImportOk | ImportFailed;
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-const FUNC = /^(?:rgb|oklch)\(([^()]*)\)$/i;
+
+/** The two functional forms the Hive reads. Nothing else is a colour here. */
+const FUNC = /^(rgb|oklch)\(([^()]*)\)$/i;
+const SUPPORTED_FUNCTIONS = new Set(['rgb', 'oklch']);
+
+/** Anything shaped like `name(…)`, whether or not the Hive reads it. */
+const ANY_FUNCTION = /^([a-z][a-z0-9-]*)\(/i;
+
+/** What an error message offers as the way out. */
+const ACCEPTED_FORMS = '#rgb, #rrggbb, #rrggbbaa, rgb() or oklch()';
 
 /** One channel or alpha value: a number, optionally a percentage. */
 const COMPONENT = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)%?$/;
@@ -52,27 +62,72 @@ const COMPONENT = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)%?$/;
  * promises an unparseable colour is fatal, so the three channels are counted
  * and each one read.
  *
- * Both separator styles CSS itself accepts are honoured — modern
- * `rgb(1 2 3 / 0.5)` and legacy `rgb(1, 2, 3, 0.5)` — but this is deliberately
- * not a CSS colour parser: `none`, `var()` and calculated values are out of
- * scope, as are range checks, which belong to the renderer.
+ * ## The two separator styles are not interchangeable
+ *
+ * CSS accepts a **legacy** comma form and a **modern** space form, and they are
+ * different grammars rather than two spellings of one. Splitting on `[\s,]+`
+ * erased the difference, so `oklch(0.5, 0.1, 200)` — which has no comma form at
+ * all — and `rgb(1 2, 3)` both passed; counting "three channels, or four when
+ * there is no slash" additionally admitted `rgb(1 2 3 4)` and
+ * `oklch(0.5 0.1 200 0.4)`, neither of which any browser parses. So:
+ *
+ * - **legacy**: `rgb()` only, commas throughout, no `/`, three channels or four
+ *   with the fourth carrying alpha;
+ * - **modern**: either function, spaces throughout, exactly three channels, and
+ *   alpha only after a `/`.
+ *
+ * Still deliberately not a full CSS colour parser: `none`, `var()` and
+ * calculated values are out of scope, as are range checks, which belong to the
+ * renderer. These are the cases this check *claims* to reject.
  */
 function isColourFunction(value: string): boolean {
   const match = FUNC.exec(value);
   if (!match) return false;
 
-  const [channels, alpha, ...extra] = match[1].split('/');
+  const fn = match[1].toLowerCase();
+  const body = match[2].trim();
+  if (body === '') return false;
+
+  if (body.includes(',')) {
+    // Legacy. `oklch()` never had one, and no legacy form takes a slash.
+    if (fn !== 'rgb' || body.includes('/')) return false;
+    const parts = body.split(',').map((part) => part.trim());
+    if (parts.length !== 3 && parts.length !== 4) return false;
+    return parts.every((part) => COMPONENT.test(part));
+  }
+
+  // Modern: three space-separated channels, alpha only behind a slash.
+  const [channels, alpha, ...extra] = body.split('/');
   if (extra.length > 0) return false;
   if (alpha !== undefined && !COMPONENT.test(alpha.trim())) return false;
 
-  const parts = channels.trim().split(/[\s,]+/).filter((part) => part !== '');
-  // Three channels — plus, in the legacy comma form, a fourth carrying alpha.
-  if (parts.length !== 3 && !(parts.length === 4 && alpha === undefined)) return false;
+  const parts = channels.trim().split(/\s+/).filter((part) => part !== '');
+  if (parts.length !== 3) return false;
   return parts.every((part) => COMPONENT.test(part));
 }
 
 function isColour(value: unknown): value is string {
   return typeof value === 'string' && (HEX.test(value) || isColourFunction(value));
+}
+
+/**
+ * Why a colour was refused, in terms the person who wrote the file can act on.
+ *
+ * The accepted set — hex, `rgb()`, `oklch()` — is a deliberate spec decision
+ * and this does **not** widen it. But a theme ported from VS Code routinely
+ * carries `rgba()`, and telling its author that `rgba(0,0,0,0.3)` "is not a
+ * colour the Hive can read" reads as *the Hive cannot parse that*, which sends
+ * them hunting for a typo that is not there. A recognised-but-unsupported
+ * family is named as such, and the forms that would work are listed.
+ */
+function colourComplaint(value: unknown): string {
+  if (typeof value === 'string') {
+    const family = ANY_FUNCTION.exec(value.trim())?.[1].toLowerCase();
+    if (family !== undefined && !SUPPORTED_FUNCTIONS.has(family)) {
+      return `uses ${family}(), which the Hive does not read. Use ${ACCEPTED_FORMS}.`;
+    }
+  }
+  return 'is not a colour the Hive can read.';
 }
 
 const MODE_NAMES = THEME_MODES;
@@ -85,6 +140,14 @@ const GROUPS = [
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The two keys naming the same colour: the ground xterm paints and the ground
+ * the DOM paints around it. Rule 8 owns both — see the comment there.
+ */
+function isTerminalGround(group: string, key: string): boolean {
+  return (group === 'terminal' && key === 'bg') || (group === 'ui' && key === 'termBg');
 }
 
 function fail(fileName: string, detail: string): ImportFailed {
@@ -136,9 +199,41 @@ export function contrastRatio(a: string, b: string): number | null {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+/**
+ * The cap is in **bytes**, and `String.length` counts UTF-16 code units.
+ *
+ * The two are the same number only for ASCII. Every character from U+0080 up
+ * costs two to four UTF-8 bytes per one or two code units, so a file of CJK
+ * theme names measured by `.length` could be four times the cap and still pass
+ * — and on the browser target nothing else is checking, since it is main's
+ * `stat()` that gates the desktop import. Encoding is exact.
+ *
+ * UTF-8 never spends *fewer* bytes than there are code units, so a string
+ * already over the cap in units is over it in bytes too: that short-circuit is
+ * what keeps the encoder from being handed an arbitrarily large string just to
+ * be told what the length already proved.
+ */
+export function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+function exceedsByteCap(raw: string): boolean {
+  return raw.length > MAX_THEME_BYTES || utf8ByteLength(raw) > MAX_THEME_BYTES;
+}
+
+/**
+ * How many unknown keys get a note of their own before the rest are summed up.
+ *
+ * A hostile file can carry thousands, and every one of them used to become its
+ * own sentence in a string the banner renders as a single joined paragraph.
+ * Ten names is enough to see the pattern; the count of the remainder is the
+ * only other fact worth having.
+ */
+const MAX_UNKNOWN_KEY_NOTES = 10;
+
 export function importTheme(raw: string, fileName: string): ImportResult {
   // Rule 1: size, before parsing.
-  if (raw.length > MAX_THEME_BYTES) {
+  if (exceedsByteCap(raw)) {
     return fail(fileName, 'The file is larger than the 256 KB limit.');
   }
 
@@ -176,15 +271,18 @@ export function importTheme(raw: string, fileName: string): ImportResult {
 
   const notes: string[] = [];
   let inherited = 0;
+  let unknownKeys = 0;
+  let namedUnknownKeys = 0;
   const modes = {} as Record<ThemeModeName, ThemeModeColors>;
 
   for (const mode of MODE_NAMES) {
     const rawMode = rawModes[mode] as Record<string, unknown>;
     const builtInMode = BUILT_IN_THEME.modes[mode];
 
-    // File-supplied terminal.bg / ui.termBg, tracked before merge — rule 8
-    // needs to know what the *file* contained, which the merged result
-    // can no longer answer once inheritance has run.
+    // What the *file* said about the two ends of the terminal ground, read
+    // before anything is merged. Rule 8 branches on which of them the file
+    // supplied, not on what the built theme ends up holding — by the time it
+    // runs, it is the thing that put a value in either one.
     const rawTerminalGroup = isPlainObject(rawMode.terminal) ? rawMode.terminal : {};
     const rawUiGroup = isPlainObject(rawMode.ui) ? rawMode.ui : {};
     const fileHadTerminalBg = 'bg' in rawTerminalGroup;
@@ -207,29 +305,35 @@ export function importTheme(raw: string, fileName: string): ImportResult {
           if (!isColour(value)) {
             return fail(
               fileName,
-              `modes.${mode}.${group.name}.${key} is not a colour the Hive can read.`,
+              `modes.${mode}.${group.name}.${key} ${colourComplaint(value)}`,
             );
           }
           merged[key] = value;
         }
       }
 
-      // Rule 6: unknown keys — noted, never copied.
+      // Rule 6: unknown keys — noted (up to a cap), never copied.
       for (const key of Object.keys(rawGroup)) {
         if (!knownKeys.has(key)) {
-          notes.push(
-            `modes.${mode}.${group.name}.${key} is not a recognised colour and was ignored.`,
-          );
+          unknownKeys += 1;
+          if (namedUnknownKeys < MAX_UNKNOWN_KEY_NOTES) {
+            namedUnknownKeys += 1;
+            notes.push(
+              `modes.${mode}.${group.name}.${key} is not a recognised colour and was ignored.`,
+            );
+          }
         }
       }
 
-      // Rule 7: inherit missing known keys from the built-in. `terminal.bg`
-      // is excluded here — rule 8 owns its counting exclusively, since it
-      // may re-derive that same key from `ui.termBg` a moment later. Letting
-      // both rules count it would inherit it twice for one logical key.
+      // Rule 7: inherit missing known keys from the built-in. The two ends of
+      // the terminal ground — `terminal.bg` and `ui.termBg` — are excluded
+      // here, because rule 8 owns them *jointly*: either may be derived from
+      // the other, so filling one in from the built-in first would both count
+      // it twice and leave a file that supplied only the other end holding a
+      // mismatched pair.
       const builtInGroup = builtInMode[group.name] as Record<string, string>;
       for (const key of group.keys) {
-        if (group.name === 'terminal' && key === 'bg') continue;
+        if (isTerminalGround(group.name, key)) continue;
         if (!(key in merged)) {
           merged[key] = builtInGroup[key];
           inherited += 1;
@@ -243,18 +347,48 @@ export function importTheme(raw: string, fileName: string): ImportResult {
     const syntax = builtGroups.syntax as SyntaxColors;
     const terminal = builtGroups.terminal as TerminalColors;
 
-    // Rule 8: terminal.bg / ui.termBg pact.
-    if (!fileHadTerminalBg) {
+    /**
+     * Rule 8: the `terminal.bg` / `ui.termBg` pact, in all four permutations.
+     *
+     * xterm paints its own background and the DOM paints the padding around
+     * it, so the two have to be the same colour or a rectangle appears at the
+     * terminal's edge. The derivation therefore runs in **both** directions:
+     * whichever end the file supplies alone, the other is taken from it.
+     *
+     * The permutation this used to miss was "file supplies `terminal.bg`,
+     * omits `ui.termBg`": rule 7 inherited `ui.termBg` from the built-in while
+     * `terminal.bg` kept the file's value, and the pair landed mismatched
+     * behind nothing louder than a "1 colour inherited" note — precisely the
+     * seam this rule exists to prevent.
+     */
+    if (fileHadTerminalBg && fileHadUiTermBg) {
+      if (terminal.bg !== ui.termBg) {
+        return fail(
+          fileName,
+          `modes.${mode}.terminal.bg is ${terminal.bg} but modes.${mode}.ui.termBg is ${ui.termBg}. xterm paints its own background and the surrounding chrome paints the other — if they disagree, a visible seam appears at the terminal's edge. Make them match, or drop either one and the Hive will derive it from the one you keep.`,
+        );
+      }
+    } else if (fileHadTerminalBg) {
+      ui.termBg = terminal.bg;
+      inherited += 1;
+    } else if (fileHadUiTermBg) {
       terminal.bg = ui.termBg;
       inherited += 1;
-    } else if (fileHadUiTermBg && terminal.bg !== ui.termBg) {
-      return fail(
-        fileName,
-        `modes.${mode}.terminal.bg is ${terminal.bg} but modes.${mode}.ui.termBg is ${ui.termBg}. xterm paints its own background and the surrounding chrome paints the other — if they disagree, a visible seam appears at the terminal's edge. Make them match, or drop one and let the Hive derive it.`,
-      );
+    } else {
+      const ground = builtInMode.ui.termBg;
+      ui.termBg = ground;
+      terminal.bg = ground;
+      inherited += 2;
     }
 
     modes[mode] = { ui, syntax, terminal };
+  }
+
+  if (unknownKeys > namedUnknownKeys) {
+    const remaining = unknownKeys - namedUnknownKeys;
+    notes.push(
+      `${remaining} further unrecognised ${remaining === 1 ? 'key was' : 'keys were'} ignored.`,
+    );
   }
 
   // Rule 7b: name the inheritance rule 7 (and rule 8) counted, as the first
@@ -285,6 +419,47 @@ export function importTheme(raw: string, fileName: string): ImportResult {
   };
 
   return { ok: true, theme, inherited, notes };
+}
+
+/**
+ * Is this a complete, readable {@link HiveTheme}?
+ *
+ * `importTheme` is the gate a theme passes on its way *in*, and for the length
+ * of one session that is enough. It is not enough on the way back **out** of
+ * `localStorage`, which is a store the user, another tab, a devtools session or
+ * a half-finished write can all reach — and where a theme that is valid JSON of
+ * the wrong shape gets past `JSON.parse` untouched. A rehydrated
+ * `{ hiveThemeVersion: 1, name: 'Nord' }` used to reach `applyThemeColors`
+ * (which threw inside `onRehydrateStorage`, where zustand swallows it) and then
+ * the terminal palette selector, which crashed the centre stage on **every**
+ * render — with the bad entry still in storage, so every restart crashed the
+ * same way. There was no way out from inside the app.
+ *
+ * So this is the same question `importTheme` asks, minus the inheritance and
+ * the advice: every mode, every group, every key, each one a colour this app
+ * can actually paint. Anything else is not a theme and is dropped.
+ */
+export function isHiveTheme(value: unknown): value is HiveTheme {
+  if (!isPlainObject(value)) return false;
+  if (value.hiveThemeVersion !== HIVE_THEME_VERSION) return false;
+  if (typeof value.name !== 'string') return false;
+  if (typeof value.author !== 'string') return false;
+  if (typeof value.version !== 'string') return false;
+  if (!isPlainObject(value.modes)) return false;
+
+  for (const mode of MODE_NAMES) {
+    const modeValue = value.modes[mode];
+    if (!isPlainObject(modeValue)) return false;
+    for (const group of GROUPS) {
+      const groupValue = modeValue[group.name];
+      if (!isPlainObject(groupValue)) return false;
+      for (const key of group.keys) {
+        if (!isColour(groupValue[key])) return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 function checkContrast(
