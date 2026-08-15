@@ -107,7 +107,7 @@ describe('inheritance', () => {
     const result = importTheme(fullTheme({ modes }), 'mixed.json');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.notes[0]).toBe('1 colours inherited from the built-in theme');
+    expect(result.notes[0]).toBe('1 colour inherited from the built-in theme');
     expect(result.notes.some((note) => note.includes('accentHover'))).toBe(true);
     expect(
       result.notes.findIndex((note) => note.includes('accentHover')),
@@ -205,14 +205,53 @@ describe('colour parsing', () => {
     expect(result.detail).toContain('modes.light.ui.panel');
   });
 
-  it.each(['#abc', '#aabbcc', '#aabbccdd', 'rgb(1 2 3)', 'oklch(0.5 0.1 200)'])(
-    'accepts %s',
-    (colour) => {
-      const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
-      modes.light.ui.panel = colour;
-      expect(importTheme(fullTheme({ modes }), 'ok.json').ok).toBe(true);
-    },
-  );
+  it.each([
+    '#abc',
+    '#aabbcc',
+    '#aabbccdd',
+    'rgb(1 2 3)',
+    'rgb(1, 2, 3)',
+    'rgb(1 2 3 / 0.5)',
+    'rgb(1, 2, 3, 0.5)',
+    'rgb(100% 0% 0%)',
+    'oklch(0.5 0.1 200)',
+    'oklch(0.5 0.1 200 / 0.4)',
+    'oklch(50% 0.1 200)',
+  ])('accepts %s', (colour) => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.light.ui.panel = colour;
+    expect(importTheme(fullTheme({ modes }), 'ok.json').ok).toBe(true);
+  });
+
+  /**
+   * The Important fix from the whole-branch review: the functional forms used
+   * to be checked for *shape* only, so anything between the parentheses passed.
+   * These imported cleanly and then landed as a declaration the browser drops
+   * silently — and, in the `terminal` group, as an xterm fallback colour.
+   */
+  it.each([
+    'rgb()',
+    'rgb(1,2)',
+    'rgb(1 2)',
+    'rgb(1 2 3 4 5)',
+    'oklch(nonsense)',
+    'oklch(0.5 0.1)',
+    'rgb(1 2 3 / )',
+    'rgb(1 2 3 / a)',
+    'rgb(1 2 3 / 0.5 / 0.5)',
+    '#ff',
+    'not-a-colour',
+  ])('rejects %s, naming its path', (colour) => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.dark.terminal.cyan = colour;
+
+    const result = importTheme(fullTheme({ modes }), 'bad.json');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.detail).toBe(
+      'modes.dark.terminal.cyan is not a colour the Hive can read.',
+    );
+  });
 });
 
 describe('contrast', () => {

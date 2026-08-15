@@ -3,6 +3,7 @@ import {
   MAX_THEME_BYTES,
   SYNTAX_KEYS,
   TERMINAL_KEYS,
+  THEME_MODES,
   UI_KEYS,
   type HiveTheme,
   type SyntaxColors,
@@ -37,13 +38,44 @@ export interface ImportFailed {
 export type ImportResult = ImportOk | ImportFailed;
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-const FUNC = /^(?:rgb|oklch)\([^()]*\)$/i;
+const FUNC = /^(?:rgb|oklch)\(([^()]*)\)$/i;
 
-function isColour(value: unknown): value is string {
-  return typeof value === 'string' && (HEX.test(value) || FUNC.test(value));
+/** One channel or alpha value: a number, optionally a percentage. */
+const COMPONENT = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)%?$/;
+
+/**
+ * The **contents** of `rgb()` / `oklch()`, not just its shape.
+ *
+ * Matching `rgb\(.*\)` alone let `rgb()`, `rgb(1,2)` and `oklch(nonsense)`
+ * import cleanly and then land as a declaration the browser drops on the floor
+ * — and, in the `terminal` group, as a colour xterm falls back on. The spec
+ * promises an unparseable colour is fatal, so the three channels are counted
+ * and each one read.
+ *
+ * Both separator styles CSS itself accepts are honoured — modern
+ * `rgb(1 2 3 / 0.5)` and legacy `rgb(1, 2, 3, 0.5)` — but this is deliberately
+ * not a CSS colour parser: `none`, `var()` and calculated values are out of
+ * scope, as are range checks, which belong to the renderer.
+ */
+function isColourFunction(value: string): boolean {
+  const match = FUNC.exec(value);
+  if (!match) return false;
+
+  const [channels, alpha, ...extra] = match[1].split('/');
+  if (extra.length > 0) return false;
+  if (alpha !== undefined && !COMPONENT.test(alpha.trim())) return false;
+
+  const parts = channels.trim().split(/[\s,]+/).filter((part) => part !== '');
+  // Three channels — plus, in the legacy comma form, a fourth carrying alpha.
+  if (parts.length !== 3 && !(parts.length === 4 && alpha === undefined)) return false;
+  return parts.every((part) => COMPONENT.test(part));
 }
 
-const MODE_NAMES = ['dark', 'light'] as const satisfies readonly ThemeModeName[];
+function isColour(value: unknown): value is string {
+  return typeof value === 'string' && (HEX.test(value) || isColourFunction(value));
+}
+
+const MODE_NAMES = THEME_MODES;
 
 const GROUPS = [
   { name: 'ui', keys: UI_KEYS },
@@ -232,7 +264,8 @@ export function importTheme(raw: string, fileName: string): ImportResult {
   // reads in the mock's own order: inheritance, then unknown keys, then
   // contrast.
   if (inherited > 0) {
-    notes.unshift(`${inherited} colours inherited from the built-in theme`);
+    const noun = inherited === 1 ? 'colour' : 'colours';
+    notes.unshift(`${inherited} ${noun} inherited from the built-in theme`);
   }
 
   // Rule 9: contrast — always a note, never fatal.

@@ -43,6 +43,16 @@ export type TerminalColors = Record<TerminalKey, string>;
 
 export type ThemeModeName = 'dark' | 'light';
 
+/**
+ * Both modes, in the order the importer reads them. Every theme carries both —
+ * which is why a theme *file* holds `THEME_MODES.length × 49` colour values,
+ * the unit the import banner counts in.
+ */
+export const THEME_MODES = [
+  'dark',
+  'light',
+] as const satisfies readonly ThemeModeName[];
+
 export interface ThemeModeColors {
   ui: UiColors;
   syntax: SyntaxColors;

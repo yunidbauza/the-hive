@@ -21,8 +21,11 @@ describe('ThemeImportResult', () => {
       />,
     );
     expect(screen.getByText('Nord imported and activated')).toBeInTheDocument();
+    // 98, not 49: a theme *file* holds 49 colours in each of its two modes,
+    // and `inherited` — the number the other sentence reports — counts in that
+    // same per-file unit. See `theme-import-result.tsx`.
     expect(
-      screen.getByText('49 of 49 colours set. Light and dark both complete.'),
+      screen.getByText('98 of 98 colours set. Light and dark both complete.'),
     ).toBeInTheDocument();
   });
 
@@ -44,6 +47,23 @@ describe('ThemeImportResult', () => {
     );
     expect(
       screen.getByText('Solarized imported with 3 notes'),
+    ).toBeInTheDocument();
+  });
+
+  it('says "1 note", not "1 notes"', () => {
+    render(
+      <ThemeImportResult
+        result={{
+          ok: true,
+          theme: solarized,
+          inherited: 1,
+          notes: ['1 colour inherited from the built-in theme'],
+        }}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText('Solarized imported with 1 note'),
     ).toBeInTheDocument();
   });
 
@@ -88,9 +108,9 @@ describe('ThemeImportResult', () => {
       />,
     );
 
-    expect(screen.queryByText(/-\d+ of 49/)).toBeNull();
+    expect(screen.queryByText(/-\d+ of 98/)).toBeNull();
     expect(
-      screen.queryByText('49 of 49 colours set. Light and dark both complete.'),
+      screen.queryByText('98 of 98 colours set. Light and dark both complete.'),
     ).toBeNull();
   });
 

@@ -1,6 +1,11 @@
 import { CheckCircle, WarningCircle, X, XCircle } from '@phosphor-icons/react';
 
-import { SYNTAX_KEYS, TERMINAL_KEYS, UI_KEYS } from '@lib/theme/contract';
+import {
+  SYNTAX_KEYS,
+  TERMINAL_KEYS,
+  THEME_MODES,
+  UI_KEYS,
+} from '@lib/theme/contract';
 import type { ImportResult } from '@lib/theme/validate';
 
 /**
@@ -23,12 +28,23 @@ export interface ThemeBanner {
 }
 
 /**
- * The keys a single mode carries — the same set for every theme, dark or
- * light. Derived from the format's own key lists rather than hard-coded, so a
- * token added to `contract.ts` moves this number without anyone having to
- * remember it lives here too.
+ * Every colour value a theme *file* holds: 49 keys, in each of the two modes.
+ *
+ * The unit matters, because both of the banner's sentences count in it. The
+ * other one is `inherited`, which `validate.ts` accumulates across both modes
+ * — so counting the complete case per-mode ("49 of 49") while counting the
+ * partial case per-file ("2 colours inherited") described one colour omitted
+ * from both modes in two different currencies. Per-file wins the tie: it is the
+ * unit `inherited` can be counted in without losing which mode a colour was
+ * missing from, and every other note in the banner names a
+ * `modes.<mode>.<group>.<key>` path for exactly that reason.
+ *
+ * Derived from the format's own key lists rather than hard-coded, so a token
+ * added to `contract.ts` moves this number without anyone having to remember it
+ * lives here too.
  */
-const TOTAL_COLOUR_KEYS = UI_KEYS.length + SYNTAX_KEYS.length + TERMINAL_KEYS.length;
+const TOTAL_COLOUR_KEYS =
+  (UI_KEYS.length + SYNTAX_KEYS.length + TERMINAL_KEYS.length) * THEME_MODES.length;
 
 /** Turn a raw `importTheme()` result into the three strings the banner shows. */
 export function themeBannerOf(result: ImportResult): ThemeBanner {
@@ -41,7 +57,7 @@ export function themeBannerOf(result: ImportResult): ThemeBanner {
   /**
    * Both conditions, not just `notes.length === 0`. `validate.ts` always
    * notes an inheritance (its own first note, story HIVE-80 review), so the
-   * two should never disagree — but the "N of 49" sentence below is only
+   * two should never disagree — but the "N of 98" sentence below is only
    * ever *true* when nothing was inherited, and checking that directly here
    * means this component can't be fooled into claiming a complete import
    * that wasn't, even if that invariant were ever broken upstream. There is
@@ -58,7 +74,9 @@ export function themeBannerOf(result: ImportResult): ThemeBanner {
 
   return {
     tone: 'warn',
-    title: `${theme.name} imported with ${notes.length} notes`,
+    title: `${theme.name} imported with ${notes.length} ${
+      notes.length === 1 ? 'note' : 'notes'
+    }`,
     detail: notes.join(' · '),
   };
 }
