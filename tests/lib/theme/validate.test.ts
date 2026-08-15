@@ -1,0 +1,149 @@
+import { describe, expect, it } from 'vitest';
+
+import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import { MAX_THEME_BYTES } from '@lib/theme/contract';
+import { importTheme } from '@lib/theme/validate';
+
+/** A complete, valid theme built by recolouring the built-in. */
+function fullTheme(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    hiveThemeVersion: 1,
+    name: 'Nord',
+    author: 'Arctic Ice Studio',
+    version: '1.0.0',
+    modes: structuredClone(BUILT_IN_THEME.modes),
+    ...overrides,
+  });
+}
+
+describe('the pair rule', () => {
+  it('rejects a file carrying only dark, in a sentence', () => {
+    const only = structuredClone(BUILT_IN_THEME.modes) as Record<string, unknown>;
+    delete only.light;
+    const result = importTheme(fullTheme({ modes: only }), 'midnight.json');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.title).toBe("Couldn't import midnight.json");
+    expect(result.detail).toContain(
+      'A Hive theme needs both a light and a dark mode',
+    );
+    expect(result.detail).toContain('modes.light');
+    // Not a schema dump.
+    expect(result.detail).not.toContain('"type"');
+  });
+});
+
+describe('the version gate', () => {
+  it('fails first and alone on a future format', () => {
+    const result = importTheme(
+      fullTheme({ hiveThemeVersion: 2, modes: {} }),
+      'future.json',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // The missing modes are never reported — the version is the only complaint.
+    expect(result.detail).not.toContain('light');
+    expect(result.detail).toContain('hiveThemeVersion');
+  });
+});
+
+describe('the size ceiling', () => {
+  it('rejects an over-size file before parsing it', () => {
+    // Deliberately not valid JSON: proving the size check runs first.
+    const huge = 'x'.repeat(MAX_THEME_BYTES + 1);
+    const result = importTheme(huge, 'huge.json');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.detail).toContain('256 KB');
+  });
+});
+
+describe('inheritance', () => {
+  it('fills missing keys from the built-in of the same mode and counts them', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    delete modes.dark.ui.panel;
+    delete modes.dark.ui.hover;
+    delete modes.light.syntax.comment;
+
+    const result = importTheme(fullTheme({ modes }), 'partial.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inherited).toBe(3);
+    expect(result.theme.modes.dark.ui.panel).toBe(
+      BUILT_IN_THEME.modes.dark.ui.panel,
+    );
+  });
+});
+
+describe('the terminal ground', () => {
+  it('derives terminal.bg from ui.termBg when the file omits it', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.dark.ui.termBg = '#2b303b';
+    delete modes.dark.terminal.bg;
+
+    const result = importTheme(fullTheme({ modes }), 'nord.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.theme.modes.dark.terminal.bg).toBe('#2b303b');
+  });
+
+  it('is fatal when both are present and disagree, naming both values', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.dark.ui.termBg = '#2b303b';
+    modes.dark.terminal.bg = '#0b1023';
+
+    const result = importTheme(fullTheme({ modes }), 'nord.json');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.detail).toContain('#2b303b');
+    expect(result.detail).toContain('#0b1023');
+  });
+});
+
+describe('unknown keys', () => {
+  it('ignores them and lists them by name', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.light.ui.accentHover = '#123456';
+
+    const result = importTheme(fullTheme({ modes }), 'solarized.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.notes.join(' ')).toContain('accentHover');
+    expect(result.theme.modes.light.ui).not.toHaveProperty('accentHover');
+  });
+});
+
+describe('colour parsing', () => {
+  it('names the exact path of an unparseable colour', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    modes.light.ui.panel = 'not-a-colour';
+
+    const result = importTheme(fullTheme({ modes }), 'bad.json');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.detail).toContain('modes.light.ui.panel');
+  });
+
+  it.each(['#abc', '#aabbcc', '#aabbccdd', 'rgb(1 2 3)', 'oklch(0.5 0.1 200)'])(
+    'accepts %s',
+    (colour) => {
+      const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+      modes.light.ui.panel = colour;
+      expect(importTheme(fullTheme({ modes }), 'ok.json').ok).toBe(true);
+    },
+  );
+});
+
+describe('contrast', () => {
+  it('notes a low ratio with the measured value and still imports', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    // Near-white ink on a white panel.
+    modes.light.ui.ink = '#f4f4f4';
+
+    const result = importTheme(fullTheme({ modes }), 'faint.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.notes.join(' ')).toMatch(/\d\.\d:1/);
+  });
+});
