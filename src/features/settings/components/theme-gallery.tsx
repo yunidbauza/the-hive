@@ -36,14 +36,30 @@ import {
 
 const VALID_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * How long an id may get.
+ *
+ * A theme's `name` is untrusted text out of a file that may be up to 256 KB,
+ * and this id becomes a `localStorage` key \u2014 so an unbounded slug let a
+ * hostile (or merely absurd) file spend the whole storage quota on a key with
+ * no value attached to it. Long enough to stay readable in devtools, short
+ * enough that the bound is the interesting thing rather than the name.
+ */
+const MAX_ID_LENGTH = 48;
+
 /** A theme name, turned into something fit to be an object key and a filename stem. */
 function slugify(name: string): string {
   const cleaned = name
+    // Bounded *before* the normalise, not after: NFKD on a 200 KB string is
+    // the expensive half, and nothing past this point can survive the slice.
+    .slice(0, MAX_ID_LENGTH * 4)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/^-+|-+$/g, '')
+    .slice(0, MAX_ID_LENGTH)
+    .replace(/-+$/, '');
   return VALID_ID.test(cleaned) ? cleaned : 'theme';
 }
 
@@ -102,8 +118,36 @@ export function ThemeGallery() {
       if (imported.ok) {
         const existingIds = new Set([BUILT_IN_THEME_ID, ...Object.keys(themes)]);
         const id = uniqueThemeId(imported.theme.name, existingIds);
-        addTheme(id, imported.theme);
-        activateTheme(id);
+        /**
+         * `zustand/persist` writes to `localStorage` **synchronously, inside
+         * `set`**, so a full quota throws straight back out of `addTheme` —
+         * past `onImport`, past `void onImport()` at the call site, and into
+         * the console as an unhandled rejection. No banner, no activation, and
+         * the in-memory store already mutated: the gallery would show a theme
+         * that storage never took.
+         *
+         * Rolling back is what makes the banner true rather than merely
+         * present. Removing shrinks the payload, so that write normally
+         * succeeds; if even it fails there is nothing further to try, and the
+         * banner is already saying the import did not stick.
+         */
+        try {
+          addTheme(id, imported.theme);
+          activateTheme(id);
+        } catch {
+          try {
+            removeTheme(id);
+          } catch {
+            // Storage is refusing every write. The banner below is the fix.
+          }
+          setResult({
+            ok: false,
+            title: `Couldn't save ${imported.theme.name}`,
+            detail:
+              'The theme was read fine, but there was no room left to store it. Remove a theme you no longer use and import it again.',
+          });
+          return;
+        }
       }
       setResult(imported);
     } finally {

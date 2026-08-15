@@ -189,6 +189,59 @@ describe('ThemeGallery', () => {
     expect(Object.keys(useAppearanceStore.getState().themes)).toEqual(['theme']);
   });
 
+  /**
+   * `zustand/persist` calls `setItem` **synchronously inside `set`**, so a
+   * `QuotaExceededError` propagates straight out of `addTheme` — through
+   * `onImport`, whose `try/finally` had no `catch`, and out of `void
+   * onImport()` at the call site as an unhandled rejection. No banner, no
+   * activation, and the in-memory store already mutated: the gallery showed a
+   * theme storage never took.
+   */
+  it('surfaces a banner when storage refuses the write', async () => {
+    vi.mocked(pickThemeFile).mockResolvedValue({
+      name: 'nord.json',
+      contents: nordJson,
+    });
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+
+    try {
+      render(<ThemeGallery />);
+      await userEvent.click(screen.getByRole('button', { name: 'Import theme…' }));
+
+      expect(await screen.findByText("Couldn't save Nord")).toBeInTheDocument();
+      expect(screen.getByText(/no room left to store it/)).toBeInTheDocument();
+      // Rolled back, so what the gallery shows is what storage holds.
+      expect(useAppearanceStore.getState().themes).toEqual({});
+      expect(useAppearanceStore.getState().activeThemeId).toBe('hive');
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  /**
+   * A theme's `name` is untrusted text from a file that may be 256 KB, and
+   * the slug becomes a `localStorage` key — so an unbounded one let a single
+   * import spend the whole quota on a key.
+   */
+  it('bounds the id it derives from an absurd name', async () => {
+    const longNamed = themeToJson({ ...BUILT_IN_THEME, name: 'n'.repeat(200_000) });
+    vi.mocked(pickThemeFile).mockResolvedValue({
+      name: 'long.json',
+      contents: longNamed,
+    });
+
+    render(<ThemeGallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Import theme…' }));
+
+    await vi.waitFor(() =>
+      expect(Object.keys(useAppearanceStore.getState().themes)).toHaveLength(1),
+    );
+    const [id] = Object.keys(useAppearanceStore.getState().themes);
+    expect(id.length).toBeLessThanOrEqual(48);
+  });
+
   it('dismissing the banner clears it', async () => {
     vi.mocked(pickThemeFile).mockResolvedValue({
       name: 'nord.json',
