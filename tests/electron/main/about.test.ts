@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ABOUT_SIZE } from '../../../electron/shared/about';
+import {
+  ABOUT_SIZE,
+  ABOUT_TRAFFIC_LIGHT_POSITION,
+} from '../../../electron/shared/about';
 
 /**
  * The About window, with `electron` mocked.
@@ -159,7 +162,26 @@ describe('showAboutWindow', () => {
     expect(created[0]?.show).toHaveBeenCalledTimes(1);
   });
 
-  it('closes on Escape, since a frameless window has no close button', () => {
+  it('shows a close button, rather than hiding the only exit behind a key', () => {
+    /**
+     * The regression this exists to prevent, and it shipped once.
+     *
+     * `frame: false` removes the traffic lights along with the title bar, so
+     * the panel had no visible way out at all — Escape worked and always did,
+     * but a shortcut nobody can see is not an affordance. `hidden` keeps the
+     * frameless look and lets macOS draw the real controls; `minimizable` and
+     * `maximizable` stay false, so Close is the only live one.
+     */
+    showAboutWindow();
+
+    expect(created[0]?.options.titleBarStyle).toBe('hidden');
+    expect(created[0]?.options.frame).toBeUndefined();
+    expect(created[0]?.options.trafficLightPosition).toEqual(
+      ABOUT_TRAFFIC_LIGHT_POSITION,
+    );
+  });
+
+  it('keeps Escape working too — the shortcut, now as the shortcut', () => {
     showAboutWindow();
 
     created[0]?.fireInput({ type: 'keyDown', key: 'Escape' });

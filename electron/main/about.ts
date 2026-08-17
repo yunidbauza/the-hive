@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import { BrowserWindow } from 'electron';
 
-import { ABOUT_SIZE } from '@shared/about';
+import { ABOUT_SIZE, ABOUT_TRAFFIC_LIGHT_POSITION } from '@shared/about';
 import { WINDOW_BACKGROUND } from '@shared/window';
 
 import { applyWebContentsPolicy } from './window';
@@ -69,7 +69,28 @@ export function showAboutWindow(parent?: BrowserWindow | null): BrowserWindow {
     ...ABOUT_SIZE,
     /** Revealed on `ready-to-show`, for the reason `window.ts` gives. */
     show: false,
-    frame: false,
+    /**
+     * `titleBarStyle: 'hidden'` rather than `frame: false` — the difference is
+     * the close button, and it is the whole point.
+     *
+     * `frame: false` removes the traffic lights along with the title bar, which
+     * left a panel with **no visible way out**. Escape closed it and always
+     * did, but a keyboard shortcut nobody can see is not an affordance: the
+     * first thing this shipped as was a window a user had to guess their way
+     * out of.
+     *
+     * `hidden` keeps the frameless look and lets macOS draw the real controls
+     * over the document. `minimizable` and `maximizable` are already false, so
+     * those two render disabled and Close is the only live one — which is
+     * exactly what a panel should offer.
+     *
+     * Chosen over drawing our own `×` because that button would need to close
+     * its own window, and a renderer that can do that is a capability this app
+     * grants nowhere else. The platform already has the control; borrowing it
+     * costs no new IPC surface.
+     */
+    titleBarStyle: 'hidden',
+    trafficLightPosition: ABOUT_TRAFFIC_LIGHT_POSITION,
     resizable: false,
     maximizable: false,
     minimizable: false,
