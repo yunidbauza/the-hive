@@ -27,6 +27,18 @@ export interface MenuContext {
    * absent handler drops the item rather than offering one that does nothing.
    */
   onCheckForUpdates?: () => void;
+  /**
+   * Opens the app's own About panel, replacing `{ role: 'about' }`.
+   *
+   * Injected for the same reason as {@link MenuContext.onCheckForUpdates}: the
+   * template stays a pure value, and the test asserts the item exists and calls
+   * this without needing a `BrowserWindow`.
+   *
+   * Optional, and an absent handler falls back to the stock panel rather than
+   * dropping the item — About is the one entry macOS users expect to be there,
+   * and a menu missing it is stranger than one showing Electron's version.
+   */
+  onShowAbout?: () => void;
 }
 
 /**
@@ -39,7 +51,23 @@ export function buildMenuTemplate({
   isDev,
   appName,
   onCheckForUpdates,
+  onShowAbout,
 }: MenuContext): MenuItemConstructorOptions[] {
+  /**
+   * The app's own panel, not Electron's.
+   *
+   * `{ role: 'about' }` opens the stock panel — the framework's atom logo, the
+   * name "Electron", and its version. All true of the runtime, and none of it
+   * what anybody opens About to find out; the app's name does not even appear.
+   *
+   * Named `About <appName>` explicitly because a custom item does not inherit
+   * the role's platform label, and "About" alone in the app menu would be the
+   * one entry there that does not say what it is about.
+   */
+  const aboutItem: MenuItemConstructorOptions =
+    onShowAbout === undefined
+      ? { role: 'about' }
+      : { label: `About ${appName}`, click: () => onShowAbout() };
   /**
    * Directly under About, which is where macOS users look for it.
    *
@@ -61,7 +89,7 @@ export function buildMenuTemplate({
         {
           label: appName,
           submenu: [
-            { role: 'about' },
+            aboutItem,
             ...updateItem,
             { type: 'separator' },
             { role: 'hide' },

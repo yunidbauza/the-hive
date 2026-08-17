@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "about.html"
+        ],
+        "createdAt": "2026-08-17T13:59:35.563Z",
+        "reason": "Mirrors splash.html: the GIF fallback ships hidden with no src and is assigned in about.ts, so it is preloaded but revealed only if the keyed video never paints. Not a placeholder."
+      }
+    ]
+  }
+}

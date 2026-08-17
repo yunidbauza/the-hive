@@ -60,7 +60,9 @@ export type PhraseKey =
   | 'complete.update'
   // Failed. Deliberately the driest pools in the file.
   | 'failed.sessionExit'
-  | 'failed.hostLost';
+  | 'failed.hostLost'
+  // The About panel's one line under the version.
+  | 'about.tagline';
 
 /**
  * The pools.
@@ -148,6 +150,20 @@ export const PHRASES = {
   'complete.update': ['metamorphosis complete', 'evolution complete'],
   'failed.sessionExit': ['the strain did not take', 'the mutation was rejected'],
   'failed.hostLost': ['unit lost', 'psionic link severed'],
+  /**
+   * The About panel, under the version.
+   *
+   * Written in the register the splash uses rather than the empty states' —
+   * this line is the app introducing itself, not apologising for having nothing
+   * to show, so it reads as a greeting rather than as an absence.
+   */
+  'about.tagline': [
+    'The Overmind stirs.',
+    'The hive cluster is online.',
+    'Spawn more Overlords.',
+    'Awaiting your command.',
+    'The creep spreads.',
+  ],
 } as const satisfies Record<PhraseKey, readonly [string, string, ...string[]]>;
 
 /**

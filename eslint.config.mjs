@@ -228,6 +228,36 @@ export default tseslint.config(
                 'splash/ is a standalone document that must paint before the app loads. It may not import from the app at all.',
             },
 
+            /**
+             * THE ABOUT PANEL, which is the splash's rule with the reason
+             * removed — so the rule is narrower.
+             *
+             * `src/about/` is a third renderer document, and it shares the
+             * splash's *shape*: no React, no store, its own entry. It does not
+             * share the splash's constraint. The splash may import nothing from
+             * the app because it must paint before the app's bundle exists;
+             * this window opens on demand, long after it does, so a chunk
+             * shared with the app costs it nothing.
+             *
+             * `lib/` is therefore allowed, and the allowance is the point: it
+             * is how the panel takes its one line of copy from the app's own
+             * phrase pools rather than carrying a second, drifting copy of the
+             * voice. What stays banned is everything that would drag the app's
+             * runtime in behind it — React trees, the stores, the fixtures.
+             */
+            {
+              target: './src/about/**/*',
+              from: [
+                './src/features/**/*',
+                './src/components/**/*',
+                './src/data/**/*',
+                './src/stores/**/*',
+                './src/hooks/**/*',
+              ],
+              message:
+                'about/ is a standalone document. It may import lib/ and splash/, but not the app’s runtime.',
+            },
+
             // Library code is leaf-level.
             {
               target: './src/lib/**/*',

@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 
+import { showAboutWindow } from './about';
 import { installApplicationMenu } from './menu';
 import { runShutdown } from './shutdown';
 import { checkForUpdatesInteractively } from './updates';
@@ -61,6 +62,12 @@ export function registerLifecycle({
          * caller here to do with the promise except drop it, so it says so.
          */
         onCheckForUpdates: () => void checkForUpdatesInteractively(),
+        /**
+         * The focused window is passed only so the panel centres over the app
+         * rather than over the display. It is not made modal — see
+         * `showAboutWindow` — and an absent one is fine.
+         */
+        onShowAbout: () => showAboutWindow(BrowserWindow.getFocusedWindow()),
       });
     }
     /**

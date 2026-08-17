@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>About The Hive</title>
+  </head>
+  <body>
+    <!--
+      The About panel — a third renderer entry beside `index.html` and
+      `splash.html`, and the reason `electron.vite.config.ts` now names three.
+
+      It replaces Electron's default about panel, which showed the *framework's*
+      name and version: true of the runtime, and about as informative as a car
+      telling you who made its gearbox.
+
+      Unlike the splash, this one is allowed to know things. The splash is
+      deliberately dumb because anything it could be told would arrive over a
+      channel that outlives it by seconds; this window opens on demand, long
+      after the bridge is up, so it asks `window.hive` for the same `AppInfo`
+      the Advanced pane uses — the interface whose own docblock says it exists
+      "for the About box and bug reports".
+
+      The creature is the splash's, not a second copy: same mp4, same GIF
+      fallback, same keying in `src/splash/chamber.ts`.
+    -->
+    <main class="panel">
+      <div class="hero">
+        <div class="bloom"></div>
+        <div class="pool"></div>
+
+        <!--
+          Two ways to draw one creature, exactly as the splash does. The canvas
+          is the mp4 with its white ground keyed away frame by frame; the image
+          is the same loop with transparency already baked in, shown only if the
+          video never produces a frame.
+        -->
+        <canvas class="sprite" id="sprite" width="486" height="526"></canvas>
+        <img class="sprite" id="sprite-fallback" alt="" hidden />
+
+        <div class="vignette"></div>
+      </div>
+
+      <section class="copy">
+        <h1 class="wordmark" aria-label="The Hive">
+          <span>T</span><span>H</span><span>E</span><span>&nbsp;</span><span>H</span
+          ><span>I</span><span>V</span><span>E</span>
+        </h1>
+
+        <!-- Filled by `about.ts` from `appInfo()`; the markup ships no version. -->
+        <p class="version" id="version">&nbsp;</p>
+        <p class="phrase" id="phrase">&nbsp;</p>
+
+        <!--
+          One live region for the whole update surface. Hidden until the status
+          resolves, so the panel never flashes a claim it has not established —
+          `checked: false` is thirty seconds of every launch and reads exactly
+          like "up to date" if you let it.
+        -->
+        <div class="update" id="update" hidden>
+          <button class="cta" id="cta" type="button" hidden></button>
+          <p class="update-note" id="update-note" aria-live="polite"></p>
+        </div>
+
+        <!--
+          Two lines by necessity, not by taste: as one, this wrapped inside a
+          version number, and half a version pasted into a bug report is wrong
+          rather than merely ugly. See `runtimeLine`.
+        -->
+        <p class="build" id="build">
+          <span id="platform">&nbsp;</span>
+          <span id="runtime">&nbsp;</span>
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="/src/about/about.ts"></script>
+  </body>
+</html>

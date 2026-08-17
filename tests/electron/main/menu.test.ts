@@ -82,6 +82,50 @@ describe('buildMenuTemplate', () => {
     );
   });
 
+  describe('About', () => {
+    const appSubmenu = (context: Parameters<typeof buildMenuTemplate>[0]) =>
+      buildMenuTemplate(context)[0]?.submenu as MenuItemConstructorOptions[];
+
+    it('opens the app’s own panel rather than Electron’s', () => {
+      /**
+       * `{ role: 'about' }` opens the stock panel: the framework's atom logo,
+       * the name "Electron", and its version. All true of the runtime, and
+       * none of it what anybody opens About to find out — the app's own name
+       * does not even appear.
+       */
+      const onShowAbout = vi.fn();
+      const item = appSubmenu({ ...mac, onShowAbout })[0];
+
+      expect(item?.role).toBeUndefined();
+      expect(item?.label).toBe('About The Hive');
+
+      item?.click?.(undefined as never, undefined as never, undefined as never);
+      expect(onShowAbout).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the stock panel when nothing can open ours', () => {
+      /**
+       * Falls back rather than dropping the item, unlike the update entry.
+       * About is the one row macOS users expect to find in an app menu, and a
+       * menu missing it is stranger than one naming the framework.
+       */
+      expect(appSubmenu(mac)[0]?.role).toBe('about');
+    });
+
+    it('stays the first item, above Check for Updates…', () => {
+      // The platform convention, and the reason the update item was put where
+      // it is: users look directly under About for it.
+      const labels = appSubmenu({
+        ...mac,
+        onShowAbout: vi.fn(),
+        onCheckForUpdates: vi.fn(),
+      }).map((entry) => entry.label);
+
+      expect(labels[0]).toBe('About The Hive');
+      expect(labels.indexOf('Check for Updates…')).toBeGreaterThan(0);
+    });
+  });
+
   it('keeps zoom and fullscreen available', () => {
     expect(roles(buildMenuTemplate(mac))).toEqual(
       expect.arrayContaining(['resetZoom', 'zoomIn', 'zoomOut', 'togglefullscreen']),
