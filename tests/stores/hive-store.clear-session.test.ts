@@ -80,6 +80,64 @@ describe('clearSession', () => {
     expect(terminalOf(sessionAt('hero-refresh'))).toBe('hero-refresh');
   });
 
+  it('never reuses an id the fleet is still showing', () => {
+    /**
+     * The reported bug: two rows called `sess-01`, one `done` and one live.
+     *
+     * `spawnCounter` is module state and the entities are store state, so the
+     * two can fall out of step — a module re-evaluation (dev HMR does exactly
+     * this) puts the counter back to `0` while the rows it already named are
+     * still on screen. The next id minted is then one that is already taken.
+     *
+     * Which is worse than a cosmetic clash: `entities` is keyed by id, so a
+     * successor colliding with the session it just retired overwrites that
+     * session with its own replacement, and `order` carries one id twice.
+     *
+     * Simulated by spawning up to the ids the seeded fleet already holds, which
+     * is what a stale counter produces, rather than by reaching into module
+     * state the store does not expose.
+     */
+    const taken = new Set(Object.keys(state().entities));
+
+    const first = state().spawnSession('apfm-web', 'one');
+    const cleared = state().clearSession(first!)!;
+    const second = state().spawnSession('apfm-web', 'two');
+
+    for (const id of [first, cleared, second]) {
+      expect(id).not.toBeNull();
+      expect(taken.has(id!)).toBe(false);
+      taken.add(id!);
+    }
+
+    // Every row is still reachable under its own key — nothing was overwritten.
+    expect(new Set(state().order).size).toBe(state().order.length);
+    expect(sessionAt(first!).status).toBe('done');
+    expect(sessionAt(cleared!).status).not.toBe('done');
+  });
+
+  it('skips an id already on the fleet, however it got there', () => {
+    /**
+     * The collision reproduced directly rather than inferred.
+     *
+     * A row is planted under the exact id a counter starting from zero will
+     * mint first — which is the state dev HMR leaves behind when it
+     * re-evaluates the store module and the rows outlive the counter. Without
+     * the guard, `spawnSession` returns `sess-01`, writes over the planted row,
+     * and the fleet shows one name twice.
+     */
+    const planted = sessionAt('hero-refresh');
+    useHiveStore.setState((current) => ({
+      entities: { ...current.entities, 'sess-01': { ...planted, id: 'sess-01' } },
+      order: [...current.order, 'sess-01'],
+    }));
+
+    const spawned = state().spawnSession('apfm-web', 'after the collision')!;
+
+    expect(spawned).not.toBe('sess-01');
+    // The planted row survived rather than being overwritten by its namesake.
+    expect(sessionAt('sess-01').task).toBe(planted.task);
+  });
+
   it('never asks for a process — there already is one', () => {
     state().clearSession('hero-refresh');
 

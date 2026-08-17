@@ -448,10 +448,32 @@ const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
 
 let spawnCounter = 0;
 
-/** Deterministic-enough id for a prototype: `sess-a1`, `sess-a2`, … */
-function nextSessionId(): string {
-  spawnCounter += 1;
-  return `sess-${spawnCounter.toString(36).padStart(2, '0')}`;
+/**
+ * Deterministic-enough id for a prototype: `sess-01`, `sess-02`, …
+ *
+ * **The counter alone is not enough, and the fleet is consulted for a reason.**
+ * `spawnCounter` is module state and the entities are store state, so the two
+ * can fall out of step: a module re-evaluation (dev HMR does exactly this) puts
+ * the counter back to `0` while the rows it already handed ids to are still on
+ * screen. The next id minted is then one that is already taken.
+ *
+ * That is not a cosmetic clash. `entities` is keyed by id, so a `/clear` whose
+ * successor collides with the session it just retired writes both under one
+ * key — the retired row is overwritten by its own replacement, and `order`
+ * carries the same id twice. What the user sees is two rows wearing one name,
+ * which is precisely the report this guard answers.
+ *
+ * Ended rows count as taken. They are still in `entities`, still rendered under
+ * ENDED, and reusing the id of a session the user can still see is the bug in
+ * its most confusing form: two rows, one name, different statuses.
+ */
+function nextSessionId(taken: Readonly<Record<string, Entity>>): string {
+  let id: string;
+  do {
+    spawnCounter += 1;
+    id = `sess-${spawnCounter.toString(36).padStart(2, '0')}`;
+  } while (id in taken);
+  return id;
 }
 
 /**
@@ -600,7 +622,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * makes the cross-store effect visible at the call site.
    */
   spawnSession: (repo, task, model, effort, ticket) => {
-    const id = nextSessionId();
+    const id = nextSessionId(get().entities);
     // Resolved once: the seed transcript quotes them back, so a default applied
     // in two places could print one model and record another.
     const resolvedModel = model ?? 'opus';
@@ -1529,7 +1551,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const current = get().entities[targetId];
     if (!current || !isSession(current) || isEnded(current.status)) return null;
 
-    const successorId = nextSessionId();
+    const successorId = nextSessionId(get().entities);
     const successor: Session = {
       kind: 'session',
       id: successorId,

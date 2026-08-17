@@ -10,7 +10,7 @@ import {
 import { Icon } from '@components/ui/icon';
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { useRelativeTime } from '@hooks/use-relative-time';
-import { useDismissNotif, useOpenEntity } from '@stores/hive-store';
+import { currentRowFor, useDismissNotif, useOpenEntity } from '@stores/hive-store';
 
 /**
  * How long the exit animation runs, in ms (HIVE-93).
@@ -108,7 +108,23 @@ export function NotificationCard({ notif }: NotificationCardProps) {
      * to mean different things about one notification.
      */
     if (notif.action.type === 'session') {
-      openEntity(notif.action.entityId);
+      /**
+       * Resolved to the row that terminal names **now**, not the row it named
+       * when the notification was written.
+       *
+       * Notifications come from hooks, and hooks speak *terminal* ids — baked
+       * into a pty's environment and never changed. A `/clear` in the meantime
+       * retires the row that id pointed at, and `openEntity` refuses an ended
+       * session by design (it belongs to the successor now). The click then did
+       * the one thing it must never do: dropped the user on the orchestrator
+       * instead of the live session the notification was actually about.
+       *
+       * `use-notification-activate` has resolved this for the **desktop toast**
+       * all along. This row did not — so one notification meant two different
+       * things depending on where it was clicked, which is exactly what the
+       * comment below forbids.
+       */
+      openEntity(currentRowFor(notif.action.entityId));
       return;
     }
     if (notif.action.type === 'none') return;

@@ -9,6 +9,8 @@ import {
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
+import { seedDemoFleet } from '@tests/support/demo-fleet';
+
 import { notif, resetNotifIds } from '../../../support/notifications';
 
 /**
@@ -242,5 +244,52 @@ describe('NotificationCard', () => {
   it('says nothing extra once read', () => {
     render(<NotificationCard notif={notif({ unread: false })} />);
     expect(screen.queryByText('unread')).toBeNull();
+  });
+
+  describe('opening the session it is about', () => {
+    beforeEach(() => {
+      seedDemoFleet();
+    });
+
+    it('opens the session', async () => {
+      const user = userEvent.setup();
+      render(
+        <NotificationCard
+          notif={notif({ action: { type: 'session', entityId: 'hero-refresh' } })}
+        />,
+      );
+
+      await user.click(screen.getByRole('button'));
+
+      expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+    });
+
+    it('follows the terminal to its live row after a /clear', async () => {
+      /**
+       * The reported bug. Notifications come from hooks, and hooks speak
+       * *terminal* ids — baked into a pty's environment and never changed. A
+       * `/clear` in between retires the row that id pointed at, and
+       * `openEntity` refuses an ended session by design, dropping the user on
+       * the orchestrator instead of the session the notification was about.
+       *
+       * The desktop toast (`use-notification-activate`) resolved this all
+       * along; this row did not, so one notification meant two different things
+       * depending on where it was clicked.
+       */
+      const user = userEvent.setup();
+      const successor = useHiveStore.getState().clearSession('hero-refresh')!;
+
+      render(
+        <NotificationCard
+          notif={notif({ action: { type: 'session', entityId: 'hero-refresh' } })}
+        />,
+      );
+
+      await user.click(screen.getByRole('button'));
+
+      // The successor, not the retired row — and emphatically not the fleet view.
+      expect(useUiStore.getState().activeTab).toBe(successor);
+      expect(useUiStore.getState().activeTab).not.toBe('hero-refresh');
+    });
   });
 });
