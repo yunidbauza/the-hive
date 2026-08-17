@@ -1,4 +1,6 @@
+import { NEWLINE_SEQUENCE } from '@lib/terminal/keymap';
 import { sessionChannelState } from '@lib/terminal/pty-transport';
+import { normalizeLines } from '@lib/terminal/text';
 
 /**
  * Putting text into a live session (story 097).
@@ -17,36 +19,23 @@ import { sessionChannelState } from '@lib/terminal/pty-transport';
 export type SendResult = { ok: true } | { ok: false; reason: string };
 
 /**
- * Every newline becomes a single space.
+ * Line breaks are kept; every other control character is dropped.
  *
- * A multi-line message pasted into the row would otherwise submit its first
- * line and leave the rest sitting at the prompt as a half-typed second command.
+ * **This used to flatten a newline to a space, and the reason it did has since
+ * stopped being true.** The old rationale was that a multi-line message would
+ * otherwise submit its first line and leave the rest sitting at the prompt as a
+ * half-typed second command — which was correct while `\r` was the only thing
+ * this module could send. It is not any more: the terminal half of this story
+ * gives the pty {@link NEWLINE_SEQUENCE}, which starts a line without
+ * submitting. Flattening now would mean the console offers a key that inserts a
+ * line break and then silently removes it on the way out.
  *
- * `\r\n` is matched before either bare form, so a Windows line ending collapses
- * to one space rather than two — the kind of detail that survives review and
- * then shows up as mysterious double-spacing in a transcript.
+ * Control characters other than the break are still stripped rather than
+ * refused, unchanged: this text is written into a terminal the user reads and
+ * trusts, and a paste carrying a stray byte should still send.
  */
 export function normalizeInput(text: string): string {
-  let out = '';
-  for (const char of text.replace(/\r\n|\r|\n/g, ' ')) {
-    const code = char.codePointAt(0) ?? 0;
-    /**
-     * Other control characters are dropped, not passed through.
-     *
-     * This text is written into a terminal the user is reading and trusts, so
-     * a pasted ESC could address the cursor, set the window title or switch to
-     * the alternate screen. Main's `assertText` rejects the same range in a
-     * spawn's task; here they are stripped rather than refused, because the
-     * message row's job is to send what a person meant to type and a paste
-     * that happens to carry a stray byte should still send.
-     *
-     * Expressed by code point rather than a regex literal, so this file stays
-     * free of control bytes.
-     */
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
-    out += char;
-  }
-  return out.trim();
+  return normalizeLines(text);
 }
 
 export function sendToSession(entityId: string, text: string): SendResult {
@@ -93,12 +82,21 @@ export function sendToSession(entityId: string, text: string): SendResult {
   }
 
   /**
-   * `\r`, not `\n`. A terminal's Enter key sends carriage return, and the line
-   * discipline is what turns it into "line submitted". A bare line feed is
-   * inserted literally by some shells and readline configurations, leaving the
-   * message typed but never sent. `sessions/bootstrap.ts` rests on the same
-   * fact for the same reason.
+   * One {@link NEWLINE_SEQUENCE} between the lines, one `\r` at the end.
+   *
+   * `\r`, not `\n`, for the submit. A terminal's Enter key sends carriage
+   * return, and the line discipline is what turns it into "line submitted". A
+   * bare line feed is inserted literally by some shells and readline
+   * configurations, leaving the message typed but never sent.
+   * `sessions/bootstrap.ts` rests on the same fact for the same reason.
+   *
+   * Which is exactly why the *interior* breaks cannot also be `\r`: each one
+   * would submit, turning a three-line message into three separate turns. The
+   * sequence that starts a line without submitting is the one the keyboard now
+   * sends for `Shift+Enter`, so a message assembled here and a message typed by
+   * hand reach the child process as the same bytes.
    */
-  bridge.pty.write({ sessionId: entityId, data: `${message}\r` });
+  const body = message.split('\n').join(NEWLINE_SEQUENCE);
+  bridge.pty.write({ sessionId: entityId, data: `${body}\r` });
   return { ok: true };
 }

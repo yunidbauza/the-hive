@@ -68,6 +68,83 @@ test('the row shrinks back when the lines are removed', async ({ page }) => {
   expect(await heightOf(field)).toBe(oneLine);
 });
 
+test('a narrowed row re-measures instead of clipping in silence', async ({ page }) => {
+  /**
+   * Height depends on content **and** width, but only the content is a React
+   * `value`. Narrow the window after the row has been sized and the same text
+   * needs more height than it has — and because the hook pins `overflow-y`, the
+   * failure is not a scrollbar but *silent clipping*: the element keeps its old
+   * height with the overflow hidden, and most of a draft becomes unreachable
+   * with nothing on screen to say so.
+   *
+   * Reproduced by resizing rather than typing, because typing would change
+   * `value` and mask the bug behind the dependency that already works.
+   */
+  const field = console_(page);
+  await field.click();
+
+  await field.fill(
+    'a reasonably long instruction that will certainly wrap once the pane narrows',
+  );
+
+  await page.setViewportSize({ width: 900, height: 800 });
+
+  // The assertion the old code failed: content taller than the box, with the
+  // overflow hidden, is text the user cannot reach by any means.
+  const clipped = await field.evaluate((el) => ({
+    scroll: el.scrollHeight,
+    client: el.clientHeight,
+    overflowY: getComputedStyle(el).overflowY,
+  }));
+
+  expect(clipped.overflowY === 'hidden' && clipped.scroll > clipped.client).toBe(
+    false,
+  );
+});
+
+test('the arrows edit a soft-wrapped command instead of moving the selection', async ({
+  page,
+}) => {
+  /**
+   * The guard keyed on `value.includes('\n')` until review caught this: a long
+   * command with no newline in it still **wraps** onto a second row, and the
+   * caret then has somewhere to go that the string knows nothing about. Keying
+   * on the text re-created the exact trap the guard exists to prevent.
+   *
+   * Browser-only, necessarily — soft wrap is a layout outcome, and happy-dom
+   * has no layout to produce one.
+   */
+  const field = console_(page);
+  await field.click();
+
+  const oneLine = await heightOf(field);
+
+  // Long enough to wrap at the default width, and deliberately free of any
+  // newline — the whole point is that the string looks single-line.
+  const command = `spawn apfm-web ${'rework the onboarding flow and its empty states '.repeat(4)}`;
+  await field.fill(command);
+
+  // Premise check: it really did wrap. Without this the test passes vacuously.
+  expect(await heightOf(field)).toBeGreaterThan(oneLine);
+
+  const atEnd = await field.evaluate(
+    (el: HTMLTextAreaElement) => el.selectionStart,
+  );
+  await page.keyboard.press('ArrowUp');
+  const afterUp = await field.evaluate(
+    (el: HTMLTextAreaElement) => el.selectionStart,
+  );
+
+  /**
+   * The precise claim: the key was **not** `preventDefault`ed, so the browser
+   * moved the caret up a visual row. Had the guard still keyed on `\n`, the
+   * console would have swallowed it to move the fleet selection and the caret
+   * would have stayed pinned at the end.
+   */
+  expect(afterUp).toBeLessThan(atEnd);
+  await expect(field).toHaveValue(command);
+});
+
 test('growth stops at the cap instead of swallowing the stage', async ({ page }) => {
   /**
    * The cap exists because this row takes its height out of the terminal above

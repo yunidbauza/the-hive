@@ -89,6 +89,18 @@ describe('parseCommand', () => {
       });
     });
 
+    it('leaves `raw` as the user typed it, collapsing only the message', () => {
+      /**
+       * `raw` is echoed verbatim into the transcript, so normalising it would
+       * quietly rewrite what the user sees they typed. Only the derived field
+       * is collapsed — which is also how this behaved before the newline work.
+       */
+      expect(parseCommand('send lead-form  yes   go')).toMatchObject({
+        raw: 'send lead-form  yes   go',
+        message: 'yes go',
+      });
+    });
+
     it('reads the target across a line break, not just a space', () => {
       // A message begun on its own line is still a message.
       expect(parseCommand('send lead-form\nthe whole thing')).toMatchObject({

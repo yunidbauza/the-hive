@@ -9,6 +9,7 @@ import type {
   TerminalDataHandler,
   TerminalTransport,
 } from '@lib/terminal/terminal-transport';
+import { flattenLines } from '@lib/terminal/text';
 import { CLONE_ENTITY_ID } from '@shared/config-contract';
 import type {
   SessionEffort,
@@ -389,6 +390,8 @@ export function requestSpawn(
   if (channel.spawnResult) return channel.spawnResult;
 
   channel.spawnRequested = true;
+  /** See the spread below for why this is flattened rather than passed as typed. */
+  const wireTask = flattenLines(task ?? '');
   channel.spawnResult = pty()
     .spawn({
       sessionId: entityId,
@@ -408,7 +411,21 @@ export function requestSpawn(
        * Normalised here rather than only at the call site, because this is the
        * one place every spawn passes through.
        */
-      ...(task === undefined || task.trim() === '' ? {} : { task }),
+      /**
+       * Flattened, because main's `assertText` rejects **every** control
+       * character — `\n` included — and refuses the whole spawn if it finds
+       * one. Since `Shift+Enter` reached the console a task can genuinely
+       * contain a line break, and the store adds the session row *before* this
+       * call resolves: without the flattening the user gets a session on screen
+       * whose process never started, plus `spawn.task: control characters are
+       * not allowed` in red.
+       *
+       * Flattened here rather than loosening the guard. That guard is the IPC
+       * boundary and is worth keeping exactly as strict as it is; a task is a
+       * value on the wire rather than text at a prompt, so it has no need of
+       * the line structure `sendToSession` now preserves.
+       */
+      ...(wireTask === '' ? {} : { task: wireTask }),
       /**
        * Same conditional spread, same reason (story 109): the guard rejects
        * unexpected keys, and an own property whose value is `undefined`

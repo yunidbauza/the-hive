@@ -59,16 +59,28 @@ const exit = (id: string) => {
 };
 
 describe('normalizeInput', () => {
-  it('collapses every newline form to a single space', () => {
-    expect(normalizeInput('first\nsecond')).toBe('first second');
-    expect(normalizeInput('first\r\nsecond')).toBe('first second');
-    expect(normalizeInput('first\rsecond')).toBe('first second');
+  it('keeps a line break, normalising every form to one `\\n`', () => {
+    /**
+     * **This assertion is inverted from what it used to be, and the premise is
+     * what changed rather than the standard.**
+     *
+     * It read "collapses every newline form to a single space", because a
+     * multi-line message would otherwise submit its first line and strand the
+     * rest at the prompt — true while `\r` was the only byte this module could
+     * send. `Shift+Enter` now gives the pty a sequence that starts a line
+     * *without* submitting, so flattening here would mean offering a key that
+     * inserts a break and then silently removing it on the way out.
+     */
+    expect(normalizeInput('first\nsecond')).toBe('first\nsecond');
+    expect(normalizeInput('first\r\nsecond')).toBe('first\nsecond');
+    expect(normalizeInput('first\rsecond')).toBe('first\nsecond');
   });
 
-  it('collapses a CRLF to one space, not two', () => {
+  it('reads a CRLF as one break, not two', () => {
     // The order of the alternation is what makes this true; a naive
     // `replace(/\n/g).replace(/\r/g)` would double it.
     expect(normalizeInput('a\r\nb').length).toBe(3);
+    expect(normalizeInput('a\r\nb')).toBe('a\nb');
   });
 
   it('strips other control characters', () => {
@@ -97,13 +109,20 @@ describe('sendToSession', () => {
   });
 
   it('sends the normalised text, so a paste submits once', () => {
+    /**
+     * Still one submit, which was always the point of normalising — but the
+     * interior break is now carried rather than destroyed. `\x1b\r` starts a
+     * line without submitting (it is what `Shift+Enter` sends), so the message
+     * arrives as the two lines it was written as and the single trailing `\r`
+     * is the only thing that ends the turn.
+     */
     openSession('sess-a');
 
     sendToSession('sess-a', 'one\ntwo');
 
     expect(write).toHaveBeenCalledWith({
       sessionId: 'sess-a',
-      data: 'one two\r',
+      data: 'one\x1b\rtwo\r',
     });
   });
 

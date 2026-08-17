@@ -599,6 +599,41 @@ describe('requestSpawn', () => {
     expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
   });
 
+  it('flattens a multi-line task, which main would otherwise refuse', async () => {
+    /**
+     * A regression guard with a specific failure behind it.
+     *
+     * Once `Shift+Enter` reached the console a task could genuinely contain a
+     * line break, and main's `assertText` rejects **every** control character —
+     * `\n` included — refusing the whole spawn. Because `spawnSession` adds the
+     * session to the store synchronously and this call resolves later, the user
+     * was left looking at a session row whose process never started, next to
+     * `spawn.task: control characters are not allowed` in red.
+     *
+     * Flattened on this side rather than by loosening the guard: a task crosses
+     * the IPC boundary as a *value*, not as text at a prompt, so it has no use
+     * for the line structure `sendToSession` now preserves.
+     */
+    await requestSpawn('sess-a', 'apfm-web', {
+      task: 'fix the login\nand the signup flow',
+    });
+
+    expect(bridge.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'fix the login and the signup flow' }),
+    );
+  });
+
+  it('strips a control character from a task rather than failing the spawn', async () => {
+    // Main refuses the whole spawn on a stray byte; dropping it sends the task
+    // the user meant, which is the better outcome for a paste that carries one.
+    // Written by code point so this file stays free of literal control bytes.
+    await requestSpawn('sess-a', 'apfm-web', { task: 'tidy\u0007 up' });
+
+    expect(bridge.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'tidy up' }),
+    );
+  });
+
   it('resolves rather than throwing when there is no bridge', async () => {
     delete (window as { hive?: unknown }).hive;
 

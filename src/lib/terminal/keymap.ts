@@ -386,12 +386,22 @@ export function decideTerminalKey(
    * path, and **before** the platform blocks because the rule is the same on
    * every platform and neither block has an `Enter` case to collide with.
    *
-   * Unlike the `←` exception above, this one does not need to inspect the screen
-   * to know it is safe. `Shift+Enter` is already indistinguishable from `Enter`
-   * by the time it reaches the child process, so there is no existing behaviour
-   * to preserve — nothing can be broken by giving the two keys different bytes,
-   * because today they have the same ones. That is the defect, stated as a
-   * justification.
+   * Unlike the `←` exception above, this one inspects nothing — and that is a
+   * deliberate trade rather than a free lunch, so it is worth being exact about
+   * what it costs.
+   *
+   * `Shift+Enter` is currently indistinguishable from `Enter` at the child
+   * process, so for **Claude Code** — the reason a session exists — there is no
+   * behaviour to preserve. For a plain shell surviving `/exit` (story 096) the
+   * chord did submit and now does not: zsh's ZLE accepts `\x1b\r` as the line,
+   * so the macOS default is unaffected, but bash's readline leaves `M-\r`
+   * unbound and answers with a bell.
+   *
+   * That is accepted rather than guarded. The `←` rule is fenced behind
+   * {@link isEmptyClaudePrompt} because `←` is load-bearing in every line
+   * editor and TUI; `Shift+Enter` is load-bearing in none, and a screen-shape
+   * test would cost this chord its reliability inside the many multi-line
+   * prompts that are not Claude's.
    */
   if (isNewlineChord(event)) return 'newline';
 

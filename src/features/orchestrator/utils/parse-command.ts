@@ -50,7 +50,17 @@ function takeWord(input: string): [word: string, rest: string] {
 }
 
 export function parseCommand(raw: string): ParsedCommand {
-  const input = normalize(raw);
+  /**
+   * `raw` is trimmed and otherwise left alone; only the *derived* message and
+   * task are collapsed.
+   *
+   * The distinction matters because `raw` is echoed verbatim into the
+   * transcript (`hive-store.ts`), so normalising it would quietly rewrite what
+   * the user sees they typed. That is also how the field behaved before this
+   * story — the old code collapsed only inside `message`/`task` — and there was
+   * no reason for that to change.
+   */
+  const input = raw.trim();
   if (input === '') return { kind: 'empty', raw: input };
 
   const [verb, rest] = takeWord(input);
@@ -72,7 +82,8 @@ export function parseCommand(raw: string): ParsedCommand {
     }
 
     case 'send': {
-      const [target, message] = takeWord(rest);
+      const [target, tail] = takeWord(rest);
+      const message = normalize(tail);
       // Both "no session" and "no message" are usage errors: a `send` missing
       // either half cannot be routed anywhere.
       if (!target || message === '') {
@@ -82,7 +93,8 @@ export function parseCommand(raw: string): ParsedCommand {
     }
 
     case 'spawn': {
-      const [repo, task] = takeWord(rest);
+      const [repo, tail] = takeWord(rest);
+      const task = normalize(tail);
       if (!repo || task === '') {
         return { kind: 'usage', raw: input, command: 'spawn' };
       }

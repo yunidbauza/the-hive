@@ -73,15 +73,28 @@ export function ConsoleInput() {
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     /**
-     * Once the row holds more than one line, `↑`/`↓` are caret motion again.
+     * Once the row occupies more than one **visual** row, `↑`/`↓` are caret
+     * motion again.
      *
      * The same shape as the `→` guard below — *only take a key when there is
      * nothing to move through* — and it is what keeps this row from becoming
-     * the trap it was built to avoid: a field you can type three lines into but
-     * cannot move the caret back up through. Single-line content, which is
-     * every command the console had before, is untouched.
+     * the trap it was built to avoid: a field you can type into but cannot move
+     * the caret back up through. Single-line content, which is every command
+     * the console had before, is untouched.
+     *
+     * Measured rather than read off the text, because `value.includes('\n')`
+     * answers a different question than the one being asked. A long command
+     * with no newline in it **soft-wraps** onto a second row, and the caret then
+     * has somewhere to go that the string knows nothing about — so keying on
+     * `\n` re-created the exact trap this guard exists to prevent, for input as
+     * ordinary as a long `spawn` task. `scrollHeight` is what the user can
+     * actually see.
      */
-    const multiline = value.includes('\n');
+    const el = inputRef.current;
+    const multiline =
+      value.includes('\n') ||
+      (el !== null &&
+        el.scrollHeight > Number.parseFloat(getComputedStyle(el).lineHeight) * 1.5);
 
     switch (event.key) {
       case 'ArrowUp':
