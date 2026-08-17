@@ -71,6 +71,32 @@ describe('parseCommand', () => {
       });
     });
 
+    it('keeps line breaks, which are not whitespace for this purpose', () => {
+      /**
+       * `⇧↵` puts them there on purpose. The collapse above is deliberate and
+       * long-standing, but applying it across newlines too would fold a
+       * three-line message into one line — silently discarding the thing the
+       * user pressed a key to create. So the collapse runs *within* each line.
+       */
+      expect(parseCommand('send lead-form first\nsecond')).toMatchObject({
+        target: 'lead-form',
+        message: 'first\nsecond',
+      });
+
+      expect(parseCommand('spawn apfm-web do  this\nthen  that')).toMatchObject({
+        repo: 'apfm-web',
+        task: 'do this\nthen that',
+      });
+    });
+
+    it('reads the target across a line break, not just a space', () => {
+      // A message begun on its own line is still a message.
+      expect(parseCommand('send lead-form\nthe whole thing')).toMatchObject({
+        target: 'lead-form',
+        message: 'the whole thing',
+      });
+    });
+
     it('reports usage when the message is missing', () => {
       expect(parseCommand('send lead-form')).toEqual({
         kind: 'usage',

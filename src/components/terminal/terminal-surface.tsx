@@ -9,6 +9,7 @@ import { xtermThemeFor, type TermPalette } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
   LINE_MOTION_SEQUENCE,
+  NEWLINE_SEQUENCE,
   TERMINAL_CHORD_EVENT,
   decideTerminalKey,
   type CursorContext,
@@ -333,6 +334,16 @@ export function TerminalSurface({
           case 'line-start':
           case 'line-end':
             transportRef.current.write(LINE_MOTION_SEQUENCE[action]);
+            event.preventDefault();
+            return false;
+          /**
+           * Written for the same reason as the line motions, from the opposite
+           * failure: xterm encodes *too little* here rather than nothing at all.
+           * Its `case 13` ignores `shiftKey`, so declining would let it send a
+           * bare `\r` — the very byte that submits. See {@link NEWLINE_SEQUENCE}.
+           */
+          case 'newline':
+            transportRef.current.write(NEWLINE_SEQUENCE);
             event.preventDefault();
             return false;
           /**

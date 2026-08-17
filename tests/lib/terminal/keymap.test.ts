@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LINE_MOTION_SEQUENCE,
+  NEWLINE_SEQUENCE,
   backChordLabel,
   decideTerminalKey,
   isBackChord,
   isBareBack,
   isEmptyClaudePrompt,
+  isNewlineChord,
   lineMotion,
   type KeyEventLike,
 } from '@lib/terminal/keymap';
@@ -46,6 +48,80 @@ describe('decideTerminalKey — the default', () => {
     for (const name of ['ArrowLeft', 'ArrowUp', 'Tab', 'Escape', 'a', 'Enter']) {
       expect(decideTerminalKey(key({ key: name }), MAC)).toBe('to-pty');
       expect(decideTerminalKey(key({ key: name }), PC)).toBe('to-pty');
+    }
+  });
+});
+
+describe('decideTerminalKey — Shift+Enter is a line break', () => {
+  /**
+   * The defect this fixes is invisible from inside xterm: its `case 13` branch
+   * reads `ev.altKey ? ESC + CR : CR` and never consults `shiftKey`, so
+   * `Shift+Enter` and a bare `Enter` reach the child process as the *same
+   * single byte*. Claude Code cannot distinguish what it cannot see, so it
+   * submits — and a half-written second line is sent instead of started.
+   */
+  it('claims Shift+Enter on every platform', () => {
+    // Platform-independent, unlike every other rule in this module: there is no
+    // OS where `Shift+Enter` means something other than "new line, don't send".
+    expect(decideTerminalKey(key({ key: 'Enter', shiftKey: true }), MAC)).toBe(
+      'newline',
+    );
+    expect(decideTerminalKey(key({ key: 'Enter', shiftKey: true }), PC)).toBe(
+      'newline',
+    );
+  });
+
+  it('sends ESC+CR, which is what the child already understood', () => {
+    /**
+     * Pinned as a literal because the whole fix is this byte pair. It is not an
+     * invention: it is xterm's own `Alt+Enter` encoding, and the exact sequence
+     * Claude Code's `/terminal-setup` installs when it rebinds `Shift+Enter` in
+     * iTerm2 and VS Code. The chord is renamed, not reinterpreted.
+     */
+    expect(NEWLINE_SEQUENCE).toBe('\x1b\r');
+  });
+
+  it('leaves a bare Enter alone', () => {
+    // The control. Submitting is what that key is for; a fix that swallowed it
+    // would leave the prompt with no way to send at all.
+    expect(decideTerminalKey(key({ key: 'Enter' }), MAC)).toBe('to-pty');
+    expect(decideTerminalKey(key({ key: 'Enter' }), PC)).toBe('to-pty');
+  });
+
+  it('leaves Alt+Enter to xterm, which already encodes it', () => {
+    // Translating a key that needs no translating would be the one way to make
+    // this worse than it was.
+    expect(
+      decideTerminalKey(key({ key: 'Enter', altKey: true }), MAC),
+    ).toBe('to-pty');
+    expect(
+      decideTerminalKey(key({ key: 'Enter', shiftKey: true, altKey: true }), PC),
+    ).toBe('to-pty');
+  });
+
+  it('leaves Ctrl+Enter and Cmd+Enter to the child process', () => {
+    /**
+     * Several TUIs bind these for themselves, and the user asked for `Shift`.
+     * The governing rule — a focused interactive terminal wins every bare key —
+     * is only worth breaking for the key that was actually broken.
+     */
+    expect(
+      decideTerminalKey(key({ key: 'Enter', ctrlKey: true, shiftKey: true }), PC),
+    ).toBe('to-pty');
+    expect(
+      decideTerminalKey(key({ key: 'Enter', metaKey: true, shiftKey: true }), MAC),
+    ).toBe('to-pty');
+  });
+
+  it('recognises exactly one chord', () => {
+    expect(isNewlineChord(key({ key: 'Enter', shiftKey: true }))).toBe(true);
+    expect(isNewlineChord(key({ key: 'Enter' }))).toBe(false);
+    expect(isNewlineChord(key({ key: 'a', shiftKey: true }))).toBe(false);
+
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey'] as const) {
+      expect(
+        isNewlineChord(key({ key: 'Enter', shiftKey: true, [modifier]: true })),
+      ).toBe(false);
     }
   });
 });

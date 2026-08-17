@@ -116,7 +116,7 @@ export function CenterStage() {
    */
   const cache = useRef(new Map<string, TerminalTransport>());
 
-  const messageInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
 
   /** The flex container the split handle measures its ratio against. */
   const splitRef = useRef<HTMLDivElement>(null);

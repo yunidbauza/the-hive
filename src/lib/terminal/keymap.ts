@@ -25,6 +25,8 @@ export type TerminalKeyAction =
   | 'line-start'
   /** Send `End` to the pty. See {@link LINE_MOTION_SEQUENCE}. */
   | 'line-end'
+  /** Insert a line break without submitting. See {@link NEWLINE_SEQUENCE}. */
+  | 'newline'
   /** An app navigation chord: not xterm's, not the pty's. Let it bubble. */
   | 'app-chord';
 
@@ -45,6 +47,27 @@ export const LINE_MOTION_SEQUENCE: Record<'line-start' | 'line-end', string> = {
   'line-start': '\x1b[H',
   'line-end': '\x1b[F',
 };
+
+/**
+ * The bytes that mean "line break, do not submit" on a pty's stdin.
+ *
+ * `ESC` + `CR`, and it is not an invention of this codebase. It is what xterm
+ * *already* encodes for `Alt+Enter` — the `case 13` branch of its keyboard table
+ * reads `ev.altKey ? C0.ESC + C0.CR : C0.CR` — and it is the exact pair Claude
+ * Code's own `/terminal-setup` installs when it rebinds `Shift+Enter` in iTerm2
+ * and VS Code. So the chord is renamed, not reinterpreted: the pty receives a
+ * sequence it already understood, from a key the user expected to produce it.
+ *
+ * Why a translation is needed at all is the whole defect. xterm's `case 13`
+ * never consults `shiftKey`, so `Shift+Enter` and a bare `Enter` arrive at the
+ * child process as the *same single byte* — `\r`. Claude Code cannot distinguish
+ * what it cannot see, so it submits, and a half-written second line is sent
+ * instead of started.
+ *
+ * Sent through the transport rather than `terminal.input()` for the same reason
+ * as {@link LINE_MOTION_SEQUENCE}: stdin is the transport's job.
+ */
+export const NEWLINE_SEQUENCE = '\x1b\r';
 
 /** The fields of a `KeyboardEvent` this decision reads. */
 export interface KeyEventLike {
@@ -219,6 +242,27 @@ export const isBareBack = (event: KeyEventLike): boolean =>
   !event.altKey;
 
 /**
+ * `Shift+Enter`, and nothing else wearing a modifier.
+ *
+ * Every other modifier is excluded rather than ignored, and each exclusion has a
+ * job. `Alt+Enter` already produces {@link NEWLINE_SEQUENCE} through xterm's own
+ * encoder, so matching it here would translate a key that needs no translating.
+ * `Ctrl+Enter` and `⌘Enter` are bindings several TUIs define for themselves, and
+ * a terminal that swallowed them would be breaking the governing rule at the top
+ * of this file for no gain — the user asked for `Shift`.
+ *
+ * Platform-independent, unlike every other rule in this module. `Shift+Enter`
+ * means "new line, don't send" in Slack, Discord, iMessage and every chat box on
+ * the web; there is no platform where it means something else worth preserving.
+ */
+export const isNewlineChord = (event: KeyEventLike): boolean =>
+  event.key === 'Enter' &&
+  event.shiftKey &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  !event.altKey;
+
+/**
  * The DOM event a terminal fires when it declines an app chord.
  *
  * The alternative — a `keydown` listener on `window` — was implemented first and
@@ -333,6 +377,23 @@ export function decideTerminalKey(
    * a character the user was trying to type into their shell.
    */
   if (event.altKey) return 'to-pty';
+
+  /**
+   * `Shift+Enter` is a line break, not a submit.
+   *
+   * Checked **after** the AltGr guard so that `Alt+Enter` — which xterm already
+   * encodes as {@link NEWLINE_SEQUENCE} unaided — keeps taking the untranslated
+   * path, and **before** the platform blocks because the rule is the same on
+   * every platform and neither block has an `Enter` case to collide with.
+   *
+   * Unlike the `←` exception above, this one does not need to inspect the screen
+   * to know it is safe. `Shift+Enter` is already indistinguishable from `Enter`
+   * by the time it reaches the child process, so there is no existing behaviour
+   * to preserve — nothing can be broken by giving the two keys different bytes,
+   * because today they have the same ones. That is the defect, stated as a
+   * justification.
+   */
+  if (isNewlineChord(event)) return 'newline';
 
   // `event.key` is already case-shifted by Shift ('C', not 'c'), so compare
   // case-insensitively rather than listing both forms at every site.

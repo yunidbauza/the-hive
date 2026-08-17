@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CONSOLE_VERBS } from '@/types/command';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
+import { useAutoGrow } from '@hooks/use-auto-grow';
 import {
   useNavOrder,
   useOpenEntity,
@@ -11,7 +12,7 @@ import {
 import { useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
 const PLACEHOLDER = 'help · status · send <session> <message> · spawn <repo> <task>';
-const KEY_HINT = '↑↓ select · → open · ↵ run';
+const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
 
 /**
  * The overmind's command row, and the hint bar under it (story 041).
@@ -33,7 +34,9 @@ const KEY_HINT = '↑↓ select · → open · ↵ run';
  */
 export function ConsoleInput() {
   const [value, setValue] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useAutoGrow(inputRef, value);
 
   const runOrchCommand = useRunOrchCommand();
   const navOrder = useNavOrder();
@@ -68,14 +71,27 @@ export function ConsoleInput() {
     if (id) openEntity(id);
   };
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    /**
+     * Once the row holds more than one line, `↑`/`↓` are caret motion again.
+     *
+     * The same shape as the `→` guard below — *only take a key when there is
+     * nothing to move through* — and it is what keeps this row from becoming
+     * the trap it was built to avoid: a field you can type three lines into but
+     * cannot move the caret back up through. Single-line content, which is
+     * every command the console had before, is untouched.
+     */
+    const multiline = value.includes('\n');
+
     switch (event.key) {
       case 'ArrowUp':
+        if (multiline) return;
         event.preventDefault();
         move(-1);
         return;
 
       case 'ArrowDown':
+        if (multiline) return;
         event.preventDefault();
         move(1);
         return;
@@ -89,6 +105,17 @@ export function ConsoleInput() {
         return;
 
       case 'Enter': {
+        /**
+         * `⇧↵` is a line break, and the check comes first for a reason: with an
+         * empty row the branch below would have opened the selected session
+         * instead, so a user starting a multi-line message with a blank first
+         * line would have been thrown into a terminal. Returning without
+         * `preventDefault` hands the key back to the textarea, which inserts
+         * the newline itself — the browser is better at that than we are, and
+         * it keeps undo, IME composition and the caret position correct.
+         */
+        if (event.shiftKey) return;
+
         event.preventDefault();
         if (value === '') {
           openSelected();
@@ -102,7 +129,12 @@ export function ConsoleInput() {
 
   return (
     <>
-      <div className="flex shrink-0 items-center gap-2.5 border-t border-border-soft bg-term-input px-[18px] py-2.5">
+      {/*
+        `items-start` rather than `items-center`: once the textarea grows, a
+        centred prompt glyph drifts down the side of the message and stops
+        reading as a prompt. Pinned to the top it stays where the first line is.
+      */}
+      <div className="flex shrink-0 items-start gap-2.5 border-t border-border-soft bg-term-input px-[18px] py-2.5">
         {/*
           The prompt glyph — the most visible instance of the name, and the one
           the string inventory nearly missed, because it is bare JSX text rather
@@ -112,17 +144,24 @@ export function ConsoleInput() {
         <span className="shrink-0 font-mono text-[13px] text-green">
           overmind ❯
         </span>
-        <input
+        <textarea
           ref={inputRef}
+          rows={1}
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder={PLACEHOLDER}
           spellCheck={false}
           aria-label="Overmind command"
-          className="min-w-0 flex-1 border-none bg-transparent font-mono text-[12.5px] text-ink caret-green outline-none placeholder:text-subtle"
+          /*
+           * `resize-none` because the height is ours to decide (`useAutoGrow`),
+           * and a drag handle in the corner of a terminal prompt would fight it.
+           * `leading-normal` so the computed line height the hook measures is a
+           * real number rather than the `normal` keyword.
+           */
+          className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent font-mono text-[12.5px] leading-normal text-ink caret-green outline-none placeholder:text-subtle"
         />
-        <span className="shrink-0 font-mono text-[10.5px] whitespace-nowrap text-subtle">
+        <span className="shrink-0 pt-px font-mono text-[10.5px] whitespace-nowrap text-subtle">
           {KEY_HINT}
         </span>
       </div>

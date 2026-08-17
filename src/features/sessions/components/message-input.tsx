@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { KeyHint } from '@components/ui/key-hint';
 import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
+import { useAutoGrow } from '@hooks/use-auto-grow';
 import { isBareBack } from '@lib/terminal/keymap';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
@@ -19,7 +20,7 @@ const PLACEHOLDER = 'message this session — routed by the overmind';
  * with no way to tell which has the keyboard. Over a replay, nothing else wants
  * the arrow key.
  */
-const HINTS = ['← back to list', '↵ send'];
+const HINTS = ['← back to list', '⇧↵ line', '↵ send'];
 
 interface MessageInputProps {
   /** The entity this row talks to. Its id is the prompt label. */
@@ -29,7 +30,7 @@ interface MessageInputProps {
    * this input — the concept's behaviour, and the reason the row feels like
    * part of the terminal rather than a form beneath it.
    */
-  inputRef?: RefObject<HTMLInputElement | null>;
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
 /**
@@ -46,8 +47,10 @@ interface MessageInputProps {
  */
 export function MessageInput({ entityId, inputRef }: MessageInputProps) {
   const [value, setValue] = useState('');
-  const fallbackRef = useRef<HTMLInputElement>(null);
+  const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? fallbackRef;
+
+  useAutoGrow(ref, value);
 
   const sendToEntity = useSendToEntity();
   const backToOrch = useBackToOrch();
@@ -72,8 +75,16 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
     ref.current?.focus();
   };
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter') {
+      /**
+       * `⇧↵` is a line break. Returning without `preventDefault` lets the
+       * textarea insert it natively, which keeps undo history, IME composition
+       * and the caret position correct — all three of which a manual splice of
+       * `value` would quietly get wrong.
+       */
+      if (event.shiftKey) return;
+
       event.preventDefault();
       send();
       return;
@@ -100,12 +111,17 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
   };
 
   return (
-    <div className="flex shrink-0 items-center gap-2.5 border-t border-border-soft bg-term-input px-[18px] py-2.5">
+    /*
+      `items-start`, as in the overmind console: a centred prompt glyph slides
+      down the side of a grown message and stops reading as a prompt.
+    */
+    <div className="flex shrink-0 items-start gap-2.5 border-t border-border-soft bg-term-input px-[18px] py-2.5">
       <span className="shrink-0 font-mono text-[13px] text-green">
         {`${entityId} ❯`}
       </span>
-      <input
+      <textarea
         ref={ref}
+        rows={1}
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onKeyDown}
@@ -118,7 +134,8 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
         placeholder={isDesktop() ? PLACEHOLDER : DEMO_PLACEHOLDER}
         spellCheck={false}
         aria-label={`Message ${entityId}`}
-        className="min-w-0 flex-1 border-none bg-transparent font-mono text-[12.5px] text-ink caret-green outline-none placeholder:text-subtle"
+        /* See the console row: the height is `useAutoGrow`'s to decide. */
+        className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent font-mono text-[12.5px] leading-normal text-ink caret-green outline-none placeholder:text-subtle"
       />
       <KeyHint hints={HINTS} />
     </div>

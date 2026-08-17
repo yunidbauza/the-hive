@@ -625,3 +625,59 @@ test('a focused terminal keeps the keyboard across a lost GPU context', async ({
     await app.close();
   }
 });
+
+test('Shift+Enter is a line break, not a submit', async ({}, testInfo) => {
+  /**
+   * The defect, driven the way it was reported.
+   *
+   * xterm's keyboard table reads `case 13: ev.altKey ? ESC + CR : CR` and never
+   * consults `shiftKey`, so before this fix `Shift+Enter` and a bare `Enter`
+   * reached the child process as the *same single byte*. Nothing downstream can
+   * distinguish what it cannot see, so the message went early.
+   *
+   * The assertion is built so the *old* behaviour fails it loudly rather than
+   * subtly. One command line is typed with a `Shift+Enter` in the middle of a
+   * word:
+   *
+   * - **Fixed**: the shell never sees a submit there, the halves join, and it
+   *   runs `echo hive-ok > marker` as one command when the real `Enter` lands.
+   * - **Broken**: `Shift+Enter` submits `echo hive-` on the spot and the
+   *   remainder runs as a second, different command — the marker is then either
+   *   absent or does not say `hive-ok`.
+   *
+   * Split mid-token on purpose: a break at a space would leave the first half a
+   * runnable command, which is a weaker trap.
+   *
+   * What this cannot show is the *rendered* second line, because the fixture
+   * shell is `/bin/sh` rather than a real `claude` — keeping an agent, its
+   * tokens and its working-tree writes out of a Playwright run. That is the
+   * right trade: the byte that submits is the entire defect, and this proves it
+   * no longer arrives.
+   */
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
+  const marker = testInfo.outputPath('shift-enter.txt');
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    await openLiveSession(page, {
+      ready: testInfo.outputPath('ready.txt'),
+      bootstrap: bootstrapped,
+    });
+
+    await page.keyboard.type('echo hive-');
+    await page.keyboard.press('Shift+Enter');
+    await page.keyboard.type(`ok > '${marker}'`);
+    await page.keyboard.press('Enter');
+
+    await expectMarker(marker, 'hive-ok');
+  } finally {
+    await app.close();
+  }
+});

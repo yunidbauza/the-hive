@@ -47,7 +47,9 @@ describe('MessageInput', () => {
     render(<MessageInput entityId="lead-form" />);
 
     expect(screen.getByText('lead-form ❯')).toBeInTheDocument();
-    expect(screen.getByText('← back to list · ↵ send')).toBeInTheDocument();
+    expect(
+      screen.getByText('← back to list · ⇧↵ line · ↵ send'),
+    ).toBeInTheDocument();
   });
 
   /**
@@ -97,6 +99,46 @@ describe('MessageInput', () => {
     render(<MessageInput entityId="lead-form" />);
 
     expect(input()).toHaveFocus();
+  });
+
+  /**
+   * `⇧↵` inserts a line, `↵` alone sends.
+   *
+   * The row was an `<input>` until this story, which is why the bug could not
+   * be fixed by handling a key: a single-line input has nowhere to *put* a
+   * newline. The element type is part of the contract, and is asserted as such.
+   */
+  describe('multi-line input', () => {
+    it('is a textarea, because an input cannot hold a line break', () => {
+      render(<MessageInput entityId="lead-form" />);
+
+      expect(input().tagName).toBe('TEXTAREA');
+    });
+
+    it('inserts a newline on Shift+Enter instead of sending', async () => {
+      const user = userEvent.setup();
+      render(<MessageInput entityId="lead-form" />);
+
+      const before = linesOf('lead-form').length;
+      await user.type(input(), 'first{Shift>}{Enter}{/Shift}second');
+
+      expect(input()).toHaveValue('first\nsecond');
+      // Nothing was sent: the transcript did not grow.
+      expect(linesOf('lead-form')).toHaveLength(before);
+    });
+
+    it('sends the whole message on a bare Enter, newlines intact', async () => {
+      const user = userEvent.setup();
+      render(<MessageInput entityId="lead-form" />);
+
+      await user.type(input(), 'first{Shift>}{Enter}{/Shift}second');
+      await user.keyboard('{Enter}');
+
+      // The line break survives the round trip. Collapsing it here would make
+      // the key that inserted it pointless.
+      expect(linesOf('lead-form').at(-1)).toBe('❯ first\nsecond');
+      expect(input()).toHaveValue('');
+    });
   });
 
   describe('the send flow', () => {

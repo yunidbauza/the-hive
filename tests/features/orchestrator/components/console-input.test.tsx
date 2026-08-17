@@ -152,6 +152,82 @@ describe('ConsoleInput', () => {
     expect(screen.queryByText(/read-only/)).toBeNull();
     expect(screen.queryByText(/orchestrator/i)).toBeNull();
   });
+
+  /**
+   * `⇧↵` inserts a line, `↵` alone runs.
+   *
+   * The row was an `<input>` until this story, which is why the bug could not
+   * be fixed by handling a key: a single-line input has nowhere to *put* a
+   * newline. The element type is therefore part of the contract, not an
+   * implementation detail, and is asserted as such.
+   */
+  describe('multi-line input', () => {
+    it('is a textarea, because an input cannot hold a line break', () => {
+      render(<ConsoleInput />);
+
+      expect(input().tagName).toBe('TEXTAREA');
+    });
+
+    it('inserts a newline on Shift+Enter instead of running', async () => {
+      const user = userEvent.setup();
+      render(<ConsoleInput />);
+
+      await user.type(input(), 'send lead-form first{Shift>}{Enter}{/Shift}second');
+
+      expect(input()).toHaveValue('send lead-form first\nsecond');
+      // Nothing ran: the transcript is still empty of this command.
+      expect(transcript()).not.toContain('first');
+    });
+
+    it('still runs the whole thing on a bare Enter, newlines and all', async () => {
+      const user = userEvent.setup();
+      render(<ConsoleInput />);
+
+      await user.type(input(), 'send lead-form first{Shift>}{Enter}{/Shift}second');
+      await user.keyboard('{Enter}');
+
+      expect(input()).toHaveValue('');
+      expect(transcript()).toContain('first\nsecond');
+    });
+
+    it('opens the selected session on Shift+Enter never — even when empty', async () => {
+      /**
+       * The ordering trap. With an empty row a bare `↵` opens the selected
+       * session, so a `⇧↵` check placed *after* that branch would throw a user
+       * starting a message with a blank first line straight into a terminal.
+       */
+      const user = userEvent.setup();
+      render(<ConsoleInput />);
+
+      const before = useUiStore.getState().activeTab;
+
+      await user.keyboard('{Shift>}{Enter}{/Shift}');
+
+      expect(input()).toHaveValue('\n');
+      expect(useUiStore.getState().activeTab).toBe(before);
+    });
+
+    it('gives the arrow keys back to the caret once there are two lines', async () => {
+      /**
+       * The regression this change could have introduced: a field you can type
+       * three lines into but cannot move the caret back up through. Single-line
+       * content — every command the console had before — keeps navigating, and
+       * the tests above this block prove that half.
+       */
+      const user = userEvent.setup();
+      render(<ConsoleInput />);
+
+      await user.keyboard('{ArrowDown}');
+      const selected = useUiStore.getState().selIdx;
+
+      await user.type(input(), 'one{Shift>}{Enter}{/Shift}two');
+      await user.keyboard('{ArrowUp}{ArrowUp}');
+
+      // The selection did not move: the textarea kept the key.
+      expect(useUiStore.getState().selIdx).toBe(selected);
+      expect(input()).toHaveValue('one\ntwo');
+    });
+  });
 });
 
 /** Read `navOrder` once, outside a component, for the clamp bounds. */

@@ -941,6 +941,47 @@ describe('TerminalSurface', () => {
       }
     });
 
+    it('writes ESC+CR to the pty for Shift+Enter, and lets a bare Enter through', () => {
+      /**
+       * The half a keymap test cannot cover, and the reason the defect existed.
+       *
+       * xterm's `case 13` never consults `shiftKey`, so declining the key would
+       * let it encode a bare `\r` — the byte that submits. The assertion is
+       * therefore in two parts, and both matter: the newline sequence reaches
+       * the transport, **and** the surface returns `false` so xterm never gets
+       * to encode the keystroke a second time. A test that checked only the
+       * write would pass while the message was still being sent.
+       *
+       * The bare `Enter` case is the control. It must still return `true` —
+       * submitting is what that key is *for*, and a fix that swallowed it would
+       * leave the prompt with no way to send at all.
+       */
+      const { transport } = renderInteractive();
+
+      expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+      expect(transport.write).toHaveBeenCalledWith('\x1b\r');
+
+      vi.mocked(transport.write).mockClear();
+
+      expect(press({ key: 'Enter' })).toBe(true);
+      expect(transport.write).not.toHaveBeenCalled();
+    });
+
+    it('leaves Alt+Enter to xterm, which already encodes it', () => {
+      /**
+       * Not a redundant case. xterm's own table reads
+       * `ev.altKey ? ESC + CR : CR`, so `Alt+Enter` already produces exactly the
+       * sequence this story writes by hand. Claiming it here would mean
+       * translating a key that needs no translating — and on Windows, where
+       * AltGr arrives as `ctrlKey + altKey`, a rule that matched on Alt at all
+       * is how a character being typed into a shell gets eaten.
+       */
+      const { transport } = renderInteractive();
+
+      expect(press({ key: 'Enter', altKey: true })).toBe(true);
+      expect(transport.write).not.toHaveBeenCalled();
+    });
+
     it('copies the selection and clears it, without telling the pty', async () => {
       const writeText = vi.fn(() => Promise.resolve());
       vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
