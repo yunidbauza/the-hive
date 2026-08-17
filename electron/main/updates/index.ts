@@ -1,6 +1,8 @@
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, type BrowserWindow, dialog, shell } from 'electron';
 
 import { idleUpdateStatus, type UpdateStatus } from '@shared/update-contract';
+
+import { primaryWindow } from '../aux-windows';
 
 import { probeUpdateCapability } from './capability';
 import { createElectronUpdaterEngine } from './engine';
@@ -46,10 +48,16 @@ function pendingStatus(): UpdateStatus {
   });
 }
 
-/** The window a modal should hang off, if there is one. */
+/**
+ * The window a modal should hang off — the app's own, not merely the first open.
+ *
+ * These dialogs attach as sheets on their parent. The About panel is a child of
+ * the main window and therefore floats above it, so parenting to "whatever
+ * `getAllWindows()` returned first" drew the confirm sheet *underneath* the
+ * panel the user clicked in — a button that reads as doing nothing.
+ */
 function parentWindow(): BrowserWindow | undefined {
-  const [existing] = BrowserWindow.getAllWindows();
-  return existing !== undefined && !existing.isDestroyed() ? existing : undefined;
+  return primaryWindow();
 }
 
 export async function ensureUpdater(): Promise<Updater> {

@@ -23,7 +23,13 @@ const appMock = {
   requestSingleInstanceLock: vi.fn(() => true),
 };
 
-const windows: { isMinimized: () => boolean; restore: () => void; focus: () => void }[] =
+const windows: {
+  isMinimized: () => boolean;
+  restore: () => void;
+  focus: () => void;
+  /** Real `BrowserWindow`s have this; `aux-windows` filters destroyed ones. */
+  isDestroyed: () => boolean;
+}[] =
   [];
 
 vi.mock('electron', () => ({
@@ -103,7 +109,12 @@ describe('activate', () => {
 
   it('does nothing when a window is already open', async () => {
     const createWindow = vi.fn();
-    windows.push({ isMinimized: () => false, restore: vi.fn(), focus: vi.fn() });
+    windows.push({
+      isMinimized: () => false,
+      restore: vi.fn(),
+      focus: vi.fn(),
+      isDestroyed: () => false,
+    });
     await register({ createWindow, platform: 'darwin' });
 
     await fire('activate');
@@ -118,7 +129,7 @@ describe('second-instance', () => {
     const focus = vi.fn();
     const restore = vi.fn();
     const createWindow = vi.fn();
-    windows.push({ isMinimized: () => false, restore, focus });
+    windows.push({ isMinimized: () => false, restore, focus, isDestroyed: () => false });
     await register({ createWindow, platform: 'darwin' });
 
     await fire('second-instance');
@@ -130,7 +141,7 @@ describe('second-instance', () => {
   it('restores a minimized window before focusing it', async () => {
     const focus = vi.fn();
     const restore = vi.fn();
-    windows.push({ isMinimized: () => true, restore, focus });
+    windows.push({ isMinimized: () => true, restore, focus, isDestroyed: () => false });
     await register({ createWindow: vi.fn(), platform: 'darwin' });
 
     await fire('second-instance');

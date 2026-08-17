@@ -112,7 +112,28 @@ export function updateCopy(status: UpdateStatus): UpdateCopy {
       };
 
     case 'ready':
-      return { label: 'Restart to update', note: '', enabled: true };
+      /**
+       * A **statement, not a button** — because there is no verb behind it.
+       *
+       * It read `Restart to update` and offered to be pressed, but the only
+       * thing this window can call is `updates.check()`, and a check in the
+       * `ready` state short-circuits into an informational dialog and returns.
+       * The preload exposes no install verb at all. Pressing it produced a
+       * modal telling the user to restart and then did not restart — a button
+       * naming an action it cannot perform.
+       *
+       * Settings already renders this same state as a sentence, for the same
+       * reason. Saying so here and offering nothing to press is the honest
+       * version, and it is what the user does next anyway.
+       */
+      return {
+        label: null,
+        note:
+          availableVersion === null
+            ? 'An update is ready — restart the Hive to install it.'
+            : `Version ${availableVersion} is ready — restart the Hive to install it.`,
+        enabled: false,
+      };
 
     case 'error':
       return {

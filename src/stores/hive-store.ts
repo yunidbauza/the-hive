@@ -988,7 +988,22 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       };
     };
 
-    pushOrch(`❯ ${command.raw}`, 'green');
+    /**
+     * Echoed **one `TermLine` per line**, not one line carrying newlines.
+     *
+     * `ORCH_LINE_CAP` bounds the replay by counting entries, and the surface
+     * renders with `convertEol: true` — so a single entry holding sixty
+     * newlines is one row to the cap and sixty rows on screen. The console has
+     * been a textarea since `Shift+Enter` landed, which is what made that
+     * reachable: one pasted block could push the transcript far past the bound
+     * that exists so opening the orchestrator does not get slower all session.
+     *
+     * The prompt glyph marks the first line only; the rest are indented to sit
+     * under it, which is also how a multi-line command reads back.
+     */
+    command.raw.split('\n').forEach((line, index) => {
+      pushOrch(index === 0 ? `❯ ${line}` : `  ${line}`, 'green');
+    });
 
     switch (command.kind) {
       case 'help': {

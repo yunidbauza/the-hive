@@ -89,6 +89,24 @@ describe('parseCommand', () => {
       });
     });
 
+    it('keeps indentation, so both prompt rows agree about one message', () => {
+      /**
+       * The per-line `.trim()` this replaces flattened a pasted code block —
+       * but only through *this* row. The session's own prompt does not trim per
+       * line, so the same paste arrived indented through one and flat through
+       * the other: two prompts disagreeing about one message, in the change
+       * whose whole point is that the line break survives the trip.
+       *
+       * Interior runs still collapse; that is the long-standing behaviour and
+       * the test above pins it.
+       */
+      expect(
+        parseCommand('send lead-form fix this:\n    if (x)  return;\n    done'),
+      ).toMatchObject({
+        message: 'fix this:\n    if (x) return;\n    done',
+      });
+    });
+
     it('leaves `raw` as the user typed it, collapsing only the message', () => {
       /**
        * `raw` is echoed verbatim into the transcript, so normalising it would

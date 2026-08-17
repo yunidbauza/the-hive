@@ -1,4 +1,4 @@
-import { keyFrame, scheduleCopy, showFallback } from './chamber';
+import { drawCreature, scheduleCopy } from './chamber';
 import hiveGif from './hive.gif';
 import hiveVideo from './hive.mp4?inline';
 
@@ -61,54 +61,6 @@ import './splash.css';
  */
 const DECODE_GRACE_MS = 1200;
 
-function drawCreature(canvas: HTMLCanvasElement, fallback: HTMLImageElement): void {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) {
-    showFallback(canvas, fallback);
-    return;
-  }
-
-  const video = document.createElement('video');
-  video.muted = true;
-  video.loop = true;
-  video.playsInline = true;
-  video.src = hiveVideo;
-  // A rejected play() is not an error worth surfacing: the grace timer below
-  // reaches the same conclusion, and the fallback is already the answer.
-  void video.play().catch(() => undefined);
-
-  let painted = false;
-  const grace = window.setTimeout(() => {
-    if (!painted) showFallback(canvas, fallback);
-  }, DECODE_GRACE_MS);
-
-  video.addEventListener('error', () => {
-    window.clearTimeout(grace);
-    showFallback(canvas, fallback);
-  });
-
-  const paint = (): void => {
-    if (video.readyState < 2 || !video.videoWidth) return;
-    keyFrame(ctx, video, canvas.width, canvas.height);
-    if (!painted) {
-      painted = true;
-      window.clearTimeout(grace);
-    }
-  };
-
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    // One frame, held. The preference is about motion, not about the creature.
-    video.addEventListener('loadeddata', paint, { once: true });
-    return;
-  }
-
-  const loop = (): void => {
-    paint();
-    window.requestAnimationFrame(loop);
-  };
-  window.requestAnimationFrame(loop);
-}
-
 const canvas = document.querySelector<HTMLCanvasElement>('#sprite');
 const fallback = document.querySelector<HTMLImageElement>('#sprite-fallback');
 
@@ -116,5 +68,5 @@ scheduleCopy(document);
 if (canvas && fallback) {
   // Loaded up front, shown only if the video never paints.
   fallback.src = hiveGif;
-  drawCreature(canvas, fallback);
+  drawCreature(canvas, fallback, hiveVideo, DECODE_GRACE_MS);
 }

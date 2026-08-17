@@ -97,6 +97,79 @@ export function scheduleCopy(root: ParentNode): void {
 }
 
 /**
+ * Play the creature into a canvas, keying its ground away frame by frame.
+ *
+ * Lives here rather than in either entry point because **both** documents draw
+ * it — the splash and the About panel — and it was copied wholesale into the
+ * second one. The module's own argument against duplicating {@link keyFrame}
+ * applies just as well to the loop wrapped around it: two copies means two
+ * places to fix the day the asset or the fallback logic changes, and the second
+ * is wrong within a release.
+ *
+ * Still importing nothing. The video source, the grace and both elements arrive
+ * as arguments, so this file remains a leaf that a test can reach into.
+ *
+ * @param graceMs how long to wait for a first frame before showing the GIF.
+ *   The splash wants this generous — it runs during a cold start, where the
+ *   first launch after a build can miss a short deadline for reasons unrelated
+ *   to the video. Nothing is cold by the time About opens, so it wants it short:
+ *   a long grace there is only a longer stare at an empty frame on the machines
+ *   where the video will never play.
+ */
+export function drawCreature(
+  canvas: HTMLCanvasElement,
+  fallback: HTMLImageElement,
+  videoSrc: string,
+  graceMs: number,
+): void {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    showFallback(canvas, fallback);
+    return;
+  }
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.src = videoSrc;
+  // A rejected play() is not an error worth surfacing: the grace timer below
+  // reaches the same conclusion, and the fallback is already the answer.
+  void video.play().catch(() => undefined);
+
+  let painted = false;
+  const grace = window.setTimeout(() => {
+    if (!painted) showFallback(canvas, fallback);
+  }, graceMs);
+
+  video.addEventListener('error', () => {
+    window.clearTimeout(grace);
+    showFallback(canvas, fallback);
+  });
+
+  const paint = (): void => {
+    if (video.readyState < 2 || !video.videoWidth) return;
+    keyFrame(ctx, video, canvas.width, canvas.height);
+    if (!painted) {
+      painted = true;
+      window.clearTimeout(grace);
+    }
+  };
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // One frame, held. The preference is about motion, not about the creature.
+    video.addEventListener('loadeddata', paint, { once: true });
+    return;
+  }
+
+  const loop = (): void => {
+    paint();
+    window.requestAnimationFrame(loop);
+  };
+  window.requestAnimationFrame(loop);
+}
+
+/**
  * Swap to the pre-keyed GIF, which is already loaded and waiting.
  *
  * The entrance delay is cleared on the way in. `.sprite` rises 0.3s after the

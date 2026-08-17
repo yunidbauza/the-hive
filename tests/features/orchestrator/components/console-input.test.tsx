@@ -187,7 +187,13 @@ describe('ConsoleInput', () => {
       await user.keyboard('{Enter}');
 
       expect(input()).toHaveValue('');
-      expect(transcript()).toContain('first\nsecond');
+      /**
+       * The continuation line is indented under the prompt glyph because the
+       * echo is now **one transcript entry per line** — `ORCH_LINE_CAP` counts
+       * entries while the surface renders `convertEol: true`, so an entry
+       * holding newlines was one line to the cap and many rows on screen.
+       */
+      expect(transcript()).toContain('❯ send lead-form first\n  second');
     });
 
     it('opens the selected session on Shift+Enter never — even when empty', async () => {

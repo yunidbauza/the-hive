@@ -5,6 +5,7 @@ import { BrowserWindow } from 'electron';
 import { ABOUT_SIZE, ABOUT_TRAFFIC_LIGHT_POSITION } from '@shared/about';
 import { WINDOW_BACKGROUND } from '@shared/window';
 
+import { markAuxiliary } from './aux-windows';
 import { applyWebContentsPolicy } from './window';
 
 /**
@@ -117,6 +118,12 @@ export function showAboutWindow(parent?: BrowserWindow | null): BrowserWindow {
   });
 
   current = win;
+  /**
+   * Furniture, not a place to work — see `aux-windows.ts`. Without this the
+   * dock-click handler counts this panel as the app still being open, and a
+   * user who closed the main window first has no way back to it.
+   */
+  markAuxiliary(win);
 
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => {

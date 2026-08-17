@@ -10,6 +10,8 @@ import {
 } from '@shared/splash';
 import { WINDOW_BACKGROUND } from '@shared/window';
 
+import { markAuxiliary } from './aux-windows';
+
 /**
  * The cold-start splash — the Overmind Chamber.
  *
@@ -142,6 +144,14 @@ export function createSplashWindow({
    * the clock here makes the floor an upper bound on the delay no matter what
    * the document does.
    */
+  /**
+   * Furniture. The splash never needed this — it destroys itself moments after
+   * the main window appears — but "the transient one happens not to overlap" is
+   * a coincidence rather than a rule, and the About panel is what happens when
+   * the next window like it does. See `aux-windows.ts`.
+   */
+  markAuxiliary(win);
+
   let shownAt = now();
   let dismissed = false;
 

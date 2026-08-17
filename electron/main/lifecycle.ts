@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 
 import { showAboutWindow } from './about';
+import { appWindows, primaryWindow } from './aux-windows';
 import { installApplicationMenu } from './menu';
 import { runShutdown } from './shutdown';
 import { checkForUpdatesInteractively } from './updates';
@@ -43,7 +44,9 @@ export function registerLifecycle({
    * agents editing one working tree. The lock has to exist *before* PTYs do.
    */
   app.on('second-instance', () => {
-    const [existing] = BrowserWindow.getAllWindows();
+    // The *app's* window, not merely the first one open — with the About panel
+    // up and the main window closed, the first one is the panel.
+    const existing = primaryWindow();
     if (!existing) return;
     if (existing.isMinimized()) existing.restore();
     existing.focus();
@@ -84,7 +87,16 @@ export function registerLifecycle({
    * would turn a two-and-a-half second launch flourish into a recurring toll.
    */
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    /**
+     * Counted over the app's own windows, not every window that exists.
+     *
+     * The About panel is a long-lived `BrowserWindow`, so the old count of
+     * *all* windows could be 1 with no main window open at all: close the main
+     * window on macOS (the app stays alive), open About from the menu, click
+     * the dock icon — nothing was re-created, and the only thing on screen was
+     * a panel about an app the user could no longer reach.
+     */
+    if (appWindows().length === 0) createWindow();
   });
 
   /** macOS apps stay alive with no windows; everywhere else, closing quits. */

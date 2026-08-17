@@ -142,11 +142,34 @@ describe('updateCopy', () => {
     expect(copy.enabled).toBe(false);
   });
 
-  it('asks for the restart that finishes the job', () => {
-    expect(updateCopy(status({ state: 'ready' }))).toMatchObject({
-      label: 'Restart to update',
-      enabled: true,
-    });
+  it('states that a ready update needs a restart, rather than offering to do it', () => {
+    /**
+     * **A button here would name an action nothing can perform.**
+     *
+     * It read `Restart to update` and was pressable, but the only verb this
+     * window has is `updates.check()` — and a check in the `ready` state
+     * short-circuits into an informational dialog and returns. The preload
+     * exposes no install verb at all, so the restart is unreachable from here:
+     * pressing it produced a modal telling the user to restart, and then did
+     * not restart.
+     *
+     * Settings renders this same state as a sentence for the same reason.
+     */
+    const copy = updateCopy(status({ state: 'ready', availableVersion: '0.1.7' }));
+
+    expect(copy.label).toBeNull();
+    expect(copy.enabled).toBe(false);
+    expect(copy.note).toContain('0.1.7');
+    expect(copy.note).toContain('restart');
+  });
+
+  it('still says so when the ready version is unknown', () => {
+    // `availableVersion` is nullable on the contract; interpolating it raw
+    // would print "Version null is ready".
+    const copy = updateCopy(status({ state: 'ready' }));
+
+    expect(copy.note).not.toContain('null');
+    expect(copy.note).toContain('restart');
   });
 
   it('surfaces an error as one line, and offers a retry', () => {

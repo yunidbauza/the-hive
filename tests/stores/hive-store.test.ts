@@ -392,6 +392,34 @@ describe('hive-store', () => {
       });
     });
 
+    it('echoes a multi-line command as one entry per line', () => {
+      /**
+       * `ORCH_LINE_CAP` bounds the replay by counting entries, while the
+       * surface renders with `convertEol: true` — so one entry holding sixty
+       * newlines is one line to the cap and sixty rows on screen. The console
+       * has been a textarea since `Shift+Enter` landed, which is what made that
+       * reachable: a single pasted block could push the transcript far past the
+       * bound that keeps opening the orchestrator from getting slower all
+       * session.
+       */
+      const before = useHiveStore.getState().orchLines.length;
+      run('send lead-form first\nsecond\nthird');
+
+      const echoed = useHiveStore
+        .getState()
+        .orchLines.slice(before, before + 3);
+
+      expect(echoed.map((line) => line.text)).toEqual([
+        '❯ send lead-form first',
+        '  second',
+        '  third',
+      ]);
+      // No entry smuggles a newline past the cap.
+      for (const line of useHiveStore.getState().orchLines) {
+        expect(line.text).not.toContain('\n');
+      }
+    });
+
     describe('help', () => {
       it('lists every command in the grammar', () => {
         run('help');

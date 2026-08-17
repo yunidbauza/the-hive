@@ -161,6 +161,36 @@ const CASES = [
     },
   },
   /**
+   * The About panel: the splash's rule with its reason removed.
+   *
+   * It is a standalone document too, but it opens on demand rather than before
+   * the app's bundle exists — so a chunk shared with the app costs it nothing,
+   * and `lib/` is deliberately **allowed** (that allowance is how it takes its
+   * copy from the app's phrase pools instead of carrying a second one).
+   * `stores/` stands in for the runtime the zone does ban.
+   */
+  {
+    name: 'zone: about/ may not import the app’s runtime',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/about/probe.ts':
+        "import { useHiveStore } from '@stores/hive-store';\nexport const probe = useHiveStore;\n",
+    },
+  },
+  /**
+   * The other half of that zone, and the half a ban-only probe cannot show: if
+   * `lib/` were added to the `from` list by mistake, About would lose its
+   * phrases and nothing above would notice.
+   */
+  {
+    name: 'ALLOWED: about/ may import lib/',
+    rule: null,
+    files: {
+      'src/about/probe-allowed.ts':
+        "import { pickPhrase } from '@lib/swarm/phrases';\nexport const probe = pickPhrase;\n",
+    },
+  },
+  /**
    * Test scaffolding never ships.
    *
    * `tests/support/demo-fleet.ts` holds the sample fleet the store used to seed

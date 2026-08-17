@@ -30,7 +30,24 @@ import type { ParsedCommand } from '@/types/command';
 function normalize(raw: string): string {
   return raw
     .split('\n')
-    .map((line) => line.replace(/[^\S\n]+/gu, ' ').trim())
+    .map((line) => {
+      /**
+       * **Leading whitespace survives; runs inside the line do not.**
+       *
+       * The per-line `.trim()` this replaces destroyed indentation, and that
+       * mattered more than it looks. The session's own prompt row does not trim
+       * per line (`normalizeLines` in `lib/terminal/text.ts` strips controls and
+       * nothing else), so the same pasted code block arrived indented through
+       * one row and flattened through the other — two prompts disagreeing about
+       * one message, in the story whose whole point is that the line break
+       * survives the trip.
+       *
+       * Collapsing *interior* runs is the long-standing behaviour and stays:
+       * `send x  yes   go` still yields `yes go`.
+       */
+      const indent = /^[^\S\n]*/u.exec(line)?.[0] ?? '';
+      return indent + line.slice(indent.length).replace(/[^\S\n]+/gu, ' ').trimEnd();
+    })
     .join('\n')
     .trim();
 }
