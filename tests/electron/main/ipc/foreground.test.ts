@@ -68,6 +68,41 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   onShutdown: (hook: () => void) => shutdownHooks.push(hook),
 }));
 
+/**
+ * The real `isForeground` composition (HIVE-81) — `action.type === 'session'
+ * && isForeground(action.entityId)` in `ipc/index.ts` — is the one line that
+ * makes "non-session kinds are never gated" true in the shipped app. Asserting
+ * it by inspection is not enough, so this mocks the hub *factory* rather than
+ * the hub itself: `registerIpcHandlers` still runs for real, still resolves
+ * the real `isForeground` from module scope, still composes the real
+ * predicate — this only intercepts the options object handed to
+ * `createNotificationHub` so the predicate can be called directly.
+ */
+let capturedIsForeground:
+  | ((action: import('../../../../electron/shared/notification-contract').NotificationAction) => boolean)
+  | undefined;
+
+const fakeHub = {
+  list: () => [],
+  markRead: () => {},
+  dismiss: () => {},
+  raise: () => null,
+  activate: () => {},
+  clear: () => {},
+};
+
+vi.mock('../../../../electron/main/notifications', () => ({
+  createNotificationHub: (options: {
+    isForeground?: (
+      action: import('../../../../electron/shared/notification-contract').NotificationAction,
+    ) => boolean;
+  }) => {
+    capturedIsForeground = options.isForeground;
+    return fakeHub;
+  },
+  createNotifier: () => ({ observe: vi.fn() }),
+}));
+
 const snapshot = {
   configPath: '/tmp/config.json',
   templateWritten: false,
@@ -204,5 +239,35 @@ describe('ui:foreground', () => {
 
     expect(isForeground('term-1')).toBe(true);
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('the isForeground predicate composed for the notification hub (HIVE-81)', () => {
+  const session = (entityId: string) => ({ type: 'session' as const, entityId });
+
+  it('is true for a session action naming the reported terminal while focused', () => {
+    report({ terminalId: 'term-1' });
+
+    expect(capturedIsForeground?.(session('term-1'))).toBe(true);
+  });
+
+  it('is false while the window is blurred', () => {
+    windows = [fakeWindow(false)];
+    report({ terminalId: 'term-1' });
+
+    expect(capturedIsForeground?.(session('term-1'))).toBe(false);
+  });
+
+  it('is false for a session action naming a different terminal', () => {
+    report({ terminalId: 'term-1' });
+
+    expect(capturedIsForeground?.(session('term-2'))).toBe(false);
+  });
+
+  it('is false for a non-session action, even while a session is foreground', () => {
+    report({ terminalId: 'term-1' });
+
+    expect(capturedIsForeground?.({ type: 'url', url: 'https://example.test' })).toBe(false);
+    expect(capturedIsForeground?.({ type: 'none' })).toBe(false);
   });
 });
