@@ -209,11 +209,41 @@ describe('the failed state', () => {
 });
 
 describe('refresh on open', () => {
-  it('reads once when the panel mounts', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reads once immediately on mount', () => {
     render(<WorkPanel />);
 
     // The left rail unmounts panels on tab switch, so mounting *is* the pane
     // opening — the refresh is as frequent as the user looking at it.
+    expect(refreshTickets).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The panel used to stop there (HIVE-81): one read on mount, and nothing
+   * again until the tab was closed and reopened. `useTicketRefresh` keeps it
+   * current on the same minute cadence the PR rows already had.
+   */
+  it('reads again after the interval', async () => {
+    render(<WorkPanel />);
+    // Let the mount sweep's promise settle before clearing — otherwise the
+    // in-flight guard is still holding it and the next tick is a silent no-op.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    refreshTickets.mockClear();
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+      await Promise.resolve();
+    });
+
     expect(refreshTickets).toHaveBeenCalledTimes(1);
   });
 });

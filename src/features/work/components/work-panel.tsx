@@ -1,7 +1,7 @@
 import { ArrowClockwise } from '@phosphor-icons/react';
-import { useEffect } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
+import { useTicketRefresh } from '@/hooks/use-ticket-refresh';
 
 import { EmptyState } from '@components/ui/empty-state';
 import { SwarmLine } from '@components/ui/swarm-line';
@@ -37,14 +37,16 @@ import {
  * shows a skeleton until the read resolves, and never shows an issue it did not
  * get from Jira.
  *
- * ## Refreshed on open, and not otherwise
+ * ## Refreshed on open, and every minute after (HIVE-81)
  *
  * `left-rail.tsx` swaps panels by unmounting them, so mounting *is* the pane
- * opening — the refresh is exactly as frequent as the user looking at it, with
- * no extra plumbing. Not polled, for the reason `integrations-section.tsx`
- * writes down at length for its `gh` status: a request per interval is a request
- * per interval forever, and nothing outside the app changes these on that
- * timescale.
+ * opening — the first read is exactly as prompt as the user looking at it. It
+ * used to stop there, on the argument that a Jira issue moves when a human
+ * moves it, which is roughly never while the panel is open. The premise is
+ * false in the way that matters: other people assign you work, and this app's
+ * own sessions file tickets. `useTicketRefresh` keeps it current for as long as
+ * the panel stays open, on the same shared-timer poller the PR rows already
+ * used.
  */
 
 /** The line above the list. `null` when there is nothing worth saying. */
@@ -121,25 +123,21 @@ export function WorkPanel() {
   const source = useTicketSource();
   const refresh = useRefreshTickets();
 
-  /**
-   * One read on open. `refreshTickets` returns immediately in the browser
-   * target, so the demo pays nothing for this.
-   */
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
   /*
-    The PR half of a ticket card is polled, unlike the ticket itself.
+    Both halves of a ticket card are polled now (HIVE-81).
 
-    The asymmetry is deliberate and it is about what actually changes. A Jira
-    issue moves when a human moves it, which is roughly never while the panel is
-    open — one read on open is the right cost. A PR's state moves without anyone
-    touching this app: CI finishes, a reviewer approves, a bot leaves findings.
-    Those are the things a card is worth watching for, so the PR rows share the
-    minute poller with the PRS panel — and closing that tab does not stop them
-    updating, because this subscription is its own.
+    They used to be asymmetric: PR rows shared the minute poller while the
+    ticket they sat on was read once, on mount. The argument was that a Jira
+    issue only moves when a human moves it — true, and irrelevant, because the
+    human is often not you. A ticket assigned to you while this panel sits open
+    never appeared at all, and the only affordance to force a read is the retry
+    button, which shows up solely on a failed or stale source. Restarting the
+    app was the remedy, which is not one.
+
+    Two subscriptions rather than one call: each poller owns its own timer, so
+    closing the PRS tab does not stop ticket rows updating and vice versa.
   */
+  useTicketRefresh();
   usePrRefresh();
 
   const retry = () => {
