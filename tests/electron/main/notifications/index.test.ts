@@ -559,6 +559,108 @@ describe('foreground re-arm', () => {
     expect(promote).toHaveBeenCalledWith('raised-1');
   });
 
+  /**
+   * The bug a review of this branch caught, and the reason `pendingForeground`
+   * stopped keying its relevance off the status.
+   *
+   * `idle_prompt` reports `idle`, not `waiting` (Part 3.1), so the old
+   * `status === 'waiting'` condition recorded nothing for it — while
+   * `announcedInputNeeded` had already been spent. The row was raised
+   * already-read, no toast and no badge, and nothing could ever promote it: the
+   * user was told about a blocked session by a row they never saw and a badge
+   * that never moved.
+   */
+  const idlePrompt = (entityId: string) => ({
+    entityId,
+    status: 'idle',
+    event: 'Notification',
+    notificationType: 'idle_prompt',
+  });
+
+  it('promotes a gated input_needed when the user looks away', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    n.reevaluateForeground();
+
+    expect(raise).toHaveBeenCalledTimes(1);
+    expect(promote).toHaveBeenCalledTimes(1);
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('promotes nothing when the user types instead of looking away', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-04',
+      status: 'working',
+      event: 'UserPromptSubmit',
+    });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+
+    // The same engagement cleared the announce-once mark, so the *next* time
+    // the session runs out of instructions it announces again.
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    expect(raise).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The half of the relevance rule that a status test cannot express: a
+   * backgrounded agent runs tools, every tool reports `working`, and none of
+   * that is the user coming back. The gated row must still be there to promote.
+   */
+  it('keeps a gated input_needed pending while a background agent works', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-04',
+      status: 'working',
+      event: 'PostToolUse',
+    });
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('raises one row for a repeating idle prompt, and promotes that one row', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    isForeground.mockReturnValue(true);
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    // Still watching: nothing to promote, and the repeat must not raise a
+    // second row on top of the one already sitting read in the inbox.
+    n.reevaluateForeground();
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+
+    expect(raise).toHaveBeenCalledTimes(1);
+    expect(promote).not.toHaveBeenCalled();
+
+    isForeground.mockReturnValue(false);
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledTimes(1);
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('drops a gated input_needed when the session terminates', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    n.observe(CH.sessionStatus, { entityId: 'sess-04', status: 'terminated' });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
   it('promotes nothing when the session was answered first', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
     const n = makeNotifier();

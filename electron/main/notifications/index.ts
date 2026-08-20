@@ -210,8 +210,64 @@ function waitingKind(
   return Object.hasOwn(WAITING_KIND, event) ? WAITING_KIND[event] : undefined;
 }
 
+/**
+ * Is a row raised silently still worth chasing the user about (HIVE-81)?
+ *
+ * **Relevance is a property of the kind, not of the status**, and getting that
+ * backwards is what a review of this branch caught. A single
+ * `status === 'waiting'` test was applied to every gated row, which was right
+ * for the two kinds that come *from* a blocked status and silently wrong for
+ * the one that does not: after Part 3.1, `idle_prompt` reports `idle`, so a
+ * gated `session.input_needed` was never recorded as pending at all — while
+ * `announcedInputNeeded` had already been spent on it. The row existed,
+ * already-read, with no toast, no badge and no path back to unread; on a
+ * machine where the OS refuses toasts that is the notification never being
+ * delivered by any route.
+ *
+ * So each kind is cleared by its own rule, and the two are exactly the rules
+ * already written down elsewhere in this file rather than a third idea:
+ *
+ * - `session.input_needed` asks nothing of the session — it says the user has
+ *   gone quiet — so only the **user** can end it. That is
+ *   `announcedInputNeeded`'s rule verbatim, which is the point: the mark and
+ *   the pending row are two halves of one announcement, and they must expire
+ *   together or the announcement is lost between them.
+ * - `session.waiting` and `session.asked` are questions the *session* is
+ *   blocked on, so they end when it stops being blocked — any status that is
+ *   not `waiting` means the tool ran or the answer was given.
+ */
+function stillRelevant(
+  kind: NotificationKind,
+  status: string,
+  event: unknown,
+): boolean {
+  if (kind === 'session.input_needed') {
+    return !(event === 'UserPromptSubmit' || status === 'terminated');
+  }
+  return status === 'waiting';
+}
+
 export function createNotifier(options: NotifierOptions): Notifier {
   const { hub, isForeground } = options;
+
+  /**
+   * A note on `/clear`, which `observe` does not handle and does not need to.
+   *
+   * Both per-session maps below (`announcedInputNeeded`, `pendingForeground`)
+   * are keyed by **terminal** id and survive a `/clear`, because `observe`
+   * reads `sessionStatus`, `sessionName` and `configCloneDone` and never
+   * `CH.sessionCleared`. That is deliberate rather than overlooked, and it is
+   * stated here because everything else in this file is.
+   *
+   * `/clear` ends the conversation, not the terminal — `publishCleared`
+   * (`sessions/index.ts`) tears nothing down and the entity id is unchanged —
+   * so the entries are not stale in the sense of naming something gone. And
+   * both clear on the same act that always follows a `/clear`: the user types,
+   * which is `UserPromptSubmit`, which is the engagement rule both maps
+   * already use. The blocked kinds are covered a second way over — a `/clear`
+   * cannot be typed past an outstanding permission prompt, so a pending
+   * `session.waiting` is answered before a `/clear` is even reachable.
+   */
 
   /**
    * Sessions already announced as out of instructions.
@@ -267,11 +323,15 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * question is worth promoting, and the previous one is either answered or
    * superseded.
    *
-   * `status` is kept alongside the id because the promotion has a condition —
-   * the session must still be blocked — and the foreground change that triggers
-   * it carries no status of its own.
+   * The **kind** is kept alongside the id because the promotion has a
+   * condition — the row must still be worth chasing the user about — and the
+   * foreground change that triggers it carries nothing of its own to test.
+   * See {@link stillRelevant} for why the kind is the right thing to keep.
    */
-  const pendingForeground = new Map<string, string>();
+  const pendingForeground = new Map<
+    string,
+    { id: string; kind: NotificationKind }
+  >();
 
   const sessionEvent = (payload: Record<string, unknown>): void => {
     const { entityId, status, event, notificationType } = payload;
@@ -307,16 +367,18 @@ export function createNotifier(options: NotifierOptions): Notifier {
     }
 
     /**
-     * Deliberately a different rule from the one just above (HIVE-81).
+     * The pending row expires by its own kind's rule (HIVE-81).
      *
-     * `announcedInputNeeded` clears only on **engagement** — the user typing,
-     * or the session ending — because it exists to stop repeating a fact the
-     * user has already been told. This clears on anything that is not still
-     * blocked, because a promotion has one precondition: the question is still
-     * open.
+     * For `session.waiting` and `session.asked` that is a different rule from
+     * `announcedInputNeeded`'s just above — they end when the session stops
+     * being blocked. For `session.input_needed` it is deliberately the *same*
+     * rule, applied to the same event, because the mark and the pending row are
+     * two halves of one announcement. See {@link stillRelevant}.
      */
-    // The question was answered, or the session is gone. Nothing left to chase.
-    if (status !== 'waiting') pendingForeground.delete(entityId);
+    const pending = pendingForeground.get(entityId);
+    if (pending !== undefined && !stillRelevant(pending.kind, status, event)) {
+      pendingForeground.delete(entityId);
+    }
 
     /**
      * The inbox is routed off the hook **event**, never off the status.
@@ -336,6 +398,14 @@ export function createNotifier(options: NotifierOptions): Notifier {
       const kind = waitingKind(event, notificationType);
       if (kind === undefined) return;
 
+      /*
+        Marked before the raise, and deliberately not rolled back when the raise
+        is gated. The gate downgrades, it does not drop: the row exists, and the
+        promotion below is what delivers it. A repeat while the user is still
+        watching must therefore raise nothing — a second row for a fact already
+        sitting in the inbox — and the one pending entry carries the
+        announcement the rest of the way.
+      */
       if (kind === 'session.input_needed') {
         if (announcedInputNeeded.has(entityId)) return;
         announcedInputNeeded.add(entityId);
@@ -350,13 +420,17 @@ export function createNotifier(options: NotifierOptions): Notifier {
       });
 
       /*
-        Remember it only if it was gated, and only if it is the kind of thing
-        worth chasing the user about later. `session.idle` and `session.ended`
-        are records, not questions — nothing is waiting on an answer, so nothing
-        needs re-raising when the user looks away.
+        Remember it if, and only if, it was gated — `unread: false` off a raise
+        that happened is the hub saying "kept, but delivered to nobody". No
+        status test: every kind that reaches here is one of the three the user
+        is owed (`session.waiting`, `session.asked`, `session.input_needed`),
+        and how long each stays owed is `stillRelevant`'s job, above.
+        `session.idle` and `session.ended` cannot reach here at all — they are
+        records rather than questions, and they are raised on the pty-derived
+        path below, which records nothing.
       */
-      if (raised !== null && !raised.unread && status === 'waiting') {
-        pendingForeground.set(entityId, raised.id);
+      if (raised !== null && !raised.unread) {
+        pendingForeground.set(entityId, { id: raised.id, kind });
       }
       return;
     }
@@ -426,9 +500,9 @@ export function createNotifier(options: NotifierOptions): Notifier {
       // collaborator (typically `prefs`) threw partway through — the entry
       // stays pending so the next focus change tries again, rather than the
       // session going silently un-rearmed for good.
-      for (const [entityId, id] of pendingForeground) {
+      for (const [entityId, pending] of pendingForeground) {
         if (isForeground(entityId)) continue;
-        if (hub.promote(id)) pendingForeground.delete(entityId);
+        if (hub.promote(pending.id)) pendingForeground.delete(entityId);
       }
     },
   };
