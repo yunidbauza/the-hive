@@ -318,6 +318,184 @@ describe('idle_prompt', () => {
   });
 });
 
+/**
+ * HIVE-81: two defects seen in the running app.
+ *
+ * A — the title interpolated the internal entity id (`sess-01`) instead of the
+ * name the rest of the UI shows for that session (`INCORP-478`), so a
+ * notification could not be connected back to the session it was about.
+ *
+ * B — `announcedInputNeeded` cleared on `working`, and `PostToolUse` maps to
+ * `working` per tool call, so a backgrounded agent running tools re-armed the
+ * mark and the same "is waiting on you" row was announced repeatedly while
+ * nothing was actually waiting on the user.
+ */
+describe('naming', () => {
+  it('uses the session display name once one is known', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+
+    expect(raise).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'INCORP-478 needs approval' }),
+    );
+  });
+
+  it('falls back to the entity id before any rename arrives', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+
+    expect(raise).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'sess-01 needs approval' }),
+    );
+  });
+
+  it('follows a later rename', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+    expect(raised().title).toBe('INCORP-478 needs approval');
+
+    raise.mockClear();
+
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-999' });
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'waiting',
+      event: 'Elicitation',
+    });
+    expect(raised().title).toBe('INCORP-999 asked a question');
+  });
+
+  it('names the session in an idle and an ended body too', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
+
+    n.observe(CH.sessionStatus, { entityId: 'sess-01', status: 'idle' });
+    expect(raised().body).toBe('INCORP-478 has gone quiet.');
+
+    raise.mockClear();
+
+    n.observe(CH.sessionStatus, { entityId: 'sess-01', status: 'terminated' });
+    expect(raised().body).toBe('INCORP-478 has exited.');
+  });
+
+  it('keeps the raw entityId in the action even once a name is known', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+
+    expect(raised().action).toEqual({ type: 'session', entityId: 'sess-01' });
+  });
+
+  it('ignores a malformed rename payload', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionName, { entityId: 'sess-01' });
+    n.observe(CH.sessionName, { name: 'INCORP-478' });
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: 42 });
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+
+    expect(raised().title).toBe('sess-01 needs approval');
+  });
+});
+
+describe('announced once', () => {
+  it('does not re-announce because a tool finished', () => {
+    const n = notifier();
+    const idlePrompt = {
+      entityId: 'sess-01',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    };
+
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(1);
+
+    // A backgrounded agent running tools. Not the user coming back.
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'working',
+      event: 'PostToolUse',
+    });
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-announces after the user submits a prompt', () => {
+    const n = notifier();
+    const idlePrompt = {
+      entityId: 'sess-01',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    };
+
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(1);
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-01',
+      status: 'working',
+      event: 'UserPromptSubmit',
+    });
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-announces after the session terminates and a new one starts', () => {
+    const n = notifier();
+    const idlePrompt = {
+      entityId: 'sess-01',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    };
+
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(1);
+
+    // A pty-derived `terminated` carries no hook event, so it raises its own
+    // session.ended notification on the way through — that is pre-existing,
+    // unrelated behaviour. What this test pins down is that it also clears
+    // the mark, so a new session reusing the id can be announced again.
+    n.observe(CH.sessionStatus, { entityId: 'sess-01', status: 'terminated' });
+    expect(raise).toHaveBeenCalledTimes(2);
+    expect(raise.mock.calls[1][0].kind).toBe('session.ended');
+
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(3);
+    expect(raise.mock.calls[2][0].kind).toBe('session.input_needed');
+  });
+});
+
 describe('clone', () => {
   it('raises clone.done on success, with nowhere to go', () => {
     notifier().observe(CH.configCloneDone, { ok: true });

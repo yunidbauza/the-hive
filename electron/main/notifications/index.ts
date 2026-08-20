@@ -194,6 +194,35 @@ export function createNotifier(options: NotifierOptions): Notifier {
    */
   const announcedInputNeeded = new Set<string>();
 
+  /**
+   * What each session calls itself, as the rail shows it (HIVE-81).
+   *
+   * A notification that says `sess-01` names something the user has never seen.
+   * The rail, the tab and the meta bar all read `INCORP-478`, because the
+   * session renamed itself from its own terminal title — and an interruption
+   * that cannot be matched to the thing it interrupted about is most of the way
+   * to useless.
+   *
+   * Populated from `CH.sessionName`, which already passes through this
+   * observer on its way to the renderer; this simply stops ignoring it. The
+   * entity id remains the fallback, because a session that has not renamed
+   * itself yet genuinely has no better name.
+   *
+   * Never pruned. An entry is two short strings, the map is bounded by the
+   * number of sessions this process has ever spawned, and a session that has
+   * exited can still be the subject of a `session.ended` notification.
+   */
+  const names = new Map<string, string>();
+
+  /** What to call this session in a title or a body. */
+  const nameFor = (entityId: string): string => names.get(entityId) ?? entityId;
+
+  const nameEvent = (payload: Record<string, unknown>): void => {
+    const { entityId, name } = payload;
+    if (typeof entityId !== 'string' || typeof name !== 'string') return;
+    names.set(entityId, name);
+  };
+
   const sessionEvent = (payload: Record<string, unknown>): void => {
     const { entityId, status, event, notificationType } = payload;
     if (typeof entityId !== 'string' || typeof status !== 'string') return;
@@ -201,16 +230,29 @@ export function createNotifier(options: NotifierOptions): Notifier {
     const action = { type: 'session', entityId } as const;
 
     /**
-     * Cleared by **engagement**, not by idleness.
+     * Cleared when the **user** comes back, and by nothing else.
      *
-     * The old rule — clear on any non-`waiting` status — worked only while
-     * `idle_prompt` reported `waiting`. Now that it reports `idle`, that rule
-     * would fire on the very event that raised the row and dedup nothing at
-     * all. What the set is actually for is "announced once until the user comes
-     * back", and coming back is `UserPromptSubmit` (`working`) or the session
-     * ending. A session going quiet is not the user returning to it.
+     * This has now been wrong twice in opposite directions. It first cleared on
+     * any non-`waiting` status, so every turn boundary re-armed it. Task 1
+     * narrowed that to `working`, which held until `PostToolUse` was
+     * subscribed — a backgrounded agent runs tools, every tool reports
+     * `working`, and the mark was cleared again on work the user had no part
+     * in. Observed in the running app: the same "is waiting on you" row four
+     * times in twenty-six minutes, while a background agent worked and nothing
+     * was waiting on anybody.
+     *
+     * The rule the set has always been reaching for is "announced once, until
+     * the user comes back". A tool finishing is not that. A turn ending is not
+     * that. `UserPromptSubmit` is exactly that — it is the user typing — and
+     * `terminated` ends the question by ending the session.
+     *
+     * What this deliberately does not do is guess *why* a session is idle. Main
+     * cannot tell "idle because a background agent is running" from "idle
+     * because you walked away"; Claude fires `idle_prompt` for both. So this
+     * does not try to suppress the first — it makes the app say it once instead
+     * of four times, which is the part that was actually wrong.
      */
-    if (status === 'working' || status === 'terminated') {
+    if (event === 'UserPromptSubmit' || status === 'terminated') {
       announcedInputNeeded.delete(entityId);
     }
 
@@ -240,7 +282,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
       const copy = WAITING_COPY[kind];
       hub.raise({
         kind,
-        title: `${entityId} ${copy.title}`,
+        title: `${nameFor(entityId)} ${copy.title}`,
         body: copy.body,
         action,
       });
@@ -263,8 +305,8 @@ export function createNotifier(options: NotifierOptions): Notifier {
       kind,
       title: terminated ? 'Session ended' : 'Session idle',
       body: terminated
-        ? `${entityId} has exited.`
-        : `${entityId} has gone quiet.`,
+        ? `${nameFor(entityId)} has exited.`
+        : `${nameFor(entityId)} has gone quiet.`,
       action,
     });
   };
@@ -300,6 +342,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
        */
       try {
         if (channel === CH.sessionStatus) sessionEvent(payload);
+        else if (channel === CH.sessionName) nameEvent(payload);
         else if (channel === CH.configCloneDone) cloneEvent(payload);
       } catch (cause) {
         console.error('[hive] notification failed:', cause);
