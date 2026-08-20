@@ -12,6 +12,7 @@ import {
   createNotifier,
   createNotificationHub,
 } from '../../electron/main/notifications';
+import { NOTIFICATION_TYPE_STATUS } from '../../electron/shared/hook-contract';
 import { CH } from '../../electron/shared/ipc-contract';
 import type { HiveNotification } from '../../electron/shared/notification-contract';
 import type { SessionStatusEvent } from '../../electron/shared/session-contract';
@@ -41,10 +42,17 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  *
  * ## What it proved on the build that introduced it
  *
+ * The two scenarios no longer converge on the same status (HIVE-81). `say ok`
+ * ends the turn — `Stop` already set `idle`, and the `idle_prompt` sixty
+ * seconds later is not a session blocked on anything, so it stays `idle`; the
+ * inbox row is what carries the signal instead, off the hook *event* rather
+ * than the status. `AskUserQuestion` really is blocked on a human — a tool is
+ * waiting for a yes — and that is `waiting`, unchanged.
+ *
  * ```
  * say ok            -> UserPromptSubmit working
  *                   -> Stop             idle
- *                   -> Notification     waiting  idle_prompt        (+60s)
+ *                   -> Notification     idle     idle_prompt        (+60s)
  *                   => 1 row: session.input_needed, presented, badge 1
  *
  * AskUserQuestion   -> UserPromptSubmit working
@@ -156,11 +164,20 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       );
       console.info('PRESENTED ', JSON.stringify(presented), 'BADGE', badge);
 
-      // The turn ran, then the session was reported as waiting on the human —
-      // and the `Notification` hook is what said so, in both scenarios.
+      // The turn ran, and the `Notification` hook is what carries the type in
+      // both scenarios — but not the same status any more (HIVE-81).
+      // `permission_prompt` is a session genuinely blocked on a human, so it is
+      // still `waiting`; `idle_prompt` fires a minute after `Stop` already set
+      // `idle`, with nothing blocked, so it stays `idle` and the inbox row is
+      // what carries the signal instead. Read straight off the shared mapping
+      // rather than a hard-coded status, so this test cannot drift from it.
       expect(statuses.map((s) => s.status)).toContain('working');
+      const expectedStatus =
+        NOTIFICATION_TYPE_STATUS[
+          expectedType as keyof typeof NOTIFICATION_TYPE_STATUS
+        ];
       const waited = statuses.find(
-        (s) => s.status === 'waiting' && s.event === 'Notification',
+        (s) => s.status === expectedStatus && s.event === 'Notification',
       );
       expect(waited?.notificationType).toBe(expectedType);
 
