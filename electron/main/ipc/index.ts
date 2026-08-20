@@ -216,12 +216,28 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 let foregroundTerminalId: string | null = null;
 
 /**
- * Whether the window has focus right now.
+ * Whether **any** window of this app has focus right now.
  *
  * Read from `BrowserWindow` rather than published by the renderer, and that
  * asymmetry is the whole design. A renderer-published focus boolean goes stale
  * in exactly the case the feature exists for — the window hidden, the app in
  * the background — because the renderer stops running to update it.
+ *
+ * ## "Any window", not "the main window", and that is on purpose
+ *
+ * The app creates three (`window.ts`, `splash.ts`, `about.ts`), so with the
+ * About panel focused over the main window this still answers `true` and the
+ * session on the stage still reads as foreground. That is the right answer,
+ * not a leak: About is a small frameless panel, the terminal is visible behind
+ * it, and the user is a keystroke from the window they were already watching.
+ * The question the gate asks is "is this session on the user's screen and in
+ * front of them", and it is.
+ *
+ * The failure mode worth avoiding is the opposite one — going quiet when the
+ * user cannot see anything — and no window of ours being focused is exactly
+ * that. Narrowing this to the main window would instead make the About panel
+ * (or the splash, during startup) turn every foreground session into an
+ * interruption about something on screen.
  */
 const windowFocused = (): boolean =>
   BrowserWindow.getAllWindows().some(
@@ -231,8 +247,9 @@ const windowFocused = (): boolean =>
 /**
  * Is this terminal the one the user is already looking at?
  *
- * Both halves, and neither alone is the question. A matching id with the window
- * behind another app is precisely when the notification is worth raising.
+ * Both halves, and neither alone is the question. A matching id with every
+ * window of ours behind another app is precisely when the notification is
+ * worth raising. See {@link windowFocused} for what "focused" counts as.
  */
 export const isForeground = (terminalId: string): boolean =>
   windowFocused() && foregroundTerminalId === terminalId;
@@ -255,7 +272,13 @@ export const notifyForegroundChange = (): void => {
   }
 };
 
-/** Subscribe to foreground changes (Task 8's re-arm). */
+/**
+ * Subscribe to foreground changes (HIVE-81's re-arm).
+ *
+ * The only way into `foregroundListeners`, which stays private: the notifier's
+ * subscription in `registerIpcHandlers` goes through here, so the path a test
+ * exercises is the path production runs.
+ */
 export function onForegroundChange(listener: () => void): void {
   foregroundListeners.add(listener);
 }
@@ -488,8 +511,10 @@ export function registerIpcHandlers(): void {
   const notifier = createNotifier({ hub, isForeground });
 
   // The re-arm (HIVE-81): whatever is still blocked when the user looks away
-  // gets its row promoted back to unread.
-  foregroundListeners.add(() => {
+  // gets its row promoted back to unread. Through the exported subscriber
+  // rather than the set it wraps — one way in, so the set stays private and
+  // the function tests reach is the one production runs.
+  onForegroundChange(() => {
     notifier.reevaluateForeground();
   });
 
