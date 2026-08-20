@@ -89,6 +89,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         announceUnread: (count) => {
           badge = count;
         },
+        announceDismissed: () => undefined,
         now: () => Date.now(),
       });
       const notifier = createNotifier({ hub, isForeground: () => false });

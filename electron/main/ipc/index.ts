@@ -68,6 +68,7 @@ import {
   type IntegrationsStatus,
   type NotificationActivateEvent,
   type NotificationDeliveryStatus,
+  type NotificationDismissedEvent,
   type NotificationReadEvent,
 } from '@shared/ipc-contract';
 import type {
@@ -402,6 +403,14 @@ export function registerIpcHandlers(): void {
           id,
           unread,
         } satisfies NotificationReadEvent);
+      }
+    },
+    announceDismissed: (id) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        window.webContents.send(CH.notificationsDismissed, {
+          id,
+        } satisfies NotificationDismissedEvent);
       }
     },
     /**

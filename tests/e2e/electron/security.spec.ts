@@ -233,6 +233,9 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'list',
     'markRead',
     'onActivate',
+    // HIVE-81 — the mirror of `onRead`: main can dismiss a notification on
+    // its own (a clicked desktop toast), and the renderer has to be told.
+    'onDismissed',
     'onNew',
     'onRead',
   ]);

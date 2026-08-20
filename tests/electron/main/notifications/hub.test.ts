@@ -20,6 +20,7 @@ let broadcast: Mock<(notification: HiveNotification) => void>;
 let activate: Mock<(action: NotificationAction) => void>;
 let announceRead: Mock<(id: string | null, unread: boolean) => void>;
 let announceUnread: Mock<(count: number) => void>;
+let announceDismissed: Mock<(id: string) => void>;
 
 let now: number;
 let hub: NotificationHub;
@@ -31,6 +32,7 @@ beforeEach(() => {
   activate = vi.fn();
   announceRead = vi.fn();
   announceUnread = vi.fn();
+  announceDismissed = vi.fn();
   now = 1_700_000_000_000;
 
   hub = createNotificationHub({
@@ -40,6 +42,7 @@ beforeEach(() => {
     activate: (action) => activate(action),
     announceRead: (id, unread) => announceRead(id, unread),
     announceUnread: (count) => announceUnread(count),
+    announceDismissed: (id) => announceDismissed(id),
     now: () => now,
   });
 });
@@ -57,6 +60,7 @@ const makeHub = (overrides: Partial<NotificationHubOptions> = {}): NotificationH
     activate: (action) => activate(action),
     announceRead: (id, unread) => announceRead(id, unread),
     announceUnread: (count) => announceUnread(count),
+    announceDismissed: (id) => announceDismissed(id),
     now: () => now,
     ...overrides,
   });
@@ -225,7 +229,30 @@ describe('the buffer', () => {
 });
 
 describe('presentation', () => {
-  it('marks read and activates when the toast is clicked', () => {
+  /**
+   * HIVE-81: clicking the desktop toast now dismisses, not merely marks
+   * read. The user was in another application, chose this notification over
+   * what they were doing, and it took them straight to the session — there
+   * is nothing left for the row to tell them.
+   */
+  it('drops the row when the desktop toast is clicked', () => {
+    const present = vi.fn();
+    const announceDismissed = vi.fn();
+    const hub = makeHub({ present, announceDismissed });
+
+    const raised = hub.raise({
+      kind: 'session.waiting',
+      title: 't',
+      action: { type: 'session', entityId: 'term-9' },
+    })!;
+    const { onClick } = present.mock.calls[0][0];
+    onClick();
+
+    expect(hub.list()).toHaveLength(0);
+    expect(announceDismissed).toHaveBeenCalledWith(raised.id);
+  });
+
+  it('still carries out the action', () => {
     raise({ id: 'a', action: { type: 'session', entityId: 'lead-form' } });
 
     const { onClick } = present.mock.calls[0][0];
@@ -235,24 +262,34 @@ describe('presentation', () => {
       type: 'session',
       entityId: 'lead-form',
     });
-    expect(hub.list()[0].unread).toBe(false);
+  });
+
+  it('keeps the dismissed id in the dedup set', () => {
+    raise({ id: 'a', action: { type: 'session', entityId: 'lead-form' } });
+
+    const { onClick } = present.mock.calls[0][0];
+    onClick();
+
+    // The very next duplicate event must not resurrect what the user just
+    // dealt with.
+    expect(raise({ id: 'a' })).toBeNull();
   });
 });
 
 describe('read-state reaches the renderer', () => {
   /**
-   * The regression: main marked the toast read in its own buffer and told
-   * nobody, so the inbox row stayed filled and the badge went on counting a
-   * notification the user had already dealt with — until a reload silently
-   * corrected it.
+   * HIVE-81: the regression this used to guard against was main marking the
+   * toast read in its own buffer and telling nobody. Clicking the toast now
+   * dismisses rather than merely marks read, so what the renderer cannot
+   * otherwise observe is the dismissal itself.
    */
   it('announces a toast click, which the renderer cannot otherwise observe', () => {
     raise({ id: 'a' });
-    announceRead.mockClear();
+    announceDismissed.mockClear();
 
     present.mock.calls[0][0].onClick();
 
-    expect(announceRead).toHaveBeenCalledWith('a', false);
+    expect(announceDismissed).toHaveBeenCalledWith('a');
   });
 
   it('announces a mark-all', () => {
@@ -356,9 +393,9 @@ describe('robustness', () => {
     expect(broadcast).toHaveBeenCalledTimes(1);
     expect(present).toHaveBeenCalledTimes(1);
 
-    // And the toast's click still marks it read.
+    // And the toast's click still dismisses it.
     present.mock.calls[0][0].onClick();
-    expect(hub.list()[0].unread).toBe(false);
+    expect(hub.list()).toHaveLength(0);
   });
 
   /**
@@ -375,6 +412,7 @@ describe('robustness', () => {
       activate: (action) => activate(action),
       announceRead: (id, unread) => announceRead(id, unread),
       announceUnread: (count) => announceUnread(count),
+      announceDismissed: (id) => announceDismissed(id),
       now: () => now,
     });
 
@@ -560,5 +598,29 @@ describe('promote', () => {
     // nothing about the failed attempt left the row unpromotable.
     throwing = false;
     expect(hub.promote(raised.id)).toBe(true);
+  });
+
+  /**
+   * HIVE-81: `promote` presents its own toast, with its own `onClick`. A
+   * re-armed notification that behaved differently from a fresh one on click
+   * — marking read instead of dismissing — is exactly the split nobody would
+   * notice until it bit them.
+   */
+  it('dismisses, not merely marks read, when the re-armed toast is clicked', () => {
+    const present = vi.fn();
+    const announceDismissed = vi.fn();
+    let foreground = true;
+    const hub = makeHub({ present, announceDismissed, isForeground: () => foreground });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+
+    foreground = false;
+    hub.promote(raised.id);
+
+    present.mock.calls[0][0].onClick();
+
+    expect(hub.list()).toHaveLength(0);
+    expect(announceDismissed).toHaveBeenCalledWith(raised.id);
   });
 });

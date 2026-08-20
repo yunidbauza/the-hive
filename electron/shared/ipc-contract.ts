@@ -260,6 +260,20 @@ export const CH = {
    */
   notificationsRead: 'notifications:read', // main → renderer
   /**
+   * A notification left the buffer, main → renderer (HIVE-81).
+   *
+   * The mirror of {@link CH.notificationsRead}, and needed for the same reason:
+   * main can dismiss on its own. Clicking a **desktop toast** is the user
+   * dealing with a notification from another application entirely — they saw
+   * it, they acted on it, it opened the session for them — and without this the
+   * row sat in the inbox until the next reload quietly removed it.
+   *
+   * A renderer-initiated dismissal echoes back here, which is harmless:
+   * removing a row that is already gone is a no-op, and the renderer does not
+   * write it back.
+   */
+  notificationsDismissed: 'notifications:dismissed',
+  /**
    * Whether the OS is actually accepting desktop notifications.
    *
    * Its own verb rather than a field read off {@link CH.integrationsStatus},
@@ -1102,6 +1116,11 @@ export interface HiveBridge {
     /** The hub marked something read — including from a desktop toast click. */
     onRead(callback: (event: NotificationReadEvent) => void): () => void;
     /**
+     * A notification left the buffer — including from a desktop toast click
+     * (HIVE-81). See {@link CH.notificationsDismissed}.
+     */
+    onDismissed(callback: (event: NotificationDismissedEvent) => void): () => void;
+    /**
      * Whether the OS is accepting desktop notifications, and why not.
      *
      * Cheap by construction — two property reads, no subprocess — because it is
@@ -1360,6 +1379,11 @@ export interface NotificationReadEvent {
   unread: boolean;
 }
 
+/** What {@link CH.notificationsDismissed} carries. */
+export interface NotificationDismissedEvent {
+  id: string;
+}
+
 /**
  * What {@link CH.uiForeground} carries. `null` means nothing is on stage —
  * the orchestrator tab, the picker, the settings overlay, or an editor filling
@@ -1400,6 +1424,9 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   // and dismissed are different facts about a notification, and only one of them
   // takes the row out of `list`.
   'dismiss',
+  // HIVE-81. The mirror of `onRead`: main can dismiss on its own — a clicked
+  // desktop toast — and the renderer has to be told.
+  'onDismissed',
   // The one verb the settings pane may ask on a timer — see
   // `CH.notificationsDelivery` for why it is not a field on integrations status.
   'delivery',

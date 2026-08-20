@@ -51,6 +51,7 @@ import {
   type IntegrationsStatus,
   type NotificationActivateEvent,
   type NotificationDeliveryStatus,
+  type NotificationDismissedEvent,
   type NotificationReadEvent,
   type ResizeRequest,
   type SessionLostEvent,
@@ -320,6 +321,12 @@ const bridge: HiveBridge = {
     /** The hub marked something read — including from a desktop toast click. */
     onRead: (callback: (event: NotificationReadEvent) => void) =>
       subscribe<NotificationReadEvent>(CH.notificationsRead, callback),
+    /**
+     * A notification left the buffer — including from a desktop toast click
+     * (HIVE-81).
+     */
+    onDismissed: (callback: (event: NotificationDismissedEvent) => void) =>
+      subscribe<NotificationDismissedEvent>(CH.notificationsDismissed, callback),
     /** Whether the OS is accepting notifications. Cheap — safe to poll. */
     delivery: (): Promise<NotificationDeliveryStatus> =>
       ipcRenderer.invoke(

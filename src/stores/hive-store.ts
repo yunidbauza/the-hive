@@ -263,6 +263,15 @@ interface HiveState {
    * back once the user looks away.
    */
   applyRead: (id: string | null, unread: boolean) => void;
+  /**
+   * Remove a row main has already dropped (HIVE-81).
+   *
+   * Separate from {@link HiveState.dismissNotif}, which is the *user's* gesture
+   * and writes through to main. This is the echo of a dismissal main decided on
+   * its own — a clicked desktop toast — so writing back would send main a
+   * message about the thing it just told us.
+   */
+  applyDismiss: (id: string) => void;
   appendEntityLines: (
     id: string,
     lines: TermLine[],
@@ -1275,6 +1284,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           : state.notifs.map((notif) =>
               notif.id === id ? { ...notif, unread } : notif,
             ),
+    })),
+
+  applyDismiss: (id) =>
+    set((state) => ({
+      notifs: state.notifs.filter((notif) => notif.id !== id),
     })),
 
   hydrateNotifs: (notifs) =>
@@ -2834,6 +2848,10 @@ export const useHydrateNotifs = () =>
 
 /** Apply read-state the hub decided — see `use-notification-stream` (HIVE-75). */
 export const useApplyRead = () => useHiveStore((state) => state.applyRead);
+
+/** Apply a dismissal main decided on its own — see `use-notification-stream` (HIVE-81). */
+export const useApplyDismiss = () =>
+  useHiveStore((state) => state.applyDismiss);
 
 /** The entity behind `activeTab`, or null for the orchestrator. */
 export const useActiveEntity = () => {

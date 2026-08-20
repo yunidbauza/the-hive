@@ -1141,6 +1141,46 @@ describe('hive-store', () => {
         useHiveStore.getState().notifs.every((n) => !n.unread),
       ).toBe(true);
     });
+
+    /**
+     * HIVE-81: `applyDismiss` is the echo of a dismissal main decided on its
+     * own — a clicked desktop toast — so, unlike `dismissNotif`, it must not
+     * write back to main. Doing so would tell main about the thing it just
+     * told the renderer.
+     */
+    describe('applyDismiss', () => {
+      afterEach(() => {
+        delete window.hive;
+      });
+
+      it('removes the row and does not write back to main', () => {
+        const dismiss = vi.fn();
+        window.hive = {
+          notifications: { dismiss },
+        } as unknown as Window['hive'];
+
+        useHiveStore
+          .getState()
+          .hydrateNotifs([notif2({ id: 'a' }), notif2({ id: 'b' })]);
+
+        useHiveStore.getState().applyDismiss('a');
+
+        expect(
+          useHiveStore.getState().notifs.map((n) => n.id),
+        ).toEqual(['b']);
+        expect(dismiss).not.toHaveBeenCalled();
+      });
+
+      it('is a no-op for an id it does not hold', () => {
+        useHiveStore.getState().hydrateNotifs([notif2({ id: 'a' })]);
+
+        useHiveStore.getState().applyDismiss('nope');
+
+        expect(
+          useHiveStore.getState().notifs.map((n) => n.id),
+        ).toEqual(['a']);
+      });
+    });
   });
 
   describe('appendEntityLines', () => {

@@ -90,6 +90,15 @@ export interface NotificationHubOptions {
    */
   announceRead: (id: string | null, unread: boolean) => void;
   /**
+   * Tell the renderer that a notification left the buffer (HIVE-81).
+   *
+   * Called from `dismiss` whenever a row was actually removed. The mirror of
+   * `announceRead`, for the same reason: main can dismiss on its own — a
+   * clicked desktop toast — and the renderer has no way to observe that
+   * without being told.
+   */
+  announceDismissed: (id: string) => void;
+  /**
    * How many are still unread, after every change to the buffer.
    *
    * Pushed rather than offered as a getter, because the consumer is the **dock
@@ -206,6 +215,7 @@ export function createNotificationHub(
     broadcast,
     activate,
     announceRead,
+    announceDismissed,
     announceUnread,
     now,
     isForeground,
@@ -230,7 +240,7 @@ export function createNotificationHub(
   /**
    * A free function, deliberately, rather than a method reached through `this`.
    *
-   * The toast's `onClick` has to mark its notification read, and reaching that
+   * The toast's `onClick` has to dismiss its notification, and reaching that
    * through `this` binds to however `raise` was *invoked* — so a caller who
    * destructured (`const { raise } = hub`) would make `this` undefined.
    *
@@ -311,7 +321,21 @@ export function createNotificationHub(
         title: entry.title,
         body: entry.body,
         onClick: () => {
-          markRead(id);
+          /**
+           * Dismissed, not merely marked read (HIVE-81).
+           *
+           * Clicking a desktop toast is a stronger gesture than opening the
+           * inbox and reading a row. The user was in another application,
+           * chose this notification over what they were doing, and it took
+           * them straight to the session — there is nothing left for the row
+           * to tell them. Leaving it behind turns the inbox into a list of
+           * things already dealt with, which is the state that makes people
+           * stop reading it.
+           *
+           * The id stays in `seen`, so the very next duplicate event cannot
+           * re-raise what the user just dealt with.
+           */
+          dismiss(id);
           activate(entry.action);
         },
       });
@@ -338,7 +362,10 @@ export function createNotificationHub(
     buffer = buffer.filter((entry) => entry.id !== id);
     // An unknown id is a no-op rather than an error: the renderer may be acting
     // on a row from a buffer that has since been trimmed by the cap.
-    if (buffer.length !== before) announce();
+    if (buffer.length !== before) {
+      announceDismissed(id);
+      announce();
+    }
   };
 
   const remember = (id: string): void => {
@@ -417,15 +444,21 @@ export function createNotificationHub(
             title: notification.title,
             body: notification.body,
             /**
-             * Marked read here as well as activated.
+             * Dismissed, not merely marked read (HIVE-81).
              *
-             * Clicking a desktop toast is the user attending to it just as much
-             * as clicking the row is. Leaving it unread would make the badge
-             * lie about how much is still waiting, which is the whole reason
-             * the count exists.
+             * Clicking a desktop toast is a stronger gesture than opening the
+             * inbox and reading a row. The user was in another application,
+             * chose this notification over what they were doing, and it took
+             * them straight to the session — there is nothing left for the row
+             * to tell them. Leaving it behind turns the inbox into a list of
+             * things already dealt with, which is the state that makes people
+             * stop reading it.
+             *
+             * The id stays in `seen`, so the very next duplicate event cannot
+             * re-raise what the user just dealt with.
              */
             onClick: () => {
-              markRead(id);
+              dismiss(id);
               activate(notification.action);
             },
           });
