@@ -246,6 +246,78 @@ describe('the Notification hook', () => {
   });
 });
 
+/**
+ * HIVE-81: `idle_prompt` now reports the status `idle`, not `waiting` — see
+ * `hook-contract.ts`'s `NOTIFICATION_TYPE_STATUS`. The inbox row it raises is
+ * routed off the hook *event*, independently of that status, which is the
+ * split these tests pin down.
+ */
+describe('idle_prompt', () => {
+  it('raises session.input_needed even though the status is idle', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    });
+
+    expect(raised().kind).toBe('session.input_needed');
+  });
+
+  it('announces once across repeats, and again after the user engages', () => {
+    const n = notifier();
+    const idlePrompt = {
+      entityId: 'sess-03',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    };
+
+    n.observe(CH.sessionStatus, idlePrompt);
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(1);
+
+    // A plain hook-driven idle must NOT re-arm it — only engagement does.
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'idle',
+      event: 'Stop',
+    });
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(1);
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'working',
+      event: 'UserPromptSubmit',
+    });
+    n.observe(CH.sessionStatus, idlePrompt);
+    expect(raise).toHaveBeenCalledTimes(2);
+  });
+
+  it('still raises nothing for Stop', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'idle',
+      event: 'Stop',
+    });
+
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('still raises session.idle for a pty-derived idle', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, { entityId: 'sess-03', status: 'idle' });
+
+    expect(raised().kind).toBe('session.idle');
+  });
+});
+
 describe('clone', () => {
   it('raises clone.done on success, with nowhere to go', () => {
     notifier().observe(CH.configCloneDone, { ok: true });

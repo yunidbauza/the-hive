@@ -7,6 +7,7 @@ import {
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
 } from '../../../../electron/shared/config-contract';
+import type { HookStatusEvent } from '../../../../electron/shared/hook-contract';
 import { CH } from '../../../../electron/shared/ipc-contract';
 
 import type { PtyHostSupervisor } from '../../../../electron/main/pty-host/supervisor';
@@ -656,6 +657,54 @@ describe('status', () => {
     vi.advanceTimersByTime(8);
 
     expect(on(CH.sessionStatus).at(-1)!.payload.entityId).toBe('hero-refresh');
+  });
+
+  /**
+   * HIVE-81: `idle_prompt` reports `idle`, not `waiting` (`NOTIFICATION_TYPE_STATUS`
+   * in `hook-contract.ts`). This layer does not compute that mapping — the
+   * receiver does — but it must pass whatever the receiver decided straight
+   * through rather than reinterpreting it.
+   */
+  it('reports idle, not waiting, for an idle_prompt notification', () => {
+    let onEvent: ((event: HookStatusEvent) => void) | undefined;
+    const hooked = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: { onEvent: (event: HookStatusEvent) => void }) => {
+          onEvent = opts.onEvent;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    // Drive the hook receiver's onEvent with what it reports for an idle
+    // prompt, and assert the published SessionStatusEvent carries status
+    // 'idle' rather than reinterpreting it as 'waiting'.
+    onEvent!({
+      entityId: 'hero-refresh',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    });
+
+    expect(sent.at(-1)).toEqual({
+      channel: CH.sessionStatus,
+      payload: {
+        entityId: 'hero-refresh',
+        status: 'idle',
+        event: 'Notification',
+        notificationType: 'idle_prompt',
+      },
+    });
+
+    hooked.dispose();
   });
 });
 

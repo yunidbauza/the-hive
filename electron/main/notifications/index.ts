@@ -187,10 +187,10 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * time.
    *
    * So the suppression is stated in terms of the *session* rather than the
-   * event: announced once, and not again until the session has visibly stopped
-   * waiting. Any non-`waiting` status clears it — the user typed and it went
-   * `working`, or it exited — which makes the next `idle_prompt` a new fact
-   * rather than the same one restated.
+   * event: announced once, and cleared only by **engagement** — the user typed
+   * (`working`) or the session ended (`terminated`) — never by idleness itself.
+   * A plain hook-driven idle in between must not re-arm it; only the user coming
+   * back does.
    */
   const announcedInputNeeded = new Set<string>();
 
@@ -200,17 +200,35 @@ export function createNotifier(options: NotifierOptions): Notifier {
 
     const action = { type: 'session', entityId } as const;
 
-    if (status !== 'waiting') announcedInputNeeded.delete(entityId);
+    /**
+     * Cleared by **engagement**, not by idleness.
+     *
+     * The old rule — clear on any non-`waiting` status — worked only while
+     * `idle_prompt` reported `waiting`. Now that it reports `idle`, that rule
+     * would fire on the very event that raised the row and dedup nothing at
+     * all. What the set is actually for is "announced once until the user comes
+     * back", and coming back is `UserPromptSubmit` (`working`) or the session
+     * ending. A session going quiet is not the user returning to it.
+     */
+    if (status === 'working' || status === 'terminated') {
+      announcedInputNeeded.delete(entityId);
+    }
 
-    if (status === 'waiting') {
-      /**
-       * A `waiting` with no hook event is dropped rather than guessed at.
-       *
-       * The status is only reachable from a hook, so an event without one is a
-       * shape this build does not understand — and picking either kind would
-       * show the user a glyph and a sentence describing a different question
-       * than the one their session is actually asking.
-       */
+    /**
+     * The inbox is routed off the hook **event**, never off the status.
+     *
+     * These are two different questions that used to share one branch. The
+     * status answers "is this session blocked" — it drives the dot and the
+     * fleet counts. The notification answers "did something happen worth
+     * telling you about". `idle_prompt` is the case that proves they are not
+     * the same: nothing is blocked, and the user still needs to know.
+     *
+     * `waitingKind` already keys purely off the event, so every hook that is
+     * not an inbox event — `Stop`, `UserPromptSubmit`, `SessionStart`,
+     * `permission_prompt` behind a `PermissionRequest` — answers `undefined`
+     * and we stop here. That is the same set that was silent before.
+     */
+    if (event !== undefined) {
       const kind = waitingKind(event, notificationType);
       if (kind === undefined) return;
 
@@ -230,32 +248,19 @@ export function createNotifier(options: NotifierOptions): Notifier {
     }
 
     /**
-     * A hook-driven `idle` is **not** "this session went quiet" (HIVE-75).
+     * Only pty-derived statuses reach here — they carry no hook event.
      *
-     * `HOOK_STATUS` maps both `SessionStart` and `Stop` to `idle`, so without
-     * this every session spawn announced "has gone quiet" the instant it
-     * started — false on its face — and every agent turn announced it again.
-     * None of them dedup, so a working hour of thirteen sessions filled the
-     * buffer with idle rows and evicted the approval request the user actually
-     * walked away from.
-     *
-     * The event this notification has always been about is the *pty* going
-     * silent for `ACTIVITY_IDLE_MS`, which `activity.ts` derives and which
-     * carries no hook event. That is the one kept.
+     * This is the same guarantee the old `status === 'idle' && event !== undefined`
+     * line bought, stated once for every status instead of specially for one.
+     * The event it keeps is the pty going silent for `ACTIVITY_IDLE_MS`, which
+     * is what `session.idle` has always been about (HIVE-75).
      */
-    if (status === 'idle' && event !== undefined) return;
-
     const kind = SESSION_KIND[status as DerivedStatus];
     if (kind === undefined) return;
 
     const terminated = kind === 'session.ended';
     hub.raise({
       kind,
-      /**
-       * "Ended", not "finished". The notification reports what main saw — the
-       * process is gone — and claiming the *work* finished is the judgement
-       * story 108 took out of this path.
-       */
       title: terminated ? 'Session ended' : 'Session idle',
       body: terminated
         ? `${entityId} has exited.`

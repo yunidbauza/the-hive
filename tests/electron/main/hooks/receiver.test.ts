@@ -193,9 +193,17 @@ describe('hook receiver', () => {
    * blocked on a human; what they mean for the *inbox* is decided downstream.
    */
   describe('the Notification hook', () => {
-    it.each(['idle_prompt', 'permission_prompt'])(
-      'maps %s to waiting, carrying the type through',
-      async (notificationType) => {
+    /**
+     * HIVE-81: the two types no longer share a status. `permission_prompt` is a
+     * session blocked on a human; `idle_prompt` fires a minute after the turn
+     * already ended, and `idle` is what the session already was.
+     */
+    it.each([
+      ['idle_prompt', 'idle'],
+      ['permission_prompt', 'waiting'],
+    ])(
+      'maps %s to %s, carrying the type through',
+      async (notificationType, status) => {
         const response = await post({
           hook_event_name: 'Notification',
           notification_type: notificationType,
@@ -207,7 +215,7 @@ describe('hook receiver', () => {
           {
             entityId: 'sess-01',
             event: 'Notification',
-            status: 'waiting',
+            status,
             notificationType,
           },
         ]);
@@ -254,7 +262,7 @@ describe('hook receiver', () => {
         {
           entityId: 'sess-01',
           event: 'Notification',
-          status: 'waiting',
+          status: 'idle',
           notificationType: 'idle_prompt',
         },
       ]);
