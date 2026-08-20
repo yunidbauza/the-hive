@@ -250,7 +250,7 @@ function stillRelevant(
 export function createNotifier(options: NotifierOptions): Notifier {
   const { hub, isForeground } = options;
 
-  /**
+  /*
    * A note on `/clear`, which `observe` does not handle and does not need to.
    *
    * Both per-session maps below (`announcedInputNeeded`, `pendingForeground`)
