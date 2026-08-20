@@ -596,6 +596,32 @@ function samePrs(next: readonly PrRecord[], previous: readonly PrRecord[]): bool
   });
 }
 
+/**
+ * Whether a sweep found anything the WORK panel would draw differently.
+ *
+ * Every field of the stored ticket is compared, for the reason {@link samePrs}
+ * gives: a comparison narrower than the shape goes quietly wrong the day a
+ * field is added. Order counts — the JQL sorts by `updated`, so a reordering is
+ * a real change even when the set is identical.
+ */
+function sameTickets(
+  next: readonly Ticket[],
+  previous: readonly Ticket[],
+): boolean {
+  if (next.length !== previous.length) return false;
+
+  return next.every((ticket, index) => {
+    const before = previous[index];
+    return (
+      ticket.key === before.key &&
+      ticket.status === before.status &&
+      ticket.statusCategory === before.statusCategory &&
+      ticket.title === before.title &&
+      ticket.url === before.url
+    );
+  });
+}
+
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
   notifs: [],
@@ -1689,24 +1715,40 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   },
 
   /**
-   * Install real issues (HIVE-69).
+   * Install real issues (HIVE-69), **keeping both slices' identity when the
+   * answer has not changed** (HIVE-81).
    *
-   * Wholesale replacement, and that is safe now in a way it would not have been
-   * while tickets carried a `sessions` array: the ticket→session link lives on
-   * `Session.ticket`, which this never touches. A user can refresh the WORK
-   * panel as often as they like and the sessions on every card survive it,
-   * because they were never stored on the card in the first place (HIVE-73).
+   * The identity guard arrived with the poller. Before it, this ran once on
+   * mount and an unconditional `set` cost nothing; now it runs every minute
+   * whether or not Jira has anything new, and both slices are subscribed to by
+   * name (`useTickets`, `useTicketSource`), so a quiet minute would re-render
+   * the whole WORK panel and re-resolve every card's sessions. Most minutes are
+   * quiet minutes. This is exactly what {@link HiveState.hydratePrs} does, for
+   * exactly the same reason.
+   *
+   * Wholesale replacement is still safe when something *did* change: the
+   * ticket→session link lives on `Session.ticket`, which this never touches.
    */
   hydrateTickets: (issues, capped) =>
-    set({
-      tickets: issues.map((issue) => ({
+    set((state) => {
+      const tickets = issues.map((issue) => ({
         key: issue.key,
         status: issue.status,
         statusCategory: issue.statusCategory,
         title: issue.summary,
         url: issue.url,
-      })),
-      ticketSource: { kind: 'live', stale: false, capped },
+      }));
+
+      const source = state.ticketSource;
+      const settled =
+        source.kind === 'live' && !source.stale && source.capped === capped;
+
+      return {
+        tickets: sameTickets(tickets, state.tickets) ? state.tickets : tickets,
+        ticketSource: settled
+          ? source
+          : { kind: 'live', stale: false, capped },
+      };
     }),
 
   /**

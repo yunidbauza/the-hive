@@ -160,6 +160,28 @@ describe('hydrateTickets', () => {
   });
 });
 
+describe('hydrateTickets — identity on a quiet sweep (HIVE-81)', () => {
+  it('keeps ticket identity when a sweep changes nothing', () => {
+    state().hydrateTickets([issue()], false);
+    const first = state().tickets;
+    const firstSource = state().ticketSource;
+
+    state().hydrateTickets([issue()], false);
+
+    expect(state().tickets).toBe(first);
+    expect(state().ticketSource).toBe(firstSource);
+  });
+
+  it('replaces when a ticket changed', () => {
+    state().hydrateTickets([issue()], false);
+    const first = state().tickets;
+
+    state().hydrateTickets([issue({ status: 'Done' })], false);
+
+    expect(state().tickets).not.toBe(first);
+  });
+});
+
 describe('reportTicketFailure — staleness over emptiness', () => {
   it('keeps live tickets and only flips stale', () => {
     state().hydrateTickets([issue(), issue({ key: 'HIVE-2' })], false);
