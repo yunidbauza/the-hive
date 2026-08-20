@@ -73,6 +73,7 @@ export const HOOK_EVENTS = [
   'UserPromptSubmit',
   'PermissionRequest',
   'Elicitation',
+  'PostToolUse',
   'Notification',
   'Stop',
   'SessionEnd',
@@ -166,6 +167,25 @@ export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
    * the honest default for it.
    */
   Notification: 'waiting',
+  /**
+   * A tool finished, so whatever was blocking on a human is not blocking now.
+   *
+   * This is the only deterministic end-marker a permission block has.
+   * `PermissionRequest` sets `waiting` and nothing lowers it until `Stop`, so a
+   * session the user approved sat on "needs input" for the rest of the turn
+   * while the agent worked — and `hookDriven` (`sessions/index.ts`) means the
+   * pty cannot correct it.
+   *
+   * The pty *could* have been the signal and deliberately is not: Claude's TUI
+   * repaints while a permission prompt is on screen — a spinner, an elapsed
+   * timer — so `activity.ts` would read a redraw as work and clear the one
+   * status the whole attention model is built on.
+   *
+   * The cost is honest: this is the first high-frequency hook subscribed, and
+   * it fires per tool call. It is a loopback POST with no body worth parsing,
+   * on the same receiver the other seven already use.
+   */
+  PostToolUse: 'working',
   Stop: 'idle',
 };
 
