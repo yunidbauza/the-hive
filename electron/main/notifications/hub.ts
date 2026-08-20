@@ -88,7 +88,7 @@ export interface NotificationHubOptions {
    * which is harmless: applying it is idempotent and the renderer does not
    * write it back again.
    */
-  announceRead: (id: string | null) => void;
+  announceRead: (id: string | null, unread: boolean) => void;
   /**
    * How many are still unread, after every change to the buffer.
    *
@@ -133,6 +133,12 @@ export interface NotificationHub {
   list(): HiveNotification[];
   /** Mark one read, or every one when `id` is null. */
   markRead(id: string | null): void;
+  /**
+   * Un-read a row and show it now — the foreground gate's other half
+   * (HIVE-81). No-op for an id the buffer no longer holds, or one that is
+   * already unread.
+   */
+  promote(id: string): void;
   /**
    * Drop one notification from the buffer for good (HIVE-93).
    *
@@ -231,7 +237,7 @@ export function createNotificationHub(
    * was trying to reach never opens.
    */
   const markRead = (id: string | null): void => {
-    announceRead(id);
+    announceRead(id, false);
     buffer =
       id === null
         ? buffer.map((entry) => ({ ...entry, unread: false }))
@@ -247,6 +253,50 @@ export function createNotificationHub(
      * publish the count from before the read every single time.
      */
     announce();
+  };
+
+  /**
+   * Un-read a row and show it now — the foreground gate's other half (HIVE-81).
+   *
+   * A session that blocked while the user was watching it had its notification
+   * downgraded to a silent, already-read row. If the user then walks away while
+   * it is *still* blocked, that decision has expired: the reason not to
+   * interrupt was that they could see it, and they cannot see it any more.
+   *
+   * A promotion rather than a second `raise`, because the row already exists.
+   * Raising again would mint a new id (or be swallowed by `seen`, with the same
+   * id) and leave the inbox holding the same question twice.
+   *
+   * Re-reads `prefs` rather than trusting the delivery computed at raise time:
+   * the user may have turned this kind down to `inbox` in between, and a
+   * promotion is a fresh decision to interrupt.
+   */
+  const promote = (id: string): void => {
+    const entry = buffer.find((notification) => notification.id === id);
+    // Dismissed, or evicted by the cap. Nothing to promote and nothing wrong.
+    if (entry === undefined) return;
+    // Already unread: it was never gated, or this ran twice.
+    if (entry.unread) return;
+
+    buffer = buffer.map((notification) =>
+      notification.id === id ? { ...notification, unread: true } : notification,
+    );
+    announceRead(id, true);
+    announce();
+
+    const spec = NOTIFICATION_KIND_SPECS[entry.kind];
+    if (spec === undefined) return;
+    const delivery = prefs()[entry.kind] ?? spec.defaultDelivery;
+    if (delivery !== 'both') return;
+
+    present({
+      title: entry.title,
+      body: entry.body,
+      onClick: () => {
+        markRead(id);
+        activate(entry.action);
+      },
+    });
   };
 
   /**
@@ -370,6 +420,8 @@ export function createNotificationHub(
     },
 
     markRead,
+
+    promote,
 
     dismiss,
 

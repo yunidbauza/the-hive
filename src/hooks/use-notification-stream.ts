@@ -55,8 +55,8 @@ export function useNotificationStream(): void {
       pushNotif(notification);
     });
 
-    const unsubscribeRead = bridge.notifications.onRead(({ id }) => {
-      applyRead(id);
+    const unsubscribeRead = bridge.notifications.onRead(({ id, unread }) => {
+      applyRead(id, unread);
     });
 
     void bridge.notifications

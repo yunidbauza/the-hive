@@ -2,8 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * `ui:foreground` (HIVE-81) — main records the id and computes the predicate;
- * nothing consumes it yet.
+ * `ui:foreground` (HIVE-81) — main records the id and computes the predicate.
+ * The notifier's re-arm (`reevaluateForeground`) is one of its consumers now;
+ * this file mocks the notifier factory itself, so that half is exercised in
+ * `tests/electron/main/notifications/index.test.ts` instead.
  *
  * Mocked the way `config-channels.test.ts` mocks electron, and for the same
  * reason: `ipc/index.ts` imports it at module scope, so the mock has to be
@@ -100,7 +102,7 @@ vi.mock('../../../../electron/main/notifications', () => ({
     capturedIsForeground = options.isForeground;
     return fakeHub;
   },
-  createNotifier: () => ({ observe: vi.fn() }),
+  createNotifier: () => ({ observe: vi.fn(), reevaluateForeground: vi.fn() }),
 }));
 
 const snapshot = {

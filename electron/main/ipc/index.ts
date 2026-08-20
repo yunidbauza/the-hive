@@ -395,11 +395,12 @@ export function registerIpcHandlers(): void {
         window.webContents.send(CH.notificationsNew, notification);
       }
     },
-    announceRead: (id) => {
+    announceRead: (id, unread) => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (window.isDestroyed()) continue;
         window.webContents.send(CH.notificationsRead, {
           id,
+          unread,
         } satisfies NotificationReadEvent);
       }
     },
@@ -475,7 +476,13 @@ export function registerIpcHandlers(): void {
       action.type === 'session' && isForeground(action.entityId),
   });
 
-  const notifier = createNotifier({ hub });
+  const notifier = createNotifier({ hub, isForeground });
+
+  // The re-arm (HIVE-81): whatever is still blocked when the user looks away
+  // gets its row promoted back to unread.
+  foregroundListeners.add(() => {
+    notifier.reevaluateForeground();
+  });
 
   /**
    * Two property reads and no subprocess, which is the entire point.

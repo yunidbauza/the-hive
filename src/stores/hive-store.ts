@@ -257,8 +257,12 @@ interface HiveState {
    * through: this is the echo of a decision main already made — most often the
    * user clicking a desktop toast, which the renderer cannot observe any other
    * way.
+   *
+   * `unread` carries the direction (HIVE-81): read-state now moves both ways,
+   * since the foreground gate raises a row already-read and later promotes it
+   * back once the user looks away.
    */
-  applyRead: (id: string | null) => void;
+  applyRead: (id: string | null, unread: boolean) => void;
   appendEntityLines: (
     id: string,
     lines: TermLine[],
@@ -1263,13 +1267,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         : { notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) },
     ),
 
-  applyRead: (id) =>
+  applyRead: (id, unread) =>
     set((state) => ({
       notifs:
         id === null
-          ? state.notifs.map((notif) => ({ ...notif, unread: false }))
+          ? state.notifs.map((notif) => ({ ...notif, unread }))
           : state.notifs.map((notif) =>
-              notif.id === id ? { ...notif, unread: false } : notif,
+              notif.id === id ? { ...notif, unread } : notif,
             ),
     })),
 

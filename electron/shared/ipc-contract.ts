@@ -1346,9 +1346,18 @@ export const BRIDGE_JIRA_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.notifications`. */
-/** What {@link CH.notificationsRead} carries. `null` means "all of them". */
+/**
+ * What {@link CH.notificationsRead} carries. `null` means "all of them".
+ *
+ * `unread` because read-state moves in **both** directions now (HIVE-81). It
+ * was one-way while only `markRead` published here; the foreground gate adds a
+ * row that is raised already-read and later promoted, and the renderer has to
+ * be told which way it went. One channel with a direction beats two channels
+ * that must be kept in step.
+ */
 export interface NotificationReadEvent {
   id: string | null;
+  unread: boolean;
 }
 
 /**

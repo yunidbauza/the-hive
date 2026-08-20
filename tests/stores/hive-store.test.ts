@@ -1101,6 +1101,37 @@ describe('hive-store', () => {
       expect(notifs.find((n) => n.id === 'b')?.unread).toBe(true);
     });
 
+    /**
+     * `applyRead` now carries a direction (HIVE-81): the foreground gate
+     * raises a row already-read and promotes it back to unread once the user
+     * looks away, and the renderer has to be told which way it went.
+     */
+    it('applyRead moves read-state in the direction it is given', () => {
+      useHiveStore.getState().hydrateNotifs([notif2({ id: 'a' })]);
+
+      useHiveStore.getState().applyRead('a', false);
+      expect(
+        useHiveStore.getState().notifs.find((n) => n.id === 'a')?.unread,
+      ).toBe(false);
+
+      useHiveStore.getState().applyRead('a', true);
+      expect(
+        useHiveStore.getState().notifs.find((n) => n.id === 'a')?.unread,
+      ).toBe(true);
+    });
+
+    it('applyRead(null, false) clears every notification', () => {
+      useHiveStore
+        .getState()
+        .hydrateNotifs([notif2({ id: 'a' }), notif2({ id: 'b' })]);
+
+      useHiveStore.getState().applyRead(null, false);
+
+      expect(useHiveStore.getState().notifs.every((n) => !n.unread)).toBe(
+        true,
+      );
+    });
+
     it('markAllRead clears every notification', () => {
       useHiveStore
         .getState()

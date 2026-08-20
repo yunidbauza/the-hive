@@ -91,7 +91,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         },
         now: () => Date.now(),
       });
-      const notifier = createNotifier({ hub });
+      const notifier = createNotifier({ hub, isForeground: () => false });
 
       // Exactly what `sessions/index.ts` does: publish the status, and tap the
       // same broadcast the notifier observes.

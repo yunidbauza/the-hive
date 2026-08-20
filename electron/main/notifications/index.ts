@@ -54,11 +54,30 @@ import type { NotificationHub } from './hub';
 
 export interface NotifierOptions {
   hub: NotificationHub;
+  /**
+   * Is this session's terminal the one the user is looking at right now
+   * (HIVE-81)?
+   *
+   * Takes an entity id rather than a `NotificationAction`, unlike the hub's own
+   * `isForeground` — this module never sees an action, only the payloads on the
+   * broadcast it taps. The adapter that reconciles the two lives at the
+   * `createNotificationHub` call site in `ipc/index.ts`.
+   */
+  isForeground: (entityId: string) => boolean;
 }
 
 export interface Notifier {
   /** Called for every main → renderer broadcast. Most are not event classes. */
   observe(channel: string, payload: unknown): void;
+  /**
+   * Foreground state changed — window focus, or a different tab (HIVE-81).
+   *
+   * Anything still blocked that the user can no longer see gets its row
+   * promoted. Called by main on focus, blur and every foreground report;
+   * cheap, because the map is empty except while a session is blocked on a
+   * tab the user is actually looking at.
+   */
+  reevaluateForeground(): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,7 +193,7 @@ function waitingKind(
 }
 
 export function createNotifier(options: NotifierOptions): Notifier {
-  const { hub } = options;
+  const { hub, isForeground } = options;
 
   /**
    * Sessions already announced as out of instructions.
@@ -223,6 +242,20 @@ export function createNotifier(options: NotifierOptions): Notifier {
     names.set(entityId, name);
   };
 
+  /**
+   * Rows raised silently because the user was watching, and the session they
+   * are about (HIVE-81).
+   *
+   * Keyed by session so a second block replaces the first: only the current
+   * question is worth promoting, and the previous one is either answered or
+   * superseded.
+   *
+   * `status` is kept alongside the id because the promotion has a condition —
+   * the session must still be blocked — and the foreground change that triggers
+   * it carries no status of its own.
+   */
+  const pendingForeground = new Map<string, string>();
+
   const sessionEvent = (payload: Record<string, unknown>): void => {
     const { entityId, status, event, notificationType } = payload;
     if (typeof entityId !== 'string' || typeof status !== 'string') return;
@@ -257,6 +290,18 @@ export function createNotifier(options: NotifierOptions): Notifier {
     }
 
     /**
+     * Deliberately a different rule from the one just above (HIVE-81).
+     *
+     * `announcedInputNeeded` clears only on **engagement** — the user typing,
+     * or the session ending — because it exists to stop repeating a fact the
+     * user has already been told. This clears on anything that is not still
+     * blocked, because a promotion has one precondition: the question is still
+     * open.
+     */
+    // The question was answered, or the session is gone. Nothing left to chase.
+    if (status !== 'waiting') pendingForeground.delete(entityId);
+
+    /**
      * The inbox is routed off the hook **event**, never off the status.
      *
      * These are two different questions that used to share one branch. The
@@ -280,12 +325,22 @@ export function createNotifier(options: NotifierOptions): Notifier {
       }
 
       const copy = WAITING_COPY[kind];
-      hub.raise({
+      const raised = hub.raise({
         kind,
         title: `${nameFor(entityId)} ${copy.title}`,
         body: copy.body,
         action,
       });
+
+      /*
+        Remember it only if it was gated, and only if it is the kind of thing
+        worth chasing the user about later. `session.idle` and `session.ended`
+        are records, not questions — nothing is waiting on an answer, so nothing
+        needs re-raising when the user looks away.
+      */
+      if (raised !== null && !raised.unread && status === 'waiting') {
+        pendingForeground.set(entityId, raised.id);
+      }
       return;
     }
 
@@ -346,6 +401,14 @@ export function createNotifier(options: NotifierOptions): Notifier {
         else if (channel === CH.configCloneDone) cloneEvent(payload);
       } catch (cause) {
         console.error('[hive] notification failed:', cause);
+      }
+    },
+
+    reevaluateForeground(): void {
+      for (const [entityId, id] of pendingForeground) {
+        if (isForeground(entityId)) continue;
+        pendingForeground.delete(entityId);
+        hub.promote(id);
       }
     },
   };

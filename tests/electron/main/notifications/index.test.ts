@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { createNotifier } from '../../../../electron/main/notifications';
 import type { NotificationHub } from '../../../../electron/main/notifications/hub';
@@ -26,7 +26,7 @@ beforeEach(() => {
   } as unknown as NotificationHub;
 });
 
-const notifier = () => createNotifier({ hub });
+const notifier = () => createNotifier({ hub, isForeground: () => false });
 
 const raised = () => raise.mock.calls[0][0] as Record<string, unknown>;
 
@@ -513,6 +513,89 @@ describe('clone', () => {
 
     expect(raised().title).toBe('Clone failed');
     expect(raised().body).toBe('authentication failed');
+  });
+});
+
+/**
+ * HIVE-81, the other half of the foreground gate: a session that blocked
+ * silently while the user was watching it must speak up once they look away.
+ *
+ * `pendingForeground` is keyed on the session, so these exercise it through
+ * `sessionEvent`'s waiting branch and `reevaluateForeground` rather than
+ * reaching into the map directly.
+ */
+describe('foreground re-arm', () => {
+  let promote: ReturnType<typeof vi.fn>;
+  let isForeground: Mock<(entityId: string) => boolean>;
+
+  const waitingPermission = (entityId: string) => ({
+    entityId,
+    status: 'waiting',
+    event: 'PermissionRequest',
+  });
+
+  beforeEach(() => {
+    promote = vi.fn();
+    isForeground = vi.fn(() => false);
+    hub = {
+      raise,
+      list: () => [],
+      markRead: () => undefined,
+      clear: () => undefined,
+      promote,
+    } as unknown as NotificationHub;
+  });
+
+  const makeNotifier = () => createNotifier({ hub, isForeground });
+
+  it('promotes a still-waiting session when it leaves the foreground', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('promotes nothing when the session was answered first', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    // The user answered — a tool ran, so the session is no longer waiting.
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'working',
+      event: 'PostToolUse',
+    });
+
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('promotes nothing for a session that was never foreground', () => {
+    // Never gated at raise time: unread stayed true, so nothing was recorded
+    // as pending.
+    raise.mockReturnValue({ id: 'raised-1', unread: true });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('drops the pending entry once promoted, so a second blur does nothing', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.reevaluateForeground();
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledTimes(1);
   });
 });
 

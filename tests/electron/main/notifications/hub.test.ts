@@ -18,7 +18,7 @@ let prefs: NotificationPrefs;
 let present: Mock<(options: PresentOptions) => void>;
 let broadcast: Mock<(notification: HiveNotification) => void>;
 let activate: Mock<(action: NotificationAction) => void>;
-let announceRead: Mock<(id: string | null) => void>;
+let announceRead: Mock<(id: string | null, unread: boolean) => void>;
 let announceUnread: Mock<(count: number) => void>;
 
 let now: number;
@@ -38,7 +38,7 @@ beforeEach(() => {
     present: (options) => present(options),
     broadcast: (notification) => broadcast(notification),
     activate: (action) => activate(action),
-    announceRead: (id) => announceRead(id),
+    announceRead: (id, unread) => announceRead(id, unread),
     announceUnread: (count) => announceUnread(count),
     now: () => now,
   });
@@ -55,7 +55,7 @@ const makeHub = (overrides: Partial<NotificationHubOptions> = {}): NotificationH
     present: (options) => present(options),
     broadcast: (notification) => broadcast(notification),
     activate: (action) => activate(action),
-    announceRead: (id) => announceRead(id),
+    announceRead: (id, unread) => announceRead(id, unread),
     announceUnread: (count) => announceUnread(count),
     now: () => now,
     ...overrides,
@@ -252,7 +252,7 @@ describe('read-state reaches the renderer', () => {
 
     present.mock.calls[0][0].onClick();
 
-    expect(announceRead).toHaveBeenCalledWith('a');
+    expect(announceRead).toHaveBeenCalledWith('a', false);
   });
 
   it('announces a mark-all', () => {
@@ -261,7 +261,7 @@ describe('read-state reaches the renderer', () => {
 
     hub.markRead(null);
 
-    expect(announceRead).toHaveBeenCalledWith(null);
+    expect(announceRead).toHaveBeenCalledWith(null, false);
   });
 });
 
@@ -373,7 +373,7 @@ describe('robustness', () => {
       present: (options) => present(options),
       broadcast: (notification) => broadcast(notification),
       activate: (action) => activate(action),
-      announceRead: (id) => announceRead(id),
+      announceRead: (id, unread) => announceRead(id, unread),
       announceUnread: (count) => announceUnread(count),
       now: () => now,
     });
@@ -447,5 +447,78 @@ describe('the foreground gate', () => {
     const hub = makeHub({ present, isForeground: (action) => action.type === 'session' });
     hub.raise({ kind: 'clone.done', title: 't', action: { type: 'url', url: 'https://example.test' } });
     expect(present).toHaveBeenCalled();
+  });
+});
+
+describe('promote', () => {
+  it('marks the row unread and presents it', () => {
+    const present = vi.fn();
+    const announceRead = vi.fn();
+    let foreground = true;
+    const hub = makeHub({ present, announceRead, isForeground: () => foreground });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+
+    foreground = false;
+    hub.promote(raised.id);
+
+    expect(hub.list()[0].unread).toBe(true);
+    expect(present).toHaveBeenCalled();
+    expect(announceRead).toHaveBeenLastCalledWith(raised.id, true);
+  });
+
+  it('is a no-op for an unknown or dismissed id', () => {
+    const present = vi.fn();
+    const announceRead = vi.fn();
+    const hub = makeHub({ present, announceRead, isForeground: () => false });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    hub.dismiss(raised.id);
+    present.mockClear();
+    announceRead.mockClear();
+
+    hub.promote(raised.id);
+
+    expect(present).not.toHaveBeenCalled();
+    expect(announceRead).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for a row that is already unread', () => {
+    const present = vi.fn();
+    const announceRead = vi.fn();
+    // Never gated — raised straight to unread, same as any background session.
+    const hub = makeHub({ present, announceRead, isForeground: () => false });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+    announceRead.mockClear();
+
+    hub.promote(raised.id);
+
+    expect(hub.list()[0].unread).toBe(true);
+    expect(present).not.toHaveBeenCalled();
+    expect(announceRead).not.toHaveBeenCalled();
+  });
+
+  it('presents nothing when the kind is set to inbox only', () => {
+    const present = vi.fn();
+    const announceRead = vi.fn();
+    let foreground = true;
+    const hub = makeHub({ present, announceRead, isForeground: () => foreground });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+
+    // The user turned the kind down to `inbox` between the raise and the
+    // promotion — `promote` re-reads `prefs()` rather than trusting delivery
+    // computed at raise time, so it must honour the new setting.
+    prefs = { 'session.waiting': 'inbox' };
+    foreground = false;
+    hub.promote(raised.id);
+
+    expect(hub.list()[0].unread).toBe(true);
+    expect(announceRead).toHaveBeenLastCalledWith(raised.id, true);
+    expect(present).not.toHaveBeenCalled();
   });
 });
