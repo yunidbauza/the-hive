@@ -46,6 +46,7 @@ import {
   type AppInfo,
   type DataEvent,
   type ExitEvent,
+  type ForegroundReport,
   type HiveBridge,
   type IntegrationsStatus,
   type NotificationActivateEvent,
@@ -354,6 +355,14 @@ const bridge: HiveBridge = {
     pick: (): Promise<PickedTheme | null> => ipcRenderer.invoke(CH.themePick),
     save: (request: SaveThemeRequest): Promise<string | null> =>
       ipcRenderer.invoke(CH.themeSave, request),
+  },
+  // HIVE-81. `send`, not `invoke`: it fires on every tab switch and overlay
+  // toggle and has no answer worth waiting for.
+  ui: {
+    reportForeground: (terminalId: string | null): void =>
+      ipcRenderer.send(CH.uiForeground, {
+        terminalId,
+      } satisfies ForegroundReport),
   },
 };
 

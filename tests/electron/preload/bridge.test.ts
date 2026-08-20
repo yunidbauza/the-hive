@@ -12,6 +12,7 @@ import {
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
   BRIDGE_THEME_KEYS,
+  BRIDGE_UI_KEYS,
   CH,
 } from '../../../electron/shared/ipc-contract';
 
@@ -76,6 +77,8 @@ const updates = () =>
   exposed.updates as Record<string, (...args: unknown[]) => unknown>;
 const theme = () =>
   exposed.theme as Record<string, (...args: unknown[]) => unknown>;
+const ui = () =>
+  exposed.ui as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
@@ -111,6 +114,15 @@ describe('exposed surface', () => {
   /** HIVE-80. Two verbs, neither taking a destination path from the renderer. */
   it('exposes exactly the theme verbs', () => {
     expect(Object.keys(theme()).sort()).toEqual([...BRIDGE_THEME_KEYS].sort());
+  });
+
+  /**
+   * HIVE-81. One verb, and it is the first in this bridge that travels out of
+   * the renderer with nothing coming back: the page can report which of its
+   * own tabs is on the centre stage, and nothing else.
+   */
+  it('exposes exactly the ui verbs', () => {
+    expect(Object.keys(ui()).sort()).toEqual([...BRIDGE_UI_KEYS].sort());
   });
 
   /**
@@ -412,6 +424,22 @@ describe('theme verbs route to their channels (HIVE-80)', () => {
     expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.themeSave, {
       suggestedName: 'x.json',
       contents: '{}',
+    });
+  });
+});
+
+describe('ui verb routes to its channel (HIVE-81)', () => {
+  it('reportForeground sends ui:foreground with the terminal id', () => {
+    ui().reportForeground('term-1');
+    expect(ipcRendererMock.send).toHaveBeenCalledWith(CH.uiForeground, {
+      terminalId: 'term-1',
+    });
+
+    // `null` means nothing is on stage, and it is a legal report, not an
+    // absence to be dropped.
+    ui().reportForeground(null);
+    expect(ipcRendererMock.send).toHaveBeenCalledWith(CH.uiForeground, {
+      terminalId: null,
     });
   });
 });

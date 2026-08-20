@@ -11,6 +11,7 @@ import {
 
 import { devIconPath } from './app-icon';
 import { isSafeExternalUrl } from './external-links';
+import { notifyForegroundChange } from './ipc';
 import { createSplashWindow, splashEnabled, type SplashController } from './splash';
 import {
   debounce,
@@ -207,6 +208,15 @@ export function createWindow({
   applyWebContentsPolicy(win);
   trackWindowState(win, statePath);
   loadRenderer(win);
+
+  /*
+    Focus is half of the foreground gate (HIVE-81), and it is the half that
+    cannot be published from the renderer. Both events, not just blur: the
+    window regaining focus while a session is still blocked has to re-evaluate
+    too, or a notification promoted on blur would stay promoted.
+  */
+  win.on('focus', notifyForegroundChange);
+  win.on('blur', notifyForegroundChange);
 
   return win;
 }

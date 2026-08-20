@@ -73,6 +73,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     jira: Object.keys(window.hive!.jira).sort(),
     updates: Object.keys(window.hive!.updates).sort(),
     theme: Object.keys(window.hive!.theme).sort(),
+    ui: Object.keys(window.hive!.ui).sort(),
   }));
 
   // Widening any of these lists is the alarm this test exists to raise.
@@ -148,6 +149,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * the renderer's own `suggestedName` only ever offered to that dialog as a
    * default — never joined to a directory or trusted as a destination.
    */
+  /**
+   * HIVE-81 adds `ui`, and it is the first namespace whose one verb travels
+   * **out of** the renderer with nothing coming back — every namespace above
+   * it either answers a question (`invoke`) or tells the page something
+   * (`onX`). What a web page can now do that it could not before: report
+   * which of its own tabs is on the centre stage. It takes no path, names no
+   * other window, and reports only an id the renderer already holds — main
+   * uses it only to decide whether a notification it was already going to
+   * raise should be suppressed.
+   */
   expect(surface.top).toEqual([
     'appInfo',
     'config',
@@ -159,9 +170,11 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'pty',
     'session',
     'theme',
+    'ui',
     'updates',
   ]);
   expect(surface.theme).toEqual(['pick', 'save']);
+  expect(surface.ui).toEqual(['reportForeground']);
   expect(surface.integrations).toEqual(['status']);
   expect(surface.github).toEqual(['prs']);
   expect(surface.fs).toEqual([

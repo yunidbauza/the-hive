@@ -200,6 +200,65 @@ let cloneFlow: CloneFlow | null = null;
 /** The single project watcher, or `null` before registration. */
 let fsWatch: FsWatchLayer | null = null;
 
+/** A plain object, for the payload guards below. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * The terminal on the centre stage, as the renderer last reported it (HIVE-81).
+ *
+ * Module scope for the reason `systemNotificationRefusal` is: it is a fact
+ * about this process's window, not about notifications, and the hub is
+ * deliberately ignorant of what the user is looking at. The hub asks a
+ * predicate; it never holds this.
+ */
+let foregroundTerminalId: string | null = null;
+
+/**
+ * Whether the window has focus right now.
+ *
+ * Read from `BrowserWindow` rather than published by the renderer, and that
+ * asymmetry is the whole design. A renderer-published focus boolean goes stale
+ * in exactly the case the feature exists for — the window hidden, the app in
+ * the background — because the renderer stops running to update it.
+ */
+const windowFocused = (): boolean =>
+  BrowserWindow.getAllWindows().some(
+    (window) => !window.isDestroyed() && window.isFocused(),
+  );
+
+/**
+ * Is this terminal the one the user is already looking at?
+ *
+ * Both halves, and neither alone is the question. A matching id with the window
+ * behind another app is precisely when the notification is worth raising.
+ */
+export const isForeground = (terminalId: string): boolean =>
+  windowFocused() && foregroundTerminalId === terminalId;
+
+/** Told when foreground state changes, so the re-arm can run (HIVE-81). */
+const foregroundListeners = new Set<() => void>();
+
+/**
+ * Window focus changed, or the renderer reported a different terminal
+ * (HIVE-81). Called from `window.ts`'s `focus`/`blur` wiring as well as from
+ * the `CH.uiForeground` handler below.
+ */
+export const notifyForegroundChange = (): void => {
+  for (const listener of foregroundListeners) {
+    try {
+      listener();
+    } catch (cause) {
+      console.error('[hive] foreground listener failed:', cause);
+    }
+  }
+};
+
+/** Subscribe to foreground changes (Task 8's re-arm). */
+export function onForegroundChange(listener: () => void): void {
+  foregroundListeners.add(listener);
+}
+
 /**
  * Guards the env diagnostic against concurrent invokes (story 108's fix
  * round).
@@ -1007,6 +1066,28 @@ export function registerIpcHandlers(): void {
   );
 
   /**
+   * What the renderer is showing (HIVE-81). Guarded to reject rather than
+   * sanitise: a malformed payload is dropped and logged (see `on()` above),
+   * never coerced into `null` — a compromised or buggy renderer must not be
+   * able to make a fabricated shape read as "nothing on stage".
+   */
+  on(CH.uiForeground, (_event, payload) => {
+    if (!isRecord(payload)) throw new Error('ui:foreground expects an object');
+    const keys = Object.keys(payload);
+    if (keys.length !== 1 || keys[0] !== 'terminalId') {
+      throw new Error('ui:foreground expects exactly { terminalId }');
+    }
+    const { terminalId } = payload;
+    if (terminalId !== null && typeof terminalId !== 'string') {
+      throw new Error('ui:foreground expects a string terminalId or null');
+    }
+
+    if (foregroundTerminalId === terminalId) return;
+    foregroundTerminalId = terminalId;
+    notifyForegroundChange();
+  });
+
+  /**
    * The PTY channels (story 093).
    *
    * `spawn` and `kill` use `invoke` — both need a result. `write`, `resize`
@@ -1127,6 +1208,10 @@ export function resetIpcHandlers(): void {
   cloneFlow = null;
   fsWatch?.dispose();
   fsWatch = null;
+  // HIVE-81. Test-only: a fresh registration starts with nothing on stage and
+  // no listeners left over from a previous test.
+  foregroundTerminalId = null;
+  foregroundListeners.clear();
 }
 
 export { assertSender, isTrustedSender, IpcSenderError } from './sender';

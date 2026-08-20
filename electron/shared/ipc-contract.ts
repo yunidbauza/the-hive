@@ -419,6 +419,27 @@ export const CH = {
    */
   themePick: 'theme:pick',
   themeSave: 'theme:save',
+  /**
+   * Which session's terminal is on the centre stage, renderer → main (HIVE-81).
+   *
+   * The one fact main cannot derive and the renderer cannot act on. Main owns
+   * window focus and owns the notification hub; the renderer owns `activeTab`
+   * and `resolveView`. Suppressing a notification about the session the user is
+   * already watching needs both halves in one place, and this is the half that
+   * has to travel.
+   *
+   * `send`, not `invoke`: it fires on every tab switch and overlay toggle and
+   * has no answer worth waiting for. Ordering on a single channel is already
+   * guaranteed, which is what actually matters — a stale id is the one failure
+   * mode that would matter, and it cannot happen.
+   *
+   * Carries a **terminal** id, never a row id. `NotificationAction.session`
+   * carries a terminal id too, so main compares like with like and needs no
+   * domain knowledge; the renderer maps with `terminalIdFor`. Comparing a row
+   * id here would silently never match after a `/clear` — a gate that is a
+   * no-op and passes a naive test.
+   */
+  uiForeground: 'ui:foreground',
 } as const;
 
 export type Channel = (typeof CH)[keyof typeof CH];
@@ -1149,6 +1170,18 @@ export interface HiveBridge {
     /** Native save dialog, then writes. Resolves the path, or null when cancelled. */
     save(request: SaveThemeRequest): Promise<string | null>;
   };
+  /**
+   * What the renderer is showing (HIVE-81).
+   *
+   * Its own namespace rather than a verb on `session`, which is documented and
+   * asserted as listeners-only. This is the opposite direction, and folding it
+   * in would quietly retire a security property `security.spec.ts` argues at
+   * length.
+   */
+  ui: {
+    /** Report the terminal on the centre stage, or `null` for none. */
+    reportForeground(terminalId: string | null): void;
+  };
 }
 
 /**
@@ -1202,6 +1235,13 @@ export const RESIZE_THROTTLE_MS = 50;
  * both dialogs choose it — so this does not widen the bridge into a general
  * file picker; it is bounded to the one round trip a theme import or export
  * needs.
+ *
+ * HIVE-81 adds `ui`, and it is the first namespace whose one verb travels
+ * **out of** the renderer with nothing coming back. What a web page can now do
+ * that it could not before: tell main which of its own tabs is on the centre
+ * stage. It takes no path, names no other window, and reports only an id the
+ * renderer already holds — main uses it only to decide whether a notification
+ * it was already going to raise should be suppressed.
  */
 export const BRIDGE_KEYS = [
   'appInfo',
@@ -1214,6 +1254,7 @@ export const BRIDGE_KEYS = [
   'pty',
   'session',
   'theme',
+  'ui',
   'updates',
 ] as const;
 
@@ -1311,6 +1352,15 @@ export interface NotificationReadEvent {
 }
 
 /**
+ * What {@link CH.uiForeground} carries. `null` means nothing is on stage —
+ * the orchestrator tab, the picker, the settings overlay, or an editor filling
+ * the stage.
+ */
+export interface ForegroundReport {
+  terminalId: string | null;
+}
+
+/**
  * Answer to {@link CH.notificationsDelivery} — can the OS be reached, and if
  * not, what did it say.
  *
@@ -1354,6 +1404,9 @@ export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
 
 /** The exact key set of `window.hive.theme` (HIVE-80). */
 export const BRIDGE_THEME_KEYS = ['pick', 'save'] as const;
+
+/** The exact key set of `window.hive.ui` (HIVE-81). */
+export const BRIDGE_UI_KEYS = ['reportForeground'] as const;
 
 /** The exact key set of `window.hive.config`. */
 export const BRIDGE_CONFIG_KEYS = [
