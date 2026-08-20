@@ -233,8 +233,51 @@ function waitingKind(
  *   the pending row are two halves of one announcement, and they must expire
  *   together or the announcement is lost between them.
  * - `session.waiting` and `session.asked` are questions the *session* is
- *   blocked on, so they end when it stops being blocked — any status that is
- *   not `waiting` means the tool ran or the answer was given.
+ *   blocked on, so they end when it stops being blocked — with one exception,
+ *   below, that a plain `status === 'waiting'` test gets wrong.
+ *
+ * ## Why `PostToolUse` does not end a block
+ *
+ * **A tool finishing tells you nothing about whether a *different* tool is
+ * still waiting on you.** Claude routinely runs tools in parallel: tool B asks
+ * for permission, the session goes `waiting`, the row is raised gated and
+ * recorded pending — and then tool A, a sibling in the same batch, completes.
+ * `PostToolUse` reports `working`, the old rule dropped the entry, and tool B's
+ * permission was still outstanding. Nothing re-records it either:
+ * `Notification/permission_prompt` maps to `undefined` in
+ * {@link NOTIFICATION_TYPE_KIND} by design, so it never raises and never
+ * records. The user looks away and finds a session that is blocked and silent.
+ *
+ * So a blocked kind survives a non-`waiting` status when the event that
+ * carried it was `PostToolUse`. `UserPromptSubmit` (the user is demonstrably
+ * back), `Stop` (the turn ended, so nothing in it can still be blocked),
+ * `terminated`, and any pty-derived status change all still end it.
+ *
+ * ### The trade-off, stated rather than hidden
+ *
+ * This buys the elimination of a false negative with a possible false
+ * positive, knowingly. **What it costs:** if the user answers the permission
+ * and the turn then runs for several minutes, the entry survives until `Stop`;
+ * a blur in that window promotes a row about a block already answered. The
+ * user looks, finds the session working, moves on. **Why that is the right
+ * direction:** the alternative is silence about a genuinely blocked session,
+ * which is the one failure the whole attention model exists to prevent — the
+ * spec says so in as many words ("Suppression must not lose a real
+ * notification"). A stale interruption is recoverable in a glance; a lost one
+ * is not recoverable at all.
+ *
+ * **Why we cannot do better here.** `StatusHookPayload` carries no tool
+ * identity, so main cannot tell the blocked tool's `PostToolUse` from a
+ * sibling's. Counting `PermissionRequest`s against `PostToolUse`s does not
+ * work either: `PostToolUse` fires for *every* tool, not only the
+ * permission-gated ones, so the count drains on tools that were never blocked.
+ *
+ * ### A related consequence, deliberately not fixed here
+ *
+ * That same sibling `PostToolUse` also moves the session's **status dot** off
+ * "needs input" while a permission is genuinely outstanding. That is a display
+ * bug in the status pipeline (`hook-contract.ts`'s `HOOK_STATUS`, Part 3.4),
+ * not in the notifier, and it is out of scope on this branch.
  */
 function stillRelevant(
   kind: NotificationKind,
@@ -244,7 +287,7 @@ function stillRelevant(
   if (kind === 'session.input_needed') {
     return !(event === 'UserPromptSubmit' || status === 'terminated');
   }
-  return status === 'waiting';
+  return status === 'waiting' || event === 'PostToolUse';
 }
 
 export function createNotifier(options: NotifierOptions): Notifier {
@@ -371,9 +414,11 @@ export function createNotifier(options: NotifierOptions): Notifier {
      *
      * For `session.waiting` and `session.asked` that is a different rule from
      * `announcedInputNeeded`'s just above — they end when the session stops
-     * being blocked. For `session.input_needed` it is deliberately the *same*
-     * rule, applied to the same event, because the mark and the pending row are
-     * two halves of one announcement. See {@link stillRelevant}.
+     * being blocked, except by a `PostToolUse`, which may be a sibling tool in
+     * the same batch and says nothing about the one still asking. For
+     * `session.input_needed` it is deliberately the *same* rule, applied to the
+     * same event, because the mark and the pending row are two halves of one
+     * announcement. See {@link stillRelevant}.
      */
     const pending = pendingForeground.get(entityId);
     if (pending !== undefined && !stillRelevant(pending.kind, status, event)) {

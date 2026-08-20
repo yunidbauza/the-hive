@@ -661,17 +661,87 @@ describe('foreground re-arm', () => {
     expect(promote).not.toHaveBeenCalled();
   });
 
-  it('promotes nothing when the session was answered first', () => {
+  /**
+   * The parallel-tool bug, and the reason a blocked kind no longer expires on
+   * `PostToolUse`.
+   *
+   * Claude routinely runs tools in a batch. Tool B asks for permission — the
+   * row is raised gated and recorded pending — and then tool A, a *sibling* in
+   * the same batch, completes and reports `working`. Tool B's permission is
+   * still outstanding, and nothing will ever re-record the entry:
+   * `Notification/permission_prompt` maps to `undefined` by design, so it
+   * never raises. Expiring on the sibling's completion is a session that is
+   * blocked and silent.
+   */
+  it('keeps a gated permission pending when a sibling tool finishes', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
     const n = makeNotifier();
 
     n.observe(CH.sessionStatus, waitingPermission('sess-03'));
-    // The user answered — a tool ran, so the session is no longer waiting.
     n.observe(CH.sessionStatus, {
       entityId: 'sess-03',
       status: 'working',
       event: 'PostToolUse',
     });
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('drops a gated permission when the user submits a prompt', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'working',
+      event: 'UserPromptSubmit',
+    });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  /** The turn ended, so nothing in it can still be blocked on an answer. */
+  it('drops a gated permission when the turn ends', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-03',
+      status: 'idle',
+      event: 'Stop',
+    });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('drops a gated permission when the session terminates', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.observe(CH.sessionStatus, { entityId: 'sess-03', status: 'terminated' });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Was written against `PostToolUse` — the very path that turned out to be a
+   * sibling's completion rather than proof of an answer. A pty-derived status
+   * change carries no hook event, so it is a status leaving `waiting` by a
+   * route that says nothing about a batch of tools, and it still expires.
+   */
+  it('promotes nothing when the session stopped waiting on its own', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.observe(CH.sessionStatus, { entityId: 'sess-03', status: 'working' });
 
     n.reevaluateForeground();
 
