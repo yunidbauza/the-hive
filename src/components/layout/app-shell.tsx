@@ -8,6 +8,7 @@ import { TitleBar } from '@components/layout/title-bar';
 import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
+import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
 import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
@@ -59,6 +60,14 @@ export function AppShell() {
     mounted would leave the count at zero until someone looked.
   */
   useNotificationStream();
+
+  /*
+    Which terminal is on the stage (HIVE-81). Here for the same reason as the
+    three above — one fact about the whole shell, one publisher — and here
+    rather than in `center-stage` because the stage re-renders for reasons that
+    have nothing to do with which tab is open, and this should not.
+  */
+  useForegroundSession();
 
   /**
    * Watch the visible project's files.
