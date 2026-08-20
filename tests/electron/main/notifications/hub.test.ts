@@ -461,7 +461,7 @@ describe('promote', () => {
     present.mockClear();
 
     foreground = false;
-    hub.promote(raised.id);
+    expect(hub.promote(raised.id)).toBe(true);
 
     expect(hub.list()[0].unread).toBe(true);
     expect(present).toHaveBeenCalled();
@@ -478,7 +478,8 @@ describe('promote', () => {
     present.mockClear();
     announceRead.mockClear();
 
-    hub.promote(raised.id);
+    // Nothing to promote and nothing wrong — the caller has nothing to retry.
+    expect(hub.promote(raised.id)).toBe(true);
 
     expect(present).not.toHaveBeenCalled();
     expect(announceRead).not.toHaveBeenCalled();
@@ -494,7 +495,7 @@ describe('promote', () => {
     present.mockClear();
     announceRead.mockClear();
 
-    hub.promote(raised.id);
+    expect(hub.promote(raised.id)).toBe(true);
 
     expect(hub.list()[0].unread).toBe(true);
     expect(present).not.toHaveBeenCalled();
@@ -515,10 +516,49 @@ describe('promote', () => {
     // computed at raise time, so it must honour the new setting.
     prefs = { 'session.waiting': 'inbox' };
     foreground = false;
-    hub.promote(raised.id);
+    expect(hub.promote(raised.id)).toBe(true);
 
     expect(hub.list()[0].unread).toBe(true);
     expect(announceRead).toHaveBeenLastCalledWith(raised.id, true);
     expect(present).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The regression a code review caught: `promote` had no guard of its own,
+   * unlike `raise`, and it calls `prefs()` — proven throwable by
+   * `robustness > never throws, whatever a collaborator does` above.
+   * Uncaught, that would have propagated up through `reevaluateForeground`
+   * and been swallowed two layers further up by `notifyForegroundChange`'s
+   * own try/catch, silently — with the caller having no way to know the
+   * promotion never actually happened.
+   */
+  it('reports failure without throwing when a collaborator explodes, and can be retried', () => {
+    const present = vi.fn();
+    const announceRead = vi.fn();
+    let throwing = false;
+    const hub = makeHub({
+      present,
+      announceRead,
+      prefs: () => {
+        if (throwing) throw new Error('config exploded');
+        return prefs;
+      },
+      isForeground: () => true,
+    });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+
+    throwing = true;
+    let result: boolean | undefined;
+    expect(() => {
+      result = hub.promote(raised.id);
+    }).not.toThrow();
+    expect(result).toBe(false);
+
+    // A second attempt, once the collaborator behaves again, still succeeds —
+    // nothing about the failed attempt left the row unpromotable.
+    throwing = false;
+    expect(hub.promote(raised.id)).toBe(true);
   });
 });

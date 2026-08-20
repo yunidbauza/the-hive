@@ -405,10 +405,13 @@ export function createNotifier(options: NotifierOptions): Notifier {
     },
 
     reevaluateForeground(): void {
+      // Delete only on success. `hub.promote` answers `false` when a
+      // collaborator (typically `prefs`) threw partway through — the entry
+      // stays pending so the next focus change tries again, rather than the
+      // session going silently un-rearmed for good.
       for (const [entityId, id] of pendingForeground) {
         if (isForeground(entityId)) continue;
-        pendingForeground.delete(entityId);
-        hub.promote(id);
+        if (hub.promote(id)) pendingForeground.delete(entityId);
       }
     },
   };

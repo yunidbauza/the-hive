@@ -535,7 +535,8 @@ describe('foreground re-arm', () => {
   });
 
   beforeEach(() => {
-    promote = vi.fn();
+    // Succeeds by default; the failure case overrides per-call below.
+    promote = vi.fn(() => true);
     isForeground = vi.fn(() => false);
     hub = {
       raise,
@@ -596,6 +597,38 @@ describe('foreground re-arm', () => {
     n.reevaluateForeground();
 
     expect(promote).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * `hub.promote` answers `false` when a collaborator threw partway through
+   * (the hub's own robustness test in `hub.test.ts` covers that case). This
+   * is the fix for the bug a code review caught: `reevaluateForeground` used
+   * to delete the pending entry *before* calling `hub.promote`, so a throw
+   * inside `promote` — caught two layers up, by `notifyForegroundChange`'s
+   * own try/catch — still left the session un-rearmed for good, on this or
+   * any later focus change.
+   */
+  it('leaves the pending entry when promote fails, and promotes it on a later, successful call', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    promote.mockReturnValueOnce(false);
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledTimes(1);
+
+    // Still pending — a second blur (or the same one, retried) tries again,
+    // and this time the collaborator behaves.
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledTimes(2);
+
+    // Promoted now — a third blur has nothing left to do, so `promote` is
+    // not called again.
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledTimes(2);
   });
 });
 

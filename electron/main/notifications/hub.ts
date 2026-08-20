@@ -135,10 +135,16 @@ export interface NotificationHub {
   markRead(id: string | null): void;
   /**
    * Un-read a row and show it now — the foreground gate's other half
-   * (HIVE-81). No-op for an id the buffer no longer holds, or one that is
-   * already unread.
+   * (HIVE-81). No-op — and reported as success — for an id the buffer no
+   * longer holds, or one that is already unread.
+   *
+   * Answers `false` if a collaborator threw partway through (typically
+   * `prefs`). The caller — `reevaluateForeground` — treats that as "try
+   * again": it keeps the pending entry instead of dropping it, so the next
+   * focus change gets another chance rather than the session going silently
+   * un-rearmed.
    */
-  promote(id: string): void;
+  promote(id: string): boolean;
   /**
    * Drop one notification from the buffer for good (HIVE-93).
    *
@@ -270,33 +276,50 @@ export function createNotificationHub(
    * Re-reads `prefs` rather than trusting the delivery computed at raise time:
    * the user may have turned this kind down to `inbox` in between, and a
    * promotion is a fresh decision to interrupt.
+   *
+   * Wrapped the way `raise` wraps itself, and for the caller it matters even
+   * more here: `reevaluateForeground` is the only thing that ever calls this,
+   * and it drives the promotion from a pending map it deletes from on success.
+   * A throw that escaped uncaught would still be swallowed one layer up (by
+   * `notifyForegroundChange`'s own try/catch), but by then the entry would
+   * already be gone — a still-blocked session that silently never gets
+   * re-armed, on this or any later focus change. Reporting `false` instead
+   * lets the caller keep the entry and try again next time.
    */
-  const promote = (id: string): void => {
-    const entry = buffer.find((notification) => notification.id === id);
-    // Dismissed, or evicted by the cap. Nothing to promote and nothing wrong.
-    if (entry === undefined) return;
-    // Already unread: it was never gated, or this ran twice.
-    if (entry.unread) return;
+  const promote = (id: string): boolean => {
+    try {
+      const entry = buffer.find((notification) => notification.id === id);
+      // Dismissed, or evicted by the cap. Nothing to promote and nothing
+      // wrong — the caller has nothing to retry either.
+      if (entry === undefined) return true;
+      // Already unread: it was never gated, or this ran twice. Also nothing
+      // to retry.
+      if (entry.unread) return true;
 
-    buffer = buffer.map((notification) =>
-      notification.id === id ? { ...notification, unread: true } : notification,
-    );
-    announceRead(id, true);
-    announce();
+      buffer = buffer.map((notification) =>
+        notification.id === id ? { ...notification, unread: true } : notification,
+      );
+      announceRead(id, true);
+      announce();
 
-    const spec = NOTIFICATION_KIND_SPECS[entry.kind];
-    if (spec === undefined) return;
-    const delivery = prefs()[entry.kind] ?? spec.defaultDelivery;
-    if (delivery !== 'both') return;
+      const spec = NOTIFICATION_KIND_SPECS[entry.kind];
+      if (spec === undefined) return true;
+      const delivery = prefs()[entry.kind] ?? spec.defaultDelivery;
+      if (delivery !== 'both') return true;
 
-    present({
-      title: entry.title,
-      body: entry.body,
-      onClick: () => {
-        markRead(id);
-        activate(entry.action);
-      },
-    });
+      present({
+        title: entry.title,
+        body: entry.body,
+        onClick: () => {
+          markRead(id);
+          activate(entry.action);
+        },
+      });
+      return true;
+    } catch (cause) {
+      console.error('[hive] notification failed:', cause);
+      return false;
+    }
   };
 
   /**
