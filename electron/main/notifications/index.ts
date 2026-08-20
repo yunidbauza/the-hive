@@ -41,15 +41,33 @@ import type { NotificationHub } from './hub';
  * people stop reading. Claude's `Notification/idle_prompt` fires sixty seconds
  * later with nobody having typed, and that debounce is the whole difference.
  *
- * ## No focus suppression
+ * ## The foreground gate (HIVE-81)
  *
- * The obvious rule — stay quiet while the app is focused — is not implementable
- * *correctly* from here. Main cannot know which session the user is looking at;
- * `activeTab` is renderer state. The only version main could apply on its own is
- * "quiet whenever any window is focused", which would suppress precisely the
- * case this feature exists for: a background session finishing while the user
- * works in another terminal. The per-kind delivery is the control, and there is
- * no second, invisible one.
+ * "Main cannot know which session the user is looking at; `activeTab` is
+ * renderer state" was correct when this was written, and it was an argument
+ * against a rule main could only get wrong: the sole fact it could observe
+ * on its own was window focus, and applying that alone would go quiet
+ * whenever any window was focused — suppressing precisely the case this
+ * feature exists for, a background session finishing while the user works in
+ * another terminal.
+ *
+ * What changed is that `activeTab` stopped being renderer-only. The renderer
+ * now reports the terminal id on the centre stage over `CH.uiForeground`
+ * every time it changes; main holds that alongside `BrowserWindow` focus
+ * (`isForeground` in `ipc/index.ts`), and a session only reads as "the one
+ * being watched" when both agree — the id matches *and* the window has OS
+ * focus. That composed predicate is threaded into this module as
+ * `NotifierOptions.isForeground` and into the hub as its own
+ * `NotificationHub` option of the same name, so a background session behind
+ * a focused window, or the right tab behind an unfocused one, still
+ * interrupts.
+ *
+ * The gate this predicate drives lives in the hub, not here (see
+ * `raise`'s "downgrade, never drop" in `hub.ts`): a notification for the
+ * foreground session is kept — not suppressed — and raised already-read, so
+ * the inbox row exists for anyone who scrolls back but the toast, the dock
+ * bounce and the unread badge stay quiet. `reevaluateForeground` below is
+ * the other half — the re-arm when the user looks away while still blocked.
  */
 
 export interface NotifierOptions {
@@ -206,10 +224,9 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * time.
    *
    * So the suppression is stated in terms of the *session* rather than the
-   * event: announced once, and cleared only by **engagement** — the user typed
-   * (`working`) or the session ended (`terminated`) — never by idleness itself.
-   * A plain hook-driven idle in between must not re-arm it; only the user coming
-   * back does.
+   * event: announced once, and cleared only by **engagement**, never by
+   * idleness itself. See the `event === 'UserPromptSubmit' || status ===
+   * 'terminated'` check below for what engagement means and why.
    */
   const announcedInputNeeded = new Set<string>();
 

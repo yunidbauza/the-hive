@@ -333,24 +333,40 @@ entire inbox and attention model is built on this field.
 
 It is **reported** instead, by Claude Code's hooks (HIVE-62), which are a
 different observer with a vantage point a pty does not have — hence
-`ObservedStatus`, wider than `DerivedStatus` by exactly this member. Three
-events reach it, and they are three genuinely different facts about the user:
+`ObservedStatus`, wider than `DerivedStatus` by exactly this member. Two and a
+half events reach it — two hooks, plus one `Notification` sub-type — and they
+are genuinely different facts about the user:
 
 | Hook | Means |
 | --- | --- |
 | `PermissionRequest` | a tool wants a yes |
 | `Elicitation` | an MCP server wants a sentence |
-| `Notification` + `notification_type: idle_prompt` | the turn ended and sixty seconds passed with nothing typed |
+| `Notification` + `notification_type: permission_prompt` | the same tool-approval block, echoed six seconds later |
 
-The third is the commonest and was the last to arrive. `Stop` is not a
-substitute for it: `Stop` fires at the end of *every* turn, including the ones
-the user is sitting and watching, so it maps to `idle` and raises nothing. The
-sixty seconds are Claude's own debounce and are the whole difference between
-"the turn ended" and "you walked away".
+`Notification` also fires with `notification_type: idle_prompt` — the turn
+ended and sixty seconds passed with nothing typed, the commonest way a session
+blocks on a human and the last of these to arrive. It does **not** report
+`waiting`: the turn is already over by the time it fires, nothing is blocked,
+and calling it `waiting` is what used to make the fleet dot lie. It reports
+`idle`, the same as the `Stop` a minute earlier, and still raises its inbox
+row — the row is routed off the hook *event*, independently of the status, so
+"you walked away and your agent wants you" still reaches the user without
+painting the fleet view amber for a session nobody is waiting on. `Stop` itself
+is not a substitute for either: it fires at the end of *every* turn, including
+the ones the user is sitting and watching, so it maps to `idle` and raises
+nothing.
 
-`Notification` also fires with `permission_prompt`, about six seconds behind the
-`PermissionRequest` that already announced the same block. It moves the status
-and raises nothing — see `notifications/index.ts`.
+`PostToolUse` is subscribed too, and unlike the others it is not a new way to
+*reach* `waiting` — it is the first deterministic way to **leave** one. A tool
+finishing is the only signal that a permission block is actually over;
+`PermissionRequest` sets `waiting` and nothing lowered it until `Stop`, so a
+session the user approved sat on "needs input" for the rest of the turn while
+the agent kept working. The pty could not have been the correction: Claude's
+TUI repaints while a permission prompt is on screen, so `activity.ts` would
+read that redraw as work and clear the one status the whole attention model is
+built on. The cost is honest — it is the first high-frequency hook subscribed,
+firing per tool call — and paid anyway because nothing else ends a permission
+block deterministically.
 
 All of this is measured rather than assumed, and `pnpm test:hooks` is what
 measures it: a real `claude` in a real pty, driven through the app's own
