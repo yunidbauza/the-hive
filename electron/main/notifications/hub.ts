@@ -104,6 +104,23 @@ export interface NotificationHubOptions {
    */
   announceUnread: (count: number) => void;
   now: () => number;
+  /**
+   * Is the user already looking at what this notification is about (HIVE-81)?
+   *
+   * Read at the moment of the event, never captured — the same rule `prefs` and
+   * `now` state, and for a sharper reason: the answer changes on every tab
+   * switch and every window blur.
+   *
+   * Takes the **action**, so the hub needs no idea which kinds are about a
+   * session. A `session` action names a terminal and can be compared; every
+   * other action type has no foreground to compare against and answers `false`
+   * by construction. That is what keeps `pr.*`, `clone.done` and `app.update_*`
+   * out of the gate without a list to maintain.
+   *
+   * Optional: a hub built without it — every existing test, and the browser
+   * target's absence of one — behaves exactly as it did before.
+   */
+  isForeground?: (action: NotificationAction) => boolean;
 }
 
 export interface NotificationHub {
@@ -179,6 +196,7 @@ export function createNotificationHub(
     announceRead,
     announceUnread,
     now,
+    isForeground,
   } = options;
 
   let buffer: HiveNotification[] = [];
@@ -286,13 +304,34 @@ export function createNotificationHub(
         if (seen.has(id)) return null;
         remember(id);
 
+        /**
+         * The gate: **downgrade, never drop** (HIVE-81).
+         *
+         * The user is watching this session's terminal in a focused window, so
+         * the app has already told them — a toast, a dock bounce and a bump to
+         * the unread badge about a question they are reading on screen is the
+         * app talking over itself.
+         *
+         * What it does *not* do is suppress. The row is kept and raised
+         * already-read, which matters more than it looks: on this machine macOS
+         * refuses Electron's toasts outright, so the inbox and the badge are the
+         * only delivery there is. Dropping the row would make the app silent on
+         * the exact system this feature was written for.
+         *
+         * Note the position — **after** `remember(id)`, deliberately. A
+         * foreground row is a row that happened, so a genuine duplicate of it
+         * must still dedup. This is the argument for keeping the row rather than
+         * dropping it stated a second way.
+         */
+        const foreground = isForeground?.(input.action ?? { type: 'none' }) ?? false;
+
         const notification: HiveNotification = {
           id,
           kind: input.kind,
           title: input.title,
           body: input.body ?? '',
           createdAt,
-          unread: true,
+          unread: !foreground,
           action: input.action ?? { type: 'none' },
         };
 
@@ -300,7 +339,7 @@ export function createNotificationHub(
         announce();
         broadcast(notification);
 
-        if (delivery === 'both') {
+        if (delivery === 'both' && !foreground) {
           present({
             title: notification.title,
             body: notification.body,

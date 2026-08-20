@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   createNotificationHub,
   type NotificationHub,
+  type NotificationHubOptions,
 } from '../../../../electron/main/notifications/hub';
 import {
   NOTIFICATION_CAP,
@@ -42,6 +43,23 @@ beforeEach(() => {
     now: () => now,
   });
 });
+
+/**
+ * A hub built from the shared collaborators above, with room to override or
+ * add options per test — chiefly `present`, `announceUnread` and, for
+ * HIVE-81, `isForeground`.
+ */
+const makeHub = (overrides: Partial<NotificationHubOptions> = {}): NotificationHub =>
+  createNotificationHub({
+    prefs: () => prefs,
+    present: (options) => present(options),
+    broadcast: (notification) => broadcast(notification),
+    activate: (action) => activate(action),
+    announceRead: (id) => announceRead(id),
+    announceUnread: (count) => announceUnread(count),
+    now: () => now,
+    ...overrides,
+  });
 
 /** The most recent count pushed at the dock badge. */
 const lastUnread = (): number | undefined =>
@@ -373,5 +391,61 @@ describe('robustness', () => {
       }),
     ).toBeNull();
     expect(broadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe('the foreground gate', () => {
+  it('raises an already-read row and presents nothing', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present, isForeground: () => true });
+
+    const raised = hub.raise({
+      kind: 'session.waiting',
+      title: 'sess-03 needs approval',
+      action: { type: 'session', entityId: 'term-3' },
+    });
+
+    expect(raised?.unread).toBe(false);
+    expect(present).not.toHaveBeenCalled();
+    expect(hub.list()).toHaveLength(1);
+  });
+
+  it('leaves the unread count untouched', () => {
+    const announceUnread = vi.fn();
+    const hub = makeHub({ announceUnread, isForeground: () => true });
+    hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } });
+    expect(announceUnread).toHaveBeenLastCalledWith(0);
+  });
+
+  it('raises normally for a background session', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present, isForeground: () => false });
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-9' } });
+    expect(raised?.unread).toBe(true);
+    expect(present).toHaveBeenCalled();
+  });
+
+  it('remembers a foreground-raised id, so a duplicate still dedups', () => {
+    const hub = makeHub({ isForeground: () => true });
+    const input = { kind: 'session.waiting' as const, id: 'fixed', title: 't', action: { type: 'session' as const, entityId: 'term-3' } };
+    expect(hub.raise(input)).not.toBeNull();
+    expect(hub.raise(input)).toBeNull();
+  });
+
+  it('does not gate a non-session kind', () => {
+    // clone.done: defaultDelivery 'both' and an action that is never
+    // `session`, so this exercises the gate itself rather than an unrelated
+    // delivery default. (`pr.merged`, named in the brief's example, defaults
+    // to `inbox` and would never call `present` regardless of the gate.)
+    //
+    // The predicate below checks `action.type` itself — the "answers false by
+    // construction" shape the real predicate in `ipc/index.ts` has (Step 5:
+    // `action.type === 'session' && isForeground(action.entityId)`). A fake
+    // that ignored the action entirely, always answering `true`, would gate
+    // every kind and could never demonstrate this test's claim.
+    const present = vi.fn();
+    const hub = makeHub({ present, isForeground: (action) => action.type === 'session' });
+    hub.raise({ kind: 'clone.done', title: 't', action: { type: 'url', url: 'https://example.test' } });
+    expect(present).toHaveBeenCalled();
   });
 });

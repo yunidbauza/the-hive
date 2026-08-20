@@ -471,6 +471,8 @@ export function registerIpcHandlers(): void {
       } satisfies NotificationActivateEvent);
     },
     now: () => Date.now(),
+    isForeground: (action) =>
+      action.type === 'session' && isForeground(action.entityId),
   });
 
   const notifier = createNotifier({ hub });
