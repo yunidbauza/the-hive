@@ -81,6 +81,41 @@ describe('hook receiver', () => {
   });
 
   /**
+   * Tool and agent identity (HIVE-83): the tracker that pairs a permission
+   * request with the tool call that resolves it needs these carried through
+   * whole, not cherry-picked away with the rest of the body.
+   */
+  describe('tool and agent identity', () => {
+    it('forwards tool identity off a PostToolUse', async () => {
+      const response = await post({
+        hook_event_name: 'PostToolUse',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi', run_in_background: true },
+        tool_use_id: 'toolu_01',
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({
+        event: 'PostToolUse',
+        toolName: 'Bash',
+        toolUseId: 'toolu_01',
+        runInBackground: true,
+      });
+    });
+
+    it('forwards the agent id off a subagent event', async () => {
+      const response = await post({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a828e337',
+        agent_type: 'general-purpose',
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ event: 'SubagentStart', agentId: 'a828e337' });
+    });
+  });
+
+  /**
    * `SessionEnd` and the `reason` gate.
    *
    * Only `clear` may be acted on. The others all mean the process is going
@@ -179,10 +214,10 @@ describe('hook receiver', () => {
      * failing hook prints an error in the user's session for something the app
      * simply does not care about.
      *
-     * `PreToolUse` rather than `PostToolUse` (HIVE-81): the latter is now
-     * subscribed — see the `maps %s to %s` table above.
+     * `PreCompact` rather than `PreToolUse` (HIVE-83): the latter is now
+     * subscribed too — see the bookkeeping pair in `HOOK_EVENTS`.
      */
-    const response = await post({ hook_event_name: 'PreToolUse' });
+    const response = await post({ hook_event_name: 'PreCompact' });
     expect(response.status).toBe(204);
     expect(events).toEqual([]);
   });

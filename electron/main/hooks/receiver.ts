@@ -276,6 +276,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * least likely to be "work on ABC-123".
      */
     let prompt: unknown;
+    let toolUseId: unknown;
+    let toolName: unknown;
+    let agentId: unknown;
+    let runInBackground: unknown;
 
     if (truncated) {
       // The prefix is all there is; see EVENT_IN_PREFIX.
@@ -298,6 +302,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               cwd?: unknown;
               prompt?: unknown;
               notification_type?: unknown;
+              tool_use_id?: unknown;
+              tool_name?: unknown;
+              agent_id?: unknown;
+              tool_input?: { run_in_background?: unknown };
             })
           : undefined;
       event = fields?.hook_event_name;
@@ -305,6 +313,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       cwd = fields?.cwd;
       prompt = fields?.prompt;
       notificationType = fields?.notification_type;
+      toolUseId = fields?.tool_use_id;
+      toolName = fields?.tool_name;
+      agentId = fields?.agent_id;
+      runInBackground = fields?.tool_input?.run_in_background;
     }
 
     /**
@@ -380,6 +392,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
        * which is the honest reading — an empty string would be a directory.
        */
       ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+      ...(typeof toolUseId === 'string' ? { toolUseId } : {}),
+      ...(typeof toolName === 'string' ? { toolName } : {}),
+      ...(typeof agentId === 'string' && agentId !== '' ? { agentId } : {}),
+      ...(runInBackground === true ? { runInBackground: true } : {}),
     });
     return 204;
   }
