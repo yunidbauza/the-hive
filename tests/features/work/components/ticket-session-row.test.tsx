@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -42,6 +42,25 @@ describe('TicketSessionRow', () => {
 
     expect(
       screen.getByText('hero-refresh status: working'),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * HIVE-83. This row has no visible status text (see `labels the status
+   * dot` above), so the sr-only announcement is the only place a screen
+   * reader hears what a quiet session is still running — dropping the detail
+   * here would announce plain "idle" for a session that is actually still
+   * busy with subagents.
+   */
+  it('folds the idle detail into the announcement for a screen reader', () => {
+    act(() => {
+      useHiveStore.getState().setSessionStatus('rails-upgrade', 'idle', 'agents');
+    });
+
+    render(<TicketSessionRow id="rails-upgrade" />);
+
+    expect(
+      screen.getByText('rails-upgrade status: idle (agents)'),
     ).toBeInTheDocument();
   });
 

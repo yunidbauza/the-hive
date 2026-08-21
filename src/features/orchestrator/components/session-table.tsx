@@ -8,7 +8,7 @@ import {
   isSession,
 } from '@/types/entity';
 
-import { STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
+import { STATUS_TEXT, statusLabel } from '@components/ui/status-dot';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { prStateText } from '@features/shared/pr-presentation';
 import {
@@ -239,7 +239,7 @@ function SessionTableRow({ id }: { id: string }) {
         {entityLabel(entity)}
       </span>
       <span className={cn(COL.status, STATUS_TEXT[entity.status])}>
-        {STATUS_LABEL[entity.status]}
+        {statusLabel(entity.status, entity.idleDetail)}
       </span>
       <span className={cn(COL.project, 'text-subtle')} title={entity.project}>
         {entity.project}

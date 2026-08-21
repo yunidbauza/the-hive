@@ -2243,6 +2243,30 @@ export const useCounts = () =>
     }),
   );
 
+/**
+ * Idle sessions, broken down by what is still running (HIVE-83).
+ *
+ * A second selector rather than a wider `useCounts()`: the header's visible
+ * tally stays five numbers on purpose (widening it was the thing this story
+ * deliberately did not do), and this feeds the tooltip only. Computed here,
+ * never stored — one source of truth per number on screen, same rule as
+ * `useCounts()`.
+ */
+export const useIdleDetailCounts = () =>
+  useHiveStore(
+    useShallow((state) => {
+      let agents = 0;
+      let script = 0;
+      for (const id of state.order) {
+        const entity = state.entities[id];
+        if (!entity || !isSession(entity) || entity.status !== 'idle') continue;
+        if (entity.idleDetail === 'agents') agents += 1;
+        else if (entity.idleDetail === 'script') script += 1;
+      }
+      return { agents, script };
+    }),
+  );
+
 /** Active sessions first, then ended ones — the keyboard nav order (041, 060). */
 export const useNavOrder = () =>
   useHiveStore(

@@ -77,6 +77,23 @@ describe('SessionMetaBar', () => {
       expect(screen.queryByText(/^#\d/)).not.toBeInTheDocument();
     });
 
+    /**
+     * HIVE-83: the chip's dot goes hollow and its word names what is still
+     * running, matching the rails and the fleet table rather than collapsing
+     * a quiet-but-busy session into plain "idle".
+     */
+    it('names what a quiet session is still running, and hollows the dot', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .setSessionStatus('rails-upgrade', 'idle', 'agents');
+      });
+
+      render(<SessionMetaBar entity={entity('rails-upgrade')} />);
+
+      expect(screen.getByText('idle (agents)')).toBeInTheDocument();
+    });
+
     it('renames a waiting session to "needs input"', () => {
       render(<SessionMetaBar entity={entity('lead-form')} />);
 

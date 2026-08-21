@@ -108,6 +108,15 @@ interface StatusDotProps {
    * accessibility tree rather than duplicating the text next to it.
    */
   label?: string;
+  /**
+   * What a quiet session is still running (HIVE-83), folded into the sr-only
+   * text alongside `label`.
+   *
+   * Without this, a labelled dot on a hollow `idle` session announced plain
+   * "idle" — the exact distinction the ring exists to carry, dropped for the
+   * one audience that cannot see the ring at all.
+   */
+  detail?: IdleDetail;
   className?: string;
 }
 
@@ -122,6 +131,7 @@ export function StatusDot({
   pulse,
   hollow,
   label,
+  detail,
   className,
 }: StatusDotProps) {
   const pulsing = pulse ?? status === 'working';
@@ -137,7 +147,7 @@ export function StatusDot({
       )}
     >
       {label ? (
-        <span className="sr-only">{`${label}: ${STATUS_LABEL[status]}`}</span>
+        <span className="sr-only">{`${label}: ${statusLabel(status, detail)}`}</span>
       ) : null}
     </span>
   );

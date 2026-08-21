@@ -8,7 +8,12 @@ import {
 } from '@/types/entity';
 
 import { Chip } from '@components/ui/chip';
-import { StatusDot, STATUS_LABEL, STATUS_TEXT } from '@components/ui/status-dot';
+import {
+  StatusDot,
+  STATUS_LABEL,
+  STATUS_TEXT,
+  statusLabel,
+} from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
 import { useBackToOrch } from '@stores/ui-store';
 
@@ -74,8 +79,11 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
 
           <Chip className={STATUS_TEXT[session.status]}>
             {/* No `label` — the status word sits immediately beside the dot. */}
-            <StatusDot status={session.status} />
-            {STATUS_LABEL[session.status]}
+            <StatusDot
+              status={session.status}
+              hollow={session.idleDetail !== undefined}
+            />
+            {statusLabel(session.status, session.idleDetail)}
           </Chip>
 
           {session.pr ? (

@@ -146,6 +146,22 @@ describe('SessionTable', () => {
     expect(within(leadForm!).getByText('needs input')).toBeInTheDocument();
   });
 
+  it('names what a quiet session is still running', () => {
+    render(<SessionTable />);
+
+    act(() => {
+      useHiveStore
+        .getState()
+        .setSessionStatus('rails-upgrade', 'idle', 'agents');
+    });
+
+    const railsUpgrade = rows().find((row) =>
+      row.textContent?.includes('rails-upgrade'),
+    );
+
+    expect(within(railsUpgrade!).getByText('idle (agents)')).toBeInTheDocument();
+  });
+
   it('selects and opens on click', async () => {
     const user = userEvent.setup();
     render(<SessionTable />);

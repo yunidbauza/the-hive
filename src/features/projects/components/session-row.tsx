@@ -1,11 +1,7 @@
 import { cn } from '@/lib/utils';
 import { branchLabel, entityLabel, isSession } from '@/types/entity';
 
-import {
-  STATUS_LABEL,
-  STATUS_TEXT,
-  StatusDot,
-} from '@components/ui/status-dot';
+import { STATUS_TEXT, StatusDot, statusLabel } from '@components/ui/status-dot';
 import { useEntity, useOpenEntity } from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
@@ -45,7 +41,10 @@ export function SessionRow({ id }: SessionRowProps) {
     >
       <span className="flex w-full items-center gap-2">
         {/* No `label`: the status label sits right beside it. */}
-        <StatusDot status={entity.status} />
+        <StatusDot
+          status={entity.status}
+          hollow={entity.idleDetail !== undefined}
+        />
         <span className="flex-1 truncate text-left font-mono text-[12.5px]">
           {entityLabel(entity)}
         </span>
@@ -55,7 +54,7 @@ export function SessionRow({ id }: SessionRowProps) {
             STATUS_TEXT[entity.status],
           )}
         >
-          {STATUS_LABEL[entity.status]}
+          {statusLabel(entity.status, entity.idleDetail)}
         </span>
       </span>
 

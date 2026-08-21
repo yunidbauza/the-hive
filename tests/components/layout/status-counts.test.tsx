@@ -84,6 +84,29 @@ describe('StatusCounts', () => {
     );
   });
 
+  /**
+   * `rails-upgrade` and `e2e-quote` are the demo fleet's two idle sessions
+   * (see the `2 idle · 2 ended` assertions above). The visible tally is
+   * unchanged by design (HIVE-83) — only the tooltip grows.
+   */
+  it('breaks the idle count down in the tooltip only', () => {
+    render(<StatusCounts />);
+
+    act(() => {
+      useHiveStore
+        .getState()
+        .setSessionStatus('rails-upgrade', 'idle', 'agents');
+      useHiveStore.getState().setSessionStatus('e2e-quote', 'idle', 'script');
+    });
+
+    const el = screen.getByTestId('status-counts');
+
+    expect(el).toHaveTextContent('2 idle');
+    expect(el.getAttribute('title')).toContain(
+      '2 idle (1 with agents, 1 with a script)',
+    );
+  });
+
   it('counts sessions only — agents are never in the fleet totals', () => {
     render(<StatusCounts />);
 

@@ -106,6 +106,23 @@ describe('SessionRow', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  /**
+   * HIVE-83: a quiet session is not necessarily an empty one — the label says
+   * what is still running, and the dot goes hollow to match.
+   */
+  it('names what a quiet session is still running, and hollows the dot', () => {
+    act(() => {
+      useHiveStore.getState().setSessionStatus('rails-upgrade', 'idle', 'agents');
+    });
+
+    render(<SessionRow id="rails-upgrade" />);
+
+    expect(screen.getByText('idle (agents)')).toBeInTheDocument();
+    const dot = row().querySelector('span[aria-hidden]');
+    expect(dot?.className).toContain('border-subtle');
+    expect(dot?.className).not.toContain('bg-subtle');
+  });
+
   it('follows the store when the session’s status changes', () => {
     render(<SessionRow id="hero-refresh" />);
     expect(screen.getByText('working')).toBeInTheDocument();

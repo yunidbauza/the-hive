@@ -89,6 +89,26 @@ describe('StatusDot', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The gap Task 6's review found: a labelled, hollow `idle` dot used to
+   * announce plain "idle", dropping the one distinction the ring exists to
+   * carry for the one audience that cannot see the ring at all.
+   */
+  it('folds the idle detail into the announcement, not just plain idle', () => {
+    render(
+      <StatusDot
+        status="idle"
+        hollow
+        label="hero-refresh status"
+        detail="agents"
+      />,
+    );
+
+    expect(
+      screen.getByText('hero-refresh status: idle (agents)'),
+    ).toBeInTheDocument();
+  });
+
   it('forwards a className', () => {
     const { container } = render(
       <StatusDot status="idle" className="mt-0.5" />,
