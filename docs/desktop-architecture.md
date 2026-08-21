@@ -333,15 +333,49 @@ entire inbox and attention model is built on this field.
 
 It is **reported** instead, by Claude Code's hooks (HIVE-62), which are a
 different observer with a vantage point a pty does not have — hence
-`ObservedStatus`, wider than `DerivedStatus` by exactly this member. Two and a
-half events reach it — two hooks, plus one `Notification` sub-type — and they
-are genuinely different facts about the user:
+`ObservedStatus`, wider than `DerivedStatus` by exactly this member.
+
+## The five statuses, and the two endings that are not statuses
+
+The fleet view shows `working`, `waiting` (labelled "needs input"),
+`idle (agents)`, `idle (script)`, and plain `idle`. `done` and `terminated` are
+not in that list, on purpose: both are endings, and an ending is a claim about
+a boundary, not a thing a session is doing moment to moment. `done` arrives
+when the user runs `/clear` — Claude Code reports that as `SessionEnd` with
+`reason: 'clear'`, the pty stays alive, and the fact travels its own channel,
+`SessionClearedEvent`, rather than riding `ObservedStatus`; the row retires as
+history and a successor opens on the same pty (`entity.ts`'s `terminalId`
+keying is what lets the terminal survive that handoff without a remount).
+`terminated` is the pty exit `activity.ts` observes directly, and it is the one
+status forwarded even for a hook-driven session — `sessions/index.ts` otherwise
+lets a session's own hooks own its status once any have arrived, and makes an
+explicit exception for this one — because `SessionEnd` races the process exit
+and loses: a hook POST from a process that is already gone is not a bet worth
+making.
+
+`idle (agents)` and `idle (script)` are not new members of `ObservedStatus`
+either. They are plain `idle` with an `IdleDetail` attached, because the
+underlying fact is the same either way — the main agent has nothing to say —
+and only the reason differs: a subagent is still running (`SubagentStart` seen,
+no matching `SubagentStop` yet), or a backgrounded shell is (`PostToolUse` with
+`tool_input.run_in_background: true`, cleared only by the next
+`UserPromptSubmit` because Claude Code emits no hook when a backgrounded
+process itself dies). `status-dot.tsx` renders the difference as a hollow ring
+instead of a solid dot rather than a new colour: it costs nothing and it is
+this rename's entire point — free means free, and a subagent still working is
+not free.
+
+The hook table below reflects that: it now covers the hooks the tracker reads,
+not only the ones that can raise `waiting`.
 
 | Hook | Means |
 | --- | --- |
 | `PermissionRequest` | a tool wants a yes |
 | `Elicitation` | an MCP server wants a sentence |
 | `Notification` + `notification_type: permission_prompt` | the same tool-approval block, echoed six seconds later |
+| `PreToolUse` | a tool is about to run — the tracker's only chance to record `tool_use_id` ↔ `tool_name` before a block can reference it |
+| `SubagentStart` | a subagent is now running (`idle (agents)` once the main agent has nothing else to say) |
+| `SubagentStop` | that subagent is done, or Claude Code's own internal helper is — the tracker only removes agents it saw start |
 
 `Notification` also fires with `notification_type: idle_prompt` — the turn
 ended and sixty seconds passed with nothing typed, the commonest way a session
@@ -356,21 +390,50 @@ is not a substitute for either: it fires at the end of *every* turn, including
 the ones the user is sitting and watching, so it maps to `idle` and raises
 nothing.
 
-`PostToolUse` is subscribed too, and unlike the others it is not a new way to
-*reach* `waiting` — it is the first deterministic way to **leave** one. A tool
-finishing is the only signal that a permission block is actually over;
-`PermissionRequest` sets `waiting` and nothing lowered it until `Stop`, so a
-session the user approved sat on "needs input" for the rest of the turn while
-the agent kept working. The pty could not have been the correction: Claude's
-TUI repaints while a permission prompt is on screen, so `activity.ts` would
-read that redraw as work and clear the one status the whole attention model is
-built on. The cost is honest — it is the first high-frequency hook subscribed,
-firing per tool call — and paid anyway because nothing else ends a permission
-block deterministically.
+## Leaving `waiting`: pairing, not a single deterministic hook
+
+`PostToolUse` used to be described here as *the* deterministic way to leave
+`waiting` — subscribe one more high-frequency hook, and a tool finishing clears
+the block a `PermissionRequest` set. That was wrong in a way that only showed up
+with more than one tool in flight: `PostToolUse` fires once per tool, `waiting`
+was one flag per session, and a sibling tool's completion in a parallel batch
+cleared it while the one the user actually had to approve was still blocked. The
+notifier compensated (`status === 'waiting' || event === 'PostToolUse'`) rather
+than fixing the status itself, which is the workaround this story removed.
+
+The fix is `electron/main/hooks/tracker.ts`: status is now **derived from a
+per-session tracker**, not looked up per event. The tracker pairs blocks to the
+tool that caused them by `tool_use_id`, and clears exactly that pairing when its
+`PostToolUse` arrives — a sibling's completion no longer touches it. Pairing
+works because `PreToolUse` records `tool_use_id` ↔ `tool_name` (and `agent_id`,
+so a subagent's block cannot resolve against the main agent's) as each tool
+starts; `PermissionRequest` then resolves to an id by walking the outstanding
+tools backward for a `tool_name` match, newest first — sound because its
+matching `PreToolUse` fires roughly sixty milliseconds earlier, so it is always
+the most recent entry with that name. A block that cannot be resolved this way
+(`Elicitation`, or a `PermissionRequest` with no name match) is held under a
+sentinel, `UNPAIRED`, rather than dropped — losing a block would read as the
+session no longer needing the user, which is worse than holding one open a
+little too long.
+
+Measured against Claude Code **2.1.238**, real pty, outside the app:
+
+- `PreToolUse` and `PostToolUse` both carry `tool_use_id` **and** `tool_name`.
+- `PermissionRequest` carries `tool_name` but **no** `tool_use_id` — which is
+  exactly why the id has to be recovered from its matching `PreToolUse` rather
+  than read off the request itself.
+- `Notification` carries no tool identity at all.
+- Every event originating inside a subagent carries `agent_id`; every main-agent
+  event omits it.
+- Claude Code emits phantom `SubagentStop` events for its own internal helper
+  agents, with an empty `agent_type` and no `SubagentStart` that preceded them —
+  which is why the tracker only ever removes an agent it saw announced.
 
 All of this is measured rather than assumed, and `pnpm test:hooks` is what
 measures it: a real `claude` in a real pty, driven through the app's own
-receiver, notifier and hub. Run it when the targeted Claude Code version moves.
+receiver, notifier and hub, against the vocabulary above. Run it again whenever
+the targeted Claude Code version moves — a payload shape changing under this
+tracker is exactly the kind of regression a fixture would not catch.
 
 ## Two ABI facts that produce unreadable errors when forgotten
 
