@@ -51,6 +51,23 @@ interface Session {
   agents: Set<string>;
   bgShells: Set<string>;
   /**
+   * Tools this turn whose `PreToolUse` was truncated past `tool_use_id`, by
+   * name (HIVE-86).
+   *
+   * These are running but *unrecorded* — `outstanding` never learned about
+   * them, because pairing needs an id. They have to be counted anyway, because
+   * "exactly one match in `outstanding`" is uniqueness among what was recorded,
+   * which is not the same as uniqueness among what is running. Without this, a
+   * truncated `PostToolUse` belonging to one of these would retire the
+   * unrelated recorded tool that happens to share its name.
+   *
+   * Cleared at the turn boundary alongside `bgShells`: an entry whose
+   * `PostToolUse` arrived *with* an id (a large input and a small response)
+   * has nothing to decrement it, so it would otherwise suppress pairing for
+   * that name for the rest of the conversation.
+   */
+  unrecorded: Map<string, number>;
+  /**
    * Whether a `PostToolUse` has landed since the last `PermissionRequest`
    * (§4.4 / review Fix 2). Guards the `permission_prompt` echo: if the
    * request was already answered, the six-second-later echo must not
@@ -74,8 +91,9 @@ interface Session {
  * None of this is visible through `derive()`, and that is the point: `resolve()`
  * prefers the newest match, so a stale entry loses every race it could enter and
  * no status is ever wrong because of one. The defect a leak causes is the growth
- * itself — unbounded memory, and an `O(n)` walk per `PermissionRequest` — which
- * means a status assertion could never catch it. This is the seam that can.
+ * itself — memory that a long conversation never gets back, and a longer walk on
+ * every `PermissionRequest` — which means a status assertion could never catch
+ * it. This is the seam that can.
  */
 export interface HeldCounts {
   outstanding: number;
@@ -102,6 +120,7 @@ function empty(): Session {
     blockedNames: new Map(),
     agents: new Set(),
     bgShells: new Set(),
+    unrecorded: new Map(),
     postToolUseSincePermissionRequest: false,
   };
 }
@@ -189,20 +208,32 @@ export function createStatusTracker(): StatusTracker {
            * mid-flight and reintroduce the defect HIVE-83 removed: a tool
            * completing against no record.
            *
-           * What *is* safe is the intersection with `blocked`. An entry that is
-           * both outstanding and blocked is a tool waiting on a human; had it
-           * been answered, its `PostToolUse` would have removed it from both.
-           * The one path that strands it is Escape, which — measured, same
-           * probe — emits no event whatsoever, so nothing else can ever clear
-           * it. And dropping it here is not a new hazard: `blocked.clear()` on
-           * the next line already discards exactly these ids today. This only
-           * stops `outstanding` disagreeing with `blocked` about them.
+           * What is safe *enough* is the intersection with `blocked`. An entry
+           * that is both outstanding and blocked is a tool waiting on a human;
+           * had it been answered, its `PostToolUse` would have removed it from
+           * both. The one path that strands it is Escape, which — measured,
+           * same probe — emits no event whatsoever, so nothing else can ever
+           * clear it.
+           *
+           * "Safe enough" and not "safe", because a subagent's tool *can* be in
+           * `blocked`: `resolve()` matches on `agentId`, so a subagent's own
+           * `PermissionRequest` resolves to its own `tool_use_id`. A re-invoke
+           * carrying another subagent's result therefore can drop an entry that
+           * is genuinely still blocked on a human.
+           *
+           * What makes that acceptable is that it costs nothing new:
+           * `blocked.clear()` on the very next line already discards exactly
+           * those ids, and has since HIVE-83. The status consequence is
+           * identical before and after this change; all that changes is that
+           * `outstanding` stops disagreeing with `blocked` about them. Widening
+           * the sweep past this intersection is what would be a regression.
            */
           s.turnActive = true;
           for (const id of s.blocked) s.outstanding.delete(id);
           s.blocked.clear();
           s.blockedNames.clear();
           s.bgShells.clear();
+          s.unrecorded.clear();
           s.postToolUseSincePermissionRequest = false;
           return derive(s);
 
@@ -229,6 +260,11 @@ export function createStatusTracker(): StatusTracker {
               toolName: input.toolName,
               ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
             });
+          } else if (input.toolName !== undefined) {
+            // Truncated past `tool_use_id`: running, but unpairable. See
+            // `unrecorded` — it is what stops a later truncated `PostToolUse`
+            // from retiring a *different* tool of the same name.
+            s.unrecorded.set(input.toolName, (s.unrecorded.get(input.toolName) ?? 0) + 1);
           }
           return derive(s);
 
@@ -271,20 +307,49 @@ export function createStatusTracker(): StatusTracker {
              * `PreToolUse` keeps its id and only the `PostToolUse` loses it.
              * The entry then had nothing left to clear it.
              *
-             * Same safety rule as the block above, for the same reason: exactly
-             * one candidate, or leave it alone. `agentId` must match too, so a
-             * main-agent completion cannot retire a subagent's identically
-             * named tool.
+             * ## Why this needs two guards the `blocked` recovery above does not
+             *
+             * "Exactly one match" is uniqueness among what was *recorded*, and
+             * that is weaker than uniqueness among what is *running*:
+             *
+             * - A same-named tool whose own `PreToolUse` was truncated is
+             *   running but absent from `outstanding`, so the lone remaining
+             *   match is a *different*, live tool. Retiring it makes its own
+             *   `PermissionRequest` resolve to `UNPAIRED`, which its id-ful
+             *   `PostToolUse` can then never clear — the session sits on
+             *   `waiting` past `Stop`. That is worse than the leak, and exactly
+             *   the defect class HIVE-83 removed, so `unrecorded` is consulted
+             *   first and an ambiguous completion is left alone.
+             * - `agentId` cannot discriminate here. It is recoverable only from
+             *   a whole body, and this branch runs only on a truncated one
+             *   (`receiver.ts` recovers `hook_event_name`, `reason`, `cwd`,
+             *   `notification_type` and `tool_name` — there is no agent-id
+             *   prefix regex), so `input.agentId` is always `undefined`. It
+             *   would therefore match main-agent entries indiscriminately,
+             *   including when the completion came from inside a subagent. With
+             *   any subagent live, whose completion this is cannot be known, so
+             *   nothing is retired.
+             *
+             * Both guards fail closed: the entry leaks, which costs memory and
+             * nothing else, rather than stranding a session on a wrong status.
              */
-            let onlyMatch: string | undefined;
-            let matchCount = 0;
-            for (const [id, entry] of s.outstanding) {
-              if (entry.toolName === input.toolName && entry.agentId === input.agentId) {
-                matchCount += 1;
-                onlyMatch = id;
+            const unrecorded = s.unrecorded.get(input.toolName) ?? 0;
+            if (unrecorded > 0) {
+              // Plausibly this completion. Spend it, and retire nothing.
+              if (unrecorded === 1) s.unrecorded.delete(input.toolName);
+              else s.unrecorded.set(input.toolName, unrecorded - 1);
+            } else if (s.agents.size === 0) {
+              let onlyMatch: string | undefined;
+              let matchCount = 0;
+              for (const [id, entry] of s.outstanding) {
+                if (entry.toolName === input.toolName && entry.agentId === undefined) {
+                  matchCount += 1;
+                  onlyMatch = id;
+                }
               }
+              if (matchCount === 1 && onlyMatch !== undefined)
+                s.outstanding.delete(onlyMatch);
             }
-            if (matchCount === 1 && onlyMatch !== undefined) s.outstanding.delete(onlyMatch);
           }
           return derive(s);
         }

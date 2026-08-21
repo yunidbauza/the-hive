@@ -458,8 +458,27 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       );
       console.info('PRESENTED ', JSON.stringify(presented), 'BADGE', badge);
 
+      const held = statusTracker.held('sess-live');
+      console.info('HELD      ', JSON.stringify(held));
+
       // Every scenario types a prompt, so every scenario starts working.
       expect(statuses.map((s) => s.status)).toContain('working');
+
+      /**
+       * Nothing is still being held for a tool that finished (HIVE-86).
+       *
+       * The unit tests pin this against events *this file's author wrote*,
+       * which is the same weakness the whole file exists to answer: the leak
+       * they describe is a claim about what the real binary emits and when.
+       * Here every tool in the scenario ran to completion against a real
+       * `claude`, so an entry surviving the run means a pairing rule stopped
+       * matching what Claude Code actually sends — the regression a fixture
+       * cannot notice.
+       *
+       * Deliberately not asserted on `agents` or `bgShells`: two scenarios end
+       * with one of those genuinely still open, which is the point of them.
+       */
+      expect(held.outstanding).toBe(0);
 
       if (expectedType !== null) {
         // The turn ran, and the `Notification` hook is what carries the type

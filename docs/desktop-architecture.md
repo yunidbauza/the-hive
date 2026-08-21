@@ -471,7 +471,8 @@ matching `PreToolUse` fires roughly sixty milliseconds earlier, so it is always
 the most recent entry with that name. The walk is a single forward pass over the
 map, keeping the last match rather than reversing a copy of it: insertion order
 makes those identical, and the copy was an allocation of the whole map on every
-permission request (HIVE-86). A block that cannot be resolved this way
+permission request (HIVE-86). The walk itself is `O(n)` either way — what went
+away is the garbage, not the scan. A block that cannot be resolved this way
 (`Elicitation`, or a `PermissionRequest` with no name match) is held under a
 sentinel, `UNPAIRED`, rather than dropped — losing a block would read as the
 session no longer needing the user, which is worse than holding one open a
