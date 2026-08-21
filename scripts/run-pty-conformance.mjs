@@ -29,6 +29,7 @@ const MODULES = [
   'rendering',
   'throughput',
   'lifecycle',
+  'descendants',
   'bootstrap',
 ];
 

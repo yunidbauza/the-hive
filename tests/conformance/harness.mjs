@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,11 +112,19 @@ export function emitSentinel(token) {
  * With job control left on (an interactive shell's default) `&` puts the job in
  * a **new process group of its own**, and `kill(-shellPid)` does not reach it:
  * measured at 8480 against the shell's 8463. So a process the user explicitly
- * backgrounds — `pnpm dev &` — survives both `kill` and app shutdown. That is a
- * real hole in "no orphans on shutdown", it is **not** fixed by this story, and
- * it is recorded on HIVE-49 rather than papered over here. Closing it means
- * signalling the pty's *session* rather than one process group, which is a
- * product change with its own risks.
+ * backgrounds — `pnpm dev &` — survives the group kill on its own.
+ *
+ * That was recorded here as an open hole under HIVE-49, and **it is no longer
+ * one**: HIVE-72's descendant sweep in `process-tree.ts` walks `ps` rather than
+ * the process group, so it reaches a job whatever group it escaped into. The
+ * `descendants` group measures exactly that, on the per-tab `kill` path as well
+ * as `killAll`, and it is mutation-verified — disabling `sweep` fails all three
+ * of its assertions with five of five escaped children outliving their session.
+ *
+ * What stays true is the division of labour this helper encodes: `set +m` keeps
+ * *this* helper testing the group kill in isolation, so a regression in the
+ * group signal and a regression in the sweep fail different tests. Use
+ * {@link startEscapedGrandchild} for the sweep.
  */
 export async function startGrandchild(session, scratch, name) {
   const pidFile = join(scratch, `${name}.pid`);
@@ -146,6 +155,85 @@ export async function startGrandchild(session, scratch, name) {
 
   await waitFor(() => isAlive(pid), { message: `${name} (${pid}) to be running` });
   return pid;
+}
+
+/**
+ * Start a long-lived grandchild that **escapes the shell's process group**.
+ *
+ * The counterpart to {@link startGrandchild}, and the difference is one
+ * character: job control is left **on** (`set -m`) rather than turned off, so
+ * `&` puts the job in a process group of its own. `kill(-shellPid)` cannot
+ * reach it — which is the whole point.
+ *
+ * ## Why this shape is the one that matters
+ *
+ * It is what an agent's own long-lived children look like. A `claude` that
+ * starts an MCP server gets a process tree the session shell's group kill does
+ * not cover on its own, and the failure mode is silent: the tab closes, the
+ * terminal disappears, and the server keeps running — holding memory, holding
+ * whatever single-consumer resource it claimed, and invisible to the app that
+ * started it.
+ *
+ * `startGrandchild`'s `set +m` was deliberate — it isolates "is the *group*
+ * signalled?" from "is the *tree* swept?" — but it means every existing
+ * no-descendant assertion passes against an implementation that only ever
+ * group-kills. This helper is what exercises HIVE-72's descendant sweep.
+ *
+ * Returns `{ pid, pgid }`, and callers should assert the pgid actually differs
+ * from the shell's: a shell that decided it was non-interactive would leave the
+ * job in the shell's group, quietly turning this into a duplicate of the easier
+ * test rather than failing.
+ */
+export async function startEscapedGrandchild(session, scratch, name) {
+  const pidFile = join(scratch, `${name}.pid`);
+
+  /**
+   * `set -m` rather than trusting the default.
+   *
+   * An interactive shell enables job control on its own, and the shell here is
+   * on a real pty so it should qualify — but "should" is how a test quietly
+   * stops testing anything. Asking for it explicitly means the pgid assertion
+   * below is measuring the implementation rather than the shell's mood.
+   *
+   * `trap "" HUP` for the same reason as `startGrandchild`: without an ignored
+   * disposition the kernel's SIGHUP to the foreground group on session-leader
+   * death kills this anyway, and the assertion passes against an
+   * implementation that sweeps nothing.
+   */
+  session.send(
+    `set -m; sh -c 'trap "" HUP; echo $$ > "${pidFile}"; exec sleep 100' &`,
+  );
+
+  const pid = await waitFor(
+    () => {
+      if (!existsSync(pidFile)) return null;
+      const text = readFileSync(pidFile, 'utf8').trim();
+      return /^\d+$/.test(text) ? Number(text) : null;
+    },
+    { message: `${name} to record its pid` },
+  );
+
+  await waitFor(() => isAlive(pid), { message: `${name} (${pid}) to be running` });
+  return { pid, pgid: pgidOf(pid) };
+}
+
+/**
+ * The process group a pid belongs to, or `null` if it has already gone.
+ *
+ * Shells out to `ps` for the same reason `process-tree.ts` does: Node exposes
+ * no way to read another process's group, and this suite's whole subject is
+ * what the kernel thinks rather than what the app believes.
+ */
+export function pgidOf(pid) {
+  try {
+    const text = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'pgid='], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return /^\d+$/.test(text) ? Number(text) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Is this pid still around? `kill -0` asks without signalling anything. */
