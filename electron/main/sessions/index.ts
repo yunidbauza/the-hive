@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { AUTH_ENV_KEYS, type ConfigSnapshot } from '@shared/config-contract';
 import type {
   HookNotificationType,
+  IdleDetail,
   ObservedStatus,
   StatusHookEvent,
 } from '@shared/hook-contract';
@@ -30,6 +31,7 @@ import {
 
 import { effectiveRuntime } from '../config/runtime';
 import type { HookRuntime } from '../hooks';
+import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
@@ -232,6 +234,14 @@ export function createSessions(options: SessionsOptions): Sessions {
   } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
+  /**
+   * What each session *is*, derived from every hook it has sent (HIVE-83).
+   *
+   * One instance for the life of this module, not one per event: the whole
+   * point is a record that accumulates across a session's hooks, so a sibling
+   * tool's `PostToolUse` does not erase a block the same batch is still holding.
+   */
+  const statusTracker = createStatusTracker();
   /** Resolvers waiting for a specific entity's process to exit. */
   const exitWaiters = new Map<string, (() => void)[]>();
   /**
@@ -417,6 +427,8 @@ export function createSessions(options: SessionsOptions): Sessions {
        * exit and loses whenever the agent is killed rather than quitting.
        */
       if (status !== 'terminated' && hookDriven.has(entityId)) return;
+      // The process is gone; drop its record rather than leak it (HIVE-83).
+      if (status === 'terminated') statusTracker.forget(entityId);
       publishStatus(entityId, status);
     },
   });
@@ -461,11 +473,34 @@ export function createSessions(options: SessionsOptions): Sessions {
   void hooks?.start({
     knowsSession: (entityId) => registry.sessionFor(entityId) !== undefined,
     onEvent: (event) => {
+      /**
+       * The tracker decides, not the event (HIVE-83).
+       *
+       * `event.status` is the per-event fallback the contract still carries;
+       * what reaches the renderer is derived from what the session *is*, which
+       * is the only way a sibling tool's completion stops clearing a live
+       * permission block.
+       */
+      const derived = statusTracker.apply({
+        entityId: event.entityId,
+        event: event.event,
+        ...(event.toolUseId === undefined ? {} : { toolUseId: event.toolUseId }),
+        ...(event.toolName === undefined ? {} : { toolName: event.toolName }),
+        ...(event.agentId === undefined ? {} : { agentId: event.agentId }),
+        ...(event.runInBackground === undefined
+          ? {}
+          : { runInBackground: event.runInBackground }),
+        ...(event.notificationType === undefined
+          ? {}
+          : { notificationType: event.notificationType }),
+      });
+
       publishHookStatus(
         event.entityId,
-        event.status,
+        derived.status,
         event.event,
         event.notificationType,
+        derived.detail,
       );
       /**
        * The branch read is deliberately **after** the status (HIVE-78).
@@ -494,7 +529,17 @@ export function createSessions(options: SessionsOptions): Sessions {
         entityId: event.entityId,
         key: event.key,
       } satisfies SessionTicketIntentEvent),
-    onCleared: (entityId) => publishCleared(entityId),
+    onCleared: (entityId) => {
+      /**
+       * `/clear` keeps the pty and opens a successor row (HIVE-83).
+       *
+       * Without this reset the successor inherits the retired conversation's
+       * live subagents and sits on `idle (agents)` forever with nothing
+       * running.
+       */
+      statusTracker.reset(entityId);
+      publishCleared(entityId);
+    },
     /**
      * Usage, forwarded verbatim (HIVE-79).
      *
@@ -560,12 +605,20 @@ export function createSessions(options: SessionsOptions): Sessions {
      * it and an `idle_prompt` is not, and that judgement has no business here.
      */
     notificationType?: HookNotificationType,
+    /**
+     * What is still running while the main agent is not (HIVE-83).
+     *
+     * Passed through for the same reason `event` is: the session layer says
+     * what a session is doing, and the renderer decides how to draw it.
+     */
+    idleDetail?: IdleDetail,
   ): void {
     send(CH.sessionStatus, {
       entityId,
       status,
       ...(event === undefined ? {} : { event }),
       ...(notificationType === undefined ? {} : { notificationType }),
+      ...(idleDetail === undefined ? {} : { idleDetail }),
     } satisfies SessionStatusEvent);
   }
 
@@ -648,9 +701,10 @@ export function createSessions(options: SessionsOptions): Sessions {
     status: ObservedStatus,
     event?: StatusHookEvent,
     notificationType?: HookNotificationType,
+    idleDetail?: IdleDetail,
   ): void {
     hookDriven.add(entityId);
-    publishStatus(entityId, status, event, notificationType);
+    publishStatus(entityId, status, event, notificationType, idleDetail);
   }
 
   /**

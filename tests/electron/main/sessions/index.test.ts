@@ -618,6 +618,68 @@ describe('identity: the renderer only ever sees entity ids', () => {
   });
 });
 
+/**
+ * A sessions instance whose hook receiver the test drives directly (HIVE-83).
+ *
+ * Built the same way the `hooked` instances further down build theirs —
+ * `hooks.start` captured rather than really started — but hoisted here because
+ * the tracker tests need both `onEvent` and `onCleared` out of that same
+ * capture, and reading status back by entity is exactly what `on()` already
+ * does for the suite's default instance.
+ */
+function harness(): {
+  hook: (
+    event: { entityId: string; event: HookStatusEvent['event'] } & Partial<
+      Omit<HookStatusEvent, 'entityId' | 'event' | 'status'>
+    >,
+  ) => void;
+  cleared: (entityId: string) => void;
+  lastStatus: (entityId: string) => unknown;
+  lastEvent: (entityId: string) => Record<string, unknown>;
+} {
+  let onEvent: ((event: HookStatusEvent) => void) | undefined;
+  let onCleared: ((entityId: string) => void) | undefined;
+  const localSent: Sent[] = [];
+
+  createSessions({
+    supervisor,
+    send: (channel, payload) =>
+      localSent.push({ channel, payload: payload as Record<string, unknown> }),
+    config: () => CONFIG,
+    newSessionUuid: () => TEST_UUID,
+    hooks: {
+      settingsPathFor: () => undefined,
+      envFor: () => ({}),
+      start: (opts: {
+        onEvent: (event: HookStatusEvent) => void;
+        onCleared: (entityId: string) => void;
+      }) => {
+        onEvent = opts.onEvent;
+        onCleared = opts.onCleared;
+        return Promise.resolve();
+      },
+      stop: () => Promise.resolve(),
+    } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+  });
+
+  const statusFor = (entityId: string) =>
+    localSent
+      .filter(
+        (entry) => entry.channel === CH.sessionStatus && entry.payload.entityId === entityId,
+      )
+      .at(-1)!.payload;
+
+  return {
+    // `status` is a required field on the wire contract but unread by
+    // `onEvent` — the tracker derives it — so a fixed fallback here is
+    // never observed downstream.
+    hook: (event) => onEvent!({ status: 'working', ...event } as HookStatusEvent),
+    cleared: (entityId) => onCleared!(entityId),
+    lastStatus: (entityId) => statusFor(entityId).status,
+    lastEvent: (entityId) => statusFor(entityId),
+  };
+}
+
 describe('status', () => {
   it('reports working, then idle, then terminated', () => {
     sessions.open(OPEN);
@@ -796,6 +858,59 @@ describe('status', () => {
     expect(run).toHaveBeenCalledTimes(2);
 
     hooked.dispose();
+  });
+
+  /**
+   * HIVE-83: the whole reason `hooks/tracker.ts` exists. `Bash` (A) and
+   * `AskUserQuestion` (B) run in parallel; A's `PostToolUse` — a sibling
+   * finishing — must not clear the block B's `PermissionRequest` is holding.
+   * Only B's own `PostToolUse` may release it.
+   */
+  it('holds waiting while a sibling tool finishes, then releases on the blocked one', () => {
+    const h = harness();
+
+    h.hook({ entityId: 'sess-a', event: 'UserPromptSubmit' });
+    h.hook({ entityId: 'sess-a', event: 'PreToolUse', toolUseId: 'A', toolName: 'Bash' });
+    h.hook({
+      entityId: 'sess-a',
+      event: 'PreToolUse',
+      toolUseId: 'B',
+      toolName: 'AskUserQuestion',
+    });
+    h.hook({
+      entityId: 'sess-a',
+      event: 'PermissionRequest',
+      toolName: 'AskUserQuestion',
+    });
+    h.hook({ entityId: 'sess-a', event: 'PostToolUse', toolUseId: 'A', toolName: 'Bash' });
+
+    expect(h.lastStatus('sess-a')).toBe('waiting');
+
+    h.hook({
+      entityId: 'sess-a',
+      event: 'PostToolUse',
+      toolUseId: 'B',
+      toolName: 'AskUserQuestion',
+    });
+    expect(h.lastStatus('sess-a')).toBe('working');
+  });
+
+  /**
+   * HIVE-83: `/clear` keeps the pty and opens a successor row. Without
+   * `statusTracker.reset` on `onCleared`, the successor would inherit the
+   * retired conversation's live subagent and sit on `idle (agents)` forever.
+   */
+  it('clears tracker state when the conversation is cleared', () => {
+    const h = harness();
+
+    h.hook({ entityId: 'sess-b', event: 'UserPromptSubmit' });
+    h.hook({ entityId: 'sess-b', event: 'SubagentStart', agentId: 'X' });
+    h.hook({ entityId: 'sess-b', event: 'Stop' });
+    expect(h.lastEvent('sess-b')).toMatchObject({ idleDetail: 'agents' });
+
+    h.cleared('sess-b');
+    h.hook({ entityId: 'sess-b', event: 'Stop' });
+    expect(h.lastEvent('sess-b').idleDetail).toBeUndefined();
   });
 });
 
