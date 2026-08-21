@@ -183,6 +183,20 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const NOTIFICATION_TYPE_IN_PREFIX = /"notification_type"\s*:\s*"([a-z_]+)"/;
 
   /**
+   * And once more for `tool_name`, which HIVE-83 needs to keep a blocked
+   * session from stranding on `waiting`.
+   *
+   * `tool_name` precedes `tool_input` on the wire, and `tool_input` is what
+   * grows a body past `HOOK_MAX_BODY_BYTES` in the first place (a `Write` or
+   * `Edit` carries the whole file there) — so `tool_name` always survives a
+   * truncation that claims `tool_input` and everything after it, including
+   * `tool_use_id`. A closed-enough vocabulary — `Bash`, `Write`,
+   * `mcp__server__tool` — so word characters and underscores, same
+   * conservatism as the other prefix regexes here.
+   */
+  const TOOL_NAME_IN_PREFIX = /"tool_name"\s*:\s*"([A-Za-z0-9_]+)"/;
+
+  /**
    * Token, session id, and "do we still have this session".
    *
    * Shared by both paths because both need exactly this and in this order —
@@ -287,6 +301,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       reason = REASON_IN_PREFIX.exec(body)?.[1];
       cwd = CWD_IN_PREFIX.exec(body)?.[1];
       notificationType = NOTIFICATION_TYPE_IN_PREFIX.exec(body)?.[1];
+      toolName = TOOL_NAME_IN_PREFIX.exec(body)?.[1];
     } else {
       let parsed: unknown;
       try {

@@ -297,4 +297,36 @@ describe('createStatusTracker', () => {
     t.reset(e);
     expect(t.apply({ entityId: e, event: 'Stop' })).toEqual({ status: 'idle' });
   });
+
+  /**
+   * HIVE-83's self-review bug, replayed end to end: a `Write` needing
+   * permission carries the whole file in `tool_input`, so `PreToolUse`,
+   * `PermissionRequest` and `PostToolUse` all truncate past
+   * `HOOK_MAX_BODY_BYTES`. Measured wire order puts `tool_name` before
+   * `tool_input` and `tool_use_id` after it, so every truncated event here
+   * recovers a name and never an id — `PreToolUse` still records nothing (an
+   * `outstanding` entry needs both), but `PermissionRequest` can still name
+   * its block and the later id-less `PostToolUse` can still clear it by that
+   * name. Without the name, the block is `UNPAIRED` with no name on record and
+   * nothing but the next `UserPromptSubmit` would ever clear it — the session
+   * would sit on `waiting` through `Stop` while genuinely idle.
+   */
+  it('resolves a fully id-less permission trace by name instead of stranding on waiting', () => {
+    const t = createStatusTracker();
+    const e = 'sess-15';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    // Truncated past tool_use_id *and* tool_name: nothing to record.
+    t.apply({ entityId: e, event: 'PreToolUse' });
+    expect(t.apply({ entityId: e, event: 'PermissionRequest', toolName: 'Write' })).toEqual(
+      { status: 'waiting' },
+    );
+
+    // The user approves; the tool runs and finishes, also truncated.
+    expect(t.apply({ entityId: e, event: 'PostToolUse', toolName: 'Write' })).toEqual({
+      status: 'working',
+    });
+
+    expect(t.apply({ entityId: e, event: 'Stop' })).toEqual({ status: 'idle' });
+  });
 });

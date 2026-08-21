@@ -113,6 +113,33 @@ describe('hook receiver', () => {
       expect(response.status).toBe(204);
       expect(events[0]).toMatchObject({ event: 'SubagentStart', agentId: 'a828e337' });
     });
+
+    /**
+     * A `Write` or `Edit` needing permission carries the whole file in
+     * `tool_input`, which is exactly what pushes the body past
+     * `HOOK_MAX_BODY_BYTES`. Measured against real Claude Code 2.1.238, the
+     * wire order is `..., tool_name, tool_input, tool_use_id` — so
+     * `tool_name` sits before the field that grows unbounded and survives
+     * truncation, while `tool_use_id` sits after it and never does.
+     */
+    it('recovers tool_name from an oversized PermissionRequest, but not tool_use_id', async () => {
+      const response = await post({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Write',
+        tool_input: 'x'.repeat(256 * 1024),
+        tool_use_id: 'toolu_01',
+      });
+
+      expect(response.status).toBe(204);
+      expect(events).toEqual([
+        {
+          entityId: 'sess-01',
+          event: 'PermissionRequest',
+          status: 'waiting',
+          toolName: 'Write',
+        },
+      ]);
+    });
   });
 
   /**

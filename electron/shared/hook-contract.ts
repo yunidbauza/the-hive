@@ -338,9 +338,11 @@ export interface HookStatusEvent {
    *
    * All optional because not every event has them and because a body over
    * `HOOK_MAX_BODY_BYTES` truncates `tool_use_id` off the end — `tool_input`
-   * precedes it on the wire. Both `PreToolUse` and `PostToolUse` truncate
-   * symmetrically, so the tracker's bookkeeping stays consistent and only
-   * pairing degrades.
+   * precedes it on the wire. `tool_name` precedes `tool_input` in turn, so it
+   * always survives truncation; `tool_use_id` never does. Both `PreToolUse`
+   * and `PostToolUse` lose `tool_use_id` the same way, so the tracker's
+   * bookkeeping stays consistent and only pairing degrades — `tool_name`
+   * recovers by itself, per `receiver.ts`'s truncated-prefix parse.
    */
   toolUseId?: string;
   toolName?: string;
