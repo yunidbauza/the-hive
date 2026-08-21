@@ -8,13 +8,22 @@ import { describe, expect, it } from 'vitest';
 
 import { createReceiver } from '../../electron/main/hooks/receiver';
 import { hookSettings } from '../../electron/main/hooks/settings';
+import { createStatusTracker } from '../../electron/main/hooks/tracker';
 import {
   createNotifier,
   createNotificationHub,
 } from '../../electron/main/notifications';
-import { NOTIFICATION_TYPE_STATUS } from '../../electron/shared/hook-contract';
+import {
+  NOTIFICATION_TYPE_STATUS,
+  type HookNotificationType,
+  type IdleDetail,
+  type ObservedStatus,
+} from '../../electron/shared/hook-contract';
 import { CH } from '../../electron/shared/ipc-contract';
-import type { HiveNotification } from '../../electron/shared/notification-contract';
+import type {
+  HiveNotification,
+  NotificationKind,
+} from '../../electron/shared/notification-contract';
 import type { SessionStatusEvent } from '../../electron/shared/session-contract';
 
 /**
@@ -53,7 +62,7 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  * say ok            -> UserPromptSubmit working
  *                   -> Stop             idle
  *                   -> Notification     idle     idle_prompt        (+60s)
- *                   => 1 row: session.input_needed, presented, badge 1
+ *                   => 1 row: session.input_needed, inbox only, badge 1
  *
  * AskUserQuestion   -> UserPromptSubmit  working
  *                   -> PermissionRequest waiting
@@ -62,6 +71,13 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  *                   -> PostToolUse       working                    (the fix)
  *                   => 1 row: session.blocked, presented, badge 1   (not two)
  * ```
+ *
+ * `session.input_needed` reads "inbox only" rather than "presented" — its
+ * `defaultDelivery` is `'inbox'`, not `'both'` (HIVE-83's Task 5: what makes
+ * this kind chatty is the toast, not the row, and that matters more once a
+ * session can sit in `idle (agents)` for a long time). This corrects the
+ * belief this comment held when it was written against 47f0984, before that
+ * change shipped — this file's live run is what caught the drift.
  *
  * ## Why the driver answers the question (the review's second finding)
  *
@@ -77,72 +93,188 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  * well outside the run — otherwise this scenario would race a second inbox row
  * and the exactly-one assertion would flake. That is why `deadline` and
  * `answerAt` are per-scenario rather than one shared budget.
+ *
+ * ## Two more scenarios, and why the wiring below now includes the tracker
+ * (HIVE-83, HIVE-85)
+ *
+ * The two scenarios above only ever have one tool outstanding, so nothing
+ * distinguishes "the status derived per-event" from "the status derived from
+ * what the session actually is" — `receiver.ts`'s own `HOOK_STATUS` fallback
+ * happens to agree with `hooks/tracker.ts` in both of them. A **parallel**
+ * batch is the only thing that can tell them apart: `PostToolUse` maps to
+ * `working` unconditionally at the receiver, so a test that reads status
+ * straight off the receiver would report the sibling's completion as
+ * `working` even while the other tool is still blocked on a human — the exact
+ * bug Part 3 fixes. So the wiring below now runs every event through a real
+ * `createStatusTracker()`, exactly as `sessions/index.ts` does, and the
+ * `PostToolUse` assertion is **id-aware**: only the `PostToolUse` whose
+ * `toolUseId` matches the blocked tool's may report `working`; any other
+ * tool's completion must still read `waiting`.
+ *
+ * The fourth scenario proves the other half of HIVE-83: a subagent still
+ * running after the main agent's `Stop` reports `idle (agents)` rather than
+ * plain `idle`, and the detail clears once the subagent's own `SubagentStop`
+ * lands — not on some *other* `SubagentStop`. Claude Code emits
+ * `SubagentStop` for internal helper agents that never announced a
+ * `SubagentStart`; the tracker only clears an agent id it saw start, so a
+ * phantom stop leaves `idleDetail` exactly where it was.
  */
 const RUN = process.env.HIVE_LIVE_HOOK_PROOF === '1';
 
+/**
+ * One scenario driven end to end against the real binary.
+ *
+ * Widened past the two original scenarios' shape (HIVE-83, HIVE-85): `type`
+ * and `kind` are nullable because the subagent scenario raises no
+ * `Notification` and no inbox row at all, and `idleDetail` is optional
+ * because only that scenario asserts one.
+ */
+interface Scenario {
+  scenario: string;
+  prompt: string;
+  type: HookNotificationType | null;
+  status: ObservedStatus;
+  idleDetail?: IdleDetail;
+  kind: NotificationKind | null;
+  /**
+   * How many toasts this scenario's row is expected to produce.
+   *
+   * Not derivable from `kind` inside this file — see the literal-not-derived
+   * discipline `NOTIFICATION_TYPE_STATUS` follows above. `session.blocked` is
+   * `defaultDelivery: 'both'`; `session.input_needed` is deliberately
+   * `'inbox'` only (HIVE-83's Task 5) — a row still lands and the badge still
+   * counts it, but no toast. The live run is what caught this file's own
+   * belief going stale when that shipped.
+   */
+  presentedCount: number;
+  deadline: number;
+  answerAt: number | null;
+  completesTool: boolean;
+}
+
+/**
+ * A published status, widened with the tool identity the tracker needs to
+ * pair a `PostToolUse` with the `PreToolUse` that opened it.
+ *
+ * `toolUseId` never reaches the real renderer — `sessions/index.ts`'s own
+ * `publishHookStatus` does not forward it, and `SessionStatusEvent` has no
+ * field for it — this is test-only bookkeeping so the assertions below can
+ * tell the blocked tool's own completion from a sibling's.
+ */
+interface TestStatusEvent extends SessionStatusEvent {
+  toolUseId?: string;
+}
+
+const scenarios: Scenario[] = [
+  {
+    scenario: 'a turn that ended with nobody typing',
+    prompt: 'say ok, nothing else',
+    type: 'idle_prompt',
+    /**
+     * Asserted as a literal, not read back out of `NOTIFICATION_TYPE_STATUS`
+     * (the review's third point).
+     *
+     * This file's whole job is to pin the app's beliefs against what the real
+     * binary does, and a test that derives its expectation from the constant
+     * under test can only ever prove the constant equals itself — edit
+     * `idle_prompt` back to `'waiting'` and it would stay green while the bug
+     * it exists to catch came straight back. The literal is the belief; the
+     * cross-check below then asserts the shared constant still agrees with
+     * it, so the constant is pinned rather than consulted.
+     */
+    status: 'idle',
+    kind: 'session.input_needed',
+    /** `session.input_needed` is `inbox` only — see `Scenario.presentedCount`. */
+    presentedCount: 0,
+    /** Long enough for `Stop`, then the idle prompt sixty seconds later. */
+    deadline: 105,
+    /** Nothing to answer — no tool ever runs in this one. */
+    answerAt: null,
+    /** No block to leave, so no `PostToolUse` to expect. */
+    completesTool: false,
+  },
+  {
+    scenario: 'a tool blocked on a human, then answered',
+    prompt:
+      'Use the AskUserQuestion tool right now to ask me whether I prefer tabs or spaces. Do nothing else.',
+    type: 'permission_prompt',
+    status: 'waiting',
+    kind: 'session.blocked',
+    /** `session.blocked` is `defaultDelivery: 'both'` — one toast. */
+    presentedCount: 1,
+    /**
+     * Deliberately short. The answer lands at 45s and `Stop` a few seconds
+     * later, so the `idle_prompt` this session would eventually get is due
+     * around 110s — comfortably outside the run. Stretching this to the other
+     * scenario's 105s would let a second inbox row race the assertions below.
+     */
+    deadline: 65,
+    /**
+     * After the `Notification/permission_prompt` that trails the
+     * `PermissionRequest` by about six seconds, with room to spare: the row
+     * and the badge are asserted for the *blocked* session, so the question
+     * must be seen before it is answered.
+     */
+    answerAt: 45,
+    completesTool: true,
+  },
+  {
+    scenario: 'a parallel batch with one tool blocked on a human',
+    prompt:
+      "In one single message make two parallel tool calls: first the Bash tool running the command 'sleep 20 && echo done', and second the AskUserQuestion tool asking whether I prefer tabs or spaces. Both must be in the same assistant message so they run in parallel.",
+    type: 'permission_prompt',
+    status: 'waiting',
+    kind: 'session.blocked',
+    presentedCount: 1,
+    /**
+     * The measured trace: `Bash`'s `PostToolUse` lands at ~27s while the
+     * `AskUserQuestion` permission is still outstanding, and the answer lands
+     * at 70s. 90s gives `Stop` room after that with no risk of the
+     * `idle_prompt` sixty seconds later racing the assertions below.
+     */
+    deadline: 90,
+    answerAt: 70,
+    completesTool: true,
+  },
+  {
+    scenario: 'a subagent still working after the main agent stopped',
+    prompt:
+      "Call the Agent tool now with subagent_type 'general-purpose' and this exact prompt: 'Run the bash command: echo hello-from-subagent and report what it printed.' Do not do the work yourself.",
+    type: null,
+    status: 'idle',
+    idleDetail: 'agents',
+    kind: null,
+    /** No `Notification` ever fires here, so no row and no toast. */
+    presentedCount: 0,
+    /**
+     * Measured trace: `PreToolUse Agent` and `SubagentStart` ~23s, the main
+     * agent's own `Stop` ~25s, the subagent's own tool events ~25-29s,
+     * `SubagentStop` ~31s. 75s leaves room for the main agent to resume and
+     * finish without brushing against the `idle_prompt` this session would
+     * otherwise eventually get.
+     */
+    deadline: 75,
+    answerAt: null,
+    completesTool: false,
+  },
+];
+
 describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
-  it.each([
-    {
-      scenario: 'a turn that ended with nobody typing',
-      prompt: 'say ok, nothing else',
-      type: 'idle_prompt',
-      /**
-       * Asserted as a literal, not read back out of `NOTIFICATION_TYPE_STATUS`
-       * (the review's third point).
-       *
-       * This file's whole job is to pin the app's beliefs against what the real
-       * binary does, and a test that derives its expectation from the constant
-       * under test can only ever prove the constant equals itself — edit
-       * `idle_prompt` back to `'waiting'` and it would stay green while the bug
-       * it exists to catch came straight back. The literal is the belief; the
-       * cross-check below then asserts the shared constant still agrees with
-       * it, so the constant is pinned rather than consulted.
-       */
-      status: 'idle',
-      kind: 'session.input_needed',
-      /** Long enough for `Stop`, then the idle prompt sixty seconds later. */
-      deadline: 105,
-      /** Nothing to answer — no tool ever runs in this one. */
-      answerAt: null,
-      /** No block to leave, so no `PostToolUse` to expect. */
-      completesTool: false,
-    },
-    {
-      scenario: 'a tool blocked on a human, then answered',
-      prompt:
-        'Use the AskUserQuestion tool right now to ask me whether I prefer tabs or spaces. Do nothing else.',
-      type: 'permission_prompt',
-      status: 'waiting',
-      kind: 'session.blocked',
-      /**
-       * Deliberately short. The answer lands at 45s and `Stop` a few seconds
-       * later, so the `idle_prompt` this session would eventually get is due
-       * around 110s — comfortably outside the run. Stretching this to the other
-       * scenario's 105s would let a second inbox row race the assertions below.
-       */
-      deadline: 65,
-      /**
-       * After the `Notification/permission_prompt` that trails the
-       * `PermissionRequest` by about six seconds, with room to spare: the row
-       * and the badge are asserted for the *blocked* session, so the question
-       * must be seen before it is answered.
-       */
-      answerAt: 45,
-      completesTool: true,
-    },
-  ])(
-    '$scenario: reports $status via $type and raises exactly one notification',
+  it.each(scenarios)(
+    '$scenario: reports $status',
     { timeout: 300_000 },
     async ({
       prompt,
       type: expectedType,
       status: expectedStatus,
+      idleDetail: expectedIdleDetail,
       kind: expectedKind,
+      presentedCount,
       deadline,
       answerAt,
       completesTool,
     }) => {
-      const statuses: SessionStatusEvent[] = [];
+      const statuses: TestStatusEvent[] = [];
       const raised: HiveNotification[] = [];
       const presented: string[] = [];
       let badge = -1;
@@ -161,9 +293,19 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       });
       const notifier = createNotifier({ hub, isForeground: () => false });
 
+      /**
+       * A real tracker, one per run. `receiver.ts`'s own `HOOK_STATUS` is a
+       * per-event fallback only — the honest, id-paired status is what
+       * `hooks/tracker.ts` derives, which is what `sessions/index.ts` publishes
+       * (HIVE-83). Reading `e.status` straight off the receiver here would
+       * report every `PostToolUse` as `working` regardless of what else is
+       * still blocked, which is precisely the bug this file exists to catch.
+       */
+      const statusTracker = createStatusTracker();
+
       // Exactly what `sessions/index.ts` does: publish the status, and tap the
       // same broadcast the notifier observes.
-      const publish = (event: SessionStatusEvent): void => {
+      const publish = (event: TestStatusEvent): void => {
         statuses.push(event);
         notifier.observe(
           CH.sessionStatus,
@@ -174,16 +316,36 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       const receiver = createReceiver({
         knowsSession: (id) => id === 'sess-live',
         onMetrics: () => {},
-        onEvent: (e) =>
+        onEvent: (e) => {
+          const derived = statusTracker.apply({
+            entityId: e.entityId,
+            event: e.event,
+            ...(e.toolUseId === undefined ? {} : { toolUseId: e.toolUseId }),
+            ...(e.toolName === undefined ? {} : { toolName: e.toolName }),
+            ...(e.agentId === undefined ? {} : { agentId: e.agentId }),
+            ...(e.runInBackground === undefined
+              ? {}
+              : { runInBackground: e.runInBackground }),
+            ...(e.notificationType === undefined
+              ? {}
+              : { notificationType: e.notificationType }),
+          });
+
           publish({
             entityId: e.entityId,
-            status: e.status,
+            status: derived.status,
             event: e.event,
             ...(e.notificationType === undefined
               ? {}
               : { notificationType: e.notificationType }),
             ...(e.toolName === undefined ? {} : { toolName: e.toolName }),
-          }),
+            ...(derived.detail === undefined
+              ? {}
+              : { idleDetail: derived.detail }),
+            // Test-only: never forwarded past this point, see `TestStatusEvent`.
+            ...(e.toolUseId === undefined ? {} : { toolUseId: e.toolUseId }),
+          });
+        },
         onTicketIntent: () => undefined,
         onCleared: () => undefined,
       });
@@ -236,59 +398,124 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       );
       console.info('PRESENTED ', JSON.stringify(presented), 'BADGE', badge);
 
-      // The turn ran, and the `Notification` hook is what carries the type in
-      // both scenarios — but not the same status any more (HIVE-81).
-      // `permission_prompt` is a session genuinely blocked on a human, so it is
-      // still `waiting`; `idle_prompt` fires a minute after `Stop` already set
-      // `idle`, with nothing blocked, so it stays `idle` and the inbox row is
-      // what carries the signal instead.
+      // Every scenario types a prompt, so every scenario starts working.
       expect(statuses.map((s) => s.status)).toContain('working');
-      const waited = statuses.findIndex(
-        (s) => s.status === expectedStatus && s.event === 'Notification',
-      );
-      expect(statuses[waited]?.notificationType).toBe(expectedType);
 
-      /*
-        The shared mapping still agrees with what the binary just did. Asserted
-        against the literal above rather than used to derive it, so editing the
-        constant fails here instead of quietly moving the expectation with it.
-      */
-      expect(
-        NOTIFICATION_TYPE_STATUS[
-          expectedType as keyof typeof NOTIFICATION_TYPE_STATUS
-        ],
-      ).toBe(expectedStatus);
-
-      /**
-       * A session **leaves** `waiting`, and what takes it out is `PostToolUse`
-       * (Part 3.4).
-       *
-       * The stuck-amber bug was that nothing lowered a permission block until
-       * the turn ended: approve, watch the agent work for minutes, and the dot
-       * still says "needs input". Only a scenario whose tool actually completes
-       * can prove this, which is why the driver answers the question rather
-       * than killing `claude` with it outstanding.
-       */
-      if (completesTool) {
-        const after = statuses.slice(waited + 1);
-        expect(after.map((s) => s.status)).toContain('working');
-        expect(after.find((s) => s.event === 'PostToolUse')?.status).toBe(
-          'working',
+      if (expectedType !== null) {
+        // The turn ran, and the `Notification` hook is what carries the type
+        // in these scenarios — but not the same status any more (HIVE-81).
+        // `permission_prompt` is a session genuinely blocked on a human, so it
+        // is still `waiting`; `idle_prompt` fires a minute after `Stop`
+        // already set `idle`, with nothing blocked, so it stays `idle` and the
+        // inbox row is what carries the signal instead.
+        const waited = statuses.findIndex(
+          (s) => s.status === expectedStatus && s.event === 'Notification',
         );
-      }
+        expect(statuses[waited]?.notificationType).toBe(expectedType);
 
-      /**
-       * **One** row, whichever route got here.
-       *
-       * The `permission_prompt` case is the one that could have gone wrong:
-       * `PermissionRequest` raises `session.blocked`, and the `Notification`
-       * that follows it six seconds later must move the status and say nothing.
-       * Answering the question afterwards must stay silent too — `PostToolUse`
-       * reports `working`, which is not an event class.
-       */
-      expect(raised.map((n) => n.kind)).toEqual([expectedKind]);
-      expect(presented).toHaveLength(1);
-      expect(badge).toBe(1);
+        /*
+          The shared mapping still agrees with what the binary just did.
+          Asserted against the literal above rather than used to derive it, so
+          editing the constant fails here instead of quietly moving the
+          expectation with it.
+        */
+        expect(NOTIFICATION_TYPE_STATUS[expectedType]).toBe(expectedStatus);
+
+        /**
+         * A session **leaves** `waiting`, and what takes it out is the
+         * `PostToolUse` for the **blocked tool specifically** (Part 3.4).
+         *
+         * The stuck-amber bug was that nothing lowered a permission block
+         * until the turn ended: approve, watch the agent work for minutes,
+         * and the dot still says "needs input". A sibling tool completing in
+         * the same parallel batch must not lower it either — that was the
+         * *replacement* bug Part 3 introduced and the reason this assertion
+         * is id-aware rather than "any `PostToolUse` is `working`": the
+         * `Bash` sibling's own `PostToolUse` lands at ~27s while
+         * `AskUserQuestion` is still outstanding, and the session must still
+         * read `waiting` there.
+         */
+        if (completesTool) {
+          const after = statuses.slice(waited + 1);
+          expect(after.map((s) => s.status)).toContain('working');
+
+          // `PermissionRequest` carries the blocked tool's name; the newest
+          // `PreToolUse` with that name carries the id it was opened under
+          // (`hooks/tracker.ts`'s own `resolve()` does the same walk).
+          const blockedName = statuses.find(
+            (s) => s.event === 'PermissionRequest',
+          )?.toolName;
+          const blockedToolUseId = statuses.find(
+            (s) => s.event === 'PreToolUse' && s.toolName === blockedName,
+          )?.toolUseId;
+          expect(blockedToolUseId).toBeDefined();
+
+          const postToolUseEvents = after.filter(
+            (s) => s.event === 'PostToolUse',
+          );
+          // The blocked tool really did complete — otherwise the loop below
+          // would pass vacuously on a run where nothing ever answered it.
+          expect(
+            postToolUseEvents.some((s) => s.toolUseId === blockedToolUseId),
+          ).toBe(true);
+          for (const post of postToolUseEvents) {
+            expect(post.status).toBe(
+              post.toolUseId === blockedToolUseId ? 'working' : 'waiting',
+            );
+          }
+        }
+
+        /**
+         * **One** row, whichever route got here.
+         *
+         * The `permission_prompt` case is the one that could have gone wrong:
+         * `PermissionRequest` raises `session.blocked`, and the
+         * `Notification` that follows it six seconds later must move the
+         * status and say nothing. A sibling tool completing, and answering
+         * the question afterwards, must both stay silent too — `PostToolUse`
+         * reports a status, which is not an event class.
+         *
+         * The toast is a separate question from the row, and
+         * `presentedCount` is what tells the two `session.blocked` scenarios
+         * (`both`, one toast) apart from `idle_prompt`'s `session.input_needed`
+         * (`inbox` only, zero toasts, HIVE-83's Task 5) — see
+         * `Scenario.presentedCount`.
+         */
+        expect(raised.map((n) => n.kind)).toEqual([expectedKind]);
+        expect(presented).toHaveLength(presentedCount);
+        expect(badge).toBe(1);
+      } else {
+        /**
+         * The subagent scenario (HIVE-83). Nothing here ever blocks on a
+         * human and no `Notification` fires inside the run, so no inbox row
+         * is raised at all — unlike the scenarios above, "silent" is the
+         * whole story, not half of it.
+         */
+        expect(raised).toHaveLength(0);
+        expect(presented).toHaveLength(presentedCount);
+        expect(badge).toBe(-1);
+
+        // The main agent's own `Stop`, while the subagent is still running.
+        const stopIdx = statuses.findIndex((s) => s.event === 'Stop');
+        expect(stopIdx).toBeGreaterThanOrEqual(0);
+        expect(statuses[stopIdx]?.status).toBe(expectedStatus);
+        expect(statuses[stopIdx]?.idleDetail).toBe(expectedIdleDetail);
+
+        /**
+         * `idleDetail` clears once, on the subagent's **own** `SubagentStop`
+         * — not on a phantom one. Claude Code emits `SubagentStop` for
+         * internal helper agents that never announced a `SubagentStart`;
+         * `hooks/tracker.ts` only clears an agent id it saw start, so a
+         * phantom stop leaves `idleDetail` exactly where it was and the first
+         * status with no `idleDetail` after `Stop` is necessarily the real
+         * one.
+         */
+        const cleared = statuses
+          .slice(stopIdx + 1)
+          .find((s) => s.idleDetail === undefined);
+        expect(cleared).toBeDefined();
+        expect(cleared?.event).toBe('SubagentStop');
+      }
     },
   );
 });
