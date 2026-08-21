@@ -24,8 +24,31 @@ const shutdownHooks: (() => void)[] = [];
 
 let windows: { isDestroyed: () => boolean; isFocused: () => boolean }[] = [];
 
+/**
+ * `app`-level window events (HIVE-81 review, finding 4).
+ *
+ * A set per event name, so a test can both fire them and assert that
+ * `resetIpcHandlers` took its listeners away again.
+ */
+const appListeners = new Map<string, Set<() => void>>();
+
+const emitAppEvent = (event: string): void => {
+  for (const listener of appListeners.get(event) ?? []) listener();
+};
+
 vi.mock('electron', () => ({
-  app: { getVersion: () => '0.0.0', on: vi.fn(), getPath: () => '/tmp/hive-test' },
+  app: {
+    getVersion: () => '0.0.0',
+    getPath: () => '/tmp/hive-test',
+    on: (event: string, listener: () => void) => {
+      const existing = appListeners.get(event) ?? new Set<() => void>();
+      existing.add(listener);
+      appListeners.set(event, existing);
+    },
+    removeListener: (event: string, listener: () => void) => {
+      appListeners.get(event)?.delete(listener);
+    },
+  },
   BrowserWindow: {
     fromWebContents: () => null,
     getAllWindows: () => windows,
@@ -151,13 +174,16 @@ const report = (payload: unknown) => {
 beforeEach(() => {
   onHandlers.clear();
   shutdownHooks.length = 0;
+  appListeners.clear();
   windows = [fakeWindow(true)];
   vi.clearAllMocks();
+  vi.useFakeTimers();
   registerIpcHandlers();
 });
 
 afterEach(() => {
   resetIpcHandlers();
+  vi.useRealTimers();
 });
 
 describe('ui:foreground', () => {
@@ -229,6 +255,25 @@ describe('ui:foreground', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  /**
+   * `onForegroundChange` answers a disposer (HIVE-81 review, finding 11).
+   * Before it did, the set was emptied only by the test-only
+   * `resetIpcHandlers` — a subscribe with no way out.
+   */
+  it('stops calling a listener that unsubscribed', async () => {
+    const { onForegroundChange } = await import('../../../../electron/main/ipc');
+    const listener = vi.fn();
+    const unsubscribe = onForegroundChange(listener);
+
+    report({ terminalId: 'term-1' });
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    report({ terminalId: 'term-2' });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves the recorded id unchanged on a malformed payload, and fires no listener', async () => {
     const { onForegroundChange } = await import('../../../../electron/main/ipc');
     report({ terminalId: 'term-1' });
@@ -240,6 +285,127 @@ describe('ui:foreground', () => {
     report({ wrong: 'key' });
 
     expect(isForeground('term-1')).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Window focus, the half the renderer cannot publish (HIVE-81 review, finding 4).
+ *
+ * These were wired as `focus`/`blur` on the **main window only**, while
+ * `windowFocused()` counts every window — a mismatch with two opposite failure
+ * modes, and the gate has to be immune to both.
+ */
+describe('window focus drives the re-arm', () => {
+  const main = fakeWindow(true);
+  const about = fakeWindow(false);
+
+  /** Main focused, About open behind it, `term-1` on the stage. */
+  const openWithAbout = (listener: () => void) => {
+    windows = [main, about];
+    report({ terminalId: 'term-1' });
+    onForegroundChange(listener);
+  };
+
+  let onForegroundChange: (listener: () => void) => unknown;
+
+  beforeEach(async () => {
+    ({ onForegroundChange } = await import('../../../../electron/main/ipc'));
+  });
+
+  it('subscribes at the app level, so every window is observed', () => {
+    expect(appListeners.get('browser-window-blur')?.size).toBe(1);
+    expect(appListeners.get('browser-window-focus')?.size).toBe(1);
+  });
+
+  /**
+   * The missed promotion. Main focused with a gated pending row → the user
+   * opens About (main blurs, About focuses: still foreground, correctly
+   * nothing promoted) → the user switches to another application, and it is
+   * **About** that blurs. With the listener on the main window only, nothing
+   * fired: the still-blocked session kept its already-read row, with no
+   * promotion, no toast and no badge, for as long as the user was away. That is
+   * precisely the "suppression must not lose a real notification" failure the
+   * gate exists to prevent.
+   */
+  it('fires when the last focused window is the About panel', () => {
+    const listener = vi.fn();
+    openWithAbout(listener);
+
+    // Open About: main blurs, About takes focus.
+    windows = [fakeWindow(false), fakeWindow(true)];
+    emitAppEvent('browser-window-blur');
+    emitAppEvent('browser-window-focus');
+    vi.runAllTimers();
+    listener.mockClear();
+
+    // Switch to another application. Only About had focus to lose.
+    windows = [fakeWindow(false), fakeWindow(false)];
+    emitAppEvent('browser-window-blur');
+    vi.runAllTimers();
+
+    expect(listener).toHaveBeenCalled();
+    expect(isForeground('term-1')).toBe(false);
+  });
+
+  /**
+   * The spurious promotion, which is the hazard the fix above walks into if it
+   * is naive. On macOS `blur` on the main window fires **before** `focus` on
+   * About, and in that gap no window of ours is focused — so a re-evaluation
+   * run synchronously off the blur would promote a gated row and toast about a
+   * session the user can see right behind the panel, contradicting
+   * `windowFocused`'s own argument for counting About as foreground.
+   *
+   * The re-evaluation is deferred by a tick, so the focus half has landed by
+   * the time the predicate is read.
+   */
+  it('does not promote in the gap between one window blurring and the next focusing', () => {
+    const seen: boolean[] = [];
+    openWithAbout(() => seen.push(isForeground('term-1')));
+
+    windows = [fakeWindow(false), fakeWindow(false)];
+    emitAppEvent('browser-window-blur');
+    // ...and only then does About take it.
+    windows = [fakeWindow(false), fakeWindow(true)];
+    emitAppEvent('browser-window-focus');
+    vi.runAllTimers();
+
+    // One evaluation, and it read the settled state: still foreground.
+    expect(seen).toEqual([true]);
+  });
+
+  it('coalesces a burst of focus events into one evaluation', () => {
+    const listener = vi.fn();
+    openWithAbout(listener);
+
+    emitAppEvent('browser-window-blur');
+    emitAppEvent('browser-window-focus');
+    emitAppEvent('browser-window-blur');
+    emitAppEvent('browser-window-focus');
+    vi.runAllTimers();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops its app listeners on reset, so a re-registration does not double them', () => {
+    resetIpcHandlers();
+
+    expect(appListeners.get('browser-window-blur')?.size).toBe(0);
+    expect(appListeners.get('browser-window-focus')?.size).toBe(0);
+
+    registerIpcHandlers();
+    expect(appListeners.get('browser-window-blur')?.size).toBe(1);
+  });
+
+  /** A pending tick must not outlive the handlers it would call into. */
+  it('cancels a deferred evaluation on reset', () => {
+    const listener = vi.fn();
+    openWithAbout(listener);
+
+    emitAppEvent('browser-window-blur');
+    resetIpcHandlers();
+    vi.runAllTimers();
+
     expect(listener).not.toHaveBeenCalled();
   });
 });

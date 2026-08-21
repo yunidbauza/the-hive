@@ -24,7 +24,14 @@ const handlers = new Map<
 const shutdownHooks: (() => void)[] = [];
 
 vi.mock('electron', () => ({
-  app: { getVersion: () => '0.0.0', on: vi.fn(), getPath: () => '/tmp/hive-test' },
+  app: {
+    getVersion: () => '0.0.0',
+    on: vi.fn(),
+    // HIVE-81 review: `registerIpcHandlers` now wires app-level window focus
+    // events, and `resetIpcHandlers` takes them off again.
+    removeListener: vi.fn(),
+    getPath: () => '/tmp/hive-test',
+  },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
   /**

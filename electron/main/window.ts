@@ -11,7 +11,6 @@ import {
 
 import { devIconPath } from './app-icon';
 import { isSafeExternalUrl } from './external-links';
-import { notifyForegroundChange } from './ipc';
 import { createSplashWindow, splashEnabled, type SplashController } from './splash';
 import {
   debounce,
@@ -210,13 +209,16 @@ export function createWindow({
   loadRenderer(win);
 
   /*
-    Focus is half of the foreground gate (HIVE-81), and it is the half that
-    cannot be published from the renderer. Both events, not just blur: the
-    window regaining focus while a session is still blocked has to re-evaluate
-    too, or a notification promoted on blur would stay promoted.
+    No focus wiring here (HIVE-81 review).
+
+    This used to be `win.on('focus'|'blur', notifyForegroundChange)`, which
+    watched the main window while the predicate it feeds counts *every* window
+    of ours. The About panel is the case that breaks: blur it by switching
+    applications and nothing fired, so a still-blocked session kept its silent,
+    already-read row for as long as the user was away. It lives on `app`'s own
+    `browser-window-blur`/`browser-window-focus` now — one wiring, every window
+    — in `ipc/index.ts`, where the state it re-evaluates already lives.
   */
-  win.on('focus', notifyForegroundChange);
-  win.on('blur', notifyForegroundChange);
 
   return win;
 }

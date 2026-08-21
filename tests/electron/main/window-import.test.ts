@@ -9,22 +9,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * already builds for its own narrower graph, and duplicating that here would
  * not serve this file's one job.
  *
- * The one thing this file exists to prove: `window.ts` now imports
- * `notifyForegroundChange` from `./ipc` (HIVE-81), which makes importing
- * `window.ts` also evaluate the whole of `electron/main/ipc/index.ts` — a much
- * larger module graph than `window.ts` pulled in before. No *existing* test
- * loads the real `window.ts`: `about.test.ts` replaces it wholesale with
- * `vi.mock('../../../electron/main/window', ...)` before it is ever imported,
- * and `lifecycle.test.ts` never imports it at all — it injects
- * `createWindow: vi.fn()`. So neither exercises this module or the new edge.
+ * ## Why it exists, and what changed under it
  *
- * This test does, for real: nothing under `electron/main/`, `electron/shared/`
- * or their transitive dependents is mocked here except `electron` itself (and
- * the same three leaves — `pty-host`, `shutdown`, `config/index` —
- * `config-channels.test.ts` and `foreground.test.ts` already mock to load the
- * real `ipc/index.ts`). If either module's *module scope* — as opposed to a
- * function body inside it — reached for an Electron API, the spies below would
- * record a call before this test's own assertion ever runs.
+ * It was written when `window.ts` imported `notifyForegroundChange` from
+ * `./ipc` to wire the main window's own `focus`/`blur`, which made importing
+ * `window.ts` also evaluate the whole of `electron/main/ipc/index.ts`. **That
+ * edge is gone**: the focus wiring moved to `app.on('browser-window-blur' |
+ * 'browser-window-focus')` inside `registerIpcHandlers`, because watching one
+ * window while the predicate counts every window lost a real notification
+ * whenever the About panel was the last thing focused.
+ *
+ * The file stays, because the property it asserts was never about that one
+ * edge. No *other* test loads the real `window.ts`: `about.test.ts` replaces
+ * it wholesale with `vi.mock('../../../electron/main/window', ...)` before it
+ * is ever imported, and `lifecycle.test.ts` never imports it at all — it
+ * injects `createWindow: vi.fn()`. So this is the only place that would notice
+ * `window.ts`, or anything in its graph, reaching for an Electron API at
+ * *module scope* rather than inside a function `createWindow()` calls. The
+ * spies below would record it before the assertion ever runs.
  */
 
 const calls: string[] = [];
@@ -74,48 +76,13 @@ vi.mock('electron', () => ({
   nativeImage: { createFromPath: spy('nativeImage.createFromPath') },
 }));
 
-vi.mock('../../../electron/main/pty-host', () => ({
-  registerPtyHost: () => ({
-    spawn: vi.fn(),
-    write: vi.fn(),
-    resize: vi.fn(),
-    kill: vi.fn(),
-    pause: vi.fn(),
-    resume: vi.fn(),
-    onData: () => () => {},
-    onExit: () => () => {},
-    onSpawned: () => () => {},
-    onError: () => () => {},
-    onSessionLost: () => () => {},
-    shutdown: async () => {},
-    isRunning: () => true,
-    isBlocked: () => false,
-    sessionIds: () => [],
-  }),
-}));
-
-vi.mock('../../../electron/main/shutdown', () => ({
-  onShutdown: () => () => {},
-}));
-
-vi.mock('../../../electron/main/config/index', () => ({
-  getConfig: vi.fn(() => ({
-    configPath: '/tmp/config.json',
-    templateWritten: false,
-    shell: '/bin/zsh',
-    claudeCommand: 'claude',
-    projects: [],
-    errors: [],
-  })),
-  reloadConfig: vi.fn(),
-  loadConfig: vi.fn(),
-  addProject: vi.fn(),
-  removeProject: vi.fn(),
-  renameProject: vi.fn(),
-  repointProject: vi.fn(),
-  reorderProjects: vi.fn(),
-  configPath: vi.fn(() => '/tmp/config.json'),
-}));
+/*
+  Only `electron` is mocked. The three leaves this file used to stub as well —
+  `pty-host`, `shutdown` and `config/index` — were needed to load
+  `ipc/index.ts`, which `window.ts` no longer pulls in (see the note above).
+  Nothing under `electron/main/` or `electron/shared/` is replaced here, which
+  is what makes the assertion below a statement about the real graph.
+*/
 
 beforeEach(() => {
   calls.length = 0;
@@ -123,14 +90,13 @@ beforeEach(() => {
 });
 
 describe('electron/main/window.ts — import-time safety', () => {
-  it('evaluates the module, and the `./ipc` edge it now carries, without touching an Electron API', async () => {
+  it('evaluates the module and its whole graph without touching an Electron API', async () => {
     await import('../../../electron/main/window');
 
     // Nothing above is called at module scope in `window.ts`, `app-icon.ts`,
-    // `external-links.ts`, `splash.ts`, `aux-windows.ts`, `window-state.ts`,
-    // or anywhere in `ipc/index.ts`'s own graph — every one of them only
-    // reaches for these behind a function that `createWindow()` or
-    // `registerIpcHandlers()` would call, and neither runs here.
+    // `external-links.ts`, `splash.ts`, `aux-windows.ts` or `window-state.ts` —
+    // every one of them only reaches for these behind a function that
+    // `createWindow()` would call, and it does not run here.
     expect(calls).toEqual([]);
   });
 });
