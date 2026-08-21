@@ -91,6 +91,19 @@ export function createPoller({ intervalMs }: PollerOptions) {
           document.removeEventListener('visibilitychange', onVisibilityChange);
         }
         missed = false;
+        /*
+          Dropped alongside the timer and the missed flag, so the cleanup is
+          exhaustive rather than nearly so. Holding it costs nothing today —
+          nothing can call `sweep` with no timer and no listener — but it keeps
+          the last unmounted component's closure alive for as long as the
+          module does, and "the poller is idle" ought to mean it is holding
+          nothing.
+
+          `inFlight` is deliberately *not* cleared: its own `finally` does that,
+          and nulling the handle here would let a remount start a second read
+          alongside the one still out.
+        */
+        refresh = null;
       };
     }, [action]);
   };
