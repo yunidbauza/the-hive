@@ -68,12 +68,30 @@ interface Session {
   postToolUseSincePermissionRequest: boolean;
 }
 
+/**
+ * How much bookkeeping a session is holding (HIVE-86).
+ *
+ * None of this is visible through `derive()`, and that is the point: `resolve()`
+ * prefers the newest match, so a stale entry loses every race it could enter and
+ * no status is ever wrong because of one. The defect a leak causes is the growth
+ * itself — unbounded memory, and an `O(n)` walk per `PermissionRequest` — which
+ * means a status assertion could never catch it. This is the seam that can.
+ */
+export interface HeldCounts {
+  outstanding: number;
+  blocked: number;
+  agents: number;
+  bgShells: number;
+}
+
 export interface StatusTracker {
   apply(input: TrackerInput): DerivedState;
   /** `/clear` and `SessionStart`: same pty, new conversation. */
   reset(entityId: string): void;
   /** The process is gone; drop the record entirely. */
   forget(entityId: string): void;
+  /** What this session is still holding. See `HeldCounts`. */
+  held(entityId: string): HeldCounts;
 }
 
 function empty(): Session {
@@ -107,19 +125,24 @@ function derive(s: Session): DerivedState {
  * Resolve a `PermissionRequest` to the tool it is about.
  *
  * The matching `PreToolUse` fires roughly sixty milliseconds earlier and is
- * therefore the newest outstanding entry with this name — so the map is walked
- * backwards. `agentId` participates because a subagent's block and the main
- * agent's must not resolve to each other.
+ * therefore the newest outstanding entry with this name. `agentId` participates
+ * because a subagent's block and the main agent's must not resolve to each
+ * other.
+ *
+ * The walk is forward and keeps the *last* match rather than reversing a copy
+ * of the map (HIVE-86). Insertion order makes those identical — the last match
+ * in insertion order is the newest — and this one allocates nothing, where
+ * `[...s.outstanding.entries()]` built a fresh array of the whole map on every
+ * `PermissionRequest`.
  */
 function resolve(s: Session, toolName?: string, agentId?: string): string {
   if (toolName === undefined) return UNPAIRED;
-  const entries = [...s.outstanding.entries()];
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const [id, held] = entries[i];
-    if (held.toolName === toolName && held.agentId === agentId && !s.blocked.has(id))
-      return id;
+  let newest = UNPAIRED;
+  for (const [id, entry] of s.outstanding) {
+    if (entry.toolName === toolName && entry.agentId === agentId && !s.blocked.has(id))
+      newest = id;
   }
-  return UNPAIRED;
+  return newest;
 }
 
 export function createStatusTracker(): StatusTracker {
@@ -148,8 +171,35 @@ export function createStatusTracker(): StatusTracker {
            * emits no hook when a backgrounded process dies, and re-invokes the
            * agent when it collects the result. Clearing here means the state is
            * never sticky, at the cost of briefly under-reporting a second job.
+           *
+           * ## Why `outstanding` is not cleared wholesale here (HIVE-86)
+           *
+           * The internal re-invoke that delivers a subagent's result is itself
+           * a `UserPromptSubmit`, and it is **not distinguishable** from a
+           * typed one. Measured against Claude Code 2.1.239, the two bodies
+           * carry identical key sets — `session_id, transcript_path, cwd,
+           * prompt_id, permission_mode, hook_event_name, prompt`. No `source`,
+           * no `agent_id`, no flag. `prompt_id` differs, but it is a fresh uuid
+           * on both, so it says "a new prompt", not "who sent it". The only
+           * separator is the prompt *body* being a `<task-notification>`
+           * envelope — sniffing an undocumented internal format, which is worse
+           * than the leak it would fix.
+           *
+           * So a blanket clear would discard a subagent's in-flight tools
+           * mid-flight and reintroduce the defect HIVE-83 removed: a tool
+           * completing against no record.
+           *
+           * What *is* safe is the intersection with `blocked`. An entry that is
+           * both outstanding and blocked is a tool waiting on a human; had it
+           * been answered, its `PostToolUse` would have removed it from both.
+           * The one path that strands it is Escape, which — measured, same
+           * probe — emits no event whatsoever, so nothing else can ever clear
+           * it. And dropping it here is not a new hazard: `blocked.clear()` on
+           * the next line already discards exactly these ids today. This only
+           * stops `outstanding` disagreeing with `blocked` about them.
            */
           s.turnActive = true;
+          for (const id of s.blocked) s.outstanding.delete(id);
           s.blocked.clear();
           s.blockedNames.clear();
           s.bgShells.clear();
@@ -208,6 +258,33 @@ export function createStatusTracker(): StatusTracker {
               s.blocked.delete(matches[0]);
               s.blockedNames.delete(matches[0]);
             }
+
+            /**
+             * And the same recovery for `outstanding`, which this branch never
+             * performed (HIVE-86).
+             *
+             * HIVE-83 reasoned that truncation cancels out: a large
+             * `tool_input` strips `tool_use_id` from `PreToolUse` and from its
+             * `PostToolUse` alike, so neither side records anything. That holds
+             * for a large *input*. It does not hold for a small input with a
+             * large `tool_response` — a `Read` of a big file — where the
+             * `PreToolUse` keeps its id and only the `PostToolUse` loses it.
+             * The entry then had nothing left to clear it.
+             *
+             * Same safety rule as the block above, for the same reason: exactly
+             * one candidate, or leave it alone. `agentId` must match too, so a
+             * main-agent completion cannot retire a subagent's identically
+             * named tool.
+             */
+            let onlyMatch: string | undefined;
+            let matchCount = 0;
+            for (const [id, entry] of s.outstanding) {
+              if (entry.toolName === input.toolName && entry.agentId === input.agentId) {
+                matchCount += 1;
+                onlyMatch = id;
+              }
+            }
+            if (matchCount === 1 && onlyMatch !== undefined) s.outstanding.delete(onlyMatch);
           }
           return derive(s);
         }
@@ -273,6 +350,18 @@ export function createStatusTracker(): StatusTracker {
 
     forget(entityId) {
       sessions.delete(entityId);
+    },
+
+    held(entityId) {
+      const s = sessions.get(entityId);
+      if (s === undefined)
+        return { outstanding: 0, blocked: 0, agents: 0, bgShells: 0 };
+      return {
+        outstanding: s.outstanding.size,
+        blocked: s.blocked.size,
+        agents: s.agents.size,
+        bgShells: s.bgShells.size,
+      };
     },
   };
 }

@@ -466,9 +466,12 @@ tool that caused them by `tool_use_id`, and clears exactly that pairing when its
 works because `PreToolUse` records `tool_use_id` ↔ `tool_name` (and `agent_id`,
 so a subagent's block cannot resolve against the main agent's) as each tool
 starts; `PermissionRequest` then resolves to an id by walking the outstanding
-tools backward for a `tool_name` match, newest first — sound because its
+tools for a `tool_name` match and keeping the newest — sound because its
 matching `PreToolUse` fires roughly sixty milliseconds earlier, so it is always
-the most recent entry with that name. A block that cannot be resolved this way
+the most recent entry with that name. The walk is a single forward pass over the
+map, keeping the last match rather than reversing a copy of it: insertion order
+makes those identical, and the copy was an allocation of the whole map on every
+permission request (HIVE-86). A block that cannot be resolved this way
 (`Elicitation`, or a `PermissionRequest` with no name match) is held under a
 sentinel, `UNPAIRED`, rather than dropped — losing a block would read as the
 session no longer needing the user, which is worse than holding one open a
@@ -486,6 +489,27 @@ Measured against Claude Code **2.1.238**, real pty, outside the app:
 - Claude Code emits phantom `SubagentStop` events for its own internal helper
   agents, with an empty `agent_type` and no `SubagentStart` that preceded them —
   which is why the tracker only ever removes an agent it saw announced.
+
+Three more, measured against **2.1.239** for HIVE-86, which is about what the
+tracker never *stops* holding:
+
+- **Escaping a permission prompt emits nothing at all.** No `PostToolUse`, no
+  `PermissionDenied`, not even `Stop`, though the TUI cancels the prompt and
+  ends the turn — fifty seconds of silence after the keypress. So a stranded
+  `PreToolUse` entry can only be cleared at the next prompt, never by an event
+  of its own. That is why `UserPromptSubmit` drops the `outstanding` entries
+  that are also `blocked`, and only those.
+- **The internal re-invoke is not distinguishable from a typed prompt.** The
+  `UserPromptSubmit` that delivers a subagent's result and the one a human types
+  carry identical key sets — `session_id`, `transcript_path`, `cwd`,
+  `prompt_id`, `permission_mode`, `hook_event_name`, `prompt`. No `source`, no
+  `agent_id`, no flag; `prompt_id` differs but is a fresh uuid on both. The only
+  separator is the prompt body being a `<task-notification>` envelope, which is
+  an undocumented internal format and not something to key behaviour off. This
+  is why `outstanding` is never cleared wholesale there.
+- **A real `SubagentStart` was always followed by its `SubagentStop`**, across
+  three traces including two that Escaped mid-subagent. The unmatched-start leak
+  is unreproduced; only the phantom *stops* above are real.
 
 All of this is measured rather than assumed, and `pnpm test:hooks` is what
 measures it: a real `claude` in a real pty, driven through the app's own
