@@ -67,6 +67,14 @@ export interface SessionManager extends SessionOperations {
 
 interface Session {
   pty: IPty;
+  /**
+   * Its own id, so teardown can address the session it is tearing down.
+   *
+   * The registry is keyed by id, but `teardown` receives the values — and a
+   * survivor report that cannot name a session is a log line rather than
+   * something the app can route to a tab.
+   */
+  sessionId: string;
   pid: number;
   /**
    * Holds a partial multi-byte sequence until the next chunk completes it.
@@ -95,6 +103,18 @@ interface Session {
  * without it, just quicker to SIGKILL something that was already leaving.
  */
 const SWEEP_SETTLE_MS = 250;
+
+/**
+ * How long the kernel gets to reap a SIGKILLed process before it counts as a
+ * survivor.
+ *
+ * SIGKILL is not synchronous — the process is torn down by the kernel, and a
+ * `kill -0` immediately afterwards can still find it. Reporting without this
+ * pause would cry leak on every ordinary teardown, and a warning that fires
+ * when nothing is wrong is one nobody reads. Short, because it is spent on the
+ * quit path inside the same budget as everything else here.
+ */
+const SWEEP_VERIFY_MS = 100;
 
 /**
  * The wall clock the whole teardown has to finish inside.
@@ -248,28 +268,43 @@ export function createSessionManager(
   }
 
   /**
-   * Kill anything from the snapshot that is still running.
+   * Kill anything from the snapshot that is still running, and report whatever
+   * outlived the attempt.
    *
    * Unconditional, and that is the point. The tempting shortcut — stop once
    * the shells have exited — is exactly the leak HIVE-72 describes: a shell
    * takes SIGHUP and goes promptly while a descendant that ignores hangup
    * carries on, invisible, holding the tokens.
+   *
+   * ## Why it verifies rather than assuming
+   *
+   * SIGKILL is the last thing this can do, so for a long time there was nothing
+   * to say after sending it and the function simply returned. That made the one
+   * failure mode it exists to prevent — a descendant that is *still there* —
+   * the only outcome nobody is told about: uninterruptible sleep in a D state,
+   * a pid that changed owner between the snapshot and the signal, a `ps` whose
+   * output was truncated. The app went on believing the tab was closed.
+   *
+   * A leak that reports itself is a bug someone can act on; a silent one is the
+   * user noticing stray processes eating CPU days later and having no way to
+   * tell whose they are. Returning the survivors is what lets {@link teardown}
+   * say so.
    */
   async function sweep(
     snapshot: readonly Descendant[],
     deadline: number,
-  ): Promise<void> {
-    if (snapshot.length === 0) return;
+  ): Promise<readonly Descendant[]> {
+    if (snapshot.length === 0) return [];
 
     // Nothing to be courteous to. Checking before sleeping keeps the common
     // case — every job took the hangup and left — off the quit path entirely.
-    if (!snapshot.some(({ pid }) => control.isAlive(pid))) return;
+    if (!snapshot.some(({ pid }) => control.isAlive(pid))) return [];
 
     const settle = Math.min(SWEEP_SETTLE_MS, remaining(deadline));
     if (settle > 0) await delay(settle);
 
     const survivors = snapshot.filter(({ pid }) => control.isAlive(pid));
-    if (survivors.length === 0) return;
+    if (survivors.length === 0) return [];
 
     // The group first — it reaches children the job spawned after the snapshot
     // was taken, which by definition are not in it.
@@ -280,6 +315,11 @@ export function createSessionManager(
     for (const { pid } of survivors) {
       if (control.isAlive(pid)) signalPid(pid, 'SIGKILL');
     }
+
+    const verify = Math.min(SWEEP_VERIFY_MS, remaining(deadline));
+    if (verify > 0) await delay(verify);
+
+    return survivors.filter(({ pid }) => control.isAlive(pid));
   }
 
   /**
@@ -342,7 +382,35 @@ export function createSessionManager(
     for (const session of targets) signalGroup(session.pid, sig);
 
     await waitForExit(targets, deadline);
-    await sweep(snapshot, deadline);
+
+    /**
+     * Say so when the sweep did not finish the job.
+     *
+     * Reported on every session in this teardown rather than guessed at: the
+     * snapshot is a union of their trees, and attributing a surviving pid to
+     * one of several shells would be a claim the `ps` walk cannot support once
+     * the shells are gone. Naming the pids is what makes the report actionable
+     * — the user can look them up, and so can a bug report.
+     *
+     * This is the *only* signal that HIVE-72's guarantee did not hold. Without
+     * it the app reports the tab as closed and the stray tree keeps running,
+     * which is how a leak becomes "my machine is slow" a week later instead of
+     * a bug with a pid attached.
+     */
+    const survivors = await sweep(snapshot, deadline);
+    if (survivors.length === 0) return;
+
+    const pids = survivors.map(({ pid }) => pid).join(', ');
+    for (const session of targets) {
+      session.emit({
+        type: 'error',
+        sessionId: session.sessionId,
+        message:
+          `session teardown could not kill ${survivors.length} descendant ` +
+          `process(es): ${pids}. They outlived SIGKILL and are still running — ` +
+          'close them by hand if they are consuming resources.',
+      });
+    }
   }
 
   return {
@@ -407,6 +475,7 @@ export function createSessionManager(
 
       const session: Session = {
         pty,
+        sessionId,
         pid: pty.pid,
         decoder: new StringDecoder('utf8'),
         buffer: new Scrollback(scrollbackBytes),

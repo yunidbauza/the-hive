@@ -540,7 +540,8 @@ describe('descendant teardown', () => {
     const pending = manager.killAll();
     await vi.advanceTimersByTimeAsync(0);
     pty().emitExit(0);
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(250); // the settle window
+    await vi.advanceTimersByTimeAsync(100); // the post-SIGKILL verify window
     await pending;
 
     // The group first: it reaches whatever the job spawned after the snapshot
@@ -560,10 +561,71 @@ describe('descendant teardown', () => {
     // The shell takes SIGHUP and goes at once — the ordinary case, and exactly
     // where stopping here would leave a hangup-proof descendant running.
     pty().emitExit(0);
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(250); // the settle window
+    await vi.advanceTimersByTimeAsync(100); // the post-SIGKILL verify window
     await pending;
 
     expect(signals).toContain('pid 5150 SIGKILL');
+  });
+
+  it('reports a descendant that outlived SIGKILL, naming its pid', async () => {
+    /**
+     * The one outcome that used to be silent.
+     *
+     * SIGKILL is the last thing teardown can do, so for a long time nothing was
+     * said after sending it — which made "the descendant is still running" the
+     * only result the app never mentioned. That is how a leak becomes "my
+     * machine is slow" days later rather than a bug with a pid attached.
+     */
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([JOB]);
+    control.isAlive.mockReturnValue(true); // never dies, not even to SIGKILL
+    manager.spawn(SPAWN, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(0);
+    pty().emitExit(0);
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(100);
+    await pending;
+
+    const reported = sent.filter((message) => message.type === 'error');
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({
+      type: 'error',
+      sessionId: SPAWN.sessionId,
+    });
+    // The pid is the actionable part — without it the user cannot look it up.
+    expect(reported[0]!.message).toContain('5150');
+  });
+
+  it('says nothing when the sweep actually worked', async () => {
+    /**
+     * The guard against a warning nobody reads.
+     *
+     * A report that fires on ordinary teardowns trains the user to ignore it,
+     * which costs more than never having reported anything. The descendant is
+     * alive through the settle window and gone once SIGKILL lands — the normal
+     * path for a hangup-proof job.
+     */
+    vi.useFakeTimers();
+    control.descendants.mockResolvedValue([JOB]);
+    let killed = false;
+    control.isAlive.mockImplementation(() => !killed);
+    control.signalPid.mockImplementation(() => {
+      killed = true;
+    });
+    manager.spawn(SPAWN, emit);
+
+    const pending = manager.killAll();
+    await vi.advanceTimersByTimeAsync(0);
+    pty().emitExit(0);
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(100);
+    await pending;
+
+    expect(sent.filter((message) => message.type === 'error')).toEqual([]);
   });
 
   it('leaves a descendant that already died alone', async () => {
@@ -637,7 +699,8 @@ describe('descendant teardown', () => {
     pty().emitExit(0);
 
     const quit = manager.killAll();
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(250); // the settle window
+    await vi.advanceTimersByTimeAsync(100); // the post-SIGKILL verify window
     await quit;
 
     expect(signals).toContain('pid 5150 SIGKILL');

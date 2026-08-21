@@ -203,9 +203,22 @@ SIGKILLs whatever the snapshot says is still alive. `kill` (one tab) and
 
 The `descendants` conformance group measures this rather than asserting it from
 the source, using a job started under `set -m` so it lands in a **process group
-of its own** — the shape a group kill structurally cannot reach. It is
-mutation-verified: with `sweep` stubbed out, all three assertions fail and five
-of five escaped children outlive their sessions.
+of its own** — the shape a group kill structurally cannot reach. It covers both
+endings (`kill` and `killAll`) and a leaf two levels down, each level in its own
+group so the depth case cannot be satisfied by a group kill of the middle node.
+It is mutation-verified twice: stubbing `sweep` fails it with five of five
+escaped children outliving their sessions, and making `walkDescendants` return
+only first-generation children fails the depth property alone.
+
+**A sweep that does not work says so.** SIGKILL is the last thing teardown can
+do, so there was nothing to report after sending it — which made "the descendant
+is still running" the one outcome nobody was told about. `sweep` now waits a
+short verify window and returns what outlived the signal, and `teardown` emits an
+`error` on each session in the batch naming the surviving pids. That is the only
+signal HIVE-72's guarantee did not hold; without it a leak arrives as "my machine
+is slow" a week later instead of as a bug with a pid attached. The report is
+deliberately quiet on the happy path — a warning that fires on ordinary teardowns
+is one nobody reads, and there is a test pinning that.
 
 **What the app does not own, and cannot.** Claude Code can run a detached
 `claude daemon run` (reparented to pid 1) that keeps a pool of pre-warmed

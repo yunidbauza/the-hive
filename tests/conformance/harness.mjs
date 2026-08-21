@@ -214,7 +214,26 @@ export async function startEscapedGrandchild(session, scratch, name) {
   );
 
   await waitFor(() => isAlive(pid), { message: `${name} (${pid}) to be running` });
-  return { pid, pgid: pgidOf(pid) };
+
+  const pgid = pgidOf(pid);
+
+  /**
+   * An unreadable pgid fails here rather than travelling as `null`.
+   *
+   * The callers' guard is `assert.notEqual(child.pgid, shellPgid)`, and
+   * `null !== 8463` passes — so a `ps` that failed, or a child that died before
+   * it could be read, would silently satisfy the one assertion that exists to
+   * prove this helper did its job. A guard that cannot fail is worse than no
+   * guard, because it reads like one.
+   */
+  assert.equal(
+    typeof pgid,
+    'number',
+    `could not read the process group of ${name} (pid ${pid}) — without it the ` +
+      'escape guard in the calling test would pass vacuously',
+  );
+
+  return { pid, pgid };
 }
 
 /**

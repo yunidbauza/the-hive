@@ -37,12 +37,14 @@ import {
  * `process-tree.ts` reaches them, and until now nothing failed if it stopped
  * reaching them.
  *
- * ## The per-tab path, not just quit
+ * ## Both endings, not just one
  *
- * These drive `manager.kill(sessionId)` — closing one tab — rather than
- * `killAll`. A leak on quit is bounded by the app exiting; a leak on *tab
- * close* accumulates all day, one stray tree per session the user opened and
- * closed, which is exactly the reported symptom.
+ * The per-tab `kill` path is covered first and in most detail, because a leak
+ * on quit is bounded by the app exiting while a leak on *tab close* accumulates
+ * all day — one stray tree per session the user opened and closed, which is the
+ * reported symptom. But `killAll` gets an escaped descendant too: it shares
+ * `teardown` with `kill` today, and a group that only ever exercised one caller
+ * would let a divergence through while claiming to cover both.
  */
 describe('descendants', () => {
   it('a job that escaped the process group is still swept on kill', async (context) => {
@@ -57,7 +59,8 @@ describe('descendants', () => {
      * If the shell decided it was non-interactive, `&` would have left the job
      * in the shell's group and the kill below would succeed for a reason that
      * has nothing to do with the sweep — a green test asserting nothing. This
-     * is the guard against that.
+     * is the guard against that. (`startEscapedGrandchild` has already refused
+     * to hand back a non-numeric pgid, so this comparison cannot pass vacuously.)
      */
     assert.notEqual(
       child.pgid,
@@ -126,17 +129,73 @@ describe('descendants', () => {
     );
   });
 
+  it('killAll sweeps an escaped descendant too', async (context) => {
+    /**
+     * The quit path, with the shape `lifecycle`'s version cannot produce.
+     *
+     * `lifecycle › killAll leaves no descendant of any session` uses
+     * `startGrandchild` (`set +m`), so its children sit in the shell's own
+     * group and the group kill alone satisfies it. Without this, a regression
+     * that broke the sweep *only* on the `killAll` path would go uncaught while
+     * the docs claimed both endings were covered.
+     */
+    const sessions = [];
+    const children = [];
+    for (let i = 0; i < 3; i += 1) {
+      const session = await context.ready(context.open());
+      const child = await startEscapedGrandchild(
+        session,
+        context.scratch,
+        `quit-escaped-${i}`,
+      );
+      assert.notEqual(
+        child.pgid,
+        pgidOf(session.pid),
+        `session ${i}'s job did not escape its shell's process group`,
+      );
+      sessions.push(session);
+      children.push(child);
+    }
+
+    await context.manager.killAll();
+
+    for (const child of children) {
+      await waitFor(() => !isAlive(child.pid), {
+        timeout: 10_000,
+        message: `escaped descendant pid ${child.pid} to be gone after killAll`,
+      });
+    }
+  });
+
   it('a descendant two levels below the escaped job is swept', async (context) => {
     /**
      * The real tree has depth, and depth is where a sweep gets it wrong.
      *
-     * `claude` → `bun run …` → `bun server.ts` is three levels under the shell,
-     * and the middle one exits on its own while the leaf keeps running. A walk
-     * that stops at the first generation, or that drops a node whose parent has
-     * already been reparented, leaves the leaf behind — holding memory and
-     * whatever single-consumer resource it claimed, with nothing pointing at it.
+     * `claude` → `bun run …` → `bun server.ts` is two levels under the shell,
+     * and each level can sit in a process group of its own. A walk that stops
+     * at the first generation finds the middle node, group-kills *its* group,
+     * and leaves the leaf behind — still running, holding memory and whatever
+     * single-consumer resource it claimed, with nothing pointing at it.
+     *
+     * ## Why `set -m` appears twice
+     *
+     * Once in the line typed at the pty, which puts the **script** in its own
+     * group, and again *inside* the script, which puts the **leaf** in a third.
+     * The inner one is the whole test: a script runs non-interactively, so job
+     * control is off by default and the leaf would otherwise inherit the
+     * script's group — where the sweep's group-kill of the middle node reaches
+     * it for free, and the assertion passes against a walk that never recursed.
+     * That is exactly what the first version of this test did, and it is why
+     * the two pgids are asserted distinct below rather than assumed.
+     *
+     * The middle node deliberately does **not** exit. A parent that dies before
+     * teardown snapshots the tree has already reparented its child to launchd,
+     * taking the `ppid` linkage with it — that is a limit the design states
+     * plainly, not a property to assert against.
      */
     const session = await context.ready(context.open());
+    const shellPgid = pgidOf(session.pid);
+    const scriptPidFile = join(context.scratch, 'middle.pid');
     const leafPidFile = join(context.scratch, 'leaf.pid');
     const script = join(context.scratch, 'deep.sh');
 
@@ -149,7 +208,9 @@ describe('descendants', () => {
      */
     writeFileSync(
       script,
-      'trap "" HUP\n' +
+      'set -m\n' +
+        'trap "" HUP\n' +
+        `echo $$ > "${scriptPidFile}"\n` +
         'sh -c \'trap "" HUP; echo $$ > "' +
         leafPidFile +
         '"; exec sleep 100\' &\n' +
@@ -157,31 +218,65 @@ describe('descendants', () => {
       'utf8',
     );
 
-    const middle = await startEscapedGrandchild(session, context.scratch, 'middle');
-    assert.notEqual(middle.pgid, pgidOf(session.pid));
-
     session.send(`set -m; sh "${script}" &`);
 
-    const leafPid = await waitFor(
-      () => {
-        try {
-          const text = readFileSync(leafPidFile, 'utf8').trim();
-          return /^\d+$/.test(text) ? Number(text) : null;
-        } catch {
-          // Not written yet — `waitFor` treats a falsy answer as "keep polling".
-          return null;
-        }
-      },
-      { message: 'the leaf process to record its pid' },
-    );
+    const readPid = (file) =>
+      waitFor(
+        () => {
+          try {
+            const text = readFileSync(file, 'utf8').trim();
+            return /^\d+$/.test(text) ? Number(text) : null;
+          } catch {
+            // Not written yet — `waitFor` treats a falsy answer as "keep polling".
+            return null;
+          }
+        },
+        { message: `${file} to be written` },
+      );
+
+    const scriptPid = await readPid(scriptPidFile);
+    const leafPid = await readPid(leafPidFile);
 
     await waitFor(() => isAlive(leafPid), { message: `leaf ${leafPid} to be running` });
+
+    const scriptPgid = pgidOf(scriptPid);
+    const leafPgid = pgidOf(leafPid);
+
+    assert.equal(typeof scriptPgid, 'number', 'could not read the middle pgid');
+    assert.equal(typeof leafPgid, 'number', 'could not read the leaf pgid');
+
+    assert.notEqual(
+      scriptPgid,
+      shellPgid,
+      'the middle node did not escape the shell’s process group',
+    );
+
+    /**
+     * The assertion that makes this a depth test.
+     *
+     * Without it the leaf could be sharing the middle's group, and killing the
+     * middle's group would take it out whether or not the walk ever recursed.
+     */
+    assert.notEqual(
+      leafPgid,
+      scriptPgid,
+      `the leaf (pgid ${leafPgid}) shares the middle node's group (${scriptPgid}), ` +
+        'so a group kill of the middle reaches it for free and this test cannot ' +
+        'distinguish a recursive walk from a first-generation one',
+    );
+    assert.notEqual(leafPgid, shellPgid, 'the leaf shares the shell’s process group');
 
     session.kill();
 
     await waitFor(() => !isAlive(leafPid), {
       timeout: 10_000,
-      message: `the leaf descendant pid ${leafPid} to be gone after kill`,
+      message:
+        `the leaf descendant pid ${leafPid} (pgid ${leafPgid}) to be gone after ` +
+        'kill — a survivor here means the walk stopped short of it',
+    });
+    await waitFor(() => !isAlive(scriptPid), {
+      timeout: 10_000,
+      message: `the middle descendant pid ${scriptPid} to be gone after kill`,
     });
   });
 });
