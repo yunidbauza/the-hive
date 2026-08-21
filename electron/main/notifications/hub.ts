@@ -147,11 +147,13 @@ export interface NotificationHub {
    * (HIVE-81). No-op — and reported as success — for an id the buffer no
    * longer holds, or one that is already unread.
    *
-   * Answers `false` if a collaborator threw partway through (typically
-   * `prefs`). The caller — `reevaluateForeground` — treats that as "try
-   * again": it keeps the pending entry instead of dropping it, so the next
-   * focus change gets another chance rather than the session going silently
-   * un-rearmed.
+   * Answers `false` only when the promotion **did not happen at all** —
+   * typically `prefs` or `present` throwing — leaving the row exactly as gated.
+   * The caller, `reevaluateForeground`, treats that as "try again": it keeps
+   * the pending entry instead of dropping it, so the next focus change gets
+   * another chance rather than the session going silently un-rearmed. A throw
+   * after the toast is on screen answers `true`, because a retry would show it
+   * twice; see the implementation for the phase boundary that makes both true.
    */
   promote(id: string): boolean;
   /**
@@ -295,6 +297,39 @@ export function createNotificationHub(
    * already be gone — a still-blocked session that silently never gets
    * re-armed, on this or any later focus change. Reporting `false` instead
    * lets the caller keep the entry and try again next time.
+   *
+   * ## Why the buffer moves last
+   *
+   * The retry contract above is only true if a failed attempt leaves the row
+   * exactly as it found it. It did not: the flip to `unread` came first, so
+   * every realistic thrower — `prefs`, `present` — ran on a row that was
+   * already unread, and the retry the caller dutifully made hit
+   * `if (entry.unread) return true` and reported success without presenting
+   * anything. The toast, which is the entire purpose of the re-arm, was the one
+   * delivery lost, and the code called that a success.
+   *
+   * So the work is split at the **presentation**, which is the only step that
+   * cannot be undone or repeated safely:
+   *
+   * 1. *Decide* — `spec`, `prefs`, delivery. Everything here may throw, and a
+   *    throw costs nothing because nothing has moved. This is also where `off`
+   *    is honoured, and it has to be before the buffer: a badge and an inbox row
+   *    are deliveries too, and on a machine where the OS refuses toasts they are
+   *    the only ones. Raising them for a kind the user switched off would
+   *    contradict the setting in the one place it still shows.
+   * 2. *Present* — the toast. Still ahead of the buffer, so a refusal here is
+   *    also a clean retry.
+   * 3. *Record* — flip to unread, announce the read, announce the count. Past
+   *    the point of no return: the toast is on screen, so a throw in this
+   *    bookkeeping is logged and reported as **success**. Answering `false`
+   *    would earn a retry, and a retry would present a second toast about the
+   *    same question.
+   *
+   * The alternative considered was a separate `presented` flag on the buffer
+   * entry, tracked apart from `unread`. It solves the same problem by
+   * remembering more; this one solves it by doing things in an order that needs
+   * nothing remembered, and `HiveNotification` stays the shape the renderer
+   * hydrates from.
    */
   const promote = (id: string): boolean => {
     try {
@@ -306,44 +341,54 @@ export function createNotificationHub(
       // to retry.
       if (entry.unread) return true;
 
+      const spec = NOTIFICATION_KIND_SPECS[entry.kind];
+      if (spec === undefined) return true;
+      const delivery = prefs()[entry.kind] ?? spec.defaultDelivery;
+      // `off` means do not raise — not "raise it quietly".
+      if (delivery === 'off') return true;
+
+      if (delivery === 'both') {
+        present({
+          title: entry.title,
+          body: entry.body,
+          onClick: () => {
+            /**
+             * Dismissed, not merely marked read (HIVE-81).
+             *
+             * Clicking a desktop toast is a stronger gesture than opening the
+             * inbox and reading a row. The user was in another application,
+             * chose this notification over what they were doing, and it took
+             * them straight to the session — there is nothing left for the row
+             * to tell them. Leaving it behind turns the inbox into a list of
+             * things already dealt with, which is the state that makes people
+             * stop reading it.
+             *
+             * The id stays in `seen`, so the very next duplicate event cannot
+             * re-raise what the user just dealt with.
+             */
+            dismiss(id);
+            activate(entry.action);
+          },
+        });
+      }
+    } catch (cause) {
+      console.error('[hive] notification failed:', cause);
+      return false;
+    }
+
+    // Step 3. Nothing above this line has touched the buffer, and nothing
+    // below it may be retried.
+    try {
       buffer = buffer.map((notification) =>
         notification.id === id ? { ...notification, unread: true } : notification,
       );
       announceRead(id, true);
       announce();
-
-      const spec = NOTIFICATION_KIND_SPECS[entry.kind];
-      if (spec === undefined) return true;
-      const delivery = prefs()[entry.kind] ?? spec.defaultDelivery;
-      if (delivery !== 'both') return true;
-
-      present({
-        title: entry.title,
-        body: entry.body,
-        onClick: () => {
-          /**
-           * Dismissed, not merely marked read (HIVE-81).
-           *
-           * Clicking a desktop toast is a stronger gesture than opening the
-           * inbox and reading a row. The user was in another application,
-           * chose this notification over what they were doing, and it took
-           * them straight to the session — there is nothing left for the row
-           * to tell them. Leaving it behind turns the inbox into a list of
-           * things already dealt with, which is the state that makes people
-           * stop reading it.
-           *
-           * The id stays in `seen`, so the very next duplicate event cannot
-           * re-raise what the user just dealt with.
-           */
-          dismiss(id);
-          activate(entry.action);
-        },
-      });
-      return true;
     } catch (cause) {
       console.error('[hive] notification failed:', cause);
-      return false;
     }
+
+    return true;
   };
 
   /**

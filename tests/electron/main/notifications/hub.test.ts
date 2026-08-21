@@ -601,6 +601,107 @@ describe('promote', () => {
   });
 
   /**
+   * The retry has to actually deliver — the review finding this file missed.
+   *
+   * Asserting only that the retry answers `true` let a broken contract pass:
+   * the buffer was flipped to `unread` *before* the throwing collaborator ran,
+   * so the retry hit `if (entry.unread) return true` and reported success
+   * without ever presenting. The re-arm's whole purpose is the toast, and it
+   * was the one thing lost. The retry is only a retry if the toast arrives.
+   */
+  it('presents the toast on the successful retry, not just a truthy answer', () => {
+    const present = vi.fn();
+    let throwing = false;
+    const hub = makeHub({
+      present,
+      prefs: () => {
+        if (throwing) throw new Error('config exploded');
+        return prefs;
+      },
+      isForeground: () => true,
+    });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+
+    throwing = true;
+    expect(hub.promote(raised.id)).toBe(false);
+    // Nothing moved: a failed promotion must leave the row exactly as gated, or
+    // the retry has nothing left to do.
+    expect(hub.list()[0].unread).toBe(false);
+    expect(present).not.toHaveBeenCalled();
+
+    throwing = false;
+    expect(hub.promote(raised.id)).toBe(true);
+
+    expect(present).toHaveBeenCalledTimes(1);
+    expect(hub.list()[0].unread).toBe(true);
+  });
+
+  /**
+   * `off` means do not raise (HIVE-81 review, finding 7).
+   *
+   * The badge and the inbox row are deliveries too — on a machine where the OS
+   * refuses toasts they are the *only* ones. Moving read-state before reading
+   * `prefs` meant a kind the user had switched off since the gated raise still
+   * got its row promoted and its badge bumped, silently contradicting the
+   * setting.
+   */
+  it('raises nothing at all when the kind has been switched off since the raise', () => {
+    const present = vi.fn();
+    const announceRead = vi.fn();
+    const announceUnread = vi.fn();
+    let foreground = true;
+    const hub = makeHub({
+      present,
+      announceRead,
+      announceUnread,
+      isForeground: () => foreground,
+    });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+    announceRead.mockClear();
+    announceUnread.mockClear();
+
+    prefs = { 'session.waiting': 'off' };
+    foreground = false;
+    expect(hub.promote(raised.id)).toBe(true);
+
+    expect(hub.list()[0].unread).toBe(false);
+    expect(present).not.toHaveBeenCalled();
+    expect(announceRead).not.toHaveBeenCalled();
+    expect(announceUnread).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The phase boundary, from the other side.
+   *
+   * Once the toast is on screen the promotion has happened as far as the user
+   * is concerned, so a throw in the bookkeeping that follows must not report
+   * failure — a retry would present a second toast about the same question.
+   */
+  it('reports success when the toast landed but the announcement threw', () => {
+    const present = vi.fn();
+    let throwing = false;
+    const hub = makeHub({
+      present,
+      announceRead: () => {
+        if (throwing) throw new Error('renderer gone');
+      },
+      isForeground: () => true,
+    });
+
+    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    present.mockClear();
+
+    throwing = true;
+    expect(hub.promote(raised.id)).toBe(true);
+
+    expect(present).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * HIVE-81: `promote` presents its own toast, with its own `onClick`. A
    * re-armed notification that behaved differently from a fresh one on click
    * — marking read instead of dismissing — is exactly the split nobody would
