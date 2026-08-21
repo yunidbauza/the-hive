@@ -54,7 +54,9 @@ interface Session {
    * Whether a `PostToolUse` has landed since the last `PermissionRequest`
    * (§4.4 / review Fix 2). Guards the `permission_prompt` echo: if the
    * request was already answered, the six-second-later echo must not
-   * re-assert a block the session has moved past.
+   * re-assert a block the session has moved past. Reset by `PreToolUse` too
+   * (HIVE-83 regression fix, see that case for why) and by
+   * `UserPromptSubmit`.
    *
    * Measured against real Claude Code 2.1.238: approving a permission ~3s
    * after the request produced no `permission_prompt` at all —
@@ -155,6 +157,23 @@ export function createStatusTracker(): StatusTracker {
           return derive(s);
 
         case 'PreToolUse':
+          /**
+           * Also re-arms the `permission_prompt` echo guard (§4.4 / review
+           * Fix 2, HIVE-83 regression fix). Measured against real Claude Code
+           * 2.1.238: a `PermissionRequest` is always preceded by its own
+           * `PreToolUse` about 60 ms earlier — so "a `PreToolUse` has arrived
+           * since the last resolution" is exactly the condition under which a
+           * *new* block is possible. Without this, the flag set by an
+           * unrelated tool's `PostToolUse` stayed true for the rest of the
+           * session: a later tool's `PermissionRequest` POST could be
+           * dropped, and the guard would then silently swallow the echo that
+           * was supposed to recover it, leaving a genuinely blocked session
+           * reporting `working`. An echo with no intervening `PreToolUse` can
+           * only belong to a request that is already resolved, and stays
+           * suppressed.
+           */
+          s.postToolUseSincePermissionRequest = false;
+
           if (input.toolUseId !== undefined && input.toolName !== undefined) {
             s.outstanding.set(input.toolUseId, {
               toolName: input.toolName,

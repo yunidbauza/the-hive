@@ -198,6 +198,58 @@ describe('createStatusTracker', () => {
   });
 
   /**
+   * The regression the session-wide guard introduced: tool A's PostToolUse
+   * left `postToolUseSincePermissionRequest` true, and nothing reset it before
+   * tool B's own PermissionRequest POST was dropped. The echo for B's request
+   * then found the flag still set from A and stayed silent — a session
+   * genuinely blocked on B reported `working`. A new `PreToolUse` (B's) must
+   * re-arm the guard so the echo can recover the missed request.
+   */
+  it('lets a new PreToolUse re-arm the echo guard after an unrelated tool resolved', () => {
+    const t = createStatusTracker();
+    const e = 'sess-13';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'A', toolName: 'Bash' });
+    t.apply({ entityId: e, event: 'PermissionRequest', toolName: 'Bash' });
+    t.apply({ entityId: e, event: 'PostToolUse', toolUseId: 'A', toolName: 'Bash' });
+
+    // B's own PermissionRequest POST never arrives.
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'C', toolName: 'Write' });
+
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'Notification',
+        notificationType: 'permission_prompt',
+      }),
+    ).toEqual({ status: 'waiting' });
+  });
+
+  /**
+   * The case the guard was added for still holds: with no intervening
+   * `PreToolUse` after A's request was answered, the echo has nothing new to
+   * report and must stay suppressed.
+   */
+  it('keeps the echo guard suppressed with no intervening PreToolUse', () => {
+    const t = createStatusTracker();
+    const e = 'sess-14';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'A', toolName: 'Bash' });
+    t.apply({ entityId: e, event: 'PermissionRequest', toolName: 'Bash' });
+    t.apply({ entityId: e, event: 'PostToolUse', toolUseId: 'A', toolName: 'Bash' });
+
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'Notification',
+        notificationType: 'permission_prompt',
+      }),
+    ).toEqual({ status: 'working' });
+  });
+
+  /**
    * Review Fix 5 / spec §5.3: an id-less `PostToolUse` clears a blocked entry
    * by name only when exactly one matches. Without this, a truncated
    * `PostToolUse` for an unrelated tool clears *any* `UNPAIRED` block it finds
