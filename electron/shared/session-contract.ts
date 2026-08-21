@@ -85,13 +85,16 @@ export interface SessionStatusEvent {
    */
   idleDetail?: IdleDetail;
   /**
-   * The tool a `PermissionRequest` named, when it named one (HIVE-83).
+   * The tool named by the event that produced this status, when there was one
+   * (HIVE-83).
    *
-   * The renderer ignores it, same as `event` — the notification hub is the
-   * only reader. It exists so the hub can tell `AskUserQuestion` (a real
-   * question) apart from any other tool waiting on a yes, now that both raise
-   * the same `session.blocked` kind and the row's copy is what carries the
-   * difference.
+   * The receiver forwards it on every `PreToolUse` and `PostToolUse` too, not
+   * only `PermissionRequest` — it is whatever `tool_name` the hook payload
+   * carried. The renderer ignores it, same as `event` — the notification hub
+   * is the only reader, and only cares about the `PermissionRequest` case: it
+   * is what lets the hub tell `AskUserQuestion` (a real question) apart from
+   * any other tool waiting on a yes, now that both raise the same
+   * `session.blocked` kind and the row's copy is what carries the difference.
    */
   toolName?: string;
 }

@@ -97,8 +97,6 @@ interface StatusDotProps {
   status: DotStatus;
   /** Defaults to pulsing only while `working`. Pass `false` to force it off. */
   pulse?: boolean;
-  /** Quiet, but something is still running — see {@link STATUS_RING}. */
-  hollow?: boolean;
   /**
    * What the dot describes — e.g. `'lead-form status'`, which is announced as
    * `"lead-form status: needs input"`.
@@ -129,12 +127,20 @@ interface StatusDotProps {
 export function StatusDot({
   status,
   pulse,
-  hollow,
   label,
   detail,
   className,
 }: StatusDotProps) {
   const pulsing = pulse ?? status === 'working';
+  /**
+   * Derived, not passed in (HIVE-83 review fix). A caller used to hand-compute
+   * this from `idleDetail` alone, which could not see `status` — a `done` row
+   * with a stale `idleDetail` (see `hive-store.ts`'s `/clear` retirement) would
+   * then draw a hollow ring in `STATUS_RING.done`, the brand colour, instead of
+   * the solid fill. Gating on `status === 'idle'` here makes a hollow non-grey
+   * dot unrepresentable regardless of what the caller passes.
+   */
+  const hollow = status === 'idle' && detail !== undefined;
 
   return (
     <span

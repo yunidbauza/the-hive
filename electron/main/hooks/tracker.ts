@@ -35,8 +35,35 @@ interface Session {
   /** Insertion-ordered, which is what makes "most recent match" cheap. */
   outstanding: Map<string, { toolName: string; agentId?: string }>;
   blocked: Set<string>;
+  /**
+   * The tool name a `blocked` entry is *about*, when it is known — keyed the
+   * same way as `blocked` (a real id, or the `UNPAIRED` sentinel). Lets an
+   * id-less `PostToolUse` (§5.3) clear a block by name instead of blindly
+   * clearing the sentinel, without a second data structure for every entry:
+   * a real id's name is also recoverable from `outstanding`, but `UNPAIRED`
+   * has nowhere else to keep one.
+   *
+   * `Elicitation` deliberately leaves no name behind (it has none to give),
+   * which is what stops an unrelated truncated `PostToolUse` from clearing an
+   * Elicitation's block it merely happens to share the sentinel with.
+   */
+  blockedNames: Map<string, string>;
   agents: Set<string>;
   bgShells: Set<string>;
+  /**
+   * Whether a `PostToolUse` has landed since the last `PermissionRequest`
+   * (§4.4 / review Fix 2). Guards the `permission_prompt` echo: if the
+   * request was already answered, the six-second-later echo must not
+   * re-assert a block the session has moved past.
+   *
+   * Measured against real Claude Code 2.1.238: approving a permission ~3s
+   * after the request produced no `permission_prompt` at all —
+   * `PreToolUse → PermissionRequest → PostToolUse → Stop`, echo absent —
+   * because Claude Code suppresses the echo once the permission is answered.
+   * The race this guards is a sub-second one (echo already in flight when the
+   * answer lands), not the common path.
+   */
+  postToolUseSincePermissionRequest: boolean;
 }
 
 export interface StatusTracker {
@@ -52,8 +79,10 @@ function empty(): Session {
     turnActive: false,
     outstanding: new Map(),
     blocked: new Set(),
+    blockedNames: new Map(),
     agents: new Set(),
     bgShells: new Set(),
+    postToolUseSincePermissionRequest: false,
   };
 }
 
@@ -120,7 +149,9 @@ export function createStatusTracker(): StatusTracker {
            */
           s.turnActive = true;
           s.blocked.clear();
+          s.blockedNames.clear();
           s.bgShells.clear();
+          s.postToolUseSincePermissionRequest = false;
           return derive(s);
 
         case 'PreToolUse':
@@ -133,37 +164,63 @@ export function createStatusTracker(): StatusTracker {
           return derive(s);
 
         case 'PostToolUse': {
+          s.postToolUseSincePermissionRequest = true;
+
           if (input.toolUseId !== undefined) {
             s.outstanding.delete(input.toolUseId);
             s.blocked.delete(input.toolUseId);
+            s.blockedNames.delete(input.toolUseId);
             if (input.runInBackground === true) s.bgShells.add(input.toolUseId);
-          } else {
+          } else if (input.toolName !== undefined) {
             /**
              * A body over `HOOK_MAX_BODY_BYTES` truncates `tool_use_id` off the
-             * end. Both sides truncate symmetrically, so nothing was recorded
-             * either — but a block held under `UNPAIRED` still needs releasing.
+             * end (`tool_name` precedes it on the wire and always survives).
+             * §5.3: clear a blocked entry by name only when exactly one
+             * matches — otherwise this is indistinguishable from a *different*
+             * tool finishing, and would wrongly release, say, a live
+             * `Elicitation` block that happens to share the `UNPAIRED`
+             * sentinel. Ambiguous or unknown (an `Elicitation`'s block has no
+             * name — see `blockedNames`) means "otherwise ignored".
              */
-            s.blocked.delete(UNPAIRED);
+            const matches = [...s.blocked].filter(
+              (key) => s.blockedNames.get(key) === input.toolName,
+            );
+            if (matches.length === 1) {
+              s.blocked.delete(matches[0]);
+              s.blockedNames.delete(matches[0]);
+            }
           }
           return derive(s);
         }
 
-        case 'PermissionRequest':
+        case 'PermissionRequest': {
+          const key = resolve(s, input.toolName, input.agentId);
+          s.blocked.add(key);
+          if (input.toolName !== undefined) s.blockedNames.set(key, input.toolName);
+          s.postToolUseSincePermissionRequest = false;
+          return derive(s);
+        }
+
         case 'Elicitation':
-          s.blocked.add(
-            input.event === 'Elicitation'
-              ? UNPAIRED
-              : resolve(s, input.toolName, input.agentId),
-          );
+          s.blocked.add(UNPAIRED);
+          // No tool identity to give (§4.4) — see `blockedNames`.
+          s.blockedNames.delete(UNPAIRED);
           return derive(s);
 
         case 'Notification':
           /**
            * `permission_prompt` echoes a `PermissionRequest` six seconds later.
-           * It re-asserts a block only when none is held — recovering a missed
-           * request without double-counting one already tracked.
+           * It re-asserts a block only when none is held *and* the request has
+           * not already been answered — recovering a missed request without
+           * double-counting one already tracked, and without re-blocking a
+           * session that has since moved on (review Fix 2; see
+           * `postToolUseSincePermissionRequest`'s doc for what was measured).
            */
-          if (input.notificationType === 'permission_prompt' && s.blocked.size === 0)
+          if (
+            input.notificationType === 'permission_prompt' &&
+            s.blocked.size === 0 &&
+            !s.postToolUseSincePermissionRequest
+          )
             s.blocked.add(UNPAIRED);
           if (input.notificationType === 'idle_prompt') s.turnActive = false;
           return derive(s);

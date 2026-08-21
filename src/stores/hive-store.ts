@@ -1113,7 +1113,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
              * one of the two was accepted. Now the column and the argument are
              * the same string.
              */
-            `  ${entityLabel(entity).padEnd(16)}${STATUS_WORD[entity.status].padEnd(13)}${entity.project} · ${branchLabel(entity)}`,
+            `  ${entityLabel(entity).padEnd(16)}${statusWord(entity.status, entity.idleDetail).padEnd(13)}${entity.project} · ${branchLabel(entity)}`,
             STATUS_COLOR[entity.status],
           );
         }
@@ -1355,6 +1355,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             status: status ?? entity.status,
           }
         : { ...entity, lines: [...entity.lines, ...lines] };
+
+      /**
+       * This function has no `idleDetail` parameter, so an explicit status
+       * change through here can never legitimately carry one forward —
+       * `idleDetail` is only ever set alongside `idle` by `setSessionStatus`.
+       * Without this, a session on `idle (script)` demo-acked to `working`
+       * would keep the stale detail and draw a hollow ring on a status that
+       * must only ever be solid (HIVE-83).
+       */
+      if (status !== undefined && isSession(updated) && 'idleDetail' in updated) {
+        delete updated.idleDetail;
+      }
 
       return { entities: { ...state.entities, [id]: updated } };
     }),
@@ -1720,7 +1732,15 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }
 
     set((state) => {
+      /**
+       * `idleDetail` is only ever set alongside `idle` — a retired row must
+       * not carry one across, or `done` draws a hollow ring instead of the
+       * solid brand dot it owns (HIVE-83). `StatusDot` now derives hollowness
+       * from `status === 'idle'` too, so this is belt and braces rather than
+       * the only guard.
+       */
       const retired: Session = { ...current, status: 'done' };
+      delete retired.idleDetail;
       const entities: Record<string, Entity> = {
         ...state.entities,
         [targetId]: retired,

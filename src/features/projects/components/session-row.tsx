@@ -41,10 +41,7 @@ export function SessionRow({ id }: SessionRowProps) {
     >
       <span className="flex w-full items-center gap-2">
         {/* No `label`: the status label sits right beside it. */}
-        <StatusDot
-          status={entity.status}
-          hollow={entity.idleDetail !== undefined}
-        />
+        <StatusDot status={entity.status} detail={entity.idleDetail} />
         <span className="flex-1 truncate text-left font-mono text-[12.5px]">
           {entityLabel(entity)}
         </span>

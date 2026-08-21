@@ -11,6 +11,7 @@ import { assertId } from '@shared/guards';
 import {
   LEGACY_NOTIFICATION_KEYS,
   NOTIFICATION_DELIVERIES,
+  RETIRED_SESSION_KEYS,
   isNotificationDelivery,
 } from '@shared/notification-contract';
 
@@ -413,7 +414,8 @@ function optionalNotifications(
   }
 
   /**
-   * The legacy booleans travel through **unread and unvalidated** (HIVE-75).
+   * The legacy values travel through **unread and unvalidated** (HIVE-75,
+   * extended HIVE-83).
    *
    * They must reach `resolveNotificationPrefs`, which is the only thing that
    * knows how to migrate them — and this function is what stands between the
@@ -421,13 +423,28 @@ function optionalNotifications(
    * of this change silently reset the preference it was written to preserve:
    * the migration was correct and never saw its input.
    *
-   * Not validated, because a malformed legacy value is not worth an error on a
-   * key this build no longer writes; `resolveNotificationPrefs` ignores
-   * anything that is not a boolean and falls back to the registry default.
+   * Two legacy shapes travel this path, not one: the pre-HIVE-75 booleans
+   * (`sessionDone`, `sessionIdle`, `cloneDone`) and — scoped to
+   * {@link RETIRED_SESSION_KEYS} only — the pre-HIVE-83 per-kind deliveries
+   * `session.waiting` / `session.asked`, which held a `NotificationDelivery`
+   * string, not a boolean. Forwarding only booleans silently dropped those
+   * two, so a config that had turned session toasts off came back on.
+   * `session.ended` and `session.idle` stay boolean-only: HIVE-83 retired
+   * both outright, so a `NotificationDelivery` on either has nowhere left to
+   * go and `resolveNotificationPrefs` would only discard it anyway. Not
+   * validated beyond the type check, because a malformed legacy value is not
+   * worth an error on a key this build no longer writes;
+   * `resolveNotificationPrefs` ignores anything it does not recognise and
+   * falls back to the registry default.
    */
   for (const key of LEGACY_NOTIFICATION_KEYS) {
     const raw = value[key];
     if (typeof raw === 'boolean') {
+      (prefs as Record<string, unknown>)[key] = raw;
+    } else if (
+      (RETIRED_SESSION_KEYS as readonly string[]).includes(key) &&
+      isNotificationDelivery(raw)
+    ) {
       (prefs as Record<string, unknown>)[key] = raw;
     }
   }

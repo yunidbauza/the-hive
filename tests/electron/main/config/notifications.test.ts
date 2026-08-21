@@ -108,6 +108,26 @@ describe('parseConfig — notifications', () => {
     expect(parsed.errors).toEqual([]);
   });
 
+  /**
+   * Review Fix 8. `session.waiting` and `session.asked` are the two retired
+   * keys that still have somewhere to go — HIVE-83 merged them into
+   * `session.blocked` — so unlike `session.ended`/`session.idle` their
+   * `NotificationDelivery` value must survive the parser, not just their
+   * presence.
+   */
+  it('carries a retired session.waiting/session.asked delivery through for the migration to read', () => {
+    const parsed = parseConfig(
+      '{"version":2,"notifications":{"session.waiting":"off","session.asked":"both"}}',
+      LABEL,
+    );
+
+    expect(parsed.notifications).toEqual({
+      'session.waiting': 'off',
+      'session.asked': 'both',
+    });
+    expect(parsed.errors).toEqual([]);
+  });
+
   it('does not report the legacy names as unknown keys', () => {
     const parsed = parseConfig(
       '{"version":2,"notifications":{"sessionIdle":true}}',

@@ -37,7 +37,6 @@ export function TicketSessionRow({ id }: TicketSessionRowProps) {
         status={entity.status}
         label={`${entityLabel(entity)} status`}
         detail={entity.idleDetail}
-        hollow={entity.idleDetail !== undefined}
       />
 
       <span className="flex-1 truncate text-left font-mono text-[12px] text-muted">

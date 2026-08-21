@@ -148,4 +148,39 @@ describe('resolveNotificationPrefs', () => {
       NOTIFICATION_KIND_SPECS['session.blocked'].defaultDelivery,
     );
   });
+
+  /**
+   * Review Fix 8. Unlike `sessionDone`/`sessionIdle`, `session.waiting` and
+   * `session.asked` **do** have somewhere left to go: HIVE-83 merged them
+   * into `session.blocked`, and a config that had turned either off must not
+   * find toasts back on because the parser only ever forwarded legacy
+   * *booleans*, not the `NotificationDelivery` string these two retired keys
+   * actually held.
+   */
+  it('migrates a retired session.waiting value into session.blocked', () => {
+    const prefs = resolveNotificationPrefs({ 'session.waiting': 'off' });
+    expect(prefs['session.blocked']).toBe('off');
+  });
+
+  it('migrates a retired session.asked value into session.blocked', () => {
+    const prefs = resolveNotificationPrefs({ 'session.asked': 'inbox' });
+    expect(prefs['session.blocked']).toBe('inbox');
+  });
+
+  it('takes the quieter of session.waiting and session.asked when both are present', () => {
+    const prefs = resolveNotificationPrefs({
+      'session.waiting': 'both',
+      'session.asked': 'off',
+    });
+    expect(prefs['session.blocked']).toBe('off');
+  });
+
+  it('lets a current session.blocked value win over both retired keys', () => {
+    const prefs = resolveNotificationPrefs({
+      'session.waiting': 'off',
+      'session.asked': 'off',
+      'session.blocked': 'both',
+    });
+    expect(prefs['session.blocked']).toBe('both');
+  });
 });

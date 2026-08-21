@@ -454,6 +454,23 @@ describe('hive-store', () => {
         expect(leadForm).toMatchObject({ color: 'amber' });
         expect(leadForm?.text).toContain('needs input');
       });
+
+      /**
+       * Review Fix 3: `statusWord()` had zero production callers, so this
+       * table printed plain `idle` for a session the dot shows hollow. Wired
+       * up at the `status` command's row builder — this is the console's own
+       * evidence that the wiring is live, not just that `statusWord` is
+       * unit-tested in isolation.
+       */
+      it('spells out what a quiet session is still running, not just plain idle', () => {
+        useHiveStore.getState().setSessionStatus('hero-refresh', 'idle', 'agents');
+
+        run('status');
+        const rows = useHiveStore.getState().orchLines.slice(4);
+
+        const heroRefresh = rows.find((l) => l.text.includes('hero-refresh'));
+        expect(heroRefresh?.text).toContain('idle (agents)');
+      });
     });
 
     describe('open', () => {

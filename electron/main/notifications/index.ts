@@ -441,7 +441,6 @@ export function createNotifier(options: NotifierOptions): Notifier {
      * never fired for a Claude session; `session.ended` was retired because
      * `/exit` is deliberate and the fleet view already shows the row.
      */
-    return;
   };
 
   const cloneEvent = (payload: Record<string, unknown>): void => {

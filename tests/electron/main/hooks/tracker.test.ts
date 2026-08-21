@@ -151,6 +151,90 @@ describe('createStatusTracker', () => {
     ).toEqual({ status: 'working' });
   });
 
+  /**
+   * Review Fix 2. Measured against real Claude Code 2.1.238: approving a
+   * permission ~3s after the request produced no `permission_prompt` echo at
+   * all. The race this guards is the sub-second one — the echo already in
+   * flight when the answer lands — where the echo arrives *after* the block
+   * was already resolved by its own `PostToolUse`. Before this guard, that
+   * stale echo re-asserted `UNPAIRED` and nothing but the next
+   * `UserPromptSubmit` could ever clear it again.
+   */
+  it('does not re-assert a block the echo answers after it was already resolved', () => {
+    const t = createStatusTracker();
+    const e = 'sess-9';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'B', toolName: 'Bash' });
+    t.apply({ entityId: e, event: 'PermissionRequest', toolName: 'Bash' });
+    // Answered before the echo arrives.
+    expect(
+      t.apply({ entityId: e, event: 'PostToolUse', toolUseId: 'B', toolName: 'Bash' }),
+    ).toEqual({ status: 'working' });
+
+    // The delayed echo must not re-block a session that has moved on.
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'Notification',
+        notificationType: 'permission_prompt',
+      }),
+    ).toEqual({ status: 'working' });
+  });
+
+  it('still recovers a missed PermissionRequest with the echo', () => {
+    const t = createStatusTracker();
+    const e = 'sess-10';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    // No PermissionRequest was observed at all — the echo is the only signal.
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'Notification',
+        notificationType: 'permission_prompt',
+      }),
+    ).toEqual({ status: 'waiting' });
+  });
+
+  /**
+   * Review Fix 5 / spec §5.3: an id-less `PostToolUse` clears a blocked entry
+   * by name only when exactly one matches. Without this, a truncated
+   * `PostToolUse` for an unrelated tool clears *any* `UNPAIRED` block it finds
+   * — including a live `Elicitation`'s, which carries no tool identity of its
+   * own and so must never be assumed to match.
+   */
+  it('ignores an id-less PostToolUse for an unrelated tool, protecting a live Elicitation block', () => {
+    const t = createStatusTracker();
+    const e = 'sess-11';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    expect(t.apply({ entityId: e, event: 'Elicitation' })).toEqual({
+      status: 'waiting',
+    });
+
+    // A large Write elsewhere in the batch, truncated past `tool_use_id`.
+    expect(
+      t.apply({ entityId: e, event: 'PostToolUse', toolName: 'Write' }),
+    ).toEqual({ status: 'waiting' });
+  });
+
+  it('ignores an id-less PostToolUse when more than one blocked entry shares its name', () => {
+    const t = createStatusTracker();
+    const e = 'sess-12';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'A', toolName: 'Write' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'B', toolName: 'Write' });
+    t.apply({ entityId: e, event: 'PermissionRequest', toolName: 'Write' });
+    t.apply({ entityId: e, event: 'PermissionRequest', toolName: 'Write' });
+
+    // Both blocked entries are named `Write` — ambiguous, so neither clears.
+    expect(
+      t.apply({ entityId: e, event: 'PostToolUse', toolName: 'Write' }),
+    ).toEqual({ status: 'waiting' });
+  });
+
   it('drops phantom agents on reset, so a cleared session starts clean', () => {
     const t = createStatusTracker();
     const e = 'sess-8';

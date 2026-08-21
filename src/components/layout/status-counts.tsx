@@ -41,13 +41,17 @@ export function StatusCounts() {
   // same sentence drift the moment a separator changes on one of them.
   const workingText = `${working} working`;
   const waitingText = `${waiting} waiting`;
-  const restText = `${idle} idle · ${done + terminated} ended`;
+  const endedText = `${done + terminated} ended`;
+  const restText = `${idle} idle · ${endedText}`;
 
   /**
    * The breakdown lives in the tooltip, not on screen (HIVE-83).
    *
    * The visible tally stays five numbers — widening it was the thing this
-   * story deliberately did not do — and the detail costs no width here.
+   * story deliberately did not do — and the detail costs no width here. Unlike
+   * `endedText`, `idleText` is *not* reused for the span: it is the one number
+   * deliberately different in each place, carrying the breakdown only where
+   * there is room for it.
    */
   const idleDetailText =
     agents + script === 0
@@ -66,7 +70,7 @@ export function StatusCounts() {
       /* Named so `chip-alignment.spec.ts` can measure this element's right edge
          against the activity rail's border directly. */
       data-testid="status-counts"
-      title={`${workingText} · ${waitingText} · ${idleText} · ${done + terminated} ended`}
+      title={`${workingText} · ${waitingText} · ${idleText} · ${endedText}`}
       className="min-w-0 truncate font-mono text-xs text-muted"
     >
       <span className="text-green">{workingText}</span>

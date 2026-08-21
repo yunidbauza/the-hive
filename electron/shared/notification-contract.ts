@@ -427,12 +427,28 @@ export const LEGACY_NOTIFICATION_KEYS: readonly string[] = [
 ];
 
 /**
+ * `session.waiting` and `session.asked` merged into `session.blocked`
+ * (HIVE-83, see `NOTIFICATION_KINDS`'s doc). Both retired keys held a
+ * `NotificationDelivery`, not a boolean, so they migrate alongside
+ * {@link LEGACY_KEYS} rather than through it.
+ *
+ * Taking the **quieter** of the two when both are present — `off` beats
+ * `inbox` beats `both`, in {@link NOTIFICATION_DELIVERIES}'s own order —
+ * keeps the promise the rest of this function's docs make about a legacy
+ * value: it is read to *preserve* what the user chose, not to loosen it. A
+ * user who had silenced either the approval prompts or the questions must
+ * not find the merged switch back on because the other one was still loud.
+ */
+export const RETIRED_SESSION_KEYS = ['session.waiting', 'session.asked'] as const;
+
+/**
  * Resolve what the file said into what the hub reads.
  *
  * Three inputs, in increasing precedence: registry defaults, then any legacy
- * boolean, then any per-kind value. So a file holding both shapes — which is
- * what a downgrade-then-upgrade produces — answers with the newer one, and a
- * file holding neither answers with the defaults.
+ * value (boolean or retired per-kind delivery), then any current per-kind
+ * value. So a file holding more than one shape — which is what a
+ * downgrade-then-upgrade produces — answers with the newest one, and a file
+ * holding none of them answers with the defaults.
  *
  * A legacy `true` becomes `both` rather than `inbox`, because `both` is what it
  * used to mean: the boolean gated an OS notification, and there was no inbox
@@ -451,6 +467,17 @@ export function resolveNotificationPrefs(
   for (const [legacy, kind] of Object.entries(LEGACY_KEYS)) {
     const value = record[legacy];
     if (typeof value === 'boolean') resolved[kind] = value ? 'both' : 'off';
+  }
+
+  const retiredDeliveries = RETIRED_SESSION_KEYS.map((key) => record[key]).filter(
+    isNotificationDelivery,
+  );
+  if (retiredDeliveries.length > 0) {
+    resolved['session.blocked'] = retiredDeliveries.reduce((quietest, candidate) =>
+      NOTIFICATION_DELIVERIES.indexOf(candidate) < NOTIFICATION_DELIVERIES.indexOf(quietest)
+        ? candidate
+        : quietest,
+    );
   }
 
   for (const kind of NOTIFICATION_KINDS) {

@@ -79,10 +79,7 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
 
           <Chip className={STATUS_TEXT[session.status]}>
             {/* No `label` — the status word sits immediately beside the dot. */}
-            <StatusDot
-              status={session.status}
-              hollow={session.idleDetail !== undefined}
-            />
+            <StatusDot status={session.status} detail={session.idleDetail} />
             {statusLabel(session.status, session.idleDetail)}
           </Chip>
 

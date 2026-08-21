@@ -118,6 +118,16 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  * `SubagentStop` for internal helper agents that never announced a
  * `SubagentStart`; the tracker only clears an agent id it saw start, so a
  * phantom stop leaves `idleDetail` exactly where it was.
+ *
+ * The fifth scenario is spec §8's background-shell case: a `Bash` tool run
+ * with `tool_input.run_in_background: true` reports `idle (script)` once the
+ * main agent's `Stop` lands, with the shell itself still alive. The brief
+ * this scenario was written against assumed nothing would clear the detail
+ * inside the run, since it tells the agent not to wait for the shell — but
+ * the measured trace disagreed: Claude Code sent its own internal
+ * `UserPromptSubmit` once `sleep 30` exited, well inside the deadline, and
+ * that is exactly the re-invoke spec §2.3 documents. The assertion below is
+ * written to the measurement, not the brief.
  */
 const RUN = process.env.HIVE_LIVE_HOOK_PROOF === '1';
 
@@ -150,6 +160,20 @@ interface Scenario {
   deadline: number;
   answerAt: number | null;
   completesTool: boolean;
+  /**
+   * The event whose status must be the first, after `Stop`, with no
+   * `idleDetail` — proving the detail cleared on the right trigger and not a
+   * phantom one (HIVE-83).
+   *
+   * Both scenarios that carry this field clear inside the run: the subagent
+   * one on its own `SubagentStop`, and — measured, not assumed, see the
+   * background-shell scenario's own comment — the background-shell one on
+   * the *internal* `UserPromptSubmit` Claude Code sends itself once the
+   * backgrounded process is inferred to have finished, per spec §5.2/§2.3.
+   * That re-invoke landed well inside this scenario's deadline even though
+   * the prompt told the agent not to wait for the shell.
+   */
+  clearedBy?: 'SubagentStop' | 'UserPromptSubmit';
 }
 
 /**
@@ -256,6 +280,41 @@ const scenarios: Scenario[] = [
     deadline: 75,
     answerAt: null,
     completesTool: false,
+    clearedBy: 'SubagentStop',
+  },
+  {
+    scenario: 'a background shell still open after the main agent stopped',
+    prompt:
+      "Use the Bash tool with run_in_background set to true to run the command 'sleep 30; echo finished-bg'. Do not wait for it — start it, tell me you started it, and end your turn.",
+    type: null,
+    status: 'idle',
+    idleDetail: 'script',
+    kind: null,
+    /** No `Notification` ever fires here, so no row and no toast. */
+    presentedCount: 0,
+    /**
+     * Measured trace, timings from the driver's Enter at ~12s: `PreToolUse
+     * Bash` with `tool_input.run_in_background: true` ~5s later -> `PostToolUse`
+     * ~7s (returns immediately, the process still alive) -> `Stop` ~9s — so
+     * `Stop` lands around 21s absolute. 70s leaves comfortable room for that
+     * and the assertions below with no risk of the `idle_prompt` sixty seconds
+     * after `Stop` (~81s) racing them, since the run ends at the deadline.
+     *
+     * **Measured divergence from the brief this scenario was written against**:
+     * the prompt says "do not wait for it", but Claude Code sends an internal
+     * `UserPromptSubmit` on its own once `sleep 30` exits — the exact
+     * re-invoke spec §2.3 documents — and it landed well inside this deadline
+     * (real run: `Stop` idle/script -> a phantom `SubagentStop` that leaves
+     * the detail untouched -> `UserPromptSubmit` working, clearing it -> a
+     * second `Stop` idle with no detail). `clearedBy: 'UserPromptSubmit'`
+     * below asserts that real behaviour rather than the "never clears inside
+     * the run" belief this scenario started from.
+     */
+    deadline: 70,
+    /** Nothing to answer — the shell is fire-and-forget. */
+    answerAt: null,
+    completesTool: false,
+    clearedBy: 'UserPromptSubmit',
   },
 ];
 
@@ -273,6 +332,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       deadline,
       answerAt,
       completesTool,
+      clearedBy,
     }) => {
       const statuses: TestStatusEvent[] = [];
       const raised: HiveNotification[] = [];
@@ -486,35 +546,44 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         expect(badge).toBe(1);
       } else {
         /**
-         * The subagent scenario (HIVE-83). Nothing here ever blocks on a
-         * human and no `Notification` fires inside the run, so no inbox row
-         * is raised at all — unlike the scenarios above, "silent" is the
-         * whole story, not half of it.
+         * The subagent and background-shell scenarios (HIVE-83). Neither ever
+         * blocks on a human and no `Notification` fires inside either run, so
+         * no inbox row is raised at all — unlike the scenarios above,
+         * "silent" is the whole story, not half of it.
          */
         expect(raised).toHaveLength(0);
         expect(presented).toHaveLength(presentedCount);
         expect(badge).toBe(-1);
 
-        // The main agent's own `Stop`, while the subagent is still running.
+        // The main agent's own `Stop`, while the subagent or the background
+        // shell is still running.
         const stopIdx = statuses.findIndex((s) => s.event === 'Stop');
         expect(stopIdx).toBeGreaterThanOrEqual(0);
         expect(statuses[stopIdx]?.status).toBe(expectedStatus);
         expect(statuses[stopIdx]?.idleDetail).toBe(expectedIdleDetail);
 
         /**
-         * `idleDetail` clears once, on the subagent's **own** `SubagentStop`
-         * — not on a phantom one. Claude Code emits `SubagentStop` for
-         * internal helper agents that never announced a `SubagentStart`;
+         * `idleDetail` clears once, on the right trigger — not a phantom one.
+         *
+         * The subagent scenario's trigger is the subagent's **own**
+         * `SubagentStop`: Claude Code emits `SubagentStop` for internal
+         * helper agents that never announced a `SubagentStart`, and
          * `hooks/tracker.ts` only clears an agent id it saw start, so a
-         * phantom stop leaves `idleDetail` exactly where it was and the first
-         * status with no `idleDetail` after `Stop` is necessarily the real
-         * one.
+         * phantom stop leaves `idleDetail` exactly where it was. The
+         * background-shell scenario's trigger is the internal
+         * `UserPromptSubmit` Claude Code sends itself once the backgrounded
+         * process is inferred to have finished (spec §5.2/§2.3) — measured to
+         * land well inside this scenario's deadline even though the prompt
+         * told the agent not to wait for it (see the scenario's own comment).
+         * Either way, the first status with no `idleDetail` after `Stop` is
+         * necessarily the real clearing event.
          */
+        expect(clearedBy).toBeDefined();
         const cleared = statuses
           .slice(stopIdx + 1)
           .find((s) => s.idleDetail === undefined);
         expect(cleared).toBeDefined();
-        expect(cleared?.event).toBe('SubagentStop');
+        expect(cleared?.event).toBe(clearedBy);
       }
     },
   );
