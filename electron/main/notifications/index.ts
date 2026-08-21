@@ -326,6 +326,18 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * event: announced once, and cleared only by **engagement**, never by
    * idleness itself. See the `event === 'UserPromptSubmit' || status ===
    * 'terminated'` check below for what engagement means and why.
+   *
+   * ## A dismissal does not clear it, and that is the decision
+   *
+   * Dismissing a gated `session.input_needed` row leaves the session's mark in
+   * place, so it stays quiet until the user actually types. Reviewed and kept
+   * (HIVE-81, finding 9): **a dismissal is acknowledgement.** The user was told
+   * the session is waiting on them and swiped it away; re-announcing the same
+   * unchanged fact sixty seconds later is the behaviour this branch exists to
+   * end — the running app said "is waiting on you" four times in twenty-six
+   * minutes about one idle session. Clearing the mark on dismiss would hand
+   * that back, with the dismissal itself as the trigger. Recorded here so the
+   * next reader does not read it as an oversight and repair it.
    */
   const announcedInputNeeded = new Set<string>();
 

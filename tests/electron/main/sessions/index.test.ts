@@ -10,11 +10,13 @@ import {
 import type { HookStatusEvent } from '../../../../electron/shared/hook-contract';
 import { CH } from '../../../../electron/shared/ipc-contract';
 
+import type { RunAsync } from '../../../../electron/main/integrations/github/run';
 import type { PtyHostSupervisor } from '../../../../electron/main/pty-host/supervisor';
 import {
   createSessions,
   type Sessions,
 } from '../../../../electron/main/sessions';
+import { MIN_INTERVAL_MS } from '../../../../electron/main/sessions/git';
 
 /**
  * The sessions layer (story 096).
@@ -703,6 +705,95 @@ describe('status', () => {
         notificationType: 'idle_prompt',
       },
     });
+
+    hooked.dispose();
+  });
+
+  /**
+   * `PostToolUse` is the first **per-tool-call** hook this app subscribes
+   * (HIVE-81 review, finding 14).
+   *
+   * `onEvent` reads a branch for any event carrying a `cwd`, so a `git`
+   * spawn is now reachable once per tool call — and Claude routinely runs
+   * tools in parallel batches. The only thing between that and a spawn storm
+   * is the reader's own floor, so this pins the composition rather than
+   * trusting `git.ts`'s unit tests to be wired up the way they are read.
+   *
+   * Two properties, both of which have to hold:
+   *
+   * - Events arriving **together** share one in-flight read, so a batch of
+   *   eight parallel `PostToolUse`s is one `git rev-parse`.
+   * - Events arriving **after** it settles but inside {@link MIN_INTERVAL_MS}
+   *   are served from cache, so a fast serial batch is also one spawn.
+   *
+   * `PostToolUse` deliberately does not pass `fresh` — only `Stop` does, and
+   * `Stop` fires once per turn.
+   */
+  it('spawns git once for a parallel batch of PostToolUse events', async () => {
+    let onEvent: ((event: HookStatusEvent) => void) | undefined;
+    const run = vi.fn<RunAsync>().mockResolvedValue({
+      code: 0,
+      stdout: 'feat/x\n',
+      stderr: '',
+      timedOut: false,
+    });
+    const clock = { t: 0 };
+
+    const hooked = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      branchReader: {
+        run,
+        gitPath: () => '/usr/bin/git',
+        now: () => clock.t,
+      },
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: { onEvent: (event: HookStatusEvent) => void }) => {
+          onEvent = opts.onEvent;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    /** Let the reader's promise chain settle without leaving fake timers. */
+    const flush = async (): Promise<void> => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    };
+
+    const toolFinished = () =>
+      onEvent!({
+        entityId: 'hero-refresh',
+        status: 'working',
+        event: 'PostToolUse',
+        cwd: '/home/dev/repos/hero-refresh',
+      } as HookStatusEvent);
+
+    // Eight tools in one batch, all reporting within the same tick.
+    for (let i = 0; i < 8; i += 1) toolFinished();
+    await flush();
+
+    expect(run).toHaveBeenCalledTimes(1);
+
+    // Another eight, a second later — still inside the two-second floor.
+    clock.t = MIN_INTERVAL_MS - 1;
+    for (let i = 0; i < 8; i += 1) toolFinished();
+    await flush();
+
+    expect(run).toHaveBeenCalledTimes(1);
+
+    // Past the floor, one more read — the ceiling is one spawn per directory
+    // per interval, whatever the tool-call rate above it.
+    clock.t = MIN_INTERVAL_MS;
+    toolFinished();
+    await flush();
+
+    expect(run).toHaveBeenCalledTimes(2);
 
     hooked.dispose();
   });
