@@ -51,15 +51,16 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
 /**
  * Every kind of thing the app will raise.
  *
- * ## Why `session.input_needed` is a third waiting kind
+ * ## Why `session.input_needed` is a second waiting kind
  *
- * The two below cover a session blocked *mid-turn* — a tool wants a yes, an MCP
- * server wants a sentence. Neither covers the commonest way a session ends up
- * waiting on a human: the turn finished and nobody typed. That is not a
- * question and not an approval; nothing was asked, and the session is simply
- * done talking and out of instructions.
+ * `session.blocked` covers a session blocked *mid-turn* — a tool wants a yes,
+ * an MCP server wants a sentence, or the `AskUserQuestion` tool wants words.
+ * It does not cover the commonest way a session ends up waiting on a human:
+ * the turn finished and nobody typed. That is not a question and not an
+ * approval; nothing was asked, and the session is simply done talking and out
+ * of instructions.
  *
- * It had no producer until this story because there was no event to hang it on.
+ * It had no producer until story 106 because there was no event to hang it on.
  * `Stop` is not it — `Stop` fires at the end of *every* turn, including the many
  * the user is sitting and watching, and a row per turn is the notification
  * stream nobody trusts. Claude's `Notification/idle_prompt` fires sixty seconds
@@ -67,14 +68,17 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
  * difference between "the turn ended" and "you walked away". Measured, not
  * assumed — see `hook-contract.ts`.
  *
- * ## Why `session.waiting` and `session.asked` are two kinds
+ * ## Why `session.waiting` and `session.asked` became one kind (HIVE-83)
  *
- * Both map to the *status* `waiting` — `hook-contract.ts` maps
- * `PermissionRequest` and `Elicitation` to it precisely because they are "the
- * same fact about the session". They are not the same fact about the **user**.
- * "Approve this command" and "answer this question" ask different things and
- * carry different urgency, and the concept mock shows them as two distinct rows
- * with two distinct glyphs. A status collapses them; a notification must not.
+ * Both used to map to the *status* `waiting` and were kept as two notification
+ * kinds on the theory that "approve this command" and "answer this question"
+ * ask different things and carry different urgency. In practice the split did
+ * not survive measurement: `session.asked` was wired only to `Elicitation` —
+ * MCP elicitation, which effectively never fires — while the real question
+ * case, the `AskUserQuestion` tool, arrived as `PermissionRequest` and so wore
+ * "needs approval" copy regardless. Two switches nobody could toggle
+ * independently, because one of them never lit up. See `session.blocked`'s own
+ * entry in {@link NOTIFICATION_KIND_SPECS} for the fuller argument.
  *
  * ## Why there is no `slack.*` here yet
  *
@@ -85,11 +89,8 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
  * absent rather than inert.
  */
 export const NOTIFICATION_KINDS = [
-  'session.waiting',
-  'session.asked',
+  'session.blocked',
   'session.input_needed',
-  'session.ended',
-  'session.idle',
   'clone.done',
   'pr.approved',
   'pr.merged',
@@ -211,21 +212,26 @@ export const NOTIFICATION_KIND_SPECS: Record<
   NotificationKind,
   NotificationKindSpec
 > = {
-  'session.waiting': {
+  /**
+   * One switch for every way a session blocks on a human (HIVE-83).
+   *
+   * This was two kinds, and the split did not survive measurement.
+   * `session.asked` was wired only to `Elicitation` — MCP elicitation, which
+   * effectively never fires — while the real question case, the
+   * `AskUserQuestion` tool, arrives as `PermissionRequest` and so wore
+   * "needs approval" copy. Routing them apart properly is now possible, but it
+   * would buy two switches nobody toggles independently.
+   *
+   * The **row** still varies its title and body by cause. The glyph does not:
+   * `icon` is a property of the kind and never stored on a notification, and
+   * one kind means one glyph. The words carry the difference.
+   */
+  'session.blocked': {
     source: 'session',
-    label: 'When a session needs approval',
+    label: 'When a session is blocked on you',
     description:
-      'A tool is waiting on you to allow it. The session is blocked until you answer.',
+      'A tool wants approval, or an agent asked a question and cannot carry on. Includes subagents.',
     icon: 'ph-hand-palm',
-    tone: 'amber',
-    defaultDelivery: 'both',
-  },
-  'session.asked': {
-    source: 'session',
-    label: 'When a session asks a question',
-    description:
-      'An agent needs an answer before it can carry on. Blocked, like an approval, but it wants words rather than a yes.',
-    icon: 'ph-chat-circle-dots',
     tone: 'amber',
     defaultDelivery: 'both',
   },
@@ -237,61 +243,15 @@ export const NOTIFICATION_KIND_SPECS: Record<
     icon: 'ph-keyboard',
     tone: 'amber',
     /**
-     * `both`, and the argument for it is narrower than it first looks.
+     * `inbox`, not `both` — and not `off` either.
      *
-     * The tempting version — "the sixty-second debounce proves the user is not
-     * looking, so a toast is always warranted" — is **wrong, and worth writing
-     * down so nobody re-derives it.** Claude's debounce measures typing into
-     * *that session*, not the user's presence. In a fleet only one terminal has
-     * focus at a time, so a session the user read and deliberately moved on
-     * from reaches sixty seconds exactly as a session they walked away from
-     * does, and the app cannot tell the two apart — there is no focus
-     * suppression anywhere in this pipeline, on purpose (see
-     * `notifications/index.ts`).
-     *
-     * What actually carries the default is the **shape of the repeat**, not the
-     * debounce. `session.input_needed` is announced once per stretch of
-     * waiting: the notifier suppresses it until the session has visibly stopped
-     * waiting, so a parked session costs one toast, not one a minute and not
-     * one per turn. That is the whole distance between this and `Stop`, which
-     * has no such cap and would fire on every turn including the watched ones.
-     *
-     * The honest cost, then: a user working across a dozen sessions gets a
-     * toast for each one they leave alone for a minute — once each. That is
-     * loud on a busy afternoon and precisely right at the end of one, and the
-     * per-kind control exists so the judgement is theirs rather than this
-     * record's. Defaulting quiet would answer the bug this kind was added for —
-     * "my session was waiting and nothing told me" — with a row in a panel
-     * nobody had open.
+     * What makes this kind chatty is the toast, not the row. `off` would also
+     * take away the row, and the row is the one thing that says a long agent
+     * run finally went quiet — which matters more now that a session can sit in
+     * `idle (agents)` for a long time, not less. `inbox` kills the interruption
+     * and keeps the record.
      */
-    defaultDelivery: 'both',
-  },
-  'session.ended': {
-    source: 'session',
-    label: 'When a session finishes',
-    description: 'Its process exited — the thing you walked away from is done.',
-    icon: 'ph-terminal',
-    tone: 'brand',
-    defaultDelivery: 'both',
-  },
-  'session.idle': {
-    source: 'session',
-    label: 'When a session goes quiet',
-    description:
-      'No output for a couple of seconds. Real, but chatty: a build that pauses to download is not news.',
-    icon: 'ph-moon',
-    tone: 'brand',
-    /**
-     * Off, exactly as story 106 had it.
-     *
-     * The first cut of HIVE-75 promoted this to `inbox` on the reasoning that
-     * `off` and `inbox` used to be the same thing — true, but it changed a
-     * default the previous story had argued for on evidence: "a build that
-     * pauses to download is not news, and a notification stream the user stops
-     * trusting is worse than no notifications at all". Nothing about splitting
-     * the boolean makes a two-second pause more interesting than it was.
-     */
-    defaultDelivery: 'off',
+    defaultDelivery: 'inbox',
   },
   'clone.done': {
     source: 'app',
@@ -431,33 +391,40 @@ export function defaultNotificationPrefs(): Required<NotificationPrefs> {
 }
 
 /**
- * The three booleans this shape replaced.
+ * The one boolean this shape replaced that still has somewhere to land.
  *
- * They are in users' config files right now, and `config-contract.ts` already
- * went out of its way once not to reset anyone's preference: `sessionDone` is
- * *deliberately* misnamed relative to the status it answers to, because
- * "renaming it would silently reset the preference of everyone who had already
- * turned it off".
+ * `sessionDone` and `sessionIdle` used to migrate into `session.ended` and
+ * `session.idle`. HIVE-83 retires both kinds outright — there is no switch
+ * left for either preference to become — so only `cloneDone` still has a
+ * target. `sessionDone` and `sessionIdle` remain accepted, below, for the
+ * config file that still names them; they simply have nothing left to write.
  *
- * The same care is owed here, and it costs about twenty lines. A user who
- * turned session notifications off before this story must not find them back on
- * after it.
+ * The care this map has always taken is still owed to the one entry left in
+ * it: `config-contract.ts` already went out of its way once not to reset
+ * anyone's preference, and a user who turned clone notifications off before
+ * this story must not find them back on after it.
  */
 const LEGACY_KEYS: Record<string, NotificationKind> = {
-  sessionDone: 'session.ended',
-  sessionIdle: 'session.idle',
   cloneDone: 'clone.done',
 };
 
 /**
- * The legacy key names, for the reader that has to tolerate them.
+ * Keys this build no longer writes but must still accept.
  *
- * `parse.ts` reports unknown keys, and a config written before this story holds
- * all three — so without this list a file the app understands perfectly well
- * would raise three errors in the settings pane on the way to being migrated
- * correctly.
+ * `checkKeys` discards the **whole** notifications block on an unrecognised
+ * key, so a config naming a retired kind would silently reset every other
+ * notification preference the user had set. The three pre-HIVE-75 booleans are
+ * here for the same reason; HIVE-83 adds the four kinds it merged or removed.
  */
-export const LEGACY_NOTIFICATION_KEYS: readonly string[] = Object.keys(LEGACY_KEYS);
+export const LEGACY_NOTIFICATION_KEYS: readonly string[] = [
+  'sessionDone',
+  'sessionIdle',
+  'cloneDone',
+  'session.waiting',
+  'session.asked',
+  'session.ended',
+  'session.idle',
+];
 
 /**
  * Resolve what the file said into what the hub reads.

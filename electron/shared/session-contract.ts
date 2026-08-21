@@ -84,6 +84,16 @@ export interface SessionStatusEvent {
    * keeps its five colours.
    */
   idleDetail?: IdleDetail;
+  /**
+   * The tool a `PermissionRequest` named, when it named one (HIVE-83).
+   *
+   * The renderer ignores it, same as `event` — the notification hub is the
+   * only reader. It exists so the hub can tell `AskUserQuestion` (a real
+   * question) apart from any other tool waiting on a yes, now that both raise
+   * the same `session.blocked` kind and the row's copy is what carries the
+   * difference.
+   */
+  toolName?: string;
 }
 
 /**

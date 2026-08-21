@@ -60,7 +60,7 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  *                   -> Notification      waiting  permission_prompt (+6s)
  *                   -- driver answers the question --
  *                   -> PostToolUse       working                    (the fix)
- *                   => 1 row: session.waiting, presented, badge 1   (not two)
+ *                   => 1 row: session.blocked, presented, badge 1   (not two)
  * ```
  *
  * ## Why the driver answers the question (the review's second finding)
@@ -113,7 +113,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         'Use the AskUserQuestion tool right now to ask me whether I prefer tabs or spaces. Do nothing else.',
       type: 'permission_prompt',
       status: 'waiting',
-      kind: 'session.waiting',
+      kind: 'session.blocked',
       /**
        * Deliberately short. The answer lands at 45s and `Stop` a few seconds
        * later, so the `idle_prompt` this session would eventually get is due
@@ -182,6 +182,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
             ...(e.notificationType === undefined
               ? {}
               : { notificationType: e.notificationType }),
+            ...(e.toolName === undefined ? {} : { toolName: e.toolName }),
           }),
         onTicketIntent: () => undefined,
         onCleared: () => undefined,
@@ -280,7 +281,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
        * **One** row, whichever route got here.
        *
        * The `permission_prompt` case is the one that could have gone wrong:
-       * `PermissionRequest` raises `session.waiting`, and the `Notification`
+       * `PermissionRequest` raises `session.blocked`, and the `Notification`
        * that follows it six seconds later must move the status and say nothing.
        * Answering the question afterwards must stay silent too — `PostToolUse`
        * reports `working`, which is not an event class.

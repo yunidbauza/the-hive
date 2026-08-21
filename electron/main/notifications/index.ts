@@ -1,6 +1,6 @@
+import type { StatusHookEvent } from '../../shared/hook-contract';
 import { CH } from '../../shared/ipc-contract';
 import type { NotificationKind } from '../../shared/notification-contract';
-import type { DerivedStatus } from '../../shared/session-contract';
 
 import type { NotificationHub } from './hub';
 
@@ -103,34 +103,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The session statuses that are event classes. `working` is not one.
- *
- * `waiting` is absent on purpose: it is reached only through a hook, and *which*
- * hook decides which of two kinds it becomes. See {@link WAITING_KIND}.
- *
- * The **preference key changed** where the old one was misnamed — `sessionDone`
- * answered a status called `terminated` — and nobody's saved choice is lost by
- * it, because `resolveNotificationPrefs` migrates the legacy booleans. That is
- * what made the rename affordable this time round.
- */
-const SESSION_KIND: Partial<Record<DerivedStatus, NotificationKind>> = {
-  terminated: 'session.ended',
-  idle: 'session.idle',
-};
-
-/**
- * The two ways Claude blocks on a human, kept apart.
+ * The two ways Claude blocks on a human, now one kind (HIVE-83).
  *
  * `hook-contract.ts` maps `PermissionRequest` and `Elicitation` to the same
- * *status*, correctly — they are "different mechanisms and the same fact about
- * the session". They are not the same fact about the **user**: one wants a yes,
- * the other wants a sentence, and the concept mock shows them as two rows with
- * two glyphs. A status may collapse them; a notification may not, which is why
- * `SessionStatusEvent` now carries the hook event alongside the status.
+ * *status* — they are "different mechanisms and the same fact about the
+ * session". They used to be kept apart as notifications too, on the theory
+ * that "approve this command" and "answer this question" ask different things.
+ * That split did not survive measurement: `Elicitation` (MCP elicitation)
+ * effectively never fires, while the real question case — the
+ * `AskUserQuestion` tool — arrives as `PermissionRequest` and wore "needs
+ * approval" copy regardless. One kind now; {@link waitingCopy} is where the
+ * cause still shows up, in the words rather than in a second switch.
  */
 const WAITING_KIND: Record<string, NotificationKind> = {
-  PermissionRequest: 'session.waiting',
-  Elicitation: 'session.asked',
+  PermissionRequest: 'session.blocked',
+  Elicitation: 'session.blocked',
 };
 
 /**
@@ -145,30 +132,41 @@ const WAITING_KIND: Record<string, NotificationKind> = {
  *   waiting on a human.
  * - `permission_prompt` — mapped to `undefined` **on purpose**. It arrives about
  *   six seconds behind the `PermissionRequest` that already raised
- *   `session.waiting`, so raising anything here would be the same interruption
- *   twice, six seconds apart, with two different glyphs. The status still moves
- *   to `waiting` — that path runs before this one — which is the whole of what
- *   this event adds once the first has been seen.
+ *   `session.blocked`, so raising anything here would be the same interruption
+ *   twice, six seconds apart. The status still moves to `waiting` — that path
+ *   runs before this one — which is the whole of what this event adds once the
+ *   first has been seen.
  */
 const NOTIFICATION_TYPE_KIND: Record<string, NotificationKind | undefined> = {
   idle_prompt: 'session.input_needed',
   permission_prompt: undefined,
 };
 
-/** What each blocked kind says, keyed so the copy sits beside the mapping. */
-const WAITING_COPY: Record<string, { title: string; body: string }> = {
-  'session.waiting': {
-    title: 'needs approval',
-    body: 'A tool is waiting on you.',
-  },
-  'session.asked': {
-    title: 'asked a question',
-    body: 'It cannot carry on until you answer.',
-  },
-  'session.input_needed': {
-    title: 'is waiting on you',
-    body: 'It finished its turn and has nothing left to do.',
-  },
+/**
+ * What each block says. Keyed on what blocked, not on the kind — one kind now
+ * covers all three, and the row is where the difference survives.
+ */
+function waitingCopy(
+  event: StatusHookEvent,
+  toolName?: string,
+): { title: string; body: string } {
+  if (event === 'Elicitation')
+    return {
+      title: 'needs an answer',
+      body: 'An MCP server is waiting on you.',
+    };
+  if (toolName === 'AskUserQuestion')
+    return {
+      title: 'asked a question',
+      body: 'It cannot carry on until you answer.',
+    };
+  return { title: 'needs approval', body: 'A tool is waiting on you.' };
+}
+
+/** What `session.input_needed` says. Not a block, so it does not go through {@link waitingCopy}. */
+const INPUT_NEEDED_COPY = {
+  title: 'is waiting on you',
+  body: 'It finished its turn and has nothing left to do.',
 };
 
 /**
@@ -210,75 +208,6 @@ function waitingKind(
   return Object.hasOwn(WAITING_KIND, event) ? WAITING_KIND[event] : undefined;
 }
 
-/**
- * Is a row raised silently still worth chasing the user about (HIVE-81)?
- *
- * **Relevance is a property of the kind, not of the status**, and getting that
- * backwards is what a review of this branch caught. A single
- * `status === 'waiting'` test was applied to every gated row, which was right
- * for the two kinds that come *from* a blocked status and silently wrong for
- * the one that does not: after Part 3.1, `idle_prompt` reports `idle`, so a
- * gated `session.input_needed` was never recorded as pending at all — while
- * `announcedInputNeeded` had already been spent on it. The row existed,
- * already-read, with no toast, no badge and no path back to unread; on a
- * machine where the OS refuses toasts that is the notification never being
- * delivered by any route.
- *
- * So each kind is cleared by its own rule, and the two are exactly the rules
- * already written down elsewhere in this file rather than a third idea:
- *
- * - `session.input_needed` asks nothing of the session — it says the user has
- *   gone quiet — so only the **user** can end it. That is
- *   `announcedInputNeeded`'s rule verbatim, which is the point: the mark and
- *   the pending row are two halves of one announcement, and they must expire
- *   together or the announcement is lost between them.
- * - `session.waiting` and `session.asked` are questions the *session* is
- *   blocked on, so they end when it stops being blocked — with one exception,
- *   below, that a plain `status === 'waiting'` test gets wrong.
- *
- * ## Why `PostToolUse` does not end a block
- *
- * **A tool finishing tells you nothing about whether a *different* tool is
- * still waiting on you.** Claude routinely runs tools in parallel: tool B asks
- * for permission, the session goes `waiting`, the row is raised gated and
- * recorded pending — and then tool A, a sibling in the same batch, completes.
- * `PostToolUse` reports `working`, the old rule dropped the entry, and tool B's
- * permission was still outstanding. Nothing re-records it either:
- * `Notification/permission_prompt` maps to `undefined` in
- * {@link NOTIFICATION_TYPE_KIND} by design, so it never raises and never
- * records. The user looks away and finds a session that is blocked and silent.
- *
- * So a blocked kind survives a non-`waiting` status when the event that
- * carried it was `PostToolUse`. `UserPromptSubmit` (the user is demonstrably
- * back), `Stop` (the turn ended, so nothing in it can still be blocked),
- * `terminated`, and any pty-derived status change all still end it.
- *
- * ### The trade-off, stated rather than hidden
- *
- * This buys the elimination of a false negative with a possible false
- * positive, knowingly. **What it costs:** if the user answers the permission
- * and the turn then runs for several minutes, the entry survives until `Stop`;
- * a blur in that window promotes a row about a block already answered. The
- * user looks, finds the session working, moves on. **Why that is the right
- * direction:** the alternative is silence about a genuinely blocked session,
- * which is the one failure the whole attention model exists to prevent — the
- * spec says so in as many words ("Suppression must not lose a real
- * notification"). A stale interruption is recoverable in a glance; a lost one
- * is not recoverable at all.
- *
- * **Why we cannot do better here.** `StatusHookPayload` carries no tool
- * identity, so main cannot tell the blocked tool's `PostToolUse` from a
- * sibling's. Counting `PermissionRequest`s against `PostToolUse`s does not
- * work either: `PostToolUse` fires for *every* tool, not only the
- * permission-gated ones, so the count drains on tools that were never blocked.
- *
- * ### A related consequence, deliberately not fixed here
- *
- * That same sibling `PostToolUse` also moves the session's **status dot** off
- * "needs input" while a permission is genuinely outstanding. That is a display
- * bug in the status pipeline (`hook-contract.ts`'s `HOOK_STATUS`, Part 3.4),
- * not in the notifier, and it is out of scope on this branch.
- */
 function stillRelevant(
   kind: NotificationKind,
   status: string,
@@ -287,7 +216,16 @@ function stillRelevant(
   if (kind === 'session.input_needed') {
     return !(event === 'UserPromptSubmit' || status === 'terminated');
   }
-  return status === 'waiting' || event === 'PostToolUse';
+  /**
+   * The status is trustworthy again (HIVE-83).
+   *
+   * This used to read `status === 'waiting' || event === 'PostToolUse'`,
+   * because a sibling tool's completion in a parallel batch would flip the
+   * session to `working` while a permission was still outstanding. The tracker
+   * pairs tool events by `tool_use_id`, so `waiting` now means blocked and the
+   * notifier can stop compensating for a status it did not trust.
+   */
+  return status === 'waiting';
 }
 
 export function createNotifier(options: NotifierOptions): Notifier {
@@ -307,9 +245,9 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * so the entries are not stale in the sense of naming something gone. And
    * both clear on the same act that always follows a `/clear`: the user types,
    * which is `UserPromptSubmit`, which is the engagement rule both maps
-   * already use. The blocked kinds are covered a second way over — a `/clear`
+   * already use. The blocked kind is covered a second way over — a `/clear`
    * cannot be typed past an outstanding permission prompt, so a pending
-   * `session.waiting` is answered before a `/clear` is even reachable.
+   * `session.blocked` is answered before a `/clear` is even reachable.
    */
 
   /**
@@ -355,9 +293,9 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * entity id remains the fallback, because a session that has not renamed
    * itself yet genuinely has no better name.
    *
-   * Never pruned. An entry is two short strings, the map is bounded by the
-   * number of sessions this process has ever spawned, and a session that has
-   * exited can still be the subject of a `session.ended` notification.
+   * Never pruned. An entry is two short strings, and the map is bounded by the
+   * number of sessions this process has ever spawned — cheap enough that
+   * pruning it would buy nothing.
    */
   const names = new Map<string, string>();
 
@@ -389,7 +327,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
   >();
 
   const sessionEvent = (payload: Record<string, unknown>): void => {
-    const { entityId, status, event, notificationType } = payload;
+    const { entityId, status, event, notificationType, toolName } = payload;
     if (typeof entityId !== 'string' || typeof status !== 'string') return;
 
     const action = { type: 'session', entityId } as const;
@@ -424,10 +362,10 @@ export function createNotifier(options: NotifierOptions): Notifier {
     /**
      * The pending row expires by its own kind's rule (HIVE-81).
      *
-     * For `session.waiting` and `session.asked` that is a different rule from
-     * `announcedInputNeeded`'s just above — they end when the session stops
-     * being blocked, except by a `PostToolUse`, which may be a sibling tool in
-     * the same batch and says nothing about the one still asking. For
+     * For `session.blocked` that is a different rule from
+     * `announcedInputNeeded`'s just above — it ends when the session stops
+     * being blocked, full stop, now that the tracker (not this file) is what
+     * keeps `waiting` honest across a sibling tool's `PostToolUse`. For
      * `session.input_needed` it is deliberately the *same* rule, applied to the
      * same event, because the mark and the pending row are two halves of one
      * announcement. See {@link stillRelevant}.
@@ -468,7 +406,13 @@ export function createNotifier(options: NotifierOptions): Notifier {
         announcedInputNeeded.add(entityId);
       }
 
-      const copy = WAITING_COPY[kind];
+      const copy =
+        kind === 'session.input_needed'
+          ? INPUT_NEEDED_COPY
+          : waitingCopy(
+              event as StatusHookEvent,
+              typeof toolName === 'string' ? toolName : undefined,
+            );
       const raised = hub.raise({
         kind,
         title: `${nameFor(entityId)} ${copy.title}`,
@@ -479,12 +423,10 @@ export function createNotifier(options: NotifierOptions): Notifier {
       /*
         Remember it if, and only if, it was gated — `unread: false` off a raise
         that happened is the hub saying "kept, but delivered to nobody". No
-        status test: every kind that reaches here is one of the three the user
-        is owed (`session.waiting`, `session.asked`, `session.input_needed`),
-        and how long each stays owed is `stillRelevant`'s job, above.
-        `session.idle` and `session.ended` cannot reach here at all — they are
-        records rather than questions, and they are raised on the pty-derived
-        path below, which records nothing.
+        status test: every kind that reaches here is one of the two the user is
+        owed (`session.blocked`, `session.input_needed`), and how long each
+        stays owed is `stillRelevant`'s job, above. Nothing pty-derived can
+        reach here at all — this branch only runs when `event !== undefined`.
       */
       if (raised !== null && !raised.unread) {
         pendingForeground.set(entityId, { id: raised.id, kind });
@@ -493,25 +435,13 @@ export function createNotifier(options: NotifierOptions): Notifier {
     }
 
     /**
-     * Only pty-derived statuses reach here — they carry no hook event.
-     *
-     * This is the same guarantee the old `status === 'idle' && event !== undefined`
-     * line bought, stated once for every status instead of specially for one.
-     * The event it keeps is the pty going silent for `ACTIVITY_IDLE_MS`, which
-     * is what `session.idle` has always been about (HIVE-75).
+     * Only pty-derived statuses reach here, and since HIVE-83 none of them
+     * raise. `session.idle` was reachable only on this path and was blocked by
+     * the `hookDriven` gate for every session that ever sent a hook, so it
+     * never fired for a Claude session; `session.ended` was retired because
+     * `/exit` is deliberate and the fleet view already shows the row.
      */
-    const kind = SESSION_KIND[status as DerivedStatus];
-    if (kind === undefined) return;
-
-    const terminated = kind === 'session.ended';
-    hub.raise({
-      kind,
-      title: terminated ? 'Session ended' : 'Session idle',
-      body: terminated
-        ? `${nameFor(entityId)} has exited.`
-        : `${nameFor(entityId)} has gone quiet.`,
-      action,
-    });
+    return;
   };
 
   const cloneEvent = (payload: Record<string, unknown>): void => {

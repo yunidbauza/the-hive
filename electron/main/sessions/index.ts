@@ -501,6 +501,7 @@ export function createSessions(options: SessionsOptions): Sessions {
         event.event,
         event.notificationType,
         derived.detail,
+        event.toolName,
       );
       /**
        * The branch read is deliberately **after** the status (HIVE-78).
@@ -612,6 +613,14 @@ export function createSessions(options: SessionsOptions): Sessions {
      * what a session is doing, and the renderer decides how to draw it.
      */
     idleDetail?: IdleDetail,
+    /**
+     * The tool a `PermissionRequest` named, when it named one (HIVE-83).
+     *
+     * Passed through for the same reason `event` is: telling `AskUserQuestion`
+     * apart from any other blocking tool is the notification hub's judgement,
+     * not the session layer's.
+     */
+    toolName?: string,
   ): void {
     send(CH.sessionStatus, {
       entityId,
@@ -619,6 +628,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       ...(event === undefined ? {} : { event }),
       ...(notificationType === undefined ? {} : { notificationType }),
       ...(idleDetail === undefined ? {} : { idleDetail }),
+      ...(toolName === undefined ? {} : { toolName }),
     } satisfies SessionStatusEvent);
   }
 
@@ -702,9 +712,10 @@ export function createSessions(options: SessionsOptions): Sessions {
     event?: StatusHookEvent,
     notificationType?: HookNotificationType,
     idleDetail?: IdleDetail,
+    toolName?: string,
   ): void {
     hookDriven.add(entityId);
-    publishStatus(entityId, status, event, notificationType, idleDetail);
+    publishStatus(entityId, status, event, notificationType, idleDetail, toolName);
   }
 
   /**

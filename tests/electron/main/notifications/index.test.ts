@@ -31,24 +31,32 @@ const notifier = () => createNotifier({ hub, isForeground: () => false });
 const raised = () => raise.mock.calls[0][0] as Record<string, unknown>;
 
 describe('session status', () => {
-  it('raises session.ended when a process exits', () => {
+  /**
+   * `session.ended` was retired (HIVE-83): `/exit` is deliberate and the fleet
+   * view already shows the row, so a pty-derived `terminated` — no hook event —
+   * now raises nothing at all.
+   */
+  it('raises nothing when a process exits — pty-derived, no event', () => {
     notifier().observe(CH.sessionStatus, {
       entityId: 'lead-form',
       status: 'terminated',
     });
 
-    expect(raised().kind).toBe('session.ended');
-    expect(raised().title).toBe('Session ended');
-    expect(raised().action).toEqual({ type: 'session', entityId: 'lead-form' });
+    expect(raise).not.toHaveBeenCalled();
   });
 
-  it('raises session.idle when a session goes quiet', () => {
+  /**
+   * `session.idle` was retired (HIVE-83): it was reachable only on this
+   * pty-derived path, and the `hookDriven` gate blocked it for every session
+   * that ever sent a hook — so it never fired for a Claude session anyway.
+   */
+  it('raises nothing when a session goes quiet — pty-derived, no event', () => {
     notifier().observe(CH.sessionStatus, {
       entityId: 'lead-form',
       status: 'idle',
     });
 
-    expect(raised().kind).toBe('session.idle');
+    expect(raise).not.toHaveBeenCalled();
   });
 
   /**
@@ -84,10 +92,10 @@ describe('session status', () => {
   });
 
   /**
-   * The distinction HIVE-75 exists to make. Both hooks mean `waiting`; they do
-   * not mean the same thing to the person being asked.
+   * HIVE-83: both hooks now raise the same `session.blocked` kind — the
+   * distinction survives in the row's words, not in a second switch.
    */
-  it('tells a permission request apart from an elicitation', () => {
+  it('tells a permission request apart from an elicitation, in the copy', () => {
     const n = notifier();
 
     n.observe(CH.sessionStatus, {
@@ -95,7 +103,7 @@ describe('session status', () => {
       status: 'waiting',
       event: 'PermissionRequest',
     });
-    expect(raised().kind).toBe('session.waiting');
+    expect(raised().kind).toBe('session.blocked');
     expect(raised().title).toBe('lead-form needs approval');
 
     raise.mockClear();
@@ -105,8 +113,23 @@ describe('session status', () => {
       status: 'waiting',
       event: 'Elicitation',
     });
-    expect(raised().kind).toBe('session.asked');
-    expect(raised().title).toBe('call-notes asked a question');
+    expect(raised().kind).toBe('session.blocked');
+    expect(raised().title).toBe('call-notes needs an answer');
+  });
+
+  /** The real question case: `AskUserQuestion` arrives as a `PermissionRequest`. */
+  it('tells AskUserQuestion apart from any other tool waiting on a yes', () => {
+    const n = notifier();
+
+    n.observe(CH.sessionStatus, {
+      entityId: 'lead-form',
+      status: 'waiting',
+      event: 'PermissionRequest',
+      toolName: 'AskUserQuestion',
+    });
+
+    expect(raised().kind).toBe('session.blocked');
+    expect(raised().title).toBe('lead-form asked a question');
   });
 
   /** Guessing would describe a different question than the one being asked. */
@@ -309,12 +332,13 @@ describe('idle_prompt', () => {
     expect(raise).not.toHaveBeenCalled();
   });
 
-  it('still raises session.idle for a pty-derived idle', () => {
+  /** `session.idle` is retired (HIVE-83); a pty-derived idle now raises nothing. */
+  it('still raises nothing for a pty-derived idle', () => {
     const n = notifier();
 
     n.observe(CH.sessionStatus, { entityId: 'sess-03', status: 'idle' });
 
-    expect(raised().kind).toBe('session.idle');
+    expect(raise).not.toHaveBeenCalled();
   });
 });
 
@@ -379,21 +403,7 @@ describe('naming', () => {
       status: 'waiting',
       event: 'Elicitation',
     });
-    expect(raised().title).toBe('INCORP-999 asked a question');
-  });
-
-  it('names the session in an idle and an ended body too', () => {
-    const n = notifier();
-
-    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
-
-    n.observe(CH.sessionStatus, { entityId: 'sess-01', status: 'idle' });
-    expect(raised().body).toBe('INCORP-478 has gone quiet.');
-
-    raise.mockClear();
-
-    n.observe(CH.sessionStatus, { entityId: 'sess-01', status: 'terminated' });
-    expect(raised().body).toBe('INCORP-478 has exited.');
+    expect(raised().title).toBe('INCORP-999 needs an answer');
   });
 
   it('keeps the raw entityId in the action even once a name is known', () => {
@@ -482,17 +492,16 @@ describe('announced once', () => {
     n.observe(CH.sessionStatus, idlePrompt);
     expect(raise).toHaveBeenCalledTimes(1);
 
-    // A pty-derived `terminated` carries no hook event, so it raises its own
-    // session.ended notification on the way through — that is pre-existing,
-    // unrelated behaviour. What this test pins down is that it also clears
-    // the mark, so a new session reusing the id can be announced again.
+    // A pty-derived `terminated` carries no hook event, so it raises nothing
+    // of its own (HIVE-83 retired `session.ended`). What this test pins down
+    // is that it still clears the mark, so a new session reusing the id can
+    // be announced again.
     n.observe(CH.sessionStatus, { entityId: 'sess-01', status: 'terminated' });
-    expect(raise).toHaveBeenCalledTimes(2);
-    expect(raise.mock.calls[1][0].kind).toBe('session.ended');
+    expect(raise).toHaveBeenCalledTimes(1);
 
     n.observe(CH.sessionStatus, idlePrompt);
-    expect(raise).toHaveBeenCalledTimes(3);
-    expect(raise.mock.calls[2][0].kind).toBe('session.input_needed');
+    expect(raise).toHaveBeenCalledTimes(2);
+    expect(raise.mock.calls[1][0].kind).toBe('session.input_needed');
   });
 });
 
@@ -662,25 +671,26 @@ describe('foreground re-arm', () => {
   });
 
   /**
-   * The parallel-tool bug, and the reason a blocked kind no longer expires on
-   * `PostToolUse`.
+   * The parallel-tool bug, fixed at the source now (HIVE-83).
    *
    * Claude routinely runs tools in a batch. Tool B asks for permission — the
    * row is raised gated and recorded pending — and then tool A, a *sibling* in
-   * the same batch, completes and reports `working`. Tool B's permission is
-   * still outstanding, and nothing will ever re-record the entry:
-   * `Notification/permission_prompt` maps to `undefined` by design, so it
-   * never raises. Expiring on the sibling's completion is a session that is
-   * blocked and silent.
+   * the same batch, completes. The tracker pairs tool events by
+   * `tool_use_id`, so the sibling's `PostToolUse` does not resolve tool B's
+   * still-open request: the status the tracker reports stays `waiting`, and
+   * `stillRelevant`'s plain `status === 'waiting'` test — no special case for
+   * `PostToolUse` any more — is enough to keep the pending row alive.
    */
   it('keeps a gated permission pending when a sibling tool finishes', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
     const n = makeNotifier();
 
     n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    // The sibling's completion, as the tracker would actually report it: tool
+    // B's `PermissionRequest` is still outstanding, so status stays `waiting`.
     n.observe(CH.sessionStatus, {
       entityId: 'sess-03',
-      status: 'working',
+      status: 'waiting',
       event: 'PostToolUse',
     });
     n.reevaluateForeground();

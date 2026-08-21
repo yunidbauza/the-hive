@@ -50,25 +50,41 @@ describe('parseConfig — notifications', () => {
 
   it('reads a partial block without inventing the keys it omits', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"session.idle":"off"}}',
+      '{"version":2,"notifications":{"session.blocked":"off"}}',
       LABEL,
     );
 
-    expect(parsed.notifications).toEqual({ 'session.idle': 'off' });
+    expect(parsed.notifications).toEqual({ 'session.blocked': 'off' });
     expect(parsed.errors).toEqual([]);
   });
 
   it('reads several kinds when the file names several', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"session.ended":"off","clone.done":"inbox"}}',
+      '{"version":2,"notifications":{"session.blocked":"off","clone.done":"inbox"}}',
       LABEL,
     );
 
     expect(parsed.notifications).toEqual({
-      'session.ended': 'off',
+      'session.blocked': 'off',
       'clone.done': 'inbox',
     });
     expect(parsed.errors).toEqual([]);
+  });
+
+  /**
+   * HIVE-83: the four kinds it merged or removed are still *accepted*, via
+   * `LEGACY_NOTIFICATION_KEYS`, so a config naming one does not lose every
+   * other preference — but nothing reads their value back out. There is
+   * nowhere left for it to go.
+   */
+  it('accepts a retired kind name without erroring, and drops its value', () => {
+    const parsed = parseConfig(
+      '{"version":2,"notifications":{"session.idle":"off","clone.done":"inbox"}}',
+      LABEL,
+    );
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.notifications).toEqual({ 'clone.done': 'inbox' });
   });
 
   /**
@@ -112,24 +128,39 @@ describe('parseConfig — notifications', () => {
 
   it('reports a value outside the delivery set rather than coercing it', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"session.ended":"yes"}}',
+      '{"version":2,"notifications":{"session.blocked":"yes"}}',
       LABEL,
     );
 
     expect(parsed.errors).toContain(
-      'config.notifications.session.ended: expected one of off, inbox, both — using the default',
+      'config.notifications.session.blocked: expected one of off, inbox, both — using the default',
     );
     expect(parsed.notifications).toEqual({});
   });
 
   it('keeps the good keys when one is bad — a typo is not a reason to lose the rest', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"session.ended":"yes","clone.done":"off"}}',
+      '{"version":2,"notifications":{"session.blocked":"yes","clone.done":"off"}}',
       LABEL,
     );
 
     expect(parsed.notifications).toEqual({ 'clone.done': 'off' });
     expect(parsed.errors).toHaveLength(1);
+  });
+
+  /**
+   * A malformed value on a *retired* key is not worth an error either — the
+   * legacy loop only ever reads a boolean off it, and a string like `"yes"`
+   * is simply not one.
+   */
+  it('reports nothing for a malformed value on a retired key', () => {
+    const parsed = parseConfig(
+      '{"version":2,"notifications":{"session.ended":"yes"}}',
+      LABEL,
+    );
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.notifications).toEqual({});
   });
 
   it('reports an unknown key inside the block', () => {

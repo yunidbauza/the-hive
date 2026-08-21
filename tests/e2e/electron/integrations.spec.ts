@@ -145,15 +145,15 @@ test('a chosen delivery lands in the file, comments intact', async ({}, testInfo
   // in memory and writes nothing.
   expect(read(configPath).notifications).toBeUndefined();
 
-  await choose(page, /session finishes/i, 'Off');
+  await choose(page, /blocked on you/i, 'Off');
 
-  await expect.poll(() => prefs(configPath)['session.ended']).toBe('off');
+  await expect.poll(() => prefs(configPath)['session.blocked']).toBe('off');
 
   const written = read(configPath);
   expect(written['//']).toBe('a comment the UI must not eat');
   // Only the kind the user moved is written. Every other kind is defaulted in
   // memory, so a later change to the defaults still reaches this user.
-  expect(written.notifications).toEqual({ 'session.ended': 'off' });
+  expect(written.notifications).toEqual({ 'session.blocked': 'off' });
   // And nothing else in the file was restated.
   expect(written.claudeCommand).toBe('claude');
   expect((written.projects as unknown[])?.length).toBe(1);
@@ -172,16 +172,16 @@ test('a second choice does not restate the first', async ({}, testInfo) => {
 
   await openNotifications(page);
 
-  await choose(page, /session goes quiet/i, 'Inbox');
-  await expect.poll(() => prefs(configPath)['session.idle']).toBe('inbox');
+  await choose(page, /blocked on you/i, 'Inbox');
+  await expect.poll(() => prefs(configPath)['session.blocked']).toBe('inbox');
 
   await choose(page, /clone finishes/i, 'Off');
   await expect.poll(() => prefs(configPath)['clone.done']).toBe('off');
 
-  // `session.ended` was never touched, so it must still be absent — the partial
-  // write is what keeps an untouched kind out of the user's file.
+  // `session.input_needed` was never touched, so it must still be absent —
+  // the partial write is what keeps an untouched kind out of the user's file.
   expect(read(configPath).notifications).toEqual({
-    'session.idle': 'inbox',
+    'session.blocked': 'inbox',
     'clone.done': 'off',
   });
 
@@ -226,6 +226,11 @@ test('a hand-written block survives a save made through the UI', async ({}, test
    * and `parse.ts` tolerates it rather than reporting it, precisely so a config
    * written before HIVE-75 is not quietly reset — and the only way to know that
    * still holds through a real load and a real save is to do one.
+   *
+   * `sessionIdle` no longer migrates anywhere — HIVE-83 retired `session.idle`
+   * outright — so this also proves the narrower promise that survives it: a key
+   * this build can no longer use still round-trips untouched rather than being
+   * dropped.
    */
   const document = read(configPath);
   writeFileSync(
@@ -233,7 +238,7 @@ test('a hand-written block survives a save made through the UI', async ({}, test
     JSON.stringify(
       {
         ...document,
-        notifications: { 'session.ended': 'off', sessionIdle: true },
+        notifications: { 'session.blocked': 'off', sessionIdle: true },
       },
       null,
       2,
@@ -252,7 +257,7 @@ test('a hand-written block survives a save made through the UI', async ({}, test
   // The hand-written value is what the control shows, not the registry default.
   await expect(
     page
-      .getByRole('radiogroup', { name: /session finishes/i })
+      .getByRole('radiogroup', { name: /blocked on you/i })
       .getByRole('radio', { name: 'Off', exact: true }),
   ).toBeChecked();
 
@@ -263,7 +268,7 @@ test('a hand-written block survives a save made through the UI', async ({}, test
   // Both prior keys survive: the mutation spreads the block rather than
   // rebuilding it, so neither the current key nor the legacy one is eaten.
   expect(read(configPath).notifications).toEqual({
-    'session.ended': 'off',
+    'session.blocked': 'off',
     sessionIdle: true,
     'clone.done': 'off',
   });

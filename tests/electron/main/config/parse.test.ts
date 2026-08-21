@@ -370,6 +370,28 @@ describe('env safety at the file boundary (story 104)', () => {
  */
 const doc = (extra: object) => JSON.stringify({ version: 2, projects: [], ...extra });
 
+/**
+ * HIVE-83: a config naming a retired notification kind must keep meaning what
+ * it can — `checkKeys` discards the **whole** notifications block on an
+ * unrecognised key, so without `LEGACY_NOTIFICATION_KEYS` a file that still
+ * names `session.idle` would silently lose every other preference.
+ */
+describe('parseConfig — notifications naming a retired kind (HIVE-83)', () => {
+  it('keeps a notifications block that names a retired kind', () => {
+    const parsed = parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [],
+        notifications: { 'session.idle': 'off', 'session.blocked': 'inbox' },
+      }),
+      'config',
+    );
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.notifications?.['session.blocked']).toBe('inbox');
+  });
+});
+
 describe('top-level env', () => {
   it('reads a well-formed block', () => {
     const parsed = parseConfig(doc({ env: { AWS_PROFILE: 'incorp' } }), 'cfg');

@@ -54,7 +54,7 @@ describe('the kind registry', () => {
   });
 
   it('recognises its own kinds and deliveries, and nothing else', () => {
-    expect(isNotificationKind('session.waiting')).toBe(true);
+    expect(isNotificationKind('session.blocked')).toBe(true);
     expect(isNotificationKind('slack.mention')).toBe(false);
     expect(isNotificationKind(3)).toBe(false);
 
@@ -65,6 +65,27 @@ describe('the kind registry', () => {
   /** The renderer's cap and the hub's are the same number by intent. */
   it('publishes one cap for both processes', () => {
     expect(NOTIFICATION_CAP).toBeGreaterThan(0);
+  });
+
+  /**
+   * HIVE-83: `session.waiting` and `session.asked` merged into one kind, and
+   * `session.ended` / `session.idle` were retired outright.
+   */
+  it('carries one blocked kind and no retired ones', () => {
+    expect(NOTIFICATION_KINDS).toContain('session.blocked');
+    for (const gone of [
+      'session.waiting',
+      'session.asked',
+      'session.ended',
+      'session.idle',
+    ]) {
+      expect(NOTIFICATION_KINDS).not.toContain(gone);
+    }
+  });
+
+  /** `inbox`, not `both` — the toast is what made this kind chatty, not the row. */
+  it('defaults the run-out-of-instructions row to the inbox', () => {
+    expect(NOTIFICATION_KIND_SPECS['session.input_needed'].defaultDelivery).toBe('inbox');
   });
 });
 
@@ -83,10 +104,10 @@ describe('resolveNotificationPrefs', () => {
   });
 
   it('lets a per-kind value win over the default', () => {
-    const prefs = resolveNotificationPrefs({ 'session.waiting': 'off' });
-    expect(prefs['session.waiting']).toBe('off');
-    expect(prefs['session.ended']).toBe(
-      NOTIFICATION_KIND_SPECS['session.ended'].defaultDelivery,
+    const prefs = resolveNotificationPrefs({ 'session.blocked': 'off' });
+    expect(prefs['session.blocked']).toBe('off');
+    expect(prefs['clone.done']).toBe(
+      NOTIFICATION_KIND_SPECS['clone.done'].defaultDelivery,
     );
   });
 
@@ -94,31 +115,37 @@ describe('resolveNotificationPrefs', () => {
    * The migration that keeps a promise the old contract made explicitly: a
    * preference someone already turned off must not come back on.
    */
-  it('migrates the legacy booleans', () => {
-    const prefs = resolveNotificationPrefs({
-      sessionDone: false,
-      sessionIdle: true,
-      cloneDone: false,
-    });
+  it('migrates the legacy cloneDone boolean', () => {
+    const prefs = resolveNotificationPrefs({ cloneDone: false });
 
-    expect(prefs['session.ended']).toBe('off');
-    expect(prefs['session.idle']).toBe('both');
     expect(prefs['clone.done']).toBe('off');
+  });
+
+  /**
+   * `sessionDone` and `sessionIdle` used to migrate into `session.ended` and
+   * `session.idle`. HIVE-83 retires both kinds outright, so there is nothing
+   * left for either boolean to become — accepted without error (see
+   * `parse.test.ts`), migrated to nothing.
+   */
+  it('accepts the retired sessionDone and sessionIdle booleans without migrating them anywhere', () => {
+    const prefs = resolveNotificationPrefs({ sessionDone: false, sessionIdle: true });
+
+    expect(prefs).toEqual(defaultNotificationPrefs());
   });
 
   /** A downgrade-then-upgrade leaves both shapes in the file. Newer wins. */
   it('prefers a per-kind value over a legacy boolean for the same class', () => {
     const prefs = resolveNotificationPrefs({
-      sessionDone: false,
-      'session.ended': 'inbox',
+      cloneDone: false,
+      'clone.done': 'inbox',
     });
-    expect(prefs['session.ended']).toBe('inbox');
+    expect(prefs['clone.done']).toBe('inbox');
   });
 
   it('ignores an unparseable value rather than coercing it', () => {
-    const prefs = resolveNotificationPrefs({ 'session.waiting': 'loud' });
-    expect(prefs['session.waiting']).toBe(
-      NOTIFICATION_KIND_SPECS['session.waiting'].defaultDelivery,
+    const prefs = resolveNotificationPrefs({ 'session.blocked': 'loud' });
+    expect(prefs['session.blocked']).toBe(
+      NOTIFICATION_KIND_SPECS['session.blocked'].defaultDelivery,
     );
   });
 });

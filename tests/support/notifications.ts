@@ -19,7 +19,7 @@ export function notif(
   seq += 1;
   return {
     id: `n${seq}`,
-    kind: 'session.waiting' as NotificationKind,
+    kind: 'session.blocked' as NotificationKind,
     title: 'lead-form needs approval',
     body: 'prisma migrate dev — lead_phone_idx',
     // Fixed rather than `Date.now()`: a relative label computed against a

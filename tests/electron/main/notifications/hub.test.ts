@@ -70,7 +70,7 @@ const lastUnread = (): number | undefined =>
   announceUnread.mock.calls.at(-1)?.[0];
 
 const raise = (over: Partial<Parameters<NotificationHub['raise']>[0]> = {}) =>
-  hub.raise({ kind: 'session.waiting', title: 'blocked', ...over });
+  hub.raise({ kind: 'session.blocked', title: 'blocked', ...over });
 
 describe('delivery', () => {
   /** `both` is the default for a blocking kind, so this is the unconfigured path. */
@@ -82,7 +82,7 @@ describe('delivery', () => {
   });
 
   it('broadcasts without presenting when the kind says inbox', () => {
-    prefs = { 'session.waiting': 'inbox' };
+    prefs = { 'session.blocked': 'inbox' };
     raise();
 
     expect(broadcast).toHaveBeenCalledTimes(1);
@@ -90,7 +90,7 @@ describe('delivery', () => {
   });
 
   it('does neither when the kind is off', () => {
-    prefs = { 'session.waiting': 'off' };
+    prefs = { 'session.blocked': 'off' };
 
     expect(raise()).toBeNull();
     expect(broadcast).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe('delivery', () => {
    */
   it('reads the preference at the moment of the event', () => {
     raise();
-    prefs = { 'session.waiting': 'off' };
+    prefs = { 'session.blocked': 'off' };
     raise({ id: 'second' });
 
     expect(broadcast).toHaveBeenCalledTimes(1);
@@ -241,7 +241,7 @@ describe('presentation', () => {
     const hub = makeHub({ present, announceDismissed });
 
     const raised = hub.raise({
-      kind: 'session.waiting',
+      kind: 'session.blocked',
       title: 't',
       action: { type: 'session', entityId: 'term-9' },
     })!;
@@ -325,7 +325,7 @@ describe('the unread count', () => {
 
     // A duplicate id, and then a kind switched off.
     raise({ id: 'a' });
-    prefs = { 'session.waiting': 'off' };
+    prefs = { 'session.blocked': 'off' };
     raise({ id: 'c' });
 
     expect(announceUnread).not.toHaveBeenCalled();
@@ -384,7 +384,7 @@ describe('robustness', () => {
     const { raise: detached } = hub;
 
     const raised = detached({
-      kind: 'session.waiting',
+      kind: 'session.blocked',
       title: 'blocked',
       id: 'detached',
     });
@@ -438,7 +438,7 @@ describe('the foreground gate', () => {
     const hub = makeHub({ present, isForeground: () => true });
 
     const raised = hub.raise({
-      kind: 'session.waiting',
+      kind: 'session.blocked',
       title: 'sess-03 needs approval',
       action: { type: 'session', entityId: 'term-3' },
     });
@@ -451,21 +451,21 @@ describe('the foreground gate', () => {
   it('leaves the unread count untouched', () => {
     const announceUnread = vi.fn();
     const hub = makeHub({ announceUnread, isForeground: () => true });
-    hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } });
+    hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } });
     expect(announceUnread).toHaveBeenLastCalledWith(0);
   });
 
   it('raises normally for a background session', () => {
     const present = vi.fn();
     const hub = makeHub({ present, isForeground: () => false });
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-9' } });
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-9' } });
     expect(raised?.unread).toBe(true);
     expect(present).toHaveBeenCalled();
   });
 
   it('remembers a foreground-raised id, so a duplicate still dedups', () => {
     const hub = makeHub({ isForeground: () => true });
-    const input = { kind: 'session.waiting' as const, id: 'fixed', title: 't', action: { type: 'session' as const, entityId: 'term-3' } };
+    const input = { kind: 'session.blocked' as const, id: 'fixed', title: 't', action: { type: 'session' as const, entityId: 'term-3' } };
     expect(hub.raise(input)).not.toBeNull();
     expect(hub.raise(input)).toBeNull();
   });
@@ -495,7 +495,7 @@ describe('promote', () => {
     let foreground = true;
     const hub = makeHub({ present, announceRead, isForeground: () => foreground });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
 
     foreground = false;
@@ -511,7 +511,7 @@ describe('promote', () => {
     const announceRead = vi.fn();
     const hub = makeHub({ present, announceRead, isForeground: () => false });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     hub.dismiss(raised.id);
     present.mockClear();
     announceRead.mockClear();
@@ -529,7 +529,7 @@ describe('promote', () => {
     // Never gated — raised straight to unread, same as any background session.
     const hub = makeHub({ present, announceRead, isForeground: () => false });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
     announceRead.mockClear();
 
@@ -546,13 +546,13 @@ describe('promote', () => {
     let foreground = true;
     const hub = makeHub({ present, announceRead, isForeground: () => foreground });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
 
     // The user turned the kind down to `inbox` between the raise and the
     // promotion — `promote` re-reads `prefs()` rather than trusting delivery
     // computed at raise time, so it must honour the new setting.
-    prefs = { 'session.waiting': 'inbox' };
+    prefs = { 'session.blocked': 'inbox' };
     foreground = false;
     expect(hub.promote(raised.id)).toBe(true);
 
@@ -584,7 +584,7 @@ describe('promote', () => {
       isForeground: () => true,
     });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
 
     throwing = true;
@@ -621,7 +621,7 @@ describe('promote', () => {
       isForeground: () => true,
     });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
 
     throwing = true;
@@ -659,12 +659,12 @@ describe('promote', () => {
       isForeground: () => foreground,
     });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
     announceRead.mockClear();
     announceUnread.mockClear();
 
-    prefs = { 'session.waiting': 'off' };
+    prefs = { 'session.blocked': 'off' };
     foreground = false;
     expect(hub.promote(raised.id)).toBe(true);
 
@@ -692,7 +692,7 @@ describe('promote', () => {
       isForeground: () => true,
     });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
 
     throwing = true;
@@ -713,7 +713,7 @@ describe('promote', () => {
     let foreground = true;
     const hub = makeHub({ present, announceDismissed, isForeground: () => foreground });
 
-    const raised = hub.raise({ kind: 'session.waiting', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
+    const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
 
     foreground = false;

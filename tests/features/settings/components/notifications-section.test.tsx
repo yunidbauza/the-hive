@@ -88,11 +88,11 @@ describe('NotificationsSection', () => {
   });
 
   it('shows a stored preference over the default', () => {
-    snapshot = { notifications: { 'session.waiting': 'off' } };
+    snapshot = { notifications: { 'session.blocked': 'off' } };
     render(<NotificationsSection />);
 
     const group = screen.getByRole('radiogroup', {
-      name: NOTIFICATION_KIND_SPECS['session.waiting'].label,
+      name: NOTIFICATION_KIND_SPECS['session.blocked'].label,
     });
     expect(within(group).getByRole('radio', { name: 'Off' })).toBeChecked();
   });
@@ -103,13 +103,13 @@ describe('NotificationsSection', () => {
     render(<NotificationsSection />);
 
     const group = screen.getByRole('radiogroup', {
-      name: NOTIFICATION_KIND_SPECS['session.waiting'].label,
+      name: NOTIFICATION_KIND_SPECS['session.blocked'].label,
     });
     await user.click(within(group).getByRole('radio', { name: 'Off' }));
 
     expect(setNotificationPrefs).toHaveBeenCalledTimes(1);
     expect(setNotificationPrefs).toHaveBeenCalledWith({
-      'session.waiting': 'off',
+      'session.blocked': 'off',
     });
   });
 
@@ -122,7 +122,7 @@ describe('NotificationsSection', () => {
     render(<NotificationsSection />);
 
     const group = await screen.findByRole('radiogroup', {
-      name: NOTIFICATION_KIND_SPECS['session.waiting'].label,
+      name: NOTIFICATION_KIND_SPECS['session.blocked'].label,
     });
     expect(
       within(group).getByRole('radio', { name: 'System' }),
@@ -215,7 +215,7 @@ describe('NotificationsSection', () => {
 
     expect(
       screen.getByRole('radiogroup', {
-        name: NOTIFICATION_KIND_SPECS['session.waiting'].label,
+        name: NOTIFICATION_KIND_SPECS['session.blocked'].label,
       }),
     ).toBeInTheDocument();
   });

@@ -43,19 +43,19 @@ const onDisk = (): Record<string, unknown> =>
 
 describe('setNotifications', () => {
   it('writes only the class named, leaving a hand-written sibling alone', () => {
-    seed('{\n  "version": 2,\n  "notifications": { "session.ended": "off" }\n}\n');
+    seed('{\n  "version": 2,\n  "notifications": { "session.blocked": "off" }\n}\n');
 
-    const snapshot = setNotifications({ 'session.idle': 'inbox' });
+    const snapshot = setNotifications({ 'clone.done': 'inbox' });
 
     // The snapshot is fully resolved — every registered kind answers — so the
     // assertion names the two that matter rather than restating the registry.
     expect(snapshot.notifications).toMatchObject({
-      'session.ended': 'off',
-      'session.idle': 'inbox',
+      'session.blocked': 'off',
+      'clone.done': 'inbox',
     });
     expect(onDisk().notifications).toEqual({
-      'session.ended': 'off',
-      'session.idle': 'inbox',
+      'session.blocked': 'off',
+      'clone.done': 'inbox',
     });
   });
 
@@ -77,13 +77,13 @@ describe('setNotifications', () => {
   it('writes only the keys the user has touched, not all three', () => {
     seed('{\n  "version": 2\n}\n');
 
-    setNotifications({ 'session.idle': 'inbox' });
+    setNotifications({ 'session.blocked': 'inbox' });
 
     // The other two are defaulted in memory. Materialising them here would
     // silently freeze today's defaults into the user's file, so a later change
     // to `DEFAULT_NOTIFICATIONS` would not reach anyone who had ever opened
     // this section.
-    expect(onDisk().notifications).toEqual({ 'session.idle': 'inbox' });
+    expect(onDisk().notifications).toEqual({ 'session.blocked': 'inbox' });
   });
 
   it('preserves comment keys across the write', () => {
@@ -91,7 +91,7 @@ describe('setNotifications', () => {
       '{\n  "//": "hand written, keep me",\n  "version": 2,\n  "projects": []\n}\n',
     );
 
-    setNotifications({ 'session.ended': 'off' });
+    setNotifications({ 'session.blocked': 'off' });
 
     expect(onDisk()['//']).toBe('hand written, keep me');
   });
@@ -99,7 +99,7 @@ describe('setNotifications', () => {
   it('preserves unknown top-level keys across the write', () => {
     seed('{\n  "version": 2,\n  "futureThing": { "a": 1 }\n}\n');
 
-    setNotifications({ 'session.ended': 'off' });
+    setNotifications({ 'session.blocked': 'off' });
 
     expect(onDisk().futureThing).toEqual({ a: 1 });
   });
@@ -121,18 +121,18 @@ describe('setNotifications', () => {
   it('replaces a block that was not an object rather than merging into it', () => {
     seed('{\n  "version": 2,\n  "notifications": "on"\n}\n');
 
-    setNotifications({ 'session.ended': 'off' });
+    setNotifications({ 'session.blocked': 'off' });
 
-    expect(onDisk().notifications).toEqual({ 'session.ended': 'off' });
+    expect(onDisk().notifications).toEqual({ 'session.blocked': 'off' });
   });
 
   it('returns a snapshot describing the file, not the request', () => {
     seed('{\n  "version": 2,\n  "notifications": { "clone.done": "off" }\n}\n');
 
-    const snapshot = setNotifications({ 'session.ended': 'off' });
+    const snapshot = setNotifications({ 'session.blocked': 'off' });
 
     expect(snapshot.notifications).toMatchObject({
-      'session.ended': 'off',
+      'session.blocked': 'off',
       'clone.done': 'off',
     });
   });
@@ -142,19 +142,23 @@ describe('setNotifications', () => {
    *
    * `loadConfig` migrates the legacy booleans, but the *write* path built its
    * snapshot with a plain spread — and that snapshot becomes the cache every
-   * later read sees. So a user booted correctly with session-finish
-   * notifications off, then changed any unrelated setting, and their toasts
-   * came back on with the pane showing "System" selected.
+   * later read sees. So a user booted correctly with clone notifications off,
+   * then changed any unrelated setting, and their toasts came back on with the
+   * pane showing "System" selected.
+   *
+   * `sessionDone` no longer has anywhere to migrate to (HIVE-83 retired
+   * `session.ended`), so `cloneDone` is the one legacy boolean left that can
+   * still pin this down.
    */
-  it('migrates the legacy booleans in the snapshot it returns, not just on load', () => {
-    seed('{\n  "version": 2,\n  "notifications": { "sessionDone": false }\n}\n');
+  it('migrates the legacy cloneDone boolean in the snapshot it returns, not just on load', () => {
+    seed('{\n  "version": 2,\n  "notifications": { "cloneDone": false }\n}\n');
 
     const snapshot = setNotifications({ 'pr.merged': 'off' });
 
-    expect(snapshot.notifications['session.ended']).toBe('off');
+    expect(snapshot.notifications['clone.done']).toBe('off');
     // And the raw legacy key does not leak into a fully-resolved object.
     expect(
-      (snapshot.notifications as Record<string, unknown>).sessionDone,
+      (snapshot.notifications as Record<string, unknown>).cloneDone,
     ).toBeUndefined();
   });
 
@@ -163,7 +167,7 @@ describe('setNotifications', () => {
       `{\n  "version": 2,\n  "projects": [{ "id": "hive", "path": "${dir}" }]\n}\n`,
     );
 
-    setNotifications({ 'session.ended': 'off' });
+    setNotifications({ 'session.blocked': 'off' });
 
     expect(onDisk().projects).toEqual([{ id: 'hive', path: dir }]);
   });

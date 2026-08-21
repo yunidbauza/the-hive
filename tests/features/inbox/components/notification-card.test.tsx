@@ -77,7 +77,7 @@ describe('NotificationCard', () => {
    */
   it('takes its tone from the kind, not from the record', () => {
     const { rerender } = render(
-      <NotificationCard notif={notif({ kind: 'session.waiting' })} />,
+      <NotificationCard notif={notif({ kind: 'session.blocked' })} />,
     );
     expect(document.querySelector('.text-amber')).not.toBeNull();
 

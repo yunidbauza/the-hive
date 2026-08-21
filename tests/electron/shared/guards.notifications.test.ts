@@ -38,8 +38,8 @@ describe('parseMarkReadRequest', () => {
 
 describe('parseSetNotificationsRequest', () => {
   it('accepts a single kind', () => {
-    expect(parseSetNotificationsRequest({ 'session.waiting': 'off' })).toEqual({
-      'session.waiting': 'off',
+    expect(parseSetNotificationsRequest({ 'session.blocked': 'off' })).toEqual({
+      'session.blocked': 'off',
     });
     expect(parseSetNotificationsRequest({ 'clone.done': 'inbox' })).toEqual({
       'clone.done': 'inbox',
@@ -49,10 +49,10 @@ describe('parseSetNotificationsRequest', () => {
   it('accepts several at once', () => {
     expect(
       parseSetNotificationsRequest({
-        'session.ended': 'both',
-        'session.idle': 'off',
+        'session.blocked': 'both',
+        'session.input_needed': 'off',
       }),
-    ).toEqual({ 'session.ended': 'both', 'session.idle': 'off' });
+    ).toEqual({ 'session.blocked': 'both', 'session.input_needed': 'off' });
   });
 
   it('refuses an empty request', () => {
@@ -61,15 +61,15 @@ describe('parseSetNotificationsRequest', () => {
 
   it('refuses a value outside the delivery set rather than coercing it', () => {
     expect(() =>
-      parseSetNotificationsRequest({ 'session.waiting': 'loud' }),
+      parseSetNotificationsRequest({ 'session.blocked': 'loud' }),
     ).toThrow(/expected one of/);
     // A boolean is what this payload used to carry, which makes it the most
     // likely wrong value to arrive — and truthiness would make it "on".
     expect(() =>
-      parseSetNotificationsRequest({ 'session.waiting': true }),
+      parseSetNotificationsRequest({ 'session.blocked': true }),
     ).toThrow(/expected one of/);
     expect(() =>
-      parseSetNotificationsRequest({ 'session.waiting': null }),
+      parseSetNotificationsRequest({ 'session.blocked': null }),
     ).toThrow(/expected one of/);
   });
 
@@ -83,9 +83,27 @@ describe('parseSetNotificationsRequest', () => {
     );
   });
 
+  /**
+   * HIVE-83: the four kinds it merged or removed are readable off an old file
+   * — `parse.ts`'s `LEGACY_NOTIFICATION_KEYS` sees to that — but they are not
+   * writable. There is no live switch left for the running app to set.
+   */
+  it('refuses the four kinds HIVE-83 merged or removed', () => {
+    for (const key of [
+      'session.waiting',
+      'session.asked',
+      'session.ended',
+      'session.idle',
+    ]) {
+      expect(() => parseSetNotificationsRequest({ [key]: 'off' })).toThrow(
+        /unexpected key/,
+      );
+    }
+  });
+
   it('refuses __proto__', () => {
     const payload = JSON.parse(
-      '{"session.waiting":"off","__proto__":{"x":1}}',
+      '{"session.blocked":"off","__proto__":{"x":1}}',
     ) as unknown;
 
     expect(() => parseSetNotificationsRequest(payload)).toThrow(/forbidden key/);
@@ -94,7 +112,7 @@ describe('parseSetNotificationsRequest', () => {
   it('refuses a payload that is not an object', () => {
     expect(() => parseSetNotificationsRequest(null)).toThrow(IpcValidationError);
     expect(() => parseSetNotificationsRequest([])).toThrow(IpcValidationError);
-    expect(() => parseSetNotificationsRequest('session.waiting')).toThrow(
+    expect(() => parseSetNotificationsRequest('session.blocked')).toThrow(
       IpcValidationError,
     );
   });
