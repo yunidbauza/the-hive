@@ -39,6 +39,7 @@ import { pickPhrase } from '@lib/swarm/phrases';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import type { PrRecord } from '@shared/github-contract';
+import type { IdleDetail } from '@shared/hook-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
@@ -286,7 +287,11 @@ interface HiveState {
     lines: TermLine[],
     status?: SessionStatus,
   ) => void;
-  setSessionStatus: (id: string, status: SessionStatus) => void;
+  setSessionStatus: (
+    id: string,
+    status: SessionStatus,
+    idleDetail?: IdleDetail,
+  ) => void;
   /** The agent reported a new display name (HIVE-61). */
   renameSession: (id: string, name: string) => void;
   /**
@@ -462,6 +467,17 @@ const STATUS_WORD: Record<SessionStatus, string> = {
   done: 'done',
   terminated: 'terminated',
 };
+
+/**
+ * The terminal-side word, including what is still running (HIVE-83).
+ *
+ * Deliberately a second mapping rather than a reuse of `statusLabel`:
+ * `stores/` may not import `components/`.
+ */
+export function statusWord(status: SessionStatus, detail?: IdleDetail): string {
+  if (status === 'idle' && detail !== undefined) return `idle (${detail})`;
+  return STATUS_WORD[status];
+}
 
 const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
   working: 'green',
@@ -1355,8 +1371,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * Agents are ignored rather than rejected. They have no `status` field of this
    * shape and no pty this epic, and a status event for one means main and the
    * fixture set disagree — worth not crashing over, not worth acting on.
+   *
+   * `idleDetail` rides along (HIVE-83) and is compared too, not just `status`:
+   * `idle` with nothing running and `idle (agents)` are the same `status` and a
+   * different dot.
    */
-  setSessionStatus: (id, status) =>
+  setSessionStatus: (id, status, idleDetail) =>
     set((state) => {
       /**
        * Main names the *terminal*; this is the row that owns it now.
@@ -1367,9 +1387,31 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        */
       const target = currentSessionIn(state, id);
       const entity = state.entities[target];
-      if (!entity || !isSession(entity) || entity.status === status) return state;
+      if (
+        !entity ||
+        !isSession(entity) ||
+        (entity.status === status && entity.idleDetail === idleDetail)
+      ) {
+        return state;
+      }
+
+      /**
+       * Spread-to-absent, then an explicit delete: the two are not the same
+       * guard. The spread alone stops a missing `idleDetail` from *overwriting*
+       * a value with `undefined`, but `entity`'s own key is still on the object
+       * afterwards — an `idle (agents) → working` transition would spread over
+       * it and keep the stale detail, because the snapshot compares keys, not
+       * values, and an explicit `undefined` is not the same as absent.
+       */
+      const updated: Session = {
+        ...entity,
+        status,
+        ...(idleDetail === undefined ? {} : { idleDetail }),
+      };
+      if (idleDetail === undefined) delete updated.idleDetail;
+
       return {
-        entities: { ...state.entities, [target]: { ...entity, status } },
+        entities: { ...state.entities, [target]: updated },
       };
     }),
 

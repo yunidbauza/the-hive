@@ -68,9 +68,11 @@ export function useSessionStatus(): void {
     const bridge = window.hive;
     if (!bridge) return;
 
-    const disposeStatus = bridge.session.onStatus(({ entityId, status }) => {
-      setSessionStatus(entityId, status);
-    });
+    const disposeStatus = bridge.session.onStatus(
+      ({ entityId, status, idleDetail }) => {
+        setSessionStatus(entityId, status, idleDetail);
+      },
+    );
     const disposeName = bridge.session.onName(({ entityId, name }) => {
       renameSession(entityId, name);
     });

@@ -5,6 +5,7 @@ import {
   STATUS_LABEL,
   STATUS_TEXT,
   StatusDot,
+  statusLabel,
 } from '@components/ui/status-dot';
 
 describe('StatusDot', () => {
@@ -128,5 +129,26 @@ describe('StatusDot', () => {
     // the work, `terminated` an observation about the process (story 108).
     expect(STATUS_LABEL.terminated).toBe('terminated');
     expect(STATUS_LABEL.online).toBe('online');
+  });
+
+  it('draws a hollow dot when something is still running', () => {
+    const { container } = render(<StatusDot status="idle" hollow />);
+    const dot = container.firstElementChild as HTMLElement;
+
+    expect(dot.className).toContain('border-subtle');
+    expect(dot.className).not.toContain('bg-subtle');
+  });
+
+  it('stays solid for a plain idle session', () => {
+    const { container } = render(<StatusDot status="idle" />);
+
+    expect((container.firstElementChild as HTMLElement).className).toContain('bg-subtle');
+  });
+
+  it('names what is still running', () => {
+    expect(statusLabel('idle', 'agents')).toBe('idle (agents)');
+    expect(statusLabel('idle', 'script')).toBe('idle (script)');
+    expect(statusLabel('idle')).toBe('idle');
+    expect(statusLabel('waiting')).toBe('needs input');
   });
 });

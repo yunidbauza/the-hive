@@ -1,18 +1,19 @@
 import type { TermLine } from '@/types/terminal';
 
+import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionEffort, SessionModel } from '@shared/session-contract';
 
 /**
  * Session lifecycle. Agents are always `online` and are tracked separately.
  *
  * `done` and `terminated` are both endings and are **not** the same ending
- * (story 108). `done` is a fixture's *judgement* — this work finished — and says
- * nothing about a process. `terminated` is an observation: the pty is gone.
- * A real session can only ever reach the second, because a pty exiting is the
- * only ending main can see; a fixture only ever shows the first, because it has
- * no process to lose.
+ * (story 108). `done` is what a conversation becomes at a boundary: `/clear`
+ * ends it while the pty keeps running, so the row retires as history and a
+ * successor opens on the same terminal. `terminated` is an observation — the
+ * pty is gone, seen by `activity.ts`, and it is the one status forwarded even
+ * for a hook-driven session because `SessionEnd` races the exit and loses.
  *
- * Collapsing them, which is what shipped before this story, made a session that
+ * Collapsing them, which is what shipped before story 108, made a session that
  * had merely quit indistinguishable from one that had delivered — and made the
  * app offer to reopen a terminal with nothing behind it.
  */
@@ -149,6 +150,14 @@ export interface Session {
    */
   cwd?: string;
   status: SessionStatus;
+  /**
+   * What is still running while the main agent is not (HIVE-83).
+   *
+   * Only ever set alongside `idle` — see `SessionStatusEvent`, whose field this
+   * mirrors. Absent for every other status, including a plain `idle` with
+   * nothing behind it: the dot renders hollow only when this is present.
+   */
+  idleDetail?: IdleDetail;
   task: string; // one-line description
   pr: { n: number; state: PrState } | null;
   cost: string; // '$2.41'
