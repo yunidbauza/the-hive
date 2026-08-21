@@ -227,6 +227,32 @@ describe('reportTicketFailure — staleness over emptiness', () => {
 
     expect(state().ticketSource).toEqual({ kind: 'failed', message: 'second' });
   });
+
+  /**
+   * Identity, not equality (HIVE-81 review).
+   *
+   * These now run once a minute for the life of the app — a Jira outage
+   * re-reports the same failure on every sweep. A fresh object each time
+   * re-renders the whole WORK panel to say what it already said.
+   */
+  it('keeps the source object when the same failure repeats', () => {
+    state().reportTicketFailure('Could not reach Jira.');
+    const first = state().ticketSource;
+
+    state().reportTicketFailure('Could not reach Jira.');
+
+    expect(state().ticketSource).toBe(first);
+  });
+
+  it('keeps the source object when an already-stale live list fails again', () => {
+    state().hydrateTickets([issue()], false);
+    state().reportTicketFailure('Could not reach Jira.');
+    const first = state().ticketSource;
+
+    state().reportTicketFailure('Could not reach Jira.');
+
+    expect(state().ticketSource).toBe(first);
+  });
 });
 
 describe('reportTicketsUnconfigured', () => {
@@ -237,6 +263,21 @@ describe('reportTicketsUnconfigured', () => {
     // like their real backlog.
     expect(state().tickets).toEqual([]);
     expect(state().ticketSource).toEqual({ kind: 'unconfigured' });
+  });
+
+  /**
+   * The longest-repeating path of all: a machine with no Jira site configured
+   * reaches this on every sweep, forever.
+   */
+  it('keeps both slices’ identity when the conclusion repeats', () => {
+    state().reportTicketsUnconfigured();
+    const source = state().ticketSource;
+    const tickets = state().tickets;
+
+    state().reportTicketsUnconfigured();
+
+    expect(state().ticketSource).toBe(source);
+    expect(state().tickets).toBe(tickets);
   });
 });
 

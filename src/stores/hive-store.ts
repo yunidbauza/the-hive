@@ -261,8 +261,17 @@ interface HiveState {
    * `unread` carries the direction (HIVE-81): read-state now moves both ways,
    * since the foreground gate raises a row already-read and later promotes it
    * back once the user looks away.
+   *
+   * **The two arguments are one tuple, not two independent values.** Widening
+   * `unread` to a boolean made `applyRead(null, true)` writable, and it would
+   * mark *every* row in the inbox unread — a mass un-read the hub has no verb
+   * for and no caller wants. Nothing produces it today; the union is what keeps
+   * it from being one careless call away. `null` is "all of them", and the only
+   * thing worth doing to all of them is marking them read.
    */
-  applyRead: (id: string | null, unread: boolean) => void;
+  applyRead: (
+    ...args: [id: string, unread: boolean] | [id: null, unread: false]
+  ) => void;
   /**
    * Remove a row main has already dropped (HIVE-81).
    *
@@ -389,6 +398,15 @@ const staleTitles = new Map<string, string>();
  * to say "a request started" and "a request finished".
  */
 let inFlightPrSweep: Promise<void> | null = null;
+
+/**
+ * The Jira sweep in flight, or `null`.
+ *
+ * Module scope for the reason {@link inFlightPrSweep} is, and it exists for the
+ * same reason too — tickets became polled in HIVE-81 and inherited the race the
+ * PR side had already solved. See `refreshTickets` for the specific harm.
+ */
+let inFlightTicketSweep: Promise<void> | null = null;
 
 function currentSessionIn(state: HiveState, terminalId: string): string {
   const direct = state.entities[terminalId];
@@ -1779,19 +1797,48 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * useful than nothing at all.
    *
    * With no live tickets there is nothing to keep, so the failure is the state.
+   *
+   * **Already-failed stays put**, exactly as {@link HiveState.reportPrFailure}
+   * does it and now for the same reason: this runs on every sweep, so a Jira
+   * outage re-reports the same failure once a minute for as long as it lasts,
+   * and minting a new `ticketSource` each time would re-render the WORK panel —
+   * and re-resolve every card's sessions — to say precisely what it already
+   * said.
    */
   reportTicketFailure: (message) =>
     set((state) => {
-      if (state.ticketSource.kind === 'live') {
-        return {
-          ticketSource: { ...state.ticketSource, stale: true },
-        };
+      const source = state.ticketSource;
+
+      if (source.kind === 'live') {
+        // `return state` rather than an empty patch: zippering an unchanged
+        // partial still rebuilds the root object and wakes every listener.
+        return source.stale ? state : { ticketSource: { ...source, stale: true } };
       }
-      return { ticketSource: { kind: 'failed', message } };
+
+      return source.kind === 'failed' && source.message === message
+        ? state
+        : { ticketSource: { kind: 'failed', message } };
     }),
 
+  /**
+   * Nothing to read from — and repeating that conclusion changes nothing.
+   *
+   * This is the path that repeats longest of all: a machine with no Jira site
+   * configured reaches it on every sweep, forever. Both slices are held so the
+   * panel's explanation renders once rather than once a minute, which is what
+   * {@link HiveState.reportPrsUnconfigured} already does.
+   */
   reportTicketsUnconfigured: () =>
-    set({ tickets: [], ticketSource: { kind: 'unconfigured' } }),
+    set((state) => {
+      const settled = state.ticketSource.kind === 'unconfigured';
+
+      if (settled && state.tickets.length === 0) return state;
+
+      return {
+        tickets: state.tickets.length === 0 ? state.tickets : [],
+        ticketSource: settled ? state.ticketSource : { kind: 'unconfigured' },
+      };
+    }),
 
   /**
    * Replace one ticket, in place (HIVE-70).
@@ -1851,64 +1898,78 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }
 
     /**
-     * Announce the read — but only when there is nothing on screen to announce
-     * it *over*.
+     * One sweep at a time, however many callers ask.
      *
-     * A refresh with tickets already listed keeps them listed. Blanking a good
-     * list to a skeleton on every reopen would be the original bug wearing the
-     * opposite mask: content the user was reading, replaced by a placeholder,
-     * for the duration of a network round trip.
+     * The poller dedups its own ticks, but the WORK panel's "Try again" calls
+     * this action directly — so a retry clicked while a slow sweep is out used
+     * to start a second Jira search. The harm is the one `refreshPrs` writes
+     * down: if the retry answered first and the older sweep then failed,
+     * `reportTicketFailure` would mark the just-installed fresh list stale,
+     * putting a "may be out of date" banner over data a second old. Sharing the
+     * promise makes the retry *join* the sweep instead of racing it.
      *
-     * It is also what keeps `reportTicketFailure` able to do its job. That
-     * action marks a *live* list stale rather than discarding it, and it decides
-     * by reading the source it is replacing — so moving an already-live source
-     * to `loading` here would turn every "could not reach Jira, these may be out
-     * of date" into a bare failure with the tickets thrown away.
-     *
-     * Keyed on the *source*, not on `tickets.length`. A successful read that
-     * matched nothing is `live` with an empty array, and the panel says "No
-     * issues matched your query." — a real answer. Counting rows would treat
-     * that answer as "nothing yet" and replace it with three pulsing
-     * placeholders on every reopen, which is the same content-for-placeholder
-     * swap the paragraph above rejects.
+     * Wraps the status read as well as the search, because both hops cost a
+     * round trip and neither is worth doing twice concurrently.
      */
-    if (get().ticketSource.kind !== 'live') {
-      set({ ticketSource: { kind: 'loading' } });
-    }
+    inFlightTicketSweep ??= (async () => {
+      /**
+       * **Nothing here sets `loading`.** That is the boot state, left to the
+       * first answer to clear, permanently — `refreshPrs`'s rule, and tickets
+       * now need it for the same reason.
+       *
+       * This used to announce every sweep that was not already `live`, which
+       * was harmless when it ran once on mount. Now it polls: on a machine with
+       * no Jira configured — or through any Jira outage — the source is
+       * `unconfigured`/`failed` and stays that way, so every sweep replaced the
+       * panel's explanation (and, in the `failed` case, the retry button the
+       * user was reaching for) with three pulsing skeleton rows, once a minute,
+       * forever.
+       *
+       * The case the old guard was protecting is protected by its absence: a
+       * settled `live` list is never blanked, because nothing blanks anything.
+       */
+      const status = await readJiraStatus();
+      if (status === null) {
+        get().reportTicketFailure(
+          'The app could not reach its own main process.',
+        );
+        return;
+      }
+      if (
+        status.site === null ||
+        status.email === null ||
+        status.credential.kind === 'none' ||
+        status.credential.kind === 'unavailable'
+      ) {
+        get().reportTicketsUnconfigured();
+        return;
+      }
 
-    const status = await readJiraStatus();
-    if (status === null) {
-      get().reportTicketFailure('The app could not reach its own main process.');
-      return;
-    }
-    if (
-      status.site === null ||
-      status.email === null ||
-      status.credential.kind === 'none' ||
-      status.credential.kind === 'unavailable'
-    ) {
-      get().reportTicketsUnconfigured();
-      return;
-    }
+      /**
+       * No `jql` here on purpose.
+       *
+       * The configured override is applied in **main**, which already reads the
+       * config on every verb. Passing it from the renderer would mean the store
+       * reading a setting, holding it, and racing a hand-edit of the file — for
+       * a value main has in front of it anyway.
+       */
+      const result = await searchJiraIssues();
+      if (result === null) {
+        get().reportTicketFailure(
+          'The app could not reach its own main process.',
+        );
+        return;
+      }
+      if (!result.ok) {
+        get().reportTicketFailure(result.error.message);
+        return;
+      }
+      get().hydrateTickets(result.value.issues, result.value.capped);
+    })().finally(() => {
+      inFlightTicketSweep = null;
+    });
 
-    /**
-     * No `jql` here on purpose.
-     *
-     * The configured override is applied in **main**, which already reads the
-     * config on every verb. Passing it from the renderer would mean the store
-     * reading a setting, holding it, and racing a hand-edit of the file — for a
-     * value main has in front of it anyway.
-     */
-    const result = await searchJiraIssues();
-    if (result === null) {
-      get().reportTicketFailure('The app could not reach its own main process.');
-      return;
-    }
-    if (!result.ok) {
-      get().reportTicketFailure(result.error.message);
-      return;
-    }
-    get().hydrateTickets(result.value.issues, result.value.capped);
+    return inFlightTicketSweep;
   },
 
   /**
@@ -2081,6 +2142,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // A sweep from the previous state must not install its answer into the new
     // one — dropping the handle makes the next caller start fresh.
     inFlightPrSweep = null;
+    inFlightTicketSweep = null;
     /**
      * Nothing in this store stamps through the clock any more — the activity
      * feed was its only caller and the project explorer replaced it. The rewind

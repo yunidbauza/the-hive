@@ -238,3 +238,101 @@ describe('on desktop', () => {
     await expect(state().refreshTickets()).resolves.toBeUndefined();
   });
 });
+
+/**
+ * The poller's sweeps (HIVE-81 review).
+ *
+ * `refreshTickets` ran once on mount when it was written. It now runs every
+ * minute for the life of the app, and two of its habits only became bugs when
+ * that changed.
+ */
+describe('a repeated sweep', () => {
+  beforeEach(asDesktop);
+
+  /**
+   * On a machine with no Jira configured, or any machine during an outage, the
+   * source is `unconfigured`/`failed` and *stays* that way. Re-announcing
+   * `loading` on each sweep put three pulsing skeleton rows over the panel's
+   * explanation once a minute, forever. `refreshPrs` never does this; the two
+   * now agree that `loading` means "the first read, with nothing to show yet".
+   */
+  it('does not re-enter loading over an unconfigured answer', async () => {
+    readJiraStatus.mockResolvedValue(status({ site: null }));
+    await state().refreshTickets();
+    expect(state().ticketSource).toEqual({ kind: 'unconfigured' });
+
+    const sweep = state().refreshTickets();
+    expect(state().ticketSource).toEqual({ kind: 'unconfigured' });
+    await sweep;
+  });
+
+  it('does not re-enter loading over a failure', async () => {
+    searchJiraIssues.mockResolvedValue({
+      ok: false,
+      error: { kind: 'offline', message: 'Could not reach Jira.' },
+    });
+    await state().refreshTickets();
+    expect(state().ticketSource).toMatchObject({ kind: 'failed' });
+
+    const sweep = state().refreshTickets();
+    // The retry button lives inside the `failed` branch. A skeleton here is the
+    // button vanishing from under the cursor for the length of a round trip.
+    expect(state().ticketSource).toMatchObject({ kind: 'failed' });
+    await sweep;
+  });
+
+  /**
+   * `usePoller` dedups its own ticks; the WORK panel's "Try again" calls this
+   * action directly and used to sail past that. Two concurrent Jira searches,
+   * and if the retry answered first while the older sweep then failed,
+   * `reportTicketFailure` marked the just-installed fresh list stale — a "may
+   * be out of date" banner over data a second old. `refreshPrs` shares its
+   * promise for exactly this reason.
+   */
+  it('shares one sweep between a tick and a retry', async () => {
+    let settle: ((value: unknown) => void) | undefined;
+    searchJiraIssues.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    const tick = state().refreshTickets();
+    const retry = state().refreshTickets();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    settle?.({ ok: true, value: { issues: [issue], capped: false } });
+    await Promise.all([tick, retry]);
+
+    expect(readJiraStatus).toHaveBeenCalledTimes(1);
+    expect(searchJiraIssues).toHaveBeenCalledTimes(1);
+    expect(state().ticketSource).toEqual({
+      kind: 'live',
+      stale: false,
+      capped: false,
+    });
+  });
+
+  it('starts a fresh sweep once the shared one has settled', async () => {
+    await state().refreshTickets();
+    await state().refreshTickets();
+
+    expect(searchJiraIssues).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * A sweep from the previous state must not install its answer into the new
+   * one — the same reason `reset` drops `inFlightPrSweep`.
+   */
+  it('drops the in-flight handle on reset', async () => {
+    const first = state().refreshTickets();
+    state().reset();
+    await first;
+
+    asDesktop();
+    await state().refreshTickets();
+
+    expect(searchJiraIssues).toHaveBeenCalledTimes(2);
+  });
+});

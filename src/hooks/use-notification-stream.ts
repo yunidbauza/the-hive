@@ -67,6 +67,20 @@ export function useNotificationStream(): void {
     });
 
     const unsubscribeRead = bridge.notifications.onRead(({ id, unread }) => {
+      /**
+       * Split at the boundary, because the wire type is wider than the action.
+       *
+       * `NotificationReadEvent` carries `id: string | null` and a free
+       * `unread`, which spells a combination the store refuses to accept:
+       * `null` means *every row*, and un-reading the whole inbox at once is
+       * something no producer does and nothing would want. `markRead(null)` in
+       * the hub is the only thing that sends a null id, and it only ever marks
+       * read. This is that fact stated where the two types meet.
+       */
+      if (id === null) {
+        applyRead(null, false);
+        return;
+      }
       applyRead(id, unread);
     });
 
