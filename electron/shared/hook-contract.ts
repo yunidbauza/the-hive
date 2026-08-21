@@ -73,7 +73,28 @@ export const HOOK_EVENTS = [
   'UserPromptSubmit',
   'PermissionRequest',
   'Elicitation',
+  /**
+   * The bookkeeping pair (HIVE-83).
+   *
+   * `PreToolUse` carries the `tool_use_id` that `PermissionRequest` does not,
+   * and its `PostToolUse` carries the same one — which is the only way to tell
+   * the blocked tool's completion from a sibling's in a parallel batch.
+   *
+   * The cost is honest: this is the second high-frequency hook subscribed, and
+   * `PreToolUse` is a *blocking* hook — Claude waits for it before running the
+   * tool. Both are loopback POSTs the receiver answers 204 to.
+   */
+  'PreToolUse',
   'PostToolUse',
+  /**
+   * How a stopped main agent is told apart from a finished session (HIVE-83).
+   *
+   * Both carry `agent_id`. Only agents seen starting are ever removed: Claude
+   * Code emits `SubagentStop` for internal helper agents that never announced a
+   * start.
+   */
+  'SubagentStart',
+  'SubagentStop',
   'Notification',
   'Stop',
   'SessionEnd',
@@ -118,6 +139,9 @@ export const CLEAR_REASON = 'clear';
  * {@link HOOK_STATUS} cannot be given a bogus entry for it.
  */
 export type StatusHookEvent = Exclude<HookEvent, 'SessionEnd'>;
+
+/** What is still running while the main agent is not (HIVE-83). */
+export type IdleDetail = 'agents' | 'script';
 
 /**
  * Status as observed from outside the pty.
@@ -168,24 +192,18 @@ export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
    */
   Notification: 'waiting',
   /**
-   * A tool finished, so whatever was blocking on a human is not blocking now.
+   * `PreToolUse` and `PostToolUse` are both `working` as a *fallback only*.
    *
-   * This is the only deterministic end-marker a permission block has.
-   * `PermissionRequest` sets `waiting` and nothing lowers it until `Stop`, so a
-   * session the user approved sat on "needs input" for the rest of the turn
-   * while the agent worked — and `hookDriven` (`sessions/index.ts`) means the
-   * pty cannot correct it.
-   *
-   * The pty *could* have been the signal and deliberately is not: Claude's TUI
-   * repaints while a permission prompt is on screen — a spinner, an elapsed
-   * timer — so `activity.ts` would read a redraw as work and clear the one
-   * status the whole attention model is built on.
-   *
-   * The cost is honest: this is the first high-frequency hook subscribed, and
-   * it fires per tool call. It is a loopback POST with no body worth parsing,
-   * on the same receiver the other seven already use.
+   * Since HIVE-83 the status the renderer sees is derived by
+   * `hooks/tracker.ts` from what the session is, not looked up here. These
+   * entries survive so the record stays total and so a consumer that has no
+   * tracker still gets a defensible answer.
    */
+  PreToolUse: 'working',
   PostToolUse: 'working',
+  /** Bookkeeping only — the tracker decides what a live subagent means. */
+  SubagentStart: 'working',
+  SubagentStop: 'working',
   Stop: 'idle',
 };
 
