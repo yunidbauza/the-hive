@@ -333,6 +333,21 @@ export interface HookStatusEvent {
    * outcome as a session with no hooks at all.
    */
   cwd?: string;
+  /**
+   * Tool identity, carried since HIVE-83.
+   *
+   * All optional because not every event has them and because a body over
+   * `HOOK_MAX_BODY_BYTES` truncates `tool_use_id` off the end — `tool_input`
+   * precedes it on the wire. Both `PreToolUse` and `PostToolUse` truncate
+   * symmetrically, so the tracker's bookkeeping stays consistent and only
+   * pairing degrades.
+   */
+  toolUseId?: string;
+  toolName?: string;
+  /** Present on every event originating inside a subagent, absent on the main agent's. */
+  agentId?: string;
+  /** `tool_input.run_in_background` on a `Bash` call. */
+  runInBackground?: boolean;
 }
 
 /**

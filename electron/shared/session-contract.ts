@@ -1,5 +1,6 @@
 import type {
   HookNotificationType,
+  IdleDetail,
   ObservedStatus,
   StatusHookEvent,
 } from './hook-contract';
@@ -75,6 +76,14 @@ export interface SessionStatusEvent {
    * status alone cannot tell them apart.
    */
   notificationType?: HookNotificationType;
+  /**
+   * What is still running while the main agent is not (HIVE-83).
+   *
+   * Only ever set alongside `idle`. Orthogonal to the status rather than a
+   * sixth member of it, so `SessionStatus` keeps its five values and the dot
+   * keeps its five colours.
+   */
+  idleDetail?: IdleDetail;
 }
 
 /**
