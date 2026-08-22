@@ -289,27 +289,28 @@ describe('session ledger', () => {
       expect(readLedger(file)).toHaveLength(HISTORY_CAP);
     });
 
-    it('clears a stale ending when a restart brings the session back', () => {
-      // `restartOnce` records `terminated` with an `endedAt`, then spawns the
-      // same entity id again. A merged record reading `working` while carrying
-      // the old timestamp is a live session filed as ended — prunable, and
-      // replaceable by an empty record on its next patch.
+    it('leaves liveness to begin — a patch only adds what it carries', () => {
+      /**
+       * `record` deliberately does **not** clear an ending when a patch happens
+       * to carry a live status. An earlier draft did, to catch the restart case,
+       * and `begin` owns that now.
+       *
+       * Removing it was not merely tidying. Records loaded from disk are stamped
+       * with an `endedAt` *so the cap can reach them*, and a live status routed
+       * through `record` would have stripped that stamp straight back off —
+       * re-creating the "exempt from the cap forever" growth the stamp exists to
+       * prevent. One verb decides liveness.
+       */
       const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', {
-        project: 'p',
-        task: '',
-        status: 'working',
-        sessionUuid: 'first',
-      });
+      ledger.begin('sess-01', { project: 'p', task: '' });
       ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
 
-      ledger.record('sess-01', { status: 'working', sessionUuid: 'second' });
+      ledger.record('sess-01', { status: 'working' });
       ledger.flush();
 
       const [record] = readLedger(file);
       expect(record?.status).toBe('working');
-      expect(record?.endedAt).toBeUndefined();
-      expect(record?.sessionUuid).toBe('second');
+      expect(record?.endedAt).toBe(2000);
     });
 
     it('keeps an ending the caller states explicitly alongside a status', () => {
@@ -410,13 +411,23 @@ describe('session ledger', () => {
       ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
       ledger.begin('sess-01', { project: 'p', task: '' });
 
-      // Live again: exempt from the cap, which is what `all()` reflects.
+      /**
+       * The fillers end **after** the stale timestamp, and that is the whole
+       * test.
+       *
+       * A first draft used `500 + i`, all below the `endedAt: 2000` left by the
+       * previous generation — so a still-ended `sess-01` would have sorted
+       * *newest* and survived the cap anyway. The assertion held with the fix
+       * removed, which is a test that cannot fail. Ending them at `3000 + i`
+       * makes a still-ended `sess-01` the oldest of twenty-six and therefore the
+       * first evicted, so only actually clearing the ending keeps it.
+       */
       for (let i = 0; i < HISTORY_CAP + 5; i += 1) {
         ledger.record(`ended-${i}`, {
           project: 'p',
           task: '',
           status: 'done',
-          endedAt: 500 + i,
+          endedAt: 3000 + i,
         });
       }
       ledger.flush();

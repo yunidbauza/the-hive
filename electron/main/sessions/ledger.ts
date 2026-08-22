@@ -192,9 +192,6 @@ export function readLedger(path: string): SessionRecord[] {
   return records;
 }
 
-/** The statuses that mean a session is still going. */
-const LIVE_STATUSES = new Set(['working', 'waiting', 'idle']);
-
 /** Whether this record describes something that is over. */
 const hasEnded = (record: SessionRecord): boolean =>
   record.endedAt !== undefined ||
@@ -370,6 +367,19 @@ export function createSessionLedger(
           ...patch,
         });
       } else {
+        /**
+         * A patch adds to what is known; it does not decide whether a session
+         * is alive.
+         *
+         * An earlier draft cleared `endedAt` here whenever a patch carried a
+         * live status, to catch the restart case. `begin` owns that now, and the
+         * branch is deliberately gone rather than kept as redundancy: it had
+         * become unreachable, and worse, its polarity had flipped. Records read
+         * from disk are stamped with an `endedAt` at load *so the cap can reach
+         * them*; a live status routed through here would have stripped that
+         * stamp back off and restored the "exempt forever" growth the stamp
+         * exists to prevent. One verb decides liveness, and it is not this one.
+         */
         const merged: SessionRecord = {
           ...existing,
           ...patch,
@@ -377,25 +387,6 @@ export function createSessionLedger(
           // anyone knew about this session, and retention sorts on it.
           createdAt: existing.createdAt,
         };
-        /**
-         * A patch that brings a session back to life clears its ending.
-         *
-         * `restartOnce` kills the pty, waits for the exit — which records
-         * `terminated` **with** an `endedAt` — and then spawns the same entity
-         * id again. Without this, the merged record reads `working` while still
-         * carrying the previous generation's `endedAt`, and `hasEnded` keys off
-         * that timestamp: a session that is genuinely running is filed as ended,
-         * counted against the cap it is supposed to be exempt from, and can be
-         * pruned out from under itself. The next patch for it — a title, say —
-         * then creates a *fresh* record with no project, no task and no uuid.
-         */
-        if (
-          patch.status !== undefined &&
-          LIVE_STATUSES.has(patch.status) &&
-          patch.endedAt === undefined
-        ) {
-          delete merged.endedAt;
-        }
         records.set(id, merged);
       }
       schedule();
