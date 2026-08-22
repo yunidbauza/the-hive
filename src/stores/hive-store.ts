@@ -466,6 +466,7 @@ const STATUS_WORD: Record<SessionStatus, string> = {
   idle: 'idle',
   done: 'done',
   terminated: 'terminated',
+  closed: 'closed',
 };
 
 /**
@@ -491,6 +492,13 @@ const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
    * carries the priority.
    */
   terminated: 'dim',
+  /**
+   * Dim, for the same reason `terminated` is (HIVE-87). A restored row has even
+   * less behind it than a terminated one — the process it describes died with
+   * the app that owned it, a launch ago — so it certainly does not earn the
+   * colour that means "there is something here".
+   */
+  closed: 'dim',
 };
 
 let spawnCounter = 0;
@@ -2254,6 +2262,7 @@ export const useCounts = () =>
         idle: 0,
         done: 0,
         terminated: 0,
+        closed: 0,
       };
       for (const id of state.order) {
         const entity = state.entities[id];

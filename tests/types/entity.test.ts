@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { entityLabel, type Agent, type Session } from '@/types/entity';
+import {
+  endedReason,
+  entityLabel,
+  isEnded,
+  type Agent,
+  type Session,
+} from '@/types/entity';
 
 /**
  * What a session is called on screen (HIVE-61).
@@ -64,5 +70,43 @@ describe('entityLabel', () => {
 
   it('uses an agent’s id — agents have no agent-set name', () => {
     expect(entityLabel(agent)).toBe('slack-agent');
+  });
+});
+
+/**
+ * The third ending (HIVE-87).
+ *
+ * `closed` is an inference, not an observation: a record restored from the
+ * ledger says it was working, and it plainly is not. Both assertions below are
+ * about that distinction surviving — one for the predicate every "is it over?"
+ * selector routes through, one for the sentence the row's tooltip shows.
+ */
+describe('closed', () => {
+  it('counts as an ending, like the other two', () => {
+    expect(isEnded('closed')).toBe(true);
+  });
+
+  it('is still distinguishable from a process we watched die', () => {
+    // The whole reason it is a separate status: `terminated` is never capped,
+    // and restoring live rows as `terminated` would grow the fleet forever.
+    expect(isEnded('terminated')).toBe(true);
+    expect(endedReason(session({ status: 'closed' }))).not.toBe(
+      endedReason(session({ status: 'terminated' })),
+    );
+  });
+
+  it('explains itself as an app close rather than a crash or a clear', () => {
+    expect(endedReason(session({ id: 'sess-01', status: 'closed' }))).toBe(
+      'sess-01 was open when The Hive last closed — its process did not survive',
+    );
+  });
+
+  it('leaves the other two sentences alone', () => {
+    expect(endedReason(session({ id: 'sess-01', status: 'terminated' }))).toBe(
+      'sess-01 has terminated — its process is gone',
+    );
+    expect(endedReason(session({ id: 'sess-01', status: 'done' }))).toBe(
+      'sess-01 was cleared — its terminal continues as a new session',
+    );
   });
 });

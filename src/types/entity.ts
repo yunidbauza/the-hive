@@ -22,7 +22,30 @@ export type SessionStatus =
   | 'waiting'
   | 'idle'
   | 'done'
-  | 'terminated';
+  | 'terminated'
+  /**
+   * Open when the app was last closed (HIVE-87).
+   *
+   * The third ending, and it exists for the reason story 108 gives above:
+   * collapsing two different endings makes them indistinguishable. `terminated`
+   * is an **observation** — `activity.ts` watched the pty go. `closed` is an
+   * **inference** — a record restored from the ledger says it was working, and
+   * it plainly is not, because the process it describes died with the app that
+   * owned it.
+   *
+   * The distinction is load-bearing rather than descriptive, and retention is
+   * where it earns its keep. `DONE_CAP` deliberately never prunes `terminated`,
+   * on the grounds that such a row "is the only record that it existed". Had
+   * restored sessions come back as `terminated`, every launch would have added
+   * the entire live fleet to a list nothing is allowed to shorten — twenty
+   * launches of five sessions is a hundred permanent tombstones in a table
+   * whose job is showing what is running. `closed` is cappable; `terminated`
+   * keeps its guarantee untouched.
+   *
+   * Never written by main, and never present in `sessions.json`. See
+   * `electron/shared/session-history-contract.ts` for why it cannot be.
+   */
+  | 'closed';
 
 /**
  * Aliases, not declarations (story 109).
@@ -215,7 +238,7 @@ export interface ProjectRow extends Project {
  * `terminated` sessions quietly reappearing in the active list.
  */
 export const isEnded = (status: SessionStatus): boolean =>
-  status === 'done' || status === 'terminated';
+  status === 'done' || status === 'terminated' || status === 'closed';
 
 /**
  * Whether this session's process is gone and cannot be typed into.
@@ -306,21 +329,37 @@ export const entityLabel = (entity: Entity): string => {
  * Why an ended session cannot be visited or typed into — one sentence, named
  * once (HIVE-93).
  *
- * The two endings are **not** interchangeable and the sentence has to say which:
- * a terminated session's process is gone, while a cleared one's is very much
- * alive and simply is not its own any more. See {@link isTerminated} for the
- * same distinction from the other direction.
+ * The three endings are **not** interchangeable and the sentence has to say
+ * which: a terminated session's process is gone, a cleared one's is very much
+ * alive and simply is not its own any more, and a closed one belongs to an app
+ * that is no longer running. See {@link isTerminated} for the same distinction
+ * from the other direction.
  *
  * It lives here rather than in the session table because there are now three
  * consumers and one of them is the store, which may not import from
  * `features/`. Two copies of this sentence is how the console came to report a
  * *cleared* row as "has terminated — its process is gone", which is the one
  * reading that is false in both halves.
+ *
+ * ## Why a `switch` and not the ternary this used to be (HIVE-87)
+ *
+ * The ternary tested `terminated` and let everything else fall through to the
+ * "was cleared" sentence. That was exactly right while there were two endings
+ * and silently wrong the moment there were three: `closed` would have inherited
+ * a sentence claiming its terminal continues as a new session, which is false
+ * twice over. A `switch` on the union makes the fourth ending a compile error
+ * instead of a plausible lie.
  */
-export const endedReason = (session: Session): string =>
-  session.status === 'terminated'
-    ? `${entityLabel(session)} has terminated — its process is gone`
-    : `${entityLabel(session)} was cleared — its terminal continues as a new session`;
+export const endedReason = (session: Session): string => {
+  switch (session.status) {
+    case 'terminated':
+      return `${entityLabel(session)} has terminated — its process is gone`;
+    case 'closed':
+      return `${entityLabel(session)} was open when The Hive last closed — its process did not survive`;
+    default:
+      return `${entityLabel(session)} was cleared — its terminal continues as a new session`;
+  }
+};
 
 /**
  * The outcome of looking an entity up by what the user typed.

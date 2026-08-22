@@ -23,6 +23,18 @@ const STATUS_FILL: Record<DotStatus, string> = {
   idle: 'bg-subtle',
   done: 'bg-brand',
   terminated: 'bg-muted',
+  /**
+   * `closed` takes `terminated`'s grey, deliberately (HIVE-87).
+   *
+   * The note above rules `subtle` out for `terminated` because `idle` owns it,
+   * and "idle and terminated are the two states most easily confused — both
+   * quiet, one still alive". A closed session is not alive either, so it must
+   * not borrow the colour that means *quiet but running*. Two absences sharing
+   * one grey is the right collision: the status word and the PREVIOUS RUN
+   * divider carry the difference between an ending we watched and one we
+   * inferred, and neither of them is a reason to go and look.
+   */
+  closed: 'bg-muted',
   online: 'bg-green',
 };
 
@@ -39,6 +51,7 @@ export const STATUS_TEXT: Record<DotStatus, string> = {
   idle: 'text-subtle',
   done: 'text-brand',
   terminated: 'text-muted',
+  closed: 'text-muted',
   online: 'text-green',
 };
 
@@ -56,6 +69,7 @@ export const STATUS_LABEL: Record<DotStatus, string> = {
   idle: 'idle',
   done: 'done',
   terminated: 'terminated',
+  closed: 'closed',
   online: 'online',
 };
 
@@ -78,6 +92,7 @@ const STATUS_RING: Record<DotStatus, string> = {
   idle: 'border-subtle',
   done: 'border-brand',
   terminated: 'border-muted',
+  closed: 'border-muted',
   online: 'border-green',
 };
 
@@ -85,8 +100,8 @@ const STATUS_RING: Record<DotStatus, string> = {
  * The word beside the dot, including what is still running.
  *
  * A function rather than a sixth entry in `STATUS_LABEL`, because the detail is
- * orthogonal to the status: `SessionStatus` keeps its five members and the dot
- * keeps its five colours.
+ * orthogonal to the status: the detail rides alongside `SessionStatus` rather
+ * than multiplying its members, and the dot's palette is unchanged by it.
  */
 export function statusLabel(status: DotStatus, detail?: IdleDetail): string {
   if (status === 'idle' && detail !== undefined) return `idle (${detail})`;
