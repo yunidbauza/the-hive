@@ -419,8 +419,11 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'startClone',
   ]);
   /**
-   * Story 096 added `session`, and it is a listener only. Main derives status
-   * from pty output and pushes it; the renderer cannot ask for anything here.
+   * Story 096 added `session` as a listener only: main derived status from pty
+   * output and pushed it, and the renderer could ask for nothing here. That
+   * held until HIVE-87, which added the namespace's first two verbs — see the
+   * note above the assertion for what they grant. The paragraphs between here
+   * and there describe how the listener-only years accumulated.
    *
    * HIVE-61 added `onName` beside it — also main → renderer, also a thing the
    * page can be *told* rather than a thing it can do. It updated
@@ -462,7 +465,38 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * what Claude Code's status line already reported about a session the page
    * can see. It grants the page nothing.
    */
+  /**
+   * **HIVE-87 ends the "listener only" property, deliberately.**
+   *
+   * `history` and `note` are the first verbs in this namespace the page can
+   * call, so the sentence at the top of this block — "the renderer cannot ask
+   * for anything here" — is no longer true and the paragraphs above now read as
+   * history. This is the change that most deserved the hard look this list
+   * exists to force, so what each one grants is written down rather than
+   * asserted away:
+   *
+   * `history()` returns The Hive's own record of its own rows — entity ids,
+   * project ids, branch names, a working directory, the model and effort a
+   * session was started as, and the uuid main pinned as `--session-id`. It
+   * carries **no prompt text and no transcript**, and it reads nothing out of
+   * `~/.claude`: every field in it is something main itself wrote down while
+   * the session ran. The cwd is the widest thing in there, and the page could
+   * already reach it through `onBranch`.
+   *
+   * `note({ entityId, ticket })` is the only verb here that *writes*, and it
+   * writes one string into one field of one record. Both arguments are guarded
+   * at the boundary — `assertId` and `assertText` — and main refuses a note for
+   * an entity it never spawned, so the verb cannot create rows, only annotate
+   * ones main already knows about. It reaches no filesystem path, no process
+   * and no network.
+   *
+   * The property worth pinning is no longer "listeners only" but "nothing here
+   * carries a prompt, and nothing here names a path the renderer chose". That
+   * still holds.
+   */
   expect(surface.session).toEqual([
+    'history',
+    'note',
     'onBranch',
     'onCleared',
     'onMetrics',

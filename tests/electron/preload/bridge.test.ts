@@ -11,6 +11,7 @@ import {
   BRIDGE_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
+  BRIDGE_SESSION_KEYS,
   BRIDGE_THEME_KEYS,
   BRIDGE_UI_KEYS,
   CH,
@@ -80,6 +81,9 @@ const theme = () =>
 const ui = () =>
   exposed.ui as Record<string, (...args: unknown[]) => unknown>;
 
+const session = () =>
+  exposed.session as Record<string, (...args: unknown[]) => unknown>;
+
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
     expect(Object.keys(exposed).sort()).toEqual([...BRIDGE_KEYS].sort());
@@ -108,6 +112,20 @@ describe('exposed surface', () => {
      */
     expect(Object.keys(updates()).sort()).toEqual([
       ...BRIDGE_UPDATES_KEYS,
+    ].sort());
+    /**
+     * The fifth time, and this one had already happened.
+     *
+     * `BRIDGE_SESSION_KEYS` shipped exported and imported by nothing — the exact
+     * shape the two notes above describe — and it stayed that way through six
+     * listeners being added to it. `security.spec.ts` even records the belief
+     * that this namespace was "covered by the preload surface test", which it
+     * was not. HIVE-87 added that namespace's first two *verbs*, which is what
+     * finally made the gap worth more than the note; the line below is the
+     * alarm the constant has been claiming to be since it was written.
+     */
+    expect(Object.keys(session()).sort()).toEqual([
+      ...BRIDGE_SESSION_KEYS,
     ].sort());
   });
 

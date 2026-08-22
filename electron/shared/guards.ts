@@ -46,6 +46,7 @@ import {
   SESSION_THEMES,
   isSendableSessionName,
 } from './session-contract';
+import type { SessionNoteRequest } from './session-history-contract';
 
 /**
  * Payload guards (story 082).
@@ -312,6 +313,28 @@ export function assertSessionName(value: unknown, label: string): string {
     return fail(`${label}: expected a name like HIVE-73 (max ${SESSION_NAME_MAX})`);
   }
   return name;
+}
+
+/**
+ * The renderer naming the ticket a session is being worked for (HIVE-87).
+ *
+ * `entityId` takes {@link assertId} rather than `assertText`: it is a lookup key
+ * into the ledger's map, not a string to render, and the same argument that
+ * bounds a session id applies — a key with separators or control characters in
+ * it is a lookup that can be made to mean something other than it looks like.
+ *
+ * `ticket` takes `assertText`, which is the guard for a value that will be
+ * stored and shown. It is deliberately **not** checked against an issue-key
+ * pattern here: the renderer has already asked Jira whether the key names a
+ * real issue, which is a far stronger check than any regex, and a second weaker
+ * one in this file would only invite someone to trust it instead.
+ */
+export function parseSessionNoteRequest(input: unknown): SessionNoteRequest {
+  const raw = assertShape(input, ['entityId', 'ticket'], 'sessionNote');
+  return {
+    entityId: assertId(raw.entityId, 'sessionNote.entityId'),
+    ticket: assertText(raw.ticket, 'sessionNote.ticket'),
+  };
 }
 
 export function parseWriteRequest(input: unknown): WriteRequest {

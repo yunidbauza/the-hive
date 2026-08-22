@@ -60,6 +60,7 @@ import {
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
+  parseSessionNoteRequest,
   parseWriteRequest,
 } from '@shared/guards';
 import {
@@ -81,7 +82,10 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
-import { SESSION_HISTORY_FILE } from '@shared/session-history-contract';
+import {
+  SESSION_HISTORY_FILE,
+  type SessionRecord,
+} from '@shared/session-history-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
 import { createCloneFlow, type CloneFlow } from '../clone';
@@ -771,6 +775,34 @@ export function registerIpcHandlers(): void {
      * saves the last few hundred milliseconds of a quiet quit.
      */
     ledger?.flush();
+  });
+
+  /**
+   * The fleet as it was when the app last closed (HIVE-87).
+   *
+   * Answers from memory rather than re-reading the file: the ledger loaded it at
+   * construction and is the only thing that writes to it, so a second read could
+   * only ever return something staler than what is already held.
+   *
+   * `?? []` is not a fallback so much as the browser-shaped case in main's
+   * clothing — a renderer that asks before registration completed gets "no
+   * history", which is exactly what it would get from an empty file.
+   */
+  handle(CH.sessionHistory, (): SessionRecord[] => ledger?.all() ?? []);
+
+  /**
+   * The renderer naming a ticket for a session (HIVE-87).
+   *
+   * Guarded like every other payload that crosses the bridge. It cannot create
+   * a record — `record` merges into whatever is already there, and a note for
+   * an entity main never spawned would create a row for a session that never
+   * existed. Hence the `all()` check: main writes only what it already knows
+   * about.
+   */
+  handle(CH.sessionNote, (_event, raw: unknown): void => {
+    const request = parseSessionNoteRequest(raw);
+    if (!ledger?.all().some((record) => record.id === request.entityId)) return;
+    ledger.record(request.entityId, { ticket: request.ticket });
   });
 
   handle(CH.appInfo, (): AppInfo => {

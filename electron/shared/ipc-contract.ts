@@ -82,6 +82,10 @@ import type {
   SessionStatusEvent,
   SessionTicketIntentEvent,
 } from './session-contract';
+import type {
+  SessionNoteRequest,
+  SessionRecord,
+} from './session-history-contract';
 import type { PickedTheme, SaveThemeRequest } from './theme-contract';
 import type { UpdateStatus } from './update-contract';
 
@@ -408,6 +412,32 @@ export const CH = {
    * carries rate limits at all.
    */
   sessionMetrics: 'session:metrics', // main → renderer
+  /**
+   * The fleet as it was when the app last closed (HIVE-87).
+   *
+   * **Renderer → main, and the first of its kind in this namespace.** Every
+   * other `session:*` entry is a push main makes when it observes something;
+   * these two are verbs the page calls. The direction comments above are worth
+   * reading as a group for that reason — the namespace is no longer
+   * listeners-only, and `BRIDGE_SESSION_KEYS` says so too.
+   *
+   * Read once, at boot. There is no subscription and no refresh: the file only
+   * changes because *this* app wrote to it, so anything it could tell the
+   * renderer later, the renderer already knows.
+   */
+  sessionHistory: 'session:history', // renderer → main, invoke
+  /**
+   * The one fact about a session that main cannot work out for itself.
+   *
+   * A session's Jira key is decided in the renderer, after `readJiraIssue`
+   * confirms the key names a real issue — a check main deliberately cannot make,
+   * because main matches a *shape* and `HTTP-404` passes that shape perfectly.
+   * So the renderer tells main, and main writes it down.
+   *
+   * Same shape of claim as `SpawnRequest.name`: the renderer has a better
+   * answer than main can compute, and hands it over rather than main guessing.
+   */
+  sessionNote: 'session:note', // renderer → main, invoke
   /**
    * The project filesystem — the explorer and the editor.
    *
@@ -1174,6 +1204,23 @@ export interface HiveBridge {
      * zero.
      */
     onMetrics(callback: (event: SessionMetricsEvent) => void): () => void;
+    /**
+     * The fleet as it was when the app last closed (HIVE-87).
+     *
+     * Read once at boot and merged into the store. Records are the app's own
+     * notes about its own rows; `status` is whatever was last observed and is
+     * never `closed` — the renderer infers that, because a record claiming to
+     * be `working` plainly is not.
+     */
+    history(): Promise<SessionRecord[]>;
+    /**
+     * Tell main the issue key a session is being worked for (HIVE-87).
+     *
+     * The renderer's job because only the renderer can confirm the key names a
+     * real issue. Fire and forget — nothing downstream waits on it, and a
+     * failure costs a ticket link in the history and nothing else.
+     */
+    note(request: SessionNoteRequest): Promise<void>;
   };
   /**
    * Getting a theme file on and off disk (HIVE-80).
@@ -1283,10 +1330,11 @@ export const BRIDGE_SESSION_KEYS = [
   'onName',
   'onCleared',
   /**
-   * HIVE-78's two, and the list is still **listeners only** — main → renderer,
-   * no verb the page can call. `onTicketIntent` is the one to keep an eye on:
-   * its source is the user's prompt, and it carries only a matched issue key
-   * out. See `security.spec.ts` for the full argument.
+   * HIVE-78's two. These were listeners, and at the time so was everything in
+   * this list — HIVE-87 added the first two verbs, at the bottom.
+   * `onTicketIntent` is the one to keep an eye on: its source is the user's
+   * prompt, and it carries only a matched issue key out. See `security.spec.ts`
+   * for the full argument.
    */
   'onBranch',
   'onTicketIntent',
@@ -1297,6 +1345,18 @@ export const BRIDGE_SESSION_KEYS = [
    * no token value.
    */
   'onMetrics',
+  /**
+   * HIVE-87's two, and the "listeners only" claim above stops being true here.
+   *
+   * These are the first verbs in this namespace the page can call. What they
+   * widen the bridge by is bounded and worth stating: `history` returns the
+   * app's own record of its own rows — ids, project ids, branch names, model
+   * and effort, and the uuid it pinned as `--session-id`. No prompt text, no
+   * transcript, and nothing read out of `~/.claude`. `note` accepts one issue
+   * key for one entity, both `assertText`-guarded, and can do nothing else.
+   */
+  'history',
+  'note',
 ] as const;
 
 /** The exact key set of `window.hive.integrations`. */

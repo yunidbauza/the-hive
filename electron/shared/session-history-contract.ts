@@ -100,3 +100,21 @@ export interface SessionRecord {
   /** When the session ended, if it has. What retention sorts on. */
   endedAt?: number;
 }
+
+/**
+ * The renderer telling main the issue key a session is being worked for.
+ *
+ * The one field of a record main cannot author. A session's Jira key is settled
+ * in the renderer, after `readJiraIssue` confirms the key names a real issue —
+ * a check main deliberately does not make, because main matches a *shape* and
+ * `HTTP-404` matches that shape perfectly. Acting on an unconfirmed match would
+ * be silently misfiled work, which is the one error the user has no obvious way
+ * to notice.
+ *
+ * Both fields are display strings rather than paths: they are rendered and
+ * stored, never resolved, so `assertText` is the right guard for both.
+ */
+export interface SessionNoteRequest {
+  entityId: string;
+  ticket: string;
+}
