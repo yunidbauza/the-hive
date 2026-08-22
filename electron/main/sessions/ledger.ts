@@ -65,6 +65,21 @@ export interface SessionLedger {
    * mention is left alone.
    */
   record(id: string, patch: SessionPatch): void;
+  /**
+   * Start a session's record over, discarding anything held under that id.
+   *
+   * Entity ids are **reused across a restart**, so the ledger's `sess-01` and a
+   * freshly spawned `sess-01` are different sessions wearing the same name. The
+   * renderer already knows this — `hydrateSessions` refuses to let a restored
+   * row overwrite a live one — and this is main acting on the same fact.
+   *
+   * Merging instead was silent corruption rather than a lost field: the new
+   * session inherited the old one's `branch`, `cwd`, `ticket` and `name`,
+   * because a spawn patch does not mention them, and kept the old `createdAt`,
+   * which is what retention sorts on. A launch later, that row restored
+   * advertising a branch and a ticket belonging to a session it never was.
+   */
+  begin(id: string, patch: SessionPatch): void;
   /** Everything held, ready to answer `session:history`. */
   all(): SessionRecord[];
   /** Write now, synchronously. Safe to call when nothing is pending. */
@@ -238,21 +253,38 @@ export function createSessionLedger(
    * remove. That is the unbounded growth this whole feature was shaped to
    * avoid, reappearing in the file instead of the table.
    *
-   * `createdAt` is used as the ending timestamp rather than "now": retention
-   * already sorts on `endedAt ?? createdAt`, so it changes no ordering, and it
-   * does not relabel an old record as freshly ended on every launch. The
-   * *status* is untouched — the renderer still needs to see `working` to infer
+   * The timestamp is **now**, not `createdAt`, and the difference decides which
+   * record the cap eats first.
+   *
+   * `createdAt` looks safer — retention already falls back to it — but that only
+   * held while these records were outside the ended bucket entirely. Once they
+   * are in it, `endedAt` has to mean *when did this stop*, and a session's spawn
+   * time is the wrong answer in the worst possible direction: a session opened
+   * at 09:00 and worked in all day sorts below twenty throwaways that ended at
+   * lunchtime, so it is evicted first and the one row the user actually wants to
+   * see is the one PREVIOUS RUN loses. Stamping at load ranks it as the most
+   * recent ending, which is what it is.
+   *
+   * Nothing is relabelled on a later launch: the stamp only lands where
+   * `endedAt` is absent, so a record takes one exactly once. The *status* is
+   * untouched either way — the renderer still needs to see `working` to infer
    * `closed`.
    */
   const records = new Map(
     readLedger(path).map((record) => {
       const stamped: SessionRecord =
-        record.endedAt === undefined
-          ? { ...record, endedAt: record.createdAt }
-          : record;
+        record.endedAt === undefined ? { ...record, endedAt: now() } : record;
       return [record.id, stamped] as const;
     }),
   );
+  /**
+   * Ids this process has started, as opposed to read off disk.
+   *
+   * The one fact a `SessionRecord` cannot carry: which run wrote it. `begin`
+   * needs it to tell a restart (keep what the row has learned) from a spawn that
+   * reused a previous run's id (keep none of it).
+   */
+  const startedThisRun = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const write = (): void => {
@@ -282,6 +314,50 @@ export function createSessionLedger(
   };
 
   return {
+    begin(id, patch) {
+      /**
+       * A restart is not a new session, and a reused id is not the old one.
+       *
+       * Both arrive here — `restartOnce` spawns through the same path as a
+       * first open — and they want opposite things. A restart keeps the row's
+       * accumulated truth: same session, same ticket, same branch, new process.
+       * A spawn that happens to take an id the *previous run* used must keep
+       * none of it, or the new session advertises a branch and a ticket it
+       * never had.
+       *
+       * `startedThisRun` is what separates them, and it is the only thing that
+       * can: a record's own fields cannot say which run wrote them.
+       */
+      const previous = startedThisRun.has(id) ? records.get(id) : undefined;
+      const base: SessionRecord = previous ?? {
+        id,
+        project: '',
+        task: '',
+        status: 'working',
+        createdAt: now(),
+      };
+
+      const next: SessionRecord = {
+        ...base,
+        ...patch,
+        id,
+        // Kept across a restart, minted for a genuinely new session.
+        createdAt: base.createdAt,
+        status: patch.status ?? 'working',
+      };
+      /*
+        A session that is starting has not ended. The previous generation's
+        `settleExit` left an `endedAt` here, and leaving it would file a running
+        session as ended — exempt from nothing, prunable, and replaceable by an
+        empty record on its next patch.
+      */
+      delete next.endedAt;
+
+      startedThisRun.add(id);
+      records.set(id, next);
+      schedule();
+    },
+
     record(id, patch) {
       const existing = records.get(id);
       if (existing === undefined) {

@@ -2576,9 +2576,15 @@ export const useEndedSessions = () =>
  * A third group rather than a flag on the ended one, for the reason above: they
  * are the answer to a different question, and they get their own divider.
  *
- * Nothing mints `closed` at runtime — only `hydrateSessions` produces it, once,
- * at boot — so this list is fixed for the life of the app session. It is
- * capped by the ledger rather than here: the file it came from holds at most
+ * Keyed on `restored`, not on `closed`, and the difference is the whole reason
+ * the flag exists. `settleExit` is the only writer of an ended status, so a
+ * session that quit normally last run comes back as `terminated` —
+ * indistinguishable, by status alone, from one that quit ten seconds ago in
+ * this run. Grouping on `closed` sent every one of those into ENDED.
+ *
+ * Nothing sets `restored` at runtime — only `hydrateSessions` does, once, at
+ * boot — so this list is fixed for the life of the app session. It is capped by
+ * the ledger rather than here: the file it came from holds at most
  * `HISTORY_CAP` ended records, so there is no second cap to drift out of step
  * with the first.
  */

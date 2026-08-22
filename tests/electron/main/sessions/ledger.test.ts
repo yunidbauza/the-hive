@@ -122,10 +122,9 @@ describe('session ledger', () => {
   describe('reopening an existing ledger', () => {
     const seed = () => {
       const first = createSessionLedger(file, () => 1000);
-      first.record('sess-01', {
+      first.begin('sess-01', {
         project: 'the-hive',
         task: '',
-        status: 'working',
         sessionUuid: 'abc',
       });
       first.flush();
@@ -144,12 +143,12 @@ describe('session ledger', () => {
           createdAt: 1000,
           /*
             Stamped on load, because a record on disk cannot describe a running
-            process. `createdAt` rather than "now", so retention's
-            `endedAt ?? createdAt` ordering is unchanged and an old record is
-            not relabelled as freshly ended on every launch. See "what counts as
-            ended" below.
+            process — and stamped with the *load* clock (2000 here), not the
+            spawn time, so the session left open at the quit ranks as the newest
+            ending rather than the oldest. See "what counts as ended" below for
+            what the other choice cost.
           */
-          endedAt: 1000,
+          endedAt: 2000,
         },
       ]);
     });
@@ -214,10 +213,44 @@ describe('session ledger', () => {
       );
 
       const [record] = createSessionLedger(file, () => 9000).all();
-      expect(record?.endedAt).toBe(500);
+      // Stamped at load, not at spawn — see the next test for why that matters.
+      expect(record?.endedAt).toBe(9000);
       // The status is untouched: the renderer needs to see `working` to infer
       // `closed`.
       expect(record?.status).toBe('working');
+    });
+
+    it('ranks the session left open at quit as the newest ending, not the oldest', () => {
+      /**
+       * The cap keeps the newest `HISTORY_CAP` endings. Stamping a live-at-quit
+       * record with its *spawn* time sorts it below every throwaway that ended
+       * after it — so the one row the user actually wants back is the first one
+       * evicted. A session opened at 09:00 and worked in all day loses to twenty
+       * sessions that ended at lunchtime.
+       */
+      const openedEarly = {
+        id: 'worked-in-all-day',
+        project: 'p',
+        task: '',
+        status: 'working',
+        createdAt: 1,
+      };
+      const throwaways = Array.from({ length: HISTORY_CAP }, (_, i) => ({
+        id: `throwaway-${i}`,
+        project: 'p',
+        task: '',
+        status: 'terminated',
+        createdAt: 10 + i,
+        endedAt: 100 + i,
+      }));
+      writeFileSync(file, JSON.stringify([openedEarly, ...throwaways]), 'utf8');
+
+      const ledger = createSessionLedger(file, () => 9000);
+      ledger.flush();
+
+      const ids = readLedger(file).map((record) => record.id);
+      expect(ids).toContain('worked-in-all-day');
+      expect(ids).toHaveLength(HISTORY_CAP);
     });
 
     it('does not restamp a record that already ended', () => {
@@ -286,6 +319,109 @@ describe('session ledger', () => {
       ledger.flush();
 
       expect(readLedger(file)[0]?.endedAt).toBe(4000);
+    });
+  });
+
+  /**
+   * Starting a session, as distinct from patching one (HIVE-87 review).
+   *
+   * Entity ids are reused across a restart, so `begin` has to tell two cases
+   * apart that arrive through the same code path: a restart, which keeps what
+   * the row has learned, and a spawn that happens to take an id the *previous*
+   * run used, which must keep none of it.
+   */
+  describe('begin', () => {
+    it('keeps nothing from a record the previous run left behind', () => {
+      // The corruption this exists to stop: a brand-new session advertising a
+      // branch and a ticket belonging to a session it never was.
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'old-project',
+            task: 'old task',
+            status: 'terminated',
+            createdAt: 100,
+            endedAt: 200,
+            branch: 'feat/old',
+            cwd: '/old',
+            ticket: 'HIVE-1',
+            name: 'old-name',
+            sessionUuid: 'old-uuid',
+          },
+        ]),
+        'utf8',
+      );
+
+      const ledger = createSessionLedger(file, () => 5000);
+      ledger.begin('sess-01', {
+        project: 'new-project',
+        task: '',
+        sessionUuid: 'new-uuid',
+      });
+      ledger.flush();
+
+      const [record] = readLedger(file);
+      expect(record).toMatchObject({
+        project: 'new-project',
+        sessionUuid: 'new-uuid',
+        status: 'working',
+        createdAt: 5000,
+      });
+      expect(record?.branch).toBeUndefined();
+      expect(record?.cwd).toBeUndefined();
+      expect(record?.ticket).toBeUndefined();
+      expect(record?.name).toBeUndefined();
+      expect(record?.endedAt).toBeUndefined();
+    });
+
+    it('keeps what a restart has already learned this run', () => {
+      // Same session, new process. Its ticket and branch did not change because
+      // the agent was restarted.
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.begin('sess-01', { project: 'p', task: '', sessionUuid: 'first' });
+      ledger.record('sess-01', {
+        branch: 'feat/x',
+        cwd: '/repo',
+        ticket: 'HIVE-87',
+        name: 'worker',
+      });
+      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
+
+      ledger.begin('sess-01', { project: 'p', task: '', sessionUuid: 'second' });
+      ledger.flush();
+
+      expect(readLedger(file)[0]).toMatchObject({
+        branch: 'feat/x',
+        cwd: '/repo',
+        ticket: 'HIVE-87',
+        name: 'worker',
+        sessionUuid: 'second',
+        status: 'working',
+        createdAt: 1000,
+      });
+      expect(readLedger(file)[0]?.endedAt).toBeUndefined();
+    });
+
+    it('clears the previous generation ending so a restart is not prunable', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.begin('sess-01', { project: 'p', task: '' });
+      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
+      ledger.begin('sess-01', { project: 'p', task: '' });
+
+      // Live again: exempt from the cap, which is what `all()` reflects.
+      for (let i = 0; i < HISTORY_CAP + 5; i += 1) {
+        ledger.record(`ended-${i}`, {
+          project: 'p',
+          task: '',
+          status: 'done',
+          endedAt: 500 + i,
+        });
+      }
+      ledger.flush();
+
+      expect(readLedger(file).map((r) => r.id)).toContain('sess-01');
     });
   });
 

@@ -1292,6 +1292,14 @@ describe('the ledger', () => {
       config: () => CONFIG,
       newSessionUuid: () => TEST_UUID,
       ledger: {
+        /*
+          Both verbs land in one list. What these tests assert is *what main
+          hands over and when*; which of the two carried it is the ledger's own
+          concern and is covered in `ledger.test.ts`.
+        */
+        begin: (id, patch) => {
+          written.push({ id, patch: { ...patch } });
+        },
         record: (id, patch) => {
           written.push({ id, patch: { ...patch } });
         },

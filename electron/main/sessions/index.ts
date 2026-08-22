@@ -1065,7 +1065,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      * retroactively to a session that has already started, so the only moment
      * it can be captured is this one.
      */
-    ledger?.record(request.entityId, {
+    ledger?.begin(request.entityId, {
       project: request.projectId,
       task: request.task ?? '',
       status: 'working',
