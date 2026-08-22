@@ -10,6 +10,7 @@ import type {
   SessionStatusEvent,
   SessionTicketIntentEvent,
 } from '@shared/session-contract';
+import type { SessionNoteRequest } from '@shared/session-history-contract';
 
 import { isSession } from '@/types/entity';
 
@@ -33,6 +34,8 @@ let branchListeners: ((event: SessionBranchEvent) => void)[];
 let metricsListeners: ((event: SessionMetricsEvent) => void)[];
 let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
 let disposals: number;
+/** What the hook handed to `session.note` (HIVE-87). */
+let notedTickets: SessionNoteRequest[];
 
 /**
  * What `jira.issue` answers (HIVE-78).
@@ -88,6 +91,16 @@ function withBridge() {
           disposals += 1;
         };
       },
+      /*
+        HIVE-87. The hook now tells main about a ticket it has confirmed, so
+        this stub has to answer that verb too. Recorded rather than ignored:
+        `notedTickets` is what the association test asserts against.
+      */
+      history: () => Promise.resolve([]),
+      note: (request: SessionNoteRequest) => {
+        notedTickets.push(request);
+        return Promise.resolve();
+      },
     },
   };
 }
@@ -134,6 +147,7 @@ beforeEach(() => {
   branchListeners = [];
   metricsListeners = [];
   intentListeners = [];
+  notedTickets = [];
   issueCalls = [];
   issueReply = null;
   disposals = 0;
@@ -277,6 +291,14 @@ describe('useSessionStatus', () => {
     expect(entity.ticket).toBe('HIVE-73');
     expect(entity.name).toBe('HIVE-73');
     expect(issueCalls).toEqual(['HIVE-73']);
+    /*
+      And main was told, so the link survives a quit (HIVE-87). This is the only
+      moment it can be: main matched the shape but does not decide whether the
+      key is real, and the confirmation exists only on this side.
+    */
+    expect(notedTickets).toEqual([
+      { entityId: 'rails-upgrade', ticket: 'HIVE-73' },
+    ]);
   });
 
   it('ignores a key-shaped string Jira does not know', async () => {

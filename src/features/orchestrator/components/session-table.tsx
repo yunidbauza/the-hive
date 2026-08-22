@@ -17,6 +17,7 @@ import {
   useEntity,
   useNavOrder,
   useOpenEntity,
+  useRestoredSessions,
 } from '@stores/hive-store';
 import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
@@ -98,7 +99,10 @@ const COL = {
 export function SessionTable() {
   const active = useActiveSessions();
   const ended = useEndedSessions();
-  const empty = active.length === 0 && ended.length === 0;
+  /** Last run's fleet (HIVE-87). Fixed for the life of the app session. */
+  const restored = useRestoredSessions();
+  const empty =
+    active.length === 0 && ended.length === 0 && restored.length === 0;
   /**
    * Drawn unconditionally, though only rendered when the table is empty: a hook
    * cannot sit behind the `empty` branch. The cost is one array index on a
@@ -139,6 +143,33 @@ export function SessionTable() {
       {active.map((id) => (
         <SessionTableRow key={id} id={id} />
       ))}
+
+      {/*
+        Last run's fleet, **above** ENDED (HIVE-87).
+
+        Above rather than below because of where the eye lands and when the
+        group exists. At launch this is the only group on the table, so it sits
+        directly under the column header; as work starts, live rows push it down
+        and this run's endings collect beneath it. The ended half of the table
+        then reads oldest to newest, top to bottom.
+
+        Its own divider rather than a fourth kind of row inside ENDED: that
+        group answers "what did I just finish?", about this session of the app,
+        and a launch or two would bury the answer under rows from before.
+      */}
+      {restored.length > 0 ? (
+        <>
+          <div className="flex items-center gap-2 px-2 pt-3.5 pb-1.5">
+            <span className="shrink-0 text-[11px] tracking-[0.06em] text-term-head">
+              PREVIOUS RUN
+            </span>
+            <span className="flex-1 border-t border-border" />
+          </div>
+          {restored.map((id) => (
+            <SessionTableRow key={id} id={id} />
+          ))}
+        </>
+      ) : null}
 
       {/*
         "ENDED", not "COMPLETED" (story 108). The group now holds two different

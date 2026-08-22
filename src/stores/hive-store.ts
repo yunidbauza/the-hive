@@ -35,6 +35,7 @@ import {
   projectConfigSnapshot,
   subscribeProjectConfig,
 } from '@lib/project-config';
+import { noteSessionTicket } from '@lib/session-history';
 import { pickPhrase } from '@lib/swarm/phrases';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
@@ -868,6 +869,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * attach-never-respawn regardless.
      */
     if (isDesktop()) {
+      /*
+        The ticket link, so it survives a quit (HIVE-87).
+
+        `SpawnRequest` deliberately does not carry it. A ticket is not a
+        property of *starting* a process — nothing on the command line changes
+        because of it — and the other path that establishes the link happens
+        mid-session, long after any spawn. One verb for both keeps a single
+        answer to "how does main learn a session's ticket".
+      */
+      if (ticket !== undefined) noteSessionTicket({ entityId: id, ticket });
+
       /**
        * The **resolved** model and effort, not the arguments (story 109).
        *

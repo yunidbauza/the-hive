@@ -1,0 +1,97 @@
+import { join } from 'node:path';
+
+import { test as base, expect } from '@playwright/test';
+
+import {
+  launchHive,
+  startSession,
+  writeProjectConfig,
+} from './fixtures/hive-app';
+
+/**
+ * The fleet survives a quit (HIVE-87).
+ *
+ * This spec deliberately does **not** use the `hive` fixture, for the reason
+ * `window-state.spec.ts` gives about geometry: the fixture gives one app per
+ * test, and the only honest proof here is two launches against the same profile
+ * with a genuine `close()` in between. Asserting that `sessions.json` was
+ * written would prove the ledger writes; it would not prove the fleet comes
+ * back, which is the whole feature.
+ *
+ * It is also the only place anything checks the *inference* end to end — that a
+ * session which was running at the quit returns as `closed` rather than as the
+ * `working` the file still says it was.
+ */
+const test = base;
+
+const PROJECT = 'apfm-web';
+const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
+
+test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN', async ({}, testInfo) => {
+  const userDataDir = testInfo.outputPath('user-data');
+  const configPath = testInfo.outputPath('hive-config.json');
+  writeProjectConfig(configPath, { id: PROJECT, path: REAL_DIRECTORY });
+
+  const first = await launchHive({ userDataDir, configPath });
+  const firstWindow = await first.firstWindow();
+  await firstWindow.waitForLoadState('domcontentloaded');
+  await firstWindow.waitForSelector('header');
+
+  const id = await startSession(firstWindow, PROJECT);
+
+  /*
+    The ledger write is debounced at 400ms like the window state's, and the
+    shutdown flush races the pty teardown by design — so this waits rather than
+    relying on the flush, which is exactly the guarantee the module refuses to
+    make.
+  */
+  await firstWindow.waitForTimeout(700);
+  await first.close();
+
+  const second = await launchHive({ userDataDir, configPath });
+  const secondWindow = await second.firstWindow();
+  await secondWindow.waitForLoadState('domcontentloaded');
+  await secondWindow.waitForSelector('header');
+
+  try {
+    // The app boots into the orchestrator, so the table is already on screen.
+    await expect(secondWindow.getByText('PREVIOUS RUN')).toBeVisible();
+
+    const row = secondWindow.getByRole('button', { name: new RegExp(id) });
+    await expect(row).toBeVisible();
+
+    /*
+      The inference, end to end. The record on disk says `working` — nothing
+      ever writes `closed` — and what the user sees is `closed`, because the
+      process it describes died with the app that owned it.
+    */
+    await expect(row).toContainText('closed');
+
+    // Inert, inherited from `openEntity`'s existing refusal of any ended row.
+    await expect(row).toBeDisabled();
+  } finally {
+    await second.close();
+  }
+});
+
+test('a fresh profile still boots with an empty fleet', async ({}, testInfo) => {
+  /*
+    The other half of the claim: history is additive. A machine that has never
+    run The Hive must open exactly as it did before this feature existed, and a
+    deleted `sessions.json` must return it to that state rather than erroring.
+  */
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath: testInfo.outputPath('hive-config.json'),
+  });
+  const window = await app.firstWindow();
+  await window.waitForLoadState('domcontentloaded');
+  await window.waitForSelector('header');
+
+  try {
+    await expect(window.getByTestId('session-table-empty')).toBeVisible();
+    await expect(window.getByText('PREVIOUS RUN')).toBeHidden();
+  } finally {
+    await app.close();
+  }
+});

@@ -248,4 +248,82 @@ describe('SessionTable', () => {
 
     expect(rows()).toHaveLength(11);
   });
+
+  /**
+   * Last run's fleet (HIVE-87).
+   *
+   * The group exists to answer a different question from ENDED's, so most of
+   * what matters here is *where* it sits and that its rows stay inert.
+   */
+  describe('the PREVIOUS RUN group', () => {
+    const restore = () => {
+      act(() => {
+        useHiveStore.getState().hydrateSessions([
+          {
+            id: 'old-01',
+            project: 'apfm-web',
+            task: '',
+            status: 'working',
+            branch: 'feat/old',
+            createdAt: 1,
+          },
+        ]);
+      });
+    };
+
+    it('renders restored rows under their own divider', () => {
+      restore();
+      render(<SessionTable />);
+
+      expect(screen.getByText('PREVIOUS RUN')).toBeInTheDocument();
+      expect(screen.getByText('closed')).toBeInTheDocument();
+    });
+
+    it('puts that divider above ENDED, not below it', () => {
+      // The ordering the design turns on: at launch this is the only group on
+      // the table, so it belongs where the eye lands.
+      restore();
+      render(<SessionTable />);
+
+      const previous = screen.getByText('PREVIOUS RUN');
+      const ended = screen.getByText('ENDED');
+      expect(previous.compareDocumentPosition(ended)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    });
+
+    it('is absent entirely when nothing was restored', () => {
+      render(<SessionTable />);
+
+      expect(screen.queryByText('PREVIOUS RUN')).not.toBeInTheDocument();
+    });
+
+    it('does not count restored rows as an empty fleet', () => {
+      useHiveStore.getState().reset();
+      restore();
+      render(<SessionTable />);
+
+      expect(screen.queryByTestId('session-table-empty')).not.toBeInTheDocument();
+    });
+
+    it('refuses to open a restored row, and says why', async () => {
+      // Inherited from `openEntity`'s existing gate rather than added: `closed`
+      // is an ending, so every ended-row behaviour already applies to it.
+      restore();
+      render(<SessionTable />);
+
+      const row = screen
+        .getAllByRole('button')
+        .find((button) => within(button).queryByText('closed') !== null)!;
+
+      expect(row).toBeDisabled();
+      expect(row).toHaveAttribute(
+        'title',
+        'old-01 was open when The Hive last closed — its process did not survive',
+      );
+
+      await userEvent.click(row);
+      expect(useUiStore.getState().activeTab).not.toBe('old-01');
+    });
+  });
 });

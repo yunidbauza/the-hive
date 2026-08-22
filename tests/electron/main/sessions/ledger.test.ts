@@ -108,6 +108,82 @@ describe('session ledger', () => {
     });
   });
 
+  /**
+   * The second launch — the case every other test here was blind to.
+   *
+   * Each of them builds a fresh ledger over a fresh temp file, which is the one
+   * arrangement where "the ledger does not load the file" cannot be observed.
+   * The first draft of this module did exactly that, and the cost was not
+   * merely a missing feature: an unseeded ledger answers `session:history` with
+   * nothing and then writes that nothing back, so the *second* launch after any
+   * session erased the first launch's history. `session-history.spec.ts` caught
+   * it by quitting a real app; these are the unit tests that should have.
+   */
+  describe('reopening an existing ledger', () => {
+    const seed = () => {
+      const first = createSessionLedger(file, () => 1000);
+      first.record('sess-01', {
+        project: 'the-hive',
+        task: '',
+        status: 'working',
+        sessionUuid: 'abc',
+      });
+      first.flush();
+    };
+
+    it('starts holding what the file already held', () => {
+      seed();
+
+      expect(createSessionLedger(file, () => 2000).all()).toEqual([
+        {
+          id: 'sess-01',
+          project: 'the-hive',
+          task: '',
+          status: 'working',
+          sessionUuid: 'abc',
+          createdAt: 1000,
+        },
+      ]);
+    });
+
+    it('does not erase the file when it writes without recording anything', () => {
+      // The destructive half. A launch that touches no session must leave the
+      // previous launch's history exactly where it was.
+      seed();
+
+      createSessionLedger(file, () => 2000).flush();
+
+      expect(readLedger(file).map((record) => record.id)).toEqual(['sess-01']);
+    });
+
+    it('merges a new run into the old records rather than replacing them', () => {
+      seed();
+
+      const second = createSessionLedger(file, () => 2000);
+      second.record('sess-02', { project: 'p', task: '', status: 'working' });
+      second.flush();
+
+      expect(readLedger(file).map((record) => record.id).sort()).toEqual([
+        'sess-01',
+        'sess-02',
+      ]);
+    });
+
+    it('keeps the original createdAt when an old record is patched again', () => {
+      seed();
+
+      const second = createSessionLedger(file, () => 2000);
+      second.record('sess-01', { status: 'terminated', endedAt: 3000 });
+      second.flush();
+
+      expect(readLedger(file)[0]).toMatchObject({
+        createdAt: 1000,
+        endedAt: 3000,
+        status: 'terminated',
+      });
+    });
+  });
+
   describe('reading', () => {
     it('reads an absent file as empty', () => {
       expect(readLedger(join(dir, 'nothing-here.json'))).toEqual([]);

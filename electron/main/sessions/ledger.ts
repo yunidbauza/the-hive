@@ -198,7 +198,23 @@ export function createSessionLedger(
   /** Injected for the same reason `newSessionUuid` is: a real clock makes the file unassertable. */
   now: () => number = Date.now,
 ): SessionLedger {
-  const records = new Map<string, SessionRecord>();
+  /**
+   * Seeded from the file, **not empty**.
+   *
+   * This is the whole point of the ledger surviving a launch, and leaving it out
+   * is not a missing feature so much as an actively destructive one: an empty
+   * ledger answers `session:history` with nothing *and* then writes that nothing
+   * back over the file at the next debounce, so the second launch after any
+   * session silently erases the first launch's history.
+   *
+   * That is exactly what shipped in the first draft of this module, and no unit
+   * test noticed — each one built a fresh ledger over a fresh temp file, which
+   * is the one arrangement in which the bug is invisible. `session-history.spec.ts`
+   * caught it by quitting a real app and starting it again.
+   */
+  const records = new Map(
+    readLedger(path).map((record) => [record.id, record] as const),
+  );
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const write = (): void => {
