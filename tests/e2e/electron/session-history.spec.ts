@@ -61,11 +61,21 @@ test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN
     await expect(row).toBeVisible();
 
     /*
-      The inference, end to end. The record on disk says `working` — nothing
-      ever writes `closed` — and what the user sees is `closed`, because the
-      process it describes died with the app that owned it.
+      An ending, whichever one the quit produced.
+
+      Deliberately not pinned to `closed`. Which ending this row carries depends
+      on the race the ledger documents and refuses to arbitrate: if the pty exit
+      is forwarded before the app finishes tearing down, `settleExit` records
+      `terminated`; if the app dies first, the record still says `working` and
+      the renderer infers `closed`. Both are correct outcomes of the same quit,
+      and asserting one of them here would be asserting the race.
+
+      What is invariant — and what this spec exists for — is that the row comes
+      back, is grouped as a previous run, and cannot be opened. The `closed`
+      inference itself is pinned deterministically in
+      `tests/stores/hive-store.test.ts`, where there is no race to lose.
     */
-    await expect(row).toContainText('closed');
+    await expect(row).toContainText(/closed|terminated/);
 
     // Inert, inherited from `openEntity`'s existing refusal of any ended row.
     await expect(row).toBeDisabled();

@@ -142,6 +142,14 @@ describe('session ledger', () => {
           status: 'working',
           sessionUuid: 'abc',
           createdAt: 1000,
+          /*
+            Stamped on load, because a record on disk cannot describe a running
+            process. `createdAt` rather than "now", so retention's
+            `endedAt ?? createdAt` ordering is unchanged and an old record is
+            not relabelled as freshly ended on every launch. See "what counts as
+            ended" below.
+          */
+          endedAt: 1000,
         },
       ]);
     });
@@ -181,6 +189,127 @@ describe('session ledger', () => {
         endedAt: 3000,
         status: 'terminated',
       });
+    });
+  });
+
+  /**
+   * The two ways a record's "is it over?" answer went wrong (HIVE-87 review).
+   *
+   * `hasEnded` keys off `endedAt`, and both of these are about that timestamp
+   * being present when it should not be, or absent when it must not be. Each
+   * one, left alone, breaks the cap in the opposite direction: the first exempts
+   * a dead record forever, the second condemns a live one.
+   */
+  describe('what counts as ended', () => {
+    it('stamps a loaded record that still claims to be running', () => {
+      // Nothing on disk can describe a live process — it died with the app that
+      // wrote it. Without a timestamp such a record is exempt from the cap for
+      // ever, and every crashy launch adds another.
+      writeFileSync(
+        file,
+        JSON.stringify([
+          { id: 'sess-01', project: 'p', task: '', status: 'working', createdAt: 500 },
+        ]),
+        'utf8',
+      );
+
+      const [record] = createSessionLedger(file, () => 9000).all();
+      expect(record?.endedAt).toBe(500);
+      // The status is untouched: the renderer needs to see `working` to infer
+      // `closed`.
+      expect(record?.status).toBe('working');
+    });
+
+    it('does not restamp a record that already ended', () => {
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'p',
+            task: '',
+            status: 'terminated',
+            createdAt: 500,
+            endedAt: 700,
+          },
+        ]),
+        'utf8',
+      );
+
+      expect(createSessionLedger(file, () => 9000).all()[0]?.endedAt).toBe(700);
+    });
+
+    it('caps records the previous run left claiming to be live', () => {
+      // The whole point of the stamp: they are ended, so the cap reaches them.
+      const stale = Array.from({ length: HISTORY_CAP + 5 }, (_, i) => ({
+        id: `old-${i}`,
+        project: 'p',
+        task: '',
+        status: 'working',
+        createdAt: i,
+      }));
+      writeFileSync(file, JSON.stringify(stale), 'utf8');
+
+      const ledger = createSessionLedger(file, () => 9000);
+      ledger.flush();
+
+      expect(readLedger(file)).toHaveLength(HISTORY_CAP);
+    });
+
+    it('clears a stale ending when a restart brings the session back', () => {
+      // `restartOnce` records `terminated` with an `endedAt`, then spawns the
+      // same entity id again. A merged record reading `working` while carrying
+      // the old timestamp is a live session filed as ended — prunable, and
+      // replaceable by an empty record on its next patch.
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', {
+        project: 'p',
+        task: '',
+        status: 'working',
+        sessionUuid: 'first',
+      });
+      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
+
+      ledger.record('sess-01', { status: 'working', sessionUuid: 'second' });
+      ledger.flush();
+
+      const [record] = readLedger(file);
+      expect(record?.status).toBe('working');
+      expect(record?.endedAt).toBeUndefined();
+      expect(record?.sessionUuid).toBe('second');
+    });
+
+    it('keeps an ending the caller states explicitly alongside a status', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { status: 'done', endedAt: 4000 });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.endedAt).toBe(4000);
+    });
+  });
+
+  describe('dispose', () => {
+    it('drops a pending write instead of performing it', () => {
+      // Nulling the reference is not enough: the debounce closes over the write
+      // directly, so an unreferenced ledger still fires one last writeFileSync
+      // at whatever path it was built with.
+      vi.useFakeTimers();
+      try {
+        const ledger = createSessionLedger(file, () => 1);
+        ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+
+        ledger.dispose();
+        vi.advanceTimersByTime(1000);
+
+        expect(readLedger(file)).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('is safe with nothing pending', () => {
+      expect(() => createSessionLedger(file, () => 1).dispose()).not.toThrow();
     });
   });
 

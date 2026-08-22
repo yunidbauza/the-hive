@@ -44,6 +44,7 @@ import type { IdleDetail } from '@shared/hook-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
+import { SESSION_EFFORTS, SESSION_MODELS } from '@shared/session-contract';
 import type { SessionRecord } from '@shared/session-history-contract';
 import { currentTheme } from '@stores/appearance-store';
 import { useUiStore } from '@stores/ui-store';
@@ -556,6 +557,20 @@ let spawnCounter = 0;
  * `session-history-contract.ts` — so a file containing one was not written by
  * this app, and honouring it would be trusting a value no code path produces.
  */
+/**
+ * The closed lists, checked rather than assumed (HIVE-87).
+ *
+ * `session-history-contract.ts` types `model` and `effort` as the unions but the
+ * file they come from is not typed at all, and `ledger.ts` deliberately does not
+ * re-check them — it points here instead. These are what make that pointer
+ * true.
+ */
+const isKnownModel = (value: string | undefined): value is Model =>
+  value !== undefined && (SESSION_MODELS as readonly string[]).includes(value);
+
+const isKnownEffort = (value: string | undefined): value is Effort =>
+  value !== undefined && (SESSION_EFFORTS as readonly string[]).includes(value);
+
 function restoredStatus(stored: string): SessionStatus | undefined {
   if (stored === 'done' || stored === 'terminated') return stored;
   if (stored === 'working' || stored === 'waiting' || stored === 'idle') {
@@ -883,17 +898,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * attach-never-respawn regardless.
      */
     if (isDesktop()) {
-      /*
-        The ticket link, so it survives a quit (HIVE-87).
-
-        `SpawnRequest` deliberately does not carry it. A ticket is not a
-        property of *starting* a process — nothing on the command line changes
-        because of it — and the other path that establishes the link happens
-        mid-session, long after any spawn. One verb for both keeps a single
-        answer to "how does main learn a session's ticket".
-      */
-      if (ticket !== undefined) noteSessionTicket({ entityId: id, ticket });
-
       /**
        * The **resolved** model and effort, not the arguments (story 109).
        *
@@ -929,6 +933,26 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          */
         theme: currentTheme(),
       }).then((outcome) => {
+        /*
+          The ticket link, so it survives a quit (HIVE-87) — and **after** the
+          spawn resolves, not before it.
+
+          This used to run above, beside the `requestSpawn` call. Both are
+          `invoke` on one pipe and arrive in order, so main handled the note
+          first, found no record for this entity yet, and dropped it by the
+          guard that stops a note inventing a row for a session that never
+          existed. Deterministic rather than a narrow race: the ticket-card
+          spawn — the reason the field exists — never persisted its ticket, and
+          only the mid-session intent path ever did.
+
+          `SpawnRequest` still does not carry it. A ticket is not a property of
+          *starting* a process, and the other path that establishes the link
+          happens long after any spawn; one verb for both keeps a single answer
+          to "how does main learn a session's ticket".
+        */
+        if (outcome.ok && ticket !== undefined) {
+          noteSessionTicket({ entityId: id, ticket });
+        }
         if (outcome.ok) return;
         set((state) => ({
           orchLines: capLines([
@@ -1446,6 +1470,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       let restored = 0;
 
       for (const item of records) {
+        /**
+         * Seeded **before** the collision check, not after it.
+         *
+         * The counter has to learn about an id whether or not the row is kept.
+         * A spawn that lands in the window between boot and this unawaited
+         * hydrate takes `sess-01`; the ledger's own `sess-01` is then skipped
+         * below as a collision, and if the counter never heard of it the next
+         * spawn is handed `sess-02` — the id of another record still waiting to
+         * be restored, which then vanishes the same way. Once past the skip,
+         * this ran only for rows that survived it.
+         */
+        rememberSpawnId(item.id);
+
         /*
           A live row always wins. Not a conflict to resolve so much as the
           ordinary case: entity ids are reused across a restart, so the ledger's
@@ -1479,16 +1516,31 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           lines: [],
           pr: null,
           cost: '$0.00',
+          /*
+            Where this row came from, which is what PREVIOUS RUN groups on. It
+            cannot be derived from the status: a session that quit normally last
+            run is restored as `terminated`, which is indistinguishable from one
+            that quit ten seconds ago in this one.
+          */
+          restored: true,
           ...(item.name === undefined ? {} : { name: item.name }),
           ...(item.ticket === undefined ? {} : { ticket: item.ticket }),
           ...(item.branch === undefined ? {} : { branch: item.branch }),
           ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
-          ...(item.model === undefined ? {} : { model: item.model }),
-          ...(item.effort === undefined ? {} : { effort: item.effort }),
+          /*
+            Checked against the closed lists rather than trusted (HIVE-87).
+            `ledger.ts` casts these on the way in and says the store validates
+            them — which was not true until now, so a hand-edited file or one
+            from an older build could put an arbitrary string into a field typed
+            as a union. An unknown value drops the field and keeps the row: the
+            model a finished session ran under is a nice-to-have, and losing the
+            row over it would not be.
+          */
+          ...(isKnownModel(item.model) ? { model: item.model } : {}),
+          ...(isKnownEffort(item.effort) ? { effort: item.effort } : {}),
         };
         order.push(item.id);
         restored += 1;
-        rememberSpawnId(item.id);
       }
 
       return restored === 0 ? {} : { entities, order };
@@ -2460,7 +2512,7 @@ export const useNavOrder = () =>
       for (const id of state.order) {
         const entity = state.entities[id];
         if (!entity || !isSession(entity)) continue;
-        if (entity.status === 'closed') restored.push(id);
+        if (entity.restored === true) restored.push(id);
         else if (isEnded(entity.status)) ended.push(id);
         else active.push(id);
       }
@@ -2512,7 +2564,7 @@ export const useEndedSessions = () =>
           entity !== undefined &&
           isSession(entity) &&
           isEnded(entity.status) &&
-          entity.status !== 'closed'
+          entity.restored !== true
         );
       }),
     ),
@@ -2536,7 +2588,7 @@ export const useRestoredSessions = () =>
       state.order.filter((id) => {
         const entity = state.entities[id];
         return (
-          entity !== undefined && isSession(entity) && entity.status === 'closed'
+          entity !== undefined && isSession(entity) && entity.restored === true
         );
       }),
     ),

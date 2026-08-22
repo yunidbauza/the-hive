@@ -100,7 +100,27 @@ test('the model chip starts on the left rail edge, not the header midpoint', asy
 
     await startSession(page, PROJECT);
 
-    const chip = page.getByRole('banner').getByTitle(/\(1M\)/);
+    /**
+     * Found by test id, not by its label.
+     *
+     * This read `getByTitle(/\(1M\)/)` and had been failing since the window
+     * suffix stopped being hardcoded and started being derived from
+     * `metrics.contextWindow` (`session-metrics.ts`). This suite stubs `claude`
+     * out entirely — `STUB_CLAUDE_COMMAND` is `true; false` — so no status line
+     * ever reports a window, and the chip correctly renders `Opus 4.5 · high`
+     * with no suffix at all. `session-metrics.test.ts` pins that exact
+     * behaviour: `chipLabel({}, 'opus', 'high')` must *not* contain `(1M)`.
+     *
+     * So the locator was asserting the opposite of the specified contract, in
+     * the one suite that can never satisfy it. The unit tests were updated when
+     * the label changed and this was not — which is also why nothing caught it:
+     * a locator that never matches fails as a timeout, and a timeout reads like
+     * a slow app rather than a wrong query.
+     *
+     * The alignment measured below is about where the chip sits, not what it
+     * says, so it has no business depending on a model's reported window.
+     */
+    const chip = page.getByRole('banner').getByTestId('model-chip');
     await expect(chip).toBeVisible();
 
     const railWidth = await page

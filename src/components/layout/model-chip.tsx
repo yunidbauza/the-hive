@@ -177,6 +177,18 @@ export function ModelChip() {
     <span
       title={title}
       /*
+        A stable handle for the layout specs, like `status-counts` already has.
+        The Electron suite used to find this element by `getByTitle(/\(1M\)/)`,
+        which stopped working the moment the window suffix became *derived* from
+        `metrics.contextWindow`: that suite stubs `claude` out entirely
+        (`true; false`), so no status line ever reports a window and the label is
+        correctly `Opus 4.5 · high`. A locator that depends on a session's
+        reported context window cannot find a chip in a suite that has no
+        sessions reporting anything — and the alignment those specs measure has
+        nothing to do with the model anyway.
+      */
+      data-testid="model-chip"
+      /*
         Plain text, not a pill.
 
         This used to be a `Chip` — `rounded-full bg-chip px-3 py-1` — which gave

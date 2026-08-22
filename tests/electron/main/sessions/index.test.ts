@@ -1292,9 +1292,12 @@ describe('the ledger', () => {
       config: () => CONFIG,
       newSessionUuid: () => TEST_UUID,
       ledger: {
-        record: (id, patch) => written.push({ id, patch: { ...patch } }),
+        record: (id, patch) => {
+          written.push({ id, patch: { ...patch } });
+        },
         all: () => [],
         flush: () => {},
+        dispose: () => {},
       },
     });
 

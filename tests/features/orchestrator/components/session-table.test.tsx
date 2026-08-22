@@ -292,6 +292,49 @@ describe('SessionTable', () => {
       );
     });
 
+    it('puts a restored row that ended normally in PREVIOUS RUN, not ENDED', () => {
+      /**
+       * The grouping keys on provenance, not on the status.
+       *
+       * `settleExit` is the only writer of an ended status, so a session that
+       * quit normally last run is recorded — and restored — as `terminated`.
+       * Grouping on `closed` alone sent every one of those to ENDED, the group
+       * whose job is answering "what did I just finish?" about *this* run, so
+       * the first launch after a busy day buried today's endings under
+       * yesterday's.
+       */
+      act(() => {
+        useHiveStore.getState().hydrateSessions([
+          {
+            id: 'old-term',
+            project: 'apfm-web',
+            task: '',
+            status: 'terminated',
+            createdAt: 1,
+          },
+        ]);
+      });
+      render(<SessionTable />);
+
+      const previous = screen.getByText('PREVIOUS RUN');
+      const row = screen
+        .getAllByRole('button')
+        .find((button) => within(button).queryByText(/old-term/) !== null)!;
+
+      // It sits after the PREVIOUS RUN divider, and before ENDED if there is one.
+      expect(previous.compareDocumentPosition(row)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      const ended = screen.queryByText('ENDED');
+      if (ended) {
+        expect(row.compareDocumentPosition(ended)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      }
+      // And it keeps the ending that was actually observed.
+      expect(within(row).getByText('terminated')).toBeInTheDocument();
+    });
+
     it('is absent entirely when nothing was restored', () => {
       render(<SessionTable />);
 

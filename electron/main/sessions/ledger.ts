@@ -69,6 +69,17 @@ export interface SessionLedger {
   all(): SessionRecord[];
   /** Write now, synchronously. Safe to call when nothing is pending. */
   flush(): void;
+  /**
+   * Drop a pending write without performing it.
+   *
+   * Test-only in practice, and it has to exist rather than being implied by
+   * dropping the reference: `schedule()`'s timer closes over `write()`
+   * directly, so a ledger nobody holds any more still fires one last
+   * `writeFileSync` at whatever path it was built with. In a suite that stubs
+   * `app.getPath`, that is a file left behind — or the next test's ledger
+   * clobbered at the same path.
+   */
+  dispose(): void;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -166,6 +177,9 @@ export function readLedger(path: string): SessionRecord[] {
   return records;
 }
 
+/** The statuses that mean a session is still going. */
+const LIVE_STATUSES = new Set(['working', 'waiting', 'idle']);
+
 /** Whether this record describes something that is over. */
 const hasEnded = (record: SessionRecord): boolean =>
   record.endedAt !== undefined ||
@@ -211,9 +225,33 @@ export function createSessionLedger(
    * test noticed — each one built a fresh ledger over a fresh temp file, which
    * is the one arrangement in which the bug is invisible. `session-history.spec.ts`
    * caught it by quitting a real app and starting it again.
+   *
+   * ## Everything loaded is over, and is stamped so
+   *
+   * A record read from disk cannot describe a running process: the process died
+   * with the app that wrote it. Most arrive already ended, because `settleExit`
+   * saw them go — but a session that was live at the quit, or one lost to a
+   * crash, is still on file as `working` with no `endedAt`.
+   *
+   * Left alone, `hasEnded` reads those as live and **exempts them from the cap
+   * forever**, so every crashy launch adds records nothing is allowed to
+   * remove. That is the unbounded growth this whole feature was shaped to
+   * avoid, reappearing in the file instead of the table.
+   *
+   * `createdAt` is used as the ending timestamp rather than "now": retention
+   * already sorts on `endedAt ?? createdAt`, so it changes no ordering, and it
+   * does not relabel an old record as freshly ended on every launch. The
+   * *status* is untouched — the renderer still needs to see `working` to infer
+   * `closed`.
    */
   const records = new Map(
-    readLedger(path).map((record) => [record.id, record] as const),
+    readLedger(path).map((record) => {
+      const stamped: SessionRecord =
+        record.endedAt === undefined
+          ? { ...record, endedAt: record.createdAt }
+          : record;
+      return [record.id, stamped] as const;
+    }),
   );
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -256,9 +294,33 @@ export function createSessionLedger(
           ...patch,
         });
       } else {
-        // `createdAt` is deliberately not overwritable: it is the first thing
-        // anyone knew about this session, and retention sorts on it.
-        records.set(id, { ...existing, ...patch, createdAt: existing.createdAt });
+        const merged: SessionRecord = {
+          ...existing,
+          ...patch,
+          // `createdAt` is deliberately not overwritable: it is the first thing
+          // anyone knew about this session, and retention sorts on it.
+          createdAt: existing.createdAt,
+        };
+        /**
+         * A patch that brings a session back to life clears its ending.
+         *
+         * `restartOnce` kills the pty, waits for the exit — which records
+         * `terminated` **with** an `endedAt` — and then spawns the same entity
+         * id again. Without this, the merged record reads `working` while still
+         * carrying the previous generation's `endedAt`, and `hasEnded` keys off
+         * that timestamp: a session that is genuinely running is filed as ended,
+         * counted against the cap it is supposed to be exempt from, and can be
+         * pruned out from under itself. The next patch for it — a title, say —
+         * then creates a *fresh* record with no project, no task and no uuid.
+         */
+        if (
+          patch.status !== undefined &&
+          LIVE_STATUSES.has(patch.status) &&
+          patch.endedAt === undefined
+        ) {
+          delete merged.endedAt;
+        }
+        records.set(id, merged);
       }
       schedule();
     },
@@ -271,6 +333,12 @@ export function createSessionLedger(
         timer = undefined;
       }
       write();
+    },
+
+    dispose() {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
     },
   };
 }

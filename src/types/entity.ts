@@ -172,6 +172,24 @@ export interface Session {
    * the session works somewhere else shows files nobody is editing.
    */
   cwd?: string;
+  /**
+   * This row came back from the ledger rather than from a session this run
+   * started (HIVE-87).
+   *
+   * **Provenance, not lifecycle**, and it has to be both because they are
+   * genuinely different facts. `closed` says *how* a session ended — the app
+   * was closed while it ran — and it earns its place by being cappable where
+   * `terminated` is not. This says *where the row came from*, and it is what
+   * the PREVIOUS RUN group partitions on.
+   *
+   * Grouping on `closed` alone was wrong, and wrong in the direction that
+   * defeats the group: `settleExit` is the only writer of an ended status, so a
+   * session that quits normally is recorded `terminated` and restores as
+   * `terminated`. Every such row landed in ENDED — the group whose whole job is
+   * answering "what did I just finish?" about *this* run — so the first launch
+   * after a busy day buried today's two endings under yesterday's twenty.
+   */
+  restored?: boolean;
   status: SessionStatus;
   /**
    * What is still running while the main agent is not (HIVE-83).
@@ -347,8 +365,14 @@ export const entityLabel = (entity: Entity): string => {
  * "was cleared" sentence. That was exactly right while there were two endings
  * and silently wrong the moment there were three: `closed` would have inherited
  * a sentence claiming its terminal continues as a new session, which is false
- * twice over. A `switch` on the union makes the fourth ending a compile error
- * instead of a plausible lie.
+ * twice over.
+ *
+ * **Every case is enumerated and there is no `default`**, which is what makes
+ * the claim above true rather than merely intended. A first pass wrote this as
+ * a `switch` with a `default` arm and a comment promising that a fourth ending
+ * would be a compile error — it would not have been; it would have fallen into
+ * "was cleared", quietly, which is the exact failure being fixed. The `never`
+ * assignment is the part that actually fails the build.
  */
 export const endedReason = (session: Session): string => {
   switch (session.status) {
@@ -356,8 +380,28 @@ export const endedReason = (session: Session): string => {
       return `${entityLabel(session)} has terminated — its process is gone`;
     case 'closed':
       return `${entityLabel(session)} was open when The Hive last closed — its process did not survive`;
-    default:
+    case 'done':
       return `${entityLabel(session)} was cleared — its terminal continues as a new session`;
+    case 'working':
+    case 'waiting':
+    case 'idle': {
+      /*
+        Not an ending, and no caller should be here — every call site gates on
+        `isEnded` first. Answering with the cleared sentence would be a lie, so
+        this says only what is certainly true.
+      */
+      return `${entityLabel(session)} is still running`;
+    }
+    default: {
+      /*
+        Unreachable, and the assignment is the point: a new `SessionStatus` has
+        no case above, so `status` is no longer `never` here and the build
+        fails. A `default` that merely returned a string is what let the third
+        ending ship with the second's sentence.
+      */
+      const exhaustive: never = session.status;
+      return exhaustive;
+    }
   }
 };
 

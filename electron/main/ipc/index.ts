@@ -1417,7 +1417,12 @@ export function resetIpcHandlers(): void {
     HIVE-87. Dropped without flushing: a test's ledger points at whatever
     `app.getPath` was stubbed to return, and writing there on teardown is how a
     unit test comes to leave a file behind.
+
+    `dispose()` rather than just dropping the reference — the debounce timer
+    closes over the write directly, so an unreferenced ledger still fires one
+    last `writeFileSync` at that stubbed path.
   */
+  ledger?.dispose();
   ledger = null;
   // HIVE-81. Test-only: a fresh registration starts with nothing on stage and
   // no listeners left over from a previous test — including the app-level
