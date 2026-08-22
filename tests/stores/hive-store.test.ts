@@ -13,6 +13,7 @@ import { ACK_DELAY_MS, statusWord, useHiveStore } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
+import type { SessionRecord } from '@shared/session-history-contract';
 
 import { notif as notif2 } from '../support/notifications';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
@@ -1417,6 +1418,156 @@ describe('hive-store', () => {
       expect(statusWord('idle', 'script')).toBe('idle (script)');
       expect(statusWord('idle')).toBe('idle');
       expect(statusWord('waiting')).toBe('needs input');
+    });
+  });
+
+  /**
+   * Restoring the fleet from the ledger (HIVE-87).
+   *
+   * The first time this store receives data at boot, which `emptySeeds()`
+   * argues against at length — so most of these are about the restored rows
+   * staying *inert*: they may not overwrite anything live, may not claim to be
+   * running, and may not hand out an id a future spawn would collide with.
+   */
+  describe('hydrateSessions', () => {
+    const record = (over: Partial<SessionRecord> = {}): SessionRecord => ({
+      id: 'sess-01',
+      project: 'apfm-web',
+      task: '',
+      status: 'working',
+      createdAt: 1,
+      ...over,
+    });
+
+    const statusOf = (id: string) => {
+      const entity = useHiveStore.getState().entities[id];
+      return entity && isSession(entity) ? entity.status : undefined;
+    };
+
+    it('restores a record that was running as closed, not working', () => {
+      // The whole inference: the file says `working`, and it plainly is not.
+      useHiveStore.getState().hydrateSessions([record({ status: 'working' })]);
+
+      expect(statusOf('sess-01')).toBe('closed');
+    });
+
+    it('treats every live status the same way', () => {
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'a', status: 'working' }),
+        record({ id: 'b', status: 'waiting' }),
+        record({ id: 'c', status: 'idle' }),
+      ]);
+
+      expect(statusOf('a')).toBe('closed');
+      expect(statusOf('b')).toBe('closed');
+      expect(statusOf('c')).toBe('closed');
+    });
+
+    it('keeps an ending that was actually observed', () => {
+      // `terminated` is never capped precisely because it is the only record a
+      // process existed. Rewriting it to `closed` would forfeit that.
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'a', status: 'terminated' }),
+        record({ id: 'b', status: 'done' }),
+      ]);
+
+      expect(statusOf('a')).toBe('terminated');
+      expect(statusOf('b')).toBe('done');
+    });
+
+    it('drops a record naming a status it does not understand', () => {
+      // The file may have been written by a build that knew a status this one
+      // does not. Guessing would put an unrenderable row in the table.
+      useHiveStore.getState().hydrateSessions([record({ status: 'nonsense' })]);
+
+      expect(useHiveStore.getState().entities['sess-01']).toBeUndefined();
+    });
+
+    it('carries the fields a restored row renders', () => {
+      useHiveStore.getState().hydrateSessions([
+        record({
+          name: 'HIVE-78',
+          ticket: 'HIVE-78',
+          branch: 'feat/hive-78',
+          cwd: '/repos/the-hive',
+          model: 'haiku',
+          effort: 'low',
+        }),
+      ]);
+
+      expect(useHiveStore.getState().entities['sess-01']).toMatchObject({
+        name: 'HIVE-78',
+        ticket: 'HIVE-78',
+        branch: 'feat/hive-78',
+        cwd: '/repos/the-hive',
+        model: 'haiku',
+        effort: 'low',
+        project: 'apfm-web',
+      });
+    });
+
+    it('never clobbers a live row', () => {
+      // A restart reuses entity ids, so this collision is the ordinary case
+      // rather than a corner: the ledger holds `sess-01` from last time and
+      // this run has just spawned one.
+      useHiveStore.getState().spawnSession('the-hive');
+      const live = useHiveStore.getState().order.at(-1)!;
+
+      useHiveStore
+        .getState()
+        .hydrateSessions([record({ id: live, project: 'apfm-web', status: 'done' })]);
+
+      const entity = useHiveStore.getState().entities[live];
+      expect(statusOf(live)).not.toBe('done');
+      expect(entity && isSession(entity) ? entity.project : undefined).toBe(
+        'the-hive',
+      );
+    });
+
+    it('appends restored rows to order without disturbing what is there', () => {
+      const before = [...useHiveStore.getState().order];
+
+      useHiveStore.getState().hydrateSessions([record({ id: 'old-01' })]);
+
+      expect(useHiveStore.getState().order).toEqual([...before, 'old-01']);
+    });
+
+    it('seeds the id counter past every restored id', () => {
+      // Without this the counter restarts at 1 and `nextSessionId`'s collision
+      // guard merely *skips* the taken ids rather than continuing the sequence
+      // — so a fresh session could be handed an id a restored row already
+      // holds the moment the guard is removed or reordered.
+      useHiveStore.getState().hydrateSessions([record({ id: 'sess-05' })]);
+      useHiveStore.getState().spawnSession('the-hive');
+
+      const fresh = useHiveStore
+        .getState()
+        .order.find((id) => id !== 'sess-05');
+      expect(fresh).not.toBe('sess-05');
+      expect(statusOf('sess-05')).toBe('closed');
+    });
+
+    it('is a no-op for an empty ledger', () => {
+      const before = [...useHiveStore.getState().order];
+
+      useHiveStore.getState().hydrateSessions([]);
+
+      expect(useHiveStore.getState().order).toEqual(before);
+    });
+
+    it('leaves the store untouched when every record is unusable', () => {
+      // The `restored === 0` early return: a hydrate that admits nothing must
+      // not hand back new `entities`/`order` objects, or every selector
+      // subscribed to them repaints for no reason at boot.
+      const entitiesBefore = useHiveStore.getState().entities;
+      const orderBefore = useHiveStore.getState().order;
+
+      useHiveStore
+        .getState()
+        .hydrateSessions([record({ id: 'x', status: 'nonsense' })]);
+
+      expect(useHiveStore.getState().entities).toBe(entitiesBefore);
+      expect(useHiveStore.getState().order).toBe(orderBefore);
     });
   });
 });

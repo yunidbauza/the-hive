@@ -43,6 +43,7 @@ import type { IdleDetail } from '@shared/hook-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
+import type { SessionRecord } from '@shared/session-history-contract';
 import { currentTheme } from '@stores/appearance-store';
 import { useUiStore } from '@stores/ui-store';
 
@@ -251,6 +252,19 @@ interface HiveState {
    * what main answered with, and replacing would drop it.
    */
   hydrateNotifs: (notifs: HiveNotification[]) => void;
+  /**
+   * Put last run's fleet back on the table (HIVE-87).
+   *
+   * The first time this store receives data at boot, which reverses the
+   * position `emptySeeds()` argues — see the note there. The reversal is
+   * narrow: the seeds are still empty, and this arrives by action, after the
+   * first paint, carrying only rows that are already over.
+   *
+   * A **merge**, never a replacement. A restart reuses entity ids, so a
+   * restored `sess-01` colliding with one this run has already spawned is the
+   * ordinary case rather than a corner, and the live row always wins.
+   */
+  hydrateSessions: (records: SessionRecord[]) => void;
   /**
    * Apply read-state the hub decided, without writing it back (HIVE-75).
    *
@@ -522,6 +536,54 @@ let spawnCounter = 0;
  * ENDED, and reusing the id of a session the user can still see is the bug in
  * its most confusing form: two rows, one name, different statuses.
  */
+/**
+ * What a stored status becomes on the way back in (HIVE-87).
+ *
+ * Three answers, and the middle one is the feature:
+ *
+ * - An ending that was **observed** — `done`, `terminated` — comes back exactly
+ *   as it was. `terminated` especially: it is never capped, on the grounds that
+ *   it is the only record a process existed, and rewriting it here would forfeit
+ *   that.
+ * - Anything **live** becomes `closed`. A record claiming to be `working` is
+ *   describing a process that died with the app that owned it, a launch ago.
+ * - Anything **unrecognised** is `undefined`, and its record is dropped. The
+ *   file may have been written by a build that knew a status this one does not,
+ *   and a row the table cannot render is worse than a row missing from it.
+ *
+ * `closed` itself is not accepted, deliberately. Nothing writes it — see
+ * `session-history-contract.ts` — so a file containing one was not written by
+ * this app, and honouring it would be trusting a value no code path produces.
+ */
+function restoredStatus(stored: string): SessionStatus | undefined {
+  if (stored === 'done' || stored === 'terminated') return stored;
+  if (stored === 'working' || stored === 'waiting' || stored === 'idle') {
+    return 'closed';
+  }
+  return undefined;
+}
+
+/**
+ * Keep the spawn counter ahead of an id that already exists (HIVE-87).
+ *
+ * `nextSessionId`'s `while (id in taken)` guard already prevents a *collision*,
+ * but only by skipping: with the counter at zero and `sess-05` restored, the
+ * next four spawns take `sess-01`…`sess-04` and the fifth silently jumps the
+ * gap. That is a fleet whose ids no longer say anything about order, and it is
+ * the kind of thing that reads as a bug in the ledger long after the ledger has
+ * stopped being involved.
+ *
+ * Parsed base 36 because that is what `nextSessionId` formats with. An id that
+ * does not match the pattern — a fixture, a hand-edited file — is ignored
+ * rather than rejected: it cannot collide with a generated one anyway.
+ */
+function rememberSpawnId(id: string): void {
+  const match = /^sess-([0-9a-z]+)$/.exec(id);
+  if (match?.[1] === undefined) return;
+  const seen = Number.parseInt(match[1], 36);
+  if (Number.isFinite(seen) && seen > spawnCounter) spawnCounter = seen;
+}
+
 function nextSessionId(taken: Readonly<Record<string, Entity>>): string {
   let id: string;
   do {
@@ -1349,6 +1411,61 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ].sort((a, b) => b.createdAt - a.createdAt);
 
       return { notifs: merged.slice(0, NOTIF_CAP) };
+    }),
+
+  hydrateSessions: (records) =>
+    set((state) => {
+      const entities = { ...state.entities };
+      const order = [...state.order];
+      let restored = 0;
+
+      for (const item of records) {
+        /*
+          A live row always wins. Not a conflict to resolve so much as the
+          ordinary case: entity ids are reused across a restart, so the ledger's
+          `sess-01` and this run's `sess-01` are different sessions wearing the
+          same name, and only one of them has a process behind it.
+        */
+        if (item.id in entities) continue;
+
+        const status = restoredStatus(item.status);
+        /*
+          A status this build does not know is a record written by one that did.
+          Dropped rather than guessed at — an unrenderable row in the fleet
+          table is worse than a row missing from it, and the ledger is a
+          convenience, not a source of truth about anything.
+        */
+        if (status === undefined) continue;
+
+        entities[item.id] = {
+          kind: 'session',
+          id: item.id,
+          project: item.project,
+          status,
+          task: item.task,
+          /*
+            The three required fields the record deliberately does not carry.
+            `lines: []` is the honest one: a restored row has no transcript
+            here — Claude Code owns it — and inventing a line or two of
+            plausible scrollback would be a fiction the user cannot tell from a
+            recording.
+          */
+          lines: [],
+          pr: null,
+          cost: '$0.00',
+          ...(item.name === undefined ? {} : { name: item.name }),
+          ...(item.ticket === undefined ? {} : { ticket: item.ticket }),
+          ...(item.branch === undefined ? {} : { branch: item.branch }),
+          ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
+          ...(item.model === undefined ? {} : { model: item.model }),
+          ...(item.effort === undefined ? {} : { effort: item.effort }),
+        };
+        order.push(item.id);
+        restored += 1;
+        rememberSpawnId(item.id);
+      }
+
+      return restored === 0 ? {} : { entities, order };
     }),
 
   appendEntityLines: (id, lines, status) =>
@@ -2301,13 +2418,27 @@ export const useNavOrder = () =>
   useHiveStore(
     useShallow((state) => {
       const active: string[] = [];
+      /**
+       * Three buckets since HIVE-87, and the order of the last two is not
+       * arbitrary — it is the table's.
+       *
+       * `session-table.tsx` renders PREVIOUS RUN *above* ENDED, so the keyboard
+       * order has to as well. This selector exists precisely to keep the caret
+       * and the rows agreeing about where "here" is; a partition that flattened
+       * in a different order from the one on screen would make the down arrow
+       * skip a group and come back to it, which is the exact failure the note
+       * above is about.
+       */
+      const restored: string[] = [];
       const ended: string[] = [];
       for (const id of state.order) {
         const entity = state.entities[id];
         if (!entity || !isSession(entity)) continue;
-        (isEnded(entity.status) ? ended : active).push(id);
+        if (entity.status === 'closed') restored.push(id);
+        else if (isEnded(entity.status)) ended.push(id);
+        else active.push(id);
       }
-      return [...active, ...ended];
+      return [...active, ...restored, ...ended];
     }),
   );
 
@@ -2339,6 +2470,12 @@ export const useActiveSessions = () =>
  * One group rather than two, because the divider answers "is this still going?"
  * and both answers are no. The row itself says which kind of ended it is, which
  * is where that distinction is actually useful.
+ *
+ * **Excludes `closed` (HIVE-87).** That is a third group with its own divider,
+ * and the reason is the question this one answers. "What did I just finish?" is
+ * about *this* session of the app; a row the app outlived answers a different
+ * question, and a launch or two would leave the honest answer to the first one
+ * buried under rows from previous runs.
  */
 export const useEndedSessions = () =>
   useHiveStore(
@@ -2346,7 +2483,34 @@ export const useEndedSessions = () =>
       state.order.filter((id) => {
         const entity = state.entities[id];
         return (
-          entity !== undefined && isSession(entity) && isEnded(entity.status)
+          entity !== undefined &&
+          isSession(entity) &&
+          isEnded(entity.status) &&
+          entity.status !== 'closed'
+        );
+      }),
+    ),
+  );
+
+/**
+ * Rows the app outlived — last run's fleet (HIVE-87).
+ *
+ * A third group rather than a flag on the ended one, for the reason above: they
+ * are the answer to a different question, and they get their own divider.
+ *
+ * Nothing mints `closed` at runtime — only `hydrateSessions` produces it, once,
+ * at boot — so this list is fixed for the life of the app session. It is
+ * capped by the ledger rather than here: the file it came from holds at most
+ * `HISTORY_CAP` ended records, so there is no second cap to drift out of step
+ * with the first.
+ */
+export const useRestoredSessions = () =>
+  useHiveStore(
+    useShallow((state) =>
+      state.order.filter((id) => {
+        const entity = state.entities[id];
+        return (
+          entity !== undefined && isSession(entity) && entity.status === 'closed'
         );
       }),
     ),
