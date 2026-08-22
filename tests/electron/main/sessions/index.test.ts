@@ -1268,3 +1268,125 @@ describe('session authentication', () => {
     expect(spawned[0]!.stripEnv).toBeUndefined();
   });
 });
+
+/**
+ * What reaches the ledger (HIVE-87).
+ *
+ * The ledger itself is tested against a real file in `ledger.test.ts`; these
+ * pin the *wiring* — that each moment main knows something worth keeping
+ * actually hands it over, and that a build without a ledger is unaffected. A
+ * fake rather than the real one, for the reason the supervisor is faked: a unit
+ * test that wrote into `userData` would leave state behind.
+ */
+describe('the ledger', () => {
+  interface Written {
+    id: string;
+    patch: Record<string, unknown>;
+  }
+
+  const withLedger = (written: Written[]) =>
+    createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      ledger: {
+        record: (id, patch) => written.push({ id, patch: { ...patch } }),
+        all: () => [],
+        flush: () => {},
+      },
+    });
+
+  /** Every patch written for an entity, in order — records merge. */
+  const patchesFor = (written: Written[], id: string) =>
+    written.filter((entry) => entry.id === id).map((entry) => entry.patch);
+
+  it('records the session at spawn, carrying the uuid it pinned', () => {
+    const written: Written[] = [];
+    withLedger(written).open(OPEN);
+
+    expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
+      project: 'apfm-web',
+      status: 'working',
+      sessionUuid: TEST_UUID,
+    });
+  });
+
+  it('writes the same uuid to the ledger and to the command line', () => {
+    // The whole point of hoisting it out of the sessionCommand call: two calls
+    // to newSessionUuid() would leave the ledger naming a transcript that does
+    // not exist, which is the one thing recording it is meant to make possible.
+    //
+    // The command line is *typed into* the pty rather than passed as spawn
+    // args — `claude` runs inside a login shell — so this reads the bootstrap
+    // write, exactly as the BOOT assertions above do.
+    const written: Written[] = [];
+    const withIt = withLedger(written);
+    withIt.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(SUBMIT);
+
+    const recorded = patchesFor(written, 'hero-refresh')[0]?.sessionUuid;
+    expect(supervisor.write).toHaveBeenCalledWith(
+      sessionId,
+      expect.stringContaining(`--session-id ${String(recorded)}`) as unknown as string,
+    );
+  });
+
+  it('records the model and effort a session was started as', () => {
+    const written: Written[] = [];
+    withLedger(written).open({ ...OPEN, model: 'haiku', effort: 'low' });
+
+    expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
+      model: 'haiku',
+      effort: 'low',
+    });
+  });
+
+  it('omits a name nobody supplied rather than storing an empty one', () => {
+    const written: Written[] = [];
+    withLedger(written).open(OPEN);
+
+    expect(patchesFor(written, 'hero-refresh')[0]).not.toHaveProperty('name');
+  });
+
+  it('records the ending when the pty exits', () => {
+    const written: Written[] = [];
+    withLedger(written).open(OPEN);
+
+    emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
+
+    const ending = patchesFor(written, 'hero-refresh').at(-1);
+    expect(ending).toMatchObject({ status: 'terminated' });
+    expect(typeof ending?.endedAt).toBe('number');
+  });
+
+  it('says nothing about a command session, which has no history to keep', () => {
+    // Same reason the activity tracker is not told: a clone's ending is not a
+    // session's, and a `clone-1` row in the fleet list would be a fiction.
+    const written: Written[] = [];
+    withLedger(written).openCommand({
+      entityId: 'clone-1',
+      cwd: '/tmp',
+      file: 'git',
+      args: ['clone'],
+      cols: 80,
+      rows: 24,
+      onExit: () => {},
+    });
+
+    expect(patchesFor(written, 'clone-1')).toEqual([]);
+  });
+
+  it('works with no ledger at all — absent is supported, not degraded', () => {
+    expect(() => {
+      sessions.open(OPEN);
+      emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
+    }).not.toThrow();
+  });
+});

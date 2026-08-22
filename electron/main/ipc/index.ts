@@ -81,6 +81,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import { SESSION_HISTORY_FILE } from '@shared/session-history-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
 import { createCloneFlow, type CloneFlow } from '../clone';
@@ -119,6 +120,10 @@ import { credentialFile } from '../integrations/jira/auth';
 import { createNotificationHub, createNotifier } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
+import {
+  createSessionLedger,
+  type SessionLedger,
+} from '../sessions/ledger';
 import { onShutdown } from '../shutdown';
 import { parseSaveThemeRequest, pickTheme, saveTheme } from '../theme';
 import {
@@ -196,6 +201,15 @@ function handle<T>(
 let systemNotificationRefusal: string | null = null;
 
 let sessions: Sessions | null = null;
+/**
+ * The session ledger (HIVE-87), or `null` before registration.
+ *
+ * Held here rather than reached through `sessions` because two unrelated things
+ * need it: the session layer writes to it, and `session:history` reads from it.
+ * Routing the read through the session layer would mean widening that layer's
+ * surface with a verb it does not otherwise need.
+ */
+let ledger: SessionLedger | null = null;
 /** The clone flow (story 102), or `null` before registration. */
 let cloneFlow: CloneFlow | null = null;
 /** The single project watcher, or `null` before registration. */
@@ -681,6 +695,17 @@ export function registerIpcHandlers(): void {
    * `app.getPath('userData')` is the app's own directory. Nothing about this
    * touches `~/.claude`.
    */
+  /**
+   * The ledger, beside `window-state.json` in the app's own directory (HIVE-87).
+   *
+   * Constructed before the session layer because that layer takes it as an
+   * option. Nothing about it touches `~/.claude` — it records what The Hive
+   * knows about its own rows, not anything Claude wrote.
+   */
+  ledger = createSessionLedger(
+    join(app.getPath('userData'), SESSION_HISTORY_FILE),
+  );
+
   sessions = createSessions({
     supervisor,
     config: getConfig,
@@ -690,6 +715,7 @@ export function registerIpcHandlers(): void {
       // Read per call, so a config reload is picked up (HIVE-79).
       sessionMetrics: () => getConfig().sessionMetrics,
     }),
+    ledger,
   });
 
   cloneFlow = createCloneFlow({
@@ -734,6 +760,17 @@ export function registerIpcHandlers(): void {
      * only production leaked.
      */
     fsWatch?.dispose();
+    /**
+     * A best-effort flush of anything still inside the debounce (HIVE-87).
+     *
+     * **Correctness does not depend on this running, and it must not.**
+     * `runShutdown` invokes every hook body synchronously and then awaits them
+     * together, so this races the pty teardown above rather than following it;
+     * and a crash, a SIGKILL or a power cut runs no hook at all. Every fact
+     * worth keeping was already written at the moment it was known — this only
+     * saves the last few hundred milliseconds of a quiet quit.
+     */
+    ledger?.flush();
   });
 
   handle(CH.appInfo, (): AppInfo => {
@@ -1344,6 +1381,12 @@ export function resetIpcHandlers(): void {
   cloneFlow = null;
   fsWatch?.dispose();
   fsWatch = null;
+  /*
+    HIVE-87. Dropped without flushing: a test's ledger points at whatever
+    `app.getPath` was stubbed to return, and writing there on teardown is how a
+    unit test comes to leave a file behind.
+  */
+  ledger = null;
   // HIVE-81. Test-only: a fresh registration starts with nothing on stage and
   // no listeners left over from a previous test — including the app-level
   // focus wiring and any tick it has already scheduled, which would otherwise

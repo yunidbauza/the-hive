@@ -38,6 +38,7 @@ import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createBranchReader, resolveGit, type BranchReaderOptions } from './git';
+import type { SessionLedger } from './ledger';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
 
@@ -89,6 +90,21 @@ export interface SessionsOptions {
    * machine and in every checkout. Absent means the real reader.
    */
   branchReader?: BranchReaderOptions;
+  /**
+   * Where the fleet is written down, so it survives a quit (HIVE-87).
+   *
+   * Optional in the same spirit as `hooks`: absent is a supported state rather
+   * than a degraded one. The browser build has no main process at all, and a
+   * unit test that does not care about history passes nothing — every call site
+   * below is `ledger?.record(…)`, so "no ledger" costs exactly the history and
+   * nothing else.
+   *
+   * Injected rather than constructed in here for the reason `newSessionUuid`
+   * and `branchReader` are: the real one writes a file in the user's
+   * `userData`, and a unit test that did so would leave state behind and answer
+   * differently on the second run.
+   */
+  ledger?: SessionLedger;
 }
 
 export interface OpenRequest {
@@ -231,6 +247,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     hooks,
     newSessionUuid = randomUUID,
     branchReader,
+    ledger,
   } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
@@ -696,6 +713,14 @@ export function createSessions(options: SessionsOptions): Sessions {
     if (seen !== undefined && seen.branch === branch && seen.cwd === cwd) return;
 
     lastBranch.set(entityId, { branch, cwd });
+    /*
+      HIVE-87. The same fact the renderer is about to be told, kept where it
+      survives a quit. `branch` is nullable here and the record's is optional,
+      so a `null` omits the key rather than storing "known to be nothing" — the
+      store renders an em dash for both, and the ledger should not invent a
+      distinction the app does not draw.
+    */
+    ledger?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
     send(CH.sessionBranch, { entityId, branch, cwd } satisfies SessionBranchEvent);
   }
 
@@ -753,6 +778,9 @@ export function createSessions(options: SessionsOptions): Sessions {
        * what belongs in a rail 130px wide.
        */
       if (name.length > SESSION_NAME_DISPLAY_MAX) continue;
+      // HIVE-87. A restored row should read as whatever the agent last called
+      // itself, not as the `sess-07` it was born as.
+      ledger?.record(entityId, { name });
       send(CH.sessionName, { entityId, name } satisfies SessionNameEvent);
     }
   }
@@ -797,6 +825,17 @@ export function createSessions(options: SessionsOptions): Sessions {
       // Nothing to tell the store about.
     } else {
       activity.exited(entityId);
+      /**
+       * The ending, recorded where it is actually known (HIVE-87).
+       *
+       * Deliberately here and not in a shutdown hook. `runShutdown()` invokes
+       * every hook body synchronously and then awaits them together, so a
+       * flush registered there races the pty teardown instead of following it
+       * — and a crash or a SIGKILL runs no hook at all. This is the one place
+       * that sees an ending however it arrived, `ptyExit` or `ptyLost`, so it
+       * is the only place the fact can be captured rather than inferred.
+       */
+      ledger?.record(entityId, { status: 'terminated', endedAt: Date.now() });
     }
     registry.close(entityId);
 
@@ -1008,6 +1047,35 @@ export function createSessions(options: SessionsOptions): Sessions {
     const settingsPath = hooks?.settingsPathFor(request.theme);
 
     /**
+     * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
+     *
+     * It has to reach two places now — the command line, and the ledger — and
+     * calling `newSessionUuid()` twice would put a different uuid in each. The
+     * ledger's copy would then name a transcript that does not exist, which is
+     * precisely the thing recording it is meant to make possible.
+     */
+    const sessionUuid = newSessionUuid();
+
+    /**
+     * Written down before the process starts, not after (HIVE-87).
+     *
+     * A spawn that throws below still happened as far as the user is concerned
+     * — they asked for a session and something went wrong — and a record of it
+     * is more useful than silence. The uuid especially: it cannot be assigned
+     * retroactively to a session that has already started, so the only moment
+     * it can be captured is this one.
+     */
+    ledger?.record(request.entityId, {
+      project: request.projectId,
+      task: request.task ?? '',
+      status: 'working',
+      sessionUuid,
+      ...(request.name === undefined ? {} : { name: request.name }),
+      ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.effort === undefined ? {} : { effort: request.effort }),
+    });
+
+    /**
      * `sessionCommand` wraps the configured binary so a clean `/exit` takes the
      * login shell with it and the session settles to `done`. See its own
      * comment for why that reverses story 096, and why it is `&&`.
@@ -1042,7 +1110,7 @@ export function createSessions(options: SessionsOptions): Sessions {
          * keeps every other spawn byte-identical to what HIVE-61 shipped.
          */
         name: request.name ?? request.entityId,
-        sessionUuid: newSessionUuid(),
+        sessionUuid,
         /*
           The theme rides in from the renderer, which is the only side that
           knows it, and picks which of the two settings files this session
