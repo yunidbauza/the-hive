@@ -662,6 +662,20 @@ const line = (text: string, color: TermLine['color'] = 'ink'): TermLine => ({
  * A factory, for the same reason `createInitialState()` is one — a shared
  * constant would hand every store and every `reset()` the *same* arrays, so one
  * test appending a session would leak into the next.
+ *
+ * ## What HIVE-87 changed here, and what it deliberately did not
+ *
+ * `entities` and `order` are no longer empty for the whole of a launch:
+ * {@link HiveActions.hydrateSessions} puts last run's sessions back shortly
+ * after the first paint. That reads like a reversal of everything above, so the
+ * difference is worth stating — **the seeds are still empty, and the rows still
+ * arrive from a real producer.** The producer is main's ledger rather than a
+ * pty, and every row it supplies is one that has already ended.
+ *
+ * The failure this comment is about is untouched. A seeded fleet claimed
+ * sessions were *running* that were not, and a real read replaced them a frame
+ * later; a restored fleet claims only that some sessions once ran, arrives
+ * after the paint rather than before it, and nothing overwrites it.
  */
 const emptySeeds = (): Pick<
   HiveState,

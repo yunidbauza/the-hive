@@ -91,6 +91,21 @@ target (`pnpm dev`) has no bridge at all, so that route would need this fallback
 anyway rather than replacing it. The cost, stated plainly: appearance does not
 follow the user to another machine and cannot be hand-edited.
 
+**One store now receives data it did not create, and it is still not persisted**
+(HIVE-87). `hive-store` gets last run's sessions at boot, through
+`hydrateSessions`, and the distinction matters: nothing in the renderer writes
+them. Main owns the file — `sessions.json` under `userData`, see
+[`desktop-architecture.md`](desktop-architecture.md) — and the store is handed a
+list once, after the first paint. So the rule above is unchanged (`localStorage`
+still holds appearance and nothing else); what changed is that "the app boots
+empty" is now a statement about *seeds* rather than about the first second of a
+launch. `emptySeeds()` still returns nothing, and the rows arrive by action.
+
+Restored rows are ended rows: `hydrateSessions` turns any record that was still
+running into `closed`, because the process it describes died with the app that
+owned it. They render under their own PREVIOUS RUN divider and cannot be
+opened — `openEntity` already refuses every ended row, so that came for free.
+
 Terminal settings reach the terminal **by prop, not by store**:
 `components/terminal/**` may not import `stores/**`, so `center-stage.tsx` (the
 composition root) reads the store and passes `fontFamily`/`fontSize`/`scrollback`

@@ -93,6 +93,58 @@ Comments in the file are `"//"`-prefixed keys, the same convention
 `package.json` already uses here — JSON has no comment syntax, and the first-run
 template has to explain itself in the file the user opens.
 
+## What main writes to `userData`, and the session ledger (HIVE-87)
+
+`~/.hive/config.json` is the user's; `app.getPath('userData')` is the app's, and
+four things live there. `window-state.json` (geometry, `window-state.ts`), the
+per-theme hook settings and the status-line script under `hive/`
+(`hooks/settings.ts`), the OS-encrypted `jira-credential.bin`, and
+**`sessions.json`** — the fleet as it was when the app last closed.
+
+The ledger (`sessions/ledger.ts`) exists because closing the app used to erase
+every record that any session had run: `hive-store` boots empty by design and
+the session registry is a `Map` cleared on quit. Claude Code itself does not
+behave that way — it writes each conversation to
+`~/.claude/projects/<escaped-cwd>/<uuid>.jsonl` and lists them again on the next
+launch — and this is the equivalent for the Hive's own rows.
+
+Main authors it, from the four moments it already knows something worth keeping:
+the spawn (which is also the only moment the `--session-id` uuid can be
+captured — it cannot be assigned to a session retroactively), the branch read,
+a title the agent reports, and `settleExit`. The renderer reads it once at boot
+over `session:history` and merges it with `hydrateSessions`; it writes back
+through exactly one verb, `session:note`, carrying the Jira key — the single
+field main cannot establish for itself, because confirming a key names a real
+issue takes a Jira read the renderer does and main deliberately does not.
+
+Three properties are worth knowing before changing it:
+
+- **It is lenient, not durable, and deliberately so.** A plain `writeFileSync`
+  in a `try`, and a read that swallows every corruption case, following
+  `window-state.ts` rather than `config/write.ts`'s temp-file/`fsync`/rename
+  discipline. A lost ledger write costs the last few seconds of a record of
+  things already over; a durable path can refuse, throw or block on `fsync` at
+  exactly the two moments this module runs — app start and app quit — and a
+  history feature that can stop the app opening is a much worse bug.
+- **Nothing writes `closed`, because the quit is not observable.**
+  `runShutdown()` starts every hook body concurrently rather than in order, so a
+  flush registered there races the pty teardown, and a crash or SIGKILL runs no
+  hook at all. The ledger stores the last status it was told; the renderer
+  infers the ending. A flush *is* registered on shutdown, but only to save a
+  pending debounce — correctness does not depend on it.
+- **It seeds from the file at construction, and that is load-bearing.** An
+  unseeded ledger answers `session:history` with nothing *and* writes that
+  nothing back at the next debounce, so the second launch after any session
+  erases the first launch's history. That shipped in the first draft and no unit
+  test noticed, because each built a fresh ledger over a fresh temp file — the
+  one arrangement where it is invisible. `tests/e2e/electron/session-history.spec.ts`
+  is what catches it, by quitting a real app and starting it again.
+
+Retention is `HISTORY_CAP` (20) ended records, pruned oldest-first by
+`endedAt ?? createdAt`. Live records are exempt and are not counted against it:
+forgetting a process that still exists is a different and much worse bug than
+forgetting one that does not.
+
 ## The environment this process actually has (HIVE-84)
 
 A macOS app launched from Finder, the Dock or Spotlight inherits **launchd's**
@@ -393,12 +445,12 @@ It is **reported** instead, by Claude Code's hooks (HIVE-62), which are a
 different observer with a vantage point a pty does not have — hence
 `ObservedStatus`, wider than `DerivedStatus` by exactly this member.
 
-## The five statuses, and the two endings that are not statuses
+## The five statuses, and the three endings that are not statuses
 
 The fleet view shows `working`, `waiting` (labelled "needs input"),
-`idle (agents)`, `idle (script)`, and plain `idle`. `done` and `terminated` are
-not in that list, on purpose: both are endings, and an ending is a claim about
-a boundary, not a thing a session is doing moment to moment. `done` arrives
+`idle (agents)`, `idle (script)`, and plain `idle`. `done`, `terminated` and
+`closed` are not in that list, on purpose: all three are endings, and an ending
+is a claim about a boundary, not a thing a session is doing moment to moment. `done` arrives
 when the user runs `/clear` — Claude Code reports that as `SessionEnd` with
 `reason: 'clear'`, the pty stays alive, and the fact travels its own channel,
 `SessionClearedEvent`, rather than riding `ObservedStatus`; the row retires as
@@ -410,6 +462,20 @@ lets a session's own hooks own its status once any have arrived, and makes an
 explicit exception for this one — because `SessionEnd` races the process exit
 and loses: a hook POST from a process that is already gone is not a bet worth
 making.
+
+`closed` is the third ending, and unlike the other two **nothing ever reports
+it** (HIVE-87). It is what a session restored from the ledger becomes when the
+record says it was still running: the process it describes died with the app
+that owned it, so a record claiming `working` is describing something that
+plainly is not. Main cannot write it — see the ledger section above for why the
+quit is not observable — so the renderer infers it in `hydrateSessions`, which
+is an inference nothing can race and no crash can interrupt.
+
+It is a separate status rather than a reuse of `terminated` for a reason that
+is about retention rather than vocabulary. `terminated` is never capped, on the
+grounds that such a row is the only record a process ever existed; had restored
+sessions come back as `terminated`, every launch would have added the entire
+live fleet to a list nothing is allowed to shorten.
 
 `idle (agents)` and `idle (script)` are not new members of `ObservedStatus`
 either. They are plain `idle` with an `IdleDetail` attached, because the

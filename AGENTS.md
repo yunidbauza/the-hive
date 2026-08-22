@@ -164,7 +164,7 @@ per number on screen. Cross-store effects call the other store's action
 explicitly; no store subscribes to another.
 
 Fixtures (`src/data/`) are **store-only**, seed only `notifs`, and never gain a
-slice back — **the app boots empty**. Tests: `tests/support/`.
+slice back; boot data is last run's ended sessions. Tests: `tests/support/`.
 
 ## Styling
 
