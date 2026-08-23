@@ -129,9 +129,18 @@ Three properties are worth knowing before changing it:
 - **Nothing writes `closed`, because the quit is not observable.**
   `runShutdown()` starts every hook body concurrently rather than in order, so a
   flush registered there races the pty teardown, and a crash or SIGKILL runs no
-  hook at all. The ledger stores the last status it was told; the renderer
-  infers the ending. A flush *is* registered on shutdown, but only to save a
-  pending debounce — correctness does not depend on it.
+  hook at all. The ledger stores the last status it was told — every live
+  status `publishStatus` sends, since HIVE-88, not only the `working` a spawn
+  begins with — and the renderer infers the ending. A flush *is* registered on
+  shutdown, but only to save a pending debounce — correctness does not depend
+  on it.
+- **`session:history` says which records are still running.** The reader may
+  not be the first renderer of this run (a window reopened from the dock, a
+  reload), so the handler marks records whose id the registry holds as `live`
+  (HIVE-88); the renderer keeps those out of PREVIOUS RUN. And a restored row
+  opened again is spawned with `resume`, which puts the ledger's uuid behind
+  `--resume` instead of `--session-id` and keeps the record rather than
+  starting it over (`SessionLedger.resumable`, `begin(…, { resume })`).
 - **It seeds from the file at construction, and that is load-bearing.** An
   unseeded ledger answers `session:history` with nothing *and* writes that
   nothing back at the next debounce, so the second launch after any session

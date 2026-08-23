@@ -45,7 +45,7 @@ import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import { SESSION_EFFORTS, SESSION_MODELS } from '@shared/session-contract';
-import type { SessionRecord } from '@shared/session-history-contract';
+import type { SessionHistoryEntry } from '@shared/session-history-contract';
 import { currentTheme } from '@stores/appearance-store';
 import { useUiStore } from '@stores/ui-store';
 
@@ -266,7 +266,7 @@ interface HiveState {
    * restored `sess-01` colliding with one this run has already spawned is the
    * ordinary case rather than a corner, and the live row always wins.
    */
-  hydrateSessions: (records: SessionRecord[]) => void;
+  hydrateSessions: (records: SessionHistoryEntry[]) => void;
   /**
    * Apply read-state the hub decided, without writing it back (HIVE-75).
    *
@@ -577,6 +577,30 @@ function restoredStatus(stored: string): SessionStatus | undefined {
     return 'closed';
   }
   return undefined;
+}
+
+/**
+ * A restored row that has come back to life stops being restored (HIVE-88).
+ *
+ * `restored` records where a row came from, which is durable; the section it
+ * belongs in depends on whether it is running *now*, which is not. Reopening a
+ * PREVIOUS RUN row spawns a process under its own id, and the first live
+ * status that process reports is the moment the row is this run's fleet. Left
+ * in place, the flag put one entity in two groups: `useActiveSessions` keys on
+ * the status and `useRestoredSessions` on the flag, and a `working` row with
+ * `restored: true` satisfied both — two rows, one agent.
+ *
+ * Only a **live** status revives. A spawn that fails settles `terminated`
+ * without the row ever having run, and that is still last run's row.
+ *
+ * Mutates and returns `updated`, which every caller has just spread into a
+ * fresh object — the same shape as the `idleDetail` delete beside it.
+ */
+function reviveIfLive(updated: Session): Session {
+  if (updated.restored === true && !isEnded(updated.status)) {
+    delete updated.restored;
+  }
+  return updated;
 }
 
 /**
@@ -1096,8 +1120,25 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * put the *new* session's output on screen under the *old* session's name,
      * and let the user type into work they think they finished.
      */
+    /**
+     * `closed` opens (HIVE-88), and it is the one ending that does.
+     *
+     * The gate exists to keep the user out of a terminal that is gone or is
+     * someone else's. A closed row is neither: its process did not survive the
+     * app, and *opening it is how it gets one* — the surface mounts, the
+     * transport asks main to `--resume` the conversation the ledger kept, and
+     * the first live status moves the row from PREVIOUS RUN to ACTIVE. Refusing
+     * here made that path unreachable from every surface at once.
+     */
     const entity = get().entities[id];
-    if (!(entity !== undefined && isSession(entity) && isEnded(entity.status))) {
+    if (
+      !(
+        entity !== undefined &&
+        isSession(entity) &&
+        isEnded(entity.status) &&
+        entity.status !== 'closed'
+      )
+    ) {
       useUiStore.getState().openTab(id);
       return true;
     }
@@ -1488,10 +1529,31 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           ordinary case: entity ids are reused across a restart, so the ledger's
           `sess-01` and this run's `sess-01` are different sessions wearing the
           same name, and only one of them has a process behind it.
+
+          This is also the whole of restore's deduplication (HIVE-88), and the
+          id is the right key for it. It is the one identity that survives a
+          restart: a PREVIOUS RUN row reopened spawns under its own id, the
+          ledger is keyed by it, and `rememberSpawnId` above keeps this run's
+          counter from minting it a second time. Claude's own `sessionUuid`
+          never reaches the renderer, and `cwd` or `ticket` would collapse two
+          genuinely different sessions on one issue into one row.
         */
         if (item.id in entities) continue;
 
-        const status = restoredStatus(item.status);
+        /*
+          `live` is main saying a pty is running under this id right now
+          (HIVE-88). Such a row is this run's fleet, whatever the file says
+          about when it started: it keeps the status it was last seen in
+          rather than being written down to `closed`, and it is not `restored`
+          — PREVIOUS RUN is for rows the app outlived, and this one it did not.
+          Only a record in a live status is promoted: main never writes an
+          ended status for a pty it still holds, so a live record claiming
+          one is a file this build did not write, and the status it claims
+          wins over the mark.
+        */
+        const stored = restoredStatus(item.status);
+        const live = item.live === true && stored === 'closed';
+        const status = live ? (item.status as SessionStatus) : stored;
         /*
           A status this build does not know is a record written by one that did.
           Dropped rather than guessed at — an unrenderable row in the fleet
@@ -1521,8 +1583,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             cannot be derived from the status: a session that quit normally last
             run is restored as `terminated`, which is indistinguishable from one
             that quit ten seconds ago in this one.
+
+            Cleared again by `reviveIfLive` the moment the row is reopened and
+            its new process reports a live status (HIVE-88) — and never set on
+            a row main still runs, which was never a previous run at all.
           */
-          restored: true,
+          ...(live ? {} : { restored: true }),
           ...(item.name === undefined ? {} : { name: item.name }),
           ...(item.ticket === undefined ? {} : { ticket: item.ticket }),
           ...(item.branch === undefined ? {} : { branch: item.branch }),
@@ -1570,6 +1636,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (status !== undefined && isSession(updated) && 'idleDetail' in updated) {
         delete updated.idleDetail;
       }
+      if (status !== undefined && isSession(updated)) reviveIfLive(updated);
 
       return { entities: { ...state.entities, [id]: updated } };
     }),
@@ -1624,6 +1691,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ...(idleDetail === undefined ? {} : { idleDetail }),
       };
       if (idleDetail === undefined) delete updated.idleDetail;
+      reviveIfLive(updated);
 
       return {
         entities: { ...state.entities, [target]: updated },
@@ -2582,11 +2650,13 @@ export const useEndedSessions = () =>
  * indistinguishable, by status alone, from one that quit ten seconds ago in
  * this run. Grouping on `closed` sent every one of those into ENDED.
  *
- * Nothing sets `restored` at runtime — only `hydrateSessions` does, once, at
- * boot — so this list is fixed for the life of the app session. It is capped by
- * the ledger rather than here: the file it came from holds at most
- * `HISTORY_CAP` ended records, so there is no second cap to drift out of step
- * with the first.
+ * Nothing *sets* `restored` at runtime — only `hydrateSessions` does, once, at
+ * boot — so this list only ever shrinks: a row reopened from here comes back
+ * to life under its own id, and `reviveIfLive` clears the flag on the first
+ * live status so the row moves to ACTIVE rather than appearing in both groups
+ * (HIVE-88). It is capped by the ledger rather than here: the file it came from
+ * holds at most `HISTORY_CAP` ended records, so there is no second cap to drift
+ * out of step with the first.
  */
 export const useRestoredSessions = () =>
   useHiveStore(

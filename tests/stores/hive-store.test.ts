@@ -1,3 +1,4 @@
+import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PHRASES } from '@lib/swarm/phrases';
@@ -10,11 +11,19 @@ import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 
 import { useAppearanceStore } from '@stores/appearance-store';
-import { ACK_DELAY_MS, statusWord, useHiveStore } from '@stores/hive-store';
+import {
+  ACK_DELAY_MS,
+  statusWord,
+  useActiveSessions,
+  useEndedSessions,
+  useHiveStore,
+  useNavOrder,
+  useRestoredSessions,
+} from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
-import type { SessionRecord } from '@shared/session-history-contract';
+import type { SessionHistoryEntry } from '@shared/session-history-contract';
 
 import { notif as notif2 } from '../support/notifications';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
@@ -1495,7 +1504,7 @@ describe('hive-store', () => {
    * running, and may not hand out an id a future spawn would collide with.
    */
   describe('hydrateSessions', () => {
-    const record = (over: Partial<SessionRecord> = {}): SessionRecord => ({
+    const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
       id: 'sess-01',
       project: 'apfm-web',
       task: '',
@@ -1690,6 +1699,38 @@ describe('hive-store', () => {
       expect(useHiveStore.getState().entities['sess-09']).toBeDefined();
     });
 
+    it('puts a session main still runs straight into ACTIVE', () => {
+      /**
+       * The renderer is not always the first of its run (HIVE-88). Close the
+       * window on macOS and reopen it from the dock, reload it, crash it: a
+       * fresh store hydrates in front of the same running ptys, and the ledger
+       * lists them. Main marks those `live`, and a live row is this run's fleet
+       * — not restored, not closed, and reading whatever it was last doing.
+       */
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'live-01', status: 'idle', live: true }),
+        record({ id: 'old-01', status: 'idle' }),
+      ]);
+
+      expect(statusOf('live-01')).toBe('idle');
+      expect(statusOf('old-01')).toBe('closed');
+      const live = useHiveStore.getState().entities['live-01'];
+      expect(live && isSession(live) ? live.restored : 'missing').toBeUndefined();
+      const old = useHiveStore.getState().entities['old-01'];
+      expect(old && isSession(old) ? old.restored : 'missing').toBe(true);
+    });
+
+    it('keeps an ended status on a live entry, and keeps it restored', () => {
+      // `live` says main holds a pty under this id; it does not say the record
+      // describes a running conversation. A `done` record with a live pty is
+      // a cleared row whose terminal belongs to its successor.
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'x', status: 'done', live: true }),
+      ]);
+
+      expect(statusOf('x')).toBe('done');
+    });
+
     it('is a no-op for an empty ledger', () => {
       const before = [...useHiveStore.getState().order];
 
@@ -1711,6 +1752,174 @@ describe('hive-store', () => {
 
       expect(useHiveStore.getState().entities).toBe(entitiesBefore);
       expect(useHiveStore.getState().order).toBe(orderBefore);
+    });
+  });
+
+  /**
+   * A restored row that comes back to life (HIVE-88).
+   *
+   * `restored` records where a row came from, which is durable; the section it
+   * belongs in depends on whether it is running *now*, which is not. A row
+   * reopened from PREVIOUS RUN gets a live status from its new process, and
+   * that status has to move it — once, to ACTIVE — rather than leave one
+   * entity satisfying both groups' selectors and painting twice.
+   */
+  describe('reviving a restored session', () => {
+    const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
+      id: 'old-01',
+      project: 'apfm-web',
+      task: '',
+      status: 'working',
+      createdAt: 1,
+      ...over,
+    });
+
+    const restoredOf = (id: string) => {
+      const entity = useHiveStore.getState().entities[id];
+      return entity && isSession(entity) ? entity.restored : 'missing';
+    };
+
+    const partition = () => {
+      const { result } = renderHook(() => ({
+        active: useActiveSessions(),
+        restored: useRestoredSessions(),
+        ended: useEndedSessions(),
+        nav: useNavOrder(),
+      }));
+      return result.current;
+    };
+
+    it('leaves PREVIOUS RUN the moment a live status lands', () => {
+      useHiveStore.getState().hydrateSessions([record()]);
+      expect(partition().restored).toEqual(['old-01']);
+
+      useHiveStore.getState().setSessionStatus('old-01', 'working');
+
+      const groups = partition();
+      expect(groups.active).toContain('old-01');
+      expect(groups.restored).not.toContain('old-01');
+      expect(groups.ended).not.toContain('old-01');
+      expect(restoredOf('old-01')).toBeUndefined();
+    });
+
+    it('occupies exactly one slot in the keyboard order', () => {
+      // The partition the caret walks is the one the table draws; both have to
+      // see one row, in the ACTIVE position, and never a second one.
+      useHiveStore.getState().hydrateSessions([record()]);
+      useHiveStore.getState().setSessionStatus('old-01', 'working');
+
+      const { nav, active } = partition();
+      expect(nav.filter((id) => id === 'old-01')).toHaveLength(1);
+      // In the ACTIVE block of the walk — before every ended or restored row.
+      expect(nav.indexOf('old-01')).toBeLessThan(active.length);
+    });
+
+    it('revives on any live status, not only working', () => {
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'a' }),
+        record({ id: 'b' }),
+      ]);
+
+      useHiveStore.getState().setSessionStatus('a', 'idle');
+      useHiveStore.getState().setSessionStatus('b', 'waiting');
+
+      expect(restoredOf('a')).toBeUndefined();
+      expect(restoredOf('b')).toBeUndefined();
+    });
+
+    it('stays in PREVIOUS RUN when only an ended status is written', () => {
+      // A process that failed to start settles `terminated` without ever
+      // having been live. That is still last run's row, and it stays put.
+      useHiveStore.getState().hydrateSessions([record()]);
+
+      useHiveStore.getState().setSessionStatus('old-01', 'terminated');
+
+      expect(restoredOf('old-01')).toBe(true);
+      expect(partition().restored).toEqual(['old-01']);
+    });
+
+    it('revives through the transcript path too', () => {
+      // `appendEntityLines` is the other writer that can carry a live status.
+      useHiveStore.getState().hydrateSessions([record()]);
+
+      useHiveStore.getState().appendEntityLines('old-01', [], 'working');
+
+      expect(restoredOf('old-01')).toBeUndefined();
+      expect(partition().active).toContain('old-01');
+    });
+
+    it('ends under ENDED once revived, like any session of this run', () => {
+      useHiveStore.getState().hydrateSessions([record()]);
+      useHiveStore.getState().setSessionStatus('old-01', 'working');
+
+      useHiveStore.getState().setSessionStatus('old-01', 'terminated');
+
+      const groups = partition();
+      expect(groups.ended).toContain('old-01');
+      expect(groups.restored).not.toContain('old-01');
+      expect(groups.active).not.toContain('old-01');
+    });
+
+    it('opens a closed row, and still refuses the other two endings', () => {
+      // `closed` is the one ending whose remedy is opening it: the surface
+      // mounting is what asks main to resume the conversation.
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'closed-01' }),
+        record({ id: 'term-01', status: 'terminated' }),
+        record({ id: 'done-01', status: 'done' }),
+      ]);
+
+      expect(useHiveStore.getState().openEntity('closed-01')).toBe(true);
+      expect(useUiStore.getState().activeTab).toBe('closed-01');
+      expect(useHiveStore.getState().openEntity('term-01')).toBe(false);
+      expect(useHiveStore.getState().openEntity('done-01')).toBe(false);
+    });
+
+    it('never restores a second row for an id this run already runs', () => {
+      // The identity that survives a restart is the entity id: a reopened row
+      // spawns under its own id, and the ledger is keyed by it. The collision
+      // guard is therefore the dedup, and it has to hold with the live row
+      // under any status.
+      useHiveStore.getState().spawnSession('the-hive');
+      const live = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().setSessionStatus(live, 'working');
+
+      useHiveStore.getState().hydrateSessions([record({ id: live })]);
+
+      const rows = useHiveStore.getState().order.filter((id) => id === live);
+      expect(rows).toHaveLength(1);
+      expect(restoredOf(live)).toBeUndefined();
+      expect(partition().restored).toEqual([]);
+    });
+
+    it('keeps a genuinely previous-run row in PREVIOUS RUN', () => {
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'old-01' }),
+        record({ id: 'old-02', status: 'terminated' }),
+      ]);
+      useHiveStore.getState().setSessionStatus('old-01', 'working');
+
+      const groups = partition();
+      expect(groups.restored).toEqual(['old-02']);
+      expect(groups.active).toContain('old-01');
+    });
+
+    it('keeps terminated rows exempt from DONE_CAP, revived or not', () => {
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'old-term', status: 'terminated' }),
+        record({ id: 'old-live' }),
+      ]);
+      useHiveStore.getState().setSessionStatus('old-live', 'working');
+      useHiveStore.getState().setSessionStatus('old-live', 'terminated');
+
+      // Well past the cap: every `/clear` retires a row as `done`.
+      for (let i = 0; i < 25; i += 1) {
+        const id = useHiveStore.getState().spawnSession('the-hive');
+        useHiveStore.getState().clearSession(id);
+      }
+
+      expect(useHiveStore.getState().entities['old-term']).toBeDefined();
+      expect(useHiveStore.getState().entities['old-live']).toBeDefined();
     });
   });
 });

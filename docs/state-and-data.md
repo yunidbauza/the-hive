@@ -103,8 +103,18 @@ launch. `emptySeeds()` still returns nothing, and the rows arrive by action.
 
 Restored rows are ended rows: `hydrateSessions` turns any record that was still
 running into `closed`, because the process it describes died with the app that
-owned it. They render under their own PREVIOUS RUN divider and cannot be
-opened — `openEntity` already refuses every ended row, so that came for free.
+owned it. They render under their own PREVIOUS RUN divider.
+
+Two refinements since HIVE-88. First, the renderer is not always the first of
+its run — on macOS the window closes and the app lives on, and a reload or a
+crash gives a fresh store in front of the same running ptys — so
+`session:history` marks records whose id main still runs as `live`, and those
+hydrate as this run's fleet (their last status, no `restored` flag) rather than
+as PREVIOUS RUN. Second, `closed` is the one ending that **opens**: the surface
+mounting asks main to `--resume` the conversation the ledger kept, and the first
+live status the new process reports clears `restored` (`reviveIfLive`), which is
+what moves the row up to ACTIVE. The flag records provenance; the section
+depends on liveness, so a row is never in both.
 
 Terminal settings reach the terminal **by prop, not by store**:
 `components/terminal/**` may not import `stores/**`, so `center-stage.tsx` (the

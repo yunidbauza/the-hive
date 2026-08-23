@@ -505,6 +505,20 @@ describe('sessionCommand identity flags (HIVE-61)', () => {
     );
   });
 
+  it('resumes the conversation the uuid names when asked (HIVE-88)', () => {
+    // Same identifier, opposite claim: continue it rather than start it.
+    expect(
+      sessionCommand('claude', { name: 'sess-01', sessionUuid: UUID, resume: true }),
+    ).toBe(`claude --name sess-01 --resume ${UUID} && exit`);
+  });
+
+  it('has nothing to resume without a uuid', () => {
+    // A record written before uuids were kept gets the plain spawn.
+    expect(sessionCommand('claude', { name: 'sess-01', resume: true })).toBe(
+      'claude --name sess-01 && exit',
+    );
+  });
+
   it('quotes the settings path, which contains a space on every Mac', () => {
     /**
      * `app.getPath('userData')` is `~/Library/Application Support/the-hive/…`.

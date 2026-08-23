@@ -110,6 +110,16 @@ export interface SessionOptions {
    */
   sessionUuid?: string;
   /**
+   * Continue the conversation {@link SessionOptions.sessionUuid} names rather
+   * than start one under it (HIVE-88).
+   *
+   * `--resume <uuid>` where `--session-id <uuid>` would have gone: the same
+   * identifier, the opposite claim about it. Ignored without a uuid — there is
+   * nothing to resume — so a caller that asked to resume a record written
+   * before uuids were recorded gets the plain spawn it would have got anyway.
+   */
+  resume?: boolean;
+  /**
    * A settings file to merge on top of the user's own (HIVE-62).
    *
    * Carries the hook configuration that reports session status back to the app.
@@ -245,6 +255,7 @@ export const sessionCommand = (
     effort,
     name,
     sessionUuid,
+    resume = false,
     settingsPath,
     subscriptionAuth = false,
     task,
@@ -261,7 +272,7 @@ export const sessionCommand = (
      */
     ...(name !== undefined && isSendableSessionName(name) ? ['--name', name] : []),
     ...(sessionUuid !== undefined && UUID_PATTERN.test(sessionUuid)
-      ? ['--session-id', sessionUuid]
+      ? [resume ? '--resume' : '--session-id', sessionUuid]
       : []),
     ...(settingsPath === undefined ? [] : ['--settings', shellQuote(settingsPath)]),
   ];

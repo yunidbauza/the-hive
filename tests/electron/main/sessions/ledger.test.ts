@@ -377,6 +377,99 @@ describe('session ledger', () => {
       expect(record?.endedAt).toBeUndefined();
     });
 
+    it('keeps a previous run record when asked to resume it (HIVE-88)', () => {
+      // The opposite of the case above, and deliberately opt-in: this spawn
+      // *is* that conversation, picked up again, so what the row learned last
+      // run is still true of it.
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'p',
+            task: 'old task',
+            status: 'working',
+            createdAt: 100,
+            branch: 'feat/old',
+            cwd: '/old',
+            ticket: 'HIVE-1',
+            name: 'old-name',
+            sessionUuid: 'old-uuid',
+          },
+        ]),
+        'utf8',
+      );
+
+      const ledger = createSessionLedger(file, () => 5000);
+      expect(ledger.resumable('sess-01')).toBe('old-uuid');
+
+      ledger.begin(
+        'sess-01',
+        { project: 'p', task: '', sessionUuid: 'old-uuid' },
+        { resume: true },
+      );
+      ledger.flush();
+
+      expect(readLedger(file)[0]).toMatchObject({
+        branch: 'feat/old',
+        cwd: '/old',
+        ticket: 'HIVE-1',
+        name: 'old-name',
+        sessionUuid: 'old-uuid',
+        status: 'working',
+        createdAt: 100,
+      });
+      expect(readLedger(file)[0]?.endedAt).toBeUndefined();
+    });
+
+    it('forgets a uuid a patch withdraws, so a cleared terminal cannot resume', () => {
+      writeFileSync(
+        file,
+        JSON.stringify([
+          { id: 'sess-01', project: 'p', task: '', status: 'working', createdAt: 1, sessionUuid: 'old' },
+        ]),
+        'utf8',
+      );
+      const ledger = createSessionLedger(file, () => 5000);
+      expect(ledger.resumable('sess-01')).toBe('old');
+
+      ledger.record('sess-01', { sessionUuid: undefined });
+      ledger.flush();
+
+      expect(ledger.resumable('sess-01')).toBeUndefined();
+      expect(readLedger(file)[0]).not.toHaveProperty('sessionUuid');
+    });
+
+    it('has nothing to resume for a record without a uuid, or one this run began', () => {
+      writeFileSync(
+        file,
+        JSON.stringify([
+          { id: 'no-uuid', project: 'p', task: '', status: 'working', createdAt: 1 },
+        ]),
+        'utf8',
+      );
+      const ledger = createSessionLedger(file, () => 5000);
+      ledger.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
+
+      expect(ledger.resumable('no-uuid')).toBeUndefined();
+      expect(ledger.resumable('mine')).toBeUndefined();
+      expect(ledger.resumable('never-heard')).toBeUndefined();
+
+      // `resume` on a record with nothing to resume starts over, as any reused
+      // id does.
+      ledger.begin(
+        'no-uuid',
+        { project: 'q', task: '', sessionUuid: 'new' },
+        { resume: true },
+      );
+      ledger.flush();
+      expect(readLedger(file).find((r) => r.id === 'no-uuid')).toMatchObject({
+        project: 'q',
+        sessionUuid: 'new',
+        createdAt: 5000,
+      });
+    });
+
     it('keeps what a restart has already learned this run', () => {
       // Same session, new process. Its ticket and branch did not change because
       // the agent was restarted.

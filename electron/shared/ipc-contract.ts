@@ -83,8 +83,8 @@ import type {
   SessionTicketIntentEvent,
 } from './session-contract';
 import type {
+  SessionHistoryEntry,
   SessionNoteRequest,
-  SessionRecord,
 } from './session-history-contract';
 import type { PickedTheme, SaveThemeRequest } from './theme-contract';
 import type { UpdateStatus } from './update-contract';
@@ -566,6 +566,20 @@ export interface SpawnRequest {
    * theme, which is the only moment `claude` reads the file again.
    */
   theme?: SessionTheme;
+  /**
+   * Pick the conversation up where a previous run left it (HIVE-88).
+   *
+   * Set by the renderer for exactly one spawn: a row restored under PREVIOUS
+   * RUN that the user opens. Main then starts `claude --resume` with the uuid
+   * its ledger kept for that id, and the row carries on as the session it
+   * was rather than as a blank one wearing its name.
+   *
+   * The renderer says so **explicitly**; main never infers it from "the ledger
+   * knows this id". A fresh spawn can take an id last run used — the ledger's
+   * own `begin` exists for that case — and inferring would hand that new
+   * session a conversation it was never part of.
+   */
+  resume?: boolean;
 }
 
 export interface WriteRequest {
@@ -1212,7 +1226,7 @@ export interface HiveBridge {
      * never `closed` — the renderer infers that, because a record claiming to
      * be `working` plainly is not.
      */
-    history(): Promise<SessionRecord[]>;
+    history(): Promise<SessionHistoryEntry[]>;
     /**
      * Tell main the issue key a session is being worked for (HIVE-87).
      *

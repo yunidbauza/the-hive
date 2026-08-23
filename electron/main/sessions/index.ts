@@ -155,6 +155,16 @@ export interface OpenRequest {
    * Absent means dark, which is Claude Code's default and the app's.
    */
   theme?: SessionTheme;
+  /**
+   * Continue the conversation a previous run left under this id (HIVE-88).
+   *
+   * Honoured only when the ledger can name that conversation —
+   * `SessionLedger.resumable` — and ignored otherwise, so a restored row whose
+   * record predates uuids, or a build with no ledger at all, gets the ordinary
+   * spawn. Never set on `restart`: a restart is a new process for a session
+   * this run already owns, and its record is kept by `begin` regardless.
+   */
+  resume?: boolean;
 }
 
 /**
@@ -556,6 +566,17 @@ export function createSessions(options: SessionsOptions): Sessions {
        * running.
        */
       statusTracker.reset(entityId);
+      /**
+       * The uuid no longer names this terminal's conversation (HIVE-88).
+       *
+       * `/clear` starts a new one under a new id, and the only hook that
+       * carries that id — `SessionStart` — never reaches the receiver (see
+       * `hook-contract.ts`). So the ledger cannot learn it, and keeping the
+       * old one would let a later `--resume` reopen the conversation the user
+       * deliberately ended. Dropped, so a restored row for this terminal opens
+       * as a fresh session instead.
+       */
+      ledger?.record(entityId, { sessionUuid: undefined });
       publishCleared(entityId);
     },
     /**
@@ -639,6 +660,18 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     toolName?: string,
   ): void {
+    /**
+     * The ledger's `status` is documented as the *last known* one, and until
+     * HIVE-88 it was the first: `begin` wrote `working` and nothing touched it
+     * again before `settleExit`. That was enough for a fresh launch, which
+     * rewrites every live status to `closed` anyway. It is not enough for a
+     * renderer that starts in front of running ptys — the row it hydrates as
+     * live should say what the session is doing, not what it was doing when
+     * it started. `terminated` stays with `settleExit`, which also owns
+     * `endedAt`.
+     */
+    if (status !== 'terminated') ledger?.record(entityId, { status });
+
     send(CH.sessionStatus, {
       entityId,
       status,
@@ -1054,7 +1087,19 @@ export function createSessions(options: SessionsOptions): Sessions {
      * ledger's copy would then name a transcript that does not exist, which is
      * precisely the thing recording it is meant to make possible.
      */
-    const sessionUuid = newSessionUuid();
+    /**
+     * A resumed conversation keeps the uuid it already has (HIVE-88): that is
+     * the transcript `--resume` opens, and minting a new one here would name
+     * a session that was never started. `undefined` from the ledger means
+     * there is nothing to pick up — no ledger, no record, no uuid, or an id
+     * this run began — and the request degrades to the plain spawn it would
+     * otherwise have been. The renderer asked to resume; main decides whether
+     * it can.
+     */
+    const resumeUuid =
+      request.resume === true ? ledger?.resumable(request.entityId) : undefined;
+    const resume = resumeUuid !== undefined;
+    const sessionUuid = resumeUuid ?? newSessionUuid();
 
     /**
      * Written down before the process starts, not after (HIVE-87).
@@ -1065,15 +1110,20 @@ export function createSessions(options: SessionsOptions): Sessions {
      * retroactively to a session that has already started, so the only moment
      * it can be captured is this one.
      */
-    ledger?.begin(request.entityId, {
-      project: request.projectId,
-      task: request.task ?? '',
-      status: 'working',
-      sessionUuid,
-      ...(request.name === undefined ? {} : { name: request.name }),
-      ...(request.model === undefined ? {} : { model: request.model }),
-      ...(request.effort === undefined ? {} : { effort: request.effort }),
-    });
+    ledger?.begin(
+      request.entityId,
+      {
+        project: request.projectId,
+        // A resumed row keeps the task it was opened with; see `resume` below.
+        ...(resume ? {} : { task: request.task ?? '' }),
+        status: 'working',
+        sessionUuid,
+        ...(request.name === undefined ? {} : { name: request.name }),
+        ...(request.model === undefined ? {} : { model: request.model }),
+        ...(request.effort === undefined ? {} : { effort: request.effort }),
+      },
+      { resume },
+    );
 
     /**
      * `sessionCommand` wraps the configured binary so a clean `/exit` takes the
@@ -1111,6 +1161,7 @@ export function createSessions(options: SessionsOptions): Sessions {
          */
         name: request.name ?? request.entityId,
         sessionUuid,
+        resume,
         /*
           The theme rides in from the renderer, which is the only side that
           knows it, and picks which of the two settings files this session
@@ -1136,7 +1187,13 @@ export function createSessions(options: SessionsOptions): Sessions {
          * the login shell to run as a command. See `sessionCommand`'s own
          * comment for the transcript that produced.
          */
-        ...(request.task === undefined ? {} : { task: request.task }),
+        /*
+          Not on a resume (HIVE-88): the conversation being picked up has
+          already heard its opening instruction, and a ledger record carries
+          the task precisely so the row can display it — not so it can be
+          said twice.
+        */
+        ...(request.task === undefined || resume ? {} : { task: request.task }),
       }),
     );
 

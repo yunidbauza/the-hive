@@ -349,9 +349,9 @@ describe('SessionTable', () => {
       expect(screen.queryByTestId('session-table-empty')).not.toBeInTheDocument();
     });
 
-    it('refuses to open a restored row, and says why', async () => {
-      // Inherited from `openEntity`'s existing gate rather than added: `closed`
-      // is an ending, so every ended-row behaviour already applies to it.
+    it('opens a restored row, and says that is how it resumes (HIVE-88)', async () => {
+      // `closed` is the one ending that opens: the surface mounting is what
+      // asks main to resume the conversation the ledger kept.
       restore();
       render(<SessionTable />);
 
@@ -359,14 +359,66 @@ describe('SessionTable', () => {
         .getAllByRole('button')
         .find((button) => within(button).queryByText('closed') !== null)!;
 
-      expect(row).toBeDisabled();
+      expect(row).toBeEnabled();
       expect(row).toHaveAttribute(
         'title',
-        'old-01 was open when The Hive last closed — its process did not survive',
+        'old-01 was open when The Hive last closed — open it to pick it back up',
       );
 
       await userEvent.click(row);
-      expect(useUiStore.getState().activeTab).not.toBe('old-01');
+      expect(useUiStore.getState().activeTab).toBe('old-01');
+    });
+
+    it('moves a revived row to ACTIVE and draws it exactly once', () => {
+      /**
+       * The bug itself (HIVE-88). Before the fix the row kept `restored` after
+       * its process reported `working`, so it satisfied both groups' selectors
+       * and the table painted it under ACTIVE *and* under PREVIOUS RUN — two
+       * rows, one agent.
+       */
+      restore();
+      render(<SessionTable />);
+      act(() => {
+        useHiveStore.getState().setSessionStatus('old-01', 'working');
+      });
+
+      const rows = screen
+        .getAllByRole('button')
+        .filter((button) => within(button).queryByText(/old-01/) !== null);
+      expect(rows).toHaveLength(1);
+      expect(within(rows[0]!).getByText('working')).toBeInTheDocument();
+      expect(screen.queryByText('PREVIOUS RUN')).not.toBeInTheDocument();
+      // The active group has no divider of its own: it is everything above
+      // ENDED. Being above that divider is being in ACTIVE.
+      const ended = screen.getByText('ENDED');
+      expect(rows[0]!.compareDocumentPosition(ended)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    });
+
+    it('keeps a row main still runs out of PREVIOUS RUN from the start', () => {
+      // A window reopened in front of running ptys: main marks those live, and
+      // they are this run's fleet from the first paint.
+      act(() => {
+        useHiveStore.getState().hydrateSessions([
+          {
+            id: 'live-01',
+            project: 'apfm-web',
+            task: '',
+            status: 'idle',
+            createdAt: 1,
+            live: true,
+          },
+        ]);
+      });
+      render(<SessionTable />);
+
+      expect(screen.queryByText('PREVIOUS RUN')).not.toBeInTheDocument();
+      const rows = screen
+        .getAllByRole('button')
+        .filter((button) => within(button).queryByText(/live-01/) !== null);
+      expect(rows).toHaveLength(1);
+      expect(within(rows[0]!).getByText('idle')).toBeInTheDocument();
     });
   });
 });

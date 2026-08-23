@@ -81,8 +81,8 @@ import type {
   SessionTicketIntentEvent,
 } from '@shared/session-contract';
 import type {
+  SessionHistoryEntry,
   SessionNoteRequest,
-  SessionRecord,
 } from '@shared/session-history-contract';
 import type { PickedTheme, SaveThemeRequest } from '@shared/theme-contract';
 import type { UpdateStatus } from '@shared/update-contract';
@@ -362,7 +362,7 @@ const bridge: HiveBridge = {
     // HIVE-87. The namespace's first two verbs — everything above is a
     // subscription. `history` is read once at boot; `note` carries the one fact
     // about a session that main cannot establish for itself.
-    history: (): Promise<SessionRecord[]> =>
+    history: (): Promise<SessionHistoryEntry[]> =>
       ipcRenderer.invoke(CH.sessionHistory),
     note: (request: SessionNoteRequest): Promise<void> =>
       ipcRenderer.invoke(CH.sessionNote, request),

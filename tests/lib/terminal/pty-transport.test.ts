@@ -167,6 +167,21 @@ describe('PtyTransport — subscribe before spawn', () => {
     });
   });
 
+  it('asks main to resume only when told to, and only as true (HIVE-88)', () => {
+    createPtyTransport('sess-a', 'apfm-web', { resume: true }).onData(() => {});
+    createPtyTransport('sess-b', 'apfm-web', { resume: false }).onData(() => {});
+
+    expect(bridge.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess-a', resume: true }),
+    );
+    // `false` is the same request as absent — the ordinary payload stays
+    // byte-identical to what every spawn before the field sent.
+    const second = vi
+      .mocked(bridge.spawn)
+      .mock.calls.find(([request]) => request.sessionId === 'sess-b')!;
+    expect(second[0]).not.toHaveProperty('resume');
+  });
+
   it('spawns once for two subscribers on one entity, and feeds both', () => {
     // A per-subscriber spawn would fork a second `claude` in the same
     // repository — a data-loss bug wearing a rendering bug's clothes.

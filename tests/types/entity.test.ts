@@ -97,7 +97,7 @@ describe('closed', () => {
 
   it('explains itself as an app close rather than a crash or a clear', () => {
     expect(endedReason(session({ id: 'sess-01', status: 'closed' }))).toBe(
-      'sess-01 was open when The Hive last closed — its process did not survive',
+      'sess-01 was open when The Hive last closed — open it to pick it back up',
     );
   });
 

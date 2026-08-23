@@ -102,6 +102,41 @@ describe('resolveTransport', () => {
     });
   });
 
+  it('asks main to resume a row restored from a previous run (HIVE-88)', () => {
+    // The one mount whose first process should continue a conversation rather
+    // than start one. `restored` is still set here: the flag clears only once
+    // the new process reports a live status.
+    withBridge();
+    useHiveStore.getState().hydrateSessions([
+      {
+        id: 'old-01',
+        project: SESSION_PROJECT,
+        task: '',
+        status: 'working',
+        createdAt: 1,
+        model: 'haiku',
+      },
+    ]);
+
+    resolveTransport('old-01');
+
+    expect(createPtyTransport).toHaveBeenCalledWith('old-01', SESSION_PROJECT, {
+      model: 'haiku',
+      theme: 'dark',
+      resume: true,
+    });
+  });
+
+  it('never asks to resume a session this run started', () => {
+    withBridge();
+    const id = useHiveStore.getState().spawnSession(SESSION_PROJECT, '', 'haiku', 'low');
+
+    resolveTransport(id);
+
+    const [, , options] = vi.mocked(createPtyTransport).mock.calls.at(-1)!;
+    expect(options).not.toHaveProperty('resume');
+  });
+
   it('keeps an agent on its recorded transcript, even on desktop', () => {
     // Agents are background workers with no project and no branch (story 096's
     // scope note). A PTY would have no directory to spawn in.

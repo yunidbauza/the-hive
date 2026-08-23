@@ -135,5 +135,15 @@ export function resolveTransport(entityId: string): TerminalTransport {
      * would silently fall back to dark inside a light app.
      */
     theme: currentTheme(),
+    /**
+     * A row the app outlived, opened again (HIVE-88).
+     *
+     * `restored` is still set at this moment — `reviveIfLive` clears it only
+     * when the new process reports a live status — so it is exactly the
+     * signal that this mount should continue a conversation rather than
+     * begin one. Read here, not in `pty-transport.ts`, for the reason the
+     * model is: this is the store-aware half of the seam.
+     */
+    ...(session.restored === true ? { resume: true } : {}),
   });
 }
