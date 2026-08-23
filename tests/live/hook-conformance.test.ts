@@ -60,17 +60,35 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  *
  * ```
  * say ok            -> UserPromptSubmit working
- *                   -> Stop             idle
+ *                   -> Stop             idle      => row: session.idle (HIVE-89)
  *                   -> Notification     idle     idle_prompt        (+60s)
- *                   => 1 row: session.input_needed, inbox only, badge 1
+ *                   => 2 rows: session.idle (presented), session.input_needed
+ *                      (inbox only), badge 2
  *
  * AskUserQuestion   -> UserPromptSubmit  working
  *                   -> PermissionRequest waiting
  *                   -> Notification      waiting  permission_prompt (+6s)
  *                   -- driver answers the question --
  *                   -> PostToolUse       working                    (the fix)
- *                   => 1 row: session.blocked, presented, badge 1   (not two)
+ *                   -> Stop              idle      => row: session.idle
+ *                   => 2 rows: session.blocked, session.idle — both presented,
+ *                      badge 2 (and not a second blocked row)
  * ```
+ *
+ * ## The fifth row (HIVE-89)
+ *
+ * Every scenario types a prompt and every scenario's turn ends inside the run
+ * with nothing left running, so every scenario now raises exactly one
+ * `session.idle` — the edge the notifier arms on `UserPromptSubmit` and spends
+ * on the first hook status that is `idle` with no `idleDetail`. The two
+ * detail scenarios are the ones that earn the kind, and both land the row on
+ * the `Stop` after the internal re-invoke that collects the result — not on
+ * the main agent's own earlier `Stop`, which still carries a detail, and not
+ * on `SubagentStop` either. The first cut of this story raised at
+ * `SubagentStop` too, and this file's run is what caught it: measured,
+ * `SubagentStop` idle -> internal `UserPromptSubmit` -> `Stop` idle, so that
+ * produced two rows for one fact. `kinds` below is the ordered list the run
+ * must produce, and is a literal for the same reason `status` is.
  *
  * `session.input_needed` reads "inbox only" rather than "presented" — its
  * `defaultDelivery` is `'inbox'`, not `'both'` (HIVE-83's Task 5: what makes
@@ -145,16 +163,19 @@ interface Scenario {
   type: HookNotificationType | null;
   status: ObservedStatus;
   idleDetail?: IdleDetail;
-  kind: NotificationKind | null;
+  /** Every inbox row the run raises, in order (HIVE-89 widened this from one). */
+  kinds: NotificationKind[];
   /**
    * How many toasts this scenario's row is expected to produce.
    *
-   * Not derivable from `kind` inside this file — see the literal-not-derived
+   * Not derivable from `kinds` inside this file — see the literal-not-derived
    * discipline `NOTIFICATION_TYPE_STATUS` follows above. `session.blocked` is
    * `defaultDelivery: 'both'`; `session.input_needed` is deliberately
    * `'inbox'` only (HIVE-83's Task 5) — a row still lands and the badge still
    * counts it, but no toast. The live run is what caught this file's own
-   * belief going stale when that shipped.
+   * belief going stale when that shipped. `session.idle` is `'both'` (HIVE-89)
+   * and every scenario raises one, so every count below is one higher than it
+   * was.
    */
   presentedCount: number;
   deadline: number;
@@ -207,9 +228,9 @@ const scenarios: Scenario[] = [
      * it, so the constant is pinned rather than consulted.
      */
     status: 'idle',
-    kind: 'session.input_needed',
-    /** `session.input_needed` is `inbox` only — see `Scenario.presentedCount`. */
-    presentedCount: 0,
+    kinds: ['session.idle', 'session.input_needed'],
+    /** `session.idle` toasts; `session.input_needed` is `inbox` only — see `Scenario.presentedCount`. */
+    presentedCount: 1,
     /** Long enough for `Stop`, then the idle prompt sixty seconds later. */
     deadline: 105,
     /** Nothing to answer — no tool ever runs in this one. */
@@ -223,9 +244,9 @@ const scenarios: Scenario[] = [
       'Use the AskUserQuestion tool right now to ask me whether I prefer tabs or spaces. Do nothing else.',
     type: 'permission_prompt',
     status: 'waiting',
-    kind: 'session.blocked',
-    /** `session.blocked` is `defaultDelivery: 'both'` — one toast. */
-    presentedCount: 1,
+    kinds: ['session.blocked', 'session.idle'],
+    /** Both `defaultDelivery: 'both'` — a toast each. */
+    presentedCount: 2,
     /**
      * Deliberately short. The answer lands at 45s and `Stop` a few seconds
      * later, so the `idle_prompt` this session would eventually get is due
@@ -248,8 +269,8 @@ const scenarios: Scenario[] = [
       "In one single message make two parallel tool calls: first the Bash tool running the command 'sleep 20 && echo done', and second the AskUserQuestion tool asking whether I prefer tabs or spaces. Both must be in the same assistant message so they run in parallel.",
     type: 'permission_prompt',
     status: 'waiting',
-    kind: 'session.blocked',
-    presentedCount: 1,
+    kinds: ['session.blocked', 'session.idle'],
+    presentedCount: 2,
     /**
      * The measured trace: `Bash`'s `PostToolUse` lands at ~27s while the
      * `AskUserQuestion` permission is still outstanding, and the answer lands
@@ -267,9 +288,9 @@ const scenarios: Scenario[] = [
     type: null,
     status: 'idle',
     idleDetail: 'agents',
-    kind: null,
-    /** No `Notification` ever fires here, so no row and no toast. */
-    presentedCount: 0,
+    /** No `Notification` fires; the one row is the `Stop` after the re-invoke (HIVE-89). */
+    kinds: ['session.idle'],
+    presentedCount: 1,
     /**
      * Measured trace: `PreToolUse Agent` and `SubagentStart` ~23s, the main
      * agent's own `Stop` ~25s, the subagent's own tool events ~25-29s,
@@ -289,9 +310,9 @@ const scenarios: Scenario[] = [
     type: null,
     status: 'idle',
     idleDetail: 'script',
-    kind: null,
-    /** No `Notification` ever fires here, so no row and no toast. */
-    presentedCount: 0,
+    /** No `Notification` fires; the one row is the `Stop` after the re-invoke (HIVE-89). */
+    kinds: ['session.idle'],
+    presentedCount: 1,
     /**
      * Measured trace, timings from the driver's Enter at ~12s: `PreToolUse
      * Bash` with `tool_input.run_in_background: true` ~5s later -> `PostToolUse`
@@ -327,7 +348,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       type: expectedType,
       status: expectedStatus,
       idleDetail: expectedIdleDetail,
-      kind: expectedKind,
+      kinds: expectedKinds,
       presentedCount,
       deadline,
       answerAt,
@@ -336,13 +357,18 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
     }) => {
       const statuses: TestStatusEvent[] = [];
       const raised: HiveNotification[] = [];
+      /** Index into `statuses` of the event each row was raised on (HIVE-89). */
+      const raisedAtIndex: number[] = [];
       const presented: string[] = [];
       let badge = -1;
 
       const hub = createNotificationHub({
         prefs: () => ({}),
         present: ({ title }) => presented.push(title),
-        broadcast: (n) => raised.push(n),
+        broadcast: (n) => {
+          raised.push(n);
+          raisedAtIndex.push(statuses.length - 1);
+        },
         activate: () => undefined,
         announceRead: () => undefined,
         announceUnread: (count) => {
@@ -560,19 +586,19 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
          * (`inbox` only, zero toasts, HIVE-83's Task 5) — see
          * `Scenario.presentedCount`.
          */
-        expect(raised.map((n) => n.kind)).toEqual([expectedKind]);
+        expect(raised.map((n) => n.kind)).toEqual(expectedKinds);
         expect(presented).toHaveLength(presentedCount);
-        expect(badge).toBe(1);
+        expect(badge).toBe(expectedKinds.length);
       } else {
         /**
          * The subagent and background-shell scenarios (HIVE-83). Neither ever
          * blocks on a human and no `Notification` fires inside either run, so
-         * no inbox row is raised at all — unlike the scenarios above,
-         * "silent" is the whole story, not half of it.
+         * the only row is the `session.idle` edge (HIVE-89) — raised once,
+         * and only once the detail has cleared.
          */
-        expect(raised).toHaveLength(0);
+        expect(raised.map((n) => n.kind)).toEqual(expectedKinds);
         expect(presented).toHaveLength(presentedCount);
-        expect(badge).toBe(-1);
+        expect(badge).toBe(expectedKinds.length);
 
         // The main agent's own `Stop`, while the subagent or the background
         // shell is still running.
@@ -603,6 +629,23 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
           .find((s) => s.idleDetail === undefined);
         expect(cleared).toBeDefined();
         expect(cleared?.event).toBe(clearedBy);
+
+        /**
+         * The `session.idle` row landed on a true idle, never on the main
+         * agent's own `Stop` while the detail was still live (HIVE-89). The
+         * notifier observes the same published sequence, so the row's raise
+         * must coincide with a status that is `idle` with no detail, at or
+         * after the clearing event.
+         */
+        const raisedAt = raisedAtIndex[0];
+        expect(raisedAt).toBeDefined();
+        const edge = statuses[raisedAt as number];
+        expect(edge?.event).toBe('Stop');
+        expect(edge?.status).toBe('idle');
+        expect(edge?.idleDetail).toBeUndefined();
+        expect(raisedAt as number).toBeGreaterThanOrEqual(
+          statuses.indexOf(cleared as TestStatusEvent),
+        );
       }
     },
   );

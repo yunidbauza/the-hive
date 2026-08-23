@@ -72,19 +72,36 @@ describe('parseConfig — notifications', () => {
   });
 
   /**
-   * HIVE-83: the four kinds it merged or removed are still *accepted*, via
+   * HIVE-83: the kinds it merged or removed are still *accepted*, via
    * `LEGACY_NOTIFICATION_KEYS`, so a config naming one does not lose every
    * other preference — but nothing reads their value back out. There is
    * nowhere left for it to go.
    */
   it('accepts a retired kind name without erroring, and drops its value', () => {
     const parsed = parseConfig(
-      '{"version":2,"notifications":{"session.idle":"off","clone.done":"inbox"}}',
+      '{"version":2,"notifications":{"session.ended":"off","clone.done":"inbox"}}',
       LABEL,
     );
 
     expect(parsed.errors).toEqual([]);
     expect(parsed.notifications).toEqual({ 'clone.done': 'inbox' });
+  });
+
+  /**
+   * HIVE-89: `session.idle` is a live kind again, so a HIVE-75-era delivery
+   * for it is read as the user's choice rather than dropped.
+   */
+  it('reads an old session.idle delivery as a live preference', () => {
+    const parsed = parseConfig(
+      '{"version":2,"notifications":{"session.idle":"off","clone.done":"inbox"}}',
+      LABEL,
+    );
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.notifications).toEqual({
+      'session.idle': 'off',
+      'clone.done': 'inbox',
+    });
   });
 
   /**

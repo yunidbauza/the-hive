@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  LEGACY_NOTIFICATION_KEYS,
   NOTIFICATION_CAP,
   NOTIFICATION_KINDS,
   NOTIFICATION_KIND_SPECS,
@@ -69,18 +70,39 @@ describe('the kind registry', () => {
 
   /**
    * HIVE-83: `session.waiting` and `session.asked` merged into one kind, and
-   * `session.ended` / `session.idle` were retired outright.
+   * `session.ended` / `session.idle` were retired outright. HIVE-89 brought
+   * `session.idle` back with a new meaning — the turn actually ended — so it
+   * is live again and no longer a legacy key.
    */
   it('carries one blocked kind and no retired ones', () => {
     expect(NOTIFICATION_KINDS).toContain('session.blocked');
-    for (const gone of [
-      'session.waiting',
-      'session.asked',
-      'session.ended',
-      'session.idle',
-    ]) {
+    for (const gone of ['session.waiting', 'session.asked', 'session.ended']) {
       expect(NOTIFICATION_KINDS).not.toContain(gone);
     }
+  });
+
+  it('revives session.idle as a live kind that interrupts by default', () => {
+    expect(NOTIFICATION_KINDS).toContain('session.idle');
+    expect(LEGACY_NOTIFICATION_KEYS).not.toContain('session.idle');
+    const spec = NOTIFICATION_KIND_SPECS['session.idle'];
+    expect(spec.source).toBe('session');
+    expect(spec.defaultDelivery).toBe('both');
+    expect(spec.label).not.toBe('');
+    expect(spec.description).not.toBe('');
+  });
+
+  /**
+   * A HIVE-75-era file that silenced the old `session.idle` keeps the revived
+   * kind quiet too: same key, valid delivery, and preserving what the user
+   * chose is the rule every legacy entry follows.
+   */
+  it('honours an old session.idle delivery as the choice for the revived kind', () => {
+    expect(resolveNotificationPrefs({ 'session.idle': 'off' })['session.idle']).toBe('off');
+  });
+
+  /** The old `sessionIdle` boolean gated a pause-toast; it says nothing about this kind. */
+  it('does not migrate the legacy sessionIdle boolean into the revived kind', () => {
+    expect(resolveNotificationPrefs({ sessionIdle: false })['session.idle']).toBe('both');
   });
 
   /** `inbox`, not `both` — the toast is what made this kind chatty, not the row. */

@@ -84,21 +84,25 @@ describe('parseSetNotificationsRequest', () => {
   });
 
   /**
-   * HIVE-83: the four kinds it merged or removed are readable off an old file
-   * — `parse.ts`'s `LEGACY_NOTIFICATION_KEYS` sees to that — but they are not
+   * HIVE-83: the kinds it merged or removed are readable off an old file —
+   * `parse.ts`'s `LEGACY_NOTIFICATION_KEYS` sees to that — but they are not
    * writable. There is no live switch left for the running app to set.
+   * `session.idle` is no longer among them: HIVE-89 revived it as a live
+   * kind, so it is a writable key again.
    */
-  it('refuses the four kinds HIVE-83 merged or removed', () => {
-    for (const key of [
-      'session.waiting',
-      'session.asked',
-      'session.ended',
-      'session.idle',
-    ]) {
+  it('refuses the kinds HIVE-83 merged or removed', () => {
+    for (const key of ['session.waiting', 'session.asked', 'session.ended']) {
       expect(() => parseSetNotificationsRequest({ [key]: 'off' })).toThrow(
         /unexpected key/,
       );
     }
+  });
+
+  /** HIVE-89: a live kind again, so the pane can write it. */
+  it('accepts the revived session.idle kind', () => {
+    expect(parseSetNotificationsRequest({ 'session.idle': 'inbox' })).toEqual({
+      'session.idle': 'inbox',
+    });
   });
 
   it('refuses __proto__', () => {

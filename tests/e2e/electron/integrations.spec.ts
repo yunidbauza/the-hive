@@ -216,6 +216,40 @@ test('offers the waiting-on-you kind, and saves it', async ({}, testInfo) => {
   await app.close();
 });
 
+/**
+ * The yours-again kind (HIVE-89), driven end to end for the same reason: it is
+ * the newest entry — and a revived name, so this is also what proves the pane
+ * treats it as a live kind rather than the retired one it used to be. Every
+ * delivery is exercised because the kind defaults to `both`, and `System` is
+ * the one a defaulted control would already show.
+ */
+test('offers the yours-again kind, and saves every delivery', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openNotifications(page);
+
+  const group = page.getByRole('radiogroup', { name: /becomes yours again/i });
+  await expect(group).toBeVisible();
+  await expect(group.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
+
+  await choose(page, /becomes yours again/i, 'Off');
+  await expect.poll(() => prefs(configPath)['session.idle']).toBe('off');
+
+  await choose(page, /becomes yours again/i, 'Inbox');
+  await expect.poll(() => prefs(configPath)['session.idle']).toBe('inbox');
+
+  await choose(page, /becomes yours again/i, 'System');
+  await expect.poll(() => prefs(configPath)['session.idle']).toBe('both');
+
+  await app.close();
+});
+
 test('a hand-written block survives a save made through the UI', async ({}, testInfo) => {
   const { configPath } = seed((name) => testInfo.outputPath(name));
   /**
@@ -228,9 +262,10 @@ test('a hand-written block survives a save made through the UI', async ({}, test
    * still holds through a real load and a real save is to do one.
    *
    * `sessionIdle` no longer migrates anywhere — HIVE-83 retired `session.idle`
-   * outright — so this also proves the narrower promise that survives it: a key
-   * this build can no longer use still round-trips untouched rather than being
-   * dropped.
+   * outright, and HIVE-89's revival of that kind deliberately left the boolean
+   * unpointed — so this also proves the narrower promise that survives it: a
+   * key this build can no longer use still round-trips untouched rather than
+   * being dropped.
    */
   const document = read(configPath);
   writeFileSync(

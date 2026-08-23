@@ -1,4 +1,4 @@
-import type { StatusHookEvent } from '../../shared/hook-contract';
+import type { IdleDetail, StatusHookEvent } from '../../shared/hook-contract';
 import { CH } from '../../shared/ipc-contract';
 import type { NotificationKind } from '../../shared/notification-contract';
 
@@ -170,6 +170,19 @@ const INPUT_NEEDED_COPY = {
 };
 
 /**
+ * What `session.idle` says (HIVE-89). The moment work stopped — which is a
+ * different sentence from the nudge a minute later.
+ */
+const IDLE_COPY = {
+  title: 'is yours again',
+  body: 'Its turn ended and nothing is left running in the background.',
+};
+
+/** Whether an `idleDetail` off the wire says something is still running. */
+const isLiveDetail = (value: unknown): value is IdleDetail =>
+  value === 'agents' || value === 'script';
+
+/**
  * Which inbox kind a `waiting` status is, or `undefined` for none.
  *
  * A free function so the two-step lookup reads as one question. `undefined` is
@@ -213,7 +226,7 @@ function stillRelevant(
   status: string,
   event: unknown,
 ): boolean {
-  if (kind === 'session.input_needed') {
+  if (kind === 'session.input_needed' || kind === 'session.idle') {
     return !(event === 'UserPromptSubmit' || status === 'terminated');
   }
   /**
@@ -280,6 +293,43 @@ export function createNotifier(options: NotifierOptions): Notifier {
   const announcedInputNeeded = new Set<string>();
 
   /**
+   * Sessions whose next true idle is worth announcing (HIVE-89).
+   *
+   * `session.idle` is an edge — raised on the transition into "idle and
+   * nothing running" — and this set is what makes it one. A session is armed
+   * by `UserPromptSubmit`, the one event that says a turn is the user's, and
+   * the first `Stop` that lands `idle` with no `idleDetail` spends the arm.
+   * `terminated` drops it.
+   *
+   * Stated as "armed" rather than as "already announced" (the shape
+   * `announcedInputNeeded` takes) on purpose: it means a session that has not
+   * typed yet — a `SessionStart` idle, a resumed conversation — never
+   * announces, because nothing ever armed it. The inverse shape would have
+   * announced every spawn the moment it reported idle, which is the defect
+   * that retired the old `session.idle`.
+   *
+   * ## Why only `Stop` spends it — measured, not the brief
+   *
+   * HIVE-89 named three events that reach the moment: `Stop` with nothing
+   * outstanding, the `SubagentStop` that retires the last agent, and the last
+   * background shell finishing. The live run (`tests/live/hook-conformance`)
+   * showed the last two are not moments of their own. Claude Code reports a
+   * finished background shell only as a re-invoke — an internal
+   * `UserPromptSubmit` that clears `bgShells` — followed by a `Stop`; and a
+   * subagent's result is collected the same way: `SubagentStop` (idle, no
+   * detail) -> internal `UserPromptSubmit` -> `Stop`. At `SubagentStop` the
+   * main agent is about to run again, so the session is not yet the user's,
+   * and announcing there *and* on the `Stop` that follows was two rows for one
+   * fact — precisely what the ticket ruled out. So `SubagentStop` does not
+   * spend the arm; the `Stop` after the re-invoke does, and both of the
+   * ticket's "later" cases arrive as that `Stop`. That re-invoke is
+   * indistinguishable from a typed prompt (see `tracker.ts`), which is fine
+   * here: it re-arms a session that has just been disarmed by nothing, and
+   * the one `Stop` that follows is the one row.
+   */
+  const armedIdle = new Set<string>();
+
+  /**
    * What each session calls itself, as the rail shows it (HIVE-81).
    *
    * A notification that says `sess-01` names something the user has never seen.
@@ -327,7 +377,8 @@ export function createNotifier(options: NotifierOptions): Notifier {
   >();
 
   const sessionEvent = (payload: Record<string, unknown>): void => {
-    const { entityId, status, event, notificationType, toolName } = payload;
+    const { entityId, status, event, notificationType, toolName, idleDetail } =
+      payload;
     if (typeof entityId !== 'string' || typeof status !== 'string') return;
 
     const action = { type: 'session', entityId } as const;
@@ -349,15 +400,29 @@ export function createNotifier(options: NotifierOptions): Notifier {
      * that. `UserPromptSubmit` is exactly that — it is the user typing — and
      * `terminated` ends the question by ending the session.
      *
-     * What this deliberately does not do is guess *why* a session is idle. Main
-     * cannot tell "idle because a background agent is running" from "idle
-     * because you walked away"; Claude fires `idle_prompt` for both. So this
-     * does not try to suppress the first — it makes the app say it once instead
-     * of four times, which is the part that was actually wrong.
+     * Main *can* now tell why a session is idle (HIVE-83 / HIVE-84), and
+     * `idleDetail` is how: the tracker pairs tool events by id, knows which
+     * subagents and background shells are still live, and ships the answer in
+     * the same payload that triggers this notification. HIVE-89 spends that —
+     * the raise below is gated on the detail, so an `idle_prompt` under a
+     * running agent or script no longer raises at all. What it does **not**
+     * change is the clearing rule, and the repetition argument is why: the
+     * same "is waiting on you" row four times in twenty-six minutes was not a
+     * misreading of *why* the session was idle, it was the mark being cleared
+     * by things that were not the user. Engagement is still the only thing
+     * that clears it.
      */
     if (event === 'UserPromptSubmit' || status === 'terminated') {
       announcedInputNeeded.delete(entityId);
     }
+
+    /**
+     * The arm for `session.idle` (HIVE-89): held from the user's prompt to
+     * the first idle with nothing running, and dropped by `terminated`. See
+     * `armedIdle`.
+     */
+    if (event === 'UserPromptSubmit') armedIdle.add(entityId);
+    else if (status === 'terminated') armedIdle.delete(entityId);
 
     /**
      * The pending row expires by its own kind's rule (HIVE-81).
@@ -390,8 +455,28 @@ export function createNotifier(options: NotifierOptions): Notifier {
      * and we stop here. That is the same set that was silent before.
      */
     if (event !== undefined) {
-      const kind = waitingKind(event, notificationType);
+      /**
+       * The edge `session.idle` is raised on (HIVE-89): a `Stop` that lands
+       * `idle` with nothing still running, while the arm is held. See
+       * `armedIdle` for why it is an arm and why only `Stop` spends it.
+       */
+      const trueIdle =
+        event === 'Stop' &&
+        status === 'idle' &&
+        !isLiveDetail(idleDetail) &&
+        armedIdle.has(entityId);
+      const kind =
+        waitingKind(event, notificationType) ??
+        (trueIdle ? ('session.idle' as const) : undefined);
       if (kind === undefined) return;
+
+      /*
+        `session.input_needed` keeps its meaning — a minute passed and nothing
+        was typed — and stops firing while something is still running
+        (HIVE-89). The mark is deliberately not spent by a suppressed prompt:
+        the one that arrives after the agent finishes is the first real one.
+      */
+      if (kind === 'session.input_needed' && isLiveDetail(idleDetail)) return;
 
       /*
         Marked before the raise, and deliberately not rolled back when the raise
@@ -406,10 +491,14 @@ export function createNotifier(options: NotifierOptions): Notifier {
         announcedInputNeeded.add(entityId);
       }
 
+      if (kind === 'session.idle') armedIdle.delete(entityId);
+
       const copy =
         kind === 'session.input_needed'
           ? INPUT_NEEDED_COPY
-          : waitingCopy(
+          : kind === 'session.idle'
+            ? IDLE_COPY
+            : waitingCopy(
               event as StatusHookEvent,
               typeof toolName === 'string' ? toolName : undefined,
             );
@@ -423,10 +512,11 @@ export function createNotifier(options: NotifierOptions): Notifier {
       /*
         Remember it if, and only if, it was gated — `unread: false` off a raise
         that happened is the hub saying "kept, but delivered to nobody". No
-        status test: every kind that reaches here is one of the two the user is
-        owed (`session.blocked`, `session.input_needed`), and how long each
-        stays owed is `stillRelevant`'s job, above. Nothing pty-derived can
-        reach here at all — this branch only runs when `event !== undefined`.
+        status test: every kind that reaches here is one of the three the user
+        is owed (`session.blocked`, `session.input_needed`, `session.idle`),
+        and how long each stays owed is `stillRelevant`'s job, above. Nothing
+        pty-derived can reach here at all — this branch only runs when
+        `event !== undefined`.
       */
       if (raised !== null && !raised.unread) {
         pendingForeground.set(entityId, { id: raised.id, kind });
@@ -436,10 +526,12 @@ export function createNotifier(options: NotifierOptions): Notifier {
 
     /**
      * Only pty-derived statuses reach here, and since HIVE-83 none of them
-     * raise. `session.idle` was reachable only on this path and was blocked by
-     * the `hookDriven` gate for every session that ever sent a hook, so it
-     * never fired for a Claude session; `session.ended` was retired because
-     * `/exit` is deliberate and the fleet view already shows the row.
+     * raise. The old `session.idle` was reachable only on this path and was
+     * blocked by the `hookDriven` gate for every session that ever sent a
+     * hook, so it never fired for a Claude session — the kind HIVE-89 revived
+     * under that name is hook-driven and handled above; `session.ended` was
+     * retired because `/exit` is deliberate and the fleet view already shows
+     * the row.
      */
   };
 

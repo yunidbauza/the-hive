@@ -429,9 +429,11 @@ function optionalNotifications(
    * `session.waiting` / `session.asked`, which held a `NotificationDelivery`
    * string, not a boolean. Forwarding only booleans silently dropped those
    * two, so a config that had turned session toasts off came back on.
-   * `session.ended` and `session.idle` stay boolean-only: HIVE-83 retired
-   * both outright, so a `NotificationDelivery` on either has nowhere left to
-   * go and `resolveNotificationPrefs` would only discard it anyway. Not
+   * `session.ended` stays boolean-only: HIVE-83 retired it outright, so a
+   * `NotificationDelivery` on it has nowhere left to go and
+   * `resolveNotificationPrefs` would only discard it anyway. `session.idle`
+   * is not in this loop at all any more — HIVE-89 revived it as a live kind,
+   * so the loop over `NOTIFICATION_KEYS` above reads it like any other. Not
    * validated beyond the type check, because a malformed legacy value is not
    * worth an error on a key this build no longer writes;
    * `resolveNotificationPrefs` ignores anything it does not recognise and

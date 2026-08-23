@@ -90,6 +90,7 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
  */
 export const NOTIFICATION_KINDS = [
   'session.blocked',
+  'session.idle',
   'session.input_needed',
   'clone.done',
   'pr.approved',
@@ -235,6 +236,38 @@ export const NOTIFICATION_KIND_SPECS: Record<
     tone: 'amber',
     defaultDelivery: 'both',
   },
+  /**
+   * The turn actually ended: idle with **nothing left running** (HIVE-89).
+   *
+   * Not the `session.idle` HIVE-83 retired. That one was pty-derived — "the
+   * output paused" — and never fired for a Claude session because the
+   * `hookDriven` gate blocked it; this one is raised by the notifier off the
+   * tracker's own verdict, and only on the transition into an idle that has
+   * no `idleDetail` behind it. A background agent or a background shell still
+   * running is not the user's turn, and the tracker has told those apart since
+   * HIVE-83 / HIVE-84.
+   *
+   * An **edge**, not a level, and that is the design decision. The moment is
+   * reached by the `Stop` that ends a turn with nothing outstanding — which,
+   * measured, is also how a subagent finishing or a background shell ending
+   * after the turn arrives: Claude Code re-invokes the agent to collect the
+   * result and that turn ends in a `Stop` of its own. Those later cases are
+   * why this is a kind of its own rather than a tighter filter on
+   * `session.input_needed`: `idle_prompt` is a sixty-second timer that starts
+   * at the end of the turn, so it cannot describe a background agent
+   * finishing twenty minutes later.
+   *
+   * `both`, because this is the fact the user walked away to wait for.
+   */
+  'session.idle': {
+    source: 'session',
+    label: 'When a session becomes yours again',
+    description:
+      'Its turn ended and nothing is left running — no background agent, no background script. The moment it stopped working.',
+    icon: 'ph-moon',
+    tone: 'brand',
+    defaultDelivery: 'both',
+  },
   'session.input_needed': {
     source: 'session',
     label: 'When a session runs out of instructions',
@@ -246,10 +279,11 @@ export const NOTIFICATION_KIND_SPECS: Record<
      * `inbox`, not `both` — and not `off` either.
      *
      * What makes this kind chatty is the toast, not the row. `off` would also
-     * take away the row, and the row is the one thing that says a long agent
-     * run finally went quiet — which matters more now that a session can sit in
-     * `idle (agents)` for a long time, not less. `inbox` kills the interruption
-     * and keeps the record.
+     * take away the row, and the row is the record that a minute passed with
+     * nothing typed. Since HIVE-89 the moment work actually *stopped* has a
+     * kind of its own (`session.idle`, `both`), and this one is gated off the
+     * same `idleDetail`: it no longer fires while a background agent or script
+     * is still working. `inbox` kills the interruption and keeps the nudge.
      */
     defaultDelivery: 'inbox',
   },
@@ -394,10 +428,13 @@ export function defaultNotificationPrefs(): Required<NotificationPrefs> {
  * The one boolean this shape replaced that still has somewhere to land.
  *
  * `sessionDone` and `sessionIdle` used to migrate into `session.ended` and
- * `session.idle`. HIVE-83 retires both kinds outright — there is no switch
- * left for either preference to become — so only `cloneDone` still has a
- * target. `sessionDone` and `sessionIdle` remain accepted, below, for the
- * config file that still names them; they simply have nothing left to write.
+ * `session.idle`. HIVE-83 retired both kinds outright, and HIVE-89 brought
+ * `session.idle` back under a **different meaning** — "the turn actually
+ * ended", not "the output paused" — so `sessionIdle` is deliberately not
+ * re-pointed at it: a boolean that once gated a pause-toast says nothing about
+ * whether the user wants to hear that their turn is over. Only `cloneDone`
+ * still has a target. `sessionDone` and `sessionIdle` remain accepted, below,
+ * for the config file that still names them; they simply have nothing to write.
  *
  * The care this map has always taken is still owed to the one entry left in
  * it: `config-contract.ts` already went out of its way once not to reset
@@ -414,7 +451,14 @@ const LEGACY_KEYS: Record<string, NotificationKind> = {
  * `checkKeys` discards the **whole** notifications block on an unrecognised
  * key, so a config naming a retired kind would silently reset every other
  * notification preference the user had set. The three pre-HIVE-75 booleans are
- * here for the same reason; HIVE-83 adds the four kinds it merged or removed.
+ * here for the same reason; HIVE-83 added the four kinds it merged or removed.
+ *
+ * `session.idle` left this list in HIVE-89, because it is a live kind again.
+ * A config that still holds a HIVE-75-era delivery for it is read as the
+ * user's choice for the revived kind — the key is the same, the value is a
+ * valid delivery, and "preserve what the user chose" is the rule every other
+ * entry here follows. A user who silenced the old pause-toast finds the new
+ * kind quiet too, which is the conservative direction to be wrong in.
  */
 export const LEGACY_NOTIFICATION_KEYS: readonly string[] = [
   'sessionDone',
@@ -423,7 +467,6 @@ export const LEGACY_NOTIFICATION_KEYS: readonly string[] = [
   'session.waiting',
   'session.asked',
   'session.ended',
-  'session.idle',
 ];
 
 /**
