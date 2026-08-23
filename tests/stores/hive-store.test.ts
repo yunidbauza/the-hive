@@ -952,6 +952,16 @@ describe('hive-store', () => {
         expect(useUiStore.getState().activeTab).toBe(id);
       });
 
+      it('does not announce the spawn by id — the rail is where the session is met (HIVE-91)', () => {
+        run('spawn apfm-web tidy the footer');
+
+        const id = useHiveStore.getState().order.at(-1)!;
+        // The name does not exist yet, so the only line possible would carry
+        // `sess-0x` — the one label the user never sees anywhere else.
+        expect(transcript()).not.toContain('spawned');
+        expect(transcript()).not.toContain(id);
+      });
+
       it('rejects a repo that is not a project', () => {
         const before = useHiveStore.getState().order.length;
         run('spawn not-a-repo do things');

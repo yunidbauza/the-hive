@@ -217,15 +217,20 @@ describe('NewSessionPicker', () => {
       );
     });
 
-    it('records the spawn in the console', async () => {
+    it('does not announce the spawn by id in the console (HIVE-91)', async () => {
       const user = userEvent.setup();
       render(<NewSessionPicker />);
 
       await user.type(search(), 'referral{Enter}');
 
-      expect(
-        useHiveStore.getState().orchLines.map((line) => line.text),
-      ).toContain('  spawned sess-01 on referral-api');
+      // The rail shows the new row; a `spawned sess-01 …` line would be the
+      // one place the user ever meets the bare id.
+      const transcript = useHiveStore
+        .getState()
+        .orchLines.map((line) => line.text)
+        .join('\n');
+      expect(transcript).not.toContain('spawned');
+      expect(transcript).not.toContain('sess-01');
     });
   });
 

@@ -216,6 +216,16 @@ describe('clearSession', () => {
     expect(transcript).toContain('done — cleared');
   });
 
+  it('does not name the successor by id — it has no name yet (HIVE-91)', () => {
+    const successorId = state().clearSession('hero-refresh')!;
+
+    const transcript = state()
+      .orchLines.map((entry) => entry.text)
+      .join('\n');
+    expect(transcript).toContain('started in the same terminal');
+    expect(transcript).not.toContain(successorId);
+  });
+
   describe('the cases it refuses', () => {
     /**
      * A hook can arrive for a row the user removed a moment earlier. The honest

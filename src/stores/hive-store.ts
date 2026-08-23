@@ -896,16 +896,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }));
 
     /**
-     * The console records every spawn, whoever asked for it — the `spawn`
-     * command, the picker (044), or a future daemon event. Logging here rather
-     * than at each call site is what keeps the transcript complete.
+     * No `spawned sess-0x on <repo>` line here (HIVE-91).
+     *
+     * At this moment the session has nothing but its id — its name arrives
+     * later, from the status-line title or a rename — so the only thing the
+     * console could print is the one label the user never sees anywhere else.
+     * The session lists already show what launched; the console keeps only
+     * what they cannot show, which is the refusal below.
      */
-    set((state) => ({
-      orchLines: capLines([
-        ...state.orchLines,
-        line(`  spawned ${id} on ${repo}`, 'dim'),
-      ]),
-    }));
 
     /**
      * Ask for the process **here**, not when a surface mounts (story 097).
@@ -913,9 +911,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * The lazy path works — `PtyTransport` requests a spawn on subscribe — but
      * its refusal reaches only the terminal, asynchronously, and only if a
      * surface mounted at all. The console has to print main's exact message,
-     * so the request is made where the transcript is. That is the same
-     * argument that already puts the `spawned …` line above here rather than
-     * at each call site, and it means the picker (044) gets the refusal too.
+     * so the request is made where the transcript is — whoever asked for the
+     * spawn: the `spawn` command, the picker (044), or a future daemon event.
+     * Logging here rather than at each call site is what makes sure the picker
+     * gets the refusal too.
      *
      * Safe in either order: `requestSpawn` and the transport share one channel,
      * so whoever asks first is the only one who asks, and main's `open()` is
@@ -1900,7 +1899,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         },
         orchLines: capLines([
           ...state.orchLines,
-          line(`  ${target} is working ${ticket} — renamed ${name}`, 'dim'),
+          // The new name, never the id: the rename is the whole point of the line,
+          // and `sess-0x` is the one label the user never sees anywhere else.
+          line(`  ${name} is working ${ticket}`, 'dim'),
         ]),
       };
     }),
@@ -2076,7 +2077,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         // catch an *empty* name, which is the one case `??` lets through, and
         // spelling it here is the duplication that function exists to prevent.
         line(`  ✓ ${entityLabel(current)} done — cleared`, 'green'),
-        line(`  ▸ ${successorId} started in the same terminal`, 'dim'),
+        // No successor id (HIVE-91): it has no name yet, and the row on the rail
+        // is where the user will meet it.
+        line('  ▸ a new session started in the same terminal', 'dim'),
       ]),
     }));
 
