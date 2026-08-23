@@ -1899,9 +1899,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         },
         orchLines: capLines([
           ...state.orchLines,
-          // The new name, never the id: the rename is the whole point of the line,
-          // and `sess-0x` is the one label the user never sees anywhere else.
-          line(`  ${name} is working ${ticket}`, 'dim'),
+          // The new name, never the id (HIVE-91) — and only the name: it always
+          // carries the ticket key (`HIVE-73`, `HIVE-73-2`), so spelling the
+          // ticket again would read `HIVE-73 is working HIVE-73`.
+          line(`  renamed → ${name}`, 'dim'),
         ]),
       };
     }),

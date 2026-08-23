@@ -219,6 +219,10 @@ describe('setSessionTicket', () => {
       .join('\n');
     expect(transcript).toContain(sessionAt(id).name);
     expect(transcript).not.toContain(id);
+    // The generated name already carries the key, so the line says it once —
+    // never `HIVE-73 is working HIVE-73`.
+    expect(transcript).toContain('  renamed → HIVE-73');
+    expect(transcript).not.toMatch(/HIVE-73.*HIVE-73/);
   });
 });
 

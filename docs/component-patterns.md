@@ -270,10 +270,12 @@ survives closing and reopening the picker.
 
 ### Spawn logging belongs to the store
 
-`spawnSession` writes its own console line (`spawned {id} on {repo}`). The
-`spawn` command used to write one too; that duplicate is gone. Logging at the
-action rather than at each call site is what keeps the transcript complete when a
-third caller — the picker today, a daemon event later — arrives.
+`spawnSession` asks main for the process itself and writes main's refusal to
+the console, so every caller — the `spawn` command, the picker, a daemon event
+later — gets the same line. It does **not** announce a successful spawn
+(HIVE-91): at that moment the session has nothing but its id, which is the one
+label the user never sees anywhere else, and the session lists already show
+what launched.
 
 ## The activity rail (050–053)
 
