@@ -350,6 +350,16 @@ export interface SpawnOptions {
    * Absent means dark, which is both defaults agreeing rather than a guess.
    */
   theme?: SessionTheme;
+  /**
+   * Pick the conversation up where a previous run left it (HIVE-88).
+   *
+   * Set by `resolve-transport.ts` for a row restored under PREVIOUS RUN, which
+   * is the one surface whose first mount should continue a session rather
+   * than start one. Main decides whether it *can* — the ledger has to name a
+   * uuid for the id — and a request it cannot honour becomes the plain spawn
+   * it would otherwise have been, so this module never has to know the answer.
+   */
+  resume?: boolean;
 }
 
 /**
@@ -368,7 +378,7 @@ export interface SpawnOptions {
 export function requestSpawn(
   entityId: string,
   projectId: string,
-  { task, model, effort, name, theme }: SpawnOptions = {},
+  { task, model, effort, name, theme, resume }: SpawnOptions = {},
 ): Promise<SpawnOutcome> {
   /**
    * The bridge is read inside the try, not before it.
@@ -445,6 +455,13 @@ export function requestSpawn(
       ...(name === undefined ? {} : { name }),
       /** Same spread, same reason. A closed set, so the guard owns the rest. */
       ...(theme === undefined ? {} : { theme }),
+      /**
+       * Sent only when true (HIVE-88). `false` is the same request as absent,
+       * and absent is what every spawn before this field sent — keeping the
+       * ordinary payload byte-identical is what keeps the guard's
+       * "nothing beyond the declared fields" test meaning what it says.
+       */
+      ...(resume === true ? { resume: true } : {}),
     })
     .then((): SpawnOutcome => ({ ok: true }))
     .catch((cause: unknown): SpawnOutcome => {

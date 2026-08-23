@@ -102,6 +102,25 @@ export interface SessionRecord {
 }
 
 /**
+ * What `session:history` actually answers with (HIVE-88).
+ *
+ * A record, plus one fact the file cannot hold because it is only true of a
+ * moment: whether main has a process behind this id **right now**. The ledger
+ * records every session begun this run as well as last run's, and a renderer
+ * can start while main keeps running — close the window on macOS and reopen it
+ * from the dock, reload it, survive a crash — so the list it reads back holds
+ * rows that are not history at all. Without the mark, every one of those was
+ * restored as `closed` under PREVIOUS RUN, its own hooks then wrote `working`
+ * into it, and one agent occupied two rows.
+ *
+ * Absent means not live, so a list written by an older main reads as all
+ * history — which is what it was when only a fresh launch could read it.
+ */
+export interface SessionHistoryEntry extends SessionRecord {
+  live?: true;
+}
+
+/**
  * The renderer telling main the issue key a session is being worked for.
  *
  * The one field of a record main cannot author. A session's Jira key is settled

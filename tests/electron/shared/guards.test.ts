@@ -38,6 +38,25 @@ describe('parseSpawnRequest', () => {
     ]);
   });
 
+  describe('resume (HIVE-88)', () => {
+    it('passes a boolean through', () => {
+      expect(parseSpawnRequest({ ...validSpawn, resume: true }).resume).toBe(true);
+      expect(parseSpawnRequest({ ...validSpawn, resume: false }).resume).toBe(false);
+    });
+
+    it('is absent when not sent', () => {
+      expect(parseSpawnRequest({ ...validSpawn })).not.toHaveProperty('resume');
+    });
+
+    it('rejects anything that is not a boolean', () => {
+      // A flag that picks which command-line flag a uuid goes behind; a string
+      // here is a renderer bug, not a value to coerce.
+      expect(() => parseSpawnRequest({ ...validSpawn, resume: 'yes' })).toThrow(
+        /spawn\.resume/,
+      );
+    });
+  });
+
   describe('name (HIVE-78)', () => {
     it('accepts an issue key and its de-duplicating suffix', () => {
       // The only two shapes the store constructs: `HIVE-73`, then `HIVE-73-2`

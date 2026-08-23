@@ -1,6 +1,6 @@
 import type {
   SessionNoteRequest,
-  SessionRecord,
+  SessionHistoryEntry,
 } from '@shared/session-history-contract';
 
 /**
@@ -26,7 +26,7 @@ import type {
  * indistinguishable to every caller, and both mean the same thing on screen:
  * no history, which is the state every first launch is in anyway.
  */
-export async function readSessionHistory(): Promise<SessionRecord[]> {
+export async function readSessionHistory(): Promise<SessionHistoryEntry[]> {
   const bridge = window.hive;
   /*
     No bridge is the browser demo (`pnpm dev`), not a failure — story 083's rule

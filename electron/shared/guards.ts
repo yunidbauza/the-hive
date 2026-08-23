@@ -245,7 +245,7 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     input,
     ['sessionId', 'projectId', 'cols', 'rows'],
     'spawn',
-    ['task', 'model', 'effort', 'name', 'theme'],
+    ['task', 'model', 'effort', 'name', 'theme', 'resume'],
   );
   return {
     sessionId: assertId(raw.sessionId, 'spawn.sessionId'),
@@ -298,6 +298,14 @@ export function parseSpawnRequest(input: unknown): SpawnRequest {
     ...(raw.theme === undefined
       ? {}
       : { theme: assertOneOf(raw.theme, SESSION_THEMES, 'spawn.theme') }),
+    /**
+     * A flag, so the only thing to check is that it is one (HIVE-88). It
+     * decides which of two flags a uuid main already holds is placed behind,
+     * and never puts a renderer-supplied value on the command line.
+     */
+    ...(raw.resume === undefined
+      ? {}
+      : { resume: assertBoolean(raw.resume, 'spawn.resume') }),
   };
 }
 

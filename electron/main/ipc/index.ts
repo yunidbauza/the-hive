@@ -84,7 +84,7 @@ import type {
 } from '@shared/jira-contract';
 import {
   SESSION_HISTORY_FILE,
-  type SessionRecord,
+  type SessionHistoryEntry,
 } from '@shared/session-history-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
@@ -788,7 +788,24 @@ export function registerIpcHandlers(): void {
    * clothing — a renderer that asks before registration completed gets "no
    * history", which is exactly what it would get from an empty file.
    */
-  handle(CH.sessionHistory, (): SessionRecord[] => ledger?.all() ?? []);
+  handle(CH.sessionHistory, (): SessionHistoryEntry[] => {
+    /**
+     * Marked live against the registry, not against `startedThisRun`
+     * (HIVE-88).
+     *
+     * The renderer asking may not be the first of this run: on macOS the
+     * window closes and the app lives on, and a reload or a renderer crash
+     * gives the same fresh store in front of the same running ptys. The ledger
+     * holds those sessions as `working` — true, and exactly the problem — so
+     * the renderer would restore them as last run's fleet and their own hooks
+     * would then prove otherwise. The registry is the one authority on "has a
+     * process now": a session this run began and already lost is history too.
+     */
+    const live = new Set(sessions?.entities() ?? []);
+    return (ledger?.all() ?? []).map((record) =>
+      live.has(record.id) ? { ...record, live: true } : record,
+    );
+  });
 
   /**
    * The renderer naming a ticket for a session (HIVE-87).
@@ -1342,6 +1359,8 @@ export function registerIpcHandlers(): void {
        * with and therefore how it paints its own UI inside the terminal.
        */
       theme: request.theme,
+      // HIVE-88. Forwarded only here — a restart is never a resume.
+      resume: request.resume,
     });
   });
 

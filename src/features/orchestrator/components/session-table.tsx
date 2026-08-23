@@ -235,11 +235,18 @@ function SessionTableRow({ id }: { id: string }) {
   // The sentence itself moved to `types/entity.ts` (HIVE-93) — the console needs
   // the same one, and the store cannot import from `features/`.
   const reason = endedReason(entity);
+  /**
+   * A closed row stays clickable (HIVE-88), and the title says why: opening
+   * it is how a conversation the app outlived is picked back up. It keeps the
+   * ended dimming, because until its process reports in it *is* ended — the
+   * first live status is what moves it up to ACTIVE.
+   */
+  const openable = !ended || entity.status === 'closed';
 
   return (
     <button
       type="button"
-      disabled={ended}
+      disabled={!openable}
       title={ended ? reason : undefined}
       onClick={() => {
         // Click both selects and opens: the caret should follow the user's

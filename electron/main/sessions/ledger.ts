@@ -55,6 +55,18 @@ const PERSIST_DEBOUNCE_MS = 400;
 /** A patch is any part of a record except the identity, which is the key. */
 export type SessionPatch = Partial<Omit<SessionRecord, 'id'>>;
 
+export interface BeginOptions {
+  /**
+   * This `begin` continues a previous run's conversation under its own id
+   * (HIVE-88), so the record is kept the way a restart keeps it — ticket,
+   * branch, cwd, `createdAt` — rather than started over. Only honoured when
+   * {@link SessionLedger.resumable} would have answered for the id: a record
+   * this run began is a restart whether or not the flag is set, and one with
+   * nothing to resume is a new session whatever the caller believed.
+   */
+  resume?: boolean;
+}
+
 export interface SessionLedger {
   /**
    * Merge a fragment into this session's record, creating it if new.
@@ -79,7 +91,17 @@ export interface SessionLedger {
    * which is what retention sorts on. A launch later, that row restored
    * advertising a branch and a ticket belonging to a session it never was.
    */
-  begin(id: string, patch: SessionPatch): void;
+  begin(id: string, patch: SessionPatch, options?: BeginOptions): void;
+  /**
+   * The conversation a previous run left under this id, if it can be picked
+   * up again (HIVE-88).
+   *
+   * A uuid, or nothing. Nothing for an id this run has already started — that
+   * record is this run's, and resuming it would hand a fresh session last
+   * run's conversation — and nothing for a record written before uuids were
+   * kept, which names no transcript to resume.
+   */
+  resumable(id: string): string | undefined;
   /** Everything held, ready to answer `session:history`. */
   all(): SessionRecord[];
   /** Write now, synchronously. Safe to call when nothing is pending. */
@@ -310,8 +332,14 @@ export function createSessionLedger(
     timer.unref?.();
   };
 
+  const resumableUuid = (id: string): string | undefined => {
+    if (startedThisRun.has(id)) return undefined;
+    return records.get(id)?.sessionUuid;
+  };
+
   return {
-    begin(id, patch) {
+    resumable: resumableUuid,
+    begin(id, patch, { resume = false } = {}) {
       /**
        * A restart is not a new session, and a reused id is not the old one.
        *
@@ -325,7 +353,10 @@ export function createSessionLedger(
        * `startedThisRun` is what separates them, and it is the only thing that
        * can: a record's own fields cannot say which run wrote them.
        */
-      const previous = startedThisRun.has(id) ? records.get(id) : undefined;
+      const previous =
+        startedThisRun.has(id) || (resume && resumableUuid(id) !== undefined)
+          ? records.get(id)
+          : undefined;
       const base: SessionRecord = previous ?? {
         id,
         project: '',

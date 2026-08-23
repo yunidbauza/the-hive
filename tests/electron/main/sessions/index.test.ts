@@ -1284,7 +1284,7 @@ describe('the ledger', () => {
     patch: Record<string, unknown>;
   }
 
-  const withLedger = (written: Written[]) =>
+  const withLedger = (written: Written[], resumable?: Record<string, string>) =>
     createSessions({
       supervisor,
       send: (channel, payload) =>
@@ -1297,12 +1297,13 @@ describe('the ledger', () => {
           hands over and when*; which of the two carried it is the ledger's own
           concern and is covered in `ledger.test.ts`.
         */
-        begin: (id, patch) => {
-          written.push({ id, patch: { ...patch } });
+        begin: (id, patch, options) => {
+          written.push({ id, patch: { ...patch, ...(options ?? {}) } });
         },
         record: (id, patch) => {
           written.push({ id, patch: { ...patch } });
         },
+        resumable: (id) => resumable?.[id],
         all: () => [],
         flush: () => {},
         dispose: () => {},
@@ -1392,6 +1393,96 @@ describe('the ledger', () => {
     });
 
     expect(patchesFor(written, 'clone-1')).toEqual([]);
+  });
+
+  /**
+   * Picking a previous run's conversation back up (HIVE-88).
+   *
+   * The renderer asks; the ledger decides whether it can; the command line and
+   * the record both follow that decision. The resumed uuid must reach
+   * `--resume` on the command line, the same uuid must be what the ledger is
+   * told, and the opening instruction must not be delivered again.
+   */
+  describe('resume', () => {
+    const PRIOR = '11111111-1111-4111-8111-111111111111';
+
+    const settle = (sessionId: string) => {
+      emitData({ sessionId, chunk: '$ ' });
+      vi.advanceTimersByTime(8);
+      vi.advanceTimersByTime(150);
+      vi.advanceTimersByTime(SUBMIT);
+    };
+
+    it('resumes the conversation the ledger names, and says nothing twice', () => {
+      const written: Written[] = [];
+      withLedger(written, { 'hero-refresh': PRIOR }).open({
+        ...OPEN,
+        task: 'fix the hero',
+        resume: true,
+      });
+      settle(mintedFor('hero-refresh'));
+
+      expect(supervisor.write).toHaveBeenCalledWith(
+        mintedFor('hero-refresh'),
+        `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --resume ${PRIOR} && exit`,
+      );
+      expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
+        sessionUuid: PRIOR,
+        resume: true,
+      });
+      expect(patchesFor(written, 'hero-refresh')[0]).not.toHaveProperty('task');
+    });
+
+    it('falls back to a fresh session when there is nothing to resume', () => {
+      // A record older than uuids, or an id this run already began: the
+      // renderer's request is honest but unanswerable, and the spawn is the
+      // one it would have been without the flag.
+      const written: Written[] = [];
+      withLedger(written).open({ ...OPEN, resume: true });
+      settle(mintedFor('hero-refresh'));
+
+      expect(supervisor.write).toHaveBeenCalledWith(mintedFor('hero-refresh'), BOOT);
+      expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
+        sessionUuid: TEST_UUID,
+        resume: false,
+        task: '',
+      });
+    });
+
+    it('never resumes unasked, however well the ledger knows the id', () => {
+      const written: Written[] = [];
+      withLedger(written, { 'hero-refresh': PRIOR }).open(OPEN);
+      settle(mintedFor('hero-refresh'));
+
+      expect(supervisor.write).toHaveBeenCalledWith(mintedFor('hero-refresh'), BOOT);
+      expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
+        sessionUuid: TEST_UUID,
+      });
+    });
+
+    it('works without a ledger: resume degrades to a plain spawn', () => {
+      sessions.open({ ...OPEN, resume: true });
+      settle(mintedFor('hero-refresh'));
+
+      expect(supervisor.write).toHaveBeenCalledWith(mintedFor('hero-refresh'), BOOT);
+    });
+  });
+
+  it('keeps the ledger status current as the session reports it', () => {
+    // `status` is documented as the last known one (HIVE-88). A renderer that
+    // starts in front of a running pty reads it, so it has to be true.
+    const written: Written[] = [];
+    const withIt = withLedger(written);
+    withIt.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+    emitData({ sessionId, chunk: 'building' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(2_000);
+
+    const statuses = patchesFor(written, 'hero-refresh')
+      .map((patch) => patch.status)
+      .filter((status) => status !== undefined);
+    expect(statuses.at(-1)).toBe('idle');
   });
 
   it('works with no ledger at all — absent is supported, not degraded', () => {
