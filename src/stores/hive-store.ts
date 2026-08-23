@@ -1546,9 +1546,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           about when it started: it keeps the status it was last seen in
           rather than being written down to `closed`, and it is not `restored`
           — PREVIOUS RUN is for rows the app outlived, and this one it did not.
-          A live record with an *ended* status is not a contradiction but a
-          cleared row, whose terminal is its successor's; that keeps the
-          ordinary path.
+          Only a record in a live status is promoted: main never writes an
+          ended status for a pty it still holds, so a live record claiming
+          one is a file this build did not write, and the status it claims
+          wins over the mark.
         */
         const stored = restoredStatus(item.status);
         const live = item.live === true && stored === 'closed';

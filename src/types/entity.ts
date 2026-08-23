@@ -379,7 +379,7 @@ export const endedReason = (session: Session): string => {
     case 'terminated':
       return `${entityLabel(session)} has terminated — its process is gone`;
     case 'closed':
-      return `${entityLabel(session)} was open when The Hive last closed — open it to resume`;
+      return `${entityLabel(session)} was open when The Hive last closed — open it to pick it back up`;
     case 'done':
       return `${entityLabel(session)} was cleared — its terminal continues as a new session`;
     case 'working':

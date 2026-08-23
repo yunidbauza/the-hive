@@ -566,6 +566,17 @@ export function createSessions(options: SessionsOptions): Sessions {
        * running.
        */
       statusTracker.reset(entityId);
+      /**
+       * The uuid no longer names this terminal's conversation (HIVE-88).
+       *
+       * `/clear` starts a new one under a new id, and the only hook that
+       * carries that id — `SessionStart` — never reaches the receiver (see
+       * `hook-contract.ts`). So the ledger cannot learn it, and keeping the
+       * old one would let a later `--resume` reopen the conversation the user
+       * deliberately ended. Dropped, so a restored row for this terminal opens
+       * as a fresh session instead.
+       */
+      ledger?.record(entityId, { sessionUuid: undefined });
       publishCleared(entityId);
     },
     /**

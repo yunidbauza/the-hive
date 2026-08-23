@@ -1860,6 +1860,21 @@ describe('hive-store', () => {
       expect(groups.active).not.toContain('old-01');
     });
 
+    it('opens a closed row, and still refuses the other two endings', () => {
+      // `closed` is the one ending whose remedy is opening it: the surface
+      // mounting is what asks main to resume the conversation.
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'closed-01' }),
+        record({ id: 'term-01', status: 'terminated' }),
+        record({ id: 'done-01', status: 'done' }),
+      ]);
+
+      expect(useHiveStore.getState().openEntity('closed-01')).toBe(true);
+      expect(useUiStore.getState().activeTab).toBe('closed-01');
+      expect(useHiveStore.getState().openEntity('term-01')).toBe(false);
+      expect(useHiveStore.getState().openEntity('done-01')).toBe(false);
+    });
+
     it('never restores a second row for an id this run already runs', () => {
       // The identity that survives a restart is the entity id: a reopened row
       // spawns under its own id, and the ledger is keyed by it. The collision

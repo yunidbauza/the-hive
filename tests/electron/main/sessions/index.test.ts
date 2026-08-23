@@ -900,6 +900,41 @@ describe('status', () => {
    * `statusTracker.reset` on `onCleared`, the successor would inherit the
    * retired conversation's live subagent and sit on `idle (agents)` forever.
    */
+  it('withdraws the ledger uuid when the conversation is cleared (HIVE-88)', () => {
+    const written: { id: string; patch: Record<string, unknown> }[] = [];
+    let clear: ((entityId: string) => void) | undefined;
+    createSessions({
+      supervisor,
+      send: () => {},
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: { onCleared: (entityId: string) => void }) => {
+          clear = opts.onCleared;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+      ledger: {
+        begin: (id, patch) => written.push({ id, patch: { ...patch } }),
+        record: (id, patch) => written.push({ id, patch: { ...patch } }),
+        resumable: () => undefined,
+        all: () => [],
+        flush: () => {},
+        dispose: () => {},
+      },
+    });
+
+    clear!('sess-b');
+
+    const last = written.filter((entry) => entry.id === 'sess-b').at(-1);
+    expect(last).toBeDefined();
+    expect(last!.patch).toHaveProperty('sessionUuid');
+    expect(last!.patch.sessionUuid).toBeUndefined();
+  });
+
   it('clears tracker state when the conversation is cleared', () => {
     const h = harness();
 

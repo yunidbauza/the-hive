@@ -362,7 +362,7 @@ describe('SessionTable', () => {
       expect(row).toBeEnabled();
       expect(row).toHaveAttribute(
         'title',
-        'old-01 was open when The Hive last closed — open it to resume',
+        'old-01 was open when The Hive last closed — open it to pick it back up',
       );
 
       await userEvent.click(row);

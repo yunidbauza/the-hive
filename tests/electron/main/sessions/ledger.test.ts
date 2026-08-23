@@ -422,6 +422,24 @@ describe('session ledger', () => {
       expect(readLedger(file)[0]?.endedAt).toBeUndefined();
     });
 
+    it('forgets a uuid a patch withdraws, so a cleared terminal cannot resume', () => {
+      writeFileSync(
+        file,
+        JSON.stringify([
+          { id: 'sess-01', project: 'p', task: '', status: 'working', createdAt: 1, sessionUuid: 'old' },
+        ]),
+        'utf8',
+      );
+      const ledger = createSessionLedger(file, () => 5000);
+      expect(ledger.resumable('sess-01')).toBe('old');
+
+      ledger.record('sess-01', { sessionUuid: undefined });
+      ledger.flush();
+
+      expect(ledger.resumable('sess-01')).toBeUndefined();
+      expect(readLedger(file)[0]).not.toHaveProperty('sessionUuid');
+    });
+
     it('has nothing to resume for a record without a uuid, or one this run began', () => {
       writeFileSync(
         file,
