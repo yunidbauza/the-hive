@@ -374,7 +374,8 @@ const doc = (extra: object) => JSON.stringify({ version: 2, projects: [], ...ext
  * HIVE-83: a config naming a retired notification kind must keep meaning what
  * it can — `checkKeys` discards the **whole** notifications block on an
  * unrecognised key, so without `LEGACY_NOTIFICATION_KEYS` a file that still
- * names `session.idle` would silently lose every other preference.
+ * names `session.ended` would silently lose every other preference.
+ * (`session.idle` used to be the example; HIVE-89 made it a live key again.)
  */
 describe('parseConfig — notifications naming a retired kind (HIVE-83)', () => {
   it('keeps a notifications block that names a retired kind', () => {
@@ -382,7 +383,7 @@ describe('parseConfig — notifications naming a retired kind (HIVE-83)', () => 
       JSON.stringify({
         version: 2,
         projects: [],
-        notifications: { 'session.idle': 'off', 'session.blocked': 'inbox' },
+        notifications: { 'session.ended': 'off', 'session.blocked': 'inbox' },
       }),
       'config',
     );

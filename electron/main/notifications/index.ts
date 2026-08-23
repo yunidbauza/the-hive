@@ -1,4 +1,4 @@
-import type { IdleDetail, StatusHookEvent } from '../../shared/hook-contract';
+import type { StatusHookEvent } from '../../shared/hook-contract';
 import { CH } from '../../shared/ipc-contract';
 import type { NotificationKind } from '../../shared/notification-contract';
 
@@ -163,24 +163,36 @@ function waitingCopy(
   return { title: 'needs approval', body: 'A tool is waiting on you.' };
 }
 
-/** What `session.input_needed` says. Not a block, so it does not go through {@link waitingCopy}. */
-const INPUT_NEEDED_COPY = {
-  title: 'is waiting on you',
-  body: 'It finished its turn and has nothing left to do.',
+/**
+ * What the two kinds that are not blocks say. Neither goes through
+ * {@link waitingCopy}: `session.input_needed` is the nudge a minute after the
+ * turn, `session.idle` (HIVE-89) is the moment work stopped — a different
+ * sentence. Keyed by kind so the raise below looks the copy up rather than
+ * branching on it.
+ */
+const PLAIN_COPY: Partial<
+  Record<NotificationKind, { title: string; body: string }>
+> = {
+  'session.input_needed': {
+    title: 'is waiting on you',
+    body: 'It finished its turn and has nothing left to do.',
+  },
+  'session.idle': {
+    title: 'is yours again',
+    body: 'Its turn ended and nothing is left running in the background.',
+  },
 };
 
 /**
- * What `session.idle` says (HIVE-89). The moment work stopped — which is a
- * different sentence from the nudge a minute later.
+ * Whether something is still running behind an `idle`.
+ *
+ * Presence, not membership: `session-contract.ts` promises `idleDetail` is
+ * only ever set alongside `idle` and only when something *is* running, so a
+ * new member of `IdleDetail` is live by construction and this stays true
+ * without being told. Re-listing the union here would have answered "nothing
+ * running" for a detail this file had never heard of.
  */
-const IDLE_COPY = {
-  title: 'is yours again',
-  body: 'Its turn ended and nothing is left running in the background.',
-};
-
-/** Whether an `idleDetail` off the wire says something is still running. */
-const isLiveDetail = (value: unknown): value is IdleDetail =>
-  value === 'agents' || value === 'script';
+const hasLiveDetail = (idleDetail: unknown): boolean => idleDetail !== undefined;
 
 /**
  * Which inbox kind a `waiting` status is, or `undefined` for none.
@@ -226,9 +238,18 @@ function stillRelevant(
   status: string,
   event: unknown,
 ): boolean {
-  if (kind === 'session.input_needed' || kind === 'session.idle') {
+  if (kind === 'session.input_needed') {
     return !(event === 'UserPromptSubmit' || status === 'terminated');
   }
+  /**
+   * `session.idle` is `both`, so a promotion is a toast, and a toast that
+   * says "is yours again" about a session that has since gone back to work
+   * is a lie (HIVE-89). So this one expires the moment the session is no
+   * longer idle — which covers engagement (`UserPromptSubmit` reports
+   * `working`), `terminated`, and a turn that resumed without a typed prompt
+   * alike — rather than borrowing `input_needed`'s engagement-only rule.
+   */
+  if (kind === 'session.idle') return status === 'idle';
   /**
    * The status is trustworthy again (HIVE-83).
    *
@@ -326,6 +347,26 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * indistinguishable from a typed prompt (see `tracker.ts`), which is fine
    * here: it re-arms a session that has just been disarmed by nothing, and
    * the one `Stop` that follows is the one row.
+   *
+   * ## What this knowingly gets wrong, and why it is left that way
+   *
+   * - A `Stop` hook elsewhere in the user's settings that answers `block`
+   *   makes Claude carry on; the `Stop` this app saw has already spent the
+   *   arm, and the real one later is silent. Re-arming on the `working` that
+   *   follows would announce both — and "idle → working → idle inside one
+   *   turn must not announce twice" is the rule the ticket set. One early row
+   *   is the cheaper mistake.
+   * - The tracker clears `bgShells` on every `UserPromptSubmit` (HIVE-84's
+   *   stated trade-off, `tracker.ts`), so a prompt typed while a shell is
+   *   still running lands the next `Stop` as a true idle, and the shell's own
+   *   re-invoke can then raise once more. Conversely a shell that finished
+   *   *inside* its turn leaves `script` standing until the next prompt, which
+   *   silences both this kind and `input_needed` for that stretch. Both are
+   *   the tracker's to fix, not this file's: the ticket's contract is that
+   *   the detail is trusted in the idle window, and this file trusts it.
+   * - `/clear` and an Escape-interrupted turn leave the arm where it was. Harmless:
+   *   nothing reaches a `Stop` again without a `UserPromptSubmit`, which
+   *   re-arms anyway. See the `/clear` note above `announcedInputNeeded`.
    */
   const armedIdle = new Set<string>();
 
@@ -463,7 +504,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
       const trueIdle =
         event === 'Stop' &&
         status === 'idle' &&
-        !isLiveDetail(idleDetail) &&
+        !hasLiveDetail(idleDetail) &&
         armedIdle.has(entityId);
       const kind =
         waitingKind(event, notificationType) ??
@@ -476,7 +517,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
         (HIVE-89). The mark is deliberately not spent by a suppressed prompt:
         the one that arrives after the agent finishes is the first real one.
       */
-      if (kind === 'session.input_needed' && isLiveDetail(idleDetail)) return;
+      if (kind === 'session.input_needed' && hasLiveDetail(idleDetail)) return;
 
       /*
         Marked before the raise, and deliberately not rolled back when the raise
@@ -494,14 +535,11 @@ export function createNotifier(options: NotifierOptions): Notifier {
       if (kind === 'session.idle') armedIdle.delete(entityId);
 
       const copy =
-        kind === 'session.input_needed'
-          ? INPUT_NEEDED_COPY
-          : kind === 'session.idle'
-            ? IDLE_COPY
-            : waitingCopy(
-              event as StatusHookEvent,
-              typeof toolName === 'string' ? toolName : undefined,
-            );
+        PLAIN_COPY[kind] ??
+        waitingCopy(
+          event as StatusHookEvent,
+          typeof toolName === 'string' ? toolName : undefined,
+        );
       const raised = hub.raise({
         kind,
         title: `${nameFor(entityId)} ${copy.title}`,
@@ -519,6 +557,19 @@ export function createNotifier(options: NotifierOptions): Notifier {
         `event !== undefined`.
       */
       if (raised !== null && !raised.unread) {
+        /*
+          One exception to "the newer replaces the older" (HIVE-89). A gated
+          `session.idle` is followed, a minute later and still gated, by the
+          `session.input_needed` for the same stretch — the same fact, said
+          twice, and the older is the one that toasts (`both`) while the newer
+          is inbox-only. Letting the nudge evict the moment would promote the
+          weaker of two rows about one idle and leave the stronger unread for
+          good. Both expire by `stillRelevant` on the same `UserPromptSubmit`,
+          so keeping the first costs nothing in staleness.
+        */
+        const pending = pendingForeground.get(entityId);
+        if (kind === 'session.input_needed' && pending?.kind === 'session.idle')
+          return;
         pendingForeground.set(entityId, { id: raised.id, kind });
       }
       return;

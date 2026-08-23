@@ -1075,6 +1075,60 @@ describe('input_needed under a live idle detail', () => {
  * an `input_needed`, and promoted by the same rule when they look away.
  */
 describe('session.idle foreground gating', () => {
+  const gatedHub = () => {
+    const promote = vi.fn(() => true);
+    hub = {
+      raise: raise.mockReturnValue({ id: 'raised-idle', unread: false }),
+      list: () => [],
+      markRead: () => undefined,
+      clear: () => undefined,
+      promote,
+    } as unknown as NotificationHub;
+    return promote;
+  };
+  const prompt = { entityId: 'sess-08', status: 'working', event: 'UserPromptSubmit' };
+  const stop = { entityId: 'sess-08', status: 'idle', event: 'Stop' };
+
+  /**
+   * The nudge a minute later is the same fact again, and it is inbox-only
+   * where the moment toasts. The first pending row stays the one promoted.
+   */
+  it('does not let a later gated input_needed evict the gated idle row', () => {
+    const promote = gatedHub();
+    const n = createNotifier({ hub, isForeground: () => false });
+
+    n.observe(CH.sessionStatus, prompt);
+    n.observe(CH.sessionStatus, stop);
+    raise.mockReturnValue({ id: 'raised-nudge', unread: false });
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-08',
+      status: 'idle',
+      event: 'Notification',
+      notificationType: 'idle_prompt',
+    });
+    n.reevaluateForeground();
+
+    expect(promote).toHaveBeenCalledTimes(1);
+    expect(promote).toHaveBeenCalledWith('raised-idle');
+  });
+
+  /** A toast saying "is yours again" about a session back at work would be a lie. */
+  it('drops a gated idle row once the session is no longer idle', () => {
+    const promote = gatedHub();
+    const n = createNotifier({ hub, isForeground: () => false });
+
+    n.observe(CH.sessionStatus, prompt);
+    n.observe(CH.sessionStatus, stop);
+    n.observe(CH.sessionStatus, {
+      entityId: 'sess-08',
+      status: 'working',
+      event: 'PreToolUse',
+    });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
   it('promotes a gated session.idle when the user looks away, and drops it on engagement', () => {
     const promote = vi.fn(() => true);
     hub = {

@@ -80,7 +80,7 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  * Every scenario types a prompt and every scenario's turn ends inside the run
  * with nothing left running, so every scenario now raises exactly one
  * `session.idle` — the edge the notifier arms on `UserPromptSubmit` and spends
- * on the first hook status that is `idle` with no `idleDetail`. The two
+ * on the first `Stop` that is `idle` with no `idleDetail`. The two
  * detail scenarios are the ones that earn the kind, and both land the row on
  * the `Stop` after the internal re-invoke that collects the result — not on
  * the main agent's own earlier `Stop`, which still carries a detail, and not
