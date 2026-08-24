@@ -155,6 +155,26 @@ label[for] {
   pointer-events: none;
 }
 
+/**
+ * And the sprite paints *over* the pool.
+ *
+ * Not the free win it looks like. An absolutely-positioned `::before` is a
+ * **positioned** box, and positioned boxes paint after non-positioned inline
+ * content — so the default order puts the pool on top of the very image it is
+ * meant to sit behind, washing the creature in blue instead of lifting it off
+ * the ground. It is a difference that is easy to miss, because the result still
+ * looks like "a faint glow".
+ *
+ * `z-index: -1` on the pseudo element is the usual fix and the wrong one here:
+ * it would drop the pool behind the *header's* own background as well, since
+ * neither the header nor this span establishes a stacking context. Promoting
+ * the sprite into the same positioned layer keeps both inside this span and
+ * settles the order by DOM position, where `::before` is first by definition.
+ */
+.brand-bloom img {
+  position: relative;
+}
+
 /* Thin custom scrollbars. */
 * {
   scrollbar-width: thin;
