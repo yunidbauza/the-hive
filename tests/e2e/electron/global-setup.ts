@@ -17,8 +17,28 @@ import type { FullConfig } from '@playwright/test';
 const APP_ROOT = join(import.meta.dirname, '../../..');
 const MAIN_ENTRY = join(APP_ROOT, 'out/main/index.js');
 
-/** Sources whose change should invalidate `out/`. */
-const WATCHED = ['electron', 'src', 'index.html', 'electron.vite.config.ts'];
+/**
+ * Sources whose change should invalidate `out/`.
+ *
+ * **Every rollup input, not just the app's** (HIVE-100). The renderer target
+ * names three HTML inputs — `index.html`, `splash.html`, `about.html` — and
+ * only the first was listed here. Editing the splash therefore left `out/`
+ * looking fresh, so `splash.spec.ts` went on asserting against the previously
+ * built copy: the exact false pass the note above says this function exists to
+ * prevent, reached by the one route it had not been pointed at.
+ *
+ * Found by changing the splash's kicker copy and watching the suite fail on the
+ * *old* string. The rule to keep: if `electron.vite.config.ts` names it as an
+ * input, it belongs in this list.
+ */
+const WATCHED = [
+  'electron',
+  'src',
+  'index.html',
+  'splash.html',
+  'about.html',
+  'electron.vite.config.ts',
+];
 
 /** Newest mtime under a path, following directories. */
 function newestMtime(path: string): number {
