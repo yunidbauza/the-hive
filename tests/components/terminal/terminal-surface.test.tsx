@@ -702,6 +702,26 @@ describe('TerminalSurface', () => {
       return handler(new KeyboardEvent('keydown', init));
     }
 
+    /**
+     * Drive the handler and hand back the event, for the cases whose contract
+     * includes *cancelling* it rather than merely declining it.
+     *
+     * `cancelable` is load-bearing. `preventDefault()` on a non-cancelable
+     * event is a silent no-op that leaves `defaultPrevented` false, so a helper
+     * omitting it would make the assertions below unfalsifiable — they would
+     * fail against a perfectly correct handler. A real keydown is cancelable;
+     * this one has to be too.
+     */
+    function pressCancelable(init: Partial<KeyboardEventInit> & { key: string }): {
+      handled: boolean;
+      event: KeyboardEvent;
+    } {
+      const handler = terminal().keyEventHandler;
+      if (!handler) throw new Error('no custom key handler was installed');
+      const event = new KeyboardEvent('keydown', { cancelable: true, ...init });
+      return { handled: handler(event), event };
+    }
+
     function renderInteractive() {
       const { transport } = fakeTransport();
       const result = render(
@@ -990,12 +1010,22 @@ describe('TerminalSurface', () => {
       terminal().selection = 'copied text';
       const mac = /mac/i.test(navigator.platform || navigator.userAgent);
 
-      const handled = press(
+      const { handled, event } = pressCancelable(
         mac ? { key: 'c', metaKey: true } : { key: 'C', ctrlKey: true, shiftKey: true },
       );
 
       expect(handled).toBe(false);
       expect(writeText).toHaveBeenCalledWith('copied text');
+      /**
+       * Cancelled, not merely declined (HIVE-92).
+       *
+       * Returning `false` is not a cancel: xterm's `_keyDown` returns early on a
+       * false custom-handler result, *before* it would reach its own
+       * `cancel(event)`. The keydown keeps its default action, so the browser
+       * runs its native Copy against the focused helper textarea — racing the
+       * `clearSelection` above for the very selection it is trying to copy.
+       */
+      expect(event.defaultPrevented).toBe(true);
       /**
        * Cleared, so the next press means something different. On Linux bare
        * Ctrl+C copies only *because* there is a selection — leaving it would
@@ -1013,13 +1043,30 @@ describe('TerminalSurface', () => {
       renderInteractive();
       const mac = /mac/i.test(navigator.platform || navigator.userAgent);
 
-      expect(
-        press(
-          mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true },
-        ),
-      ).toBe(false);
+      const { handled, event } = pressCancelable(
+        mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true },
+      );
 
+      expect(handled).toBe(false);
       await vi.waitFor(() => expect(terminal().paste).toHaveBeenCalledWith('pasted'));
+      /**
+       * The whole of HIVE-92: without this, the clipboard arrives **twice**.
+       *
+       * Path A is the `terminal.paste` asserted above. Path B is the browser's
+       * own Paste, which an uncancelled keydown still performs against xterm's
+       * focused helper textarea — firing xterm's `paste` listener,
+       * `triggerDataEvent`, `onData`, and a second `transport.write`. On macOS
+       * the Edit menu's `{ role: 'paste' }` is a third route to the same
+       * duplicate, reached because an unhandled keydown is forwarded to the
+       * menu (`registerAccelerator: false` is not honoured there, so the fix
+       * cannot live in the menu).
+       *
+       * The xterm fake has no native paste listener, so path B cannot exist
+       * under happy-dom — which is exactly why the bug shipped green. This
+       * assertion stands in for it; the e2e paste-once scenario proves the real
+       * thing against a real Chromium.
+       */
+      expect(event.defaultPrevented).toBe(true);
 
       vi.unstubAllGlobals();
     });

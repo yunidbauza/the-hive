@@ -318,11 +318,33 @@ export function TerminalSurface({
         });
 
         switch (action) {
+          /**
+           * Cancelled, not merely declined — the clipboard chords are the two
+           * whose browser default *also* does the job, so leaving it in place
+           * means the job happens twice (HIVE-92).
+           *
+           * Returning `false` is not a cancel. xterm's `_keyDown` returns early
+           * on a false custom-handler result, before it would reach its own
+           * `cancel(event)`, so the keydown keeps its default action. For
+           * `paste` that default is the browser's own Paste against xterm's
+           * focused helper `<textarea>`, which fires xterm's `paste` listener
+           * and puts the clipboard on stdin a second time. For `copy` it is a
+           * native Copy racing {@link copySelection}'s `clearSelection` for the
+           * selection it is reading.
+           *
+           * On macOS this also closes the Edit menu's `{ role: 'paste' }`,
+           * which an *unhandled* keydown is forwarded to — a third route to the
+           * same duplicate. The menu cannot opt out (`registerAccelerator:
+           * false` is not honoured there), so the renderer is the only place
+           * this fix can live.
+           */
           case 'copy':
             copySelection(terminal);
+            event.preventDefault();
             return false;
           case 'paste':
             pasteFromClipboard(terminal);
+            event.preventDefault();
             return false;
           /**
            * Written to the transport rather than declined, because xterm
