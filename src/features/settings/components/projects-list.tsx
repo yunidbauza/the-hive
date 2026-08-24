@@ -14,7 +14,7 @@ import { ProjectNameEditor } from '@features/settings/components/project-name-ed
 import { ProjectRemoveConfirm } from '@features/settings/components/project-remove-confirm';
 import { ProjectRow } from '@features/settings/components/project-row';
 import { ProjectRowMenu } from '@features/settings/components/project-row-menu';
-import type { ProjectConfig } from '@shared/config-contract';
+import { projectAliases, type ProjectConfig } from '@shared/config-contract';
 import { useLiveSessionCounts } from '@stores/hive-store';
 
 interface ProjectsListProps {
@@ -27,6 +27,34 @@ type RowMode = {
   id: string;
   kind: 'rename' | 'change-key' | 'confirm-remove';
 } | null;
+
+/**
+ * Everything the other projects already answer to, mapped to who holds it.
+ *
+ * Keys **and ids and names** (HIVE-94), because that is exactly what main
+ * refuses: `resolveProjectRef` searches one address space and tries key first,
+ * so a key equal to another project's id would silently take that id's spawns.
+ * Checking only keys here would show a green hint for a value main is about to
+ * reject — the worst version of a live validator.
+ *
+ * This project's own handles are excluded, so re-opening the editor and pressing
+ * Enter is a no-op rather than a refusal against itself — the same allowance
+ * `setProjectKey` makes when it skips the entry being edited.
+ */
+function keysTakenBy(
+  entries: readonly ProjectConfig[],
+  exclude: string,
+): ReadonlyMap<string, string> {
+  return new Map(
+    entries
+      .filter((project) => project.id !== exclude)
+      .flatMap((project) =>
+        projectAliases(project).map(
+          (alias) => [alias, project.name] as [string, string],
+        ),
+      ),
+  );
+}
 
 /**
  * The ordered list of the user's projects (story 103).
@@ -42,24 +70,6 @@ type RowMode = {
  * promoting it to `ui-store` would put view state nobody else reads into a
  * store shared with thirteen live terminals.
  */
-/**
- * Every key except this project's own, mapped to who holds it (HIVE-94).
- *
- * Its own key is excluded so that re-opening the editor and pressing Enter is a
- * no-op rather than a refusal against itself — the same allowance `setProjectKey`
- * makes in main when it skips the entry being edited.
- */
-function keysTakenBy(
-  entries: readonly ProjectConfig[],
-  exclude: string,
-): ReadonlyMap<string, string> {
-  return new Map(
-    entries
-      .filter((project) => project.id !== exclude)
-      .map((project) => [project.key, project.name]),
-  );
-}
-
 export function ProjectsList({ entries }: ProjectsListProps) {
   /*
     Counts, not membership. The confirmation says the number out loud, and the

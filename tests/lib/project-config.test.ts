@@ -452,14 +452,17 @@ describe('resolveProjectRef', () => {
 
   it('matches a key, an id and a name', () => {
     expect(resolveProjectRef('hive', projects())).toMatchObject({
+      kind: 'match',
       matched: 'key',
       project: { id: 'the-hive' },
     });
     expect(resolveProjectRef('the-hive', projects())).toMatchObject({
+      kind: 'match',
       matched: 'id',
       project: { id: 'the-hive' },
     });
     expect(resolveProjectRef('The Hive', projects())).toMatchObject({
+      kind: 'match',
       matched: 'name',
       project: { id: 'the-hive' },
     });
@@ -468,10 +471,12 @@ describe('resolveProjectRef', () => {
   it('is case-insensitive, and tolerates surrounding whitespace', () => {
     // Keys and ids are lowercase by construction; a user reading `The Hive` off
     // the Projects pane should not have to reproduce its capitals.
-    expect(resolveProjectRef('HIVE', projects())?.project.id).toBe('the-hive');
-    expect(resolveProjectRef('  the-HIVE  ', projects())?.project.id).toBe(
-      'the-hive',
-    );
+    expect(resolveProjectRef('HIVE', projects())).toMatchObject({
+      project: { id: 'the-hive' },
+    });
+    expect(resolveProjectRef('  the-HIVE  ', projects())).toMatchObject({
+      project: { id: 'the-hive' },
+    });
   });
 
   /**
@@ -484,14 +489,57 @@ describe('resolveProjectRef', () => {
   it.each(['incorp', 'hiv', 'the-hive-2', 'server'])(
     'refuses %s rather than guessing',
     (input) => {
-      expect(resolveProjectRef(input, projects())).toBeNull();
+      expect(resolveProjectRef(input, projects()).kind).toBe('none');
     },
   );
 
-  it('returns null for empty input and for an empty list', () => {
-    expect(resolveProjectRef('', projects())).toBeNull();
-    expect(resolveProjectRef('   ', projects())).toBeNull();
-    expect(resolveProjectRef('hive', [])).toBeNull();
+  it('reports nothing for empty input and for an empty list', () => {
+    expect(resolveProjectRef('', projects()).kind).toBe('none');
+    expect(resolveProjectRef('   ', projects()).kind).toBe('none');
+    expect(resolveProjectRef('hive', []).kind).toBe('none');
+  });
+
+  /**
+   * Two projects with the same display name refuse rather than race.
+   *
+   * Display names are never uniqueness-checked — two folders both called `api`,
+   * a monorepo split, a pair of worktrees — so returning the first would start
+   * an agent in whichever sat earlier in the file. That is the "wrong
+   * repository, discovered later" failure the exactness rule exists to prevent,
+   * arriving by a different door.
+   */
+  it('reports ambiguity instead of picking the first match', () => {
+    const twins = snapshot([
+      { id: 'client-api', status: 'ok', key: 'ca', name: 'api' },
+      { id: 'server-api', status: 'ok', key: 'sa', name: 'api' },
+    ]).projects;
+
+    const result = resolveProjectRef('API', twins);
+
+    expect(result.kind).toBe('ambiguous');
+    expect(result).toMatchObject({ matched: 'name' });
+    expect(
+      result.kind === 'ambiguous'
+        ? result.projects.map((project) => project.id)
+        : [],
+    ).toEqual(['client-api', 'server-api']);
+  });
+
+  /*
+    An unambiguous field still answers even when a later one is ambiguous: the
+    key is exactly the way out of the ambiguity above, so it must not be
+    poisoned by it.
+  */
+  it('still resolves a unique key when the names collide', () => {
+    const twins = snapshot([
+      { id: 'client-api', status: 'ok', key: 'ca', name: 'api' },
+      { id: 'server-api', status: 'ok', key: 'sa', name: 'api' },
+    ]).projects;
+
+    expect(resolveProjectRef('sa', twins)).toMatchObject({
+      kind: 'match',
+      project: { id: 'server-api' },
+    });
   });
 
   /*
@@ -506,10 +554,12 @@ describe('resolveProjectRef', () => {
     ]).projects;
 
     expect(resolveProjectRef('al', overlapping)).toMatchObject({
+      kind: 'match',
       matched: 'key',
       project: { id: 'alpha' },
     });
     expect(resolveProjectRef('beta', overlapping)).toMatchObject({
+      kind: 'match',
       matched: 'id',
       project: { id: 'beta' },
     });
@@ -526,6 +576,8 @@ describe('resolveProjectRef', () => {
       { id: 'gone', status: 'missing', key: 'go' },
     ]).projects;
 
-    expect(resolveProjectRef('go', missing)?.project.id).toBe('gone');
+    expect(resolveProjectRef('go', missing)).toMatchObject({
+      project: { id: 'gone' },
+    });
   });
 });

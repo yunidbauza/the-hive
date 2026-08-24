@@ -1018,6 +1018,46 @@ describe('hive-store', () => {
         });
       });
 
+      /**
+       * Two projects with the same display name refuse rather than race.
+       *
+       * Names are never uniqueness-checked, so this is ordinary — two folders
+       * both called `api`, a monorepo split, a pair of worktrees. Starting an
+       * agent in whichever sat first in the file is the "wrong repository,
+       * discovered later" failure exactness exists to prevent, and the refusal
+       * names the ids so the user can say which one they meant.
+       */
+      it('refuses an ambiguous name and names the candidates', () => {
+        const current = projectConfigSnapshot()!;
+        const entry = (id: string, key: string) => ({
+          id,
+          key,
+          name: 'api',
+          path: `/repos/${id}`,
+          icon: 'ph-folder',
+          origin: 'local' as const,
+          status: 'ok' as const,
+          isRepo: true,
+        });
+        setProjectConfigForTest({
+          ...current,
+          projects: [entry('client-api', 'ca'), entry('server-api', 'sa')],
+        });
+        const before = useHiveStore.getState().order.length;
+
+        run('spawn api do things');
+
+        expect(useHiveStore.getState().order).toHaveLength(before);
+        expect(lastLine()).toMatchObject({
+          text: '  api names 2 projects (client-api, server-api) — use a key',
+          color: 'red',
+        });
+
+        // And the key is the way out, so it must still resolve.
+        run('spawn sa do things');
+        expect(useHiveStore.getState().order).toHaveLength(before + 1);
+      });
+
       it('does not announce the spawn by id — the rail is where the session is met (HIVE-91)', () => {
         run('spawn apfm-web tidy the footer');
 

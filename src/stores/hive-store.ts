@@ -1405,12 +1405,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * project. The picker now shares this resolver, so a project reachable
          * from one is reachable from the other by exactly the same spellings.
          */
-        const match =
+        const resolved =
           snapshot === null
-            ? null
+            ? ({ kind: 'none' } as const)
             : resolveProjectRef(command.project, snapshot.projects);
 
-        if (match === null && !(snapshot === null && isDesktop())) {
+        /*
+          Ambiguity is its own answer, not a miss (HIVE-94). Display names are
+          never uniqueness-checked — two folders both called `api` is ordinary —
+          and picking whichever sat first in the file would start an agent in the
+          wrong repository, which is the exact failure the exactness rule exists
+          to prevent. Naming the ids is what makes the advice actionable: the key
+          is the way to say which one.
+        */
+        if (resolved.kind === 'ambiguous') {
+          const ids = resolved.projects.map((project) => project.id).join(', ');
+          pushOrch(
+            `  ${command.project} names ${resolved.projects.length} projects (${ids}) — use a key`,
+            'red',
+          );
+          return;
+        }
+
+        if (resolved.kind === 'none' && !(snapshot === null && isDesktop())) {
           /*
             The keys, in config order, because they are the shortest thing that
             works and the row in Settings shows them. Listing ids instead would
@@ -1434,7 +1451,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           against, so the input is passed through and main — which has the file
           — gives the refusal if there is one.
         */
-        const target = match?.project.id ?? command.project;
+        const target =
+          resolved.kind === 'match' ? resolved.project.id : command.project;
         // No confirmation line here: `spawnSession` writes it, so both this
         // command and the picker log exactly once.
         get().spawnSession(target, command.task);

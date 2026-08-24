@@ -4,6 +4,7 @@ import { basename, isAbsolute, join } from 'node:path';
 
 import {
   DEFAULT_PROJECT_ICON,
+  projectAliases,
   type ProjectConfig,
 } from '@shared/config-contract';
 
@@ -28,6 +29,9 @@ import type { RawProject } from './parse';
  *   inside the child, where the error is a spawn failure with no context.
  */
 
+/** Shared by the single-entry fallback below; never mutated. */
+const EMPTY: ReadonlySet<string> = new Set<string>();
+
 /**
  * Expand a leading `~`.
  *
@@ -36,9 +40,6 @@ import type { RawProject } from './parse';
  * else's directory is not a feature anyone asked for. It falls through
  * unexpanded and is caught by the absolute-path check.
  */
-/** Shared by the single-entry fallback below; never mutated. */
-const EMPTY: ReadonlySet<string> = new Set<string>();
-
 function expandHome(path: string): string {
   if (path === '~') return homedir();
   if (path.startsWith('~/')) return join(homedir(), path.slice(2));
@@ -156,13 +157,6 @@ export function resolveProject(raw: RawProject): ProjectConfig {
 }
 
 /**
- * Resolve every entry, rejecting ids claimed more than once.
- *
- * First wins. The alternative — last wins — makes the effective config depend
- * on where in the file a line sits, which is not a rule anyone would guess
- * while editing it.
- */
-/**
  * Give every entry a key, keeping the ones the file already declared (HIVE-94).
  *
  * Two passes, and the order is the whole point: every declared key is claimed
@@ -194,14 +188,39 @@ function withKeys(
     return raw;
   });
 
-  return declared.map((raw) => {
+  /**
+   * Everything the resolver would already match, minus this entry's own handles.
+   *
+   * A generated key has to avoid the **whole address space**, not just the other
+   * keys — see {@link projectAliases} for the silent-redirect this prevents. Its
+   * own id and name are excluded because a project answering to itself under two
+   * fields is not a collision.
+   *
+   * A key the file *declares* is left alone even if it shadows something: it is
+   * the user's explicit choice in their own file, and quietly regenerating it
+   * would be the one thing `parse.ts` refuses to do with a key.
+   */
+  const addressesOf = (index: number): string[] =>
+    declared.flatMap((other, at) =>
+      at === index ? [] : projectAliases({ id: other.id, name: other.name }),
+    );
+
+  return declared.map((raw, index) => {
     if (raw.key !== undefined) return raw;
-    const key = deriveProjectKey(raw.name ?? raw.id, claimed);
+    const taken = new Set([...claimed, ...addressesOf(index)]);
+    const key = deriveProjectKey(raw.name ?? raw.id, taken);
     claimed.add(key);
     return { ...raw, key };
   });
 }
 
+/**
+ * Resolve every entry, rejecting ids claimed more than once.
+ *
+ * First wins. The alternative — last wins — makes the effective config depend
+ * on where in the file a line sits, which is not a rule anyone would guess
+ * while editing it.
+ */
 export function resolveProjects(
   raws: readonly RawProject[],
   errors: string[],

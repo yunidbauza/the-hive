@@ -160,6 +160,58 @@ describe('resolveProjects — keys', () => {
     expect(keys[0]).not.toBe('hive');
   });
 
+  /**
+   * A generated key must not shadow another project's **id**.
+   *
+   * The regression this pins, which shipped in review: project A at `~/repos/web`
+   * (id `web`) is renamed to "Frontend", so its own key derives as `fro` and
+   * leaves `web` free. Adding "Web Extension Builder" then minted exactly `web`
+   * — and because `resolveProjectRef` tries key before id, `spawn web` stopped
+   * meaning A and silently started an agent in B, with no warning anywhere.
+   */
+  it('never mints a key that is already another project’s id', () => {
+    const keys = keysOf([
+      { id: 'web', path: '/x/web', name: 'Frontend' },
+      { id: 'web-extension-builder', path: '/x/b', name: 'Web Extension Builder' },
+    ]);
+
+    expect(keys[1]).not.toBe('web');
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it('never mints a key that is already another project’s name', () => {
+    // Same hazard through the third field: a project called "Hive" would become
+    // unreachable by name the moment another project held the key `hive`.
+    const keys = keysOf([
+      { id: 'a', path: '/x/a', name: 'Hive' },
+      { id: 'the-hive', path: '/x/b', name: 'The Hive' },
+    ]);
+
+    expect(keys[1]).not.toBe('hive');
+  });
+
+  /*
+    A key the file *declares* is honoured even when it shadows something. It is
+    the user's explicit choice in their own file, and silently regenerating it is
+    the one thing `parse.ts` refuses to do with a key.
+  */
+  it('leaves a declared key alone even when it shadows another id', () => {
+    expect(
+      keysOf([
+        { id: 'web', path: '/x/web', name: 'Frontend' },
+        { id: 'b', path: '/x/b', name: 'Beta', key: 'web' },
+      ])[1],
+    ).toBe('web');
+  });
+
+  it('does not treat a project’s own id or name as blocking its own key', () => {
+    // `hive` is this project's own id; answering to itself under two fields is
+    // not a collision with anything.
+    expect(keysOf([{ id: 'hive', path: '/x/hive', name: 'hive' }])).toEqual([
+      'hive',
+    ]);
+  });
+
   /*
     A duplicate *key* is a typo in an alias, not two projects claiming to be the
     same project — so unlike a duplicate id it does not disable anything. The

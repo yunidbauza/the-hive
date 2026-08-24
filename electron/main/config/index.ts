@@ -9,6 +9,7 @@ import {
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
   emptySnapshot,
+  projectAliases,
   type AddProjectRequest,
   type ConfigSnapshot,
   type ProjectConfig,
@@ -155,6 +156,18 @@ export function loadConfig(): ConfigSnapshot {
  * held open by an editor, still loads with working keys — it just gets an
  * `errors` line saying they did not stick. Refusing to launch over an alias
  * would be wildly out of proportion.
+ *
+ * **It reformats the file, and that is the cost of the guarantee.** `writeConfig`
+ * re-serialises the whole document, so a config whose whitespace differs from
+ * `JSON.stringify(…, null, 2)` is rewritten on the first launch after upgrading
+ * — which, for the symlinked-into-dotfiles config `write.ts` deliberately
+ * supports, is a dirty working tree the user did not cause. It happens **once**:
+ * the next load finds every key present, `pending` is empty, and nothing is
+ * written. Comments, unknown keys, key order, file mode and the symlink itself
+ * all survive, because this goes through the same guarded write path every
+ * other mutation uses. The alternative — keeping the keys in memory only —
+ * regenerates them whenever the project list changes, which is not an alias
+ * anyone can learn.
  */
 function backfillKeys(
   path: string,
@@ -202,7 +215,25 @@ function backfillKeys(
     { keepDeclaredVersion: true },
   );
 
-  if (result.ok) return result.snapshot;
+  if (result.ok) {
+    /*
+      Carry forward anything the *pre-write* parse reported that the re-parse
+      cannot see any more. `withKeys` pushes a line when the file declared the
+      same key twice and one of them had to be regenerated — and the file it
+      just wrote no longer has that duplicate, so re-reading it produces no such
+      notice. Dropping it would mean silently changing an alias the user typed
+      by hand and never telling them.
+
+      Filtered rather than concatenated: an error about something still true of
+      the file (an unresolvable path) is produced by both parses, and reporting
+      it twice would be its own small lie.
+    */
+    const carried = snapshot.errors.filter(
+      (error) => !result.snapshot.errors.includes(error),
+    );
+    result.snapshot.errors.push(...carried);
+    return result.snapshot;
+  }
 
   snapshot.errors.push(
     `${LABEL}: could not save generated project keys to ${path} (${result.reason}) — they will be generated again on the next launch`,
@@ -257,6 +288,27 @@ function keyOf(entry: unknown): string | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const key = (entry as Record<string, unknown>).key;
   return typeof key === 'string' ? key : null;
+}
+
+/**
+ * Every string a draft entry already answers to (HIVE-94).
+ *
+ * Read off the *draft* rather than the snapshot for the reason every check in
+ * this file is: the config is not watched, so the cache can be older than the
+ * file. See {@link projectAliases} for why a key must avoid ids and names and
+ * not merely other keys.
+ */
+function aliasesOf(entry: unknown): string[] {
+  const id = idOf(entry);
+  if (id === null) return [];
+  const name = typeof entry === 'object' && entry !== null
+    ? (entry as Record<string, unknown>).name
+    : undefined;
+  return projectAliases({
+    id,
+    name: typeof name === 'string' ? name : null,
+    key: keyOf(entry),
+  });
 }
 
 /** Read one entry's declared path off a raw draft entry. */
@@ -339,14 +391,17 @@ export function addProject(
         entries.map(idOf).filter((id): id is string => id !== null),
       );
       /*
-        Only the keys the file **declares** are taken (HIVE-94). An entry
-        without one has not claimed anything yet, and `resolveProjects` hands
-        out generated keys only after every declared key is claimed — so the one
-        minted here cannot be stolen by a backfill on the next read.
+        The whole address space, not just the keys (HIVE-94).
+
+        A key must avoid every id and name too — `resolveProjectRef` searches
+        one space and tries key first, so a key equal to another project's id
+        would silently take that id's spawns. And only *declared* keys count as
+        claimed: an entry without one has not claimed anything yet, and
+        `resolveProjects` hands out generated keys only after every declared key
+        is, so the key minted here cannot be stolen by a backfill on the next
+        read.
       */
-      const takenKeys = new Set(
-        entries.map(keyOf).filter((key): key is string => key !== null),
-      );
+      const takenKeys = new Set(entries.flatMap(aliasesOf));
       const name = request.name ?? basename(real);
 
       return {
@@ -455,7 +510,13 @@ export function setProjectKey(request: SetProjectKeyRequest): ConfigSnapshot {
         // no-op the user is allowed to perform, exactly as `repointProject`
         // lets a project be re-pointed at its own folder.
         if (idOf(entry) === request.id) continue;
-        if (keyOf(entry) === request.key) {
+        /*
+          Refused against the whole address space, not just the other keys. A
+          key that equals another project's **id** is the dangerous case — the
+          resolver tries key first, so that id's spawns would silently move —
+          and it is invisible to a check that only compares keys.
+        */
+        if (aliasesOf(entry).includes(request.key)) {
           throw new WriteRefused(
             `the key "${request.key}" is already used by "${idOf(entry) ?? 'an existing entry'}"`,
           );

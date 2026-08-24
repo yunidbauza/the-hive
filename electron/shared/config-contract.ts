@@ -589,6 +589,38 @@ export const PROJECT_KEY_HINT = '2–4 lowercase letters';
 export const isProjectKey = (value: string): boolean =>
   PROJECT_KEY_PATTERN.test(value);
 
+/**
+ * Every string a project already answers to, lowercased (HIVE-94).
+ *
+ * A key is not unique merely by being unlike the other keys. `resolveProjectRef`
+ * searches **one address space** — key, then id, then name — and it searches key
+ * *first*, so a key that happens to equal another project's id silently takes
+ * that id's spawns. That is not hypothetical: a project at `~/repos/web` (id
+ * `web`) renamed to "Frontend" derives the key `fro` and leaves `web` free, and
+ * the next project called "Web Extension Builder" mints exactly `web` — after
+ * which `spawn web`, which had always meant the first, starts an agent in the
+ * second with no warning anywhere.
+ *
+ * So this is the set every *generated* key must avoid and every *typed* key is
+ * refused against. Ids and names are folded to lowercase because the resolver
+ * matches case-insensitively; a value that could never be a key (a forty
+ * character id) is harmless in the set and cheaper to include than to filter.
+ *
+ * A project's own handles are not excluded here — callers drop the entry being
+ * keyed, because a project answering to its own id under two fields is not a
+ * collision with anything.
+ */
+export function projectAliases(project: {
+  id: string;
+  name?: string | null;
+  key?: string | null;
+}): string[] {
+  const aliases = [project.id.toLowerCase()];
+  if (project.name) aliases.push(project.name.toLowerCase());
+  if (project.key) aliases.push(project.key.toLowerCase());
+  return aliases;
+}
+
 /** The last-resort shell: used off darwin when the password database has no usable entry. */
 export const DEFAULT_SHELL = '/bin/sh';
 

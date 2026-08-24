@@ -487,10 +487,22 @@ export function projectPath(projectId: string): string | null {
 /** Which field of a project answered to what the user typed (HIVE-94). */
 export type ProjectRefField = 'key' | 'id' | 'name';
 
-export interface ProjectRefMatch {
-  project: ProjectConfig;
-  matched: ProjectRefField;
-}
+/**
+ * What one project reference resolved to.
+ *
+ * Three states rather than "the project or null", because *ambiguous* and
+ * *unknown* are different answers and only one of them is the user's mistake.
+ * Collapsing them would make the console tell someone their project does not
+ * exist while it is sitting in the list twice.
+ */
+export type ProjectRefResult =
+  | { kind: 'none' }
+  | { kind: 'match'; project: ProjectConfig; matched: ProjectRefField }
+  | {
+      kind: 'ambiguous';
+      matched: ProjectRefField;
+      projects: readonly ProjectConfig[];
+    };
 
 /**
  * Resolve whatever the user typed to exactly one project (HIVE-94).
@@ -508,11 +520,21 @@ export interface ProjectRefMatch {
  *
  * ## Key, then id, then name
  *
- * The order matters only when two *different* projects answer, which the key
- * and id alphabets make unlikely in practice — but a display name equal to
- * another project's id is entirely possible, and the id wins there because it
- * is the older, stable handle. {@link ProjectRefMatch.matched} reports which
- * field answered so a caller can say so.
+ * Keys are kept clear of ids and names when they are generated and when they are
+ * typed (`projectAliases`), and duplicate ids are already disabled by
+ * `resolveProjects` — so the order decides only the one ambiguity the config can
+ * still contain: a display **name** equal to another project's id. The id wins
+ * there because it is the older, stable handle.
+ * {@link ProjectRefResult.matched} reports which field answered so a caller can
+ * say so.
+ *
+ * ## Two projects with the same name refuse, they do not race
+ *
+ * Display names are never uniqueness-checked — two folders both called `api`,
+ * a monorepo split, a pair of worktrees — so `find` would silently hand back
+ * whichever sat first in the file. That is precisely the "agent in the wrong
+ * repository" failure the exactness rule above exists to prevent, arriving by a
+ * different door. Ambiguity is reported, and the caller asks for a key.
  *
  * Case-insensitive throughout: keys and ids are lowercase by construction, and
  * a user reading `The Hive` off the Projects pane should not have to reproduce
@@ -521,18 +543,20 @@ export interface ProjectRefMatch {
 export function resolveProjectRef(
   input: string,
   projects: readonly ProjectConfig[],
-): ProjectRefMatch | null {
+): ProjectRefResult {
   const wanted = input.trim().toLowerCase();
-  if (wanted === '') return null;
+  if (wanted === '') return { kind: 'none' };
 
-  const on = (field: ProjectRefField): ProjectRefMatch | null => {
-    const project = projects.find(
-      (candidate) => candidate[field].toLowerCase() === wanted,
+  const on = (matched: ProjectRefField): ProjectRefResult | null => {
+    const hits = projects.filter(
+      (candidate) => candidate[matched].toLowerCase() === wanted,
     );
-    return project === undefined ? null : { project, matched: field };
+    if (hits.length === 0) return null;
+    if (hits.length === 1) return { kind: 'match', project: hits[0], matched };
+    return { kind: 'ambiguous', matched, projects: hits };
   };
 
-  return on('key') ?? on('id') ?? on('name');
+  return on('key') ?? on('id') ?? on('name') ?? { kind: 'none' };
 }
 
 export function projectAccess(projectId: string): ProjectAccess {

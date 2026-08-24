@@ -1311,6 +1311,40 @@ describe('project keys', () => {
       expect(readFileSync(path, 'utf8')).toBe(afterFirst);
     });
 
+    /**
+     * The duplicate-key notice survives the write that erases its evidence.
+     *
+     * `withKeys` reports that a hand-written alias was claimed twice and one of
+     * them had to be regenerated — but the file it then writes no longer has the
+     * duplicate, so re-reading it produces no such error. Dropping it would mean
+     * silently changing an alias the user typed and never telling them.
+     */
+    it('still reports a duplicate declared key after rewriting the file', async () => {
+      const one = join(sandbox, 'one');
+      const two = join(sandbox, 'two');
+      mkdirSync(one);
+      mkdirSync(two);
+      const path = writeConfig({
+        version: 2,
+        projects: [
+          { id: 'one', name: 'one', path: one, key: 'ix' },
+          { id: 'two', name: 'two', path: two, key: 'ix' },
+        ],
+      });
+      const module = await mutable();
+
+      const snapshot = module.getConfig();
+
+      expect(
+        snapshot.errors.some((error) =>
+          /duplicate key "ix" on "two"/.test(error),
+        ),
+      ).toBe(true);
+      // And the repair really landed: the file now holds two distinct keys.
+      const written = entriesOnDisk(path).map((entry) => entry.key);
+      expect(new Set(written).size).toBe(2);
+    });
+
     it('leaves a key the file already declares exactly as it found it', async () => {
       const repo = join(sandbox, 'repo');
       mkdirSync(repo);
@@ -1388,6 +1422,29 @@ describe('project keys', () => {
       expect(snapshot.projects[1]?.key).toBe('ise');
     });
 
+    /*
+      The address space, not just the keys. `resolveProjectRef` tries key before
+      id, so a minted key equal to an existing id would silently take that id's
+      spawns.
+    */
+    it('never mints a key that is already another project’s id', async () => {
+      const existing = join(sandbox, 'web');
+      const added = join(sandbox, 'web-extension-builder');
+      mkdirSync(existing);
+      mkdirSync(added);
+      writeConfig({
+        version: 2,
+        projects: [
+          { id: 'web', name: 'Frontend', path: existing, key: 'fro' },
+        ],
+      });
+      const module = await mutable();
+
+      expect(module.addProject({ path: added }).projects[1]?.key).not.toBe(
+        'web',
+      );
+    });
+
     it('derives the key from the name the caller gave, not the folder', async () => {
       const added = join(sandbox, 'x');
       mkdirSync(added);
@@ -1461,6 +1518,20 @@ describe('project keys', () => {
       );
       expect(readFileSync(path, 'utf8')).toBe(before);
       expect(module.getConfig().projects[0]?.key).toBe('on');
+    });
+
+    it('refuses a key that is another project’s id, writing nothing', async () => {
+      const { path, module } = await seedTwo();
+      const before = readFileSync(path, 'utf8');
+
+      // `two` is an id, not a key — and refusing it is the whole point: the
+      // resolver tries key first, so accepting it would move `spawn two`.
+      const snapshot = module.setProjectKey({ id: 'one', key: 'two' });
+
+      expect(snapshot.errors[0]).toMatch(
+        /the key "two" is already used by "two"/,
+      );
+      expect(readFileSync(path, 'utf8')).toBe(before);
     });
 
     it('allows a project to be given the key it already has', async () => {

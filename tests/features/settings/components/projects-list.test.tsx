@@ -404,6 +404,33 @@ describe('ProjectsList · changing a key', () => {
     expect(setProjectKeyInConfig).not.toHaveBeenCalled();
   });
 
+  /**
+   * The hint refuses another project's **id**, not just its key.
+   *
+   * Main refuses it — the resolver tries key before id, so accepting it would
+   * silently move that id's spawns — and a live validator that showed green for
+   * a value about to be rejected would be worse than no validator at all.
+   */
+  it('refuses a key that is another row’s id', async () => {
+    // Ids that are themselves valid key shapes — `a`/`b`/`c` are one letter, so
+    // they could never collide with a key and cannot show this.
+    const rows = [
+      entry({ id: 'frontend', name: 'Frontend', key: 'fro' }),
+      entry({ id: 'web', name: 'Web', key: 'we' }),
+    ];
+    render(<ProjectsList entries={rows} />);
+    await openMenu('Frontend');
+    await choose(/change key…/i);
+
+    await userEvent.clear(keyField());
+    await userEvent.type(keyField(), 'web');
+
+    expect(screen.getByText(/already used by Web/)).toBeInTheDocument();
+
+    await userEvent.type(keyField(), '{Enter}');
+    expect(setProjectKeyInConfig).not.toHaveBeenCalled();
+  });
+
   /*
     Its own key is excluded from the taken set, so re-opening the editor and
     pressing Enter is a no-op rather than a refusal against itself.
