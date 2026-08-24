@@ -26,9 +26,8 @@
  *
  * ## The glyph
  *
- * Claude prefixes the title with an activity glyph: `✳` when settled, braille
- * spinner frames while it works. It is stripped, and **only** the name is
- * reported. The glyph looks like a free status signal and is not one — it
+ * Claude prefixes the title with an activity glyph: `✳` when settled, spinner
+ * frames while it works. It is stripped, and **only** the name is reported. The glyph looks like a free status signal and is not one — it
  * returns to `✳` while the session sits on an unanswered question, so it cannot
  * express `waiting`, which is the distinction the whole attention model rests
  * on. Status comes from hooks (HIVE-62), never from this.
@@ -51,25 +50,37 @@ const MAX_SEQUENCE_LENGTH = 2_048;
 /**
  * Glyphs Claude may put in front of the name.
  *
- * Two ranges, not a list of the frames observed on one release:
+ * **A Unicode category, not a list of blocks — and that is the third attempt.**
  *
- * - `U+2800`–`U+28FF`, the braille block the spinner frames come from.
- * - `U+2720`–`U+274F`, the dingbats run holding `✳` (U+2733), the settled
- *   marker, and its neighbours.
+ * This started as an enumeration of the frames observed on one release, which
+ * missed `✳` and put it in every session's name. That was replaced by two
+ * ranges — braille `U+2800`–`U+28FF` and the dingbats run `U+2720`–`U+274F` —
+ * on the reasoning that a range degrades gracefully where a list does not. It
+ * does not degrade far enough: measured against a real `claude`, the spinner
+ * now cycles `U+25D0`/`U+25D1` (`◐`, `◑`) out of Geometric Shapes, which is
+ * neither range, so a session ended mid-frame kept a half-filled circle in
+ * front of its name forever and read as still working long after it was `done`.
  *
- * Ranges rather than an enumeration because a new spinner in a later release
- * should degrade to "one unknown glyph stripped" rather than "the glyph becomes
- * part of every session's name" — which is exactly what an enumeration missing
- * `✳` produced the first time this was written.
+ * Blocks were never the property being tested for. **`\p{So}` — Symbol, other —
+ * is**, and every frame yet observed is in it: `✳` U+2733, `◐` U+25D0, `◑`
+ * U+25D1, the whole braille block. A spinner Anthropic adds from a fourth block
+ * is one this already covers, which is the difference between a rule and a
+ * running patch.
  *
  * The trailing `\s*` is what separates glyph from name, so a name is never
  * returned with a leading space.
  *
- * `*` and `·` are deliberately **not** in the class. Both are plausible
- * spinner characters and both are also ordinary text, so stripping them would
- * silently mangle a session someone renamed to `*scratch*`.
+ * `*` and `·` are still deliberately not stripped, and now by construction
+ * rather than by hand: both are `\p{Po}` (punctuation) rather than `\p{So}`, so
+ * the session someone renamed to `*scratch*` survives without the class needing
+ * to remember it. `+` (`\p{Sm}`) and `#` (`\p{Po}`) likewise.
+ *
+ * A name the *user* chose that opens with a symbol — `🚀 deploy` — is not at
+ * risk, because Claude's own glyph is always in front of it: `+` stops at the
+ * space, so `✳ 🚀 deploy` strips to `🚀 deploy`. Only a title with no activity
+ * glyph at all could lose one, and Claude does not write those.
  */
-const LEADING_GLYPH = /^[⠀-⣿✠-❏]+\s*/u;
+const LEADING_GLYPH = /^\p{So}+\s*/u;
 
 /**
  * What Claude titles a session that has no name of its own.

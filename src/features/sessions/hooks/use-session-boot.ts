@@ -23,6 +23,27 @@ import { useMarkSessionReady, useSessionBooting } from '@stores/hive-store';
 export const BOOT_COVER_TIMEOUT_MS = 60_000;
 
 /**
+ * How long the cover holds **after** the ready signal, before it lifts.
+ *
+ * The signal is a `SessionStart` hook, and a hook fires when Claude's *process*
+ * reaches a point in its startup — not when its TUI has painted a frame. Those
+ * are not the same instant, and the gap is visible: uncovering on the signal
+ * alone showed the tail of the boot output for a fraction of a second before
+ * Claude's own screen replaced it, which is precisely the output this whole
+ * surface exists to keep off screen. Ending on a flash of the thing you were
+ * hiding is worse than never having hidden it, because it reads as a glitch.
+ *
+ * A second is enough for the first paint and short enough that nobody waiting
+ * on a session notices it — the cover has already been up for two by then.
+ *
+ * **The escapes deliberately do not use it.** A key or a click means *show me
+ * now*, usually because something is wrong underneath, and a second of extra
+ * hydralisk in answer to that is the opposite of what was asked. This delay
+ * applies only where the app decided on the user's behalf.
+ */
+export const READY_SETTLE_MS = 1_000;
+
+/**
  * Should this session's terminal still be covered while it starts?
  *
  * The store holds the flag; this hook owns the two ways out that do **not**

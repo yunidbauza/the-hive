@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { readJiraIssue } from '@/lib/jira';
 import { noteSessionTicket } from '@/lib/session-history';
 
+import { READY_SETTLE_MS } from '@features/sessions/hooks/use-session-boot';
 import {
   useClearSession,
   useFinishSession,
@@ -111,18 +112,41 @@ export function useSessionStatus(): void {
     );
 
     /**
-     * Claude is up — uncover the terminal (HIVE-101).
+     * Claude is up — uncover the terminal, a beat later (HIVE-101).
      *
-     * The plainest listener here after `onMetrics`, and for a stronger reason:
-     * the event carries only an entity id, because the fact *is* the message.
+     * The event carries only an entity id, because the fact *is* the message.
      *
      * It can arrive more than once — `/clear` starts a new Claude session in
      * the same pty — and the store's action is idempotent for exactly that. It
      * can also never arrive, which is why nothing about the cover depends on
      * this listener alone; see `useSessionBoot`.
+     *
+     * ## Why the timer
+     *
+     * The hook fires when Claude's *process* gets somewhere, not when its TUI
+     * has painted, so lifting on arrival flashed the boot output for a frame
+     * before Claude's screen replaced it. {@link READY_SETTLE_MS} covers that
+     * gap; its doc has the reasoning, including why the keystroke and pointer
+     * escapes pointedly do not wait.
+     *
+     * Tracked and cleared on teardown rather than fired and forgotten: this
+     * hook is mounted once at the composition root, so an untracked timer would
+     * outlive an unmount and write to the store afterwards. Keyed by entity so
+     * a repeat signal for the same session — the `/clear` case above — replaces
+     * its own pending lift instead of queueing a second one.
      */
+    const settling = new Map<string, ReturnType<typeof setTimeout>>();
+
     const disposeReady = bridge.session.onReady(({ entityId }) => {
-      markSessionReady(entityId);
+      const pending = settling.get(entityId);
+      if (pending !== undefined) clearTimeout(pending);
+      settling.set(
+        entityId,
+        setTimeout(() => {
+          settling.delete(entityId);
+          markSessionReady(entityId);
+        }, READY_SETTLE_MS),
+      );
     });
 
     const disposeBranch = bridge.session.onBranch(({ entityId, branch, cwd }) => {
@@ -187,6 +211,8 @@ export function useSessionStatus(): void {
       disposeCleared();
       disposeFinished();
       disposeReady();
+      for (const timer of settling.values()) clearTimeout(timer);
+      settling.clear();
       disposeBranch();
       disposeTicketIntent();
       disposeMetrics();

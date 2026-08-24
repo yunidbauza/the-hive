@@ -5,6 +5,8 @@ import {
   type SessionRecord,
 } from '@shared/session-history-contract';
 
+import { nameFromTitle } from './title';
+
 /**
  * What the fleet looked like last time (HIVE-87).
  *
@@ -130,6 +132,30 @@ const finite = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
 /**
+ * A stored name, re-cleaned with **today's** rule rather than the one that was
+ * in force when it was written.
+ *
+ * The ledger holds whatever `title.ts` reported, and `title.ts` has been wrong
+ * twice about which glyphs Claude puts in front of a name — most recently the
+ * `◐`/`◑` spinner, which fixing the reader alone does not remove from the rows
+ * already on disk. Those are exactly the rows PREVIOUS RUN shows at launch, so
+ * without this the reported defect stays on screen until they age out of a
+ * 40-record history.
+ *
+ * Idempotent by construction: it is the same function the reader applies, so a
+ * name written by a fixed build passes through untouched. An entry that cleans
+ * away to nothing — a legacy `Claude Code`, which is the *absence* of a name
+ * spelled out — becomes `undefined`, the same thing `reviveRecord` stores for a
+ * record that never had one.
+ */
+const cleanName = (value: unknown): string | undefined => {
+  const raw = text(value);
+  if (raw === undefined) return undefined;
+  const name = nameFromTitle(raw);
+  return name === '' ? undefined : name;
+};
+
+/**
  * One record, revalidated on the way in.
  *
  * Field by field rather than all-or-nothing, in both directions: a row missing
@@ -159,7 +185,7 @@ function reviveRecord(raw: unknown): SessionRecord | undefined {
   }
 
   const optional = {
-    name: text(raw.name),
+    name: cleanName(raw.name),
     ticket: text(raw.ticket),
     branch: text(raw.branch),
     cwd: text(raw.cwd),

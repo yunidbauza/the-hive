@@ -639,6 +639,76 @@ describe('session ledger', () => {
       expect(record?.branch).toBeUndefined();
       expect(record?.sessionUuid).toBeUndefined();
     });
+
+    /**
+     * A name is re-cleaned with today's rule, not the one that wrote it.
+     *
+     * `title.ts` has twice been wrong about which glyphs Claude puts in front
+     * of a name, and the ledger is where a wrong answer outlives the fix: these
+     * are the records PREVIOUS RUN shows at launch, so a `◐` written by
+     * yesterday's build would still be on screen after the reader stopped
+     * producing them, until it aged out of a 40-record history.
+     */
+    it('cleans a glyph an older build stored in a name', () => {
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'p',
+            task: '',
+            status: 'done',
+            createdAt: 1,
+            name: '◐ sess-0c',
+          },
+        ]),
+        'utf8',
+      );
+
+      expect(readLedger(file)[0]?.name).toBe('sess-0c');
+    });
+
+    it('leaves a name a fixed build wrote exactly as it is', () => {
+      // The same function the reader applies, so a clean name is a no-op —
+      // interior spaces, punctuation and all.
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'p',
+            task: '',
+            status: 'done',
+            createdAt: 1,
+            name: 'fix "login" & logout',
+          },
+        ]),
+        'utf8',
+      );
+
+      expect(readLedger(file)[0]?.name).toBe('fix "login" & logout');
+    });
+
+    it('reads a stored default title as no name at all', () => {
+      // `Claude Code` is the absence of a name spelled out. A record carrying
+      // it should restore as unnamed, not as a session called `Claude Code`.
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'p',
+            task: '',
+            status: 'done',
+            createdAt: 1,
+            name: 'Claude Code',
+          },
+        ]),
+        'utf8',
+      );
+
+      expect(readLedger(file)[0]?.name).toBeUndefined();
+    });
   });
 
   describe('retention', () => {
