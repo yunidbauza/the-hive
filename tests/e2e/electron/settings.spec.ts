@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
@@ -185,6 +185,58 @@ test('a directory that is not a repository is added anyway, and says so', async 
     // rule the shell does not have, so it reports rather than blocks.
     await expect(page.getByText('plain-directory').first()).toBeVisible();
     await expect(page.getByText('no git')).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test('creates a skill from Settings, beside the config', async ({}, testInfo) => {
+  /**
+   * The Skills pane, end to end (HIVE-96).
+   *
+   * The unit suite proves the pane against a mocked bridge, and
+   * `tests/live/skills-conformance.test.ts` proves a real `claude` loads what
+   * main generates. Neither says whether a click in this pane reaches main,
+   * whether main builds the path from the validated name rather than from
+   * anything the renderer sent, or whether the file lands where the next spawn
+   * will read it. That gap is what this covers.
+   *
+   * The skills root is `dirname(configPath())/skills`, and the harness points
+   * `HIVE_CONFIG_PATH` at this test's own output directory — so the file below
+   * is written into the test's scratch space and never into the developer's
+   * real `~/.hive`. That is the whole reason the root is derived from the
+   * config path instead of `homedir()`.
+   */
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+
+  try {
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Skills' }).click();
+
+    // The screen a fresh install actually sees.
+    await expect(page.getByText(/no skills yet/i)).toBeVisible();
+
+    await page.getByRole('button', { name: '+ New skill' }).click();
+
+    await page
+      .getByLabel('Skill source')
+      .fill(
+        '---\nname: standup\ndescription: Summarise the day\n---\nSummarise it.\n',
+      );
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    // The row appears without a reload: the write returns the fresh snapshot.
+    await expect(page.getByRole('button', { name: '/standup' })).toBeVisible();
+
+    const written = readFileSync(
+      join(dirname(configPath), 'skills', 'standup', 'SKILL.md'),
+      'utf8',
+    );
+    expect(written).toContain('name: standup');
+    expect(written).toContain('Summarise it.');
   } finally {
     await app.close();
   }

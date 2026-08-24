@@ -68,6 +68,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     session: Object.keys(window.hive!.session).sort(),
     integrations: Object.keys(window.hive!.integrations).sort(),
     fs: Object.keys(window.hive!.fs).sort(),
+    skills: Object.keys(window.hive!.skills).sort(),
     github: Object.keys(window.hive!.github).sort(),
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
@@ -159,6 +160,25 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * uses it only to decide whether a notification it was already going to
    * raise should be suppressed.
    */
+  /**
+   * HIVE-96 adds `skills` — the second namespace after `fs` that writes to the
+   * user's disk, and the one to check any future verb here against.
+   *
+   * What bounds it, and why it is narrower than `fs` despite doing the same
+   * kind of thing:
+   *
+   * - **No verb takes a path, or anything a path could hide in.** `fs` accepts
+   *   a project-relative path and has to re-check containment after `realpath`
+   *   because a symlink is a fact about the disk rather than about the string.
+   *   Here a request names a **skill**, and `SKILL_NAME_PATTERN` admits only
+   *   `[a-z0-9-]+` — no separator, no dot segment, no drive. Main joins that
+   *   onto a directory it chose, so there is no second question to ask and no
+   *   containment check to forget.
+   * - **One directory, decided in main.** The renderer cannot name where a
+   *   skill lives, only which skill it means.
+   * - **The reserved name is refused at the boundary**, so the built-in
+   *   `/done` cannot be shadowed by a write from the page.
+   */
   expect(surface.top).toEqual([
     'appInfo',
     'config',
@@ -169,10 +189,12 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'notifications',
     'pty',
     'session',
+    'skills',
     'theme',
     'ui',
     'updates',
   ]);
+  expect(surface.skills).toEqual(['list', 'read', 'remove', 'write']);
   expect(surface.theme).toEqual(['pick', 'save']);
   expect(surface.ui).toEqual(['reportForeground']);
   expect(surface.integrations).toEqual(['status']);

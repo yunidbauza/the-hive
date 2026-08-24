@@ -107,17 +107,23 @@ async function expectFile(path: string, contents: string): Promise<void> {
 }
 
 /**
- * The session-identity flags HIVE-61 appends to every spawn.
+ * The flags main appends to every spawn from paths and ids of its own.
  *
- * `--session-id` is a fresh uuid and `--settings` is a per-test temp path, so
- * neither can be matched literally. Stripping them keeps what the two argv
- * tests are really asserting — that nothing *else* reached the argument list,
- * `&& exit` included — without freezing a value that changes per run.
+ * `--session-id` is a fresh uuid, and `--settings` and `--plugin-dir` are
+ * per-run paths under `userData`, so none of them can be matched literally.
+ * Stripping them keeps what the two argv tests are really asserting — that
+ * nothing *else* reached the argument list, `&& exit` included — without
+ * freezing a value that changes per run.
  *
- * These two tests have been failing since HIVE-61 landed, which updated the
- * unit tests for the new flags and not this file.
+ * Their *content* is asserted where it can be: exactly, in
+ * `bootstrap.test.ts`, and against a real binary in
+ * `tests/live/skills-conformance.test.ts`.
+ *
+ * These two tests were failing from HIVE-61 until HIVE-88 for want of the
+ * first three, which is the argument for adding HIVE-96's here at the same
+ * time as the flag rather than after the next red run.
  */
-const IDENTITY_FLAGS = /\s*--(?:name|session-id|settings)\s+\S+/g;
+const IDENTITY_FLAGS = /\s*--(?:name|session-id|settings|plugin-dir)\s+\S+/g;
 
 /** Assert the argv the stub recorded, ignoring the identity flags. */
 async function expectArgs(path: string, contents: string): Promise<void> {

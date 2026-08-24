@@ -71,6 +71,15 @@ strict CSP applied on the session (not only as a `<meta>` tag).
 shown in the left rail to a real directory on this machine. It is the only thing
 that makes a PTY's `cwd` real; everything else about a project is still fixtures.
 
+`~/.hive/skills/<name>/SKILL.md` is its sibling (HIVE-96): the custom slash
+commands the app injects into every session it starts. Main reads that tree
+before **every** spawn — a readdir over a handful of small files — which is what
+makes a skill written by hand in a text editor and one saved from Settings the
+same feature, with no invalidation protocol between them. The root is derived
+from `dirname(configPath())` rather than `homedir()`, so `HIVE_CONFIG_PATH`
+relocates the skills too and an e2e run never writes into the developer's own
+`~/.hive`.
+
 Read in main (`electron/main/config/`), never in the renderer. The file is
 user-authored input arriving from disk, so it gets the same treatment as input
 arriving from the renderer: hand-written guards, an explicit key allowlist, and
@@ -96,10 +105,21 @@ template has to explain itself in the file the user opens.
 ## What main writes to `userData`, and the session ledger (HIVE-87)
 
 `~/.hive/config.json` is the user's; `app.getPath('userData')` is the app's, and
-four things live there. `window-state.json` (geometry, `window-state.ts`), the
+five things live there. `window-state.json` (geometry, `window-state.ts`), the
 per-theme hook settings and the status-line script under `hive/`
-(`hooks/settings.ts`), the OS-encrypted `jira-credential.bin`, and
+(`hooks/settings.ts`), the **generated skills plugin** under `hive/plugin/`
+(`skills/plugin.ts`), the OS-encrypted `jira-credential.bin`, and
 **`sessions.json`** — the fleet as it was when the app last closed.
+
+The plugin directory is the app's copy of the user's skills, in the layout
+Claude Code loads: a `.claude-plugin/plugin.json` naming the plugin `hive`, and
+one `skills/<name>/SKILL.md` per valid skill plus the app-owned `done`. It is
+regenerated at launch and before every spawn, and passed as `--plugin-dir` on
+the session's command line — which loads for that process only and writes
+nothing to `~/.claude`. Stale entries are removed by a directory diff rather
+than a wipe: regenerations and spawns interleave, and a wipe would leave a
+window in which a session starting right now reads an empty plugin. Deleting the
+whole directory is safe; the next spawn writes it again.
 
 The ledger (`sessions/ledger.ts`) exists because closing the app used to erase
 every record that any session had run: `hive-store` boots empty by design and
@@ -413,6 +433,23 @@ reason neither side can see.
 `restart` forwards them and still drops the `task` — a task is an instruction the
 previous generation may have acted on; a model is what the session *is*.
 
+Two more flags come from **main's own paths** rather than from the renderer, and
+both are `shellQuote`d because `app.getPath('userData')` contains a space on
+macOS: `--settings <path>` (the hook configuration, per theme) and
+`--plugin-dir <path>` (the generated skills plugin, HIVE-96). Neither has a
+field in `parseSpawnRequest`, and neither should ever grow one — the renderer
+naming a path main will pass to a shell is the shape this whole layer avoids.
+
+`--plugin-dir` is the mechanism for custom skills because it is the only one:
+`--settings` cannot carry skills at all, and `--add-dir` only finds a `.claude/`
+*inside* the directory it adds. It loads for that process only and writes
+nothing to the user's config — measured, not assumed, in
+`tests/live/skills-conformance.test.ts`, which also pins the fact the Settings
+copy depends on: a plugin skill resolves by its **bare** name, so the pane can
+promise `/standup` rather than `/hive:standup`. The flag is omitted entirely
+when the directory could not be written, so a failed generation costs a session
+its custom commands rather than its start.
+
 The write waits for the shell's first output plus a ~150 ms settle, because
 characters written before the line discipline is installed land in a buffer the
 shell may discard — the session then sits at a bare prompt having silently
@@ -617,6 +654,12 @@ populates. The symptom is `Error: posix_spawnp failed.` on the first spawn,
 | **Main-process unit** | Vitest, node env, `node-pty` mocked | plain Node | spawn arguments, cwd, IPC routing, guards, teardown |
 | **PTY conformance** | `ELECTRON_RUN_AS_NODE=1 electron` | Electron ABI, no window | terminal *semantics*: signals, resize, alt-screen, exit codes (story 098) |
 | **Electron e2e** | Playwright `_electron` | the full app | window chrome, menus, security posture, the UI wired to a live PTY |
+| **Live conformance** | Vitest, env-gated, a **real `claude`** | plain Node | what the binary actually does with what this app generates — hooks (`test:hooks`), the status line (`test:statusline`), custom skills (`test:skills`) |
+
+The last layer is opt-in and costs real tokens, which is exactly the line
+`tests/live/` draws: each of those suites exists because a unit test asserting
+the *text* of a generated artifact only ever proves the author's belief about
+how `claude` reads it.
 
 The middle layer is the one that does not exist in a web project. Whether Ctrl-C
 delivers `SIGINT` to the foreground process group is not a UI question, and
