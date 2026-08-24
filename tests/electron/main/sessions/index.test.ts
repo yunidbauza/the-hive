@@ -1557,6 +1557,7 @@ describe('/done', () => {
     patches: (entityId: string) => Record<string, unknown>[];
     statusOf: (entityId: string) => unknown;
     finishedFor: (entityId: string) => number;
+    lastFinished: (entityId: string) => Record<string, unknown> | undefined;
   } {
     const written: Written[] = [];
     const local: Sent[] = [];
@@ -1586,6 +1587,20 @@ describe('/done', () => {
         },
         stop: () => Promise.resolve(),
       } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+      /**
+       * A fake that **reflects what it has been told**, rather than answering a
+       * constant (HIVE-93).
+       *
+       * `resumable: () => undefined` is what let a real bug through a green
+       * suite: `publishFinished` asks the ledger whether the conversation can be
+       * reopened, and it was asking *before* `settleExit` recorded the ending —
+       * so every `/done` shipped `resumable: false` and the Resume control never
+       * appeared. A stub that always says "no" agrees with a broken ordering and
+       * a correct one alike, which makes it worse than no assertion at all.
+       *
+       * So this mirrors the real rule — a record is resumable once it has a uuid
+       * and has ended — and the ordering becomes something a test can see.
+       */
       ledger: {
         begin: (id, patch, options) => {
           written.push({ id, patch: { ...patch, ...(options ?? {}) } });
@@ -1593,7 +1608,21 @@ describe('/done', () => {
         record: (id, patch) => {
           written.push({ id, patch: { ...patch } });
         },
-        resumable: () => undefined,
+        resumable: (id) => {
+          const merged = written
+            .filter((entry) => entry.id === id)
+            .reduce<Record<string, unknown>>(
+              (acc, entry) => ({ ...acc, ...entry.patch }),
+              {},
+            );
+          const ended =
+            merged.endedAt !== undefined ||
+            merged.status === 'done' ||
+            merged.status === 'terminated';
+          return ended && typeof merged.sessionUuid === 'string'
+            ? merged.sessionUuid
+            : undefined;
+        },
         all: () => [],
         flush: () => {},
         dispose: () => {},
@@ -1627,6 +1656,14 @@ describe('/done', () => {
             entry.channel === CH.sessionFinished &&
             entry.payload.entityId === entityId,
         ).length,
+      lastFinished: (entityId) =>
+        local
+          .filter(
+            (entry) =>
+              entry.channel === CH.sessionFinished &&
+              entry.payload.entityId === entityId,
+          )
+          .at(-1)?.payload,
     };
   }
 
@@ -1682,6 +1719,24 @@ describe('/done', () => {
     */
     expect(h.finishedFor('hero-refresh')).toBe(1);
     expect(h.statusOf('hero-refresh')).not.toBe('terminated');
+  });
+
+  it('reports the finish as resumable, so the row can offer Resume', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+    emitExit({ sessionId, exitCode: 0 });
+
+    /*
+      The ordering assertion, and the reason it is worth its own test: the
+      ledger is asked this question *during* `settleExit`, so it has to have
+      been told the session ended before anything asks. Recorded second, it
+      answered "no" for every `/done` — the transcript still on disk, the uuid
+      still in the ledger, and nothing on screen able to reach either.
+    */
+    expect(h.lastFinished('hero-refresh')).toMatchObject({ resumable: true });
   });
 
   it('records terminated for an exit nobody declared', () => {

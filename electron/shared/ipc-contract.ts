@@ -1444,7 +1444,9 @@ export const BRIDGE_SESSION_KEYS = [
   'onCleared',
   /**
    * HIVE-93's, and a listener like its neighbours: main → renderer, carrying
-   * one entity id and nothing the page can act on. It sits beside `onCleared`
+   * an entity id and main's own answer to whether that conversation can be
+   * resumed — nothing the page can act on beyond drawing it. It sits beside
+   * `onCleared`
    * because the two are the same kind of announcement — a session boundary the
    * renderer answers structurally — and reviewing one should mean looking at
    * the other.

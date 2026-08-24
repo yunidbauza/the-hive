@@ -164,9 +164,7 @@ function reviveRecord(raw: unknown): SessionRecord | undefined {
     branch: text(raw.branch),
     cwd: text(raw.cwd),
     sessionUuid: text(raw.sessionUuid),
-    ...(raw.endedBy === 'cleared' || raw.endedBy === 'finished'
-      ? { endedBy: raw.endedBy }
-      : {}),
+    ...(raw.endedBy === 'finished' ? { endedBy: 'finished' as const } : {}),
     endedAt: finite(raw.endedAt),
     /*
       `model` and `effort` are closed lists on the renderer side, and this does

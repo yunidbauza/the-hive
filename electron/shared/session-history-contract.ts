@@ -100,20 +100,25 @@ export interface SessionRecord {
    */
   sessionUuid?: string;
   /**
-   * How a recorded ending happened (HIVE-93).
+   * Set when this record's session ended by declaring itself finished
+   * (HIVE-93).
    *
-   * Without it a restored `done` row cannot be told from a restored `/clear`,
-   * and every one of them is described as "was cleared — its terminal continues
-   * as a new session". That sentence is false for **every** record this field
-   * appears on: `publishStatus` never writes `done` and `onCleared` writes no
-   * status at all, so the only way a record holds `done` is a declared `/done`.
+   * A one-member union rather than a mirror of the renderer's `endedBy`,
+   * because the other two endings cannot be written here and saying so in the
+   * type is cheaper than saying so in a comment nobody reads:
    *
-   * Absent on a record written before the field existed, and on a live one.
-   * `'app-closed'` is never written here — nothing can observe the app being
-   * quit; the renderer infers that at hydrate from a record still claiming to
-   * be live.
+   * - **`cleared`** would stamp an ending on a record that carries on. Main
+   *   knows only the *terminal*, so after a `/clear` this same record goes on
+   *   describing the successor.
+   * - **`app-closed`** cannot be observed at all — see the note on `status`.
+   *   The renderer infers it at hydrate from a record still claiming to be live.
+   *
+   * Without it a restored `done` row cannot be told from a cleared one, and was
+   * described as "was cleared — its terminal continues as a new session" — the
+   * one sentence false for every record that can hold this status, shown beside
+   * a Resume button, so the tooltip and the control contradicted each other.
    */
-  endedBy?: 'cleared' | 'finished';
+  endedBy?: 'finished';
   createdAt: number;
   /** When the session ended, if it has. What retention sorts on. */
   endedAt?: number;

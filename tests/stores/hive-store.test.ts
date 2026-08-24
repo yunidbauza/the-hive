@@ -2177,13 +2177,20 @@ describe('hive-store', () => {
       */
       useHiveStore.getState().hydrateSessions([
         record({ id: 'fin-01', status: 'done', endedBy: 'finished' }),
-        record({ id: 'clr-01', status: 'done', endedBy: 'cleared' }),
+        record({ id: 'clr-01', status: 'done' }),
         record({ id: 'old-02' }),
       ]);
 
       const entities = useHiveStore.getState().entities;
       expect(entities['fin-01']).toMatchObject({ endedBy: 'finished' });
-      expect(entities['clr-01']).toMatchObject({ endedBy: 'cleared' });
+      /*
+        A `done` record with no `endedBy` predates the field, and every one of
+        those was a `/clear` — nothing else produced the status then. Main can
+        no longer write `cleared` at all: after a `/clear` that same record goes
+        on describing the successor, so stamping an ending on it would be a lie
+        about a session still running.
+      */
+      expect(entities['clr-01']).not.toHaveProperty('endedBy');
       // A record still claiming to be live ended when the app did.
       expect(entities['old-02']).toMatchObject({ endedBy: 'app-closed' });
     });

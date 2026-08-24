@@ -624,8 +624,8 @@ function restoredStatus(
       sentence that is false for all of them — and shown beside a Resume button,
       so the tooltip and the control contradict each other.
     */
-    return recorded === 'cleared' || recorded === 'finished'
-      ? { status: 'done', endedBy: recorded }
+    return recorded === 'finished'
+      ? { status: 'done', endedBy: 'finished' }
       : { status: 'done' };
   }
   if (stored === 'terminated') return { status: 'terminated' };

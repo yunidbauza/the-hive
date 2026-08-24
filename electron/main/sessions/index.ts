@@ -655,7 +655,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        * deliberately ended. Dropped, so a restored row for this terminal opens
        * as a fresh session instead.
        */
-      ledger?.record(entityId, { sessionUuid: undefined, endedBy: 'cleared' });
+      ledger?.record(entityId, { sessionUuid: undefined });
       publishCleared(entityId);
     },
     /**
@@ -1093,7 +1093,6 @@ export function createSessions(options: SessionsOptions): Sessions {
     if (commandEntities.delete(entityId)) {
       // Nothing to tell the store about.
     } else {
-      activity.exited(entityId);
       /**
        * The ending, recorded where it is actually known (HIVE-87).
        *
@@ -1103,6 +1102,16 @@ export function createSessions(options: SessionsOptions): Sessions {
        * — and a crash or a SIGKILL runs no hook at all. This is the one place
        * that sees an ending however it arrived, `ptyExit` or `ptyLost`, so it
        * is the only place the fact can be captured rather than inferred.
+       *
+       * **Before `activity.exited`, and that ordering is load-bearing**
+       * (HIVE-93). `exited()` publishes synchronously, so for a declared finish
+       * it reaches `publishFinished` — which asks the ledger whether this
+       * conversation can be resumed — inside this very statement. Recorded
+       * second, that question arrived at a record still claiming to be live and
+       * carrying no `endedAt`, so `resumable` answered "no" for **every** `/done`
+       * and the Resume control never appeared on the rows the feature exists
+       * for. The ledger has to know the session is over before anything asks it
+       * what that means.
        */
       /**
        * `done` when the session said so first, `terminated` otherwise
@@ -1120,6 +1129,7 @@ export function createSessions(options: SessionsOptions): Sessions {
           ? { status: 'done', endedBy: 'finished', endedAt: Date.now() }
           : { status: 'terminated', endedAt: Date.now() },
       );
+      activity.exited(entityId);
     }
     registry.close(entityId);
     /*
