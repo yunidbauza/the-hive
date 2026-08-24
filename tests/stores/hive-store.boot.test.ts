@@ -92,3 +92,114 @@ describe('the boot flag', () => {
     expect('booting' in sessionAt(id)).toBe(false);
   });
 });
+
+/**
+ * The escape for a boot that stopped to ask the user something (HIVE-103).
+ *
+ * A session opened in a folder Claude Code has not been trusted with never
+ * starts: it draws a trust prompt on the shell's own screen and waits. No
+ * `SessionStart` ever fires, so before this the only ways out were a keystroke
+ * or the sixty-second timeout — and the question was behind the cover the whole
+ * time.
+ *
+ * Nothing new observes it. Main's activity tracker already reports `idle` after
+ * two seconds of pty silence, and a boot that has gone quiet is a boot with
+ * nothing left to hide.
+ */
+describe('the boot flag — a boot that goes quiet', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+  });
+
+  /** Spawned, then reported working the way a shell's own output makes it. */
+  const booting = (task?: string) => {
+    const id = state().spawnSession('apfm-web', task);
+    state().setSessionStatus(id, 'working');
+    expect(sessionAt(id).booting).toBe(true);
+    return id;
+  };
+
+  it('uncovers a session whose output stopped', () => {
+    const id = booting();
+
+    // What main sends after two seconds of silence — the trust prompt, drawn
+    // and waiting.
+    state().setSessionStatus(id, 'idle');
+
+    expect(sessionAt(id).booting).toBeUndefined();
+  });
+
+  it('keeps covering a session that is still producing output', () => {
+    // The whole point of the cover. `direnv`, a package manager and the echoed
+    // command line are all `working`, and none of them is worth watching.
+    const id = booting();
+
+    state().setSessionStatus(id, 'working');
+
+    expect(sessionAt(id).booting).toBe(true);
+  });
+
+  it('uncovers a session that is asking for permission', () => {
+    // `waiting` comes from a hook, so Claude is up — but the reason it matters
+    // is the same one: something on that screen wants the user.
+    const id = booting();
+
+    state().setSessionStatus(id, 'waiting');
+
+    expect(sessionAt(id).booting).toBeUndefined();
+  });
+
+  it('uncovers a session whose process died before Claude started', () => {
+    /*
+      Otherwise the cover outlives the terminal it covers, and the explanation —
+      `claude: command not found`, an expired login — sits underneath it for a
+      minute. That is the failure mode the timeout exists for, reached here in
+      two seconds instead.
+    */
+    const id = booting();
+
+    state().setSessionStatus(id, 'terminated');
+
+    expect(sessionAt(id).booting).toBeUndefined();
+  });
+
+  it('lifts the cover even when the status did not change', () => {
+    /**
+     * The guard that makes the rule unconditional.
+     *
+     * An unchanged status is normally a write to drop — Claude repaints
+     * continuously, and a store write per repaint would re-render the fleet.
+     * But a session spawned with no task starts `idle`, so a repeat `idle` is
+     * both "no change" and "the cover must lift", and dropping it would leave a
+     * cover nothing could ever remove.
+     */
+    const id = state().spawnSession('apfm-web');
+    expect(sessionAt(id).status).toBe('idle');
+
+    state().setSessionStatus(id, 'idle');
+
+    expect(sessionAt(id).booting).toBeUndefined();
+  });
+
+  it('still drops an unchanged status once there is no cover to lift', () => {
+    // The other half of that guard: with `booting` gone, a repeated status is
+    // the no-op it has always been, and `entities` keeps its identity.
+    const id = booting();
+    state().setSessionStatus(id, 'idle');
+
+    const before = state().entities;
+    state().setSessionStatus(id, 'idle');
+
+    expect(state().entities).toBe(before);
+  });
+
+  it('removes the key rather than setting it false', () => {
+    // The same shape `markSessionReady` leaves behind; these snapshots are
+    // compared on keys, not values.
+    const id = booting();
+
+    state().setSessionStatus(id, 'idle');
+
+    expect('booting' in sessionAt(id)).toBe(false);
+  });
+});

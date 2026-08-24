@@ -54,6 +54,13 @@ export const READY_SETTLE_MS = 1_000;
  * - **the first keystroke**, for a user who would rather watch it boot, or who
  *   needs to read the error the cover is hiding.
  *
+ * There is a third escape, and it is deliberately **not** here: a session whose
+ * status stops being `working` has nothing left to hide, and that is a fact
+ * about the *process*, so `setSessionStatus` acts on it in the store. It is the
+ * one that answers a boot which stopped to ask the user something — the folder
+ * Claude Code has not been trusted with (HIVE-103) — where no `SessionStart`
+ * is ever coming and this hook's timeout is a minute too late.
+ *
  * Nothing here waits on the ready signal alone. That was the whole risk of this
  * feature: an overlay that outlives the thing it is covering is worse than the
  * noise it replaced, because it hides the explanation as well.

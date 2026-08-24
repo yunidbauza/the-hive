@@ -32,7 +32,21 @@ import {
  * arrives. That is not a limitation of the test, it is the exact failure the
  * cover had to survive: a session whose Claude never starts has its explanation
  * sitting in the terminal underneath, and an overlay that waits forever hides
- * it. So this is the honest environment in which to prove the way out works.
+ * it. So this is the honest environment in which to prove the ways out work.
+ *
+ * That environment turned out to reproduce a **real** failure exactly (HIVE-103):
+ * a folder Claude Code has not been trusted with produces a session whose pty
+ * falls silent with a question on it and never reports anything either. The
+ * quiet escape is tested here for that reason and not by arrangement.
+ *
+ * ## A note on timing, for whoever edits these
+ *
+ * The cover now lifts on its own about two seconds after the pty goes quiet,
+ * and in this harness it does go quiet. The specs that assert the cover is
+ * *present* therefore race that clock. Measured over ten repeats of this file:
+ * they finish at 1.3–1.6s, and the quiet uncover lands at 4.0–4.3s — a margin
+ * of roughly two and a half seconds, and 50/50 green. Adding a slow step to one
+ * of them is what would spend that margin, so measure again if you do.
  */
 const test = base;
 
@@ -158,6 +172,40 @@ test('going back to the overmind and returning finds the session still covered',
     .click();
 
   await expect(page.getByTestId('session-boot-cover')).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test('a boot that goes quiet uncovers itself, with nobody touching it', async ({}, testInfo) => {
+  /**
+   * The escape a real user needed (HIVE-103).
+   *
+   * A session opened in a folder Claude Code has not been trusted with draws a
+   * trust prompt on the shell's own screen and waits. Claude never starts, so
+   * no `SessionStart` fires and no ready signal is ever coming — and the
+   * question sits behind the cover until the user thinks to press a key.
+   *
+   * **This harness reproduces that faithfully rather than by arrangement.** Its
+   * session has no working `claude` either, so its pty falls silent and stays
+   * silent, which is the same observable: main reports `idle` after two seconds
+   * of quiet, and a boot with nothing left to say has nothing left to hide.
+   *
+   * No keystroke here, deliberately — that is the *other* escape, and this
+   * spec is void if it borrows it. The generous timeout is what makes the
+   * assertion meaningful: it is far below `BOOT_COVER_TIMEOUT_MS`, so passing
+   * cannot be the sixty-second fallback arriving early.
+   */
+  const { app, page } = await withProject((name) => testInfo.outputPath(name));
+  try {
+  await startSession(page, PROJECT);
+  const cover = page.getByTestId('session-boot-cover');
+  await expect(cover).toBeVisible();
+
+  await expect(cover).toHaveCount(0, { timeout: 15_000 });
+
+  // And the terminal it was hiding is the thing now on screen.
+  await expect(page.getByTestId('session-meta-bar')).toBeVisible();
   } finally {
     await app.close();
   }

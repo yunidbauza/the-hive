@@ -1808,10 +1808,47 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        */
       const target = currentSessionIn(state, id);
       const entity = state.entities[target];
+      if (!entity || !isSession(entity)) return state;
+
+      /**
+       * **`working` is the only status worth covering** (HIVE-103).
+       *
+       * The boot cover hides output in flight. Any other status says there is
+       * no more output coming — or that something is being asked — and both are
+       * things the user must be allowed to see.
+       *
+       * This is the escape that was missing. A session opened in a folder
+       * Claude Code has not been trusted with never starts: it draws a trust
+       * prompt on the shell's own screen and waits. No `SessionStart` fires,
+       * because Claude never gets that far, so the only way out was the
+       * sixty-second timeout or a keystroke — and the user's first symptom was
+       * a hydralisk that would not go away, with the question hidden behind it.
+       *
+       * Nothing new observes this. Main's activity tracker already derives
+       * `idle` from two seconds of pty silence, and a boot that has stopped
+       * producing output is exactly what that means. Measured against a real
+       * `claude`, the gap between the two readings is wide: a normal boot's
+       * quiet gaps before Claude paints are all under 0.6s, while a trust
+       * prompt goes silent at ~2.5s and stays silent indefinitely.
+       *
+       * The trust prompt itself is deliberately **not** pattern-matched. Its
+       * text does not exist in the byte stream — the TUI positions each word
+       * with cursor moves, so `Is this a project you created…` is never
+       * contiguous — and matching it would need a screen emulator and would
+       * break on the next release's wording. Silence is the observable.
+       */
+      const uncover = entity.booting === true && status !== 'working';
+
+      /*
+        Checked *after* `uncover`, not before. An unchanged status is normally a
+        write to drop — Claude repaints continuously — but a repeat that also
+        has to lift a cover is not a no-op, and returning early on it would be a
+        cover that never lifts, which is the whole class of bug above.
+      */
       if (
-        !entity ||
-        !isSession(entity) ||
-        (entity.status === status && entity.idleDetail === idleDetail)
+        entity.status === status &&
+        entity.idleDetail === idleDetail &&
+        !uncover
       ) {
         return state;
       }
@@ -1830,6 +1867,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ...(idleDetail === undefined ? {} : { idleDetail }),
       };
       if (idleDetail === undefined) delete updated.idleDetail;
+      // Absent, not `false` — `markSessionReady` deletes the key for the same
+      // reason, and the two must leave a session in the same shape.
+      if (uncover) delete updated.booting;
       reviveIfLive(updated);
 
       return {
