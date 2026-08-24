@@ -1600,6 +1600,14 @@ describe('/done', () => {
        *
        * So this mirrors the real rule — a record is resumable once it has a uuid
        * and has ended — and the ordering becomes something a test can see.
+       *
+       * What it deliberately does **not** model is the real ledger's
+       * `startedThisRun` half. That branch only decides an *unended, same-run*
+       * record, which the rule above already refuses, so modelling it would add
+       * nothing here. It would matter to a test that exercised `resumable`
+       * across a restart — this harness has no restart, and a fake that quietly
+       * diverges from the real rule in a case a future test does reach is the
+       * exact shape of the stub this replaced.
        */
       ledger: {
         begin: (id, patch, options) => {
