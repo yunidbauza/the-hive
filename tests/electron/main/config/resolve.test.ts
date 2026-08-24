@@ -5,7 +5,10 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveProject } from '../../../../electron/main/config/resolve';
+import {
+  resolveProject,
+  resolveProjects,
+} from '../../../../electron/main/config/resolve';
 
 /**
  * Path resolution and the fields derived from it (stories 090, 101).
@@ -105,5 +108,89 @@ describe('resolveProject — v1 upgrade defaults', () => {
 
     expect(resolved.status).toBe('not-absolute');
     expect(resolved.name).toBe('Ghost');
+  });
+});
+
+/**
+ * Assigning project keys across the whole list (HIVE-94).
+ *
+ * `resolveProjects` rather than `resolveProject`, because uniqueness is a fact
+ * about the *file* and a single entry cannot answer it. Real directories are
+ * not needed here — a key is derived from the name, never from the filesystem —
+ * so these use unresolvable paths on purpose and assert only the keys.
+ */
+describe('resolveProjects — keys', () => {
+  const keysOf = (raws: Parameters<typeof resolveProjects>[0]) =>
+    resolveProjects(raws, []).map((project) => project.key);
+
+  it('generates a key for every entry that has none', () => {
+    expect(
+      keysOf([
+        { id: 'the-hive', path: '/x/the-hive' },
+        { id: 'incorpx-server', path: '/x/incorpx-server' },
+        { id: 'ai-sdk', path: '/x/ai-sdk' },
+      ]),
+    ).toEqual(['hive', 'is', 'as']);
+  });
+
+  it('prefers a declared key and generates around it', () => {
+    expect(
+      keysOf([
+        { id: 'a', path: '/x/a', name: 'incorpx-server' },
+        { id: 'b', path: '/x/b', name: 'incorpx-sdk', key: 'is' },
+      ]),
+    ).toEqual(['ise', 'is']);
+  });
+
+  /**
+   * Every declared key is claimed **before** a single one is generated.
+   *
+   * Otherwise a generated key could take a literal one out from under an entry
+   * further down the file, which would make the keys depend on where in the
+   * list a project happened to sit — and the entry that *declared* its key
+   * would be the one that lost it.
+   */
+  it('never lets a generated key steal a declared one further down', () => {
+    const keys = keysOf([
+      { id: 'a', path: '/x/a', name: 'hive' },
+      { id: 'b', path: '/x/b', name: 'something-else', key: 'hive' },
+    ]);
+
+    expect(keys[1]).toBe('hive');
+    expect(keys[0]).not.toBe('hive');
+  });
+
+  /*
+    A duplicate *key* is a typo in an alias, not two projects claiming to be the
+    same project — so unlike a duplicate id it does not disable anything. The
+    later entry is regenerated and the collision is reported.
+  */
+  it('regenerates a duplicate declared key and reports it', () => {
+    const errors: string[] = [];
+    const resolved = resolveProjects(
+      [
+        { id: 'a', path: '/x/a', key: 'ix' },
+        { id: 'b', path: '/x/b', name: 'beta', key: 'ix' },
+      ],
+      errors,
+    );
+
+    expect(resolved[0].key).toBe('ix');
+    expect(resolved[1].key).toBe('beta');
+    expect(resolved[1].status).not.toBe('duplicate-id');
+    expect(errors.some((error) => /duplicate key "ix" on "b"/.test(error))).toBe(
+      true,
+    );
+  });
+
+  it('gives every entry a key the pattern accepts, whatever the name', () => {
+    const keys = keysOf([
+      { id: 'a', path: '/x/a', name: '123' },
+      { id: 'b', path: '/x/b', name: '—' },
+      { id: 'c', path: '/x/c', name: 'x' },
+    ]);
+
+    expect(new Set(keys).size).toBe(3);
+    for (const key of keys) expect(key).toMatch(/^[a-z]{2,4}$/);
   });
 });

@@ -69,6 +69,7 @@ const CONFIG: ConfigSnapshot = {
       icon: 'ph-folder',
       origin: 'local',
       status: 'ok',
+      key: 'aw',
       isRepo: true,
     },
     {
@@ -78,6 +79,7 @@ const CONFIG: ConfigSnapshot = {
       icon: 'ph-folder',
       origin: 'local',
       status: 'missing',
+      key: 'ra',
       isRepo: false,
     },
   ],

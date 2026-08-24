@@ -13,6 +13,7 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseSetProjectKeyRequest,
   parseSpawnRequest,
   parseWriteRequest,
 } from '../../../electron/shared/guards';
@@ -738,5 +739,67 @@ describe('parseReorderProjectsRequest', () => {
     expect(() =>
       parseReorderProjectsRequest(JSON.parse('{"ids":[],"__proto__":{}}')),
     ).toThrow(/forbidden key/);
+  });
+});
+
+/**
+ * `config:set-project-key` (HIVE-94).
+ *
+ * The same matrix story 082 specifies, plus the one rule this payload has that
+ * no other does: the key's alphabet is closed. `[a-z]{2,4}` is narrower than
+ * `assertId`, deliberately — nothing that reaches a `cwd`, a lookup table or a
+ * log line can be smuggled through a field that accepts only letters.
+ *
+ * Uniqueness is **not** checked here and could not be: whether a key is taken
+ * is a fact about the file main is about to write, which this guard cannot see.
+ * That check lives inside the write's mutation.
+ */
+describe('parseSetProjectKeyRequest', () => {
+  it('accepts an id and a key', () => {
+    expect(parseSetProjectKeyRequest({ id: 'the-hive', key: 'hive' })).toEqual({
+      id: 'the-hive',
+      key: 'hive',
+    });
+  });
+
+  it('trims, the way a display name is trimmed', () => {
+    // The inline editor commits on blur, and a key that arrived with a trailing
+    // space would be refused for a reason invisible on screen.
+    expect(parseSetProjectKeyRequest({ id: 'a', key: ' hive ' }).key).toBe('hive');
+  });
+
+  it.each([
+    ['one letter', 'h'],
+    ['five letters', 'hivey'],
+    ['uppercase', 'Hive'],
+    ['a digit', 'hiv3'],
+    ['a separator', 'hi-e'],
+    ['empty', ''],
+    ['whitespace only', '   '],
+    ['not a string', 42],
+  ])('refuses a key that is %s', (_label, key) => {
+    expect(() => parseSetProjectKeyRequest({ id: 'a', key })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('refuses a missing field, an extra field, and a malformed id', () => {
+    expect(() => parseSetProjectKeyRequest({ id: 'a' })).toThrow(
+      IpcValidationError,
+    );
+    expect(() =>
+      parseSetProjectKeyRequest({ id: 'a', key: 'ab', extra: 1 }),
+    ).toThrow(IpcValidationError);
+    expect(() => parseSetProjectKeyRequest({ id: '../x', key: 'ab' })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('refuses a prototype-polluting key', () => {
+    expect(() =>
+      parseSetProjectKeyRequest(
+        JSON.parse('{"id":"a","key":"ab","__proto__":{"x":1}}'),
+      ),
+    ).toThrow(IpcValidationError);
   });
 });

@@ -243,6 +243,15 @@ export interface Project {
 export interface ProjectRow extends Project {
   /** Display name, as the config declares it. */
   name: string;
+  /**
+   * The 2–4 letter alias the config declares or generated (HIVE-94).
+   *
+   * Carried on the row rather than looked up per consumer because the picker
+   * both *searches* it and *shows* it, and a second read of the config snapshot
+   * to answer the same question is how two surfaces come to disagree about
+   * which projects exist.
+   */
+  key: string;
 }
 
 /**

@@ -41,6 +41,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
@@ -103,6 +104,12 @@ export const CH = {
   configRenameProject: 'config:rename-project',
   configRepointProject: 'config:repoint-project',
   configReorderProjects: 'config:reorder-projects',
+  /**
+   * HIVE-94's key editor. `invoke` like every other mutating config verb, and
+   * for the same reason: it returns the fresh snapshot, and it can be *refused*
+   * — a key already taken by another project — which a send could not report.
+   */
+  configSetProjectKey: 'config:set-project-key',
   /**
    * Story 102's clone verbs.
    *
@@ -866,6 +873,14 @@ export interface HiveBridge {
     /** Change a project's display name (story 103). The id is never touched. */
     renameProject(request: RenameProjectRequest): Promise<ConfigSnapshot>;
     /**
+     * Change a project's typing alias (HIVE-94). The id is never touched.
+     *
+     * Refused, with the reason in `snapshot.errors`, when another project in
+     * the file already holds the key — checked against the bytes on disk rather
+     * than against the caller's snapshot.
+     */
+    setProjectKey(request: SetProjectKeyRequest): Promise<ConfigSnapshot>;
+    /**
      * Point a project at a folder that moved (story 103).
      *
      * The path comes from {@link HiveBridge.config.chooseDirectory}, and main
@@ -1529,6 +1544,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'renameProject',
   'repointProject',
   'reorderProjects',
+  // HIVE-94.
+  'setProjectKey',
   // Story 102.
   'startClone',
   'cancelClone',

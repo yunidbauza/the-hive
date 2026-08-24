@@ -45,6 +45,7 @@ beforeEach(() => {
     icon: 'ph-folder',
     origin: 'local',
     status: 'ok',
+    key: 'demo',
     isRepo: true,
   });
 });

@@ -7,6 +7,7 @@ import {
   type NotificationPrefs,
   type ProjectOrigin,
 } from '@shared/config-contract';
+import { PROJECT_KEY_HINT, isProjectKey } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
 import {
   LEGACY_NOTIFICATION_KEYS,
@@ -34,6 +35,16 @@ import {
 export interface RawProject {
   id: string;
   path: string;
+  /**
+   * The typing alias (HIVE-94). Absent when the file omits it.
+   *
+   * Optional on read even though `ProjectConfig.key` is required: a config
+   * written before this build — or by hand — has no keys, and refusing to load
+   * it would make a new field a breaking change. `resolveProjects` generates
+   * one for every entry that arrives without it, and `loadConfig` writes them
+   * back once so the next read is stable.
+   */
+  key?: string;
   /** Absent when the file omitted it; `resolveProject` supplies the default. */
   name?: string;
   icon?: string;
@@ -163,6 +174,7 @@ const TOP_LEVEL_KEYS = [
 const PROJECT_KEYS = [
   'id',
   'path',
+  'key',
   'name',
   'icon',
   'origin',
@@ -637,6 +649,22 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       return;
     }
 
+    /*
+      HIVE-94's alias. Rejected the way `origin` is — the whole entry is
+      dropped and the reason reported — rather than silently regenerated. A key
+      is a thing the user typed into the file expecting to be able to type it
+      into the console, and quietly substituting a different one would leave
+      them with a config that does not do what it says.
+    */
+    let key: string | undefined;
+    if (entry.key !== undefined) {
+      if (typeof entry.key !== 'string' || !isProjectKey(entry.key)) {
+        errors.push(`${at}.key: expected ${PROJECT_KEY_HINT}`);
+        return;
+      }
+      key = entry.key;
+    }
+
     // The three fields story 101 adds. Each is optional: a v1 file omits all
     // of them, and `resolveProject` supplies the defaults in memory.
     let name: string | undefined;
@@ -678,6 +706,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     projects.push({
       id,
       path: entry.path,
+      ...(key !== undefined ? { key } : {}),
       ...(name !== undefined ? { name } : {}),
       ...(icon !== undefined ? { icon } : {}),
       ...(origin !== undefined ? { origin } : {}),

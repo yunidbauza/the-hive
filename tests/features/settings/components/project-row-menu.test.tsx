@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +23,7 @@ function setup(overrides: Partial<Props> = {}) {
     onMoveUp: vi.fn(),
     onMoveDown: vi.fn(),
     onRename: vi.fn(),
+    onChangeKey: vi.fn(),
     onRepoint: vi.fn(),
     onRemove: vi.fn(),
     ...overrides,
@@ -112,5 +113,57 @@ describe('ProjectRowMenu', () => {
       'aria-disabled',
       'true',
     );
+  });
+});
+
+/**
+ * *Change key…* (HIVE-94).
+ *
+ * Between *Rename…* and *Change folder…*: the three edits are ordered by how
+ * much they change, and renaming what a project is called sits nearer to
+ * renaming what it is typed as than either does to moving it on disk.
+ */
+describe('ProjectRowMenu · Change key…', () => {
+  it('offers the item and calls back when it is chosen', async () => {
+    const { onChangeKey } = setup();
+    await open();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Change key…' }));
+
+    expect(onChangeKey).toHaveBeenCalled();
+  });
+
+  it('sits between Rename… and Change folder…', async () => {
+    setup();
+    await open();
+
+    const labels = screen
+      .getAllByRole('menuitem')
+      .map((item) => item.textContent);
+
+    expect(labels.indexOf('Change key…')).toBe(labels.indexOf('Rename…') + 1);
+    expect(labels.indexOf('Change key…')).toBe(
+      labels.indexOf('Change folder…') - 1,
+    );
+  });
+
+  /**
+   * It hands focus off, exactly as *Rename…* does.
+   *
+   * The item swaps the row's chip for a control that focuses itself on mount,
+   * and Radix's focus restore lands *after* that. Without the hand-off the
+   * restore blurs the input, blur commits, an unchanged key cancels — and the
+   * editor closes before a key is pressed.
+   */
+  it('does not let the trigger take focus back', async () => {
+    setup();
+    // Captured before the menu opens: once it has, Radix marks the rest of the
+    // tree inert and the trigger is no longer reachable by role.
+    const trigger = screen.getByRole('button');
+    await open();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Change key…' }));
+
+    await waitFor(() => expect(trigger).not.toHaveFocus());
   });
 });

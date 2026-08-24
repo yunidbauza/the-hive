@@ -11,7 +11,7 @@ import {
 } from '@stores/hive-store';
 import { useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
-const PLACEHOLDER = 'help · status · send <session> <message> · spawn <repo> <task>';
+const PLACEHOLDER = 'help · status · send <session> <message> · spawn <project> <task>';
 const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
 
 /**

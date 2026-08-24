@@ -6,8 +6,10 @@ import {
   renameProjectInConfig,
   reorderProjectsInConfig,
   repointProjectInConfig,
+  setProjectKeyInConfig,
 } from '@/lib/project-config';
 
+import { ProjectKeyEditor } from '@features/settings/components/project-key-editor';
 import { ProjectNameEditor } from '@features/settings/components/project-name-editor';
 import { ProjectRemoveConfirm } from '@features/settings/components/project-remove-confirm';
 import { ProjectRow } from '@features/settings/components/project-row';
@@ -21,7 +23,10 @@ interface ProjectsListProps {
 }
 
 /** Which row, if any, has replaced its resting state with something else. */
-type RowMode = { id: string; kind: 'rename' | 'confirm-remove' } | null;
+type RowMode = {
+  id: string;
+  kind: 'rename' | 'change-key' | 'confirm-remove';
+} | null;
 
 /**
  * The ordered list of the user's projects (story 103).
@@ -37,6 +42,24 @@ type RowMode = { id: string; kind: 'rename' | 'confirm-remove' } | null;
  * promoting it to `ui-store` would put view state nobody else reads into a
  * store shared with thirteen live terminals.
  */
+/**
+ * Every key except this project's own, mapped to who holds it (HIVE-94).
+ *
+ * Its own key is excluded so that re-opening the editor and pressing Enter is a
+ * no-op rather than a refusal against itself — the same allowance `setProjectKey`
+ * makes in main when it skips the entry being edited.
+ */
+function keysTakenBy(
+  entries: readonly ProjectConfig[],
+  exclude: string,
+): ReadonlyMap<string, string> {
+  return new Map(
+    entries
+      .filter((project) => project.id !== exclude)
+      .map((project) => [project.key, project.name]),
+  );
+}
+
 export function ProjectsList({ entries }: ProjectsListProps) {
   /*
     Counts, not membership. The confirmation says the number out loud, and the
@@ -178,6 +201,19 @@ export function ProjectsList({ entries }: ProjectsListProps) {
                 />
               ) : null
             }
+            keyEditor={
+              active === 'change-key' ? (
+                <ProjectKeyEditor
+                  initialKey={project.key}
+                  takenKeys={keysTakenBy(entries, project.id)}
+                  onCommit={(key) => {
+                    setMode(null);
+                    void setProjectKeyInConfig({ id: project.id, key });
+                  }}
+                  onCancel={() => setMode(null)}
+                />
+              ) : null
+            }
             menu={
               <ProjectRowMenu
                 projectName={project.name}
@@ -186,6 +222,9 @@ export function ProjectsList({ entries }: ProjectsListProps) {
                 onMoveUp={() => move(project.id, -1)}
                 onMoveDown={() => move(project.id, 1)}
                 onRename={() => setMode({ id: project.id, kind: 'rename' })}
+                onChangeKey={() =>
+                  setMode({ id: project.id, kind: 'change-key' })
+                }
                 onRepoint={() => void onRepoint(project.id)}
                 onRemove={() => onRemove(project.id)}
               />

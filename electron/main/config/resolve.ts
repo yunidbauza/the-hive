@@ -7,6 +7,7 @@ import {
   type ProjectConfig,
 } from '@shared/config-contract';
 
+import { deriveProjectKey } from './identity';
 import type { RawProject } from './parse';
 
 /**
@@ -35,6 +36,9 @@ import type { RawProject } from './parse';
  * else's directory is not a feature anyone asked for. It falls through
  * unexpanded and is caught by the absolute-path check.
  */
+/** Shared by the single-entry fallback below; never mutated. */
+const EMPTY: ReadonlySet<string> = new Set<string>();
+
 function expandHome(path: string): string {
   if (path === '~') return homedir();
   if (path.startsWith('~/')) return join(homedir(), path.slice(2));
@@ -69,10 +73,21 @@ function decorate(
   real: string | null,
 ): Pick<
   ProjectConfig,
-  'id' | 'name' | 'icon' | 'origin' | 'shell' | 'claudeCommand' | 'env'
+  'id' | 'key' | 'name' | 'icon' | 'origin' | 'shell' | 'claudeCommand' | 'env'
 > {
   return {
     id: raw.id,
+    /**
+     * Defaulted here only for the single-entry path (HIVE-94).
+     *
+     * {@link resolveProjects} assigns keys **before** calling through, because
+     * uniqueness is a fact about the whole list and this function can see one
+     * entry. What reaches this fallback is therefore only `resolveProject`
+     * called directly — the `{ id: 'probe' }` throwaways `addProject` and
+     * `repointProject` use to validate a path, whose key nothing ever reads.
+     * Deriving one anyway keeps the return type honest without a cast.
+     */
+    key: raw.key ?? deriveProjectKey(raw.name ?? raw.id, EMPTY),
     name: raw.name ?? (real === null ? raw.id : basename(real)),
     icon: raw.icon ?? DEFAULT_PROJECT_ICON,
     origin: raw.origin ?? 'local',
@@ -147,13 +162,53 @@ export function resolveProject(raw: RawProject): ProjectConfig {
  * on where in the file a line sits, which is not a rule anyone would guess
  * while editing it.
  */
+/**
+ * Give every entry a key, keeping the ones the file already declared (HIVE-94).
+ *
+ * Two passes, and the order is the whole point: every declared key is claimed
+ * *before* a single one is generated, so a generated key can never take a
+ * literal one out from under an entry further down the file — which would make
+ * the keys depend on where in the list a project happened to sit.
+ *
+ * A duplicate declared key is reported and the later entry is regenerated,
+ * mirroring how a duplicate *id* is reported. Unlike a duplicate id it does not
+ * disable the project: two entries claiming `ix` is a typo in an alias, not two
+ * projects claiming to be the same project, so the honest repair is to give the
+ * second one a key that works and say so.
+ */
+function withKeys(
+  raws: readonly RawProject[],
+  errors: string[],
+): RawProject[] {
+  const claimed = new Set<string>();
+  const declared = raws.map((raw) => {
+    if (raw.key === undefined) return raw;
+    if (claimed.has(raw.key)) {
+      errors.push(
+        `projects: duplicate key "${raw.key}" on "${raw.id}" — generating a new one`,
+      );
+      // Fall through to the generating pass by forgetting what it declared.
+      return { ...raw, key: undefined };
+    }
+    claimed.add(raw.key);
+    return raw;
+  });
+
+  return declared.map((raw) => {
+    if (raw.key !== undefined) return raw;
+    const key = deriveProjectKey(raw.name ?? raw.id, claimed);
+    claimed.add(key);
+    return { ...raw, key };
+  });
+}
+
 export function resolveProjects(
   raws: readonly RawProject[],
   errors: string[],
 ): ProjectConfig[] {
   const claimed = new Set<string>();
 
-  return raws.map((raw) => {
+  return withKeys(raws, errors).map((raw) => {
     if (claimed.has(raw.id)) {
       errors.push(
         `projects: duplicate id "${raw.id}" — keeping the first entry, ignoring this one`,

@@ -43,6 +43,7 @@ import {
   parseKillRequest,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
+  parseSetProjectKeyRequest,
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
@@ -101,6 +102,7 @@ import {
   resetConfig,
   setJira,
   setNotifications,
+  setProjectKey,
   setProjectRuntime,
   setRuntime,
 } from '../config';
@@ -910,6 +912,17 @@ export function registerIpcHandlers(): void {
     CH.configRepointProject,
     (_event, payload): ConfigSnapshot =>
       repointProject(parseRepointProjectRequest(payload)),
+  );
+
+  /*
+    HIVE-94's key editor. The guard proves the shape — 2–4 lowercase letters —
+    and main proves the value, because whether a key is free is a fact about the
+    file rather than about the payload.
+  */
+  handle(
+    CH.configSetProjectKey,
+    (_event, payload): ConfigSnapshot =>
+      setProjectKey(parseSetProjectKeyRequest(payload)),
   );
 
   handle(

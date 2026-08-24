@@ -9,7 +9,7 @@ import type { ParsedCommand } from '@/types/command';
  * render.
  *
  * Anything it cannot know from the text alone stays *out* of here. "No such
- * session" and "unknown repo" are runtime failures that need the store, so the
+ * session" and "unknown project" are runtime failures that need the store, so the
  * parser happily returns `open`/`spawn` with an id that may not exist; the
  * executor is what rejects it. The split is the point: shape errors here,
  * existence errors there.
@@ -66,6 +66,39 @@ function takeWord(input: string): [word: string, rest: string] {
   return [match[1], match[2].replace(/^\s+/u, '')];
 }
 
+/**
+ * Like {@link takeWord}, but a quoted argument counts as one word (HIVE-94).
+ *
+ * `spawn` takes a project, and a project can now be named by its *display
+ * name* — which is prose and may contain spaces. `spawn The Hive fix the bug`
+ * is unparseable by construction: nothing in the string says where the name
+ * stops and the task starts. Quotes are how the user says so, and they are the
+ * convention every shell already taught them.
+ *
+ * Deliberately **only the opening character decides**. There is no escaping and
+ * no quote handling anywhere else in the grammar: an unterminated quote falls
+ * back to plain word-splitting rather than swallowing the rest of the line, so
+ * a stray `"` in a task is still a task and not a parse failure. Both quote
+ * characters are accepted because an apostrophe-free name is not something a
+ * user should have to think about.
+ */
+function takeArgument(input: string): [word: string, rest: string] {
+  const quote = input[0];
+  if (quote !== '"' && quote !== "'") return takeWord(input);
+
+  const closing = input.indexOf(quote, 1);
+  // Unterminated: not a quoted argument at all. `"The` is then an ordinary
+  // word, which fails to resolve and is reported as an unknown project — a far
+  // better outcome than consuming the task.
+  if (closing === -1) return takeWord(input);
+
+  const word = input.slice(1, closing);
+  const rest = input.slice(closing + 1).replace(/^\s+/u, '');
+  // An empty `""` is not an argument. Reporting it as a missing one is what the
+  // user meant, and keeps `!project` at the call site the only emptiness check.
+  return [word, rest];
+}
+
 export function parseCommand(raw: string): ParsedCommand {
   /**
    * `raw` is trimmed and otherwise left alone; only the *derived* message and
@@ -110,12 +143,12 @@ export function parseCommand(raw: string): ParsedCommand {
     }
 
     case 'spawn': {
-      const [repo, tail] = takeWord(rest);
+      const [project, tail] = takeArgument(rest);
       const task = normalize(tail);
-      if (!repo || task === '') {
+      if (!project || task === '') {
         return { kind: 'usage', raw: input, command: 'spawn' };
       }
-      return { kind: 'spawn', raw: input, repo, task };
+      return { kind: 'spawn', raw: input, project, task };
     }
 
     default:

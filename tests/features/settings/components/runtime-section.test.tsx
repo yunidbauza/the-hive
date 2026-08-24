@@ -13,6 +13,8 @@ import {
 import { RuntimeSection } from '@features/settings/components/runtime-section';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 const setRuntimeConfig = vi.fn();
 const setProjectRuntimeConfig = vi.fn();
 const diagnoseAgentCommand = vi.fn();
@@ -35,6 +37,7 @@ const entry = (over: Partial<ProjectConfig> & { id: string }): ProjectConfig => 
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
+  key: testProjectKey(over.id),
   isRepo: true,
   ...over,
 });

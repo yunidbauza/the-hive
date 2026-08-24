@@ -35,6 +35,8 @@ import { useUiStore } from '@stores/ui-store';
 import { notif } from '../support/notifications';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 /**
  * Every selector hook is asserted against the fixtures. Derived values are
  * computed in selectors and never stored, so these tests are the only place
@@ -652,6 +654,7 @@ describe('hive-store selectors', () => {
         icon: 'ph-folder',
         origin: 'local' as const,
         status: 'ok' as const,
+        key: testProjectKey(id),
         isRepo: true,
       })),
     });
@@ -700,7 +703,7 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useProjects());
 
       expect(result.current).toEqual([
-        { id: 'the-hive', name: 'The Hive', icon: 'ph-folder' },
+        { id: 'the-hive', key: 'th', name: 'The Hive', icon: 'ph-folder' },
       ]);
     });
 

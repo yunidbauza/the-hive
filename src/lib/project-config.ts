@@ -5,6 +5,7 @@ import type {
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
   EnvDiagnostic,
+  ProjectConfig,
   ProjectStatus,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -12,6 +13,7 @@ import type {
   RepointProjectRequest,
   SetJiraRequest,
   SetNotificationsRequest,
+  SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
@@ -345,6 +347,18 @@ export const renameProjectInConfig = (
   request: RenameProjectRequest,
 ): Promise<void> => mutate((bridge) => bridge.config.renameProject(request));
 
+/**
+ * Change a project's typing alias (HIVE-94).
+ *
+ * Refused by main when another project already holds the key — which arrives,
+ * like every other refusal, as the returned snapshot's `errors`. The editor
+ * checks for a duplicate too, but that check is the courtesy: main has the file
+ * and the renderer has a snapshot that a hand edit may already have outdated.
+ */
+export const setProjectKeyInConfig = (
+  request: SetProjectKeyRequest,
+): Promise<void> => mutate((bridge) => bridge.config.setProjectKey(request));
+
 /** Point a project at a folder that moved (story 103). */
 export const repointProjectInConfig = (
   request: RepointProjectRequest,
@@ -468,6 +482,57 @@ export function projectPath(projectId: string): string | null {
   const entry = snapshot?.projects.find((project) => project.id === projectId);
   if (!entry || entry.status !== 'ok') return null;
   return entry.path;
+}
+
+/** Which field of a project answered to what the user typed (HIVE-94). */
+export type ProjectRefField = 'key' | 'id' | 'name';
+
+export interface ProjectRefMatch {
+  project: ProjectConfig;
+  matched: ProjectRefField;
+}
+
+/**
+ * Resolve whatever the user typed to exactly one project (HIVE-94).
+ *
+ * Every surface that takes a project *from a human* goes through here — the
+ * console's `spawn`, and the new-session picker's search — so there is one
+ * answer to "does this name a project?" rather than one per caller.
+ *
+ * ## Exact, never a prefix
+ *
+ * `incorp` does not resolve to `incorpx-server`, and that is the point: a spawn
+ * lands in a folder and starts an agent in it. A prefix match turns a typo into
+ * a session in the wrong repository, which is discovered later and by then has
+ * done work. Refusing costs a retype.
+ *
+ * ## Key, then id, then name
+ *
+ * The order matters only when two *different* projects answer, which the key
+ * and id alphabets make unlikely in practice — but a display name equal to
+ * another project's id is entirely possible, and the id wins there because it
+ * is the older, stable handle. {@link ProjectRefMatch.matched} reports which
+ * field answered so a caller can say so.
+ *
+ * Case-insensitive throughout: keys and ids are lowercase by construction, and
+ * a user reading `The Hive` off the Projects pane should not have to reproduce
+ * its capitals.
+ */
+export function resolveProjectRef(
+  input: string,
+  projects: readonly ProjectConfig[],
+): ProjectRefMatch | null {
+  const wanted = input.trim().toLowerCase();
+  if (wanted === '') return null;
+
+  const on = (field: ProjectRefField): ProjectRefMatch | null => {
+    const project = projects.find(
+      (candidate) => candidate[field].toLowerCase() === wanted,
+    );
+    return project === undefined ? null : { project, matched: field };
+  };
+
+  return on('key') ?? on('id') ?? on('name');
 }
 
 export function projectAccess(projectId: string): ProjectAccess {
