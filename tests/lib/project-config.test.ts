@@ -19,6 +19,7 @@ import {
   readNotificationDelivery,
   resetConfigToTemplate,
   resetProjectConfig,
+  resolveProjectRef,
   revealConfigFile,
   setProjectConfigForTest,
   subscribeProjectConfig,
@@ -35,8 +36,20 @@ import {
 
 const CONFIG_PATH = '/home/dev/.hive/config.json';
 
+/**
+ * One declared project. `key` and `name` default off the id, because most
+ * assertions here are about paths and access and do not care what a project is
+ * called — the resolver's own tests are the ones that set them (HIVE-94).
+ */
+type Declared = {
+  id: string;
+  status: ProjectStatus;
+  key?: string;
+  name?: string;
+};
+
 function snapshot(
-  projects: { id: string; status: ProjectStatus }[] = [],
+  projects: Declared[] = [],
   overrides: Partial<ConfigSnapshot> = {},
 ): ConfigSnapshot {
   return {
@@ -44,9 +57,10 @@ function snapshot(
     templateWritten: false,
     shell: '/bin/zsh',
     claudeCommand: 'claude',
-    projects: projects.map(({ id, status }) => ({
+    projects: projects.map(({ id, status, key, name }) => ({
       id,
-      name: id,
+      key: key ?? id.slice(0, 2),
+      name: name ?? id,
       path: status === 'ok' ? `/repos/${id}` : null,
       icon: 'ph-folder',
       origin: 'local' as const,
@@ -419,5 +433,151 @@ describe('story 107 verbs', () => {
       appInfo: vi.fn().mockRejectedValue(new Error('channel gone')),
     };
     await expect(readAppInfo()).resolves.toBeNull();
+  });
+});
+
+/**
+ * Resolving what a human typed to exactly one project (HIVE-94).
+ *
+ * The console's `spawn` and the picker's search both come through here, so this
+ * is the one place that answers "does this name a project?". The rules it
+ * enforces are about *safety* as much as convenience — see the exactness tests.
+ */
+describe('resolveProjectRef', () => {
+  const projects = () =>
+    snapshot([
+      { id: 'the-hive', status: 'ok', key: 'hive', name: 'The Hive' },
+      { id: 'incorpx-server', status: 'ok', key: 'is', name: 'IncorpX Server' },
+    ]).projects;
+
+  it('matches a key, an id and a name', () => {
+    expect(resolveProjectRef('hive', projects())).toMatchObject({
+      kind: 'match',
+      matched: 'key',
+      project: { id: 'the-hive' },
+    });
+    expect(resolveProjectRef('the-hive', projects())).toMatchObject({
+      kind: 'match',
+      matched: 'id',
+      project: { id: 'the-hive' },
+    });
+    expect(resolveProjectRef('The Hive', projects())).toMatchObject({
+      kind: 'match',
+      matched: 'name',
+      project: { id: 'the-hive' },
+    });
+  });
+
+  it('is case-insensitive, and tolerates surrounding whitespace', () => {
+    // Keys and ids are lowercase by construction; a user reading `The Hive` off
+    // the Projects pane should not have to reproduce its capitals.
+    expect(resolveProjectRef('HIVE', projects())).toMatchObject({
+      project: { id: 'the-hive' },
+    });
+    expect(resolveProjectRef('  the-HIVE  ', projects())).toMatchObject({
+      project: { id: 'the-hive' },
+    });
+  });
+
+  /**
+   * Exact, never a prefix — the safety property this function exists for.
+   *
+   * A spawn lands in a folder and starts an agent in it, so a prefix match
+   * turns a typo into work done in the wrong repository, discovered later and
+   * by then already done. Refusing costs a retype.
+   */
+  it.each(['incorp', 'hiv', 'the-hive-2', 'server'])(
+    'refuses %s rather than guessing',
+    (input) => {
+      expect(resolveProjectRef(input, projects()).kind).toBe('none');
+    },
+  );
+
+  it('reports nothing for empty input and for an empty list', () => {
+    expect(resolveProjectRef('', projects()).kind).toBe('none');
+    expect(resolveProjectRef('   ', projects()).kind).toBe('none');
+    expect(resolveProjectRef('hive', []).kind).toBe('none');
+  });
+
+  /**
+   * Two projects with the same display name refuse rather than race.
+   *
+   * Display names are never uniqueness-checked — two folders both called `api`,
+   * a monorepo split, a pair of worktrees — so returning the first would start
+   * an agent in whichever sat earlier in the file. That is the "wrong
+   * repository, discovered later" failure the exactness rule exists to prevent,
+   * arriving by a different door.
+   */
+  it('reports ambiguity instead of picking the first match', () => {
+    const twins = snapshot([
+      { id: 'client-api', status: 'ok', key: 'ca', name: 'api' },
+      { id: 'server-api', status: 'ok', key: 'sa', name: 'api' },
+    ]).projects;
+
+    const result = resolveProjectRef('API', twins);
+
+    expect(result.kind).toBe('ambiguous');
+    expect(result).toMatchObject({ matched: 'name' });
+    expect(
+      result.kind === 'ambiguous'
+        ? result.projects.map((project) => project.id)
+        : [],
+    ).toEqual(['client-api', 'server-api']);
+  });
+
+  /*
+    An unambiguous field still answers even when a later one is ambiguous: the
+    key is exactly the way out of the ambiguity above, so it must not be
+    poisoned by it.
+  */
+  it('still resolves a unique key when the names collide', () => {
+    const twins = snapshot([
+      { id: 'client-api', status: 'ok', key: 'ca', name: 'api' },
+      { id: 'server-api', status: 'ok', key: 'sa', name: 'api' },
+    ]).projects;
+
+    expect(resolveProjectRef('sa', twins)).toMatchObject({
+      kind: 'match',
+      project: { id: 'server-api' },
+    });
+  });
+
+  /*
+    Key first, then id, then name. The order matters only when two *different*
+    projects answer — a display name equal to another project's id is entirely
+    possible — and the older, stable handle wins.
+  */
+  it('prefers a key over an id, and an id over a name', () => {
+    const overlapping = snapshot([
+      { id: 'alpha', status: 'ok', key: 'al', name: 'beta' },
+      { id: 'beta', status: 'ok', key: 'be', name: 'al' },
+    ]).projects;
+
+    expect(resolveProjectRef('al', overlapping)).toMatchObject({
+      kind: 'match',
+      matched: 'key',
+      project: { id: 'alpha' },
+    });
+    expect(resolveProjectRef('beta', overlapping)).toMatchObject({
+      kind: 'match',
+      matched: 'id',
+      project: { id: 'beta' },
+    });
+  });
+
+  it('resolves a project whose directory is unusable', () => {
+    /*
+      Two different questions: "which project is this?" and "can it host a
+      PTY?". This answers only the first — `projectAccess` owns the second.
+      Conflating them would make an unmapped project unnameable, so the console
+      could not even explain why it was refusing.
+    */
+    const missing = snapshot([
+      { id: 'gone', status: 'missing', key: 'go' },
+    ]).projects;
+
+    expect(resolveProjectRef('go', missing)).toMatchObject({
+      project: { id: 'gone' },
+    });
   });
 });

@@ -143,6 +143,7 @@ describe('useProjectWatcher', () => {
           icon: 'ph-folder',
           origin: 'local',
           status: 'missing',
+          key: 'aw',
           isRepo: false,
         },
       ],

@@ -86,6 +86,7 @@ describe('can', () => {
             icon: 'ph-folder',
             origin: 'local',
             status: 'ok',
+            key: 'aw',
             isRepo: true,
           },
           {
@@ -95,6 +96,7 @@ describe('can', () => {
             icon: 'ph-folder',
             origin: 'local',
             status: 'missing',
+            key: 'ra',
             isRepo: false,
           },
         ],

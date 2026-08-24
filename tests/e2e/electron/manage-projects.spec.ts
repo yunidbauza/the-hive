@@ -353,3 +353,146 @@ test('removing a project with no live sessions takes one click', async ({}, test
     await app.close();
   }
 });
+
+/**
+ * The key backfill, in the real app (HIVE-94).
+ *
+ * `launchWithThree` writes a config with no keys — which is every config
+ * written before this build — so simply booting is the scenario. Only a real
+ * launch can show this: the backfill fires inside `loadConfig`, so a unit test
+ * proves the write happens and this proves the *app* is the thing that
+ * triggers it, and that what lands on screen matches what landed on disk.
+ */
+test('launching backfills a key for every project, on disk and on the row', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithThree((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openSettings(page);
+
+    const written = JSON.parse(readFileSync(configPath, 'utf8'))
+      .projects as { id: string; key: string }[];
+    // Five-letter names abbreviate to three: `alpha` reads as `alp`, not `alph`.
+    expect(written.map((entry) => entry.key)).toEqual(['alp', 'bra', 'cha']);
+
+    // Readable at rest, without hovering — a key nobody can see is a key
+    // nobody can type.
+    for (const entry of written) {
+      await expect(
+        page.getByTitle(`type "${entry.key}" wherever a project is asked for`),
+      ).toBeVisible();
+    }
+
+    // The comment survives a write the user never asked for.
+    expect(JSON.parse(readFileSync(configPath, 'utf8'))['//']).toBe(
+      'a comment the UI must not eat',
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Changing a key through the row menu (HIVE-94).
+ *
+ * The whole loop, in the app: open the editor from the menu, type a key, and
+ * find it both on disk and back on the row — with the id untouched, because the
+ * key is an alias and sessions reference the id.
+ */
+test('changing a key writes the file and never touches the id', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithThree((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openSettings(page);
+
+    await openRowMenu(page, 'alpha');
+    await page.getByRole('menuitem', { name: 'Change key…' }).click();
+
+    const input = page.getByRole('textbox', { name: 'Project key' });
+    await expect(input).toBeFocused();
+    await input.fill('zz');
+    await input.press('Enter');
+
+    await expect(
+      page.getByTitle('type "zz" wherever a project is asked for'),
+    ).toBeVisible();
+
+    const written = JSON.parse(readFileSync(configPath, 'utf8'));
+    expect(written.projects[0].key).toBe('zz');
+    expect(written.projects[0].id).toBe('alpha');
+    expect(idsOnDisk(configPath)).toEqual(['alpha', 'bravo', 'charlie']);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * A duplicate is refused inline, before anything is written.
+ *
+ * The editor names the project already holding the key, which is the difference
+ * between a refusal and an answer — and nothing reaches the file, so the row
+ * keeps the key it had.
+ */
+test('a duplicate key is refused in the editor and never written', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithThree((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openSettings(page);
+    await openRowMenu(page, 'alpha');
+    await page.getByRole('menuitem', { name: 'Change key…' }).click();
+
+    const input = page.getByRole('textbox', { name: 'Project key' });
+    // `bra` belongs to bravo, which the backfill gave it on launch.
+    await input.fill('bra');
+
+    await expect(page.getByText('already used by bravo')).toBeVisible();
+
+    await input.press('Enter');
+    await expect(
+      page.getByTitle('type "alp" wherever a project is asked for'),
+    ).toBeVisible();
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).projects[0].key).toBe(
+      'alp',
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Escape backs out of the key edit, not out of Settings.
+ *
+ * The same trap the rename editor documents: Settings is a Radix dialog and
+ * Escape is how a dialog is dismissed, so an Escape left to bubble would close
+ * the whole overlay — one key pressed to abandon an edit, and the screen gone.
+ */
+test('cancelling a key change leaves settings open and the key unchanged', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithThree((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openSettings(page);
+    await openRowMenu(page, 'alpha');
+    await page.getByRole('menuitem', { name: 'Change key…' }).click();
+
+    const input = page.getByRole('textbox', { name: 'Project key' });
+    await input.fill('zz');
+    await input.press('Escape');
+
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(
+      page.getByTitle('type "alp" wherever a project is asked for'),
+    ).toBeVisible();
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).projects[0].key).toBe(
+      'alp',
+    );
+  } finally {
+    await app.close();
+  }
+});

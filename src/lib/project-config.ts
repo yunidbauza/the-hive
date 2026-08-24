@@ -5,6 +5,7 @@ import type {
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
   EnvDiagnostic,
+  ProjectConfig,
   ProjectStatus,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -12,6 +13,7 @@ import type {
   RepointProjectRequest,
   SetJiraRequest,
   SetNotificationsRequest,
+  SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
@@ -345,6 +347,18 @@ export const renameProjectInConfig = (
   request: RenameProjectRequest,
 ): Promise<void> => mutate((bridge) => bridge.config.renameProject(request));
 
+/**
+ * Change a project's typing alias (HIVE-94).
+ *
+ * Refused by main when another project already holds the key — which arrives,
+ * like every other refusal, as the returned snapshot's `errors`. The editor
+ * checks for a duplicate too, but that check is the courtesy: main has the file
+ * and the renderer has a snapshot that a hand edit may already have outdated.
+ */
+export const setProjectKeyInConfig = (
+  request: SetProjectKeyRequest,
+): Promise<void> => mutate((bridge) => bridge.config.setProjectKey(request));
+
 /** Point a project at a folder that moved (story 103). */
 export const repointProjectInConfig = (
   request: RepointProjectRequest,
@@ -468,6 +482,81 @@ export function projectPath(projectId: string): string | null {
   const entry = snapshot?.projects.find((project) => project.id === projectId);
   if (!entry || entry.status !== 'ok') return null;
   return entry.path;
+}
+
+/** Which field of a project answered to what the user typed (HIVE-94). */
+export type ProjectRefField = 'key' | 'id' | 'name';
+
+/**
+ * What one project reference resolved to.
+ *
+ * Three states rather than "the project or null", because *ambiguous* and
+ * *unknown* are different answers and only one of them is the user's mistake.
+ * Collapsing them would make the console tell someone their project does not
+ * exist while it is sitting in the list twice.
+ */
+export type ProjectRefResult =
+  | { kind: 'none' }
+  | { kind: 'match'; project: ProjectConfig; matched: ProjectRefField }
+  | {
+      kind: 'ambiguous';
+      matched: ProjectRefField;
+      projects: readonly ProjectConfig[];
+    };
+
+/**
+ * Resolve whatever the user typed to exactly one project (HIVE-94).
+ *
+ * Every surface that takes a project *from a human* goes through here — the
+ * console's `spawn`, and the new-session picker's search — so there is one
+ * answer to "does this name a project?" rather than one per caller.
+ *
+ * ## Exact, never a prefix
+ *
+ * `incorp` does not resolve to `incorpx-server`, and that is the point: a spawn
+ * lands in a folder and starts an agent in it. A prefix match turns a typo into
+ * a session in the wrong repository, which is discovered later and by then has
+ * done work. Refusing costs a retype.
+ *
+ * ## Key, then id, then name
+ *
+ * Keys are kept clear of ids and names when they are generated and when they are
+ * typed (`projectAliases`), and duplicate ids are already disabled by
+ * `resolveProjects` — so the order decides only the one ambiguity the config can
+ * still contain: a display **name** equal to another project's id. The id wins
+ * there because it is the older, stable handle.
+ * {@link ProjectRefResult.matched} reports which field answered so a caller can
+ * say so.
+ *
+ * ## Two projects with the same name refuse, they do not race
+ *
+ * Display names are never uniqueness-checked — two folders both called `api`,
+ * a monorepo split, a pair of worktrees — so `find` would silently hand back
+ * whichever sat first in the file. That is precisely the "agent in the wrong
+ * repository" failure the exactness rule above exists to prevent, arriving by a
+ * different door. Ambiguity is reported, and the caller asks for a key.
+ *
+ * Case-insensitive throughout: keys and ids are lowercase by construction, and
+ * a user reading `The Hive` off the Projects pane should not have to reproduce
+ * its capitals.
+ */
+export function resolveProjectRef(
+  input: string,
+  projects: readonly ProjectConfig[],
+): ProjectRefResult {
+  const wanted = input.trim().toLowerCase();
+  if (wanted === '') return { kind: 'none' };
+
+  const on = (matched: ProjectRefField): ProjectRefResult | null => {
+    const hits = projects.filter(
+      (candidate) => candidate[matched].toLowerCase() === wanted,
+    );
+    if (hits.length === 0) return null;
+    if (hits.length === 1) return { kind: 'match', project: hits[0], matched };
+    return { kind: 'ambiguous', matched, projects: hits };
+  };
+
+  return on('key') ?? on('id') ?? on('name') ?? { kind: 'none' };
 }
 
 export function projectAccess(projectId: string): ProjectAccess {

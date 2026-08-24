@@ -39,10 +39,11 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     '//importLoginEnv':
       'Optional, default true. At startup the app runs your login shell once and adopts its PATH (plus GH_TOKEN / GITHUB_TOKEN if it has them, and this process does not). Without it a Finder-launched app inherits launchd\'s four-entry PATH and cannot find gh, claude, or anything else you installed. Set false if you would rather this app never ran your rc file.',
     '//projects':
-      'id is stable and referenced by sessions; name is what you see. "~" is expanded; the path must be an existing directory.',
+      'id is stable and referenced by sessions; name is what you see; key is the 2-4 letter alias you type into the console ("spawn <key> <task>"), generated for you if you leave it out. "~" is expanded; the path must be an existing directory.',
     '//example': [
       {
         id: 'apfm-web',
+        key: 'aw',
         name: 'APFM Web',
         path: '~/repos/apfm-web',
         icon: 'ph-folder',

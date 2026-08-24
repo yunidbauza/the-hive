@@ -16,10 +16,16 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
-import { NOTIFICATION_KEYS, unsafeEnvReason } from './config-contract';
+import {
+  NOTIFICATION_KEYS,
+  PROJECT_KEY_HINT,
+  isProjectKey,
+  unsafeEnvReason,
+} from './config-contract';
 import type {
   ReadDirRequest,
   ReadFileRequest,
@@ -151,6 +157,25 @@ export function assertId(value: unknown, label: string): string {
   const id = assertString(value, label);
   if (!ID_PATTERN.test(id)) return fail(`${label}: malformed id`);
   return id;
+}
+
+/**
+ * A project key (HIVE-94) — the alias a user types instead of an id.
+ *
+ * Narrower than {@link assertId} on purpose, and not a relaxation of it: the
+ * pattern is closed to two-to-four lowercase letters, so nothing that reaches a
+ * `cwd`, a lookup table, or a log line can be smuggled through this field. The
+ * pattern itself lives in `config-contract.ts` because the config reader and
+ * the Settings editor need the same rule — see {@link PROJECT_KEY_PATTERN}.
+ *
+ * Trimmed first, like a name is: the inline editor commits on blur, and a key
+ * that arrived with a trailing space would be refused for a reason invisible on
+ * screen.
+ */
+export function assertProjectKey(value: unknown, label: string): string {
+  const key = assertString(value, label).trim();
+  if (!isProjectKey(key)) return fail(`${label}: expected ${PROJECT_KEY_HINT}`);
+  return key;
 }
 
 /** Terminal geometry. Bounded on both ends — a PTY cannot be 0 or 100000 wide. */
@@ -460,6 +485,23 @@ export function parseRenameProjectRequest(input: unknown): RenameProjectRequest 
   const trimmed = name.trim();
   if (trimmed === '') return fail('renameProject.name: must not be empty');
   return { id: assertId(raw.id, 'renameProject.id'), name: trimmed };
+}
+
+/**
+ * `config:set-project-key` (HIVE-94).
+ *
+ * Shape only. **Uniqueness is not checked here** and could not be: this guard
+ * sees one payload, and whether a key is taken is a fact about the file main is
+ * about to write — which the renderer's snapshot may already be behind. That
+ * check belongs inside the write's mutation, where it can refuse against the
+ * bytes on disk, exactly as `addProject` checks a duplicate path.
+ */
+export function parseSetProjectKeyRequest(input: unknown): SetProjectKeyRequest {
+  const raw = assertShape(input, ['id', 'key'], 'setProjectKey');
+  return {
+    id: assertId(raw.id, 'setProjectKey.id'),
+    key: assertProjectKey(raw.key, 'setProjectKey.key'),
+  };
 }
 
 /**

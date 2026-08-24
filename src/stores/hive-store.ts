@@ -33,6 +33,7 @@ import { readPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
 import {
   projectConfigSnapshot,
+  resolveProjectRef,
   subscribeProjectConfig,
 } from '@lib/project-config';
 import { noteSessionTicket } from '@lib/session-history';
@@ -216,7 +217,15 @@ interface HiveState {
   refreshPrs: () => Promise<void>;
 
   spawnSession: (
-    repo: string,
+    /**
+     * A project **id**, already resolved — never a key or a display name.
+     *
+     * It lands on the entity as `entity.project`, which is how every other
+     * surface finds this session's project, so an alias stored here would point
+     * at nothing the moment it was edited. `resolveProjectRef` is what callers
+     * put in front of user input (HIVE-94).
+     */
+    projectId: string,
     task?: string,
     model?: Model,
     effort?: Effort,
@@ -464,8 +473,15 @@ const HELP_LINES = [
   '  status                     one line per session',
   '  open <session>             open a session in the center stage',
   '  send <session> <message>   route a message to a session',
-  '  spawn <repo> <task>        start a new session on a project',
+  '  spawn <project> <task>     start a new session on a project',
   '  clear                      empty this transcript',
+  /*
+    One trailing line rather than a fourth column, because it is a footnote and
+    not a verb (HIVE-94). It is the only place the console says out loud that a
+    project answers to three different things, and `help` is where a user goes
+    to find that out.
+  */
+  '  <project> is a key, an id or a name — hive, the-hive, "The Hive"',
 ];
 
 /**
@@ -818,7 +834,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * no store subscribes to the other. That keeps the dependency one-way and
    * makes the cross-store effect visible at the call site.
    */
-  spawnSession: (repo, task, model, effort, ticket) => {
+  spawnSession: (projectId, task, model, effort, ticket) => {
     const id = nextSessionId(get().entities);
     // Resolved once: the seed transcript quotes them back, so a default applied
     // in two places could print one model and record another.
@@ -841,7 +857,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const session: Session = {
       kind: 'session',
       id,
-      project: repo,
+      project: projectId,
       /**
        * Only present when the picker was opened from a ticket card, which is
        * why it is spread conditionally rather than assigned `undefined`: an
@@ -880,7 +896,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       effort: resolvedEffort,
       lines: [
         line(
-          `❯ claude --model ${resolvedModel} --effort ${resolvedEffort} — new session on ${repo}`,
+          `❯ claude --model ${resolvedModel} --effort ${resolvedEffort} — new session on ${projectId}`,
           'green',
         ),
         line('● Reading CLAUDE.md, mapping repo…', 'blue'),
@@ -896,7 +912,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }));
 
     /**
-     * No `spawned sess-0x on <repo>` line here (HIVE-91).
+     * No `spawned sess-0x on <project>` line here (HIVE-91).
      *
      * At this moment the session has nothing but its id — its name arrives
      * later, from the status-line title or a rename — so the only thing the
@@ -931,7 +947,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * arguments would leave those two disagreeing for exactly the sessions
        * nobody chose for.
        */
-      void requestSpawn(id, repo, {
+      void requestSpawn(id, projectId, {
         ...(task === undefined ? {} : { task }),
         model: resolvedModel,
         effort: resolvedEffort,
@@ -1358,14 +1374,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * This read `state.projects` — the store's own slice — which worked
          * only because that slice was seeded with five demo projects at boot.
          * Emptying the seed left it always empty, so every `spawn` answered
-         * "unknown repo" for projects sitting right there in the Projects
+         * "unknown project" for projects sitting right there in the Projects
          * panel. One source for "which projects exist", and it is the config.
          *
          * **On desktop, no snapshot means permissive, not empty.** `main.tsx`
          * fires `loadProjectConfig()` without awaiting, and `project-config.ts`
          * leaves the snapshot `null` when that read throws — deliberately, so a
          * broken IPC hop degrades rather than locks the app. Treating `null` as
-         * "no projects" would make this verb refuse every repo during the first
+         * "no projects" would make this verb refuse every project during the first
          * frames of launch, and refuse them *permanently* after a failed read.
          * `can.spawnSessionIn` already answers `true` with no snapshot; this
          * agrees with it, and lets main — which has the file in front of it —
@@ -1381,20 +1397,65 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * exists to delete.
          */
         const snapshot = projectConfigSnapshot();
-        const known =
-          (snapshot === null && isDesktop()) ||
-          (snapshot?.projects.some((project) => project.id === command.repo) ??
-            false);
-        if (!known) {
+        /**
+         * A key, an id or a name — resolved once, in `lib/` (HIVE-94).
+         *
+         * The store used to compare `project.id === command.repo` inline, which
+         * made the console the only surface with an opinion about what names a
+         * project. The picker now shares this resolver, so a project reachable
+         * from one is reachable from the other by exactly the same spellings.
+         */
+        const resolved =
+          snapshot === null
+            ? ({ kind: 'none' } as const)
+            : resolveProjectRef(command.project, snapshot.projects);
+
+        /*
+          Ambiguity is its own answer, not a miss (HIVE-94). Display names are
+          never uniqueness-checked — two folders both called `api` is ordinary —
+          and picking whichever sat first in the file would start an agent in the
+          wrong repository, which is the exact failure the exactness rule exists
+          to prevent. Naming the ids is what makes the advice actionable: the key
+          is the way to say which one.
+        */
+        if (resolved.kind === 'ambiguous') {
+          const ids = resolved.projects.map((project) => project.id).join(', ');
           pushOrch(
-            `  unknown repo: ${command.repo} — try one from the Projects panel`,
+            `  ${command.project} names ${resolved.projects.length} projects (${ids}) — use a key`,
             'red',
           );
           return;
         }
+
+        if (resolved.kind === 'none' && !(snapshot === null && isDesktop())) {
+          /*
+            The keys, in config order, because they are the shortest thing that
+            works and the row in Settings shows them. Listing ids instead would
+            answer "what could I have typed?" with the very strings this story
+            exists to stop people typing.
+          */
+          const keys = snapshot?.projects.map((project) => project.key) ?? [];
+          const suffix =
+            keys.length === 0
+              ? ' — add one in Settings › Projects'
+              : ` — try a key from Settings › Projects (${keys.join(', ')})`;
+          pushOrch(`  unknown project: ${command.project}${suffix}`, 'red');
+          return;
+        }
+
+        /*
+          The **resolved id**, never what was typed. `spawnSession` stores it on
+          the entity as `entity.project`, and a session recorded under a key or
+          a display name would be a session pointing at nothing the moment that
+          alias was edited. With no snapshot there is nothing to resolve
+          against, so the input is passed through and main — which has the file
+          — gives the refusal if there is one.
+        */
+        const target =
+          resolved.kind === 'match' ? resolved.project.id : command.project;
         // No confirmation line here: `spawnSession` writes it, so both this
         // command and the picker log exactly once.
-        get().spawnSession(command.repo, command.task);
+        get().spawnSession(target, command.task);
         return;
       }
 
@@ -2847,6 +2908,7 @@ export const useProjects = (): ProjectRow[] => {
     () =>
       (snapshot?.projects ?? []).map((entry) => ({
         id: entry.id,
+        key: entry.key,
         name: entry.name,
         icon: entry.icon,
       })),

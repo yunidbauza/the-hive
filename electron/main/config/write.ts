@@ -67,6 +67,25 @@ export type ConfigDocument = Record<string, unknown>;
 export type Mutation = (draft: ConfigDocument) => ConfigDocument;
 
 /**
+ * How a write should treat the version the file declares.
+ *
+ * `keepDeclaredVersion` exists for exactly one caller — HIVE-94's key backfill,
+ * which writes without the user having asked for anything. Story 101 promised
+ * that a v1 file nobody edits through the UI stays v1 forever, on the grounds
+ * that a migration is only unsurprising at the moment someone saves. The
+ * backfill is not that moment: it fires on *load*, so stamping the current
+ * version onto the file would migrate a config whose owner had done nothing but
+ * launch the app.
+ *
+ * The two concerns are genuinely separate — "record the keys I just generated"
+ * and "adopt this build's schema" — and this is what keeps them separate. Every
+ * other caller is a real save and takes the default.
+ */
+export interface WriteOptions {
+  keepDeclaredVersion?: boolean;
+}
+
+/**
  * Thrown by a mutation that has decided not to write.
  *
  * A mutation runs against the document **just read from disk**, which is the
@@ -100,7 +119,10 @@ export type WriteResult =
 
 const failed = (message: string): WriteResult => ({ ok: false, reason: message });
 
-export function writeConfig(mutate: Mutation): WriteResult {
+export function writeConfig(
+  mutate: Mutation,
+  options: WriteOptions = {},
+): WriteResult {
   const path = configPath();
 
   let text: string;
@@ -136,9 +158,20 @@ export function writeConfig(mutate: Mutation): WriteResult {
 
   let next: ConfigDocument;
   try {
-    // The version emitted is always current: a v1 file becomes v2 on the first
-    // save, which is the only moment a migration is not a surprise.
-    next = { ...mutate(document), version: CONFIG_VERSION };
+    /*
+      The version emitted is current for every real save: a v1 file becomes v2
+      on the first one, which is the only moment a migration is not a surprise.
+      A backfill is the exception and says so — see {@link WriteOptions}.
+
+      `current.version` rather than the raw document's, because it has been
+      through the parser: a file that reached here at all declared a supported
+      version, so this can never write back something unreadable.
+    */
+    const version =
+      options.keepDeclaredVersion && current.version !== null
+        ? current.version
+        : CONFIG_VERSION;
+    next = { ...mutate(document), version };
   } catch (cause) {
     if (cause instanceof WriteRefused) return failed(`${LABEL}: ${cause.message}`);
     throw cause;

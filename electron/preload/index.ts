@@ -24,6 +24,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
@@ -160,6 +161,10 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.configRenameProject, request),
     repointProject: (request: RepointProjectRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configRepointProject, request),
+    // HIVE-94. The key is an alias, so this is a sibling of `renameProject`
+    // rather than of anything that touches identity.
+    setProjectKey: (request: SetProjectKeyRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetProjectKey, request),
     reorderProjects: (
       request: ReorderProjectsRequest,
     ): Promise<ConfigSnapshot> =>

@@ -213,7 +213,14 @@ describe('setJira', () => {
 
     setJira({ site: 'a.b.net' });
 
-    expect(onDisk().projects).toEqual([{ id: 'hive', path: dir }]);
+    /*
+      The entry carries the key HIVE-94's backfill generated for it — that is
+      the load doing its job, not this verb reaching into the projects block.
+      What is under test survives: `setJira` added nothing else and removed nothing.
+    */
+    expect(onDisk().projects).toEqual([
+      { id: 'hive', path: dir, key: 'hive' },
+    ]);
   });
 
   it('returns a snapshot describing the file, not the request', () => {

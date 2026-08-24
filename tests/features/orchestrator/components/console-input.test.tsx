@@ -121,7 +121,7 @@ describe('ConsoleInput', () => {
 
     expect(input()).toHaveAttribute(
       'placeholder',
-      'help · status · send <session> <message> · spawn <repo> <task>',
+      'help · status · send <session> <message> · spawn <project> <task>',
     );
   });
 

@@ -5,6 +5,8 @@ import type { ProjectConfig } from '@shared/config-contract';
 
 import { ProjectRow } from '@features/settings/components/project-row';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 /**
  * One row of the settings projects list (stories 101, 103).
  *
@@ -23,6 +25,7 @@ const entry = (over: Partial<ProjectConfig> & { id: string }): ProjectConfig => 
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
+  key: testProjectKey(over.id),
   isRepo: true,
   ...over,
 });
@@ -36,6 +39,7 @@ function setup(overrides: Partial<Parameters<typeof ProjectRow>[0]> = {}) {
     onDrop: vi.fn(),
     onDragEnd: vi.fn(),
     editor: null,
+    keyEditor: null,
     menu: <button type="button">menu</button>,
     ...overrides,
   };
@@ -133,5 +137,52 @@ describe('ProjectRow', () => {
     setup({ isDragging: true });
 
     expect(screen.getByRole('listitem').className).toContain('opacity-45');
+  });
+});
+
+/**
+ * The key chip (HIVE-94).
+ *
+ * Visible at rest, and between the icon and the name. Both halves matter: a key
+ * is only worth having if it can be read off the list and typed, so a chip
+ * revealed on hover — the way the grip is — would defeat the point.
+ */
+describe('ProjectRow · the key chip', () => {
+  it('shows the key without hovering', () => {
+    setup({ project: entry({ id: 'the-hive', name: 'The Hive', key: 'hive' }) });
+
+    expect(screen.getByText('hive')).toBeInTheDocument();
+  });
+
+  it('explains what the key is for', () => {
+    setup({ project: entry({ id: 'the-hive', key: 'hive' }) });
+
+    expect(screen.getByText('hive')).toHaveAttribute(
+      'title',
+      'type "hive" wherever a project is asked for',
+    );
+  });
+
+  it('places the key between the icon and the name', () => {
+    setup({ project: entry({ id: 'the-hive', name: 'The Hive', key: 'hive' }) });
+
+    const row = screen.getByRole('listitem');
+    expect(row.textContent?.indexOf('hive')).toBeLessThan(
+      row.textContent?.indexOf('The Hive') ?? -1,
+    );
+  });
+
+  /*
+    The chip is what the key editor replaces, so the row must give up its space
+    rather than render both — otherwise the key appears twice mid-edit.
+  */
+  it('gives way to the key editor when one is supplied', () => {
+    setup({
+      project: entry({ id: 'the-hive', key: 'hive' }),
+      keyEditor: <input aria-label="Project key" defaultValue="hive" />,
+    });
+
+    expect(screen.getByRole('textbox', { name: 'Project key' })).toBeInTheDocument();
+    expect(screen.queryByTitle(/wherever a project is asked for/)).toBeNull();
   });
 });

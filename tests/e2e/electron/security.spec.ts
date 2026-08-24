@@ -414,6 +414,23 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
       * can write is still exactly one, and it is still not named by the caller.
       */
     'setNotifications',
+    /**
+     * HIVE-94's `setProjectKey`, and it is the *narrowest* capability on this
+     * list.
+     *
+     * Its payload is two fields, and the second has a closed alphabet:
+     * `parseSetProjectKeyRequest` accepts two to four lowercase letters and
+     * refuses everything else — no digits, no separators, no path. So unlike
+     * `setProjectRuntime` below it, nothing this verb carries can name a
+     * destination, reach process control, or be lengthened into one; the worst
+     * a compromised renderer achieves is a project with a different two-letter
+     * alias in the one file the bridge could already write.
+     *
+     * Uniqueness is enforced in main against the file on disk rather than by
+     * the guard, which is a *stronger* position than the guard could take: the
+     * renderer's snapshot may be stale, and the bytes being written may not be.
+     */
+    'setProjectKey',
     'setProjectRuntime',
     'setRuntime',
     'startClone',

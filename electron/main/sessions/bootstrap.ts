@@ -142,7 +142,7 @@ export interface SessionOptions {
    * that distinction is the whole of HIVE-91. See {@link sessionCommand} for
    * what the two-stage version did when `claude` failed to start.
    *
-   * Untrusted free text — it comes from the console's `spawn <repo> <task…>` and
+   * Untrusted free text — it comes from the console's `spawn <project> <task…>` and
    * from the picker's message box — so unlike every other value here it is
    * {@link shellQuote}d rather than covered by a closed-list guard. It is the
    * second argument on this command line to need that, for the same reason

@@ -23,7 +23,16 @@ export type ParsedCommand =
   | { kind: 'clear'; raw: string }
   | { kind: 'open'; raw: string; target: string }
   | { kind: 'send'; raw: string; target: string; message: string }
-  | { kind: 'spawn'; raw: string; repo: string; task: string }
+  /**
+   * `project` is whatever the user typed — a key, an id or a name (HIVE-94).
+   *
+   * Not `repo`, and not resolved here: the parser cannot know which projects
+   * exist, so this carries the raw reference and the store resolves it through
+   * `resolveProjectRef`. The rename is not cosmetic — the field used to be
+   * called `repo` back when a project *was* a repository, and the console now
+   * spawns into any directory a PTY can take as a `cwd`.
+   */
+  | { kind: 'spawn'; raw: string; project: string; task: string }
   /** Right verb, wrong arguments. */
   | { kind: 'usage'; raw: string; command: UsageCommand }
   /** No such verb. */
@@ -38,7 +47,7 @@ export type ParsedCommand =
 export const USAGE: Record<UsageCommand, string> = {
   open: 'usage: open <session>',
   send: 'usage: send <session> <message>',
-  spawn: 'usage: spawn <repo> <task>',
+  spawn: 'usage: spawn <project> <task>',
 };
 
 /**

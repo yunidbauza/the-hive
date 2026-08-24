@@ -8,6 +8,8 @@ import type { AppInfo } from '@shared/ipc-contract';
 import { AdvancedSection } from '@features/settings/components/advanced-section';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 /**
  * Advanced & diagnostics (story 107).
  *
@@ -55,6 +57,7 @@ const project = (id: string): ConfigSnapshot['projects'][number] => ({
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
+  key: testProjectKey(id),
   isRepo: true,
 });
 

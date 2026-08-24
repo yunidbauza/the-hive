@@ -8,11 +8,14 @@ import { ProjectsList } from '@features/settings/components/projects-list';
 import { useHiveStore } from '@stores/hive-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 const chooseProjectDirectory = vi.fn();
 const removeProjectFromConfig = vi.fn();
 const renameProjectInConfig = vi.fn();
 const repointProjectInConfig = vi.fn();
 const reorderProjectsInConfig = vi.fn();
+const setProjectKeyInConfig = vi.fn();
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -26,6 +29,7 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
       repointProjectInConfig(request),
     reorderProjectsInConfig: (request: unknown) =>
       reorderProjectsInConfig(request),
+    setProjectKeyInConfig: (request: unknown) => setProjectKeyInConfig(request),
   };
 });
 
@@ -36,6 +40,7 @@ const entry = (over: Partial<ProjectConfig> & { id: string }): ProjectConfig => 
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
+  key: testProjectKey(over.id),
   isRepo: true,
   ...over,
 });
@@ -184,10 +189,15 @@ describe('ProjectsList', () => {
           entries={[entry({ id: 'a' }), entry({ id: 'b' }), entry({ id: 'c' })]}
         />,
       );
+      /*
+        Matched after the key chip, which HIVE-94 put first in the row. `ax`,
+        `bx`, `cx` are what `testProjectKey` makes of one-letter ids, so the
+        name is the character following that pair.
+      */
       const names = () =>
         screen
           .getAllByRole('listitem')
-          .map((row) => row.textContent?.match(/^[abc]/)?.[0]);
+          .map((row) => row.textContent?.match(/^[abc]x([abc])/)?.[1]);
 
       expect(names()).toEqual(['a', 'b', 'c']);
 
@@ -334,5 +344,119 @@ describe('ProjectsList', () => {
         screen.getByText(new RegExp(`${live} live sessions will keep running`)),
       ).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * Changing a project's key from the row (HIVE-94).
+ *
+ * The list is the only component that can see the other rows, so it is the only
+ * one that can answer "is this key already taken?" — which is why the editor
+ * takes that set as a prop rather than fetching it. These tests are about that
+ * wiring: the menu opens the editor, the editor's answer reaches the config,
+ * and the duplicate check is fed the *right* set.
+ */
+describe('ProjectsList · changing a key', () => {
+  // A sibling of the block above, so it does not inherit that one's `beforeEach`
+  // — and a leftover call from the previous test would make "writes nothing"
+  // pass or fail for the wrong reason.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const keyField = () => screen.getByRole('textbox', { name: 'Project key' });
+
+  it('opens the key editor from the menu, on that row only', async () => {
+    render(<ProjectsList entries={abc} />);
+
+    await openMenu('a');
+    await choose(/change key…/i);
+
+    expect(keyField()).toHaveValue(testProjectKey('a'));
+    expect(screen.getAllByRole('textbox', { name: 'Project key' })).toHaveLength(1);
+  });
+
+  it('posts the new key and closes the editor', async () => {
+    render(<ProjectsList entries={abc} />);
+    await openMenu('a');
+    await choose(/change key…/i);
+
+    await userEvent.clear(keyField());
+    await userEvent.type(keyField(), 'zz{Enter}');
+
+    expect(setProjectKeyInConfig).toHaveBeenCalledWith({ id: 'a', key: 'zz' });
+    expect(
+      screen.queryByRole('textbox', { name: 'Project key' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('refuses a key another row already holds, and writes nothing', async () => {
+    render(<ProjectsList entries={abc} />);
+    await openMenu('a');
+    await choose(/change key…/i);
+
+    await userEvent.clear(keyField());
+    await userEvent.type(keyField(), testProjectKey('b'));
+
+    expect(screen.getByText(/already used by b/)).toBeInTheDocument();
+
+    await userEvent.type(keyField(), '{Enter}');
+    expect(setProjectKeyInConfig).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The hint refuses another project's **id**, not just its key.
+   *
+   * Main refuses it — the resolver tries key before id, so accepting it would
+   * silently move that id's spawns — and a live validator that showed green for
+   * a value about to be rejected would be worse than no validator at all.
+   */
+  it('refuses a key that is another row’s id', async () => {
+    // Ids that are themselves valid key shapes — `a`/`b`/`c` are one letter, so
+    // they could never collide with a key and cannot show this.
+    const rows = [
+      entry({ id: 'frontend', name: 'Frontend', key: 'fro' }),
+      entry({ id: 'web', name: 'Web', key: 'we' }),
+    ];
+    render(<ProjectsList entries={rows} />);
+    await openMenu('Frontend');
+    await choose(/change key…/i);
+
+    await userEvent.clear(keyField());
+    await userEvent.type(keyField(), 'web');
+
+    expect(screen.getByText(/already used by Web/)).toBeInTheDocument();
+
+    await userEvent.type(keyField(), '{Enter}');
+    expect(setProjectKeyInConfig).not.toHaveBeenCalled();
+  });
+
+  /*
+    Its own key is excluded from the taken set, so re-opening the editor and
+    pressing Enter is a no-op rather than a refusal against itself.
+  */
+  it('does not treat the row’s own key as taken', async () => {
+    render(<ProjectsList entries={abc} />);
+    await openMenu('a');
+    await choose(/change key…/i);
+
+    expect(keyField()).toHaveAttribute('aria-invalid', 'false');
+
+    await userEvent.type(keyField(), '{Enter}');
+    expect(setProjectKeyInConfig).not.toHaveBeenCalled();
+  });
+
+  it('closes without writing when the edit is abandoned', async () => {
+    render(<ProjectsList entries={abc} />);
+    await openMenu('a');
+    await choose(/change key…/i);
+
+    await userEvent.clear(keyField());
+    await userEvent.type(keyField(), 'zz{Escape}');
+
+    expect(setProjectKeyInConfig).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('textbox', { name: 'Project key' }),
+    ).not.toBeInTheDocument();
   });
 });

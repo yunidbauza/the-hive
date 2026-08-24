@@ -17,6 +17,7 @@ interface ProjectRowMenuProps {
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRename: () => void;
+  onChangeKey: () => void;
   onRepoint: () => void;
   onRemove: () => void;
 }
@@ -61,6 +62,7 @@ export function ProjectRowMenu({
   onMoveUp,
   onMoveDown,
   onRename,
+  onChangeKey,
   onRepoint,
   onRemove,
 }: ProjectRowMenuProps) {
@@ -130,6 +132,18 @@ export function ProjectRowMenu({
           className={item}
         >
           Rename…
+        </DropdownMenuItem>
+        {/*
+          Between *Rename…* and *Change folder…*: the three edits are ordered by
+          how much they change, and renaming what a project is called sits
+          nearer to renaming what it is typed as than either does to moving it
+          on disk (HIVE-94).
+        */}
+        <DropdownMenuItem
+          onSelect={() => select(onChangeKey, true)}
+          className={item}
+        >
+          Change key…
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() => select(onRepoint)}

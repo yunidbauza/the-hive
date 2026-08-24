@@ -51,6 +51,7 @@ const project = (over: Partial<ProjectConfig> = {}): ProjectConfig => ({
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
+  key: 'aw',
   isRepo: true,
   ...over,
 });
