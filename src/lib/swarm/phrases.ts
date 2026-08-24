@@ -44,6 +44,7 @@ export type PhraseKey =
   | 'empty.sessions'
   | 'empty.explorer'
   | 'empty.settingsProjects'
+  | 'empty.settingsSkills'
   | 'empty.editor'
   // A search that found nothing. Distinct from empty: something *is* there.
   | 'noMatch.picker'
@@ -115,6 +116,11 @@ export const PHRASES = {
     'Unclaimed ground.',
     'No hatcheries detected.',
     'This sector is unclaimed.',
+  ],
+  'empty.settingsSkills': [
+    'The brood knows no tricks.',
+    'No strains spliced.',
+    'Nothing taught yet.',
   ],
   'empty.editor': [
     'No strand under the microscope.',

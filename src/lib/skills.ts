@@ -1,6 +1,8 @@
-import type {
-  SkillFile,
-  SkillsSnapshot,
+import {
+  RESERVED_SKILL_NAME,
+  SKILL_NAME_PATTERN,
+  type SkillFile,
+  type SkillsSnapshot,
 } from '@shared/skills-contract';
 
 /**
@@ -111,6 +113,67 @@ export const saveSkill = (name: string, body: string): Promise<void> =>
 
 export const deleteSkill = (name: string): Promise<void> =>
   mutate((bridge) => bridge.skills.remove({ name }));
+
+/** Test-only: drop the snapshot and every subscriber. */
+export function resetSkills(): void {
+  snapshot = null;
+  listeners.clear();
+}
+
+/** Test-only: install a snapshot without going through the bridge. */
+export function setSkillsForTest(next: SkillsSnapshot | null): void {
+  snapshot = next;
+  emit();
+}
+
+/**
+ * The `name:` a buffer declares, or `''` when it declares none.
+ *
+ * The folder name is not typed separately — it is **mirrored** from the
+ * frontmatter, so a skill has exactly one name and the two cannot drift into
+ * the mismatch main would then refuse. This is the renderer's half of the same
+ * rule `skills/read.ts` enforces on disk.
+ *
+ * Same deliberately small reader as main's: the only key that decides anything
+ * is `name`, and a YAML parser here would be this app holding an opinion about
+ * a format it does not own.
+ */
+export function frontmatterName(body: string): string {
+  if (!body.startsWith('---')) return '';
+  const end = body.indexOf('\n---', 3);
+  if (end === -1) return '';
+
+  for (const line of body.slice(3, end).split('\n')) {
+    const match = /^name:\s*(.*)$/.exec(line.trim());
+    if (match) return (match[1] ?? '').trim();
+  }
+  return '';
+}
+
+/**
+ * Why this name cannot be saved, or `null` when it can.
+ *
+ * A sentence rather than a boolean, because the footer shows it: "must be
+ * lowercase…" tells the user what to type next, and a disabled button with no
+ * reason does not.
+ *
+ * `taken` excludes the skill being edited, so re-saving an existing skill under
+ * its own name is not a collision with itself.
+ */
+export function skillNameProblem(
+  name: string,
+  taken: readonly string[],
+): string | null {
+  if (name === '') return 'Give the skill a name in its frontmatter.';
+  if (name === RESERVED_SKILL_NAME) {
+    return `"${RESERVED_SKILL_NAME}" is reserved by The Hive.`;
+  }
+  if (!SKILL_NAME_PATTERN.test(name)) {
+    return 'Lowercase letters, digits and dashes only.';
+  }
+  if (taken.includes(name)) return `You already have a skill called ${name}.`;
+  return null;
+}
 
 /**
  * One file, for the editor.

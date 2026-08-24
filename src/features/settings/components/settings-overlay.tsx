@@ -11,6 +11,7 @@ import { IntegrationsSection } from '@features/settings/components/integrations-
 import { NotificationsSection } from '@features/settings/components/notifications-section';
 import { ProjectsSection } from '@features/settings/components/projects-section';
 import { RuntimeSection } from '@features/settings/components/runtime-section';
+import { SkillsSection } from '@features/settings/components/skills-section';
 import { useSettingsActions } from '@stores/ui-store';
 
 
@@ -44,10 +45,16 @@ import { useSettingsActions } from '@stores/ui-store';
  * filled the last slot the same way: five rows, five entries, and no control
  * flow anywhere in this file.
  *
+ * HIVE-96's Skills is the first section to arrive from **outside** the epic, and
+ * it cost the same two lines — which is the claim above finally being tested by
+ * something it did not anticipate rather than merely restated.
+ *
  * Sections stay **absent rather than disabled** until they exist: a nav full of
- * dead items teaches the user that settings are broken. Every section the epic
- * named now exists, so the rule is currently unexercised — it applies to
- * whatever comes next.
+ * dead items teaches the user that settings are broken.
+ *
+ * Skills sits directly after Runtime because both answer "what does a session I
+ * start actually run?" — Runtime decides the binary and its environment, Skills
+ * decides the commands it comes with. Appearance onwards is about the app.
  *
  * Advanced sits last deliberately. It is the only section that answers
  * questions about the app rather than setting anything in it, and the
@@ -56,6 +63,7 @@ import { useSettingsActions } from '@stores/ui-store';
 const SECTIONS = [
   { id: 'projects', label: 'Projects' },
   { id: 'runtime', label: 'Runtime' },
+  { id: 'skills', label: 'Skills' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'editor', label: 'Editor' },
   { id: 'integrations', label: 'Integrations' },
@@ -74,6 +82,7 @@ type SectionId = (typeof SECTIONS)[number]['id'];
 const PANES: Record<SectionId, ComponentType> = {
   projects: ProjectsSection,
   runtime: RuntimeSection,
+  skills: SkillsSection,
   appearance: AppearanceSection,
   editor: EditorSection,
   integrations: IntegrationsSection,

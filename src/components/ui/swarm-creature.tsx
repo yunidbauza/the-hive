@@ -61,8 +61,9 @@ export function SwarmCreature({
    * per surface rather than chosen per render:
    *
    * - **Hive** — the overmind's empty fleet, the picker's **first run**, the
-   *   settings projects card, and the explorer's empty repository. The app's own
-   *   face, territory, and the thing that leads the main screen.
+   *   settings projects **and skills** cards, and the explorer's empty
+   *   repository. The app's own face, territory, and the thing that leads the
+   *   main screen.
    * - **Overlord** — the projects rail, and the inbox. It hovers and watches
    *   without acting, which is what both of those states are.
    * - **Spire** — work, pull requests, the editor with no file, and the
@@ -85,6 +86,16 @@ export function SwarmCreature({
    * This was a deliberate revision, not drift. An earlier version of this list
    * assigned the picker to Hive outright and said so here, which stopped being
    * true the moment the ordinary picker got its own sprite.
+   *
+   * ## Skills is a hive, not a hydralisk (HIVE-96)
+   *
+   * The tempting reading is that a skill belongs to the agent that runs it, and
+   * agents are the hydralisk's. But the casting is per **surface**, not per
+   * subject: Skills is a settings card, its only neighbour in that state is the
+   * projects card, and the two are looked at in the same breath. Casting it for
+   * its subject would put two different creatures side by side in one pane and
+   * make the channel mean nothing — which is precisely what the rule below
+   * forbids.
    *
    * A surface that picks a different creature than its neighbours in the same
    * state turns the channel back into noise, which is the whole reason this is

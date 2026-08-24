@@ -59,12 +59,29 @@ describe('SettingsOverlay', () => {
     for (const present of [
       'Projects',
       'Runtime',
+      'Skills',
       'Appearance',
       'Integrations',
       'Advanced',
     ]) {
       expect(within(nav).getByRole('button', { name: present })).toBeInTheDocument();
     }
+  });
+
+  it('puts Skills next to Runtime (HIVE-96)', () => {
+    /*
+      Both answer "what does a session I start actually run?" — Runtime decides
+      the binary and its environment, Skills decides the commands it comes with.
+      Appearance onwards is about the app rather than the session.
+    */
+    render(<SettingsOverlay />);
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const labels = within(nav)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+
+    expect(labels.indexOf('Skills')).toBe(labels.indexOf('Runtime') + 1);
   });
 
   it('switches to Advanced (story 107)', async () => {
