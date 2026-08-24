@@ -32,17 +32,40 @@ describe('doneSkill', () => {
       expect(body).toContain(`name: ${RESERVED_SKILL_NAME}`);
     });
 
-    it('runs exactly the command the settings file permits', () => {
+    it('authorises exactly the command it runs, in its own frontmatter', () => {
       const command = doneCommand(DONE_URL);
-      expect(body).toContain(command);
 
-      const rule = hookSettings(
-        'http://127.0.0.1:51234/hook',
-        'dark',
-        DONE_URL,
-      ).permissions!.allow[0]!;
-      // Exact, not a prefix — see the settings test for why that matters.
-      expect(rule).toBe(`Bash(${command})`);
+      /*
+        Both derived from one builder, which is what makes drift impossible
+        rather than unlikely. If the grant and the command ever disagreed the
+        symptom would be a permission prompt in the middle of the app's own
+        built-in — something the user did not cause and cannot diagnose.
+      */
+      expect(body).toContain(`allowed-tools: Bash(${command})`);
+      expect(body).toContain(command);
+    });
+
+    it('grants the tool at the skill, not in the app-wide settings file', () => {
+      /*
+        The settings file merges above the user's own scope, so a grant written
+        there is invisible and unrevokable to them. `allowed-tools` is scoped to
+        the one skill that needs it. See `hooks/settings.test.ts` for the other
+        half of this pair.
+      */
+      expect(
+        hookSettings('http://127.0.0.1:51234/hook', 'dark'),
+      ).not.toHaveProperty('permissions');
+    });
+
+    it('authorises the exact command, never a prefix', () => {
+      /*
+        `…:*` would let anything be appended to the same `curl` invocation, and
+        `curl` has flags with nothing to do with the URL: `-K` reads a config
+        that redefines the target, `-o`/`-D` write to a chosen path,
+        `--upload-file` sends one. None need a shell operator, so none are
+        caught by Claude Code's `&&`/`;` handling.
+      */
+      expect(body).not.toContain(':*)');
     });
 
     it('is invocable by a skill handing off, not only by a user typing it', () => {

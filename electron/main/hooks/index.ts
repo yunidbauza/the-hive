@@ -167,15 +167,6 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
             status line whether or not that line renders anything.
           */
           sessionMetrics() ? (created.metricsUrl ?? undefined) : undefined,
-          /*
-            Unconditional, where the metrics URL is switchable. `/done` has no
-            visible cost inside the terminal — it renders nothing, runs on no
-            timer, and exists only when the user invokes it — so there is
-            nothing for a user to want turned off. The status line is switchable
-            because Claude Code drops its footer key hints for any configured
-            one; this writes a permission and no UI.
-          */
-          created.doneUrl ?? undefined,
         );
         receiver = created;
       } catch (cause) {

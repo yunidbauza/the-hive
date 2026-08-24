@@ -21,6 +21,7 @@ import {
   statusLineSettings,
   writeHookSettings,
 } from '../../../../electron/main/hooks/settings';
+import { doneSkill } from '../../../../electron/main/skills/done-skill';
 
 /**
  * The settings file and the receiver are two halves of one contract (HIVE-62).
@@ -103,76 +104,45 @@ describe('hookSettings', () => {
  * status line they configured for themselves, inside Hive sessions only.
  */
 /**
- * The one permission this file grants (HIVE-93).
+ * What this file deliberately does NOT grant (HIVE-93).
  *
- * It is written *above* the user's own settings scope, so every assertion here
- * is really about restraint: exactly one entry, only when there is an endpoint
- * to reach, and scoped to a command this app both writes and serves.
+ * An earlier version wrote a `permissions.allow` entry here so the built-in
+ * `/done` could run its `curl` without a prompt. It was moved to `allowed-tools`
+ * in the generated skill's own frontmatter, and this test is what keeps it from
+ * creeping back: this file merges **above** the user's own scope, so a grant
+ * written here is one they can neither find among their settings nor revoke.
  */
-describe('the /done permission', () => {
-  const DONE_URL = 'http://127.0.0.1:51234/done';
-
-  it('grants nothing when there is no endpoint to reach', () => {
-    expect(hookSettings('http://127.0.0.1:51234/hook')).not.toHaveProperty(
-      'permissions',
-    );
-  });
-
-  it('grants exactly one command, derived from the shared builder', () => {
-    const settings = hookSettings(
-      'http://127.0.0.1:51234/hook',
-      'dark',
-      DONE_URL,
-    );
-
-    /*
-      Derived rather than spelled out. A literal here would pass while the skill
-      body and the permission drifted apart — which is the one failure this
-      pairing exists to make impossible, and it surfaces as a permission prompt
-      inside the app's own built-in.
-    */
-    expect(settings.permissions).toEqual({
-      allow: [`Bash(${doneCommand(DONE_URL)})`],
-    });
-  });
-
-  it('permits the exact command and nothing that could follow it', () => {
-    const rule = hookSettings('http://127.0.0.1:51234/hook', 'dark', DONE_URL)
-      .permissions!.allow[0]!;
-
-    expect(rule).toContain(DONE_URL);
-    expect(rule).toContain(HOOK_HEADER_SESSION);
-    expect(rule).toContain(HOOK_HEADER_TOKEN);
-
-    /*
-      Not a prefix rule. `…:*` would let anything be appended to the same
-      `curl` invocation, and `curl` has flags that have nothing to do with the
-      URL — `-K` reads a config that redefines the target, `-o`/`-D` write to a
-      chosen path, `--upload-file` sends one. None need a shell operator, so
-      none are caught by Claude Code's `&&`/`;` handling. A prefix here is a
-      silent, unrevokable grant of arbitrary file writes.
-    */
-    expect(rule.endsWith(':*)')).toBe(false);
-    expect(rule.endsWith(')')).toBe(true);
-  });
-
-  it('reaches the file both themes are written from', async () => {
+describe('the settings file grants no permissions', () => {
+  it('writes no permissions block for either theme', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-done-'));
-    const paths = await writeHookSettings(
-      dir,
-      'http://127.0.0.1:51234/hook',
-      undefined,
-      DONE_URL,
-    );
+    const paths = await writeHookSettings(dir, 'http://127.0.0.1:51234/hook');
 
     for (const path of Object.values(paths)) {
-      const written = JSON.parse(await readFile(path, 'utf8')) as {
-        permissions?: { allow: string[] };
-      };
-      expect(written.permissions?.allow).toEqual([
-        `Bash(${doneCommand(DONE_URL)})`,
-      ]);
+      const raw = await readFile(path, 'utf8');
+      const written = JSON.parse(raw) as Record<string, unknown>;
+
+      expect(written).not.toHaveProperty('permissions');
+      /*
+        Asserted on the raw text too. A nested grant somewhere else in the file
+        would satisfy the property check above and still be a permission the
+        user never wrote.
+      */
+      expect(raw).not.toContain('permissions');
     }
+  });
+
+  it('authorises the curl at the skill instead, exactly', () => {
+    /*
+      The grant lives with the command it authorises. Exact, not a prefix:
+      `…:*` would let anything be appended to the same `curl` invocation, and
+      `-K` redefines the target, `-o`/`-D` write to a chosen path and
+      `--upload-file` sends one — none needing a shell operator, so none caught
+      by Claude Code's `&&`/`;` handling.
+    */
+    const command = doneCommand('http://127.0.0.1:51234/done');
+    expect(doneSkill('http://127.0.0.1:51234/done')).toContain(
+      `allowed-tools: Bash(${command})`,
+    );
   });
 });
 

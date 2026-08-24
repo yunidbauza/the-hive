@@ -67,14 +67,43 @@ import { doneCommand } from '@shared/hook-contract';
 export const doneSkill = (doneUrl: string | null): string =>
   doneUrl === null ? INERT : active(doneUrl);
 
-const FRONTMATTER = `---
+/**
+ * The frontmatter, with the skill's own tool grant when it has a command to run.
+ *
+ * ## Why `allowed-tools` here rather than a permission in the settings file
+ *
+ * The first version of this authorised the `curl` with a `permissions.allow`
+ * entry in the app-generated `--settings` file. That file merges **above** the
+ * user's own scope, so the grant was one the user could neither see in their
+ * settings nor revoke — and it applied to every session, for a command only this
+ * one skill ever runs.
+ *
+ * `allowed-tools` is scoped to the skill that needs it, which is both narrower
+ * and legible: the authorisation sits three lines above the command it
+ * authorises, in a file the user can read. HIVE-93 specified it this way from
+ * the start; the settings-file detour was a mistake, and a self review found it
+ * had also been written as a **prefix** rule — which for `curl` is not a small
+ * over-grant. `-K` reads a config file that redefines the target and the output,
+ * `-o` and `-D` write to a chosen path, `--upload-file` sends one. None need a
+ * shell operator, so none are caught by the `&&`/`;` handling that makes prefix
+ * rules safe for ordinary commands.
+ *
+ * So the rule is the **exact** command, built from {@link doneCommand} — the same
+ * builder the body below runs, which is what stops the grant and the command from
+ * drifting into a permission prompt inside the app's own built-in.
+ *
+ * Omitted entirely when there is no endpoint: the inert body runs nothing, and a
+ * grant for a command that is not there would be a claim with no purpose.
+ */
+const frontmatter = (allowedTools?: string): string =>
+  `---
 name: done
 description: >-
   Finish this session — mark it done in The Hive and close its terminal. Use it
   when the work a session was opened for is complete, either because the user
   asked to finish or because a skill has finished its task and is handing off.
   Closing is recoverable; the transcript stays readable afterwards.
----
+${allowedTools === undefined ? '' : `allowed-tools: ${allowedTools}\n`}---
 `;
 
 /**
@@ -90,7 +119,9 @@ description: >-
  * narrate what it just did, and a paragraph written after the request has landed
  * is a paragraph the user reads in a terminal that is already closing.
  */
-const active = (doneUrl: string): string => `${FRONTMATTER}
+const active = (doneUrl: string): string => `${frontmatter(
+  `Bash(${doneCommand(doneUrl)})`,
+)}
 Run exactly this command:
 
 \`\`\`sh
@@ -111,7 +142,7 @@ Then stop. Do not summarise, do not explain, and do not run anything else.
  * app cannot hear it is a session the user has to close by hand, and knowing
  * that is the difference between one keystroke and a stare.
  */
-const INERT = `${FRONTMATTER}
+const INERT = `${frontmatter()}
 This session cannot be closed automatically: The Hive is not reachable from it,
 so there is nowhere to report that the work is finished.
 
