@@ -64,6 +64,8 @@ export interface HookHandlers {
   onCleared: (entityId: string) => void;
   /** A session reported its context and rate-limit usage (HIVE-79). */
   onMetrics: (entityId: string, metrics: SessionMetrics) => void;
+  /** A session declared itself finished — `/done` (HIVE-93). */
+  onDone: (entityId: string) => void;
 }
 
 export interface HookRuntime {
@@ -91,6 +93,22 @@ export interface HookRuntime {
    * having to ask: it always merges this in, and merging nothing is correct.
    */
   envFor(entityId: string): Record<string, string>;
+  /**
+   * The URL `/done`'s body POSTs to, or `null` when hooks are unavailable
+   * (HIVE-93).
+   *
+   * Read by the **skills** runtime, which is a sibling of this one and holds no
+   * reference to it — so the value travels as a getter passed at construction
+   * rather than as a dependency. That indirection is what keeps the two
+   * runtimes independent while letting the generated skill name a port this one
+   * chose at bind time, on a schedule (`sync()` before every spawn) that is
+   * always later than the bind.
+   *
+   * `null` is load-bearing rather than a placeholder: it is what makes the
+   * generated `/done` fall back to a body that promises nothing, instead of one
+   * that curls an address nobody is listening on.
+   */
+  doneUrl(): string | null;
   stop(): Promise<void>;
 }
 
@@ -105,12 +123,20 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       return settingsPaths?.[theme] ?? null;
     },
 
-    async start({ knowsSession, onEvent, onTicketIntent, onCleared, onMetrics }) {
+    async start({
+      knowsSession,
+      onEvent,
+      onTicketIntent,
+      onCleared,
+      onMetrics,
+      onDone,
+    }) {
       const created = createReceiver({
         onEvent,
         onTicketIntent,
         onCleared,
         onMetrics,
+        onDone,
         knowsSession,
         ...(port === undefined ? {} : { port }),
       });
@@ -141,6 +167,15 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
             status line whether or not that line renders anything.
           */
           sessionMetrics() ? (created.metricsUrl ?? undefined) : undefined,
+          /*
+            Unconditional, where the metrics URL is switchable. `/done` has no
+            visible cost inside the terminal — it renders nothing, runs on no
+            timer, and exists only when the user invokes it — so there is
+            nothing for a user to want turned off. The status line is switchable
+            because Claude Code drops its footer key hints for any configured
+            one; this writes a permission and no UI.
+          */
+          created.doneUrl ?? undefined,
         );
         receiver = created;
       } catch (cause) {
@@ -154,6 +189,19 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           `[hive] hook settings could not be written — session status falls back to pty activity (${String(cause)})`,
         );
       }
+    },
+
+    doneUrl(): string | null {
+      /*
+        Gated on `settingsPaths` as well as the receiver, exactly as `envFor` is.
+        A bound socket whose settings file failed to write is a session with no
+        `HIVE_HOOK_TOKEN` in its environment, so the command would build a
+        request that could only ever be refused — and a `/done` that 403s is
+        worse than one that says up front it cannot finish the session.
+      */
+      const running = receiver;
+      if (running === null || settingsPaths === null) return null;
+      return running.doneUrl;
     },
 
     envFor(entityId): Record<string, string> {

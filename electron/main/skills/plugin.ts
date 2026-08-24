@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { RESERVED_SKILL_NAME } from '@shared/skills-contract';
 
-import { DONE_SKILL } from './done-skill';
+import { doneSkill } from './done-skill';
 import type { SkillsRead } from './read';
 
 /**
@@ -56,6 +56,17 @@ export async function writePluginDir(
   pluginRoot: string,
   version: string,
   read: SkillsRead,
+  /**
+   * Where `/done` reports to, or `null` when nothing is listening (HIVE-93).
+   *
+   * Passed per call rather than captured once, because this runs before every
+   * spawn and the receiver's port is only known after it binds. A directory
+   * written during a launch whose receiver never came up holds the inert
+   * built-in, and the next regeneration replaces it with the live one — which
+   * is why the write below is unconditional rather than skipped when the file
+   * already exists.
+   */
+  doneUrl: string | null = null,
 ): Promise<void> {
   const skillsDir = join(pluginRoot, 'skills');
 
@@ -78,7 +89,7 @@ export async function writePluginDir(
     and a copy edited inside userData surviving a launch would make the built-in
     mean something different on one machine than on every other.
   */
-  await write(RESERVED_SKILL_NAME, DONE_SKILL);
+  await write(RESERVED_SKILL_NAME, doneSkill(doneUrl));
 
   // Only the valid ones. An invalid skill is reported to the pane and left out
   // of the plugin entirely — Claude Code never sees a file this app could not

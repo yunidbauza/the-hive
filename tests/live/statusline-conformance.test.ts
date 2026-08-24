@@ -99,6 +99,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onCleared: () => {},
       onTicketIntent: () => {},
       onMetrics: (entityId, metrics) => reported.push({ entityId, metrics }),
+      onDone: () => {},
       knowsSession: (entityId) => entityId === 'sess-live',
     });
 
@@ -166,6 +167,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onCleared: () => {},
       onTicketIntent: () => {},
       onMetrics: () => {},
+      onDone: () => {},
       knowsSession: () => true,
     });
     await receiver.start();
@@ -202,6 +204,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onCleared: () => {},
       onTicketIntent: () => {},
       onMetrics: (entityId) => reported.push(entityId),
+      onDone: () => {},
       knowsSession: () => true,
     });
     await receiver.start();

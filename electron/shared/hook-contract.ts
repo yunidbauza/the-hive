@@ -151,10 +151,16 @@ export type IdleDetail = 'agents' | 'script';
  * that type is still the right one for `activity.ts`. It becomes observable here
  * because a hook is a different observer with a different vantage point.
  *
- * `done` is absent here too, and for a reason that survives `SessionEnd` being
- * subscribed: it is not a *status* a hook observes moment to moment, it is what
- * a session becomes at a boundary. It travels its own channel — see
- * `SessionClearedEvent` — rather than riding this union.
+ * `done` is absent here too, and stays absent now that `/done` can produce it
+ * (HIVE-93). The reason is unchanged and is the point of the type: no hook
+ * observes `done`. It is *declared* — by the user typing `/done`, or by a skill
+ * handing off to it — and a declaration is not an observation. Keeping it out
+ * of this union is what stops {@link HOOK_STATUS} from being given an entry
+ * that would quietly let some Claude Code event mean "the work is finished".
+ *
+ * What may carry it is `PublishedStatus` in `session-contract.ts`, which widens
+ * this by exactly that one member at the *event* boundary — the one place main
+ * speaks about a session having been told something rather than having seen it.
  */
 export type ObservedStatus = 'working' | 'waiting' | 'idle' | 'terminated';
 
@@ -287,6 +293,43 @@ export const HOOK_ENV_TOKEN = 'HIVE_HOOK_TOKEN';
 
 /** The path the receiver serves. */
 export const HOOK_PATH = '/hook';
+
+/**
+ * The path `/done` posts to (HIVE-93).
+ *
+ * Its own route rather than an event on {@link HOOK_PATH}, for the reason
+ * `METRICS_PATH` is separate: nothing about this is a hook. No Claude Code
+ * event produces it, it carries no payload to parse, and the receiver's answer
+ * to it is a *lifecycle* action rather than a status tick. Sharing the hook
+ * route would mean inventing an event name Claude Code never sends.
+ */
+export const DONE_PATH = '/done';
+
+/**
+ * The exact command `/done`'s body runs, and the exact prefix the generated
+ * settings file permits (HIVE-93).
+ *
+ * **One builder, two callers, on purpose.** `skills/done-skill.ts` puts this in
+ * the skill body and `hooks/settings.ts` puts it in `permissions.allow`. If the
+ * two ever drifted the symptom would be a permission prompt in the middle of
+ * the app's own built-in — a failure the user cannot diagnose and did nothing to
+ * cause. Deriving both from one function makes the drift impossible rather than
+ * unlikely.
+ *
+ * Lives here, in a module that may hold no runtime, because it is neither
+ * runtime nor either caller's business: it is the shape of a request on the
+ * wire, which is what this file is for. No Node APIs, no imports, pure string.
+ *
+ * `-sS` rather than the status line's `-s`: this one has no stdout to protect —
+ * nothing renders its output — so a failure should say so in the transcript
+ * instead of vanishing. `--fail` makes a 4xx a non-zero exit for the same
+ * reason, so a session whose token went stale reports it rather than appearing
+ * to succeed and never closing.
+ */
+export const doneCommand = (url: string): string =>
+  `curl -sS --fail -m 5 -X POST ${url}` +
+  ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
+  ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}"`;
 
 /**
  * The largest body the receiver will read.

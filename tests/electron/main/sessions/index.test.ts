@@ -1529,3 +1529,244 @@ describe('the ledger', () => {
     }).not.toThrow();
   });
 });
+
+/**
+ * `/done` — a session declaring itself finished (HIVE-93).
+ *
+ * The whole feature is one bit of state and what it changes: whether the app
+ * owes this terminal an exit, and whether the ending is recorded as `done` or
+ * `terminated`. Both are asserted here against the seam that actually decides
+ * them, because after the `/exit` is written **nothing downstream can tell the
+ * two endings apart** — the app's `/exit` and a user's are the same bytes.
+ *
+ * The receiver's half — that a POST is authenticated and correlated before any
+ * of this runs — is `hooks/receiver.test.ts`.
+ */
+describe('/done', () => {
+  interface Written {
+    id: string;
+    patch: Record<string, unknown>;
+  }
+
+  function finished(): {
+    open: () => string;
+    done: (entityId: string) => void;
+    hook: (entityId: string, event: HookStatusEvent['event']) => void;
+    cleared: (entityId: string) => void;
+    patches: (entityId: string) => Record<string, unknown>[];
+    statusOf: (entityId: string) => unknown;
+  } {
+    const written: Written[] = [];
+    const local: Sent[] = [];
+    let onEvent!: (event: HookStatusEvent) => void;
+    let onDone!: (entityId: string) => void;
+    let onCleared!: (entityId: string) => void;
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        local.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        doneUrl: () => null,
+        start: (opts: {
+          onEvent: (event: HookStatusEvent) => void;
+          onDone: (entityId: string) => void;
+          onCleared: (entityId: string) => void;
+        }) => {
+          onEvent = opts.onEvent;
+          onDone = opts.onDone;
+          onCleared = opts.onCleared;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+      ledger: {
+        begin: (id, patch, options) => {
+          written.push({ id, patch: { ...patch, ...(options ?? {}) } });
+        },
+        record: (id, patch) => {
+          written.push({ id, patch: { ...patch } });
+        },
+        resumable: () => undefined,
+        all: () => [],
+        flush: () => {},
+        dispose: () => {},
+      },
+    });
+
+    return {
+      open: () => {
+        instance.open(OPEN);
+        // The bootstrap's own writes are not what these tests are about.
+        vi.mocked(supervisor.write).mockClear();
+        return mintedFor('hero-refresh');
+      },
+      done: (entityId) => onDone(entityId),
+      hook: (entityId, event) =>
+        onEvent({ entityId, event, status: 'working' } as HookStatusEvent),
+      cleared: (entityId) => onCleared(entityId),
+      patches: (entityId) =>
+        written.filter((entry) => entry.id === entityId).map((entry) => entry.patch),
+      statusOf: (entityId) =>
+        local
+          .filter(
+            (entry) =>
+              entry.channel === CH.sessionStatus && entry.payload.entityId === entityId,
+          )
+          .at(-1)?.payload.status,
+    };
+  }
+
+  /** Every chunk written into the pty since the session opened. */
+  const writes = () => vi.mocked(supervisor.write).mock.calls.map((call) => call[1]);
+
+  it('closes the terminal with /exit rather than a signal', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+
+    /*
+      The assertion is the *mechanism*, not just the effect. `bootstrap.ts`
+      starts sessions as `claude … && exit`, so only a clean exit retires the
+      row — a signal would make `claude` exit non-zero, short-circuit the `&&`,
+      and leave a live login shell wrapped around a dead agent.
+    */
+    expect(writes()).toEqual(['/exit\r']);
+    expect(killed).not.toContain(sessionId);
+  });
+
+  it('waits for the turn to end rather than writing into a working pty', () => {
+    const h = finished();
+    h.open();
+
+    h.done('hero-refresh');
+
+    /*
+      The POST arrives *during* a turn — it is a tool call the agent is in the
+      middle of. Five characters written into a REPL that is still working land
+      somewhere nobody can predict.
+    */
+    expect(writes()).toEqual([]);
+  });
+
+  it('records done where a bare exit records terminated', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+    emitExit({ sessionId, exitCode: 0 });
+
+    expect(h.patches('hero-refresh').at(-1)).toMatchObject({ status: 'done' });
+    expect(h.statusOf('hero-refresh')).toBe('done');
+  });
+
+  it('records terminated for an exit nobody declared', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    // The same clean exit, the same bytes, no declaration in front of it.
+    emitExit({ sessionId, exitCode: 0 });
+
+    expect(h.patches('hero-refresh').at(-1)).toMatchObject({
+      status: 'terminated',
+    });
+    expect(h.statusOf('hero-refresh')).toBe('terminated');
+  });
+
+  it('withdraws the declaration when the user goes back to work', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'UserPromptSubmit');
+    h.hook('hero-refresh', 'Stop');
+
+    // Nothing written, and the ending that eventually comes is not `done`.
+    expect(writes()).toEqual([]);
+    emitExit({ sessionId, exitCode: 0 });
+    expect(h.patches('hero-refresh').at(-1)).toMatchObject({
+      status: 'terminated',
+    });
+  });
+
+  it('does not treat a subagent finishing as the end of the turn', () => {
+    const h = finished();
+    h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'SubagentStop');
+
+    expect(writes()).toEqual([]);
+  });
+
+  it('kills the terminal when /exit is ignored', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+    expect(killed).not.toContain(sessionId);
+
+    vi.advanceTimersByTime(10_000);
+
+    expect(killed).toContain(sessionId);
+  });
+
+  it('does not kill a terminal that took the /exit', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+    emitExit({ sessionId, exitCode: 0 });
+
+    // The timer has to go with the session, or it fires against a closed
+    // registry entry ten seconds later.
+    vi.advanceTimersByTime(10_000);
+
+    expect(killed).not.toContain(sessionId);
+  });
+
+  it('never writes a second /exit however often /done is invoked', () => {
+    const h = finished();
+    h.open();
+
+    h.done('hero-refresh');
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+    h.hook('hero-refresh', 'Stop');
+
+    expect(writes()).toEqual(['/exit\r']);
+  });
+
+  it('withdraws the declaration when the conversation is cleared', () => {
+    const h = finished();
+    h.open();
+
+    h.done('hero-refresh');
+    h.cleared('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+
+    /*
+      `/clear` retires the conversation that declared itself finished and opens
+      a successor on the same terminal. Acting on it afterwards would close a
+      session the user has only just started.
+    */
+    expect(writes()).toEqual([]);
+  });
+
+  it('ignores a declaration from a session it does not have', () => {
+    const h = finished();
+    h.open();
+
+    expect(() => h.done('sess-gone')).not.toThrow();
+    expect(writes()).toEqual([]);
+  });
+});

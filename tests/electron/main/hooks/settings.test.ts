@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  doneCommand,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_EVENTS,
@@ -101,6 +102,71 @@ describe('hookSettings', () => {
  * at command-line precedence, so the entry written here replaces whatever
  * status line they configured for themselves, inside Hive sessions only.
  */
+/**
+ * The one permission this file grants (HIVE-93).
+ *
+ * It is written *above* the user's own settings scope, so every assertion here
+ * is really about restraint: exactly one entry, only when there is an endpoint
+ * to reach, and scoped to a command this app both writes and serves.
+ */
+describe('the /done permission', () => {
+  const DONE_URL = 'http://127.0.0.1:51234/done';
+
+  it('grants nothing when there is no endpoint to reach', () => {
+    expect(hookSettings('http://127.0.0.1:51234/hook')).not.toHaveProperty(
+      'permissions',
+    );
+  });
+
+  it('grants exactly one command, derived from the shared builder', () => {
+    const settings = hookSettings(
+      'http://127.0.0.1:51234/hook',
+      'dark',
+      DONE_URL,
+    );
+
+    /*
+      Derived rather than spelled out. A literal here would pass while the skill
+      body and the permission drifted apart — which is the one failure this
+      pairing exists to make impossible, and it surfaces as a permission prompt
+      inside the app's own built-in.
+    */
+    expect(settings.permissions).toEqual({
+      allow: [`Bash(${doneCommand(DONE_URL)}:*)`],
+    });
+  });
+
+  it('permits a prefix, so the agent may not vary the request itself', () => {
+    const rule = hookSettings('http://127.0.0.1:51234/hook', 'dark', DONE_URL)
+      .permissions!.allow[0]!;
+
+    // Everything that identifies the request is inside the permitted prefix.
+    expect(rule).toContain(DONE_URL);
+    expect(rule).toContain(HOOK_HEADER_SESSION);
+    expect(rule).toContain(HOOK_HEADER_TOKEN);
+    expect(rule.endsWith(':*)')).toBe(true);
+  });
+
+  it('reaches the file both themes are written from', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-done-'));
+    const paths = await writeHookSettings(
+      dir,
+      'http://127.0.0.1:51234/hook',
+      undefined,
+      DONE_URL,
+    );
+
+    for (const path of Object.values(paths)) {
+      const written = JSON.parse(await readFile(path, 'utf8')) as {
+        permissions?: { allow: string[] };
+      };
+      expect(written.permissions?.allow).toEqual([
+        `Bash(${doneCommand(DONE_URL)}:*)`,
+      ]);
+    }
+  });
+});
+
 describe('statusLineSettings', () => {
   const scriptPath = '/Users/x/Library/Application Support/The Hive/hive/statusline.sh';
 

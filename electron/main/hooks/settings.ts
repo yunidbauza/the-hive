@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
+  doneCommand,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_EVENTS,
@@ -118,6 +119,35 @@ export interface HookSettings {
    * fleet-within-a-fleet this exists to prevent.
    */
   disableAgentView?: boolean;
+  /**
+   * The one command the app's own built-in needs, pre-approved (HIVE-93).
+   *
+   * ## Why this file may grant a permission at all
+   *
+   * It is the app's file, merged *above* the user's scope, so anything written
+   * here is a permission the user did not grant and cannot see in their own
+   * settings. That is a real cost and the reason this holds exactly one entry,
+   * scoped to one URL on loopback that only this app serves.
+   *
+   * The alternative was worse. `/done` is a built-in: the app writes it, the
+   * app is the only thing it can talk to, and the user asked for it by typing
+   * its name. Without this, its first use stops on an "allow curl?" prompt for
+   * a command the user never wrote — which reads as the app being broken, and
+   * teaches the habit of approving `curl` prompts by reflex. A built-in that
+   * cannot run without a permission dialog is not a built-in.
+   *
+   * ## Why a prefix and not the exact string
+   *
+   * The rule is derived from {@link doneCommand}, so the thing permitted and the
+   * thing run are the same text by construction. It is written as a prefix
+   * because the agent reproduces the command from the skill body rather than
+   * echoing bytes — a trailing newline or a wrapped line would miss an exact
+   * match, and the failure mode of a near-miss is the prompt this exists to
+   * prevent. Everything that identifies the request — method, host, port, path,
+   * both headers — is inside the prefix, so what a suffix could add is an
+   * argument to a URL that answers 204 and nothing else.
+   */
+  permissions?: { allow: string[] };
 }
 
 /**
@@ -147,7 +177,11 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * a receiver that answers 403 to everything, which is a confusing way to
  * discover a missing field.
  */
-export function hookSettings(url: string, theme?: SessionTheme): HookSettings {
+export function hookSettings(
+  url: string,
+  theme?: SessionTheme,
+  doneUrl?: string,
+): HookSettings {
   const handler = {
     type: 'http',
     url,
@@ -180,6 +214,17 @@ export function hookSettings(url: string, theme?: SessionTheme): HookSettings {
     */
     disableAgentView: true,
     ...(theme === undefined ? {} : { theme }),
+    /*
+      Omitted entirely when there is no `/done` endpoint to reach, so a launch
+      whose receiver never bound writes no permission for a command no skill
+      will contain. The generated skill degrades in the same breath — see
+      `skills/done-skill.ts` — and the two must agree: a permission for an
+      absent command is harmless, but it is also a claim in a file the user did
+      not write, and this file makes as few of those as it can.
+    */
+    ...(doneUrl === undefined
+      ? {}
+      : { permissions: { allow: [`Bash(${doneCommand(doneUrl)}:*)`] } }),
   };
 }
 
@@ -286,6 +331,7 @@ export async function writeHookSettings(
   userDataPath: string,
   url: string,
   metricsUrl?: string,
+  doneUrl?: string,
 ): Promise<HookSettingsPaths> {
   await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
 
@@ -308,7 +354,7 @@ export async function writeHookSettings(
 
   for (const theme of SESSION_THEMES) {
     const path = join(userDataPath, hookSettingsFile(theme));
-    const settings = hookSettings(url, theme);
+    const settings = hookSettings(url, theme, doneUrl);
     if (statusLine !== undefined) settings.statusLine = statusLine;
     await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
     paths[theme] = path;

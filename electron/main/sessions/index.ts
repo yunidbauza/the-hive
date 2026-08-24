@@ -18,6 +18,7 @@ import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import {
   spawnRefusal,
+  type PublishedStatus,
   type SessionEffort,
   type SessionModel,
   type SessionTheme,
@@ -467,7 +468,19 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (status !== 'terminated' && hookDriven.has(entityId)) return;
       // The process is gone; drop its record rather than leak it (HIVE-83).
       if (status === 'terminated') statusTracker.forget(entityId);
-      publishStatus(entityId, status);
+      /**
+       * `done` is a `terminated` that was declared first (HIVE-93).
+       *
+       * Translated here, at the one place an ending reaches the renderer, rather
+       * than by teaching `activity.ts` a fourth status. That module derives what
+       * a *pty* shows and `done` is not derivable from one — it is a fact this
+       * layer holds and that one has no business knowing. `DerivedStatus` stays
+       * three members wide and the tracker stays honest.
+       */
+      publishStatus(
+        entityId,
+        status === 'terminated' && declaredDone(entityId) ? 'done' : status,
+      );
     },
   });
 
@@ -526,6 +539,12 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   void hooks?.start({
     knowsSession: (entityId) => registry.sessionFor(entityId) !== undefined,
+    /*
+      The declaration, recorded and nothing more (HIVE-93). Acting on it here
+      would write `/exit` into a pty in the middle of the turn that is asking
+      for it — see `armFinish`.
+    */
+    onDone: (entityId) => armFinish(entityId),
     onEvent: (event) => {
       /**
        * The tracker decides, not the event (HIVE-83).
@@ -557,6 +576,24 @@ export function createSessions(options: SessionsOptions): Sessions {
         derived.detail,
         event.toolName,
       );
+      /**
+       * `/done`'s two turning points, both of them events on this stream
+       * (HIVE-93).
+       *
+       * `Stop` is the end of a turn, and the app's only reliable signal that the
+       * REPL is back at an empty prompt — so it is when a declared finish is
+       * acted on. `SubagentStop` deliberately is not: a helper agent finishing
+       * says nothing about the session.
+       *
+       * `UserPromptSubmit` is the opposite turning point — the user went back to
+       * work, which withdraws a declaration nothing has acted on yet.
+       *
+       * Both sit after the status publish so a session that is closing still
+       * reports the turn it just finished; its last live status stays truthful
+       * right up until the exit replaces it.
+       */
+      if (event.event === 'Stop') closeFinished(event.entityId);
+      else if (event.event === 'UserPromptSubmit') disarmFinish(event.entityId);
       /**
        * The branch read is deliberately **after** the status (HIVE-78).
        *
@@ -593,6 +630,14 @@ export function createSessions(options: SessionsOptions): Sessions {
        * running.
        */
       statusTracker.reset(entityId);
+      /*
+        A declaration belongs to the conversation that made it (HIVE-93).
+        `/clear` retires that conversation and opens a successor on the same
+        terminal, so a finish still armed here would close a session the user
+        has only just started — and the row it closed would not even be the one
+        that asked.
+      */
+      forgetFinish(entityId);
       /**
        * The uuid no longer names this terminal's conversation (HIVE-88).
        *
@@ -652,7 +697,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   function publishStatus(
     entityId: string,
-    status: ObservedStatus,
+    status: PublishedStatus,
     /**
      * The hook that produced this status, when one did (HIVE-75).
      *
@@ -694,10 +739,14 @@ export function createSessions(options: SessionsOptions): Sessions {
      * rewrites every live status to `closed` anyway. It is not enough for a
      * renderer that starts in front of running ptys — the row it hydrates as
      * live should say what the session is doing, not what it was doing when
-     * it started. `terminated` stays with `settleExit`, which also owns
-     * `endedAt`.
+     * it started. Both *endings* stay with `settleExit`, which also owns
+     * `endedAt` — `terminated` since HIVE-88 and `done` since HIVE-93, for the
+     * same reason: a status written here would land without the timestamp that
+     * makes it sortable, and retention sorts on `endedAt`.
      */
-    if (status !== 'terminated') ledger?.record(entityId, { status });
+    if (status !== 'terminated' && status !== 'done') {
+      ledger?.record(entityId, { status });
+    }
 
     send(CH.sessionStatus, {
       entityId,
@@ -723,6 +772,128 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   function publishCleared(entityId: string): void {
     send(CH.sessionCleared, { entityId } satisfies SessionClearedEvent);
+  }
+
+  /**
+   * How long `/exit` gets to take before the pty is killed instead (HIVE-93).
+   *
+   * A backstop for a `/exit` that was written but never acted on — an agent
+   * wedged mid-turn, a REPL that never returned to its prompt. Not a bound on
+   * the *turn*: the write only happens at `Stop`, which is already the end of
+   * one, so anything after it is a session that is not going to close on its
+   * own.
+   *
+   * Ten seconds because the honest outcomes are "immediately" and "never". A
+   * healthy `claude` handling `/exit` at an empty prompt takes milliseconds, and
+   * every extra second here is a row the user asked to close still sitting in
+   * the rail. Killing is not lossy: the transcript stays readable either way,
+   * and the ending is still recorded as `done` because the *declaration* is what
+   * decides that, not which of the two mechanisms got there.
+   */
+  const DONE_EXIT_TIMEOUT_MS = 10_000;
+
+  /** What `/done` writes into the pty. See {@link closeFinished}. */
+  const EXIT_COMMAND = '/exit\r';
+
+  /**
+   * Sessions that have declared themselves finished (HIVE-93).
+   *
+   * Presence means `/done` was invoked and the app owes this terminal an exit.
+   * The value is the kill timer, `null` until `/exit` has actually been written
+   * — so the map carries both halves of the state in one entry, and the
+   * distinction between "armed" and "closing" is a value check rather than a
+   * second collection that could disagree with this one.
+   *
+   * **This flag is the only thing that separates `done` from `terminated`.**
+   * After the write, the app's `/exit` and a user's are the same bytes in the
+   * same pty; nothing downstream can tell them apart, and nothing should try.
+   * What is recorded depends on whether somebody said the work was finished
+   * before the process went — which is exactly the judgement story 108 said a
+   * pty cannot make, now supplied by whoever typed `/done`.
+   */
+  const finishing = new Map<string, ReturnType<typeof setTimeout> | null>();
+
+  /** Whether this session has declared itself finished. */
+  const declaredDone = (entityId: string): boolean => finishing.has(entityId);
+
+  /**
+   * `/done` was invoked in this session.
+   *
+   * Nothing happens to the terminal yet. The POST arrives *during* a turn — it
+   * is a tool call the agent is in the middle of — and writing `/exit` into a
+   * pty whose REPL is still working would put five characters somewhere nobody
+   * can predict. The close waits for `Stop`, which is the app's only reliable
+   * signal that the prompt is empty again.
+   */
+  function armFinish(entityId: string): void {
+    if (registry.sessionFor(entityId) === undefined) return;
+    // Re-invoking `/done` in a session already closing changes nothing, and
+    // must not restart the timer or write a second `/exit`.
+    if (finishing.has(entityId)) return;
+    finishing.set(entityId, null);
+  }
+
+  /**
+   * The user kept working after `/done`, so the session is not finished.
+   *
+   * Without this the *next* `Stop` would close a session that had gone back to
+   * work — the user runs `/done`, changes their mind, types a new prompt, and
+   * the terminal shuts on them at the end of that turn. A typed prompt is the
+   * clearest possible statement that the declaration no longer holds.
+   *
+   * Only while still armed. Once `/exit` is written the exit is in flight and
+   * there is nothing left to call off; a `UserPromptSubmit` arriving then is
+   * from a REPL that is already on its way out.
+   */
+  function disarmFinish(entityId: string): void {
+    if (finishing.get(entityId) === null) finishing.delete(entityId);
+  }
+
+  /**
+   * The turn ended in a session that declared itself finished — close it.
+   *
+   * `/exit` rather than a signal, and that is the whole reason this is written
+   * into the pty instead of killed from outside. `bootstrap.ts` starts sessions
+   * as `claude … && exit`, so the login shell leaves **only** on a clean exit:
+   * a `SIGTERM` makes `claude` exit non-zero, the `&&` short-circuits, and the
+   * user is left with a live shell wrapped around a dead agent — the one
+   * outcome nobody asked for. `/exit` exits 0, the `&&` fires, the shell goes,
+   * and the pty closes on its own.
+   *
+   * Written straight to the pty rather than through `write`, deliberately: that
+   * path holds input while the bootstrap is pending, and this can only run for a
+   * session whose agent is far enough along to have called a tool. Holding it
+   * would mean queueing an exit behind a bootstrap that has already finished.
+   */
+  function closeFinished(entityId: string): void {
+    if (finishing.get(entityId) !== null) return;
+
+    const sessionId = registry.sessionFor(entityId);
+    if (sessionId === undefined) {
+      finishing.delete(entityId);
+      return;
+    }
+
+    ptyIpc.write(sessionId, EXIT_COMMAND);
+
+    finishing.set(
+      entityId,
+      setTimeout(() => {
+        const live = registry.sessionFor(entityId);
+        if (live === undefined) return;
+        console.info(
+          `[hive] ${entityId} did not exit after /done — killing the terminal`,
+        );
+        ptyIpc.kill(live);
+      }, DONE_EXIT_TIMEOUT_MS),
+    );
+  }
+
+  /** Drop a session's finish state, timer included. */
+  function forgetFinish(entityId: string): void {
+    const timer = finishing.get(entityId);
+    if (timer !== undefined && timer !== null) clearTimeout(timer);
+    finishing.delete(entityId);
   }
 
   /**
@@ -895,9 +1066,28 @@ export function createSessions(options: SessionsOptions): Sessions {
        * that sees an ending however it arrived, `ptyExit` or `ptyLost`, so it
        * is the only place the fact can be captured rather than inferred.
        */
-      ledger?.record(entityId, { status: 'terminated', endedAt: Date.now() });
+      /**
+       * `done` when the session said so first, `terminated` otherwise
+       * (HIVE-93).
+       *
+       * Read here rather than passed in, because every caller of `settleExit`
+       * reaches it the same way — a pty exited — and none of them knows why.
+       * That is the point: a deliberate `/exit`, the `/exit` this app wrote
+       * after `/done`, and a kill are indistinguishable by the time they get
+       * here, so the only honest input is whether a declaration was on file.
+       */
+      ledger?.record(entityId, {
+        status: declaredDone(entityId) ? 'done' : 'terminated',
+        endedAt: Date.now(),
+      });
     }
     registry.close(entityId);
+    /*
+      After `activity.exited` and the record above, both of which read it. The
+      kill timer goes with it — the pty is gone, so a pending force-kill has
+      nothing left to reach and would fire against a closed registry entry.
+    */
+    forgetFinish(entityId);
 
     const waiters = exitWaiters.get(entityId);
     if (!waiters) return;
@@ -1056,6 +1246,14 @@ export function createSessions(options: SessionsOptions): Sessions {
      * session is not.
      */
     activity.forget(request.entityId);
+    /*
+      No `forgetFinish` beside this one, deliberately (HIVE-93). The tracker
+      needs clearing here because it keeps its entry past an exit; the finish map
+      does not, because `settleExit` drops it on every ending — and a live
+      session cannot be re-opened, so there is no path that reaches a spawn with
+      a declaration still standing. A defensive call here would be a branch no
+      test could reach.
+    */
 
     /**
      * Per-project overrides win over the top-level values (story 104).
@@ -1390,6 +1588,13 @@ export function createSessions(options: SessionsOptions): Sessions {
       titles.clear();
       hookDriven.clear();
       heldInput.clear();
+      /*
+        Timers first, then the map. These are the only ones in this layer that
+        can outlive a session by design — a force-kill scheduled ten seconds out
+        — and this hook exists precisely so nothing holds `before-quit` open
+        after the processes are gone (HIVE-93).
+      */
+      for (const entityId of [...finishing.keys()]) forgetFinish(entityId);
       registry.clear();
       restarting.clear();
       exitWaiters.clear();

@@ -729,9 +729,27 @@ export function registerIpcHandlers(): void {
     inside the runtime so that module's tests can run under plain Node — the
     same reason `userDataPath` is passed in rather than resolved there.
   */
+  /*
+    Hoisted out of the `createSessions` call it used to be an argument to,
+    because the skills runtime now reads one value off it (HIVE-93). The two
+    stay independent — `doneUrl` is passed as a getter, not as the runtime —
+    and this is the only line where they meet.
+  */
+  const hooks = createHookRuntime({
+    userDataPath: app.getPath('userData'),
+    // Read per call, so a config reload is picked up (HIVE-79).
+    sessionMetrics: () => getConfig().sessionMetrics,
+  });
+
   skills = createSkillsRuntime({
     userDataPath: app.getPath('userData'),
     version: app.getVersion(),
+    /*
+      Read at every regeneration rather than captured here: this runs before the
+      receiver has bound, so a value read now would be `null` for the life of the
+      app. `sync()` happens before every spawn, which is always afterwards.
+    */
+    doneUrl: () => hooks.doneUrl(),
   });
 
   sessions = createSessions({
@@ -739,11 +757,7 @@ export function registerIpcHandlers(): void {
     config: getConfig,
     send,
     skills,
-    hooks: createHookRuntime({
-      userDataPath: app.getPath('userData'),
-      // Read per call, so a config reload is picked up (HIVE-79).
-      sessionMetrics: () => getConfig().sessionMetrics,
-    }),
+    hooks,
     ledger,
   });
 

@@ -61,11 +61,27 @@ export interface SkillsRuntimeOptions {
    * call for the same reason.
    */
   version: string;
+  /**
+   * Where the generated `/done` reports to (HIVE-93).
+   *
+   * A getter, not a value, and that is the whole of this runtime's relationship
+   * with the hook runtime. The two are siblings that share a parent directory in
+   * userData and nothing else — folding one into the other would put a fatal
+   * error path and a cosmetic one behind one name — but `/done` needs a port the
+   * *other* one chose at bind time. A function read at regeneration keeps the
+   * dependency to a single value flowing one way, with no import between them.
+   *
+   * Optional, and absent means `null`: this module's own tests construct a
+   * runtime with no hooks at all, and a skills directory without a working
+   * `/done` is still a skills directory.
+   */
+  doneUrl?: () => string | null;
 }
 
 export function createSkillsRuntime({
   userDataPath,
   version,
+  doneUrl,
 }: SkillsRuntimeOptions): SkillsRuntime {
   const pluginRoot = join(userDataPath, PLUGIN_DIR);
   let written = false;
@@ -106,7 +122,7 @@ export function createSkillsRuntime({
     const read = await readUserSkills(skillsRoot());
 
     try {
-      await writePluginDir(pluginRoot, version, read);
+      await writePluginDir(pluginRoot, version, read, doneUrl?.() ?? null);
       written = true;
     } catch (cause) {
       /**
