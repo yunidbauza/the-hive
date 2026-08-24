@@ -15,10 +15,12 @@ import {
   useActiveSessions,
   useEndedSessions,
   useEntity,
+  useHasResumable,
   useNavOrder,
   useOpenEntity,
   useResumeSession,
   useRestoredSessions,
+  useSessionPr,
 } from '@stores/hive-store';
 import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
 
@@ -63,6 +65,27 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  * it names never line up on the same x. Two columns cost nothing (the `·` that
  * joined them is now the gap) and the header once again points at what is under
  * it.
+ *
+ * ## `action`, and why one header word ended up over the wrong column
+ *
+ * Resume arrived (HIVE-93) as a sibling of the row button rather than a cell
+ * inside it — it has to be, since a button cannot contain a button. It was
+ * given no column, so it took its width from the flex line directly: every cell
+ * to its left shifted, and `PR` — the last and narrowest of them — ended up a
+ * whole control away from the header word naming it. The screenshot that
+ * reported this shows `PR` sitting squarely above a stack of `resume`s.
+ *
+ * So the control gets a column like everything else, and both rows and header
+ * reserve it *together*, on {@link useHasResumable}'s single table-wide answer.
+ * Per-row would be worse than nothing: rows with a resumable neighbour would
+ * disagree with rows without one, and the header could not match either.
+ *
+ * It is reserved only when some row will use it, because the floors above have
+ * no room to give: `PR` is 34px at a window where the two rails leave the stage
+ * 516px, and a 52px slot held open on a fleet that never resumes anything is
+ * exactly the overflow the paragraph above measures. A fleet that *does* have a
+ * resumable row spends it, and the variable columns give the width back by
+ * truncating — which is why every one of them carries a `title`.
  */
 const COL = {
   caret: 'w-3 shrink-0',
@@ -71,6 +94,7 @@ const COL = {
   project: 'min-w-[80px] flex-[1] truncate',
   branch: 'min-w-[100px] flex-[2] truncate',
   pr: 'w-[34px] shrink-0',
+  action: 'w-[52px] shrink-0',
 } as const;
 
 /**
@@ -110,16 +134,43 @@ export function SessionTable() {
    * render that throws it away.
    */
   const phrase = useSwarmPhrase('empty.sessions');
+  /**
+   * Whether the header and every row hold the Resume column open (HIVE-100).
+   *
+   * Answered once, here, and handed down — see `COL.action`. A row cannot
+   * decide this for itself without disagreeing with its neighbours.
+   */
+  const reserveAction = useHasResumable();
 
   return (
     <div className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]">
-      <div className="flex gap-2.5 px-2 pb-1.5 text-[11px] tracking-[0.06em] text-term-head">
+      <div className="flex items-center gap-2.5 px-2 pb-1.5 text-[11px] tracking-[0.06em] text-term-head">
         <span className={COL.caret} />
         <span className={COL.session}>SESSION</span>
         <span className={COL.status}>STATUS</span>
         <span className={COL.project}>PROJECT</span>
         <span className={COL.branch}>BRANCH</span>
-        <span className={COL.pr}>PR</span>
+        {/*
+          `data-col` is a measurement handle, not a style hook (HIVE-100). The
+          header cell and every row's PR cell carry it, so one selector collects
+          the whole column and an e2e can assert they share an x — which is the
+          only kind of test that can see this defect at all. happy-dom performs
+          no layout, so the misalignment that produced this column was invisible
+          to all 4,386 unit tests while being the first thing a user saw.
+        */}
+        <span className={COL.pr} data-col="pr">
+          PR
+        </span>
+        {/*
+          The Resume column's header cell, deliberately wordless: the control
+          below it is already labelled `resume` on every row that has one, and a
+          header word for a column that is empty on most rows would read as a
+          fourth thing the table tracks. It exists to hold the width, which is
+          the only reason `PR` now sits over the PR values.
+        */}
+        {reserveAction ? (
+          <span className={COL.action} data-col="action" aria-hidden="true" />
+        ) : null}
       </div>
 
       {empty ? (
@@ -142,7 +193,7 @@ export function SessionTable() {
       ) : null}
 
       {active.map((id) => (
-        <SessionTableRow key={id} id={id} />
+        <SessionTableRow key={id} id={id} reserveAction={reserveAction} />
       ))}
 
       {/*
@@ -167,7 +218,7 @@ export function SessionTable() {
             <span className="flex-1 border-t border-border" />
           </div>
           {restored.map((id) => (
-            <SessionTableRow key={id} id={id} />
+            <SessionTableRow key={id} id={id} reserveAction={reserveAction} />
           ))}
         </>
       ) : null}
@@ -186,7 +237,7 @@ export function SessionTable() {
             <span className="flex-1 border-t border-border" />
           </div>
           {ended.map((id) => (
-            <SessionTableRow key={id} id={id} />
+            <SessionTableRow key={id} id={id} reserveAction={reserveAction} />
           ))}
         </>
       ) : null}
@@ -201,7 +252,13 @@ export function SessionTable() {
  * status change should repaint one row, not the whole table. Same rule the
  * header's chips follow.
  */
-function SessionTableRow({ id }: { id: string }) {
+function SessionTableRow({
+  id,
+  reserveAction,
+}: {
+  id: string;
+  reserveAction: boolean;
+}) {
   const entity = useEntity(id);
   const navOrder = useNavOrder();
   const selIdx = useSelIdx();
@@ -209,6 +266,14 @@ function SessionTableRow({ id }: { id: string }) {
   const openEntity = useOpenEntity();
   const resumeSession = useResumeSession();
   const activeTab = useActiveTab();
+  /**
+   * The row's pull request, resolved from the live GitHub list (HIVE-100).
+   *
+   * Called before the guard below, because a hook cannot sit behind an early
+   * return — `useSessionPr` takes the id for exactly that reason and answers
+   * `null` for anything that is not a session.
+   */
+  const pr = useSessionPr(id);
 
   if (!entity || !isSession(entity)) return null;
 
@@ -258,9 +323,21 @@ function SessionTableRow({ id }: { id: string }) {
   const resumable = ended && entity.resumable === true;
 
   return (
+    /*
+      The flex line the header mirrors, cell for cell.
+
+      The row button no longer spans it: it holds the five cells that open a
+      terminal, and `PR` and Resume sit outside as siblings. That is forced
+      rather than chosen — `#123` is a link and Resume is a button, and neither
+      may be nested inside the row's own button. The arithmetic still lines up
+      with the header because the button is `flex-1` over the same gap: what it
+      leaves for `SESSION`, `PROJECT` and `BRANCH` is the header's total minus
+      the very same fixed columns.
+    */
     <div
+      data-testid="session-row"
       className={cn(
-        'flex w-full items-center rounded',
+        'flex w-full items-center gap-2.5 rounded px-2',
         selected ? 'bg-term-row-active' : 'hover:bg-term-row-hover',
       )}
     >
@@ -277,7 +354,7 @@ function SessionTableRow({ id }: { id: string }) {
       }}
       aria-current={activeTab === id ? 'true' : undefined}
       className={cn(
-        'flex min-w-0 flex-1 items-center gap-2.5 px-2 py-[3px] text-left',
+        'flex min-w-0 flex-1 items-center gap-2.5 py-[3px] text-left',
         ended && 'opacity-60',
       )}
     >
@@ -307,53 +384,94 @@ function SessionTableRow({ id }: { id: string }) {
       >
         {branchLabel(entity)}
       </span>
-      {/*
-        The column is 34px wide, so the PR *state* cannot be visible text here
-        the way it is on the meta bar. It still must not be carried by colour
-        alone — a hue is no signal to a colour-blind user, and none at all to a
-        screen reader — so the state rides along as a title and an sr-only word.
-      */}
-      <span
-        title={entity.pr ? `#${entity.pr.n} · ${entity.pr.state}` : 'no pull request'}
-        className={cn(
-          COL.pr,
-          entity.pr ? prStateText(entity.pr.state) : 'text-subtle',
-        )}
-      >
-        {entity.pr ? `#${entity.pr.n}` : '—'}
-        <span className="sr-only">
-          {entity.pr ? ` ${entity.pr.state}` : ' no pull request'}
-        </span>
-      </span>
     </button>
+    {/*
+      The PR cell, and the second thing this row cannot keep inside its button:
+      `#123` opens GitHub, and an anchor nested in a button is invalid markup
+      that browsers resolve by silently dropping one of the two.
+
+      The column is 34px wide, so the PR *state* cannot be visible text here the
+      way it is on the meta bar. It still must not be carried by colour alone —
+      a hue is no signal to a colour-blind user, and none at all to a screen
+      reader — so the state rides along as a title and an sr-only word.
+
+      `opacity-60` is repeated from the button rather than lifted to the row,
+      because Resume is the one thing on an ended row that is *not* spent:
+      dimming it would say the opposite of what it does.
+    */}
+    <span className={cn(COL.pr, ended && 'opacity-60')} data-col="pr">
+      {pr ? (
+        <a
+          href={pr.url}
+          target="_blank"
+          rel="noreferrer"
+          /*
+            Underlined at rest, not on hover. In a monospace table `#123` is
+            otherwise just the cell's value — the same weight and shape as the
+            branch beside it — and nothing would suggest it leaves the app.
+            `pr-card` can afford `hover:underline` because its `#123` sits next
+            to a title and an arrow glyph; there is no room for either here.
+          */
+          className={cn(
+            'underline underline-offset-2',
+            prStateText(pr.state),
+            'hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+          )}
+          title={`#${String(pr.n)} · ${pr.state} — open on GitHub`}
+          /*
+            The state is *in* the label rather than in an `sr-only` span beside
+            it. An `aria-label` replaces an element's content for accessibility
+            purposes, so the visually-hidden word the cell used to carry would
+            have been computed away here and announced to nobody — the colour
+            would then have been the only carrier of the state, which is the one
+            thing this cell has always refused to do.
+          */
+          aria-label={`Open PR #${String(pr.n)} on GitHub — ${pr.state}`}
+        >
+          #{pr.n}
+        </a>
+      ) : (
+        <span className="text-subtle" title="no pull request">
+          —<span className="sr-only"> no pull request</span>
+        </span>
+      )}
+    </span>
     {/*
       A sibling of the row, not a child of it — a button inside a button is
       invalid markup, and browsers resolve it by dropping one of the two.
       `stopPropagation` is therefore unnecessary here, which is the point: the
       two controls are genuinely separate targets for both mouse and keyboard.
+
+      The slot is drawn on **every** row once any row needs it, so this cell is
+      frequently empty. That is what a reserved column is: the alternative is
+      the misalignment `COL.action` describes.
     */}
-    {resumable ? (
-      <button
-        type="button"
-        /*
-          Named for its row, not just "resume". The visible word is enough
-          beside the session it belongs to, but a screen reader reaching the
-          fifth of five identical "resume" buttons has been told nothing about
-          which conversation it reopens.
-        */
-        aria-label={`resume ${entityLabel(entity)}`}
-        title={`resume ${entityLabel(entity)} — continues the conversation`}
-        onClick={() => {
-          setSelIdx(index);
-          resumeSession(id);
-        }}
-        className={cn(
-          'mr-2 shrink-0 rounded px-1.5 py-[1px] text-[11px] text-subtle',
-          'hover:bg-term-row-hover hover:text-ink',
-        )}
-      >
-        resume
-      </button>
+    {reserveAction ? (
+      <span className={cn(COL.action, 'flex justify-end')} data-col="action">
+        {resumable ? (
+          <button
+            type="button"
+            /*
+              Named for its row, not just "resume". The visible word is enough
+              beside the session it belongs to, but a screen reader reaching the
+              fifth of five identical "resume" buttons has been told nothing
+              about which conversation it reopens.
+            */
+            aria-label={`resume ${entityLabel(entity)}`}
+            title={`resume ${entityLabel(entity)} — continues the conversation`}
+            onClick={() => {
+              setSelIdx(index);
+              resumeSession(id);
+            }}
+            className={cn(
+              'rounded px-1.5 py-[1px] text-[11px] text-subtle',
+              'hover:bg-term-row-hover hover:text-ink',
+            )}
+          >
+            resume
+          </button>
+        ) : null}
+      </span>
     ) : null}
     </div>
   );

@@ -365,7 +365,9 @@ projects panel groups by repo, grouped by work item instead.
 `useTicketPrs()` filters the live `prs` list by the branches the ticket's
 sessions are on. It used to walk `Session.pr` instead, with the global list as a
 fallback; nothing ever wrote that field, so the section was permanently empty and
-only the fixtures made it look otherwise. It **cannot use
+only the fixtures made it look otherwise. (The field itself is gone as of
+HIVE-100, which found the last two surfaces still reading it — the fleet table's
+`PR` column and the meta bar's chip, both empty for the same reason.) It **cannot use
 `useShallow`** — it builds new objects, and `useShallow` compares an array's
 elements by identity, so every render would produce a new snapshot and React
 would loop. It subscribes to the stable slices and memoises instead; the
@@ -501,6 +503,14 @@ same moment it reaches the rails — including the `waiting → "needs input"`
 rename, which comes from `STATUS_LABEL` rather than being spelled again here.
 PR colour comes from `features/shared/pr-presentation`, shared with the work and
 PRs panels.
+
+**The PR chip is resolved, not read off the entity, and it is a link** (HIVE-100).
+It used to render `entity.pr` — a field nothing has ever written, so the chip had
+never once appeared outside a fixture and the "derived from the entity" sentence
+above was describing something that could not happen. `useSessionPr()` matches
+the session's branch against the live `prs` list, the same resolution
+`useTicketPrs()` and `usePrs()` perform; `Session.pr` is gone, along with the
+`PrState` type that existed only to type it.
 
 The back pill uses a native `title` rather than the Radix tooltip: the app mounts
 no `TooltipProvider`, and adding one to the root for a single affordance buys

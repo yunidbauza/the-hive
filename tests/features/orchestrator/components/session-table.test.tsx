@@ -9,6 +9,22 @@ import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const rows = () => screen.getAllByRole('button');
 
+/**
+ * The whole row, not just the button inside it.
+ *
+ * `PR` and Resume are siblings of that button rather than cells within it —
+ * they are a link and a button, and neither may be nested inside one
+ * (HIVE-93, HIVE-100). So an assertion about a row's pull request has to be
+ * scoped to the shell that holds all three, or it escapes to the table.
+ */
+const shellOf = (row: HTMLElement): HTMLElement => {
+  const shell = row.closest('[data-testid="session-row"]');
+  if (!(shell instanceof HTMLElement)) {
+    throw new Error('row button is not inside a session-row shell');
+  }
+  return shell;
+};
+
 /** The fleet table (story 041) — DOM, so its rows stay clickable. */
 describe('SessionTable', () => {
   beforeEach(() => {
@@ -91,7 +107,53 @@ describe('SessionTable', () => {
     // puts it and each branch starts where its project name ends.
     expect(within(row).getByText('apfm-web')).toBeInTheDocument();
     expect(within(row).getByText('feat/hero-refresh')).toBeInTheDocument();
-    expect(within(row).getByText('#482')).toBeInTheDocument();
+    /*
+      Resolved from the live PR list by branch, not read off the session
+      (HIVE-100). `Session.pr` was the field this column used to read and nothing
+      ever wrote it, so every row showed `—` in the running app while the
+      fixtures made it look populated. The fixture now supplies only what GitHub
+      supplies — a `PrRecord` on `feat/hero-refresh` — and the column derives
+      the rest.
+    */
+    expect(within(shellOf(row)).getByText('#482')).toBeInTheDocument();
+  });
+
+  it('links the PR to its GitHub page', () => {
+    render(<SessionTable />);
+
+    /*
+      A real anchor, so middle-click and "copy link" work — the same treatment
+      `pr-card` and `ticket-pr-row` give the number. The underline is what says
+      so in a monospace table, where `#482` would otherwise look like any other
+      cell value.
+    */
+    const link = within(shellOf(rows()[0])).getByRole('link');
+
+    expect(link).toHaveAttribute(
+      'href',
+      'https://github.com/demo/apfm-web/pull/482',
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveClass('underline');
+  });
+
+  /**
+   * Two rows on one branch is the ordinary case after a `/clear`: the successor
+   * inherits the branch, so both point at the same pull request and neither may
+   * claim it exclusively.
+   *
+   * This is the behaviour that replaced `hive-store.clear-session`'s old
+   * "successor carries no PR" assertion. That one passed for the wrong reason —
+   * nothing wrote `Session.pr`, so *no* session had one — and a PR belongs to
+   * the branch both rows are on.
+   */
+  it('gives the same PR to both rows after a clear', () => {
+    act(() => {
+      useHiveStore.getState().clearSession('hero-refresh');
+    });
+    render(<SessionTable />);
+
+    expect(screen.getAllByRole('link', { name: /#482/ })).toHaveLength(2);
   });
 
   it('leaves the BRANCH column an em dash until one is observed', () => {
@@ -125,18 +187,33 @@ describe('SessionTable', () => {
 
     // 34px leaves no room for the state as visible text, but a hue is no
     // signal to a colour-blind user and none at all to a screen reader.
-    expect(within(row).getByText('#482')).toHaveAttribute(
-      'title',
-      '#482 · open',
-    );
-    expect(row).toHaveAccessibleName(/open/);
+    const link = within(shellOf(row)).getByRole('link');
+
+    expect(link).toHaveAttribute('title', '#482 · open — open on GitHub');
+    /*
+      On the link's own accessible name, and *not* in an `sr-only` span beside
+      the number: `aria-label` replaces an element's content for accessibility,
+      so a hidden word inside this anchor would be computed away and announced
+      to nobody — leaving colour as the only carrier of the state, which is the
+      failure this test exists to catch.
+    */
+    expect(link).toHaveAccessibleName(/open$/);
   });
 
   it('renders an em dash for a session with no PR', () => {
     render(<SessionTable />);
     const leadForm = rows().find((row) => row.textContent?.includes('lead-form'));
 
-    expect(within(leadForm!).getByText('—')).toBeInTheDocument();
+    /*
+      `fix/lead-form-validation` carries no `PrRecord`, so the cell says so —
+      and says it as plain text rather than a link, since there is no page to
+      open. The em dash is scoped to the PR cell by `title`: the BRANCH column
+      renders its own for an unobserved branch (HIVE-78).
+    */
+    const cell = within(shellOf(leadForm!)).getByTitle('no pull request');
+
+    expect(cell).toHaveTextContent('—');
+    expect(within(shellOf(leadForm!)).queryByRole('link')).toBeNull();
   });
 
   it('renames a waiting session to "needs input"', () => {
@@ -398,6 +475,56 @@ describe('SessionTable', () => {
       expect(
         screen.queryByRole('button', { name: /^resume gone-01/ }),
       ).not.toBeInTheDocument();
+    });
+
+    /**
+     * The Resume column is reserved by the *table*, not by the row (HIVE-100).
+     *
+     * Resume is a sibling of the row's button, so it takes width from the flex
+     * line that the cells share. Left unreserved, it pushed every cell out from
+     * under the header word naming it — which is how `PR` came to sit above a
+     * stack of `resume`s in the screenshot that opened this story.
+     *
+     * These two assertions pin the count, which is all happy-dom can see; that
+     * the reserved cell actually lands the columns on a shared x is measured in
+     * a real browser by `tests/e2e/electron/table-alignment.spec.ts`, because
+     * no layout happens here.
+     */
+    it('reserves the resume column on every row once any row needs it', () => {
+      restore();
+      render(<SessionTable />);
+
+      /*
+        One per row **plus the header**. The header's cell is the whole point:
+        the rows agreeing with each other and not with the heading above them
+        is the defect, not the fix.
+
+        The count also says the slot is on rows that will never draw a button:
+        `restore()` adds one resumable row to a demo fleet of ten that are not,
+        so exactly one Resume exists and eleven rows reserve room for it. A slot
+        drawn per-*control* rather than per-*table* would leave those ten
+        disagreeing with the eleventh about where `PR` starts.
+      */
+      const rows = screen.getAllByTestId('session-row').length;
+      expect(document.querySelectorAll('[data-col="action"]')).toHaveLength(
+        rows + 1,
+      );
+      expect(screen.getAllByRole('button', { name: /^resume / })).toHaveLength(
+        1,
+      );
+    });
+
+    it('reserves nothing while no row can be resumed', () => {
+      render(<SessionTable />);
+
+      /*
+        The demo fleet ends two sessions and resumes neither, so the column is
+        not merely empty — it is absent, and the table is 52px narrower for it.
+        That is the reason this is a table-wide answer rather than a permanent
+        column: `COL` documents the width budget it would otherwise spend.
+      */
+      expect(screen.queryByRole('button', { name: /^resume / })).toBeNull();
+      expect(document.querySelectorAll('[data-col="action"]')).toHaveLength(0);
     });
 
     it('moves a revived row to ACTIVE and draws it exactly once', () => {

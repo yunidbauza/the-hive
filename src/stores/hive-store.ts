@@ -22,7 +22,7 @@ import {
   terminalOf,
 } from '@/types/entity';
 import type { HiveNotification } from '@/types/notification';
-import type { Pr, TicketPr } from '@/types/pull-request';
+import type { Pr, SessionPr, TicketPr } from '@/types/pull-request';
 import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
@@ -935,7 +935,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * the meta bar and the rails claim a task that nobody set.
        */
       task: task ?? '',
-      pr: null,
       cost: '$0.02',
       model: resolvedModel,
       effort: resolvedEffort,
@@ -1699,8 +1698,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             recording.
           */
           lines: [],
-          pr: null,
-          cost: '$0.00',
+              cost: '$0.00',
           /*
             Where this row came from, which is what PREVIOUS RUN groups on. It
             cannot be derived from the status: a session that quit normally last
@@ -2224,7 +2222,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       project: current.project,
       status: 'idle',
       task: '',
-      pr: null,
       cost: '$0.00',
       lines: [],
       /**
@@ -2967,6 +2964,42 @@ export const useRestoredSessions = () =>
     ),
   );
 
+/**
+ * Does any row on the fleet table offer Resume? (HIVE-100)
+ *
+ * A **table-level** question, which is what makes it a store selector rather
+ * than something each row works out for itself. Resume is a control beside the
+ * row, outside the button that holds the cells, so it occupies width the
+ * columns do not — and a slot reserved per-row would put the `PR` cell of a
+ * resumable row in a different place from its neighbour's, and both of them
+ * somewhere other than under the header. One answer for the whole table is what
+ * keeps the column a column.
+ *
+ * Reserved only when something needs it, because the width is not free: the
+ * table's floors are measured against a 1100px window (see `COL` in
+ * `session-table.tsx`), and a slot held open on every launch would spend that
+ * headroom on a control most fleets never show.
+ *
+ * The predicate is the row's own — `ended` **and** `resumable` — deliberately
+ * duplicated rather than exported, because these are two different questions
+ * that happen to share an answer: this one asks whether to hold the space open,
+ * the row asks whether to draw the button. Reads `order`, so it sees exactly
+ * the rows the table draws, and returns a boolean rather than a list, so the
+ * header re-renders only when the answer flips.
+ */
+export const useHasResumable = (): boolean =>
+  useHiveStore((state) =>
+    state.order.some((id) => {
+      const entity = state.entities[id];
+      return (
+        entity !== undefined &&
+        isSession(entity) &&
+        isEnded(entity.status) &&
+        entity.resumable === true
+      );
+    }),
+  );
+
 /** The long-lived background agents, in fixture order (story 033). */
 export const useAgentOrder = () =>
   useHiveStore(useShallow((state) => state.agentOrder));
@@ -3438,6 +3471,71 @@ function sessionForPr(
 }
 
 /**
+ * The pull request a session owns, or `null` — {@link sessionForPr} run
+ * backwards (HIVE-100).
+ *
+ * The fleet table's `PR` column read `Session.pr` from the day it was drawn,
+ * and `Session.pr` has never been written by anything. Every row therefore
+ * showed `—` forever, which is indistinguishable from "this branch has no pull
+ * request" and so never looked like a bug. The work panel hit the identical
+ * wall and fixed it the same way (`resolveTicketPrs`): resolve from the live
+ * list at render, because a branch's PR is a fact about GitHub, not about the
+ * session — it can be opened, approved or merged between two sweeps, and a
+ * value frozen onto the row at spawn time would be wrong within the hour.
+ *
+ * ## The same two signals, and the same disambiguation
+ *
+ * Branch is the strong match; repository breaks the cross-repo tie, where one
+ * branch name carries a frontend PR and a backend one. The rule is
+ * {@link sessionForPr}'s exactly — *disambiguate, do not filter* — because
+ * `project` is a config id from a directory name and `repo` is GitHub's, and
+ * requiring equality would blank the column for anyone whose checkout is named
+ * differently from the repository.
+ *
+ * ## Why the newest live PR wins
+ *
+ * A branch can carry more than one record here. The panel keeps PRs merged in
+ * the last 24 hours, so a branch that just landed and was immediately reused
+ * has both — and the merged one is the answer nobody wants in a *fleet* table,
+ * whose subject is the work in front of you. Alive therefore beats merged, and
+ * `updatedAt` breaks the remaining tie: descending ISO 8601 sorts
+ * lexicographically, so the comparison needs no parse.
+ */
+export function resolveSessionPr(
+  branch: string | undefined,
+  project: string | undefined,
+  prs: readonly PrRecord[],
+): SessionPr | null {
+  /*
+    An unobserved branch matches nothing — the same guard `sessionForPr` states
+    for the same reason (HIVE-78). The empty string is excluded too: it is what
+    `branchLabel` already treats as absent, and a `''` here would be a value
+    that compares equal to nothing while looking like it could.
+  */
+  if (branch === undefined || branch === '') return null;
+
+  const candidates = prs.filter((pr) => pr.branch === branch);
+  if (candidates.length === 0) return null;
+
+  const sameProject =
+    project === undefined
+      ? []
+      : candidates.filter(
+          (pr) => pr.repo.toLowerCase() === project.toLowerCase(),
+        );
+  const pool = sameProject.length > 0 ? sameProject : candidates;
+
+  const best = pool.reduce((winner, pr) => {
+    const winnerLanded = winner.state === 'merged';
+    const prLanded = pr.state === 'merged';
+    if (winnerLanded !== prLanded) return winnerLanded ? pr : winner;
+    return pr.updatedAt > winner.updatedAt ? pr : winner;
+  });
+
+  return { n: best.number, state: best.state, url: best.url };
+}
+
+/**
  * PRs reachable from a Jira ticket (story 032, rebuilt for live data).
  *
  * ## Why this stopped reading `Session.pr`
@@ -3627,6 +3725,35 @@ export const usePrs = (): Pr[] => {
         session: sessionForPr(pr, fleet),
       })),
     [prs, fleet],
+  );
+};
+
+/**
+ * One row's pull request, resolved from the live list (HIVE-100).
+ *
+ * Takes an id rather than a branch so it can be called before the caller has
+ * narrowed its entity: the fleet row bails out on a missing or non-session
+ * entity, and a hook cannot sit behind that guard. The two subscriptions it
+ * costs are the two the row already holds — `useEntity(id)` reads the same
+ * slot — so this adds a `prs` subscription and nothing else.
+ *
+ * Memoised over `branch` and `project` rather than over the entity, for the
+ * reason {@link usePrs} gives about freshly-built objects: those two strings are
+ * the entire input, and every other field on a session changes far more often
+ * than they do. A status flip therefore re-renders the row without re-resolving
+ * its PR.
+ */
+export const useSessionPr = (id: string): SessionPr | null => {
+  const prs = useHiveStore((state) => state.prs);
+  const entity = useHiveStore((state) => state.entities[id]);
+
+  const session = entity !== undefined && isSession(entity) ? entity : undefined;
+  const branch = session?.branch;
+  const project = session?.project;
+
+  return useMemo(
+    () => resolveSessionPr(branch, project, prs),
+    [branch, project, prs],
   );
 };
 
