@@ -44,3 +44,60 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9-]+$/;
  * way for them to drift apart. What `/done` actually does is HIVE-93.
  */
 export const RESERVED_SKILL_NAME = 'done';
+
+/** A skill the app will inject, as the pane lists it. */
+export interface SkillSummary {
+  name: string;
+  /** From the frontmatter. Empty when the file declares none, which is legal. */
+  description: string;
+  valid: true;
+}
+
+/**
+ * A skill that will **not** be injected, and the sentence explaining why.
+ *
+ * Carried beside the good ones rather than through `ConfigSnapshot.errors`.
+ * Skills are not config, and a problem belongs to the skill it describes — the
+ * pane renders it on that row, next to the name that caused it, which an array
+ * of loose strings somewhere else cannot do.
+ *
+ * The `valid` discriminant is what lets one list render both kinds without the
+ * renderer inferring anything from which array a row arrived in.
+ */
+export interface SkillProblem {
+  name: string;
+  reason: string;
+  valid: false;
+}
+
+export interface SkillsSnapshot {
+  skills: SkillSummary[];
+  invalid: SkillProblem[];
+  /** Shown in the pane's footer, so the user can find the files themselves. */
+  skillsRoot: string;
+}
+
+/** One file, for the editor. */
+export interface SkillFile {
+  name: string;
+  body: string;
+  path: string;
+}
+
+export interface SkillNameRequest {
+  name: string;
+}
+
+export interface SkillWriteRequest {
+  name: string;
+  /**
+   * The whole file.
+   *
+   * Neither length-capped nor swept for control characters, for the reason
+   * `parseWriteFileRequest` gives about source files: a SKILL.md legitimately
+   * contains tabs and newlines, and what makes this safe is *where* the bytes
+   * land — a directory main chose, under a name main validated — not what the
+   * bytes are.
+   */
+  body: string;
+}

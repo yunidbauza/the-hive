@@ -1,0 +1,157 @@
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type {
+  SkillFile,
+  SkillsSnapshot,
+} from '@shared/skills-contract';
+
+import { PLUGIN_DIR, skillsRoot } from './paths';
+import { writePluginDir } from './plugin';
+import { readUserSkills, type SkillsRead } from './read';
+
+/**
+ * The skills runtime (HIVE-96).
+ *
+ * A sibling of `createHookRuntime`, not a member of it. The two share a parent
+ * directory in userData and nothing else: hooks own a socket whose failure
+ * takes the receiver down with it, and this owns a directory whose failure
+ * costs a session some slash commands. Folding the second into the first would
+ * put a fatal error path and a cosmetic one behind one name.
+ */
+
+export interface SkillsRuntime {
+  /**
+   * Re-read `~/.hive/skills` and regenerate the plugin directory.
+   *
+   * Called at launch and again before **every** spawn. A readdir per spawn is
+   * cheap, and paying it is what makes "save a skill, start a session, it is
+   * there" true with no invalidation protocol between the pane and main — and
+   * what makes a skill added by hand in a text editor behave identically to one
+   * added in Settings.
+   */
+  sync(): Promise<SkillsRead>;
+  /**
+   * The `--plugin-dir` argument, or `null` when the directory has never been
+   * written successfully.
+   *
+   * `null` is the honest answer rather than an optimistic path: `bootstrap.ts`
+   * omits the flag for it, and a session with no extra skills is strictly
+   * better than a session pointed at a directory that is not there.
+   */
+  pluginDirPath(): string | null;
+  /** The snapshot the Settings pane renders. */
+  list(): Promise<SkillsSnapshot>;
+  /** One file, for the editor. */
+  readOne(name: string): Promise<SkillFile>;
+  /** Write, regenerate, and answer with the fresh snapshot. */
+  write(name: string, body: string): Promise<SkillsSnapshot>;
+  /** Remove the folder, regenerate, and answer with the fresh snapshot. */
+  remove(name: string): Promise<SkillsSnapshot>;
+}
+
+export interface SkillsRuntimeOptions {
+  userDataPath: string;
+  /**
+   * The app's version, for the generated manifest.
+   *
+   * Passed in rather than read from `app.getVersion()` here: this module's
+   * tests run under plain Node, and importing `electron` would make them need a
+   * runtime they do not have. `ipc/index.ts` already owns every other `app.*`
+   * call for the same reason.
+   */
+  version: string;
+}
+
+export function createSkillsRuntime({
+  userDataPath,
+  version,
+}: SkillsRuntimeOptions): SkillsRuntime {
+  const pluginRoot = join(userDataPath, PLUGIN_DIR);
+  let written = false;
+
+  /**
+   * Every path this module touches is built here, from a name.
+   *
+   * The name has already been through `assertSkillName` at the IPC boundary, so
+   * it matches `SKILL_NAME_PATTERN` and cannot contain a separator or a dot
+   * segment — which is what makes this `join` total rather than something that
+   * needs a containment check afterwards. See `skills-contract.ts` for why the
+   * contract is shaped to make that true rather than to verify it.
+   */
+  const fileFor = (name: string): string =>
+    join(skillsRoot(), name, 'SKILL.md');
+
+  const sync = async (): Promise<SkillsRead> => {
+    const read = await readUserSkills(skillsRoot());
+
+    try {
+      await writePluginDir(pluginRoot, version, read);
+      written = true;
+    } catch (cause) {
+      /**
+       * Non-fatal, and this is the one place that decision is made.
+       *
+       * A session that starts without its custom skills is a session that
+       * works. A session that does not start because a directory could not be
+       * written is not, and nothing on screen would connect the two. The hook
+       * runtime reports its own failures the same way, and for the same reason.
+       */
+      console.info(
+        `[hive] the skills plugin could not be written — sessions start without custom skills (${String(cause)})`,
+      );
+    }
+
+    return read;
+  };
+
+  /*
+    `SkillsRead` is main's shape and `SkillsSnapshot` is the renderer's. They
+    are kept separate rather than reused: the renderer has no business with a
+    skill's `body` until it opens one, and shipping every file's full text on
+    every list would put the whole skills tree on the wire for a sidebar.
+  */
+  const snapshot = (read: SkillsRead): SkillsSnapshot => ({
+    skills: read.skills.map(({ name, description }) => ({
+      name,
+      description,
+      valid: true,
+    })),
+    invalid: read.invalid.map(({ name, reason }) => ({
+      name,
+      reason,
+      valid: false,
+    })),
+    skillsRoot: skillsRoot(),
+  });
+
+  return {
+    sync,
+
+    pluginDirPath(): string | null {
+      return written ? pluginRoot : null;
+    },
+
+    async list(): Promise<SkillsSnapshot> {
+      return snapshot(await sync());
+    },
+
+    async readOne(name: string): Promise<SkillFile> {
+      const path = fileFor(name);
+      return { name, body: await readFile(path, 'utf8'), path };
+    },
+
+    async write(name: string, body: string): Promise<SkillsSnapshot> {
+      // The tree does not exist until there is something to put in it, so the
+      // first save is also what creates `~/.hive/skills`.
+      await mkdir(join(skillsRoot(), name), { recursive: true });
+      await writeFile(fileFor(name), body, 'utf8');
+      return snapshot(await sync());
+    },
+
+    async remove(name: string): Promise<SkillsSnapshot> {
+      await rm(join(skillsRoot(), name), { recursive: true, force: true });
+      return snapshot(await sync());
+    },
+  };
+}
