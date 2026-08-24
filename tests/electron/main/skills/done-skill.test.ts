@@ -4,8 +4,42 @@ import { describe, expect, it } from 'vitest';
 import { doneCommand } from '../../../../electron/shared/hook-contract';
 import { RESERVED_SKILL_NAME } from '../../../../electron/shared/skills-contract';
 
-import { hookSettings } from '../../../../electron/main/hooks/settings';
 import { doneSkill } from '../../../../electron/main/skills/done-skill';
+
+/**
+ * The frontmatter's `key: value` lines, with the value exactly as emitted.
+ *
+ * Deliberately **not** `skills/read.ts`'s `frontmatter()`, which is a line
+ * splitter rather than a parser and would report a file YAML rejects as fine —
+ * which is precisely the bug these tests exist to catch.
+ */
+const frontmatterLines = (body: string): [string, string][] => {
+  const block = body.split('---\n')[1] ?? '';
+  return block
+    .split('\n')
+    .filter((line) => /^[a-z-]+:/i.test(line))
+    .map((line) => {
+      const at = line.indexOf(':');
+      return [line.slice(0, at), line.slice(at + 1).trim()];
+    });
+};
+
+/**
+ * One frontmatter value, read back **through** its quoting.
+ *
+ * A substring match on the raw body proves only that some bytes are present; it
+ * cannot tell a value Claude Code will parse from one it will reject. Undoing
+ * the single-quote form here is what makes the assertion about the value the
+ * parser ends up with.
+ */
+const frontmatterValue = (body: string, key: string): string | undefined => {
+  const found = frontmatterLines(body).find(([name]) => name === key);
+  if (found === undefined) return undefined;
+  const raw = found[1];
+  return raw.startsWith("'") && raw.endsWith("'")
+    ? raw.slice(1, -1).replaceAll("''", "'")
+    : raw;
+};
 
 /**
  * The generated `/done` (HIVE-93).
@@ -32,29 +66,38 @@ describe('doneSkill', () => {
       expect(body).toContain(`name: ${RESERVED_SKILL_NAME}`);
     });
 
+    it('emits frontmatter YAML can actually parse', () => {
+      /*
+        The regression this exists for shipped green under a `toContain` check.
+        The rule contains `-H "x-hive-session: $HIVE_SESSION_ID"`, and a colon
+        followed by a space is YAML's mapping-value indicator — forbidden inside
+        a *plain* (unquoted) scalar however many double quotes appear later in
+        it, because a scalar that does not start with a quote has no quoted
+        regions at all. The scanner error kills the whole block, `name` and
+        `description` with it, so `/done` is never registered — and since the
+        built-in shares `skills/` with the user's own, it takes those down too.
+      */
+      for (const [key, raw] of frontmatterLines(body)) {
+        if (raw.startsWith("'") || raw.startsWith('"')) continue;
+        expect(
+          raw,
+          `plain scalar for "${key}" must not contain a colon-space`,
+        ).not.toContain(': ');
+      }
+    });
+
     it('authorises exactly the command it runs, in its own frontmatter', () => {
       const command = doneCommand(DONE_URL);
 
       /*
-        Both derived from one builder, which is what makes drift impossible
-        rather than unlikely. If the grant and the command ever disagreed the
-        symptom would be a permission prompt in the middle of the app's own
-        built-in — something the user did not cause and cannot diagnose.
+        Read back **through** the quoting, so this asserts the value a parser
+        ends up with rather than the bytes on the page. Both sides derive from
+        one builder, which is what makes drift impossible rather than unlikely:
+        if the grant and the command ever disagreed, the symptom would be a
+        permission prompt in the middle of the app's own built-in.
       */
-      expect(body).toContain(`allowed-tools: Bash(${command})`);
+      expect(frontmatterValue(body, 'allowed-tools')).toBe(`Bash(${command})`);
       expect(body).toContain(command);
-    });
-
-    it('grants the tool at the skill, not in the app-wide settings file', () => {
-      /*
-        The settings file merges above the user's own scope, so a grant written
-        there is invisible and unrevokable to them. `allowed-tools` is scoped to
-        the one skill that needs it. See `hooks/settings.test.ts` for the other
-        half of this pair.
-      */
-      expect(
-        hookSettings('http://127.0.0.1:51234/hook', 'dark'),
-      ).not.toHaveProperty('permissions');
     });
 
     it('authorises the exact command, never a prefix', () => {
@@ -65,7 +108,7 @@ describe('doneSkill', () => {
         `--upload-file` sends one. None need a shell operator, so none are
         caught by Claude Code's `&&`/`;` handling.
       */
-      expect(body).not.toContain(':*)');
+      expect(frontmatterValue(body, 'allowed-tools')).not.toContain(':*');
     });
 
     it('is invocable by a skill handing off, not only by a user typing it', () => {

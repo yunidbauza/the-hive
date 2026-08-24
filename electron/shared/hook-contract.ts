@@ -306,15 +306,22 @@ export const HOOK_PATH = '/hook';
 export const DONE_PATH = '/done';
 
 /**
- * The exact command `/done`'s body runs, and the exact prefix the generated
- * settings file permits (HIVE-93).
+ * The exact command `/done`'s body runs, and the exact rule its frontmatter
+ * grants (HIVE-93).
  *
- * **One builder, two callers, on purpose.** `skills/done-skill.ts` puts this in
- * the skill body and `hooks/settings.ts` puts it in `permissions.allow`. If the
- * two ever drifted the symptom would be a permission prompt in the middle of
- * the app's own built-in — a failure the user cannot diagnose and did nothing to
- * cause. Deriving both from one function makes the drift impossible rather than
- * unlikely.
+ * **One builder, two callers, on purpose** — and both of them are
+ * `skills/done-skill.ts`: `active()` spells the command out in the body, and
+ * `frontmatter()` wraps the same string in `allowed-tools`. (An earlier version
+ * put the grant in the app-generated settings file instead; that file merges
+ * above the user's own scope, so the permission was invisible and unrevokable
+ * to them, and it is gone.)
+ *
+ * If the two ever drifted the symptom would be a permission prompt in the middle
+ * of the app's own built-in — a failure the user cannot diagnose and did nothing
+ * to cause. Deriving both from one function makes the drift impossible rather
+ * than unlikely. The grant is the **whole** command, never a prefix: `curl`
+ * takes `-K`, `-o`, `-D` and `--upload-file`, none of which need a shell
+ * operator, so a trailing `:*` would be a silent grant of arbitrary file writes.
  *
  * Lives here, in a module that may hold no runtime, because it is neither
  * runtime nor either caller's business: it is the shape of a request on the

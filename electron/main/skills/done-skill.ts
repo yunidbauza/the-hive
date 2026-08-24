@@ -95,6 +95,34 @@ export const doneSkill = (doneUrl: string | null): string =>
  * Omitted entirely when there is no endpoint: the inert body runs nothing, and a
  * grant for a command that is not there would be a claim with no purpose.
  */
+/**
+ * A YAML **single-quoted** scalar, which is the only safe way to emit this rule.
+ *
+ * Unquoted — a *plain* scalar — is what shipped first, and it made the whole
+ * frontmatter block unparseable. The value contains
+ * `-H "x-hive-session: $HIVE_SESSION_ID"`, and a colon followed by a space is
+ * YAML's mapping-value indicator: it is forbidden inside a plain scalar
+ * regardless of any `"` around it, because a scalar that does not *start* with a
+ * quote has no quoted regions — those double quotes are ordinary characters. The
+ * `:` in `127.0.0.1:51234` is fine, being followed by a digit; the two header
+ * ones are not.
+ *
+ * The cost of getting this wrong is total rather than partial. A scanner error
+ * kills the **entire** block, taking `name` and `description` with it, so
+ * `/done` is never registered at all — and because the built-in shares
+ * `skills/` with the user's own custom skills, a plugin-level rejection takes
+ * those down too. The app validates user skills and refuses to emit one it
+ * cannot explain (`plugin.ts`); emitting an invalid one of its own would be the
+ * same failure with none of the reporting.
+ *
+ * Single-quoted rather than double-quoted because its escaping rule is the
+ * simplest one YAML has: a literal `'` is written `''` and nothing else means
+ * anything. The command holds no quote today, but the URL is interpolated, so
+ * the doubling is what keeps that from mattering.
+ */
+const yamlScalar = (value: string): string =>
+  `'${value.replaceAll("'", "''")}'`;
+
 const frontmatter = (allowedTools?: string): string =>
   `---
 name: done
@@ -103,17 +131,18 @@ description: >-
   when the work a session was opened for is complete, either because the user
   asked to finish or because a skill has finished its task and is handing off.
   Closing is recoverable; the transcript stays readable afterwards.
-${allowedTools === undefined ? '' : `allowed-tools: ${allowedTools}\n`}---
+${allowedTools === undefined ? '' : `allowed-tools: ${yamlScalar(allowedTools)}\n`}---
 `;
 
 /**
  * What the skill says when the app can actually close the session.
  *
  * Written as an instruction with the command spelled out rather than as a
- * description of one, because the agent has to reproduce it closely enough to
- * match the permission prefix the settings file grants — see `hooks/settings.ts`.
- * Anything it adds after the URL still matches; anything it changes *inside* it
- * produces the prompt that rule exists to prevent.
+ * description of one, because the agent has to reproduce it **exactly** to match
+ * the `allowed-tools` grant in the frontmatter above. The rule is the whole
+ * command and not a prefix, so anything added, removed or reordered misses it —
+ * and a miss is the permission prompt the grant exists to prevent. The fenced
+ * block is what makes byte-for-byte reproduction the easy path.
  *
  * The closing line matters as much as the command. Without it the model tends to
  * narrate what it just did, and a paragraph written after the request has landed
