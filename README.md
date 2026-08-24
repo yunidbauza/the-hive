@@ -1,19 +1,61 @@
+<img src="docs/assets/splash.webp" alt="The Hive — overmind, swarm awakening" width="100%">
+
+[![Latest release](https://img.shields.io/github/v/release/yunidbauza/the-hive?style=flat-square&labelColor=141a33&color=334fa9&label=release)](https://github.com/yunidbauza/the-hive/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/yunidbauza/the-hive/total?style=flat-square&labelColor=141a33&color=334fa9&label=downloads)](https://github.com/yunidbauza/the-hive/releases)
+[![Open issues](https://img.shields.io/github/issues/yunidbauza/the-hive?style=flat-square&labelColor=141a33&color=ffac47&label=open%20issues)](https://github.com/yunidbauza/the-hive/issues)
+[![License](https://img.shields.io/github/license/yunidbauza/the-hive?style=flat-square&labelColor=141a33&color=74b79c)](LICENSE)
+
 # The Hive
 
-A command center for multiple agentic terminal sessions running on a single machine.
-This repository is the **static React prototype**: real xterm.js terminal surfaces fed by
-an in-memory mock data layer, with no backend. The terminal transport is the designed
-seam for the future local-PTY daemon.
+**Thirteen agentic terminals on one machine, and one place that knows which one needs you.**
 
-Context, decision record, scope boundary and full backlog: the **HIVE project in
-Jira**. The visual source of truth is
-[`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) — it records the exact colors,
-sizes, and copy the concept mock fixed, and tickets quote them.
+Every session is a real Claude Code process in a real PTY. The Hive watches all of
+them at once, surfaces the one that stopped to ask you a question, and gets out of the
+way again. The terminal is the product; everything else exists to route your attention
+back to it.
+
+---
+
+## What it actually does
+
+<img src="src/components/ui/swarm/hive.webp" alt="" width="120" align="right">
+
+**Runs the terminals.** Real PTYs through `node-pty`, rendered by xterm.js, one per
+session. Spawn from a project, a Jira ticket, or the console — `spawn apfm-web "fix the
+lead form"`.
+
+**Notices when one needs you.** Claude Code's hooks report into The Hive, so a session
+that asks a permission question or finishes its turn raises an inbox item instead of
+scrolling past unread in a tab you were not looking at.
+
+**Keeps the work in view.** Jira tickets, `gh` pull requests and the branch each
+session is on, resolved against the fleet — so a PR row knows which terminal made it.
+
+**Opens the repository.** The right rail's third tab is a project explorer over the
+active session's checkout, opening files into a CodeMirror editor on the centre stage.
+
+**Ends cleanly.** `/done` finishes a session and closes its terminal, and the row stays
+readable afterwards — with Resume, which continues the same conversation.
+
+<br clear="all">
+
+## Install
+
+Grab the `.dmg` from [the latest
+release](https://github.com/yunidbauza/the-hive/releases/latest) — macOS arm64, with
+auto-update built in. There is no Homebrew cask yet.
+
+Or run it from source:
+
+```sh
+pnpm install
+pnpm desktop:dev
+```
 
 ## Requirements
 
 - **Node** — the major pinned in [`.nvmrc`](.nvmrc) (22)
-- **pnpm** — the package manager, pinned via `packageManager` in `package.json`
+- **pnpm** — pinned via `packageManager` in `package.json`
 - **Chromium** — for `pnpm test:e2e` only. `pnpm install` does not fetch browser
   binaries, so run `pnpm exec playwright install chromium` once per machine.
 
@@ -29,21 +71,20 @@ platform:
 | Linux | `build-essential` and `python3` |
 | Windows | **Not supported.** See the gap below. |
 
-**Windows is a known gap.** This epic targets macOS and Linux. Windows terminals go
-through ConPTY/`winpty` rather than a POSIX pty, and `titleBarStyle: 'hiddenInset'`
-(story 081) is not honoured there either. It is its own body of work, deliberately
-not attempted here.
+**Windows is a known gap.** This project targets macOS and Linux. Windows terminals go
+through ConPTY/`winpty` rather than a POSIX pty, and `titleBarStyle: 'hiddenInset'` is
+not honoured there either. It is its own body of work, deliberately not attempted.
 
 Two facts about the native module that produce unreadable errors when forgotten:
 
 - **`node-pty@1.1.0` ships N-API prebuilds, so it does *not* need rebuilding for
-  Electron.** N-API is ABI-stable across Node versions and across Electron. Verified
-  on this tree: the same `prebuilds/darwin-arm64/pty.node` spawns a working PTY under
-  plain Node (ABI 127) and under Electron 43 (ABI 148). Running `electron-rebuild`
+  Electron.** N-API is ABI-stable across Node versions and across Electron. Verified on
+  this tree: the same `prebuilds/darwin-arm64/pty.node` spawns a working PTY under
+  plain Node (ABI 127) and under Electron (ABI 148). Running `electron-rebuild`
   unconditionally would *replace* that portable prebuild with an ABI-locked one.
-  `pnpm rebuild:pty` exists for the case that genuinely needs it — no prebuild for
-  your platform (musl, some Linux arches), `node-pty` falls back to `node-gyp
-  rebuild`, and that build *is* Node-ABI-locked.
+  `pnpm rebuild:pty` exists for the case that genuinely needs it — no prebuild for your
+  platform (musl, some Linux arches), where `node-pty` falls back to `node-gyp rebuild`,
+  and that build *is* Node-ABI-locked.
 - **The published `spawn-helper` has no executable bit.** `node-pty@1.1.0` ships
   `prebuilds/<platform>-<arch>/spawn-helper` as mode `0644` in the tarball itself, so
   every package manager reproduces it, and the package's own `post-install.js` only
@@ -52,98 +93,51 @@ Two facts about the native module that produce unreadable errors when forgotten:
   succeeded. `postinstall` repairs it automatically; `pnpm check:abi --fix` repairs it
   by hand.
 
-Vitest never loads the real module — `__mocks__/node-pty.ts` holds a recording fake.
-A unit test that spawns real processes is a unit test that leaks them. Real terminal
-semantics get their own runner under Electron's ABI:
-
-```sh
-pnpm test:pty                      # builds, then runs the conformance matrix
-pnpm test:pty --filter signals     # one property group
-```
-
-`ELECTRON_RUN_AS_NODE=1` runs the Electron binary as a plain Node process — same ABI,
-no window, no Chromium.
-
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Start the Vite dev server — the **browser** target |
-| `pnpm build` | Type-check, then produce a production build |
-| `pnpm preview` | Serve the production build locally |
 | `pnpm desktop:dev` | The **Electron** app, with renderer HMR |
 | `pnpm desktop:build` | Type-check, then build `out/{main,preload,renderer}/` |
 | `pnpm desktop:preview` | Run the built Electron app |
-| `pnpm check:abi` | Diagnose the native toolchain; `--fix` repairs what it can |
-| `pnpm rebuild:pty` | Rebuild `node-pty` against Electron's ABI (escape hatch) |
-| `pnpm lint` | ESLint across `src/`, `electron/` and config files |
-| `pnpm type-check` | `tsc --noEmit` for the app, the configs, and `electron/` |
+| `pnpm desktop:dist` | Package `.dmg` + `.zip` into `dist/` (macOS arm64) |
+| `pnpm dev` | Vite dev server — the **browser** target (no PTYs, no Jira, no config) |
+| `pnpm build` | Type-check, then a production build of the browser target |
+| `pnpm lint` | ESLint across `src/`, `electron/` and config |
+| `pnpm type-check` | `tsc --noEmit` for the app, the Node configs, and `electron/` |
 | `pnpm test` | Vitest, single run |
-| `pnpm test:watch` | Vitest in watch mode |
-| `pnpm test:coverage` | Vitest with the coverage gate |
-| `pnpm test:ui` | Vitest browser UI |
-| `pnpm test:e2e` | Playwright end-to-end specs |
+| `pnpm test:coverage` | Vitest with the 80% coverage gate |
+| `pnpm test:e2e` | Playwright — the web specs and the packaged app |
+| `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI |
+| `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
-**`pnpm lint` and `pnpm type-check` must both pass before any task is considered done.**
+**`pnpm lint` and `pnpm type-check` must both pass before any task is considered
+done.** Neither is optional, and no rule may be disabled inline to make a task pass.
 
-The test scripts are wired up by story 013 (testing infrastructure); the script names
-exist from the scaffold so the vocabulary never changes underneath anyone.
-
-`pnpm test:e2e` runs Playwright against a **production build** — the config starts
-`pnpm build && pnpm preview` itself, so no server needs to be running first. It
-currently covers the shell smoke spec; the full suite (terminal, keyboard,
-waiting-session, picker, simulation) lands with story 070 as the surfaces it drives
-are built.
+There are also four live conformance suites — `pnpm test:hooks`, `:statusline`,
+`:skills` and `:done` — which run against a **real `claude` binary** rather than a
+mock, because what Claude Code's hooks actually send is not something a fake can tell
+you.
 
 ## Stack
 
-React 19 · TypeScript (strict) · Vite · xterm.js · Zustand · Tailwind v4 · shadcn/ui
+React 19 · TypeScript (strict) · Vite · Electron · xterm.js · CodeMirror 6 · Zustand ·
+Tailwind v4 · shadcn/ui · pnpm
 
-Vite rather than Next.js: the Hive is a single-screen app destined for a desktop shell
-(Electron/Tauri). There is no server, no routing, and no SSR to gain. The architecture
-reference — `incorpHQ/incorpx` — is a Next.js app; we take its conventions, not its
-framework.
+## Architecture, in one paragraph
 
-## Layout
+Four stores, split by what they answer: what the system *knows*, what the user is
+*looking at*, what they have *chosen*, and what they have *open*. One import fence per
+feature slice, enforced by ESLint rather than by review. And one invariant above all
+the others — **`src/components/terminal/` speaks only `TerminalTransport`** and may not
+import from `features/`, `data/` or `stores/`. That seam is why the terminal survived
+the move from a scripted fake to a real PTY with no changes to the component tree.
 
-```
-src/
-  main.tsx          entry
-  app.tsx           composition root
-  styles/           tokens.css + global.css      (011)
-  components/
-    ui/             shadcn primitives + Hive atoms
-    layout/         app chrome — the three-column shell
-    terminal/       THE core component — domain-agnostic
-  features/         one slice per domain surface
-    shared/         the ONLY slice other slices may import
-  stores/           hive-store.ts + ui-store.ts   (012)
-  hooks/  lib/  types/  data/  config/  utils/
-tests/              mirrors src/                  (013)
-docs/               deep-dive docs                (015)
-```
+`pnpm verify:boundaries` proves each fence still fires.
 
-Feature slices follow the bulletproof-react shape — `components/`, `hooks/`, `stores/`,
-`types/`, `utils/`, plus an `index.ts` barrel that is the only thing outside code
-imports.
+The deep dives live in [`docs/`](docs/), and the visual source of truth is
+[`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md).
 
-## Rules that are machine-enforced
+## License
 
-Story 014 turns these into lint failures rather than review notes:
-
-- **Feature isolation** — slices never import each other, except `features/shared`.
-  Cross-slice communication goes through the store.
-- **The terminal seam** — nothing under `src/components/terminal/` may import from
-  `features/`, `data/`, or `stores/`. The terminal knows only its transport.
-- **kebab-case** file and folder names; no circular imports; ordered imports.
-- **Absolute `@/` imports**, never relative parent imports (`../`).
-
-Path aliases are declared in **both** `tsconfig.json` and `vite.config.ts` — Vite does
-not read TypeScript's `paths`, so the two lists must be kept in sync.
-
-## shadcn/ui
-
-Only the primitives the UI actually needs are installed — `dialog` (picker overlay),
-`tooltip` (meta-bar back button), and `dropdown-menu`. The library is deliberately not
-bulk-installed. Generated primitives are adapted to use `@phosphor-icons/react` so the
-app ships a single icon library.
+[MIT](LICENSE) © Yunid Bauza

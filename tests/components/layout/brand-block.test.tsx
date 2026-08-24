@@ -30,9 +30,14 @@ describe('BrandBlock', () => {
    */
   it('drops the line entirely when the team name is cleared', () => {
     useAppearanceStore.setState({ teamName: '   ' });
-    const { container } = render(<BrandBlock />);
+    render(<BrandBlock />);
 
-    expect(container.querySelectorAll('span')).toHaveLength(1);
+    /*
+      One span *in the wordmark column* — the mark's pool is a span too, so a
+      whole-container count now answers a different question than it did.
+    */
+    const words = screen.getByText('The Hive').parentElement;
+    expect(words?.querySelectorAll('span')).toHaveLength(1);
     expect(screen.getByText('The Hive')).toBeInTheDocument();
   });
 
@@ -77,12 +82,30 @@ describe('BrandBlock', () => {
    * 44px, because this is the one call site that is never an empty state and
    * competes with the terminal on every screen.
    */
-  it('renders at its 34px header slot with no theme-dependent fill behind it', () => {
+  it('renders at its 40px header slot with no theme-dependent fill behind it', () => {
     const { container } = render(<BrandBlock />);
 
     const mark = container.querySelector('img');
-    expect(mark).toHaveStyle({ height: '34px' });
+    expect(mark).toHaveStyle({ height: '40px' });
     expect(mark?.parentElement?.className).not.toMatch(/\bbg-/);
+  });
+
+  /**
+   * The pool behind the mark, which is what makes 40px legible rather than
+   * merely bigger: the hive is a dark sprite on a dark ground, so the outline
+   * needs something to be dark against.
+   *
+   * Asserted as the class, not the gradient — the value lives in `global.css`
+   * and its colour in `--cc-bloom`, neither of which happy-dom loads. What this
+   * can prove is that the mark is wrapped in the thing that draws it.
+   */
+  it('sits in the diffused pool that keeps it legible on a dark ground', () => {
+    const { container } = render(<BrandBlock />);
+
+    const mark = container.querySelector('img');
+    expect(mark?.parentElement).toHaveClass('brand-bloom');
+    // Positioned, or the pool's absolute `::before` escapes to the header.
+    expect(mark?.parentElement).toHaveClass('relative');
   });
 
   /**

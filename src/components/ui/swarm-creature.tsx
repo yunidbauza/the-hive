@@ -21,11 +21,12 @@ import spireAnim from './swarm/spire.webp';
  *   whole centre and have nothing to compete with.
  * - **Rails at 44 px** — small enough to read as a mark rather than an
  *   illustration.
- * - **The header at 34 px** (HIVE-100) — the brand mark beside the wordmark,
- *   and the only call site that is *never* an empty state. It is the smallest
- *   for that reason: the header competes with the terminal on every screen, so
- *   the mark earns its place by staying out of the way. See `brand-block.tsx`
- *   for what replacing the baked app tile gave up.
+ * - **The header at 40 px** (HIVE-100) — the brand mark beside the wordmark,
+ *   and the only call site that is *never* an empty state. It is the one place
+ *   the sprite is given a lit ground rather than the app's: at this size on
+ *   `--cc-bg` the creature still loses its silhouette, so `brand-block.tsx`
+ *   puts the splash's blurred pool behind it. See there for what replacing the
+ *   baked app tile gave up.
  *
  * The rails were text-only when this shipped, on the argument that a decorative
  * empty state in a 268 px column beside a live terminal takes more attention

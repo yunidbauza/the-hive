@@ -22,14 +22,20 @@ import { useTeamName } from '@stores/appearance-store';
  * logo that changes colour reads as a different logo. That argument survives
  * intact — the sprite is a raster with its own palette and no tokens in it.
  *
- * ## Size
+ * ## Size, and the pool behind it
  *
- * A third register for {@link SwarmCreature}, and the smallest: 34px against a
- * 56px header row. Smaller than the rails' 44px because this is a *mark* beside
- * a wordmark rather than an illustration standing in for missing content, and
- * because the header is the one row that is never empty — everything on it is
- * competing with the terminal for attention, so it earns its place by being
- * small.
+ * A third register for {@link SwarmCreature}: 40px against a 56px header row,
+ * which is the size at which the creature reads as a creature rather than as a
+ * dark smudge. 30px and 34px were both tried on the real header ground and both
+ * lose the silhouette.
+ *
+ * Size alone does not fix it, because the problem is not scale but ground: the
+ * hive is a dark sprite and `--cc-bg` is a dark navy, so the outline has
+ * nothing to be dark *against*. The splash solved this years earlier with its
+ * `.bloom` — a blurred pool of the signature blue behind the creature — and
+ * this is the same move at a smaller scale, as `.brand-bloom` in `global.css`.
+ * The pool is deliberately wider than the sprite; one the same size would read
+ * as a plate behind a logo rather than as depth beneath it.
  *
  * The concept sets the wordmark in a display serif. This app is deliberately
  * all-mono (`.claude/DESIGN-SYSTEM.md`), so the size and tracking come across
@@ -46,7 +52,9 @@ export function BrandBlock() {
         inherits the reduced-motion fallback for free. Under the preference the
         mark is the single-frame file: still there, simply holding still.
       */}
-      <SwarmCreature creature="hive" size={34} />
+      <span className="brand-bloom relative flex shrink-0 items-center">
+        <SwarmCreature creature="hive" size={40} />
+      </span>
 
       <div className="flex min-w-0 flex-col leading-[1.15]">
         <span className="text-[17px] tracking-[-0.02em]">The Hive</span>
