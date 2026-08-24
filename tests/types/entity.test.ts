@@ -25,7 +25,6 @@ const session = (over: Partial<Session> = {}): Session => ({
   branch: 'feat/sess-01',
   status: 'idle',
   task: '',
-  pr: null,
   cost: '$0.00',
   lines: [],
   ...over,

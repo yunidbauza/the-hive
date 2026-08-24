@@ -299,14 +299,68 @@ describe('NewSessionPicker', () => {
       const user = userEvent.setup();
       render(<NewSessionPicker />);
 
-      await user.click(screen.getByRole('radio', { name: 'haiku' }));
+      /*
+        `sonnet`, not `haiku`. This test used to pick haiku and then `max`, and
+        that combination stopped being reachable when haiku started disabling
+        the effort scale (HIVE-100) — the click landed on a disabled control and
+        the assertion failed on an effort the user could no longer choose.
+      */
+      await user.click(screen.getByRole('radio', { name: 'sonnet' }));
       await user.click(screen.getByRole('radio', { name: 'max' }));
       await user.type(search(), 'referral{Enter}');
 
       expect(useHiveStore.getState().entities['sess-01']).toMatchObject({
-        model: 'haiku',
+        model: 'sonnet',
         effort: 'max',
       });
+    });
+
+    /**
+     * Haiku does not think, so the scale beside it does not apply (HIVE-100).
+     *
+     * Disabled rather than hidden: a control that vanishes takes the layout
+     * with it and leaves the user wondering what they did.
+     */
+    it('takes the thinking scale out of reach for haiku', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('radio', { name: 'haiku' }));
+
+      expect(screen.getByRole('radio', { name: 'low' })).toBeDisabled();
+      expect(screen.getByRole('radio', { name: 'max' })).toBeDisabled();
+      // Announced, not merely faded — opacity is no signal to a screen reader.
+      expect(
+        screen.getByRole('radiogroup', { name: /thinking effort/ }),
+      ).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByText(/not for haiku/)).toBeInTheDocument();
+    });
+
+    it('leaves the scale alone for a model that does think', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('radio', { name: 'haiku' }));
+      await user.click(screen.getByRole('radio', { name: 'opus' }));
+
+      expect(screen.getByRole('radio', { name: 'max' })).toBeEnabled();
+      expect(screen.queryByText(/not for haiku/)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Disabled, not destructive. A user who tries haiku and changes their mind
+     * finds the effort exactly where they left it, rather than reset to a
+     * default they never chose.
+     */
+    it('remembers the effort across a trip through haiku', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('radio', { name: 'max' }));
+      await user.click(screen.getByRole('radio', { name: 'haiku' }));
+      await user.click(screen.getByRole('radio', { name: 'sonnet' }));
+
+      expect(screen.getByRole('radio', { name: 'max' })).toBeChecked();
     });
 
     it('persists the choice across open and close', async () => {

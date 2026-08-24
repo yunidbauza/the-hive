@@ -171,18 +171,32 @@ test('the traffic lights get their own row above the header', async ({ page }) =
     .evaluate((element) => element.getBoundingClientRect().x);
 
   /**
-   * 56px, and every term of it is a layout constant rather than a measurement:
-   * 16 (the header's own `px-4`) + 30 (the logo tile) + 10 (`gap-2.5`). This is
-   * the *wordmark*, so the brand block itself starts at 16 — the same left
-   * margin the traffic lights use one row up.
+   * 16 (the header's own `px-4`) + the mark + 10 (`gap-2.5`). This is the
+   * *wordmark*, so the brand block itself starts at 16 — the same left margin
+   * the traffic lights use one row up.
    *
-   * The old assertion on this element was `>= 78`, the width of the inset that
-   * kept it clear of the lights. Its going below 78 is the regression this
-   * inverts; the exact 56 is what stops the inset creeping back in some other
-   * form.
+   * The old assertion was `>= 78`, the width of the inset that kept the brand
+   * clear of the floating lights. Its going below 78 is the regression this
+   * inverts; pinning the exact start is what stops the inset creeping back in
+   * some other form.
+   *
+   * ## Why the mark's width is measured rather than written down (HIVE-100)
+   *
+   * It used to be the literal `30`, because the mark was a square 30px tile.
+   * The tile is now the hive sprite, which is 166×180 — so a 34px-tall mark is
+   * 31.4px wide, and *no* integer is the right one to hardcode. Measuring it
+   * keeps the assertion about the thing it was always about — that the brand
+   * block starts at the header's own padding with one gap between its two
+   * parts — rather than about a sprite's aspect ratio, which is not this
+   * spec's business and would break it again on any future art change.
    */
+  const markWidth = await page
+    .locator('header [data-creature]')
+    .first()
+    .evaluate((element) => element.getBoundingClientRect().width);
+
   expect(brandX).toBeLessThan(78);
-  expect(Math.round(brandX)).toBe(16 + 30 + 10);
+  expect(Math.round(brandX)).toBe(Math.round(16 + markWidth + 10));
 });
 
 test('the lights are positioned inside the strip, not over the header', async ({

@@ -157,8 +157,16 @@ describe('clearSession', () => {
    * The successor is a *new conversation*. Carrying the old name or task
    * forward would make it look like a continuation of work it cannot see —
    * Claude has just wiped its own context.
+   *
+   * **The PR left this list with the field** (HIVE-100). It used to assert
+   * `successor.pr` was null, and that assertion was only ever true because
+   * nothing wrote `Session.pr` in the first place. A pull request belongs to a
+   * *branch*, and the test above pins that the successor keeps the branch — so
+   * the honest answer is that it owns the same PR, which is what resolving from
+   * the live list now produces. Name and task are the two things that really do
+   * belong to the conversation rather than the terminal.
    */
-  it('does not carry the finished conversation’s name, task or PR', () => {
+  it('does not carry the finished conversation’s name or task', () => {
     useHiveStore.setState((current) => ({
       entities: {
         ...current.entities,
@@ -173,7 +181,6 @@ describe('clearSession', () => {
 
     expect(successor.name).toBeUndefined();
     expect(successor.task).toBe('');
-    expect(successor.pr).toBeNull();
     expect(successor.lines).toEqual([]);
   });
 

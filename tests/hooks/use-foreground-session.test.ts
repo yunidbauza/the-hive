@@ -28,7 +28,6 @@ const session: Session = {
   project: 'apfm-web',
   status: 'idle',
   task: 'refresh the hero',
-  pr: null,
   cost: '$0.00',
   lines: [],
 };

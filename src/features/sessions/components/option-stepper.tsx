@@ -7,6 +7,24 @@ interface OptionStepperProps<T extends string> {
   options: readonly T[];
   value: T;
   onChange: (value: T) => void;
+  /**
+   * The whole scale is inapplicable right now — fade it and take it out of
+   * reach (HIVE-100).
+   *
+   * Not the same as "this option is unavailable". A stepper is one value on a
+   * scale, and there is no coherent way to grey out part of a scale: the fill
+   * would still run to a dot the user cannot choose. So the control is disabled
+   * whole, and {@link OptionStepperProps.disabledReason} says why.
+   */
+  disabled?: boolean;
+  /**
+   * Why, in the user's words, beside the label.
+   *
+   * A disabled control with no explanation is the one that generates the
+   * question — the user's options are to guess or to try clicking it, and both
+   * are worse than four words of copy.
+   */
+  disabledReason?: string;
 }
 
 /** Keys that step the selection, and which way. */
@@ -37,6 +55,8 @@ export function OptionStepper<T extends string>({
   options,
   value,
   onChange,
+  disabled = false,
+  disabledReason,
 }: OptionStepperProps<T>) {
   const index = Math.max(options.indexOf(value), 0);
   const buttons = useRef(new Map<T, HTMLButtonElement | null>());
@@ -49,6 +69,7 @@ export function OptionStepper<T extends string>({
   const fill = options.length > 1 ? (index / (options.length - 1)) * 100 : 0;
 
   const step = (event: React.KeyboardEvent) => {
+    if (disabled) return;
     const delta = STEP[event.key];
     if (delta === undefined) return;
 
@@ -65,9 +86,35 @@ export function OptionStepper<T extends string>({
   };
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-3">
-      <span className="font-mono text-[11px] tracking-[0.06em] text-term-head uppercase">
+    <div
+      className={cn(
+        'flex min-w-0 flex-1 flex-col gap-3',
+        /*
+          Faded as a whole, and `transition-opacity` so it reads as *this scale
+          just stopped applying* rather than as a different control appearing.
+          The value underneath is untouched — switching back to a model that
+          thinks finds the effort exactly where it was left.
+        */
+        'transition-opacity duration-200',
+        disabled && 'opacity-45',
+      )}
+    >
+      {/*
+        One line, always. The aside is appended to a label that sits in a
+        half-width column, and left to wrap it made the row taller — so the
+        whole stepper dropped a line the moment haiku was picked and rose again
+        when it was not. A control that moves while you are choosing is worse
+        than one that says less, which is why the reason is four words.
+      */}
+      <span className="flex items-baseline gap-1.5 truncate font-mono text-[11px] tracking-[0.06em] whitespace-nowrap text-term-head uppercase">
         {label}
+        {disabled && disabledReason ? (
+          /*
+            Lower case against the uppercase label, so it reads as an aside
+            rather than as part of the field's name.
+          */
+          <span className="normal-case">· {disabledReason}</span>
+        ) : null}
       </span>
 
       <div className="relative px-[7px]">
@@ -82,7 +129,19 @@ export function OptionStepper<T extends string>({
           style={{ width: `calc(${fill}% - ${(fill / 100) * 14}px)` }}
         />
 
-        <div role="radiogroup" aria-label={label} className="relative flex">
+        <div
+          role="radiogroup"
+          aria-label={
+            disabled && disabledReason ? `${label} — ${disabledReason}` : label
+          }
+          /*
+            Announced as well as faded. Opacity is no signal to a screen reader,
+            and `disabled` on each button would leave the *group* claiming to be
+            operable.
+          */
+          aria-disabled={disabled || undefined}
+          className="relative flex"
+        >
           {options.map((option) => {
             const selected = option === value;
 
@@ -98,7 +157,13 @@ export function OptionStepper<T extends string>({
                  * past, and the focus order would flatly contradict the
                  * grouping the role announces.
                  */
-                tabIndex={selected ? 0 : -1}
+                tabIndex={selected && !disabled ? 0 : -1}
+                /*
+                  Really disabled, not merely dimmed: a control that looks spent
+                  and still answers a click is the trap `session-table.tsx`
+                  argues against for ended rows, and the same rule holds here.
+                */
+                disabled={disabled}
                 ref={(node) => {
                   buttons.current.set(option, node);
                 }}

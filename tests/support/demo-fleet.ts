@@ -87,7 +87,6 @@ function createSessions(): Session[] {
     branch: string,
     status: Session['status'],
     task: string,
-    pr: Session['pr'],
     cost: string,
     lines: TermLine[],
   ): Session => ({
@@ -97,7 +96,6 @@ function createSessions(): Session[] {
     branch,
     status,
     task,
-    pr,
     cost,
     lines,
     // Spread conditionally so an unlinked session has no `ticket` key at all,
@@ -112,7 +110,6 @@ function createSessions(): Session[] {
       'feat/hero-refresh',
       'working',
       'Refactor hero to semantic tokens',
-      { n: 482, state: 'open' },
       '$2.41',
       [
         line('❯ claude --resume feat/hero-refresh', 'green'),
@@ -131,7 +128,6 @@ function createSessions(): Session[] {
       'fix/lead-form-validation',
       'waiting',
       'Fix lead form validation',
-      null,
       '$0.87',
       [
         line('❯ claude --resume fix/lead-form-validation', 'green'),
@@ -152,7 +148,6 @@ function createSessions(): Session[] {
       'feat/partner-webhooks',
       'working',
       'Partner webhook delivery + retries',
-      { n: 219, state: 'open' },
       '$3.12',
       [
         line('❯ claude --resume feat/partner-webhooks', 'green'),
@@ -170,7 +165,6 @@ function createSessions(): Session[] {
       'chore/rails-7.2',
       'idle',
       'Rails 7.2 upgrade spike',
-      null,
       '$1.05',
       [
         line('❯ claude --resume chore/rails-7.2', 'green'),
@@ -186,7 +180,6 @@ function createSessions(): Session[] {
       'feat/call-notes',
       'waiting',
       'Advisor call notes editor',
-      null,
       '$1.66',
       [
         line('❯ claude --resume feat/call-notes', 'green'),
@@ -204,7 +197,6 @@ function createSessions(): Session[] {
       'fix/timezone-bug',
       'done',
       'Tour times shown in wrong timezone',
-      { n: 77, state: 'merged' },
       '$0.54',
       [
         line('❯ claude --resume fix/timezone-bug', 'green'),
@@ -220,7 +212,6 @@ function createSessions(): Session[] {
       'feat/dark-tokens',
       'working',
       'Dark-mode token ramp',
-      null,
       '$2.08',
       [
         line('❯ claude --resume feat/dark-tokens', 'green'),
@@ -239,7 +230,6 @@ function createSessions(): Session[] {
       'chore/ecs-autoscaling',
       'done',
       'ECS autoscaling policies',
-      { n: 31, state: 'merged' },
       '$0.92',
       [
         line('❯ claude --resume chore/ecs-autoscaling', 'green'),
@@ -257,7 +247,6 @@ function createSessions(): Session[] {
       'test/e2e-quote-flow',
       'idle',
       'E2E coverage for quote flow',
-      null,
       '$0.31',
       [
         line('❯ claude --resume test/e2e-quote-flow', 'green'),
@@ -272,7 +261,6 @@ function createSessions(): Session[] {
       'fix/n-plus-one',
       'working',
       'Kill N+1 queries in lead search',
-      null,
       '$1.19',
       [
         line('❯ claude --resume fix/n-plus-one', 'green'),

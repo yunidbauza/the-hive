@@ -53,3 +53,25 @@ export interface TicketPr {
   /** Owning session id, for `openEntity` — `null` when nothing matched. */
   session: string | null;
 }
+
+/**
+ * The pull request a fleet row points at (HIVE-100).
+ *
+ * The third of these resolved shapes, and the smallest: a 34px column has room
+ * for `#123` and nothing else, so it carries the number, the colour rule's
+ * input, and the page to open. Findings and checks are deliberately absent —
+ * they have no glyph that fits, and the PRs panel exists to show them.
+ *
+ * **Resolved from the live list, never read off the session.** `Session.pr` was
+ * the obvious place for this and is the reason the column was empty for as long
+ * as it existed: nothing has ever written that field, on any code path, and the
+ * fixtures made the emptiness look like an absence of pull requests rather than
+ * an absence of a writer. `TicketPr` above records the same discovery — this is
+ * the last surface to stop reading it.
+ */
+export interface SessionPr {
+  n: number;
+  state: PrListState;
+  /** The GitHub page. What the `#123` link opens. */
+  url: string;
+}

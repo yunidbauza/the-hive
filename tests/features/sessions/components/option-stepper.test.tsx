@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -132,5 +132,109 @@ describe('OptionStepper', () => {
 
     expect(screen.getAllByRole('radio')).toHaveLength(OPTIONS.length);
     expect(screen.queryByRole('radio', { checked: true })).not.toBeInTheDocument();
+  });
+  /**
+   * A whole scale can stop applying (HIVE-100).
+   *
+   * Not the same as "this option is unavailable": a stepper is one value on a
+   * scale, and there is no coherent way to grey out part of one — the fill would
+   * still run to a dot nobody can pick. So it disables whole, and says why.
+   */
+  describe('when the scale does not apply', () => {
+    it('refuses a click', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(
+        <OptionStepper
+          label="thinking effort"
+          options={['low', 'high'] as const}
+          value="low"
+          onChange={onChange}
+          disabled
+        />,
+      );
+
+      await user.click(screen.getByRole('radio', { name: 'high' }));
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it('refuses the arrow keys too', () => {
+      const onChange = vi.fn();
+      render(
+        <OptionStepper
+          label="thinking effort"
+          options={['low', 'high'] as const}
+          value="low"
+          onChange={onChange}
+          disabled
+        />,
+      );
+
+      fireEvent.keyDown(screen.getByRole('radio', { name: 'low' }), {
+        key: 'ArrowRight',
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Announced as well as faded. Opacity is no signal to a screen reader, and
+     * disabling only the buttons would leave the *group* claiming to be
+     * operable.
+     */
+    it('says so on the group, and gives the reason', () => {
+      render(
+        <OptionStepper
+          label="thinking effort"
+          options={['low', 'high'] as const}
+          value="low"
+          onChange={() => {}}
+          disabled
+          disabledReason="haiku does not think"
+        />,
+      );
+
+      const group = screen.getByRole('radiogroup', {
+        name: /thinking effort — haiku does not think/,
+      });
+      expect(group).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByText(/haiku does not think/)).toBeInTheDocument();
+    });
+
+    it('takes the group out of the tab order entirely', () => {
+      render(
+        <OptionStepper
+          label="thinking effort"
+          options={['low', 'high'] as const}
+          value="low"
+          onChange={() => {}}
+          disabled
+        />,
+      );
+
+      // The selected dot is the group's single tab stop when it is live.
+      expect(screen.getByRole('radio', { name: 'low' })).toHaveAttribute(
+        'tabindex',
+        '-1',
+      );
+    });
+
+    it('is fully operable again once it applies', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(
+        <OptionStepper
+          label="thinking effort"
+          options={['low', 'high'] as const}
+          value="low"
+          onChange={onChange}
+        />,
+      );
+
+      await user.click(screen.getByRole('radio', { name: 'high' }));
+
+      expect(onChange).toHaveBeenCalledWith('high');
+    });
   });
 });

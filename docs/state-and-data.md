@@ -141,6 +141,8 @@ Components never read a store object directly and never call `getState()`.
 | `useUnreadCount()` | inbox unread count |
 | `useNotifs()` | the inbox, newest first (051) |
 | `usePrs()` | every open PR the fleet produced (052) |
+| `useSessionPr(id)` | one row's PR, matched on its branch (HIVE-100) |
+| `useHasResumable()` | whether the fleet table reserves its Resume column |
 | `useMarkRead()` | mark one notification read, by index |
 | `usePushNotif()` | push a notification — the simulation's entry point |
 | `useActiveEntity()` | the entity behind `activeTab`, or `null` |

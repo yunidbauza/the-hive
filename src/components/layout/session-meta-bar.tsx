@@ -15,6 +15,7 @@ import {
   statusLabel,
 } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
+import { useSessionPr } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
 interface SessionMetaBarProps {
@@ -36,6 +37,20 @@ interface SessionMetaBarProps {
 export function SessionMetaBar({ entity }: SessionMetaBarProps) {
   const backToOrch = useBackToOrch();
   const session = isSession(entity) ? entity : null;
+  /**
+   * The PR chip's subject, resolved from the live GitHub list (HIVE-100).
+   *
+   * It used to read `entity.pr`, a field nothing ever wrote — so this chip has
+   * never once appeared outside a fixture, and the bar's own docstring above
+   * promising "a PR opening updates the bar" was describing something that
+   * could not happen. The fleet table read the same field and was empty for the
+   * same reason; both now resolve by branch, and the field is gone.
+   *
+   * Safe for an agent, which is not a session and owns no branch: the selector
+   * answers `null` for anything it cannot resolve, and the chip is inside the
+   * `session` arm regardless.
+   */
+  const pr = useSessionPr(entity.id);
 
   return (
     <div
@@ -83,11 +98,29 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
             {statusLabel(session.status, session.idleDetail)}
           </Chip>
 
-          {session.pr ? (
-            <Chip className={prStateText(session.pr.state)}>
-              <GitPullRequest size={13} aria-hidden="true" className="shrink-0" />
-              {`#${session.pr.n} · ${session.pr.state}`}
-            </Chip>
+          {pr ? (
+            /*
+              A link, not a chip-shaped label: the bar sits above the terminal a
+              user is watching a PR from, and the number is the fastest way to
+              the page it names. Same target and `rel` as every other PR link in
+              the app — `pr-card`, `ticket-pr-row`, the fleet table.
+            */
+            <a
+              href={pr.url}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Open PR #${String(pr.n)} on GitHub`}
+              className="shrink-0 rounded-full hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+            >
+              <Chip className={prStateText(pr.state)}>
+                <GitPullRequest
+                  size={13}
+                  aria-hidden="true"
+                  className="shrink-0"
+                />
+                {`#${pr.n} · ${pr.state}`}
+              </Chip>
+            </a>
           ) : null}
         </>
       ) : (

@@ -14,13 +14,19 @@ import spireAnim from './swarm/spire.webp';
  *
  * ## Where this is allowed, and at what size
  *
- * Two registers, and the size is what separates them:
+ * Three registers, and the size is what separates them:
  *
  * - **Full-stage surfaces at 72–120 px** — the picker's first run, the dormant
  *   orchestrator, the editor with no file, the settings card. Those own the
  *   whole centre and have nothing to compete with.
  * - **Rails at 44 px** — small enough to read as a mark rather than an
  *   illustration.
+ * - **The header at 40 px** (HIVE-100) — the brand mark beside the wordmark,
+ *   and the only call site that is *never* an empty state. It is the one place
+ *   the sprite is given a lit ground rather than the app's: at this size on
+ *   `--cc-bg` the creature still loses its silhouette, so `brand-block.tsx`
+ *   puts the splash's blurred pool behind it. See there for what replacing the
+ *   baked app tile gave up.
  *
  * The rails were text-only when this shipped, on the argument that a decorative
  * empty state in a 268 px column beside a live terminal takes more attention
@@ -60,10 +66,12 @@ export function SwarmCreature({
    * Which one. The casting is a second channel, not decoration, so it is fixed
    * per surface rather than chosen per render:
    *
-   * - **Hive** — the overmind's empty fleet, the picker's **first run**, the
-   *   settings projects **and skills** cards, and the explorer's empty
-   *   repository. The app's own face, territory, and the thing that leads the
-   *   main screen.
+   * - **Hive** — the header's brand mark, the overmind's empty fleet, the
+   *   picker's **first run**, the settings projects **and skills** cards, and
+   *   the explorer's empty repository. The app's own face, territory, and the
+   *   thing that leads the main screen. The header is the one that is not an
+   *   empty state at all, and it is cast this way for the plainest reason on
+   *   the list: it *is* the app's face (HIVE-100).
    * - **Overlord** — the projects rail, and the inbox. It hovers and watches
    *   without acting, which is what both of those states are.
    * - **Spire** — work, pull requests, the editor with no file, and the

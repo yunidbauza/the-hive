@@ -65,16 +65,55 @@ describe('SessionMetaBar', () => {
       expect(screen.getByText('feat/incorp-332')).toBeInTheDocument();
     });
 
+    /**
+     * Resolved from the live PR list by branch, not read off the entity
+     * (HIVE-100).
+     *
+     * This assertion is unchanged and that is the point: it passed for years
+     * against `entity.pr`, a field nothing ever wrote, because the fixture set
+     * it by hand. The chip had therefore never appeared in the running app. The
+     * fixture now supplies only what GitHub supplies — a `PrRecord` on
+     * `feat/hero-refresh` — so the same expectation is finally evidence of the
+     * behaviour it names.
+     */
     it('renders the PR chip with its number and state', () => {
       render(<SessionMetaBar entity={entity('hero-refresh')} />);
 
       expect(screen.getByText('#482 · open')).toBeInTheDocument();
     });
 
+    it('links the PR chip to its GitHub page', () => {
+      render(<SessionMetaBar entity={entity('hero-refresh')} />);
+
+      const link = screen.getByRole('link', {
+        name: 'Open PR #482 on GitHub',
+      });
+
+      expect(link).toHaveAttribute(
+        'href',
+        'https://github.com/demo/apfm-web/pull/482',
+      );
+      expect(link).toHaveAttribute('target', '_blank');
+      // No opener handed to the page being opened.
+      expect(link).toHaveAttribute('rel', 'noreferrer');
+    });
+
     it('omits the PR chip when the session has no PR', () => {
       render(<SessionMetaBar entity={entity('lead-form')} />);
 
       expect(screen.queryByText(/^#\d/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('link')).toBeNull();
+    });
+
+    /**
+     * An agent has no branch and no session record, so the selector it shares
+     * with sessions must answer `null` rather than throwing — the bar renders
+     * for both kinds of entity.
+     */
+    it('shows no PR chip for an agent', () => {
+      render(<SessionMetaBar entity={entity('slack-agent')} />);
+
+      expect(screen.queryByRole('link')).toBeNull();
     });
 
     /**

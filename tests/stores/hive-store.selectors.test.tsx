@@ -18,6 +18,7 @@ import {
   useAgentOrder,
   useCounts,
   useEntity,
+  useHasResumable,
   useHiveStore,
   useMarkRead,
   useNavOrder,
@@ -25,6 +26,7 @@ import {
   useProjects,
   useProjectSessions,
   usePrs,
+  useSessionPr,
   useTicketCount,
   useTicketPrs,
   useTickets,
@@ -1090,6 +1092,234 @@ describe('hive-store selectors', () => {
 
       expect(useHiveStore.getState().prSource).not.toBe(before);
       expect(useHiveStore.getState().prSource).toMatchObject({ repos: 4 });
+    });
+  });
+
+  /**
+   * The fleet table's `PR` column, and the meta bar's chip (HIVE-100).
+   *
+   * Both read `Session.pr` until this story, and `Session.pr` was never once
+   * written — not by `spawnSession`, not by a hook, not by any IPC payload. So
+   * the column showed `—` on every row of every real fleet, which is exactly
+   * what "this branch has no pull request" looks like. It took a user
+   * screenshot to notice.
+   *
+   * The resolution is `usePrs()` run backwards: branch first, repository to
+   * break a cross-repo tie.
+   */
+  describe('useSessionPr', () => {
+    it('resolves the PR on the session’s branch', () => {
+      const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+      expect(result.current).toEqual({
+        n: 482,
+        state: 'open',
+        url: 'https://github.com/demo/apfm-web/pull/482',
+      });
+    });
+
+    it('answers null when no PR is on the branch', () => {
+      // `fix/lead-form-validation` carries no record in the fixture.
+      const { result } = renderHook(() => useSessionPr('lead-form'));
+
+      expect(result.current).toBeNull();
+    });
+
+    it('answers null for an unknown id, and for an agent', () => {
+      expect(renderHook(() => useSessionPr('nope')).result.current).toBeNull();
+      expect(
+        renderHook(() => useSessionPr('slack-agent')).result.current,
+      ).toBeNull();
+    });
+
+    /**
+     * HIVE-78's guard, restated: a session whose branch nobody has observed
+     * owns no pull request. Without it an `undefined` branch would compare
+     * against records and match nothing — the right answer reached by luck
+     * rather than by rule.
+     */
+    it('answers null while the branch is unobserved', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          entities: {
+            ...state.entities,
+            'hero-refresh': {
+              ...(state.entities['hero-refresh'] as Session),
+              branch: undefined,
+            },
+          },
+        }));
+      });
+
+      const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+      expect(result.current).toBeNull();
+    });
+
+    /**
+     * The cross-repo case `sessionForPr` exists for, seen from the other side:
+     * one branch name, two repositories, two pull requests. Resolving by branch
+     * alone would hand the frontend session the backend's PR — and the link
+     * would open the wrong page, which is worse than opening none.
+     */
+    it('breaks a two-repo branch collision on the project', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          prs: [
+            ...state.prs,
+            {
+              number: 9001,
+              title: 'Same branch, other repo',
+              url: 'https://github.com/demo/referral-api/pull/9001',
+              repo: 'referral-api',
+              owner: 'demo',
+              branch: 'feat/hero-refresh',
+              state: 'open',
+              findings: 0,
+              checks: 'passing',
+              updatedAt: '2026-08-10T09:00:00Z',
+            } satisfies PrRecord,
+          ],
+        }));
+      });
+
+      const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+      // Newer by `updatedAt`, and still not this session's — `apfm-web` is.
+      expect(result.current?.n).toBe(482);
+    });
+
+    /**
+     * When the repository cannot disambiguate — a checkout named differently
+     * from its repo, which the *disambiguate, do not filter* rule deliberately
+     * tolerates — the newest record wins rather than whichever GitHub happened
+     * to return first.
+     */
+    it('takes the most recently updated when the project cannot decide', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          prs: [
+            ...state.prs.filter((pr) => pr.number !== 482),
+            {
+              number: 482,
+              title: 'Older',
+              url: 'https://github.com/demo/checkout-named-otherwise/pull/482',
+              repo: 'checkout-named-otherwise',
+              owner: 'demo',
+              branch: 'feat/hero-refresh',
+              state: 'open',
+              findings: 0,
+              checks: 'passing',
+              updatedAt: '2026-08-01T00:00:00Z',
+            } satisfies PrRecord,
+            {
+              number: 700,
+              title: 'Newer',
+              url: 'https://github.com/demo/checkout-named-otherwise/pull/700',
+              repo: 'checkout-named-otherwise',
+              owner: 'demo',
+              branch: 'feat/hero-refresh',
+              state: 'open',
+              findings: 0,
+              checks: 'passing',
+              updatedAt: '2026-08-20T00:00:00Z',
+            } satisfies PrRecord,
+          ],
+        }));
+      });
+
+      const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+      expect(result.current?.n).toBe(700);
+    });
+
+    /**
+     * A branch that just landed and was reused carries both records for a day
+     * — the panel keeps merged PRs for 24 hours. The fleet table's subject is
+     * the work in front of you, so the live one wins even though the merged one
+     * is newer.
+     */
+    it('prefers a live PR over a merged one, however recent the merge', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          prs: [
+            ...state.prs,
+            {
+              number: 999,
+              title: 'Landed an hour ago',
+              url: 'https://github.com/demo/apfm-web/pull/999',
+              repo: 'apfm-web',
+              owner: 'demo',
+              branch: 'feat/hero-refresh',
+              state: 'merged',
+              findings: 0,
+              checks: 'passing',
+              updatedAt: '2099-01-01T00:00:00Z',
+            } satisfies PrRecord,
+          ],
+        }));
+      });
+
+      const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+      expect(result.current?.n).toBe(482);
+    });
+  });
+
+  /**
+   * Whether the fleet table holds its Resume column open (HIVE-100).
+   *
+   * One answer for the whole table, because a column that some rows reserve and
+   * others do not is not a column — the header can then be over at most one
+   * kind of row, which is the misalignment this story was reported for.
+   */
+  describe('useHasResumable', () => {
+    it('is false for a fleet with nothing to resume', () => {
+      const { result } = renderHook(() => useHasResumable());
+
+      expect(result.current).toBe(false);
+    });
+
+    it('is true once an ended session is resumable', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          entities: {
+            ...state.entities,
+            'tz-fix': {
+              ...(state.entities['tz-fix'] as Session),
+              status: 'done',
+              resumable: true,
+            },
+          },
+        }));
+      });
+
+      const { result } = renderHook(() => useHasResumable());
+
+      expect(result.current).toBe(true);
+    });
+
+    /**
+     * A *live* session that happens to carry the flag reserves nothing: the
+     * row's own control is gated on `ended` too, so a column held open for it
+     * would be permanently empty and permanently wrong.
+     */
+    it('ignores a live session carrying the flag', () => {
+      act(() => {
+        useHiveStore.setState((state) => ({
+          entities: {
+            ...state.entities,
+            'hero-refresh': {
+              ...(state.entities['hero-refresh'] as Session),
+              resumable: true,
+            },
+          },
+        }));
+      });
+
+      const { result } = renderHook(() => useHasResumable());
+
+      expect(result.current).toBe(false);
     });
   });
 });

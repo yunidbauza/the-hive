@@ -61,8 +61,6 @@ export type SessionStatus =
 export type Model = SessionModel;
 export type Effort = SessionEffort;
 
-export type PrState = 'open' | 'merged' | 'draft';
-
 /** One agentic terminal session, bound to a project and a branch. */
 export interface Session {
   kind: 'session';
@@ -253,7 +251,6 @@ export interface Session {
    */
   booting?: boolean;
   task: string; // one-line description
-  pr: { n: number; state: PrState } | null;
   cost: string; // '$2.41'
   model?: Model;
   effort?: Effort;
