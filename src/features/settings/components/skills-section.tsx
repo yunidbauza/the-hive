@@ -243,7 +243,15 @@ export function SkillsSection() {
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden px-5 py-4">
       <SettingsSectionHeader title="Skills" description={description} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[150px_1fr] gap-3">
+      {/*
+        `min-w-0` on the editor column, for the reason `skill-editor.tsx`'s
+        header gives: a grid item's default `min-width: auto` refuses to shrink
+        below its content, so the absolute path in that header widened the
+        column past the pane and pushed Delete and Save off the right edge.
+        Caught on a screenshot of the built app, which is the only place a
+        clipped panel is visible — every assertion still passed.
+      */}
+      <div className="grid min-h-0 flex-1 grid-cols-[150px_minmax(0,1fr)] gap-3">
         <div className="flex flex-col overflow-y-auto rounded-[7px] border border-border">
           {rows.map((row) => {
             const active = row.name === open;

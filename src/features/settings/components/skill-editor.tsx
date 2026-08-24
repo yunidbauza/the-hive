@@ -44,13 +44,20 @@ export function SkillEditor({
           selected, and what the header adds is *where the bytes go* — which is
           the fact a user needs when they go looking for the file outside the
           app.
+
+          `min-w-0` is load-bearing, not decoration: a flex item's default
+          `min-width: auto` refuses to shrink below its content, so `truncate`
+          never engages and a long path pushes the state badge off the panel
+          instead of ellipsising. Every path here is absolute and most are long.
         */}
-        <span className="truncate font-mono text-[11px] text-subtle">
+        <span className="min-w-0 truncate font-mono text-[11px] text-subtle">
           {path ?? 'New skill'}
         </span>
         <span
           className={
-            dirty ? 'text-[11px] text-brand' : 'text-[11px] text-subtle'
+            dirty
+              ? 'shrink-0 text-[11px] text-brand'
+              : 'shrink-0 text-[11px] text-subtle'
           }
         >
           {dirty ? 'unsaved' : 'saved'}
@@ -74,8 +81,8 @@ export function SkillEditor({
         <span
           className={
             problem === null
-              ? 'text-[11px] text-subtle'
-              : 'text-[11px] text-red'
+              ? 'min-w-0 text-[11px] text-subtle'
+              : 'min-w-0 text-[11px] text-red'
           }
         >
           {problem ?? 'The name in the frontmatter names the folder and the command.'}
