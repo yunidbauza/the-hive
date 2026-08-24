@@ -6,46 +6,43 @@ import type { SessionEffort, SessionModel } from '@shared/session-contract';
 /**
  * Session lifecycle. Agents are always `online` and are tracked separately.
  *
- * `done` and `terminated` are both endings and are **not** the same ending
- * (story 108). `done` is what a conversation becomes at a boundary: `/clear`
- * ends it while the pty keeps running, so the row retires as history and a
- * successor opens on the same terminal. `terminated` is an observation — the
- * pty is gone, seen by `activity.ts`, and it is the one status forwarded even
- * for a hook-driven session because `SessionEnd` races the exit and loses.
+ * **Two endings, and they answer different questions** (story 108, HIVE-93).
  *
- * Collapsing them, which is what shipped before story 108, made a session that
- * had merely quit indistinguishable from one that had delivered — and made the
- * app offer to reopen a terminal with nothing behind it.
+ * `done` is a session that finished **on purpose**: `/clear` ended the
+ * conversation, `/done` ended the session, or the app was quit around it. What
+ * they share is a person deciding, which is why they share a word.
+ *
+ * `terminated` is an **observation**: the pty went away and nobody said it was
+ * finished. `/exit`, `Ctrl-D`, a kill. It is the one status forwarded even for a
+ * hook-driven session, because `SessionEnd` races the exit and loses.
+ *
+ * Collapsing *these two*, which is what shipped before story 108, made a session
+ * that had merely quit indistinguishable from one that had delivered.
+ *
+ * ## Why there is no longer a third
+ *
+ * `closed` used to be here for a row that was live when the app last quit. It
+ * was carrying two jobs at once, and neither needed a status of its own:
+ *
+ * - *"you can click this to resume it"* — an **affordance**, now a real `resume`
+ *   control driven by {@link Session.resumable}. A status word should not be how
+ *   the user discovers what a row can do.
+ * - *"this may be pruned, unlike `terminated`"* — a **retention rule**, and the
+ *   load-bearing half. It survives the fold because `done` is cappable too; the
+ *   guarantee that matters is that a `terminated` row is never dropped, and that
+ *   is untouched. Folding into `terminated` instead would have been the
+ *   catastrophe the old comment warned about: twenty launches of five sessions
+ *   is a hundred permanent tombstones.
+ *
+ * What is left — *how* a session ended — is {@link Session.endedBy}, a field,
+ * where it can be read without also deciding what the row may do.
  */
 export type SessionStatus =
   | 'working'
   | 'waiting'
   | 'idle'
   | 'done'
-  | 'terminated'
-  /**
-   * Open when the app was last closed (HIVE-87).
-   *
-   * The third ending, and it exists for the reason story 108 gives above:
-   * collapsing two different endings makes them indistinguishable. `terminated`
-   * is an **observation** — `activity.ts` watched the pty go. `closed` is an
-   * **inference** — a record restored from the ledger says it was working, and
-   * it plainly is not, because the process it describes died with the app that
-   * owned it.
-   *
-   * The distinction is load-bearing rather than descriptive, and retention is
-   * where it earns its keep. `DONE_CAP` deliberately never prunes `terminated`,
-   * on the grounds that such a row "is the only record that it existed". Had
-   * restored sessions come back as `terminated`, every launch would have added
-   * the entire live fleet to a list nothing is allowed to shorten — twenty
-   * launches of five sessions is a hundred permanent tombstones in a table
-   * whose job is showing what is running. `closed` is cappable; `terminated`
-   * keeps its guarantee untouched.
-   *
-   * Never written by main, and never present in `sessions.json`. See
-   * `electron/shared/session-history-contract.ts` for why it cannot be.
-   */
-  | 'closed';
+  | 'terminated';
 
 /**
  * Aliases, not declarations (story 109).
@@ -192,6 +189,46 @@ export interface Session {
   restored?: boolean;
   status: SessionStatus;
   /**
+   * How a `done` session came to be done (HIVE-93).
+   *
+   * `done` is one word for three deliberate endings, and almost everything is
+   * happy with that — the fleet table, the counts, the dot. Two things are not,
+   * and both are about the **terminal** rather than the row:
+   *
+   * ```
+   * cleared      pty alive, belongs to the successor    transcript not shown
+   * finished     pty gone, /done wrote the /exit        transcript worth reading
+   * app-closed   pty gone with the app that owned it    nothing left to read
+   * ```
+   *
+   * `isTerminated` asks the first column and `endedReason` asks for a sentence
+   * per row — neither is answerable from `status` once the three share a word.
+   * That is the whole reason this field exists rather than a fourth status: the
+   * user-facing vocabulary stays at two endings while the code keeps the
+   * distinctions it actually needs.
+   *
+   * Absent on a live session, and on an ending old enough to predate the field.
+   * Every reader treats absent as "not `cleared`", which is the safe default: it
+   * protects a transcript that may not need protecting, rather than discarding
+   * one that did.
+   */
+  endedBy?: 'cleared' | 'finished' | 'app-closed';
+  /**
+   * This row's conversation can be reopened (HIVE-93).
+   *
+   * Set from the ledger at hydrate — main answers whether it still holds a
+   * `--session-id` for this row — and by `finishSession`, because a `/done`
+   * keeps its uuid where a `/clear` drops it.
+   *
+   * **Deliberately not derived from `status` or `endedBy`.** Resumability is a
+   * fact about a transcript on disk, and the three endings do not agree with it:
+   * a `cleared` row is not resumable, a `finished` one is, and an `app-closed`
+   * one is only resumable if its record carried a uuid — which records written
+   * before uuids existed do not. Inferring it would offer Resume on rows that
+   * cannot resume, which fails at the worst possible moment: after the click.
+   */
+  resumable?: boolean;
+  /**
    * What is still running while the main agent is not (HIVE-83).
    *
    * Only ever set alongside `idle` — see `SessionStatusEvent`, whose field this
@@ -265,21 +302,32 @@ export interface ProjectRow extends Project {
  * `terminated` sessions quietly reappearing in the active list.
  */
 export const isEnded = (status: SessionStatus): boolean =>
-  status === 'done' || status === 'terminated' || status === 'closed';
+  status === 'done' || status === 'terminated';
 
 /**
  * Whether this session's process is gone and cannot be typed into.
  *
- * Narrower than {@link isEnded}, and the two are still not interchangeable —
- * though the reason changed. Both endings now close their tab to new visits, so
- * `openEntity` gates on `isEnded`; what only `terminated` means is that the
- * **process is gone**. A cleared session's pty is alive and belongs to its
- * successor, which is why `center-stage.tsx` uses this one for the "this
- * terminal has died" notice: showing it over a session whose terminal is still
- * running would be false.
+ * Narrower than {@link isEnded}: every ended row closes its tab to new visits,
+ * so `openEntity` gates on that one, while this asks the sharper question
+ * `center-stage.tsx` needs for the "this terminal has died" notice and for
+ * disabling stdin.
+ *
+ * **Not a status test** (HIVE-93). It was, while `terminated` was the only
+ * ending whose process had gone. Now `/done` produces a `done` row whose pty is
+ * equally gone, and an app-quit restores one, so the question is answered by
+ * {@link Session.endedBy} instead. Only a *cleared* session's pty survives its
+ * row — it belongs to the successor — and showing "this terminal has died" over
+ * it would be false.
+ *
+ * Absent `endedBy` on a `done` row reads as "the process is gone", which is the
+ * safe direction: it disables typing into a terminal that might be alive, where
+ * the reverse leaves a live caret over a dead pty silently eating keystrokes.
  */
-export const isTerminated = (entity: Entity | undefined): boolean =>
-  entity !== undefined && entity.kind === 'session' && entity.status === 'terminated';
+export const isTerminated = (entity: Entity | undefined): boolean => {
+  if (entity === undefined || entity.kind !== 'session') return false;
+  if (entity.status === 'terminated') return true;
+  return entity.status === 'done' && entity.endedBy !== 'cleared';
+};
 
 /** Narrowing helpers — cheaper to read than repeating the discriminant. */
 export const isSession = (entity: Entity): entity is Session =>
@@ -358,9 +406,9 @@ export const entityLabel = (entity: Entity): string => {
  *
  * The three endings are **not** interchangeable and the sentence has to say
  * which: a terminated session's process is gone, a cleared one's is very much
- * alive and simply is not its own any more, and a closed one belongs to an app
- * that is no longer running. See {@link isTerminated} for the same distinction
- * from the other direction.
+ * alive and simply is not its own any more, and an app-closed one belonged to an
+ * app that is no longer running. See {@link isTerminated} for the same
+ * distinction from the other direction.
  *
  * It lives here rather than in the session table because there are now three
  * consumers and one of them is the store, which may not import from
@@ -368,29 +416,45 @@ export const entityLabel = (entity: Entity): string => {
  * *cleared* row as "has terminated — its process is gone", which is the one
  * reading that is false in both halves.
  *
- * ## Why a `switch` and not the ternary this used to be (HIVE-87)
+ * ## Two switches, because one word covers three endings (HIVE-93)
  *
- * The ternary tested `terminated` and let everything else fall through to the
- * "was cleared" sentence. That was exactly right while there were two endings
- * and silently wrong the moment there were three: `closed` would have inherited
- * a sentence claiming its terminal continues as a new session, which is false
- * twice over.
+ * `status` no longer identifies the ending — `done` is `/clear`, `/done` and an
+ * app quit — so the sentence comes from {@link Session.endedBy} and the outer
+ * switch only separates "deliberate" from "observed".
  *
- * **Every case is enumerated and there is no `default`**, which is what makes
- * the claim above true rather than merely intended. A first pass wrote this as
- * a `switch` with a `default` arm and a comment promising that a fourth ending
- * would be a compile error — it would not have been; it would have fallen into
- * "was cleared", quietly, which is the exact failure being fixed. The `never`
- * assignment is the part that actually fails the build.
+ * **Neither switch has a `default`**, which is what makes the claim above true
+ * rather than merely intended. An earlier version had one, with a comment
+ * promising that a new ending would be a compile error — it would not have
+ * been; it would have fallen into "was cleared", quietly, which is the exact
+ * failure this shape exists to prevent. The `never` assignments are the part
+ * that actually fails the build.
  */
 export const endedReason = (session: Session): string => {
+  const label = entityLabel(session);
+
   switch (session.status) {
     case 'terminated':
-      return `${entityLabel(session)} has terminated — its process is gone`;
-    case 'closed':
-      return `${entityLabel(session)} was open when The Hive last closed — open it to pick it back up`;
-    case 'done':
-      return `${entityLabel(session)} was cleared — its terminal continues as a new session`;
+      return `${label} has terminated — its process is gone`;
+    case 'done': {
+      switch (session.endedBy) {
+        case 'finished':
+          return `${label} finished with /done — resume to pick it up`;
+        case 'app-closed':
+          return `${label} was open when The Hive last closed — resume to pick it back up`;
+        /*
+          `cleared` and absent share a sentence, and absent is the older
+          ending: every `done` row predating `endedBy` was a cleared one,
+          because `/clear` was the only thing that produced the status.
+        */
+        case 'cleared':
+        case undefined:
+          return `${label} was cleared — its terminal continues as a new session`;
+        default: {
+          const exhaustive: never = session.endedBy;
+          return exhaustive;
+        }
+      }
+    }
     case 'working':
     case 'waiting':
     case 'idle': {
@@ -399,14 +463,13 @@ export const endedReason = (session: Session): string => {
         `isEnded` first. Answering with the cleared sentence would be a lie, so
         this says only what is certainly true.
       */
-      return `${entityLabel(session)} is still running`;
+      return `${label} is still running`;
     }
     default: {
       /*
         Unreachable, and the assignment is the point: a new `SessionStatus` has
         no case above, so `status` is no longer `never` here and the build
-        fails. A `default` that merely returned a string is what let the third
-        ending ship with the second's sentence.
+        fails.
       */
       const exhaustive: never = session.status;
       return exhaustive;

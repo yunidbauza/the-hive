@@ -71,15 +71,21 @@ function liveSession(entityId: string): Session | null {
    * terminal that replaced it, so the user would watch new work appear under a
    * finished session's name and be able to type into it.
    *
-   * `terminated` is deliberately **not** included, though it is equally ended.
-   * That case is carried by `center-stage.tsx`'s `endedId` and the surface's
-   * `ended` prop (story 108), which disable stdin *in place*. Flipping
+   * Every other ending is deliberately **not** included, though all of them are
+   * equally over. Those are carried by `center-stage.tsx`'s `endedId` and the
+   * surface's `ended` prop (story 108), which disable stdin *in place*. Flipping
    * `readOnly` instead would rebuild the xterm instance and wipe the transcript
    * of the session that just died — the one thing the user still wants to read.
    * A cleared session has no such transcript to protect: its row is inert and
    * never shown.
+   *
+   * **Keyed on `endedBy`, not on the status** (HIVE-93). It was `status ===
+   * 'done'` while `/clear` was the only thing that produced `done`. `/done` now
+   * produces one too, and its transcript is exactly the kind this guard exists
+   * to protect — the user is very likely still reading it, because they were
+   * watching the session when it finished.
    */
-  if (entity.status === 'done') return null;
+  if (entity.status === 'done' && entity.endedBy === 'cleared') return null;
 
   return entity;
 }
@@ -136,14 +142,21 @@ export function resolveTransport(entityId: string): TerminalTransport {
      */
     theme: currentTheme(),
     /**
-     * A row the app outlived, opened again (HIVE-88).
+     * A conversation being picked up rather than begun (HIVE-88, HIVE-93).
      *
-     * `restored` is still set at this moment — `reviveIfLive` clears it only
-     * when the new process reports a live status — so it is exactly the
-     * signal that this mount should continue a conversation rather than
-     * begin one. Read here, not in `pty-transport.ts`, for the reason the
-     * model is: this is the store-aware half of the seam.
+     * Two signals, because there are two ways to arrive here with a transcript
+     * worth continuing. `restored` is a row the app outlived, still set at this
+     * moment — `reviveIfLive` clears it only once the new process reports a live
+     * status. `resumable` is a row that ended *within* this run, which `/done`
+     * produces: it never left, so it was never restored.
+     *
+     * Read here, not in `pty-transport.ts`, for the reason the model is: this is
+     * the store-aware half of the seam. Main still has the last word — it
+     * honours `resume` only where its ledger can actually name the conversation,
+     * so a row wrongly marked here spawns fresh rather than failing.
      */
-    ...(session.restored === true ? { resume: true } : {}),
+    ...(session.restored === true || session.resumable === true
+      ? { resume: true }
+      : {}),
   });
 }

@@ -841,9 +841,21 @@ export function registerIpcHandlers(): void {
      * process now": a session this run began and already lost is history too.
      */
     const live = new Set(sessions?.entities() ?? []);
-    return (ledger?.all() ?? []).map((record) =>
-      live.has(record.id) ? { ...record, live: true } : record,
-    );
+    return (ledger?.all() ?? []).map((record) => {
+      /*
+        Both marks are computed here rather than stored, because both are only
+        true of this moment (HIVE-93). `resumable` asks the ledger rather than
+        reading `sessionUuid` off the record: a session *this run* started holds
+        a uuid naming a conversation that is already open, and offering Resume
+        for it would start a second `claude` against one transcript.
+      */
+      const marked = live.has(record.id)
+        ? { ...record, live: true as const }
+        : record;
+      return ledger?.resumable(record.id) === undefined
+        ? marked
+        : { ...marked, resumable: true as const };
+    });
   });
 
   /**

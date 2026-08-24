@@ -5,6 +5,7 @@ import { noteSessionTicket } from '@/lib/session-history';
 
 import {
   useClearSession,
+  useFinishSession,
   useRenameSession,
   useSetSessionBranch,
   useSetSessionMetrics,
@@ -59,6 +60,7 @@ export function useSessionStatus(): void {
   const setSessionStatus = useSetSessionStatus();
   const renameSession = useRenameSession();
   const clearSession = useClearSession();
+  const finishSession = useFinishSession();
   const setSessionBranch = useSetSessionBranch();
   const setSessionTicket = useSetSessionTicket();
   const setSessionMetrics = useSetSessionMetrics();
@@ -89,6 +91,19 @@ export function useSessionStatus(): void {
      */
     const disposeCleared = bridge.session.onCleared(({ entityId }) => {
       clearSession(entityId);
+    });
+
+    /**
+     * `/done` — the session finished on purpose and its terminal is gone.
+     *
+     * The second structural event, and the mirror of the one above: `/clear`
+     * retires a row and mints a successor on the same pty; this ends a row and
+     * mints nothing. Both are here for the same reason — one bridge, one
+     * observer, and a second mount would mean a second listener for one
+     * broadcast.
+     */
+    const disposeFinished = bridge.session.onFinished(({ entityId }) => {
+      finishSession(entityId);
     });
 
     const disposeBranch = bridge.session.onBranch(({ entityId, branch, cwd }) => {
@@ -151,6 +166,7 @@ export function useSessionStatus(): void {
       disposeStatus();
       disposeName();
       disposeCleared();
+      disposeFinished();
       disposeBranch();
       disposeTicketIntent();
       disposeMetrics();
@@ -159,6 +175,7 @@ export function useSessionStatus(): void {
     setSessionStatus,
     renameSession,
     clearSession,
+    finishSession,
     setSessionBranch,
     setSessionTicket,
     setSessionMetrics,

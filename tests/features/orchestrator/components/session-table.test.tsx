@@ -266,6 +266,7 @@ describe('SessionTable', () => {
             status: 'working',
             branch: 'feat/old',
             createdAt: 1,
+            resumable: true,
           },
         ]);
       });
@@ -276,7 +277,9 @@ describe('SessionTable', () => {
       render(<SessionTable />);
 
       expect(screen.getByText('PREVIOUS RUN')).toBeInTheDocument();
-      expect(screen.getByText('closed')).toBeInTheDocument();
+      // `closed` folded into `done` (HIVE-93) — the word the user sees for
+      // every deliberate ending, with the *how* carried by `endedBy`.
+      expect(screen.getAllByText('done').length).toBeGreaterThan(0);
     });
 
     it('puts that divider above ENDED, not below it', () => {
@@ -349,24 +352,52 @@ describe('SessionTable', () => {
       expect(screen.queryByTestId('session-table-empty')).not.toBeInTheDocument();
     });
 
-    it('opens a restored row, and says that is how it resumes (HIVE-88)', async () => {
-      // `closed` is the one ending that opens: the surface mounting is what
-      // asks main to resume the conversation the ledger kept.
+    it('offers resume on a restored row rather than opening it (HIVE-93)', async () => {
+      /*
+        The affordance moved off the status and onto a control. The row itself
+        is now disabled like every other ending — clicking it would show a pty
+        that is gone — and `resume` is what picks the conversation back up.
+      */
       restore();
       render(<SessionTable />);
 
       const row = screen
         .getAllByRole('button')
-        .find((button) => within(button).queryByText('closed') !== null)!;
-
-      expect(row).toBeEnabled();
+        .find((button) => within(button).queryByText('old-01') !== null)!;
+      expect(row).toBeDisabled();
       expect(row).toHaveAttribute(
         'title',
-        'old-01 was open when The Hive last closed — open it to pick it back up',
+        'old-01 was open when The Hive last closed — resume to pick it back up',
       );
 
-      await userEvent.click(row);
+      const resume = screen.getByRole('button', { name: /^resume old-01/ });
+      await userEvent.click(resume);
+
       expect(useUiStore.getState().activeTab).toBe('old-01');
+    });
+
+    it('offers no resume where there is no conversation to reopen', () => {
+      /*
+        `resumable` is main's answer, not a guess from the status: it holds the
+        uuid and knows whether that conversation is already open. A row without
+        one must not offer a control that would fail after the click.
+      */
+      act(() => {
+        useHiveStore.getState().hydrateSessions([
+          {
+            id: 'gone-01',
+            project: 'apfm-web',
+            task: '',
+            status: 'terminated',
+            createdAt: 1,
+          },
+        ]);
+      });
+      render(<SessionTable />);
+
+      expect(
+        screen.queryByRole('button', { name: /^resume gone-01/ }),
+      ).not.toBeInTheDocument();
     });
 
     it('moves a revived row to ACTIVE and draws it exactly once', () => {

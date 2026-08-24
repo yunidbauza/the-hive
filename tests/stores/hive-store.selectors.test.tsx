@@ -76,7 +76,6 @@ describe('hive-store selectors', () => {
         terminated: 0,
         // HIVE-87. No fixture is `closed` either: only a record read back from
         // the ledger at boot produces one, and nothing seeds the ledger here.
-        closed: 0,
       });
     });
 
@@ -102,7 +101,6 @@ describe('hive-store selectors', () => {
         idle: 2,
         done: 3,
         terminated: 0,
-        closed: 0,
       });
     });
   });

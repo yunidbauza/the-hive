@@ -79,6 +79,7 @@ import type {
   SessionTheme,
   SessionBranchEvent,
   SessionClearedEvent,
+  SessionFinishedEvent,
   SessionNameEvent,
   SessionStatusEvent,
   SessionTicketIntentEvent,
@@ -392,6 +393,23 @@ export const CH = {
    */
   sessionCleared: 'session:cleared', // main → renderer
   /**
+   * A session declared itself finished with `/done`, and its pty is gone
+   * (HIVE-93).
+   *
+   * Its own channel beside `session:cleared`, and for the same reason: the
+   * renderer's response is **structural**. The row ends, no successor is minted
+   * — the difference from `/clear` — the centre stage falls back to the
+   * orchestrator if this was the tab in front of the user, and the row keeps
+   * its conversation so Resume can offer it.
+   *
+   * Sending it as a status would be the conflation this codebase has already
+   * paid for twice: `ObservedStatus` deliberately holds nothing a hook cannot
+   * *observe*, and "the work is finished" is a declaration rather than an
+   * observation. The status channel would also arrive as `terminated` from
+   * `activity.ts` a moment later and overwrite it.
+   */
+  sessionFinished: 'session:finished', // main → renderer
+  /**
    * Where a session is really working, and what is checked out there (HIVE-78).
    *
    * Its own channel for the reason `session:name` has one — a branch changes
@@ -532,6 +550,7 @@ export const EVENT_CHANNELS = [
   CH.sessionStatus,
   CH.sessionName,
   CH.sessionCleared,
+  CH.sessionFinished,
   CH.sessionBranch,
   CH.sessionTicketIntent,
   CH.sessionMetrics,
@@ -1256,6 +1275,8 @@ export interface HiveBridge {
     onName(callback: (event: SessionNameEvent) => void): () => void;
     /** A session's conversation ended by `/clear`; its terminal did not. */
     onCleared(callback: (event: SessionClearedEvent) => void): () => void;
+    /** `/done`: the session finished and its terminal is gone (HIVE-93). */
+    onFinished(callback: (event: SessionFinishedEvent) => void): () => void;
     /**
      * A session's real working directory and branch, as main observed them
      * (HIVE-78). Replaces the invented `feat/<id>` the store used to assign.
@@ -1421,6 +1442,14 @@ export const BRIDGE_SESSION_KEYS = [
   'onStatus',
   'onName',
   'onCleared',
+  /**
+   * HIVE-93's, and a listener like its neighbours: main → renderer, carrying
+   * one entity id and nothing the page can act on. It sits beside `onCleared`
+   * because the two are the same kind of announcement — a session boundary the
+   * renderer answers structurally — and reviewing one should mean looking at
+   * the other.
+   */
+  'onFinished',
   /**
    * HIVE-78's two. These were listeners, and at the time so was everything in
    * this list — HIVE-87 added the first two verbs, at the bottom.

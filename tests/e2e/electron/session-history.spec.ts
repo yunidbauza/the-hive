@@ -83,25 +83,17 @@ test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN
       assumed — and that is the whole repair (HIVE-92 found it; HIVE-88 caused
       it).
 
-      This used to assert `toBeDisabled()` unconditionally, with a comment about
-      `openEntity` refusing any ended row. That was true under HIVE-87, when
-      every ending was inert. HIVE-88 then made `closed` the one ending that
-      *opens* — it resumes the agent behind `--resume` — and left this assertion
-      behind: `session-table.tsx` now renders `openable = !ended || status ===
-      'closed'`.
+      The branch that used to be here is gone with the rule it pinned. HIVE-88
+      made a restored row the one ending that *opened*, because clicking it was
+      how the conversation resumed; HIVE-93 gave resume its own control, so the
+      row is inert again like every other ending and this can go back to being
+      unconditional.
 
-      The result was a test that contradicted itself. The assertion above
-      deliberately refuses to arbitrate the quit race, accepting either ending —
-      but `toBeDisabled()` silently held only for `terminated`, so the spec
-      passed or failed on exactly the coin-flip it had just declined to call.
-      Branching here keeps the spec race-agnostic *and* upgrades it: it now
-      pins HIVE-88's actual rule rather than a stale blanket claim.
+      Which also restores the property the branch was working around: the
+      assertion above deliberately refuses to arbitrate the quit race, and this
+      one now holds for either outcome rather than only for `terminated`.
     */
-    if (ending?.includes('closed')) {
-      await expect(row).toBeEnabled();
-    } else {
-      await expect(row).toBeDisabled();
-    }
+    await expect(row).toBeDisabled();
   } finally {
     await second.close();
   }

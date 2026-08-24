@@ -34,56 +34,37 @@ import type {
  * `done`, which is what shipped before, quietly asserted that judgement on every
  * `/exit`.
  *
- * HIVE-93 gave the judgement a speaker without giving it to this module. `/done`
- * declares it and `PublishedStatus` carries it; a deliberate `/exit` is still
- * `terminated`, because after HIVE-93 both endings write the *same bytes* into
- * the same pty — the app's own `/exit\r` and the user's are indistinguishable
- * here, and the only thing that tells them apart is whether a declaration
- * arrived first. Which is exactly story 108's point, now with a mechanism.
+ * HIVE-93 gave the judgement a speaker without giving it to this module, or to
+ * the status channel at all: `/done` declares it and `SessionFinishedEvent`
+ * carries it, on its own channel beside `session:cleared`. A deliberate `/exit`
+ * is still `terminated`, because both endings write the *same bytes* into the
+ * same pty — the app's own `/exit\r` and the user's are indistinguishable here
+ * — and the only thing that tells them apart is whether a declaration arrived
+ * first. Which is exactly story 108's point, now with a mechanism.
  *
  * The type is what enforces both. A status main could never honestly produce
  * cannot be produced by a later edit either.
  */
 export type DerivedStatus = 'working' | 'idle' | 'terminated';
 
-/**
- * Everything main may put on `session:status`, observed or declared (HIVE-93).
- *
- * Three widths, each one honest about where its extra member comes from:
- *
- * ```
- * DerivedStatus    working | idle | terminated            what a pty shows
- * ObservedStatus   + waiting                              what a hook reports
- * PublishedStatus  + done                                 what a session was told
- * ```
- *
- * `done` enters here and nowhere upstream. `activity.ts` still cannot produce
- * it — story 108's rule that a pty exit is an observation and "done" is a claim
- * about the *work* is unchanged, and the type still enforces it. What changed
- * is that the claim now has a speaker: `/done` is the user, or a skill handing
- * off to it, saying the work is finished. Main records a declaration it
- * received; it never infers one.
- *
- * That is also why this is a separate type rather than a widened
- * {@link ObservedStatus}: `HOOK_STATUS` maps every subscribed event to that
- * union, so widening it there would make "some hook means done" expressible.
- * Here it is not — nothing maps an event to this type.
- */
-export type PublishedStatus = ObservedStatus | 'done';
 
 /**
  * Main telling the renderer what a real session is doing.
  *
- * Carries {@link PublishedStatus}, which is wider than {@link DerivedStatus} by
- * two members. The narrower type still governs `activity.ts`, whose reasoning
- * about what a *pty* can show is unchanged; `waiting` reaches this event only
- * from a Claude Code hook, which is a different observer with a vantage point a
- * pty does not have, and `done` only from a `/done` declaration.
+ * Carries {@link ObservedStatus}, which is wider than {@link DerivedStatus} by
+ * one member (HIVE-62). The narrower type still governs `activity.ts`, whose
+ * reasoning about what a *pty* can show is unchanged; `waiting` reaches this
+ * event only from a Claude Code hook, which is a different observer with a
+ * vantage point a pty does not have.
+ *
+ * No `done` member, and none is coming: a finish is announced on
+ * {@link SessionFinishedEvent}'s own channel, because the renderer's response to
+ * it is structural rather than a field assignment.
  */
 export interface SessionStatusEvent {
   /** The *entity* id — the renderer never sees a pty session id. */
   entityId: string;
-  status: PublishedStatus;
+  status: ObservedStatus;
   /**
    * The hook that produced this status, when one did (HIVE-75).
    *
@@ -282,6 +263,31 @@ export interface SessionTicketIntentEvent {
  * and it mints the successor itself because ids are its to allocate.
  */
 export interface SessionClearedEvent {
+  entityId: string;
+}
+
+/**
+ * A session finished on purpose and its terminal is gone (HIVE-93).
+ *
+ * The sibling of {@link SessionClearedEvent}, and the pair is worth reading
+ * together because they are the two *deliberate* endings and they differ in
+ * every consequence:
+ *
+ * ```
+ * /clear   row retired, successor minted, pty alive,  uuid dropped  -> no Resume
+ * /done    row ends,    no successor,     pty gone,   uuid kept     -> Resume
+ * ```
+ *
+ * Carries only the entity, like its sibling. Everything else the renderer needs
+ * it already knows or owns: which row this is, whether that row is the tab in
+ * front of the user, and how to draw an ended one.
+ *
+ * Emitted **instead of** a `terminated` status, not alongside one. The pty exit
+ * that follows `/exit` is real and `activity.ts` observes it, but reporting it
+ * would overwrite the ending the user actually asked for with the mechanism
+ * that delivered it.
+ */
+export interface SessionFinishedEvent {
   entityId: string;
 }
 

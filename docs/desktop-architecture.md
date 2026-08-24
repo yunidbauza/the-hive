@@ -654,7 +654,7 @@ populates. The symptom is `Error: posix_spawnp failed.` on the first spawn,
 | **Main-process unit** | Vitest, node env, `node-pty` mocked | plain Node | spawn arguments, cwd, IPC routing, guards, teardown |
 | **PTY conformance** | `ELECTRON_RUN_AS_NODE=1 electron` | Electron ABI, no window | terminal *semantics*: signals, resize, alt-screen, exit codes (story 098) |
 | **Electron e2e** | Playwright `_electron` | the full app | window chrome, menus, security posture, the UI wired to a live PTY |
-| **Live conformance** | Vitest, env-gated, a **real `claude`** | plain Node | what the binary actually does with what this app generates — hooks (`test:hooks`), the status line (`test:statusline`), custom skills (`test:skills`) |
+| **Live conformance** | Vitest, env-gated, a **real `claude`** | plain Node | what the binary actually does with what this app generates — hooks (`test:hooks`), the status line (`test:statusline`), custom skills (`test:skills`), `/done` (`test:done`) |
 
 The last layer is opt-in and costs real tokens, which is exactly the line
 `tests/live/` draws: each of those suites exists because a unit test asserting

@@ -6,6 +6,7 @@ import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import type {
   SessionBranchEvent,
   SessionClearedEvent,
+  SessionFinishedEvent,
   SessionNameEvent,
   SessionStatusEvent,
   SessionTicketIntentEvent,
@@ -30,6 +31,7 @@ import { seedDemoFleet } from '@tests/support/demo-fleet';
 let listeners: ((event: SessionStatusEvent) => void)[];
 let nameListeners: ((event: SessionNameEvent) => void)[];
 let clearedListeners: ((event: SessionClearedEvent) => void)[];
+let finishedListeners: ((event: SessionFinishedEvent) => void)[];
 let branchListeners: ((event: SessionBranchEvent) => void)[];
 let metricsListeners: ((event: SessionMetricsEvent) => void)[];
 let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
@@ -69,6 +71,12 @@ function withBridge() {
       },
       onCleared: (callback: (event: SessionClearedEvent) => void) => {
         clearedListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
+      onFinished: (callback: (event: SessionFinishedEvent) => void) => {
+        finishedListeners.push(callback);
         return () => {
           disposals += 1;
         };
@@ -144,6 +152,7 @@ beforeEach(() => {
   listeners = [];
   nameListeners = [];
   clearedListeners = [];
+  finishedListeners = [];
   branchListeners = [];
   metricsListeners = [];
   intentListeners = [];
@@ -189,11 +198,12 @@ describe('useSessionStatus', () => {
 
     unmount();
 
-    // Status, name (HIVE-61), cleared, branch and ticket-intent (HIVE-78) — a
-    // leaked listener on any of the five would keep writing to a store the
-    // unmounted shell no longer renders, and the cleared one would go on
-    // minting sessions.
-    expect(disposals).toBe(6);
+    // Status, name (HIVE-61), cleared, finished (HIVE-93), branch, metrics and
+    // ticket-intent (HIVE-78) — a leaked listener on any of them would keep
+    // writing to a store the unmounted shell no longer renders, the cleared one
+    // would go on minting sessions, and the finished one would go on bouncing
+    // the user back to the orchestrator.
+    expect(disposals).toBe(7);
   });
 
   it('applies a rename pushed from main', () => {

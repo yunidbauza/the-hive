@@ -18,13 +18,13 @@ import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import {
   spawnRefusal,
-  type PublishedStatus,
   type SessionEffort,
   type SessionModel,
   type SessionTheme,
   SESSION_NAME_DISPLAY_MAX,
   type SessionBranchEvent,
   type SessionClearedEvent,
+  type SessionFinishedEvent,
   type SessionNameEvent,
   type SessionStatusEvent,
   type SessionTicketIntentEvent,
@@ -469,18 +469,25 @@ export function createSessions(options: SessionsOptions): Sessions {
       // The process is gone; drop its record rather than leak it (HIVE-83).
       if (status === 'terminated') statusTracker.forget(entityId);
       /**
-       * `done` is a `terminated` that was declared first (HIVE-93).
+       * A declared finish leaves on its own channel, not as a status (HIVE-93).
        *
-       * Translated here, at the one place an ending reaches the renderer, rather
-       * than by teaching `activity.ts` a fourth status. That module derives what
-       * a *pty* shows and `done` is not derivable from one — it is a fact this
-       * layer holds and that one has no business knowing. `DerivedStatus` stays
-       * three members wide and the tracker stays honest.
+       * Swapped here, at the one place an ending reaches the renderer, rather
+       * than by teaching `activity.ts` a fourth status: that module derives what
+       * a *pty* shows, and "the work is finished" is not derivable from one. It
+       * is a fact this layer holds and that one has no business knowing, so
+       * `DerivedStatus` stays three members wide and the tracker stays honest.
+       *
+       * `instead of`, not `as well as`. The renderer's response to a finish is
+       * structural — end the row, mint no successor, fall back to the
+       * orchestrator if this was the visible tab — and a `terminated` status
+       * arriving beside it would overwrite the ending the user asked for with
+       * the mechanism that delivered it.
        */
-      publishStatus(
-        entityId,
-        status === 'terminated' && declaredDone(entityId) ? 'done' : status,
-      );
+      if (status === 'terminated' && declaredDone(entityId)) {
+        publishFinished(entityId);
+        return;
+      }
+      publishStatus(entityId, status);
     },
   });
 
@@ -697,7 +704,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   function publishStatus(
     entityId: string,
-    status: PublishedStatus,
+    status: ObservedStatus,
     /**
      * The hook that produced this status, when one did (HIVE-75).
      *
@@ -739,14 +746,12 @@ export function createSessions(options: SessionsOptions): Sessions {
      * rewrites every live status to `closed` anyway. It is not enough for a
      * renderer that starts in front of running ptys — the row it hydrates as
      * live should say what the session is doing, not what it was doing when
-     * it started. Both *endings* stay with `settleExit`, which also owns
-     * `endedAt` — `terminated` since HIVE-88 and `done` since HIVE-93, for the
-     * same reason: a status written here would land without the timestamp that
-     * makes it sortable, and retention sorts on `endedAt`.
+     * it started. The *ending* stays with `settleExit`, which also owns
+     * `endedAt`: a status written here would land without the timestamp that
+     * makes it sortable, and retention sorts on `endedAt`. `done` never reaches
+     * this function at all — a declared finish leaves on its own channel.
      */
-    if (status !== 'terminated' && status !== 'done') {
-      ledger?.record(entityId, { status });
-    }
+    if (status !== 'terminated') ledger?.record(entityId, { status });
 
     send(CH.sessionStatus, {
       entityId,
@@ -772,6 +777,20 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   function publishCleared(entityId: string): void {
     send(CH.sessionCleared, { entityId } satisfies SessionClearedEvent);
+  }
+
+  /**
+   * The session finished on purpose and its terminal is gone (HIVE-93).
+   *
+   * The mirror of {@link publishCleared}, and everything is torn down here where
+   * nothing is torn down there — the pty has already exited by the time this
+   * runs, because it is the exit that triggers it. What the two share is the
+   * shape of the answer: a boundary the renderer responds to structurally,
+   * carrying only the entity, leaving the renderer to decide what a finished row
+   * looks like and whether it was the tab in front of the user.
+   */
+  function publishFinished(entityId: string): void {
+    send(CH.sessionFinished, { entityId } satisfies SessionFinishedEvent);
   }
 
   /**

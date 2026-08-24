@@ -41,7 +41,8 @@
     "test:pty": "electron-vite build && ELECTRON_RUN_AS_NODE=1 electron scripts/run-pty-conformance.mjs",
     "test:hooks": "HIVE_LIVE_HOOK_PROOF=1 vitest run tests/live/hook-conformance.test.ts",
     "test:statusline": "HIVE_LIVE_STATUSLINE_PROOF=1 vitest run tests/live/statusline-conformance.test.ts",
-    "test:skills": "HIVE_LIVE_SKILLS_PROOF=1 vitest run tests/live/skills-conformance.test.ts"
+    "test:skills": "HIVE_LIVE_SKILLS_PROOF=1 vitest run tests/live/skills-conformance.test.ts",
+    "test:done": "HIVE_LIVE_DONE_PROOF=1 vitest run tests/live/done-conformance.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

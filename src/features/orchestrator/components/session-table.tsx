@@ -17,6 +17,7 @@ import {
   useEntity,
   useNavOrder,
   useOpenEntity,
+  useResumeSession,
   useRestoredSessions,
 } from '@stores/hive-store';
 import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
@@ -206,6 +207,7 @@ function SessionTableRow({ id }: { id: string }) {
   const selIdx = useSelIdx();
   const setSelIdx = useSetSelIdx();
   const openEntity = useOpenEntity();
+  const resumeSession = useResumeSession();
   const activeTab = useActiveTab();
 
   if (!entity || !isSession(entity)) return null;
@@ -236,14 +238,32 @@ function SessionTableRow({ id }: { id: string }) {
   // the same one, and the store cannot import from `features/`.
   const reason = endedReason(entity);
   /**
-   * A closed row stays clickable (HIVE-88), and the title says why: opening
-   * it is how a conversation the app outlived is picked back up. It keeps the
-   * ended dimming, because until its process reports in it *is* ended — the
-   * first live status is what moves it up to ACTIVE.
+   * **No ended row is clickable any more** (HIVE-93).
+   *
+   * A restored row used to be the exception, because clicking it *was* how a
+   * conversation got picked back up. Resume is now its own control, so the row
+   * itself can say the honest thing: this terminal is gone, or it belongs to a
+   * successor.
    */
-  const openable = !ended || entity.status === 'closed';
+  const openable = !ended;
+  /**
+   * Offered only where there is something to reopen, and only once the session
+   * is over.
+   *
+   * `resumable` is main's answer rather than a guess from the status — it holds
+   * the uuid and knows whether that conversation is already open. Gating on
+   * `ended` too keeps the control off a live row that merely *could* be resumed
+   * later.
+   */
+  const resumable = ended && entity.resumable === true;
 
   return (
+    <div
+      className={cn(
+        'flex w-full items-center rounded',
+        selected ? 'bg-term-row-active' : 'hover:bg-term-row-hover',
+      )}
+    >
     <button
       type="button"
       disabled={!openable}
@@ -257,8 +277,7 @@ function SessionTableRow({ id }: { id: string }) {
       }}
       aria-current={activeTab === id ? 'true' : undefined}
       className={cn(
-        'flex w-full items-center gap-2.5 rounded px-2 py-[3px] text-left',
-        selected ? 'bg-term-row-active' : 'hover:bg-term-row-hover',
+        'flex min-w-0 flex-1 items-center gap-2.5 px-2 py-[3px] text-left',
         ended && 'opacity-60',
       )}
     >
@@ -307,5 +326,35 @@ function SessionTableRow({ id }: { id: string }) {
         </span>
       </span>
     </button>
+    {/*
+      A sibling of the row, not a child of it — a button inside a button is
+      invalid markup, and browsers resolve it by dropping one of the two.
+      `stopPropagation` is therefore unnecessary here, which is the point: the
+      two controls are genuinely separate targets for both mouse and keyboard.
+    */}
+    {resumable ? (
+      <button
+        type="button"
+        /*
+          Named for its row, not just "resume". The visible word is enough
+          beside the session it belongs to, but a screen reader reaching the
+          fifth of five identical "resume" buttons has been told nothing about
+          which conversation it reopens.
+        */
+        aria-label={`resume ${entityLabel(entity)}`}
+        title={`resume ${entityLabel(entity)} — continues the conversation`}
+        onClick={() => {
+          setSelIdx(index);
+          resumeSession(id);
+        }}
+        className={cn(
+          'mr-2 shrink-0 rounded px-1.5 py-[1px] text-[11px] text-subtle',
+          'hover:bg-term-row-hover hover:text-ink',
+        )}
+      >
+        resume
+      </button>
+    ) : null}
+    </div>
   );
 }

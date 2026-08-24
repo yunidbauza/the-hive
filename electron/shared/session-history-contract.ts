@@ -72,18 +72,21 @@ export interface SessionRecord {
   model?: SessionModel;
   effort?: SessionEffort;
   /**
-   * The **last known** status, and never `'closed'`.
+   * The **last known** status, and never an app-close.
    *
    * Typed as `string` rather than `SessionStatus` on purpose: this is a value
    * read back off disk, possibly written by an older build, and the union is a
    * claim the file format cannot make. The renderer validates it at hydrate and
    * drops a record whose status it does not recognise.
    *
-   * Nothing writes `'closed'` because nothing can reliably observe "the app is
-   * closing": `runShutdown` starts every hook concurrently rather than in
-   * order, so a flush races the pty teardown, and a crash or a SIGKILL writes
-   * nothing at all. The renderer infers it instead — a record claiming to be
-   * `working` plainly is not.
+   * Nothing records "the app was quit around this session", because nothing can
+   * reliably observe it: `runShutdown` starts every hook concurrently rather
+   * than in order, so a flush races the pty teardown, and a crash or a SIGKILL
+   * writes nothing at all. The renderer infers it instead — a record claiming
+   * to be `working` plainly is not — and files it as `done` with
+   * `endedBy: 'app-closed'` (HIVE-93). Until that story the inference had a
+   * status of its own, `closed`; it does not any more, and this file is
+   * unchanged by that, which is the point of keeping the field a `string`.
    */
   status: string;
   /**
@@ -118,6 +121,24 @@ export interface SessionRecord {
  */
 export interface SessionHistoryEntry extends SessionRecord {
   live?: true;
+  /**
+   * This row's conversation can be reopened with `claude --resume` (HIVE-93).
+   *
+   * The second fact the file cannot hold, and for the same reason `live` cannot:
+   * it is only true of a moment. `ledger.resumable()` answers `undefined` for an
+   * id **this run started**, because that id's uuid names a conversation that is
+   * already open — resuming it would be a second `claude` against one transcript.
+   *
+   * Sent as a boolean rather than the uuid it derives from, deliberately.
+   * Claude's `sessionUuid` has never reached the renderer and should not start:
+   * the renderer's job is to decide whether to *offer* Resume, and main owns
+   * which conversation that resumes. Passing the uuid would put a second copy of
+   * that decision on the other side of the bridge.
+   *
+   * Absent means not resumable, which is the honest default for a list written
+   * by an older main.
+   */
+  resumable?: true;
 }
 
 /**

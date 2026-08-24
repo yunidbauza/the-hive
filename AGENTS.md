@@ -44,6 +44,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
 | `pnpm test:hooks` | Hook conformance — a real `claude`, real hooks, ~3½ min |
 | `pnpm test:statusline` | Status line conformance — the generated script, a real `sh` and `curl` (HIVE-79) |
+| `pnpm test:done` | `/done` conformance — a real `claude` runs the generated skill against a real receiver (HIVE-93) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered

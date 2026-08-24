@@ -1556,6 +1556,7 @@ describe('/done', () => {
     restart: () => Promise<void>;
     patches: (entityId: string) => Record<string, unknown>[];
     statusOf: (entityId: string) => unknown;
+    finishedFor: (entityId: string) => number;
   } {
     const written: Written[] = [];
     const local: Sent[] = [];
@@ -1620,6 +1621,12 @@ describe('/done', () => {
               entry.channel === CH.sessionStatus && entry.payload.entityId === entityId,
           )
           .at(-1)?.payload.status,
+      finishedFor: (entityId) =>
+        local.filter(
+          (entry) =>
+            entry.channel === CH.sessionFinished &&
+            entry.payload.entityId === entityId,
+        ).length,
     };
   }
 
@@ -1666,7 +1673,15 @@ describe('/done', () => {
     emitExit({ sessionId, exitCode: 0 });
 
     expect(h.patches('hero-refresh').at(-1)).toMatchObject({ status: 'done' });
-    expect(h.statusOf('hero-refresh')).toBe('done');
+    /*
+      Announced on its own channel, not as a status (HIVE-93). The renderer's
+      answer to a finish is structural — end the row, mint no successor, fall
+      back to the orchestrator — and a `terminated` status arriving beside it
+      would overwrite the ending the user asked for with the mechanism that
+      delivered it.
+    */
+    expect(h.finishedFor('hero-refresh')).toBe(1);
+    expect(h.statusOf('hero-refresh')).not.toBe('terminated');
   });
 
   it('records terminated for an exit nobody declared', () => {

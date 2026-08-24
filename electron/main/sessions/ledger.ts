@@ -333,8 +333,25 @@ export function createSessionLedger(
   };
 
   const resumableUuid = (id: string): string | undefined => {
-    if (startedThisRun.has(id)) return undefined;
-    return records.get(id)?.sessionUuid;
+    const record = records.get(id);
+    if (record === undefined) return undefined;
+    /**
+     * A session this run started is only unresumable **while it is running**
+     * (HIVE-93).
+     *
+     * The bar was `startedThisRun` alone, and the reasoning was right: resuming
+     * a conversation that is currently open means a second `claude` against one
+     * transcript. But that reasoning is about the process, not about the run —
+     * and `/done` produces a session that started this run and is now over. Its
+     * transcript is closed, its uuid still names it, and offering to reopen it
+     * is the whole point of the feature.
+     *
+     * So the test is "started this run **and** has not ended", which is the
+     * condition the original was standing in for while every ending arrived
+     * after a restart.
+     */
+    if (startedThisRun.has(id) && !hasEnded(record)) return undefined;
+    return record.sessionUuid;
   };
 
   return {

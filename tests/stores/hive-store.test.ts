@@ -1662,7 +1662,7 @@ describe('hive-store', () => {
       // The whole inference: the file says `working`, and it plainly is not.
       useHiveStore.getState().hydrateSessions([record({ status: 'working' })]);
 
-      expect(statusOf('sess-01')).toBe('closed');
+      expect(statusOf('sess-01')).toBe('done');
     });
 
     it('treats every live status the same way', () => {
@@ -1672,9 +1672,9 @@ describe('hive-store', () => {
         record({ id: 'c', status: 'idle' }),
       ]);
 
-      expect(statusOf('a')).toBe('closed');
-      expect(statusOf('b')).toBe('closed');
-      expect(statusOf('c')).toBe('closed');
+      expect(statusOf('a')).toBe('done');
+      expect(statusOf('b')).toBe('done');
+      expect(statusOf('c')).toBe('done');
     });
 
     it('keeps an ending that was actually observed', () => {
@@ -1758,7 +1758,7 @@ describe('hive-store', () => {
         .getState()
         .order.find((id) => id !== 'sess-05');
       expect(fresh).not.toBe('sess-05');
-      expect(statusOf('sess-05')).toBe('closed');
+      expect(statusOf('sess-05')).toBe('done');
     });
 
     it('marks every restored row as restored, however it ended', () => {
@@ -1853,7 +1853,7 @@ describe('hive-store', () => {
       ]);
 
       expect(statusOf('live-01')).toBe('idle');
-      expect(statusOf('old-01')).toBe('closed');
+      expect(statusOf('old-01')).toBe('done');
       const live = useHiveStore.getState().entities['live-01'];
       expect(live && isSession(live) ? live.restored : 'missing').toBeUndefined();
       const old = useHiveStore.getState().entities['old-01'];
@@ -1904,6 +1904,123 @@ describe('hive-store', () => {
    * that status has to move it — once, to ACTIVE — rather than leave one
    * entity satisfying both groups' selectors and painting twice.
    */
+  /**
+   * `/done` in the renderer (HIVE-93).
+   *
+   * The mirror of `clearSession`, and every assertion here is about a way the
+   * two differ: no successor, a conversation kept, and the centre stage getting
+   * out of the way of a terminal that no longer exists.
+   */
+  describe('finishSession', () => {
+    const finished = (id: string) => {
+      const entity = useHiveStore.getState().entities[id];
+      return entity && isSession(entity) ? entity : undefined;
+    };
+
+    it('ends the row without minting a successor', () => {
+      useHiveStore.getState().spawnSession('the-hive');
+      const id = useHiveStore.getState().order.at(-1)!;
+      const before = useHiveStore.getState().order.length;
+
+      useHiveStore.getState().finishSession(id);
+
+      /*
+        The one difference from `/clear` that the user sees immediately: a
+        cleared terminal carries on under a new row, a finished one does not.
+      */
+      expect(useHiveStore.getState().order).toHaveLength(before);
+      expect(finished(id)).toMatchObject({
+        status: 'done',
+        endedBy: 'finished',
+        resumable: true,
+      });
+    });
+
+    it('keeps the conversation, where a clear drops it', () => {
+      useHiveStore.getState().spawnSession('the-hive');
+      const kept = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().spawnSession('the-hive');
+      const dropped = useHiveStore.getState().order.at(-1)!;
+
+      useHiveStore.getState().finishSession(kept);
+      useHiveStore.getState().clearSession(dropped);
+
+      /*
+        Main keeps the uuid on `/done` and drops it on `/clear`, so only one of
+        these has anything to reopen — and `resumable` is also what exempts a
+        row from `DONE_CAP`.
+      */
+      expect(finished(kept)?.resumable).toBe(true);
+      expect(finished(dropped)?.resumable).toBe(false);
+    });
+
+    it('falls back to the orchestrator when it was the visible tab', () => {
+      useHiveStore.getState().spawnSession('the-hive');
+      const id = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().openEntity(id);
+      expect(useUiStore.getState().activeTab).toBe(id);
+
+      useHiveStore.getState().finishSession(id);
+
+      // Its terminal is gone; leaving the user staring at a dead pty would be
+      // the whole feature failing at the last step.
+      expect(useUiStore.getState().activeTab).toBe('orch');
+    });
+
+    it('leaves the visible tab alone when some other session finishes', () => {
+      useHiveStore.getState().spawnSession('the-hive');
+      const watched = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().spawnSession('the-hive');
+      const other = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().openEntity(watched);
+
+      useHiveStore.getState().finishSession(other);
+
+      /*
+        Bouncing unconditionally would throw the user out of whatever they were
+        reading because a background session finished — precisely the attention
+        theft the fleet view exists to prevent.
+      */
+      expect(useUiStore.getState().activeTab).toBe(watched);
+    });
+
+    it('is a no-op on a row that has already ended', () => {
+      useHiveStore.getState().spawnSession('the-hive');
+      const id = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().finishSession(id);
+      useHiveStore.getState().openEntity('orch');
+
+      /*
+        The exit that follows `/done` can reach `settleExit` by two routes —
+        `ptyExit` and `ptyLost` — so a second pass must not bounce a user who
+        has since moved on.
+      */
+      useHiveStore.getState().finishSession(id);
+
+      expect(finished(id)).toMatchObject({ status: 'done' });
+    });
+
+    it('spares a resumable row from the done cap', () => {
+      /*
+        Capping `done` was justified by "a cleared session's successor is right
+        there". A finished row has no successor and keeps a transcript the user
+        can reopen, so dropping it would delete the only visible route back to
+        something that still exists on disk.
+      */
+      useHiveStore.getState().spawnSession('the-hive');
+      const survivor = useHiveStore.getState().order.at(-1)!;
+      useHiveStore.getState().finishSession(survivor);
+
+      for (let i = 0; i < 25; i += 1) {
+        useHiveStore.getState().spawnSession('the-hive');
+        const id = useHiveStore.getState().order.at(-1)!;
+        useHiveStore.getState().clearSession(id);
+      }
+
+      expect(useHiveStore.getState().entities[survivor]).toBeDefined();
+    });
+  });
+
   describe('reviving a restored session', () => {
     const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
       id: 'old-01',
@@ -2000,19 +2117,59 @@ describe('hive-store', () => {
       expect(groups.active).not.toContain('old-01');
     });
 
-    it('opens a closed row, and still refuses the other two endings', () => {
-      // `closed` is the one ending whose remedy is opening it: the surface
-      // mounting is what asks main to resume the conversation.
+    it('refuses to open any ended row, restored ones included', () => {
+      /*
+        A restored row used to be the exception, because clicking it *was* the
+        resume (HIVE-88). Resume is its own control now (HIVE-93), so the gate
+        can say the honest thing about every ending: that terminal is gone, or
+        it belongs to a successor.
+      */
       useHiveStore.getState().hydrateSessions([
-        record({ id: 'closed-01' }),
+        record({ id: 'closed-01', resumable: true }),
         record({ id: 'term-01', status: 'terminated' }),
         record({ id: 'done-01', status: 'done' }),
       ]);
 
-      expect(useHiveStore.getState().openEntity('closed-01')).toBe(true);
-      expect(useUiStore.getState().activeTab).toBe('closed-01');
+      expect(useHiveStore.getState().openEntity('closed-01')).toBe(false);
       expect(useHiveStore.getState().openEntity('term-01')).toBe(false);
       expect(useHiveStore.getState().openEntity('done-01')).toBe(false);
+    });
+
+    it('resumes a restored row instead, and opens it live', () => {
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'closed-01', resumable: true }),
+      ]);
+
+      useHiveStore.getState().resumeSession('closed-01');
+
+      /*
+        Live *before* the tab opens, and both halves matter: `center-stage`
+        reads `isTerminated` on mount to decide whether to disable stdin, so a
+        row still marked ended would mount a read-only surface over the very
+        session this was asked to reopen.
+      */
+      const revived = useHiveStore.getState().entities['closed-01'];
+      expect(revived).toMatchObject({ status: 'idle', resumable: true });
+      expect(revived).not.toHaveProperty('endedBy');
+      expect(useUiStore.getState().activeTab).toBe('closed-01');
+    });
+
+    it('refuses to resume a row with no conversation behind it', () => {
+      /*
+        A cleared row drops its uuid in main, so there is nothing to reopen.
+        Opening the tab anyway would put the user in front of a terminal this
+        action has not arranged to exist.
+      */
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'done-01', status: 'done' }),
+      ]);
+
+      useHiveStore.getState().resumeSession('done-01');
+
+      expect(useHiveStore.getState().entities['done-01']).toMatchObject({
+        status: 'done',
+      });
+      expect(useUiStore.getState().activeTab).not.toBe('done-01');
     });
 
     it('never restores a second row for an id this run already runs', () => {

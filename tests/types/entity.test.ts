@@ -4,6 +4,7 @@ import {
   endedReason,
   entityLabel,
   isEnded,
+  isTerminated,
   type Agent,
   type Session,
 } from '@/types/entity';
@@ -74,39 +75,103 @@ describe('entityLabel', () => {
 });
 
 /**
- * The third ending (HIVE-87).
+ * Two endings, three reasons (HIVE-87, HIVE-93).
  *
- * `closed` is an inference, not an observation: a record restored from the
- * ledger says it was working, and it plainly is not. Both assertions below are
- * about that distinction surviving — one for the predicate every "is it over?"
- * selector routes through, one for the sentence the row's tooltip shows.
+ * `closed` used to be a third status, carrying an affordance ("click me to
+ * resume") alongside a retention rule. Both were moved off the status — the
+ * affordance to a `resume` control driven by `resumable`, the "how" to
+ * `endedBy` — so the user-facing vocabulary is two words while the code keeps
+ * every distinction it needs. These assert that the distinctions survived the
+ * fold rather than being lost with the word.
  */
-describe('closed', () => {
-  it('counts as an ending, like the other two', () => {
-    expect(isEnded('closed')).toBe(true);
-  });
-
-  it('is still distinguishable from a process we watched die', () => {
-    // The whole reason it is a separate status: `terminated` is never capped,
-    // and restoring live rows as `terminated` would grow the fleet forever.
+describe('endings', () => {
+  it('counts both as endings', () => {
+    expect(isEnded('done')).toBe(true);
     expect(isEnded('terminated')).toBe(true);
-    expect(endedReason(session({ status: 'closed' }))).not.toBe(
-      endedReason(session({ status: 'terminated' })),
-    );
   });
 
-  it('explains itself as an app close rather than a crash or a clear', () => {
-    expect(endedReason(session({ id: 'sess-01', status: 'closed' }))).toBe(
-      'sess-01 was open when The Hive last closed — open it to pick it back up',
-    );
+  it('leaves live statuses alone', () => {
+    expect(isEnded('working')).toBe(false);
+    expect(isEnded('waiting')).toBe(false);
+    expect(isEnded('idle')).toBe(false);
   });
 
-  it('leaves the other two sentences alone', () => {
-    expect(endedReason(session({ id: 'sess-01', status: 'terminated' }))).toBe(
-      'sess-01 has terminated — its process is gone',
-    );
+  it('gives each deliberate ending its own sentence', () => {
+    /*
+      One status, three reasons. Losing this is what the fold risked: a single
+      `done` sentence would have told a user whose session finished with /done
+      that its terminal "continues as a new session", which is false twice over.
+    */
+    const reasons = new Set([
+      endedReason(session({ id: 'sess-01', status: 'done', endedBy: 'cleared' })),
+      endedReason(session({ id: 'sess-01', status: 'done', endedBy: 'finished' })),
+      endedReason(
+        session({ id: 'sess-01', status: 'done', endedBy: 'app-closed' }),
+      ),
+      endedReason(session({ id: 'sess-01', status: 'terminated' })),
+    ]);
+    expect(reasons.size).toBe(4);
+  });
+
+  it('names each one', () => {
+    expect(
+      endedReason(session({ id: 'sess-01', status: 'terminated' })),
+    ).toBe('sess-01 has terminated — its process is gone');
+    expect(
+      endedReason(session({ id: 'sess-01', status: 'done', endedBy: 'cleared' })),
+    ).toBe('sess-01 was cleared — its terminal continues as a new session');
+    expect(
+      endedReason(session({ id: 'sess-01', status: 'done', endedBy: 'finished' })),
+    ).toBe('sess-01 finished with /done — resume to pick it up');
+    expect(
+      endedReason(
+        session({ id: 'sess-01', status: 'done', endedBy: 'app-closed' }),
+      ),
+    ).toBe('sess-01 was open when The Hive last closed — resume to pick it back up');
+  });
+
+  it('reads a done row with no endedBy as a cleared one', () => {
+    /*
+      Every `done` row written before the field existed was a `/clear`, because
+      nothing else produced the status.
+    */
     expect(endedReason(session({ id: 'sess-01', status: 'done' }))).toBe(
       'sess-01 was cleared — its terminal continues as a new session',
     );
+  });
+});
+
+/**
+ * Whose process is actually gone (HIVE-93).
+ *
+ * `isTerminated` drives the "this terminal has died" notice and disables stdin,
+ * so it has to answer about the *pty* rather than the row. A cleared session is
+ * the one ending whose pty outlives it — the successor is using it.
+ */
+describe('isTerminated', () => {
+  it('is true for a session that was observed to die', () => {
+    expect(isTerminated(session({ status: 'terminated' }))).toBe(true);
+  });
+
+  it('is true for a session finished with /done — its pty is gone', () => {
+    expect(
+      isTerminated(session({ status: 'done', endedBy: 'finished' })),
+    ).toBe(true);
+  });
+
+  it('is true for a row restored from a closed app', () => {
+    expect(
+      isTerminated(session({ status: 'done', endedBy: 'app-closed' })),
+    ).toBe(true);
+  });
+
+  it('is false for a cleared session — the successor holds its terminal', () => {
+    expect(isTerminated(session({ status: 'done', endedBy: 'cleared' }))).toBe(
+      false,
+    );
+  });
+
+  it('is false while the session is still running', () => {
+    expect(isTerminated(session({ status: 'working' }))).toBe(false);
   });
 });

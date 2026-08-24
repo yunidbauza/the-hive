@@ -440,6 +440,26 @@ describe('session ledger', () => {
       expect(readLedger(file)[0]).not.toHaveProperty('sessionUuid');
     });
 
+    it('resumes a session this run began once it has ended (HIVE-93)', () => {
+      /*
+        The bar used to be "started this run", full stop, and the reasoning was
+        about the *process*: resuming a conversation that is currently open
+        means a second `claude` against one transcript. `/done` produces a
+        session that started this run and is now over — its transcript is
+        closed, its uuid still names it, and offering to reopen it is the whole
+        point of the feature.
+      */
+      const ledger = createSessionLedger(file, () => 5000);
+      ledger.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
+
+      // While it runs, still refused.
+      expect(ledger.resumable('mine')).toBeUndefined();
+
+      ledger.record('mine', { status: 'done', endedAt: 6000 });
+
+      expect(ledger.resumable('mine')).toBe('fresh');
+    });
+
     it('has nothing to resume for a record without a uuid, or one this run began', () => {
       writeFileSync(
         file,
