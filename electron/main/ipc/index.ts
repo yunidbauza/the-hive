@@ -129,6 +129,7 @@ import {
   type SessionLedger,
 } from '../sessions/ledger';
 import { onShutdown } from '../shutdown';
+import { createSkillsRuntime, type SkillsRuntime } from '../skills';
 import { parseSaveThemeRequest, pickTheme, saveTheme } from '../theme';
 import {
   checkForUpdatesInteractively,
@@ -214,6 +215,14 @@ let sessions: Sessions | null = null;
  * surface with a verb it does not otherwise need.
  */
 let ledger: SessionLedger | null = null;
+/**
+ * The custom-skills runtime (HIVE-96), or `null` before registration.
+ *
+ * Held here for the reason `ledger` is: two unrelated callers need it. The
+ * session layer syncs it before every spawn and reads its path, and the four
+ * `skills:*` handlers below read and write the tree it manages.
+ */
+let skills: SkillsRuntime | null = null;
 /** The clone flow (story 102), or `null` before registration. */
 let cloneFlow: CloneFlow | null = null;
 /** The single project watcher, or `null` before registration. */
@@ -710,10 +719,22 @@ export function registerIpcHandlers(): void {
     join(app.getPath('userData'), SESSION_HISTORY_FILE),
   );
 
+  /*
+    Constructed before the session layer, which takes it as an option and syncs
+    it on every spawn (HIVE-96). `app.getVersion()` is read here rather than
+    inside the runtime so that module's tests can run under plain Node — the
+    same reason `userDataPath` is passed in rather than resolved there.
+  */
+  skills = createSkillsRuntime({
+    userDataPath: app.getPath('userData'),
+    version: app.getVersion(),
+  });
+
   sessions = createSessions({
     supervisor,
     config: getConfig,
     send,
+    skills,
     hooks: createHookRuntime({
       userDataPath: app.getPath('userData'),
       // Read per call, so a config reload is picked up (HIVE-79).
@@ -1345,6 +1366,21 @@ export function registerIpcHandlers(): void {
      * long since resolved by the time anyone opens a session.
      */
     await loginEnvStatus();
+    /**
+     * Regenerate the skills plugin before the session is started (HIVE-96).
+     *
+     * Here rather than inside `spawn` because `spawn` is synchronous on
+     * purpose — its "attach, never respawn" guard and the registration that
+     * satisfies it must not be separated by an await. This handler is already
+     * asynchronous and already waits for the login-shell probe, so the
+     * regeneration is free of that constraint.
+     *
+     * Per spawn rather than at launch: a skill saved from Settings, or written
+     * by hand into `~/.hive/skills` with the app already running, has to be on
+     * *this* command line. A readdir over a handful of small files is cheaper
+     * than any protocol that would tell us the tree changed.
+     */
+    await skills?.sync();
     sessions?.open({
       entityId: request.sessionId,
       projectId: request.projectId,
@@ -1369,6 +1405,9 @@ export function registerIpcHandlers(): void {
     // Same fork race as `ptySpawn` above: a restart can be the call that first
     // brings the host up, so it has to wait for the same reason.
     await loginEnvStatus();
+    // And the same regeneration, for the same reason: a restart builds a fresh
+    // command line, so it must see the skills the user has now (HIVE-96).
+    await skills?.sync();
     /**
      * The task is deliberately **not** forwarded (story 097).
      *

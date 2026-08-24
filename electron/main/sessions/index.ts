@@ -34,6 +34,7 @@ import type { HookRuntime } from '../hooks';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
+import type { SkillsRuntime } from '../skills';
 
 import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
@@ -74,6 +75,15 @@ export interface SessionsOptions {
    * treats "no hooks" and "hooks not started yet" identically.
    */
   hooks?: HookRuntime;
+  /**
+   * The custom-skills pipeline, when the app has one (HIVE-96).
+   *
+   * Optional for the same reason `hooks` is, and absent is likewise supported
+   * rather than degraded: a session with no injected skills is an ordinary
+   * `claude`. Nothing downstream distinguishes "no skills runtime" from "the
+   * plugin could not be written" — both omit the flag.
+   */
+  skills?: SkillsRuntime;
   /**
    * The uuid pinned as `--session-id` on a spawn (HIVE-61).
    *
@@ -255,6 +265,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     config,
     maxSessions = MAX_SESSIONS,
     hooks,
+    skills,
     newSessionUuid = randomUUID,
     branchReader,
     ledger,
@@ -1080,6 +1091,20 @@ export function createSessions(options: SessionsOptions): Sessions {
     const settingsPath = hooks?.settingsPathFor(request.theme);
 
     /**
+     * The generated plugin, read but **not** regenerated here (HIVE-96).
+     *
+     * `spawn` is synchronous on purpose: its "attach, never respawn" guard and
+     * the registration that satisfies it must not be separated by an await, or
+     * two rapid opens of the same entity both pass the guard and both spawn —
+     * which is the single most destructive thing this layer can do.
+     *
+     * So the regeneration happens one level up, in the `session:open` handler,
+     * which is already asynchronous and runs before this is reached. See
+     * `ipc/index.ts`.
+     */
+    const pluginDir = skills?.pluginDirPath() ?? null;
+
+    /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
      *
      * It has to reach two places now — the command line, and the ledger — and
@@ -1169,6 +1194,13 @@ export function createSessions(options: SessionsOptions): Sessions {
           spawn from main's own paths is byte-identical to what it was.
         */
         ...(settingsPath == null ? {} : { settingsPath }),
+        /*
+          The generated plugin, when there is one (HIVE-96). Resolved above for
+          the same reason `settingsPath` is: it is main's own path, chosen at
+          spawn, and it never crosses IPC — `parseSpawnRequest` has no field for
+          it and deliberately never will.
+        */
+        ...(pluginDir == null ? {} : { pluginDir }),
         /*
           Belt *and* braces, deliberately. `stripEnv` above covers the ambient
           environment and a project's own `env` block; this covers the login

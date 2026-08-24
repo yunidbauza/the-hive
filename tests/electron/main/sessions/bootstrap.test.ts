@@ -542,6 +542,37 @@ describe('sessionCommand identity flags (HIVE-61)', () => {
     );
   });
 
+  it('omits --plugin-dir when there is no generated directory', () => {
+    /*
+      `pluginDirPath()` answers null until a sync has succeeded (HIVE-96). A
+      session with no custom skills is the correct outcome of that — better than
+      one pointed at a directory that is not there.
+    */
+    expect(sessionCommand('claude', {})).toBe('claude && exit');
+  });
+
+  it('quotes the plugin dir, which is under Application Support too', () => {
+    expect(
+      sessionCommand('claude', {
+        pluginDir: '/Users/x/Library/Application Support/the-hive/hive/plugin',
+      }),
+    ).toBe(
+      "claude --plugin-dir '/Users/x/Library/Application Support/the-hive/hive/plugin' && exit",
+    );
+  });
+
+  it('emits --plugin-dir exactly once, after --settings', () => {
+    const command = sessionCommand('claude', {
+      settingsPath: '/s/hooks.json',
+      pluginDir: '/p/plugin',
+    });
+
+    expect(command).toBe(
+      "claude --settings '/s/hooks.json' --plugin-dir '/p/plugin' && exit",
+    );
+    expect(command.match(/--plugin-dir/g)).toHaveLength(1);
+  });
+
   it('keeps the flags in a stable order alongside model and effort', () => {
     expect(
       sessionCommand('claude', {
@@ -746,13 +777,14 @@ describe('sessionCommand', () => {
     });
 
     it('rides alongside every other flag, in a full spawn', () => {
-      // The shape main actually builds, so the ordering of all five is pinned.
+      // The shape main actually builds, so the ordering of all six is pinned.
       expect(
         sessionCommand('claude', {
           model: 'sonnet',
           effort: 'high',
           name: 'INCORP-455',
           settingsPath: '/Users/x/Application Support/hooks.json',
+          pluginDir: '/Users/x/Application Support/hive/plugin',
           task: 'what time is it',
           subscriptionAuth: true,
         }),
@@ -760,6 +792,7 @@ describe('sessionCommand', () => {
         'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ' +
           'claude --model sonnet --effort high --name INCORP-455 ' +
           "--settings '/Users/x/Application Support/hooks.json' " +
+          "--plugin-dir '/Users/x/Application Support/hive/plugin' " +
           "'what time is it' && exit",
       );
     });
