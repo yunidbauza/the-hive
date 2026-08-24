@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   deleteSkill,
+  frontmatterName,
   loadSkills,
   readSkill,
   saveSkill,
+  skillNameProblem,
   skillsSnapshot,
   subscribeSkills,
 } from '@/lib/skills';
@@ -92,6 +94,46 @@ describe('the skills store', () => {
     expect(skillsSnapshot()?.skills.map((s) => s.name)).toEqual(['standup']);
   });
 
+  it('reports a refused write instead of resolving as success', async () => {
+    /*
+      The caller has a success path — flip the badge to "saved", empty the
+      editor after a delete — and running it unconditionally told the user a
+      write happened when it had not. Resolving with the reason is what lets
+      the pane show the failure instead of hiding it.
+    */
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    bridge({
+      list: () => Promise.resolve(snapshot([])),
+      write: () => Promise.reject(new Error('EACCES: permission denied')),
+    });
+    await loadSkills();
+
+    await expect(saveSkill('standup', 'body')).resolves.toBe(
+      'EACCES: permission denied',
+    );
+  });
+
+  it('reports a refused delete the same way', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    bridge({
+      list: () => Promise.resolve(snapshot(['standup'])),
+      remove: () => Promise.reject(new Error('ENOTEMPTY')),
+    });
+    await loadSkills();
+
+    await expect(deleteSkill('standup')).resolves.toBe('ENOTEMPTY');
+  });
+
+  it('resolves null when a write succeeds', async () => {
+    bridge({
+      list: () => Promise.resolve(snapshot([])),
+      write: () => Promise.resolve(snapshot(['standup'])),
+    });
+    await loadSkills();
+
+    await expect(saveSkill('standup', 'body')).resolves.toBeNull();
+  });
+
   it('keeps the last good snapshot when a write is refused', async () => {
     /*
       Nothing on disk changed, so what the pane already holds is still true.
@@ -141,5 +183,57 @@ describe('the skills store', () => {
 
   it('answers null for a read with no bridge, rather than throwing', async () => {
     await expect(readSkill('standup')).resolves.toBeNull();
+  });
+});
+
+describe('frontmatterName', () => {
+  it('reads the declared name', () => {
+    expect(frontmatterName('---\nname: standup\n---\nBody.\n')).toBe('standup');
+  });
+
+  it('is empty for a file with no header', () => {
+    expect(frontmatterName('Just prose.\n')).toBe('');
+  });
+
+  it('does not read past the closing fence', () => {
+    // The name belongs to the header, not to a `name:` line in the body.
+    expect(frontmatterName('---\ndescription: d\n---\nname: sneaky\n')).toBe('');
+  });
+
+  it('does not mistake a horizontal rule for the fence', () => {
+    /*
+      Mirrors `skills/read.ts`, which is the copy that decides whether a skill
+      loads at all — the two must agree about where a header ends. Neither of
+      these closes, so both are files main refuses, and reporting a name for
+      either would enable Save for a command that never appears.
+    */
+    expect(frontmatterName('---\nname: ruled\n-----\n')).toBe('');
+    expect(frontmatterName('---\ndescription: d\n-----\nname: no\n')).toBe('');
+  });
+
+  it('is empty for an unterminated header', () => {
+    expect(frontmatterName('---\nname: half\ndescription: d\n')).toBe('');
+  });
+});
+
+describe('skillNameProblem', () => {
+  it('accepts a good name', () => {
+    expect(skillNameProblem('ship-it', [])).toBeNull();
+  });
+
+  it('asks for a name when the frontmatter declares none', () => {
+    expect(skillNameProblem('', [])).toMatch(/name/i);
+  });
+
+  it('refuses the reserved name', () => {
+    expect(skillNameProblem('done', [])).toMatch(/reserved/i);
+  });
+
+  it('refuses a name the pattern does not admit', () => {
+    expect(skillNameProblem('Stand Up', [])).toMatch(/lowercase/i);
+  });
+
+  it('refuses a name already taken', () => {
+    expect(skillNameProblem('standup', ['standup'])).toMatch(/already/i);
   });
 });

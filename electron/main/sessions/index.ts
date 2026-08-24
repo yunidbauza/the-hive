@@ -508,6 +508,22 @@ export function createSessions(options: SessionsOptions): Sessions {
    * a hook for a session that has already exited must be refused, and the
    * registry is the thing that already knows.
    */
+  /**
+   * Generate the skills plugin once at startup (HIVE-96).
+   *
+   * Every path that needs it — both spawn handlers, and the Settings pane's
+   * first `list()` — syncs first, so this is not load-bearing. It is here
+   * because the directory should exist from launch rather than appearing at the
+   * first spawn: `<userData>/hive/plugin` is then inspectable by anyone
+   * debugging a session, in the same state the next session will get, and the
+   * documented "regenerated at launch and before every spawn" is true of the
+   * code rather than only of the second half.
+   *
+   * Fire-and-forget for the same reason `hooks.start` below is: nothing waits
+   * on it, and its own failure path is non-fatal.
+   */
+  void skills?.sync();
+
   void hooks?.start({
     knowsSession: (entityId) => registry.sessionFor(entityId) !== undefined,
     onEvent: (event) => {

@@ -46,8 +46,9 @@ const withSkills = (...names: string[]): SkillsSnapshot =>
 
 beforeEach(() => {
   loadSkills.mockResolvedValue(undefined);
-  saveSkill.mockResolvedValue(undefined);
-  deleteSkill.mockResolvedValue(undefined);
+  // `null` is success — the mutators resolve with the reason they failed.
+  saveSkill.mockResolvedValue(null);
+  deleteSkill.mockResolvedValue(null);
   readSkill.mockImplementation((name: string) =>
     Promise.resolve({
       name,
@@ -299,6 +300,165 @@ describe('SkillsSection', () => {
     );
 
     expect(deleteSkill).toHaveBeenCalledWith('standup');
+  });
+
+  it('says why an invalid skill is invalid, in readable text', async () => {
+    /*
+      This was a `title` on the row — unreachable, because the row is disabled
+      and Chromium delivers no pointer events to a disabled control, so the
+      tooltip never appeared. The whole reason main returns its rejects rather
+      than logging them is that the user can act on them.
+    */
+    setSkillsForTest(
+      snapshot({
+        invalid: [
+          {
+            name: 'Bad Name',
+            reason: 'Folder name must be lowercase letters, digits and dashes.',
+            valid: false,
+          },
+        ],
+      }),
+    );
+
+    render(<SkillsSection />);
+
+    expect(
+      screen.getByText(/Bad Name: Folder name must be lowercase/),
+    ).toBeInTheDocument();
+  });
+
+  it('counts an invalid skill as a taken name, so a save cannot clobber it', async () => {
+    /*
+      An invalid skill is still a folder with a SKILL.md in it. The commonest
+      invalid case is a frontmatter name that disagrees with its folder — which
+      is exactly the name the user then types.
+    */
+    setSkillsForTest(
+      snapshot({
+        invalid: [
+          { name: 'standup', reason: 'Frontmatter name does not match.', valid: false },
+        ],
+      }),
+    );
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
+    const box = screen.getByLabelText('Skill source');
+    await userEvent.clear(box);
+    await userEvent.type(box, '---{enter}name: standup{enter}---{enter}Body.');
+
+    expect(screen.getByText(/already have a skill/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('reports a refused save instead of claiming it saved', async () => {
+    saveSkill.mockResolvedValue('EACCES: permission denied');
+    setSkillsForTest(snapshot());
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
+    const box = screen.getByLabelText('Skill source');
+    await userEvent.clear(box);
+    await userEvent.type(box, '---{enter}name: triage{enter}---{enter}Body.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'EACCES: permission denied',
+    );
+    // Still unsaved — the badge must not claim otherwise.
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+  });
+
+  it('reports a refused delete and keeps the editor open', async () => {
+    deleteSkill.mockResolvedValue('ENOTEMPTY');
+    setSkillsForTest(withSkills('standup'));
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+    await screen.findByLabelText('Skill source');
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const confirm = screen.getByRole('alertdialog');
+    await userEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('ENOTEMPTY');
+    // Emptying the editor over a row that is still listed would tell the user a
+    // destructive action succeeded while showing them that it did not.
+    expect(screen.getByLabelText('Skill source')).toBeInTheDocument();
+  });
+
+  it('ignores a read that resolves after the user moved on', async () => {
+    /*
+      Two quick clicks race. The first leaves the buffer null, so the dirty
+      guard does not stop the second, and whichever read resolves last wins —
+      which could be the first row's body under the second row's name.
+    */
+    let resolveFirst: (file: unknown) => void = () => undefined;
+    readSkill.mockImplementation((name: string) => {
+      if (name === 'standup') {
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve({
+        name,
+        body: file(name),
+        path: `/home/u/.hive/skills/${name}/SKILL.md`,
+      });
+    });
+    setSkillsForTest(withSkills('standup', 'triage'));
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    expect(await screen.findByLabelText('Skill source')).toHaveValue(file('triage'));
+
+    // The stale response lands last and must be dropped on the floor.
+    resolveFirst({
+      name: 'standup',
+      body: file('standup'),
+      path: '/home/u/.hive/skills/standup/SKILL.md',
+    });
+
+    await expect
+      .poll(() => screen.getByLabelText<HTMLTextAreaElement>('Skill source').value)
+      .toBe(file('triage'));
+  });
+
+  it('asks a sensible question about a skill that was never saved', async () => {
+    // "Discard changes to /?" is nonsense on screen, and the question doubles
+    // as the confirm's accessible name.
+    setSkillsForTest(snapshot());
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
+    await userEvent.type(screen.getByLabelText('Skill source'), 'more');
+    await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
+
+    expect(
+      screen.getByRole('alertdialog', { name: 'Discard this new skill?' }),
+    ).toBeInTheDocument();
+  });
+
+  it('cancels the confirm on Escape from the textarea', async () => {
+    /*
+      The caret is normally still in the editor when the confirm appears. Escape
+      there reached neither button, and `data-escape-scope` had already told the
+      overlay to decline — so the key did nothing at all.
+    */
+    setSkillsForTest(withSkills('standup', 'triage'));
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+    const box = await screen.findByLabelText('Skill source');
+    await userEvent.type(box, ' more');
+    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+
+    box.focus();
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('shows where the files live', () => {

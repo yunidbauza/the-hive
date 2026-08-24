@@ -1,4 +1,5 @@
-import { readdir, readFile } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -64,16 +65,44 @@ export interface SkillsRead {
  * skill is silently lost rather than loudly broken.
  */
 function frontmatter(body: string): Record<string, string> | null {
-  if (!body.startsWith('---')) return null;
-  const end = body.indexOf('\n---', 3);
-  if (end === -1) return null;
+  const lines = body.split('\n');
+  if (lines[0]?.trim() !== '---') return null;
 
   const keys: Record<string, string> = {};
-  for (const line of body.slice(3, end).split('\n')) {
-    const match = /^([a-z-]+):\s*(.*)$/.exec(line.trim());
+
+  for (const line of lines.slice(1)) {
+    /*
+      The closing fence is a line that **is** `---`, not one that merely starts
+      with it. Searching for the next `\n---` also matched `-----` and `---x`,
+      so a file with an unclosed header and a horizontal rule further down
+      parsed as valid here while Claude Code read the whole thing as prose —
+      the app would inject a skill the binary does not have. Failing closed is
+      the only safe direction: an unterminated header is `null`.
+    */
+    if (line.trim() === '---') return keys;
+
+    const match = /^([a-z0-9-]+):\s*(.*)$/.exec(line.trim());
     if (match?.[1] !== undefined) keys[match[1]] = (match[2] ?? '').trim();
   }
-  return keys;
+
+  // Ran off the end without a closing fence.
+  return null;
+}
+
+/** Is this entry a directory, following one level of symlink? */
+async function isSkillFolder(root: string, entry: Dirent): Promise<boolean> {
+  if (entry.isDirectory()) return true;
+  // Not a link either — a loose `README.md` beside the folders.
+  if (!entry.isSymbolicLink()) return false;
+
+  try {
+    // `stat` follows the link where `Dirent` reports `lstat`. A link to a
+    // *file* stays out, so it does not become a spurious invalid row.
+    return (await stat(join(root, entry.name))).isDirectory();
+  } catch {
+    // A broken link. Nothing to read, and nothing worth reporting.
+    return false;
+  }
 }
 
 /**
@@ -106,9 +135,18 @@ export async function readUserSkills(root: string): Promise<SkillsRead> {
   const invalid: InvalidSkill[] = [];
 
   for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-    // A loose `README.md` beside the folders is a thing a person writes. It is
-    // not a skill, and it is not a problem either.
-    if (!entry.isDirectory()) continue;
+    /*
+      A loose `README.md` beside the folders is a thing a person writes. It is
+      not a skill, and it is not a problem either.
+
+      A **symlink** to a directory is a skill, though, and `Dirent` answers with
+      `lstat` semantics — so `isDirectory()` is false for one and the skill was
+      silently dropped with no row and no reason. Anyone whose dotfiles manage
+      `~/.hive/skills` links these in, which is exactly the population most
+      likely to write skills at all. The `readFile` below resolves the link, so
+      admitting it here is the whole fix.
+    */
+    if (!(await isSkillFolder(root, entry))) continue;
 
     const name = entry.name;
     const path = join(root, name, 'SKILL.md');

@@ -82,7 +82,27 @@ export function createSkillsRuntime({
   const fileFor = (name: string): string =>
     join(skillsRoot(), name, 'SKILL.md');
 
-  const sync = async (): Promise<SkillsRead> => {
+  /**
+   * The regeneration in flight, so two never interleave.
+   *
+   * `writePluginDir` ends by diffing the directory against the set it just
+   * wrote and removing everything else. Two concurrent runs make that diff
+   * lie: run A snapshots `{x}`, the user saves `y` and run B writes it, then
+   * A's prune finds `y` absent from *its* expected set and deletes it. The
+   * session A was regenerating for starts without a skill that exists on disk,
+   * and the plugin stays wrong until something else happens to re-sync.
+   *
+   * A promise chain rather than a lock: every caller still gets a settled
+   * answer, they simply queue. The work is a readdir and a handful of small
+   * writes, so the wait is not worth a more elaborate mechanism — and a spawn
+   * that overlaps a save is precisely the case this exists for.
+   */
+  let inFlight: Promise<SkillsRead> = Promise.resolve({
+    skills: [],
+    invalid: [],
+  });
+
+  const regenerate = async (): Promise<SkillsRead> => {
     const read = await readUserSkills(skillsRoot());
 
     try {
@@ -96,13 +116,26 @@ export function createSkillsRuntime({
        * works. A session that does not start because a directory could not be
        * written is not, and nothing on screen would connect the two. The hook
        * runtime reports its own failures the same way, and for the same reason.
+       *
+       * `written` goes back to `false`, so this stays true to
+       * {@link SkillsRuntime.pluginDirPath}'s contract. Latching it on the
+       * first success meant a directory removed or broken later still produced
+       * a `--plugin-dir` pointing at nothing.
        */
+      written = false;
       console.info(
         `[hive] the skills plugin could not be written — sessions start without custom skills (${String(cause)})`,
       );
     }
 
     return read;
+  };
+
+  const sync = (): Promise<SkillsRead> => {
+    // Chained off the previous run whether it resolved or rejected — and
+    // `regenerate` never rejects, so this queue cannot wedge.
+    inFlight = inFlight.then(regenerate, regenerate);
+    return inFlight;
   };
 
   /*

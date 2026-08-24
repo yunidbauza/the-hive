@@ -77,6 +77,15 @@ export function SkillsSection() {
     confirmLabel: string;
     act: () => void;
   } | null>(null);
+  /**
+   * Why the last write did not happen, or `null`.
+   *
+   * Main's own words, verbatim — `projects-section.tsx` renders `snapshot.errors`
+   * the same way and for the same reason: "not a directory", the OS message
+   * from a failed write, are the details that make a failure fixable, and
+   * rephrasing them here would throw exactly those away.
+   */
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void loadSkills();
@@ -92,8 +101,16 @@ export function SkillsSection() {
    *
    * Re-saving a skill under its own name is not a collision with itself, and
    * refusing it would make an edit unsaveable the moment it was reopened.
+   *
+   * **Invalid skills count.** They are folders on disk with a SKILL.md in them,
+   * so a save under one of their names overwrites a real file — and the most
+   * likely invalid skill is one whose frontmatter name and folder disagree,
+   * which is exactly the name a user is then likely to type. Listing only the
+   * valid ones made that silent data loss.
    */
-  const taken = skills.map((s) => s.name).filter((name) => name !== open);
+  const taken = [...skills, ...invalid]
+    .map((entry) => entry.name)
+    .filter((name) => name !== open);
   const typed = buffer === null ? '' : frontmatterName(buffer);
   const problem = buffer === null ? null : skillNameProblem(typed, taken);
 
@@ -111,22 +128,50 @@ export function SkillsSection() {
     setPending({ question, detail, confirmLabel, act });
   };
 
+  /**
+   * The question to ask before throwing away the open buffer.
+   *
+   * A never-saved skill has no name yet, and asking "Discard changes to /?"
+   * was both nonsense on screen and, because the question doubles as the
+   * confirm's `aria-label`, nonsense read aloud.
+   */
+  const discardQuestion =
+    open === null ? 'Discard this new skill?' : `Discard changes to /${open}?`;
+  const discardDetail =
+    open === null
+      ? 'It has never been saved, so there is nothing on disk to keep.'
+      : 'The file on disk is unchanged. Your edits in this box are lost.';
+
   const openSkill = (name: string): void => {
     guard(
       () => {
         setOpen(name);
         setBuffer(null);
         setSaved(null);
+        setError(null);
         void readSkill(name).then((file) => {
           // `null` is the browser demo, or a read that failed and already
           // reported itself. Either way there is nothing to put in the editor.
           if (file === null) return;
-          setBuffer(file.body);
-          setSaved(file.body);
+          /*
+            Drop a response the user has moved on from.
+
+            Two quick clicks race: the first row leaves `buffer` null, so the
+            dirty guard does not stop the second, and whichever `skills:read`
+            resolves last wins. Without this check that could be the *first*
+            row's body, landing under the second row's name and path — and
+            Delete would then act on the name, not on the text on screen.
+          */
+          setOpen((current) => {
+            if (current !== name) return current;
+            setBuffer(file.body);
+            setSaved(file.body);
+            return current;
+          });
         });
       },
-      `Discard changes to /${open ?? ''}?`,
-      'The file on disk is unchanged. Your edits in this box are lost.',
+      discardQuestion,
+      discardDetail,
       'Discard',
     );
   };
@@ -139,19 +184,33 @@ export function SkillsSection() {
         // Never equal to the buffer, so a fresh template counts as unsaved —
         // which it is: nothing has been written yet.
         setSaved(null);
+        setError(null);
       },
-      `Discard changes to /${open ?? ''}?`,
-      'The file on disk is unchanged. Your edits in this box are lost.',
+      discardQuestion,
+      discardDetail,
       'Discard',
     );
   };
 
   const save = (): void => {
     if (buffer === null || problem !== null) return;
-    void saveSkill(typed, buffer).then(() => {
+    void saveSkill(typed, buffer).then((failure) => {
+      /*
+        Only claim success when there was one.
+
+        `saveSkill` used to resolve either way, so this ran unconditionally: the
+        badge flipped to "saved" and the path header pointed at a file main had
+        refused to write. Being told a skill is saved while it is not is worse
+        than the failure itself, because the user stops looking.
+      */
+      if (failure !== null) {
+        setError(failure);
+        return;
+      }
+      setError(null);
       // The folder is named from the frontmatter, so a rename lands as a new
-      // skill and the old one is removed by the caller's own Delete — this
-      // story does not move files behind the user's back.
+      // skill and the old one is removed by the user's own Delete — this story
+      // does not move files behind their back.
       setOpen(typed);
       setSaved(buffer);
     });
@@ -163,14 +222,23 @@ export function SkillsSection() {
       // Never saved, so there is no file. Abandoning it is a local matter.
       setBuffer(null);
       setSaved(null);
+      setError(null);
       return;
     }
     setPending({
       question: `Delete /${target}?`,
-      detail: `Removes ~/.hive/skills/${target}. Sessions already running keep the command until they end.`,
+      detail: `Removes the folder under ${snapshot?.skillsRoot ?? 'the skills folder'}. Sessions already running keep the command until they end.`,
       confirmLabel: 'Delete',
       act: () => {
-        void deleteSkill(target).then(() => {
+        void deleteSkill(target).then((failure) => {
+          // Same rule as `save`, and it matters more here: emptying the editor
+          // over a row that is still in the list tells the user a destructive
+          // action succeeded while showing them that it did not.
+          if (failure !== null) {
+            setError(failure);
+            return;
+          }
+          setError(null);
           setOpen(null);
           setBuffer(null);
           setSaved(null);
@@ -251,6 +319,34 @@ export function SkillsSection() {
         Caught on a screenshot of the built app, which is the only place a
         clipped panel is visible — every assertion still passed.
       */}
+      {/*
+        Why a skill will not be injected, in main's own words.
+
+        This used to be a `title` on the row, which is unreachable: the row is
+        `disabled` — it has nothing to open — and Chromium delivers no pointer
+        events to a disabled control, so the native tooltip never appeared. The
+        whole reason `readUserSkills` returns its rejects instead of logging
+        them is that the user can act on them, and a reason nobody can read is
+        the same as no reason at all.
+      */}
+      {invalid.map((skill) => (
+        <p
+          key={skill.name}
+          className="rounded-[5px] border border-amber px-2.5 py-1.5 text-[11.5px] text-amber"
+        >
+          {skill.name}: {skill.reason}
+        </p>
+      ))}
+
+      {error === null ? null : (
+        <p
+          role="alert"
+          className="rounded-[5px] border border-red px-2.5 py-1.5 text-[11.5px] text-red"
+        >
+          {error}
+        </p>
+      )}
+
       <div className="grid min-h-0 flex-1 grid-cols-[150px_minmax(0,1fr)] gap-3">
         <div className="flex flex-col overflow-y-auto rounded-[7px] border border-border">
           {rows.map((row) => {
@@ -265,7 +361,6 @@ export function SkillsSection() {
                 // name out of it, so there is no file this pane could address.
                 disabled={broken}
                 onClick={() => openSkill(row.name)}
-                title={row.reason ?? undefined}
                 className={`flex items-center justify-between gap-2 border-b border-border-soft px-2.5 py-1.5 text-left text-[12.5px] last:border-b-0 ${
                   active ? 'bg-active text-ink' : 'text-muted'
                 } ${broken ? 'cursor-default' : 'hover:bg-hover hover:text-ink'}`}

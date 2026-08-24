@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -75,6 +75,76 @@ describe('readUserSkills', () => {
 
     expect(read.skills).toEqual([]);
     expect(read.invalid[0]?.reason).toMatch(/frontmatter/i);
+  });
+
+  it('does not mistake a horizontal rule for the closing fence', async () => {
+    /*
+      `indexOf('\n---')` matched `-----` too, so an unclosed header followed by
+      a rule parsed as valid here while Claude Code read the whole file as
+      prose — the app would inject a skill the binary does not have.
+    */
+    await write('ruled', '---\nname: ruled\ndescription: d\nBody.\n\n-----\n\nMore.\n');
+
+    const read = await readUserSkills(root);
+
+    expect(read.skills).toEqual([]);
+    expect(read.invalid[0]?.reason).toMatch(/frontmatter/i);
+  });
+
+  it('accepts a fence line with trailing whitespace', async () => {
+    await write('spaced', '---\nname: spaced\ndescription: d\n---  \nDo it.\n');
+
+    const read = await readUserSkills(root);
+
+    expect(read.skills.map((s) => s.name)).toEqual(['spaced']);
+  });
+
+  it('reads a digit-bearing frontmatter key', async () => {
+    await write('keyed', '---\nname: keyed\ndescription: d\nallowed-tools: Bash\n---\nGo.\n');
+
+    const read = await readUserSkills(root);
+
+    expect(read.skills.map((s) => s.name)).toEqual(['keyed']);
+  });
+
+  it('follows a symlinked skill folder', async () => {
+    /*
+      A `Dirent` reports `lstat`, so `isDirectory()` is false for a link and the
+      skill was dropped with no row and no reason. Anyone whose dotfiles manage
+      `~/.hive/skills` links them in — the population most likely to write
+      skills at all.
+    */
+    const elsewhere = join(await mkdtemp(join(tmpdir(), 'hive-linked-')), 'deploy');
+    await mkdir(elsewhere, { recursive: true });
+    await writeFile(join(elsewhere, 'SKILL.md'), valid('deploy'), 'utf8');
+    await mkdir(root, { recursive: true });
+    await symlink(elsewhere, join(root, 'deploy'), 'dir');
+
+    const read = await readUserSkills(root);
+
+    expect(read.skills.map((s) => s.name)).toEqual(['deploy']);
+  });
+
+  it('ignores a symlink that points at a file', async () => {
+    // A link to a loose note is not a skill, and must not become an invalid row.
+    const dir = await mkdtemp(join(tmpdir(), 'hive-linked-file-'));
+    const target = join(dir, 'notes.md');
+    await writeFile(target, 'notes', 'utf8');
+    await mkdir(root, { recursive: true });
+    await symlink(target, join(root, 'notes'), 'file');
+
+    const read = await readUserSkills(root);
+
+    expect(read).toEqual({ skills: [], invalid: [] });
+  });
+
+  it('ignores a broken symlink', async () => {
+    await mkdir(root, { recursive: true });
+    await symlink(join(root, 'nowhere'), join(root, 'dangling'), 'dir');
+
+    const read = await readUserSkills(root);
+
+    expect(read).toEqual({ skills: [], invalid: [] });
   });
 
   it('refuses frontmatter whose name disagrees with the folder', async () => {

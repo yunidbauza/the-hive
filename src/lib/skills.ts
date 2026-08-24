@@ -83,19 +83,37 @@ async function read(
  *
  * A refused **write** says only that the write did not happen. Nothing on disk
  * changed, so the snapshot the pane already holds is still exactly true.
+ *
+ * ## Why this reports the refusal rather than only logging it
+ *
+ * Keeping the snapshot is right; *resolving as though the write happened* is
+ * not, and the two were conflated here. The caller then ran its success path
+ * unconditionally — the editor flipped to "saved" over a file that was never
+ * written, and Delete emptied the editor while the row it claimed to have
+ * removed stayed in the list. The user is told one thing and shown its
+ * opposite.
+ *
+ * `project-config.ts` can log-and-continue because its callers have no success
+ * path to run: they re-render from the snapshot and nothing else. This pane
+ * does, so the outcome has to be a value.
  */
 async function mutate(
   call: (bridge: NonNullable<Window['hive']>) => Promise<SkillsSnapshot>,
-): Promise<void> {
+): Promise<string | null> {
   const bridge = window.hive;
-  if (!bridge) return;
+  // No bridge is the browser demo. Nothing was written and nothing failed —
+  // the pane is header-only there and never calls this.
+  if (!bridge) return 'Custom skills are only available in the desktop app.';
 
   try {
     snapshot = await call(bridge);
+    emit();
+    return null;
   } catch (cause) {
     console.error('[hive] the skill was not written:', cause);
+    emit();
+    return cause instanceof Error ? cause.message : String(cause);
   }
-  emit();
 }
 
 /** Ask main for the skills. Called when the pane mounts. */
@@ -105,13 +123,21 @@ export const loadSkills = (): Promise<void> =>
 /**
  * Write one skill, creating it if new.
  *
- * No reload follows: both mutating verbs answer with the fresh snapshot, so the
- * list and the disk can never disagree about what a save produced.
+ * Resolves to `null` on success, or the reason it failed — see {@link mutate}
+ * for why the outcome is a value rather than a log line.
+ *
+ * No reload follows a success: both mutating verbs answer with the fresh
+ * snapshot, so the list and the disk can never disagree about what a save
+ * produced.
  */
-export const saveSkill = (name: string, body: string): Promise<void> =>
+export const saveSkill = (
+  name: string,
+  body: string,
+): Promise<string | null> =>
   mutate((bridge) => bridge.skills.write({ name, body }));
 
-export const deleteSkill = (name: string): Promise<void> =>
+/** Remove one skill. `null` on success, otherwise the reason. */
+export const deleteSkill = (name: string): Promise<string | null> =>
   mutate((bridge) => bridge.skills.remove({ name }));
 
 /** Test-only: drop the snapshot and every subscriber. */
@@ -139,14 +165,29 @@ export function setSkillsForTest(next: SkillsSnapshot | null): void {
  * a format it does not own.
  */
 export function frontmatterName(body: string): string {
-  if (!body.startsWith('---')) return '';
-  const end = body.indexOf('\n---', 3);
-  if (end === -1) return '';
+  const lines = body.split('\n');
+  if (lines[0]?.trim() !== '---') return '';
 
-  for (const line of body.slice(3, end).split('\n')) {
+  let name = '';
+
+  for (const line of lines.slice(1)) {
+    /*
+      The closing fence is a line that **is** `---`, not one that merely starts
+      with it — a `-----` rule in the body would otherwise end the header early.
+
+      And the name only counts once that fence is found. An unterminated header
+      is a file `skills/read.ts` refuses outright, so returning a name from one
+      would enable Save for something main is guaranteed to reject. The two
+      readers have to agree about where a header ends, or the pane promises a
+      command that never appears.
+    */
+    if (line.trim() === '---') return name;
+
     const match = /^name:\s*(.*)$/.exec(line.trim());
-    if (match) return (match[1] ?? '').trim();
+    if (match && name === '') name = (match[1] ?? '').trim();
   }
+
+  // Ran off the end without a closing fence.
   return '';
 }
 

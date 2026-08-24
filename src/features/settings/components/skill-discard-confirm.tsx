@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface SkillDiscardConfirmProps {
   /** The whole question, e.g. `Discard changes to /ship-it?` */
@@ -46,23 +46,33 @@ export function SkillDiscardConfirm({
   }, []);
 
   /**
-   * Escape backs out, handled on the buttons rather than the container.
+   * Escape backs out — from anywhere, on the document, in the capture phase.
    *
-   * The container is `role="alertdialog"`, which `jsx-a11y` classes as
-   * non-interactive — rightly, for a plain region. The buttons are interactive,
-   * focus starts on Cancel and the only other stop is the destructive one, so
-   * listening on both covers every position focus can hold in here.
+   * `project-remove-confirm.tsx` listens on its two buttons instead, and that
+   * is sound *there*: it replaces the row it was launched from, so focus is
+   * always one of those two. This confirm is different. It appears **beside a
+   * live `<textarea>`**, and the caret usually stays in it — the user was
+   * typing when they clicked another row. Escape pressed there reached neither
+   * button, and `data-escape-scope` below had already told the settings overlay
+   * to decline (`escapeIsClaimed` falls back to a document query, so any target
+   * counts). The key did nothing at all: the overlay would not close and the
+   * confirm would not cancel.
+   *
+   * Capture, so it runs before the textarea or anything else; `preventDefault`
+   * and `stopPropagation` so the keystroke ends here rather than reaching Radix
+   * and closing the whole overlay behind the question.
    */
-  const escapes = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return;
-    /*
-      Stops bubble-phase ancestors seeing it. Keeping the settings overlay open
-      is a separate matter, decided by Radix on a document-capture listener that
-      runs first — `data-escape-scope` below is what answers that one.
-    */
-    event.stopPropagation();
-    onCancel();
-  };
+  useEffect(() => {
+    const escapes = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    };
+
+    document.addEventListener('keydown', escapes, true);
+    return () => document.removeEventListener('keydown', escapes, true);
+  }, [onCancel]);
 
   return (
     <div
@@ -79,7 +89,6 @@ export function SkillDiscardConfirm({
           ref={cancel}
           type="button"
           onClick={onCancel}
-          onKeyDown={escapes}
           className="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink"
         >
           Keep editing
@@ -87,7 +96,6 @@ export function SkillDiscardConfirm({
         <button
           type="button"
           onClick={onConfirm}
-          onKeyDown={escapes}
           className="rounded-md bg-red px-2.5 py-1 text-[12px] font-medium text-bg hover:opacity-90"
         >
           {confirmLabel}

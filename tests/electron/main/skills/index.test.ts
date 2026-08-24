@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -96,6 +96,42 @@ describe('createSkillsRuntime', () => {
 
     await expect(skills.sync()).resolves.toEqual({ skills: [], invalid: [] });
     expect(skills.pluginDirPath()).toBeNull();
+  });
+
+  it('stops offering a path once a regeneration fails', async () => {
+    /*
+      `written` used to latch true on the first success, so a directory removed
+      or broken later still produced `--plugin-dir <missing path>` — the
+      opposite of what `pluginDirPath`'s contract promises.
+    */
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const skills = runtime();
+    await skills.sync();
+    expect(skills.pluginDirPath()).not.toBeNull();
+
+    // A file where the plugin root needs to be a directory.
+    await rm(join(userDataPath, 'hive', 'plugin'), { recursive: true, force: true });
+    await writeFile(join(userDataPath, 'hive', 'plugin'), 'not a dir', 'utf8');
+    await skills.sync();
+
+    expect(skills.pluginDirPath()).toBeNull();
+  });
+
+  it('serialises concurrent syncs, so a prune cannot eat a fresh write', async () => {
+    /*
+      `writePluginDir` ends by diffing the directory against the set it wrote.
+      Two runs in flight make that diff lie: A snapshots {}, B writes standup,
+      A's prune then finds standup absent from *its* expected set and removes
+      it — losing a skill that exists on disk.
+    */
+    const skills = runtime();
+    const first = skills.sync();
+    await writeSkill('standup', skill('standup'));
+    const second = skills.sync();
+
+    await Promise.all([first, second]);
+
+    expect(await pluginSkills()).toEqual(['done', 'standup']);
   });
 
   it('lists what the pane renders, invalid skills included', async () => {
