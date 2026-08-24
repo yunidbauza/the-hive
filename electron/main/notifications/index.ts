@@ -432,6 +432,27 @@ export function createNotifier(options: NotifierOptions): Notifier {
     { id: string; kind: NotificationKind }
   >();
 
+  /**
+   * A session declared itself finished (HIVE-93).
+   *
+   * Routed into {@link sessionEvent} as an ending rather than handled here,
+   * because everything this needs to do is already what an ending does: expire
+   * a pending row, drop the "already told them" mark, disarm the idle watch.
+   *
+   * It needs its own branch at all because a declared finish does **not** reach
+   * the status channel. It leaves on `session:finished`, and the `terminated`
+   * that `activity.ts` observes a moment later is deliberately suppressed —
+   * so without this the notifier never learns the session ended. The visible
+   * cost was a promoted toast saying a finished session was waiting on the
+   * user, whose click opened a session that no longer existed, plus a leaked
+   * entry per finish under an id a resume can reuse.
+   */
+  const finishedEvent = (payload: Record<string, unknown>): void => {
+    const { entityId } = payload;
+    if (typeof entityId !== 'string') return;
+    sessionEvent({ entityId, status: 'done' });
+  };
+
   const sessionEvent = (payload: Record<string, unknown>): void => {
     const { entityId, status, event, notificationType, toolName, idleDetail } =
       payload;
@@ -632,6 +653,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
        */
       try {
         if (channel === CH.sessionStatus) sessionEvent(payload);
+        else if (channel === CH.sessionFinished) finishedEvent(payload);
         else if (channel === CH.sessionName) nameEvent(payload);
         else if (channel === CH.configCloneDone) cloneEvent(payload);
       } catch (cause) {

@@ -102,9 +102,11 @@ export function useSessionStatus(): void {
      * observer, and a second mount would mean a second listener for one
      * broadcast.
      */
-    const disposeFinished = bridge.session.onFinished(({ entityId }) => {
-      finishSession(entityId);
-    });
+    const disposeFinished = bridge.session.onFinished(
+      ({ entityId, resumable }) => {
+        finishSession(entityId, resumable);
+      },
+    );
 
     const disposeBranch = bridge.session.onBranch(({ entityId, branch, cwd }) => {
       setSessionBranch(entityId, branch, cwd);

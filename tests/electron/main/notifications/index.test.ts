@@ -598,6 +598,25 @@ describe('foreground re-arm', () => {
     expect(promote).toHaveBeenCalledWith('raised-1');
   });
 
+  it('promotes nothing when the session finished with /done (HIVE-93)', () => {
+    /*
+      A declared finish does **not** reach the status channel — it leaves on
+      `session:finished`, and the `terminated` that `activity.ts` observes a
+      moment later is deliberately suppressed. So without a branch for it here
+      the notifier never learns the session ended: the pending row survives, and
+      the next foreground change promotes it into a toast saying a finished
+      session is waiting on the user, whose click opens a session that is gone.
+    */
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+    n.observe(CH.sessionFinished, { entityId: 'sess-04', resumable: true });
+    n.reevaluateForeground();
+
+    expect(promote).not.toHaveBeenCalled();
+  });
+
   it('promotes nothing when the user types instead of looking away', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
     const n = makeNotifier();

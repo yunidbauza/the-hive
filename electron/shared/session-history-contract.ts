@@ -99,6 +99,21 @@ export interface SessionRecord {
    * gets one.
    */
   sessionUuid?: string;
+  /**
+   * How a recorded ending happened (HIVE-93).
+   *
+   * Without it a restored `done` row cannot be told from a restored `/clear`,
+   * and every one of them is described as "was cleared — its terminal continues
+   * as a new session". That sentence is false for **every** record this field
+   * appears on: `publishStatus` never writes `done` and `onCleared` writes no
+   * status at all, so the only way a record holds `done` is a declared `/done`.
+   *
+   * Absent on a record written before the field existed, and on a live one.
+   * `'app-closed'` is never written here — nothing can observe the app being
+   * quit; the renderer infers that at hydrate from a record still claiming to
+   * be live.
+   */
+  endedBy?: 'cleared' | 'finished';
   createdAt: number;
   /** When the session ended, if it has. What retention sorts on. */
   endedAt?: number;

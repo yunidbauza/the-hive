@@ -289,6 +289,21 @@ export interface SessionClearedEvent {
  */
 export interface SessionFinishedEvent {
   entityId: string;
+  /**
+   * Whether this conversation can be reopened — **main's answer, not a guess**.
+   *
+   * `/done` normally keeps its uuid where `/clear` drops it, which is what
+   * makes a finished session resumable. But "normally" is not "always": a
+   * terminal that was cleared and then finished has had its uuid withdrawn and
+   * cannot get another, because the only hook carrying the successor's id never
+   * reaches the receiver. Inferring resumability from the fact of a finish
+   * would offer Resume on exactly that row and start a **brand-new**
+   * conversation under the promise of continuing the old one.
+   *
+   * So the ledger is asked, here, where it can be. See `Session.resumable` in
+   * `src/types/entity.ts`, whose own contract says this must not be derived.
+   */
+  resumable: boolean;
 }
 
 /**

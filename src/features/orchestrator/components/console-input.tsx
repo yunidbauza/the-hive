@@ -6,7 +6,7 @@ import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useAutoGrow } from '@hooks/use-auto-grow';
 import {
   useNavOrder,
-  useOpenEntity,
+  openOrResume,
   useRunOrchCommand,
 } from '@stores/hive-store';
 import { useSelIdx, useSetSelIdx } from '@stores/ui-store';
@@ -42,7 +42,6 @@ export function ConsoleInput() {
   const navOrder = useNavOrder();
   const selIdx = useSelIdx();
   const setSelIdx = useSetSelIdx();
-  const openEntity = useOpenEntity();
 
   /**
    * Focus on mount so the arrow keys work without a click first. Story 060
@@ -65,10 +64,16 @@ export function ConsoleInput() {
   /**
    * `→` and `↵` open the selected row — through the domain gate, so a
    * terminated session is declined here exactly as it is on click (story 108).
+   *
+   * `openOrResume` rather than `openEntity` (HIVE-93): every ended row is now
+   * refused by the gate, and a row that *can* be resumed has a control saying
+   * so. Routing the keyboard through `openEntity` alone would mean a user could
+   * arrow onto a finished session, press Enter, and get silence — with the
+   * resume button reachable only by mouse.
    */
   const openSelected = () => {
     const id = navOrder[selIdx];
-    if (id) openEntity(id);
+    if (id) openOrResume(id);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

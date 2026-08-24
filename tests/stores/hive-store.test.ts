@@ -11,12 +11,13 @@ import {
   setProjectConfigForTest,
 } from '@lib/project-config';
 import { noteSessionTicket } from '@lib/session-history';
-import { requestSpawn } from '@lib/terminal/pty-transport';
+import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 
 import { useAppearanceStore } from '@stores/appearance-store';
 import {
   ACK_DELAY_MS,
+  openOrResume,
   statusWord,
   useActiveSessions,
   useEndedSessions,
@@ -55,6 +56,10 @@ vi.mock('@lib/terminal/pty-transport', () => ({
   requestSpawn: vi.fn(() => Promise.resolve({ ok: true })),
   sessionChannelState: vi.fn(() => 'live'),
   resetPtyChannels: vi.fn(),
+  // HIVE-93: `resumeSession` clears the renderer's exit latch before asking
+  // for the new process, so a resume that only updated the store would leave
+  // the surface typing into a pty that had gone.
+  reopenChannel: vi.fn(),
 }));
 
 /*
@@ -1922,7 +1927,7 @@ describe('hive-store', () => {
       const id = useHiveStore.getState().order.at(-1)!;
       const before = useHiveStore.getState().order.length;
 
-      useHiveStore.getState().finishSession(id);
+      useHiveStore.getState().finishSession(id, true);
 
       /*
         The one difference from `/clear` that the user sees immediately: a
@@ -1942,7 +1947,7 @@ describe('hive-store', () => {
       useHiveStore.getState().spawnSession('the-hive');
       const dropped = useHiveStore.getState().order.at(-1)!;
 
-      useHiveStore.getState().finishSession(kept);
+      useHiveStore.getState().finishSession(kept, true);
       useHiveStore.getState().clearSession(dropped);
 
       /*
@@ -1960,7 +1965,7 @@ describe('hive-store', () => {
       useHiveStore.getState().openEntity(id);
       expect(useUiStore.getState().activeTab).toBe(id);
 
-      useHiveStore.getState().finishSession(id);
+      useHiveStore.getState().finishSession(id, true);
 
       // Its terminal is gone; leaving the user staring at a dead pty would be
       // the whole feature failing at the last step.
@@ -1974,7 +1979,7 @@ describe('hive-store', () => {
       const other = useHiveStore.getState().order.at(-1)!;
       useHiveStore.getState().openEntity(watched);
 
-      useHiveStore.getState().finishSession(other);
+      useHiveStore.getState().finishSession(other, true);
 
       /*
         Bouncing unconditionally would throw the user out of whatever they were
@@ -1987,7 +1992,7 @@ describe('hive-store', () => {
     it('is a no-op on a row that has already ended', () => {
       useHiveStore.getState().spawnSession('the-hive');
       const id = useHiveStore.getState().order.at(-1)!;
-      useHiveStore.getState().finishSession(id);
+      useHiveStore.getState().finishSession(id, true);
       useHiveStore.getState().openEntity('orch');
 
       /*
@@ -1995,9 +2000,53 @@ describe('hive-store', () => {
         `ptyExit` and `ptyLost` — so a second pass must not bounce a user who
         has since moved on.
       */
-      useHiveStore.getState().finishSession(id);
+      useHiveStore.getState().finishSession(id, true);
 
       expect(finished(id)).toMatchObject({ status: 'done' });
+    });
+
+    it('takes resumability from main rather than inferring it', () => {
+      /*
+        A terminal that was cleared and then finished has had its uuid withdrawn
+        and cannot get another — the only hook carrying the successor's id never
+        reaches the receiver. Inferring `resumable` from the fact of a finish
+        would offer Resume there and start a brand-new conversation under the
+        promise of continuing the old one.
+      */
+      useHiveStore.getState().spawnSession('the-hive');
+      const id = useHiveStore.getState().order.at(-1)!;
+
+      useHiveStore.getState().finishSession(id, false);
+
+      expect(finished(id)).toMatchObject({
+        status: 'done',
+        endedBy: 'finished',
+        resumable: false,
+      });
+
+      // And the row is therefore cappable, like a cleared one.
+      useHiveStore.getState().resumeSession(id);
+      expect(useUiStore.getState().activeTab).not.toBe(id);
+    });
+
+    it('ends the terminal\'s current row, not the id main happens to name', () => {
+      /*
+        Main always names the *terminal*: `HIVE_SESSION_ID` is baked into the
+        pty's environment at spawn and never changes, so after a `/clear` it is
+        still calling the row that was retired. Reading that id directly left
+        the successor `idle` on a pty that had exited — stdin enabled, no
+        "terminal has died" notice, and no ending for any cap to reap.
+      */
+      useHiveStore.getState().spawnSession('the-hive');
+      const original = useHiveStore.getState().order.at(-1)!;
+      const successor = useHiveStore.getState().clearSession(original)!;
+
+      useHiveStore.getState().finishSession(original, true);
+
+      expect(finished(successor)).toMatchObject({
+        status: 'done',
+        endedBy: 'finished',
+      });
     });
 
     it('spares a resumable row from the done cap', () => {
@@ -2009,7 +2058,7 @@ describe('hive-store', () => {
       */
       useHiveStore.getState().spawnSession('the-hive');
       const survivor = useHiveStore.getState().order.at(-1)!;
-      useHiveStore.getState().finishSession(survivor);
+      useHiveStore.getState().finishSession(survivor, true);
 
       for (let i = 0; i < 25; i += 1) {
         useHiveStore.getState().spawnSession('the-hive');
@@ -2117,6 +2166,28 @@ describe('hive-store', () => {
       expect(groups.active).not.toContain('old-01');
     });
 
+    it('restores how a session ended, not just that it did', () => {
+      /*
+        `publishStatus` never writes `done` and `onCleared` writes no status, so
+        the only way a record holds `done` is a declared `/done`. Without the
+        recorded `endedBy`, every one of those came back reading "was cleared —
+        its terminal continues as a new session" — the one sentence that is
+        false for all of them, shown beside a Resume button, so the tooltip and
+        the control contradicted each other.
+      */
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'fin-01', status: 'done', endedBy: 'finished' }),
+        record({ id: 'clr-01', status: 'done', endedBy: 'cleared' }),
+        record({ id: 'old-02' }),
+      ]);
+
+      const entities = useHiveStore.getState().entities;
+      expect(entities['fin-01']).toMatchObject({ endedBy: 'finished' });
+      expect(entities['clr-01']).toMatchObject({ endedBy: 'cleared' });
+      // A record still claiming to be live ended when the app did.
+      expect(entities['old-02']).toMatchObject({ endedBy: 'app-closed' });
+    });
+
     it('refuses to open any ended row, restored ones included', () => {
       /*
         A restored row used to be the exception, because clicking it *was* the
@@ -2152,6 +2223,72 @@ describe('hive-store', () => {
       expect(revived).toMatchObject({ status: 'idle', resumable: true });
       expect(revived).not.toHaveProperty('endedBy');
       expect(useUiStore.getState().activeTab).toBe('closed-01');
+    });
+
+    it('actually starts a process — the store update alone is not a resume', () => {
+      /*
+        The bug this exists for: `resumeSession` used to only mutate the row and
+        open the tab. The pty had exited, so the renderer's channel was latched
+        closed and no spawn was ever requested — the surface re-enabled stdin
+        over a dead process and swallowed every keystroke, with the Resume
+        control now gone because it is gated on the row being ended. There was
+        no way back from that state.
+      */
+      vi.mocked(requestSpawn).mockClear();
+      vi.mocked(reopenChannel).mockClear();
+
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'closed-01', resumable: true }),
+      ]);
+      useHiveStore.getState().resumeSession('closed-01');
+
+      // The latch first, or the request below hands back the previous answer.
+      expect(reopenChannel).toHaveBeenCalledWith('closed-01');
+      /*
+        And `resume: true`, which is why this goes through the spawn path rather
+        than `pty.restart` — a restart deliberately never forwards it, so it
+        would begin a new conversation while promising the old one.
+      */
+      expect(requestSpawn).toHaveBeenCalledWith(
+        'closed-01',
+        expect.any(String),
+        expect.objectContaining({ resume: true }),
+      );
+    });
+
+    it('stops being a PREVIOUS RUN row, so it is not drawn twice', () => {
+      /*
+        `useActiveSessions` keys on the status and `useRestoredSessions` on
+        `restored`. A resumed row that kept the flag satisfied both and the
+        table drew it under ACTIVE *and* PREVIOUS RUN, sharing one selection
+        index — the exact double-draw HIVE-88 fixed.
+      */
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'closed-01', resumable: true }),
+      ]);
+      useHiveStore.getState().resumeSession('closed-01');
+
+      expect(useHiveStore.getState().entities['closed-01']).not.toHaveProperty(
+        'restored',
+      );
+    });
+
+    it('resumes from the keyboard, not only from the control', () => {
+      /*
+        `openEntity` refuses every ended row now, so routing the keyboard
+        through it alone left a user able to arrow onto a finished session,
+        press Enter and get silence — the resume button reachable only by mouse.
+      */
+      useHiveStore.getState().hydrateSessions([
+        record({ id: 'closed-01', resumable: true }),
+        record({ id: 'term-01', status: 'terminated' }),
+      ]);
+
+      expect(openOrResume('closed-01')).toBe(true);
+      expect(useUiStore.getState().activeTab).toBe('closed-01');
+
+      // And a row with nothing to resume is still refused.
+      expect(openOrResume('term-01')).toBe(false);
     });
 
     it('refuses to resume a row with no conversation behind it', () => {

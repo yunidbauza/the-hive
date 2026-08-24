@@ -655,7 +655,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        * deliberately ended. Dropped, so a restored row for this terminal opens
        * as a fresh session instead.
        */
-      ledger?.record(entityId, { sessionUuid: undefined });
+      ledger?.record(entityId, { sessionUuid: undefined, endedBy: 'cleared' });
       publishCleared(entityId);
     },
     /**
@@ -790,7 +790,16 @@ export function createSessions(options: SessionsOptions): Sessions {
    * looks like and whether it was the tab in front of the user.
    */
   function publishFinished(entityId: string): void {
-    send(CH.sessionFinished, { entityId } satisfies SessionFinishedEvent);
+    /*
+      Asked rather than assumed. `ledger.resumable` is the only thing that knows
+      whether a uuid still names this terminal's conversation — a `/clear`
+      withdraws it, and nothing can recover the successor's — so a finish after
+      a clear is honestly not resumable even though every other finish is.
+    */
+    send(CH.sessionFinished, {
+      entityId,
+      resumable: ledger?.resumable(entityId) !== undefined,
+    } satisfies SessionFinishedEvent);
   }
 
   /**
@@ -1105,10 +1114,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        * after `/done`, and a kill are indistinguishable by the time they get
        * here, so the only honest input is whether a declaration was on file.
        */
-      ledger?.record(entityId, {
-        status: declaredDone(entityId) ? 'done' : 'terminated',
-        endedAt: Date.now(),
-      });
+      ledger?.record(
+        entityId,
+        declaredDone(entityId)
+          ? { status: 'done', endedBy: 'finished', endedAt: Date.now() }
+          : { status: 'terminated', endedAt: Date.now() },
+      );
     }
     registry.close(entityId);
     /*

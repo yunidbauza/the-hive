@@ -158,9 +158,10 @@ export type IdleDetail = 'agents' | 'script';
  * of this union is what stops {@link HOOK_STATUS} from being given an entry
  * that would quietly let some Claude Code event mean "the work is finished".
  *
- * What may carry it is `PublishedStatus` in `session-contract.ts`, which widens
- * this by exactly that one member at the *event* boundary — the one place main
- * speaks about a session having been told something rather than having seen it.
+ * What carries it instead is `SessionFinishedEvent` in `session-contract.ts`,
+ * on a channel of its own — the one place main speaks about a session having
+ * been *told* something rather than having seen it. The status channel never
+ * carries `done` at all.
  */
 export type ObservedStatus = 'working' | 'waiting' | 'idle' | 'terminated';
 

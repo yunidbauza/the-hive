@@ -162,7 +162,7 @@ describe('resolveTransport', () => {
     */
     withBridge();
     const id = useHiveStore.getState().spawnSession(SESSION_PROJECT);
-    useHiveStore.getState().finishSession(id);
+    useHiveStore.getState().finishSession(id, true);
 
     expect(isLiveTerminal(id)).toBe(true);
   });
@@ -175,7 +175,7 @@ describe('resolveTransport', () => {
     */
     withBridge();
     const id = useHiveStore.getState().spawnSession(SESSION_PROJECT);
-    useHiveStore.getState().finishSession(id);
+    useHiveStore.getState().finishSession(id, true);
 
     resolveTransport(id);
 

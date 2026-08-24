@@ -3,7 +3,7 @@ import type { SessionStatus } from '@/types/entity';
 
 import type { IdleDetail } from '@shared/hook-contract';
 
-/** Sessions have five states; agents are always `online`. */
+/** Sessions have four states; agents are always `online`. */
 export type DotStatus = SessionStatus | 'online';
 
 /**
@@ -27,7 +27,7 @@ const STATUS_FILL: Record<DotStatus, string> = {
 };
 
 /**
- * The same six colours as text, for the label beside the dot.
+ * The same colours as text, for the label beside the dot.
  *
  * Paired with `STATUS_FILL` deliberately: a dot and its label drifting to
  * different colours is the exact bug this file exists to prevent. Stories 031
