@@ -41,7 +41,8 @@ describe('doneSkill', () => {
         'dark',
         DONE_URL,
       ).permissions!.allow[0]!;
-      expect(rule).toBe(`Bash(${command}:*)`);
+      // Exact, not a prefix — see the settings test for why that matters.
+      expect(rule).toBe(`Bash(${command})`);
     });
 
     it('is invocable by a skill handing off, not only by a user typing it', () => {

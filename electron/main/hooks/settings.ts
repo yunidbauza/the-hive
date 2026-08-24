@@ -136,16 +136,27 @@ export interface HookSettings {
    * teaches the habit of approving `curl` prompts by reflex. A built-in that
    * cannot run without a permission dialog is not a built-in.
    *
-   * ## Why a prefix and not the exact string
+   * ## Why the exact command, and emphatically not a prefix
    *
    * The rule is derived from {@link doneCommand}, so the thing permitted and the
-   * thing run are the same text by construction. It is written as a prefix
-   * because the agent reproduces the command from the skill body rather than
-   * echoing bytes — a trailing newline or a wrapped line would miss an exact
-   * match, and the failure mode of a near-miss is the prompt this exists to
-   * prevent. Everything that identifies the request — method, host, port, path,
-   * both headers — is inside the prefix, so what a suffix could add is an
-   * argument to a URL that answers 204 and nothing else.
+   * thing run are the same text by construction.
+   *
+   * An earlier draft granted `…:*` — a prefix — reasoning that everything
+   * identifying the request was already inside it, so a suffix could only add
+   * "an argument to a URL that answers 204". **That reasoning was wrong, and
+   * dangerously so.** A suffix is passed to the same `curl` process, and `curl`
+   * has flags that have nothing to do with the URL: `-K <file>` reads a config
+   * that can redefine the target and the output, `-o`/`-D <path>` write to an
+   * attacker-chosen path, `--upload-file` sends one. None of them need a shell
+   * operator, so Claude Code's `&&`/`;` awareness never sees them. One
+   * auto-approved, invisible prefix rule would have covered "write any file"
+   * and "fetch any URL".
+   *
+   * Exact matching costs the thing the prefix was buying: the agent must
+   * reproduce the command byte for byte. That is what the fenced code block in
+   * the skill body is for, and the failure mode of a near-miss is a permission
+   * prompt — the thing this was meant to avoid, but visible, refusable, and
+   * infinitely better than a silent grant of arbitrary file writes.
    */
   permissions?: { allow: string[] };
 }
@@ -224,7 +235,7 @@ export function hookSettings(
     */
     ...(doneUrl === undefined
       ? {}
-      : { permissions: { allow: [`Bash(${doneCommand(doneUrl)}:*)`] } }),
+      : { permissions: { allow: [`Bash(${doneCommand(doneUrl)})`] } }),
   };
 }
 

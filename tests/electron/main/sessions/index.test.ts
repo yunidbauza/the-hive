@@ -1553,6 +1553,7 @@ describe('/done', () => {
     done: (entityId: string) => void;
     hook: (entityId: string, event: HookStatusEvent['event']) => void;
     cleared: (entityId: string) => void;
+    restart: () => Promise<void>;
     patches: (entityId: string) => Record<string, unknown>[];
     statusOf: (entityId: string) => unknown;
   } {
@@ -1609,6 +1610,7 @@ describe('/done', () => {
       hook: (entityId, event) =>
         onEvent({ entityId, event, status: 'working' } as HookStatusEvent),
       cleared: (entityId) => onCleared(entityId),
+      restart: () => instance.restart(OPEN),
       patches: (entityId) =>
         written.filter((entry) => entry.id === entityId).map((entry) => entry.patch),
       statusOf: (entityId) =>
@@ -1768,5 +1770,50 @@ describe('/done', () => {
 
     expect(() => h.done('sess-gone')).not.toThrow();
     expect(writes()).toEqual([]);
+  });
+
+  it('calls off the force-kill when a new turn starts after the /exit', () => {
+    const h = finished();
+    const sessionId = h.open();
+
+    h.done('hero-refresh');
+    h.hook('hero-refresh', 'Stop');
+    expect(writes()).toEqual(['/exit\r']);
+
+    /*
+      `/exit\r` goes into a pty, not to a REPL that promised to act on it. With
+      a half-typed draft at the prompt those five characters append to it and
+      submit it as an ordinary prompt — so the session goes back to work, and
+      this event is the proof. Left armed, the backstop would destroy the pty
+      ten seconds into that turn and file it as `done`.
+    */
+    h.hook('hero-refresh', 'UserPromptSubmit');
+    vi.advanceTimersByTime(10_000);
+
+    expect(killed).not.toContain(sessionId);
+  });
+
+  it('does not record a restarted generation as done', async () => {
+    const h = finished();
+    const first = h.open();
+
+    h.done('hero-refresh');
+    // Restart before the turn ends, so the declaration is still on file.
+    const restarted = h.restart();
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await restarted;
+
+    /*
+      A restart is not an ending. The user interrupted this generation; filing
+      it as `done` would claim it finished, and the row would flash `done` on
+      its way to respawning.
+    */
+    const statuses = h
+      .patches('hero-refresh')
+      .map((patch) => patch.status)
+      .filter((status) => status !== undefined);
+    expect(statuses).not.toContain('done');
   });
 });

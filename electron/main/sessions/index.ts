@@ -841,12 +841,22 @@ export function createSessions(options: SessionsOptions): Sessions {
    * the terminal shuts on them at the end of that turn. A typed prompt is the
    * clearest possible statement that the declaration no longer holds.
    *
-   * Only while still armed. Once `/exit` is written the exit is in flight and
-   * there is nothing left to call off; a `UserPromptSubmit` arriving then is
-   * from a REPL that is already on its way out.
+   * **Including one already closing**, which an earlier draft refused on the
+   * reasoning that the exit was in flight and there was nothing left to call
+   * off. There is: `/exit\r` is written into a pty, not handed to a REPL that
+   * has promised to act on it. If the user had a half-typed draft at the
+   * prompt, those five characters append to it and submit it as an ordinary
+   * prompt — the session goes back to work, and `UserPromptSubmit` is the proof
+   * that it did. Left armed, the force-kill lands ten seconds later, in the
+   * middle of a turn, and files it as `done`.
+   *
+   * So a typed prompt withdraws the declaration in either state, and the kill
+   * timer goes with it. The backstop's premise — "anything after `Stop` is a
+   * session that is not going to close on its own" — stops holding the moment a
+   * new turn starts.
    */
   function disarmFinish(entityId: string): void {
-    if (finishing.get(entityId) === null) finishing.delete(entityId);
+    if (finishing.has(entityId)) forgetFinish(entityId);
   }
 
   /**
@@ -1103,6 +1113,15 @@ export function createSessions(options: SessionsOptions): Sessions {
    * generation genuinely new.
    */
   async function restartOnce(request: OpenRequest): Promise<void> {
+    /*
+      Before the kill, not after it (HIVE-93). A restart while a `/done` is
+      still armed would otherwise reach `settleExit` with the declaration on
+      file, and a generation the user *interrupted* would be recorded as one
+      that finished — the row flashing `done` on its way to respawning. A
+      restart is not an ending; withdrawing here is what keeps the two apart.
+    */
+    forgetFinish(request.entityId);
+
     const sessionId = registry.sessionFor(request.entityId);
 
     if (sessionId !== undefined) {

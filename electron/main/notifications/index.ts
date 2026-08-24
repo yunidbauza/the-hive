@@ -233,13 +233,28 @@ function waitingKind(
   return Object.hasOwn(WAITING_KIND, event) ? WAITING_KIND[event] : undefined;
 }
 
+/**
+ * The session is over, however it got there (HIVE-93).
+ *
+ * `terminated` was the only ending this module knew, because it was the only
+ * one main could publish. `/done` added a second, and every check that meant
+ * "this session is finished" has to cover both or it silently covers neither
+ * for half of them: a `/done` row would keep a pending "is waiting on you" row
+ * alive, promotable into a toast whose click opens a session that is gone.
+ *
+ * A predicate rather than three widened conditions, so the next ending is added
+ * in one place instead of found in three.
+ */
+const hasEnded = (status: string): boolean =>
+  status === 'terminated' || status === 'done';
+
 function stillRelevant(
   kind: NotificationKind,
   status: string,
   event: unknown,
 ): boolean {
   if (kind === 'session.input_needed') {
-    return !(event === 'UserPromptSubmit' || status === 'terminated');
+    return !(event === 'UserPromptSubmit' || hasEnded(status));
   }
   /**
    * `session.idle` is `both`, so a promotion is a toast, and a toast that
@@ -453,7 +468,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
      * by things that were not the user. Engagement is still the only thing
      * that clears it.
      */
-    if (event === 'UserPromptSubmit' || status === 'terminated') {
+    if (event === 'UserPromptSubmit' || hasEnded(status)) {
       announcedInputNeeded.delete(entityId);
     }
 
@@ -463,7 +478,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
      * `armedIdle`.
      */
     if (event === 'UserPromptSubmit') armedIdle.add(entityId);
-    else if (status === 'terminated') armedIdle.delete(entityId);
+    else if (hasEnded(status)) armedIdle.delete(entityId);
 
     /**
      * The pending row expires by its own kind's rule (HIVE-81).

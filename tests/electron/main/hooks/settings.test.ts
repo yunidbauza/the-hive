@@ -132,19 +132,28 @@ describe('the /done permission', () => {
       inside the app's own built-in.
     */
     expect(settings.permissions).toEqual({
-      allow: [`Bash(${doneCommand(DONE_URL)}:*)`],
+      allow: [`Bash(${doneCommand(DONE_URL)})`],
     });
   });
 
-  it('permits a prefix, so the agent may not vary the request itself', () => {
+  it('permits the exact command and nothing that could follow it', () => {
     const rule = hookSettings('http://127.0.0.1:51234/hook', 'dark', DONE_URL)
       .permissions!.allow[0]!;
 
-    // Everything that identifies the request is inside the permitted prefix.
     expect(rule).toContain(DONE_URL);
     expect(rule).toContain(HOOK_HEADER_SESSION);
     expect(rule).toContain(HOOK_HEADER_TOKEN);
-    expect(rule.endsWith(':*)')).toBe(true);
+
+    /*
+      Not a prefix rule. `…:*` would let anything be appended to the same
+      `curl` invocation, and `curl` has flags that have nothing to do with the
+      URL — `-K` reads a config that redefines the target, `-o`/`-D` write to a
+      chosen path, `--upload-file` sends one. None need a shell operator, so
+      none are caught by Claude Code's `&&`/`;` handling. A prefix here is a
+      silent, unrevokable grant of arbitrary file writes.
+    */
+    expect(rule.endsWith(':*)')).toBe(false);
+    expect(rule.endsWith(')')).toBe(true);
   });
 
   it('reaches the file both themes are written from', async () => {
@@ -161,7 +170,7 @@ describe('the /done permission', () => {
         permissions?: { allow: string[] };
       };
       expect(written.permissions?.allow).toEqual([
-        `Bash(${doneCommand(DONE_URL)}:*)`,
+        `Bash(${doneCommand(DONE_URL)})`,
       ]);
     }
   });
