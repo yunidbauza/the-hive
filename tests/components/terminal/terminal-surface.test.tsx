@@ -695,22 +695,19 @@ describe('TerminalSurface', () => {
   });
 
   describe('the keyboard, when interactive (story 095)', () => {
-    /** Drive the installed handler with a synthetic event. */
-    function press(init: Partial<KeyboardEventInit> & { key: string }): boolean {
-      const handler = terminal().keyEventHandler;
-      if (!handler) throw new Error('no custom key handler was installed');
-      return handler(new KeyboardEvent('keydown', init));
-    }
-
     /**
-     * Drive the handler and hand back the event, for the cases whose contract
-     * includes *cancelling* it rather than merely declining it.
+     * Drive the installed handler, handing back both the verdict and the event.
      *
-     * `cancelable` is load-bearing. `preventDefault()` on a non-cancelable
-     * event is a silent no-op that leaves `defaultPrevented` false, so a helper
-     * omitting it would make the assertions below unfalsifiable — they would
-     * fail against a perfectly correct handler. A real keydown is cancelable;
-     * this one has to be too.
+     * **`cancelable` is load-bearing, and it is why there is only one helper
+     * here.** `preventDefault()` on a non-cancelable event is a silent no-op
+     * that leaves `defaultPrevented` false, so a helper building plain
+     * `new KeyboardEvent('keydown', init)` would make any cancellation
+     * assertion unfalsifiable — it would fail against a perfectly correct
+     * handler. A real keydown is always cancelable; these have to be too, for
+     * *every* case rather than only the two that assert it today. Four other
+     * cases already cancel (`line-start`, `line-end`, `newline`, `app-chord`),
+     * and the next test to check one of them should not have to rediscover
+     * this.
      */
     function pressCancelable(init: Partial<KeyboardEventInit> & { key: string }): {
       handled: boolean;
@@ -720,6 +717,11 @@ describe('TerminalSurface', () => {
       if (!handler) throw new Error('no custom key handler was installed');
       const event = new KeyboardEvent('keydown', { cancelable: true, ...init });
       return { handled: handler(event), event };
+    }
+
+    /** The verdict alone, for the cases whose contract is only accept/decline. */
+    function press(init: Partial<KeyboardEventInit> & { key: string }): boolean {
+      return pressCancelable(init).handled;
     }
 
     function renderInteractive() {
@@ -1068,6 +1070,45 @@ describe('TerminalSurface', () => {
        */
       expect(event.defaultPrevented).toBe(true);
 
+      vi.unstubAllGlobals();
+    });
+
+    /**
+     * Cancelling the keydown made these the *only* path (HIVE-92).
+     *
+     * Before the fix a rejected `readText` was survivable by accident: the
+     * browser's own Paste still ran, so the chord appeared to work. Now a
+     * rejection means the chord did nothing at all, and a failure that leaves
+     * no trace is the kind of silence that cost this bug a diagnosis. Still not
+     * rethrown — an unhandled rejection in a working app is worse — but it has
+     * to be greppable.
+     */
+    it('warns rather than failing silently when the clipboard rejects', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const denied = new Error('NotAllowedError');
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        clipboard: {
+          readText: vi.fn(() => Promise.reject(denied)),
+          writeText: vi.fn(() => Promise.reject(denied)),
+        },
+      });
+
+      renderInteractive();
+      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+
+      press(mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true });
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith('terminal: clipboard paste failed', denied),
+      );
+
+      terminal().selection = 'copied text';
+      press(mac ? { key: 'c', metaKey: true } : { key: 'C', ctrlKey: true, shiftKey: true });
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith('terminal: clipboard copy failed', denied),
+      );
+
+      warn.mockRestore();
       vi.unstubAllGlobals();
     });
   });

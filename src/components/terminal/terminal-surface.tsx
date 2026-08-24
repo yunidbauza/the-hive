@@ -128,22 +128,39 @@ function readCursorContext(terminal: Terminal): CursorContext | null {
 }
 
 /**
+ * Reported rather than swallowed outright (HIVE-92).
+ *
+ * These used to fail invisibly, and that was survivable only because it was not
+ * really the end of the story: the browser's own Copy/Paste still ran, so a
+ * rejected `readText` looked like a working paste rather than a broken one. Now
+ * that the keydown is cancelled, this **is** the only path — a rejection means
+ * the chord did nothing at all, which is precisely the kind of silence that
+ * cost this bug a diagnosis.
+ *
+ * Still not rethrown: `writeText`/`readText` reject when the document is not
+ * focused or permission is denied, and neither is worth an unhandled rejection
+ * in the console of an app whose terminal is otherwise fine. A warning is the
+ * middle ground — a dead paste becomes greppable instead of a mystery.
+ */
+function reportClipboardFailure(action: 'copy' | 'paste', reason: unknown): void {
+  console.warn(`terminal: clipboard ${action} failed`, reason);
+}
+
+/**
  * Copy the selection, then drop it.
  *
  * Clearing matters most on Linux and Windows, where bare `Ctrl+C` copies only
  * *because* there is a selection: leaving it in place would mean the second
  * press copied again instead of interrupting, and a user trying to stop a
  * runaway process would press it repeatedly to no effect.
- *
- * Failures are swallowed on purpose. `writeText` rejects when the document is
- * not focused or permission is denied, and neither is worth an unhandled
- * rejection in the console of an app whose terminal is otherwise fine.
  */
 function copySelection(terminal: Terminal): void {
   const selection = terminal.getSelection();
   if (selection === '') return;
   terminal.clearSelection();
-  void navigator.clipboard?.writeText(selection).catch(() => {});
+  void navigator.clipboard
+    ?.writeText(selection)
+    .catch((reason: unknown) => reportClipboardFailure('copy', reason));
 }
 
 /** Paste as if typed — through the terminal, so bracketed paste is honoured. */
@@ -153,7 +170,7 @@ function pasteFromClipboard(terminal: Terminal): void {
     .then((text) => {
       if (text !== '') terminal.paste(text);
     })
-    .catch(() => {});
+    .catch((reason: unknown) => reportClipboardFailure('paste', reason));
 }
 
 /**

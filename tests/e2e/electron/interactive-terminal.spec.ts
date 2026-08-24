@@ -727,28 +727,36 @@ test('Cmd+V pastes the clipboard once, not twice', async ({}, testInfo) => {
     configPath,
   });
 
-  /**
-   * The system clipboard, borrowed and put back.
-   *
-   * `menu.spec.ts` declines to touch it, on the grounds that reading the real
-   * clipboard makes the suite stateful against whatever else the machine is
-   * doing — and it is right. But the native Paste this spec exists to catch
-   * reads the OS clipboard and nothing else, so there is no way to drive the
-   * defect without it. Borrowing and restoring is the compromise: whatever the
-   * developer had copied is theirs again by the time the test ends, on the
-   * failure path as much as the success one.
-   *
-   * Nothing else in the suite touches the clipboard, so the only writer to race
-   * is a human using their own machine mid-run.
-   */
-  const borrowed = await app.evaluate(({ clipboard }) => clipboard.readText());
-
   try {
-    const page = await app.firstWindow();
-    await openLiveSession(page, {
-      ready: testInfo.outputPath('ready.txt'),
-      bootstrap: bootstrapped,
-    });
+    /**
+     * The system clipboard, borrowed and put back.
+     *
+     * `menu.spec.ts` declines to touch it, on the grounds that reading the real
+     * clipboard makes the suite stateful against whatever else the machine is
+     * doing — and it is right. But the native Paste this spec exists to catch
+     * reads the OS clipboard and nothing else, so there is no way to drive the
+     * defect without it. Borrowing and restoring is the compromise.
+     *
+     * **The restore is text-only, and that limit is real rather than
+     * theoretical.** `clipboard.readText()` returns `''` for an image, a file
+     * or rich content, so a blind write-back would *destroy* such a clipboard
+     * rather than restore it. Hence the branch below: text is put back
+     * verbatim; anything else is cleared, which at least does not leave a shell
+     * command sitting on the developer's clipboard. Preserving a non-text
+     * clipboard would need `availableFormats()` and a reader per format, which
+     * is more machinery than this spec earns.
+     *
+     * Nothing else in the suite touches the clipboard, so the only writer to
+     * race is a human using their own machine mid-run.
+     */
+    const borrowed = await app.evaluate(({ clipboard }) => clipboard.readText());
+
+    try {
+      const page = await app.firstWindow();
+      await openLiveSession(page, {
+        ready: testInfo.outputPath('ready.txt'),
+        bootstrap: bootstrapped,
+      });
 
     /**
      * The clipboard holds a whole, self-submitting command — not a bare word
@@ -770,19 +778,19 @@ test('Cmd+V pastes the clipboard once, not twice', async ({}, testInfo) => {
      * contents whether the command ran once or twice, which is precisely the
      * distinction being tested.
      */
-    await app.evaluate(
-      ({ clipboard }, command) => clipboard.writeText(command),
-      `printf ${TOKEN} >> '${marker}'\n`,
-    );
+      await app.evaluate(
+        ({ clipboard }, command) => clipboard.writeText(command),
+        `printf ${TOKEN} >> '${marker}'\n`,
+      );
 
     /**
      * `Meta+V` on macOS, `Control+Shift+V` elsewhere, matching
      * `decideTerminalKey`. The defect is macOS-shaped — nothing native is bound
      * to `Ctrl+Shift+V` — but paste-once is the correct claim everywhere.
      */
-    await page.keyboard.press(
-      process.platform === 'darwin' ? 'Meta+v' : 'Control+Shift+V',
-    );
+      await page.keyboard.press(
+        process.platform === 'darwin' ? 'Meta+v' : 'Control+Shift+V',
+      );
 
     /**
      * Getting to a trustworthy count takes three steps, and each one is here
@@ -790,7 +798,9 @@ test('Cmd+V pastes the clipboard once, not twice', async ({}, testInfo) => {
      *
      * **1. Wait for the first delivery.** Proves the chord did something at all.
      */
-    await expect.poll(() => readMarker(marker), { timeout: 15_000 }).not.toBeNull();
+      await expect
+        .poll(() => readMarker(marker), { timeout: 15_000 })
+        .not.toBeNull();
 
     /**
      * **2. Settle, so a *second* delivery has time to arrive.**
@@ -813,25 +823,36 @@ test('Cmd+V pastes the clipboard once, not twice', async ({}, testInfo) => {
      * paste landed *after* the barrier and the count was read one delivery
      * early.
      */
-    await page.waitForTimeout(1000);
+      await page.waitForTimeout(1000);
 
     /**
      * **3. Drain the shell.** A second command, typed and awaited, proves the
      * pty has processed everything queued ahead of it — so the file now holds a
      * final count rather than a snapshot caught between two appends.
      */
-    await page.keyboard.type(`echo done > '${done}'`);
-    await page.keyboard.press('Enter');
-    await expectMarker(done, 'done');
+      await page.keyboard.type(`echo done > '${done}'`);
+      await page.keyboard.press('Enter');
+      await expectMarker(done, 'done');
 
-    // Exact, and deliberately not polled — see above. Doubled, this reads
-    // `hive-paste-92hive-paste-92` and fails loudly.
-    expect(readMarker(marker)).toBe(TOKEN);
+      // Exact, and deliberately not polled — see above. Doubled, this reads
+      // `hive-paste-92hive-paste-92` and fails loudly.
+      expect(readMarker(marker)).toBe(TOKEN);
+    } finally {
+      /**
+       * Swallowed, and the swallow is the point: if the app died mid-test, this
+       * `evaluate` rejects, and an unguarded rejection here would replace the
+       * real assertion error with a confusing one — then skip the close in the
+       * outer `finally` and leak the process.
+       */
+      await app
+        .evaluate(
+          ({ clipboard }, text) =>
+            text === '' ? clipboard.clear() : clipboard.writeText(text),
+          borrowed,
+        )
+        .catch(() => {});
+    }
   } finally {
-    await app.evaluate(
-      ({ clipboard }, text) => clipboard.writeText(text),
-      borrowed,
-    );
     await app.close();
   }
 });
