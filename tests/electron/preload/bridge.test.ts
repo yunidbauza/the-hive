@@ -12,6 +12,7 @@ import {
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
   BRIDGE_SESSION_KEYS,
+  BRIDGE_SKILLS_KEYS,
   BRIDGE_THEME_KEYS,
   BRIDGE_UI_KEYS,
   CH,
@@ -74,6 +75,8 @@ const github = () =>
   exposed.github as Record<string, (...args: unknown[]) => unknown>;
 const fs = () =>
   exposed.fs as Record<string, (...args: unknown[]) => unknown>;
+const skills = () =>
+  exposed.skills as Record<string, (...args: unknown[]) => unknown>;
 const updates = () =>
   exposed.updates as Record<string, (...args: unknown[]) => unknown>;
 const theme = () =>
@@ -93,6 +96,13 @@ describe('exposed surface', () => {
       ...BRIDGE_INTEGRATIONS_KEYS,
     ].sort());
     expect(Object.keys(fs()).sort()).toEqual([...BRIDGE_FS_KEYS].sort());
+    /*
+      HIVE-96's, written at the same time as the namespace rather than after the
+      fourth reminder above. `skills` is the second namespace that writes to the
+      disk, so a fifth verb appearing here is exactly the change this file exists
+      to catch.
+    */
+    expect(Object.keys(skills()).sort()).toEqual([...BRIDGE_SKILLS_KEYS].sort());
     /**
      * `github` shipped without this assertion, and `BRIDGE_GITHUB_KEYS` sat
      * unimported — a constant whose docblock claims it makes a second verb

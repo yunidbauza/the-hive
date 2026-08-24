@@ -86,6 +86,12 @@ import type {
   SessionHistoryEntry,
   SessionNoteRequest,
 } from './session-history-contract';
+import type {
+  SkillFile,
+  SkillNameRequest,
+  SkillWriteRequest,
+  SkillsSnapshot,
+} from './skills-contract';
 import type { PickedTheme, SaveThemeRequest } from './theme-contract';
 import type { UpdateStatus } from './update-contract';
 
@@ -455,6 +461,23 @@ export const CH = {
   fsWatch: 'fs:watch',
   fsUnwatch: 'fs:unwatch',
   fsChanged: 'fs:changed', // main → renderer
+  /**
+   * Custom skills (HIVE-96). Four verbs, and not one of them takes a path.
+   *
+   * Stricter than the `fs` block above, which has to admit a project-relative
+   * path because the explorer navigates a tree. A skill request names a
+   * **skill**, and main already knows the one directory skills live in — see
+   * `skills-contract.ts` for why that makes traversal unrepresentable rather
+   * than merely filtered.
+   *
+   * No event channel. A write is request/response and answers with the fresh
+   * snapshot, the way the config's mutating verbs do; the Settings pane is the
+   * only writer, so there is no second party to notify.
+   */
+  skillsList: 'skills:list',
+  skillsRead: 'skills:read',
+  skillsWrite: 'skills:write',
+  skillsRemove: 'skills:remove',
   appInfo: 'app:info',
   /**
    * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
@@ -1037,6 +1060,26 @@ export interface HiveBridge {
     onChanged(callback: (event: FsChangedEvent) => void): () => void;
   };
   /**
+   * The custom skills The Hive injects into the sessions it starts (HIVE-96).
+   *
+   * Four verbs, none of which names a path. `fs` above must accept a
+   * project-relative path and defend containment on the resolved result; here
+   * a request names a skill, and `SKILL_NAME_PATTERN` cannot express a
+   * separator or a dot segment — so main's `join` is total and there is no
+   * second check to forget.
+   *
+   * `write` and `remove` answer with the fresh snapshot rather than `void`, so
+   * the pane never has to follow a mutation with a read, and the two can never
+   * disagree about what is on disk.
+   */
+  skills: {
+    list(): Promise<SkillsSnapshot>;
+    read(request: SkillNameRequest): Promise<SkillFile>;
+    /** Write, regenerate the plugin, and answer with the fresh snapshot. */
+    write(request: SkillWriteRequest): Promise<SkillsSnapshot>;
+    remove(request: SkillNameRequest): Promise<SkillsSnapshot>;
+  };
+  /**
    * External tooling this app can see but does not own (story 106).
    *
    * Read-only, and `status()` takes no arguments at all. That is the whole
@@ -1322,6 +1365,14 @@ export const RESIZE_THROTTLE_MS = 50;
  * stage. It takes no path, names no other window, and reports only an id the
  * renderer already holds — main uses it only to decide whether a notification
  * it was already going to raise should be suppressed.
+ *
+ * HIVE-96 adds `skills`, and it is the second namespace after `fs` that writes
+ * to the disk. What a web page can now do that it could not before: create,
+ * rewrite and delete files under `~/.hive/skills` — and **only** there. No verb
+ * takes a path; each names a skill, and `SKILL_NAME_PATTERN` admits only
+ * `[a-z0-9-]+`, so the directory a request can reach is not a matter of
+ * validation but of what the name is able to express. `fs`, by contrast, has to
+ * accept a path and defend containment on the resolved result.
  */
 export const BRIDGE_KEYS = [
   'appInfo',
@@ -1333,10 +1384,22 @@ export const BRIDGE_KEYS = [
   'notifications',
   'pty',
   'session',
+  'skills',
   'theme',
   'ui',
   'updates',
 ] as const;
+
+/**
+ * The exact key set of `window.hive.skills` (HIVE-96).
+ *
+ * Four, and the count is the security story the way it is for `jira` and
+ * `integrations`: two readers and two writers, all four bounded to one
+ * directory by the shape of what they accept rather than by a check they
+ * perform. A fifth verb here is a change to what the renderer may do to the
+ * user's disk, and should be argued for in this comment before it is written.
+ */
+export const BRIDGE_SKILLS_KEYS = ['list', 'read', 'write', 'remove'] as const;
 
 /** The exact key set of `window.hive.session`. */
 export const BRIDGE_SESSION_KEYS = [

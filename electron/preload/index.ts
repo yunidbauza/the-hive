@@ -84,6 +84,12 @@ import type {
   SessionHistoryEntry,
   SessionNoteRequest,
 } from '@shared/session-history-contract';
+import type {
+  SkillFile,
+  SkillNameRequest,
+  SkillWriteRequest,
+  SkillsSnapshot,
+} from '@shared/skills-contract';
 import type { PickedTheme, SaveThemeRequest } from '@shared/theme-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
@@ -251,6 +257,21 @@ const bridge: HiveBridge = {
     unwatch: (): Promise<void> => ipcRenderer.invoke(CH.fsUnwatch),
     onChanged: (callback: (event: FsChangedEvent) => void) =>
       subscribe<FsChangedEvent>(CH.fsChanged, callback),
+  },
+  /*
+    HIVE-96. Four verbs, and not one of them names a path — see the contract for
+    why that is the whole security design rather than one layer of it. There is
+    no `onChanged` here on purpose: the pane is the only writer, and both
+    mutating verbs answer with the fresh snapshot.
+  */
+  skills: {
+    list: (): Promise<SkillsSnapshot> => ipcRenderer.invoke(CH.skillsList),
+    read: (request: SkillNameRequest): Promise<SkillFile> =>
+      ipcRenderer.invoke(CH.skillsRead, request),
+    write: (request: SkillWriteRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsWrite, request),
+    remove: (request: SkillNameRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsRemove, request),
   },
   // Story 106. `status` takes no argument — see the contract for why that is
   // the security design and not an oversight.

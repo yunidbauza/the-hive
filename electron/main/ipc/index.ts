@@ -61,6 +61,8 @@ import {
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
   parseSessionNoteRequest,
+  parseSkillNameRequest,
+  parseSkillWriteRequest,
   parseWriteRequest,
 } from '@shared/guards';
 import {
@@ -1293,6 +1295,34 @@ export function registerIpcHandlers(): void {
   handle(CH.fsUnwatch, (): void => {
     fsWatch?.unwatch();
   });
+
+  /**
+   * Custom skills (HIVE-96).
+   *
+   * The `fs` block above validates twice — a string-shape guard here, then real
+   * containment in `fs/paths.ts` — because it accepts a path. These four
+   * validate once, and that is not a weaker design: `assertSkillName` admits
+   * only `[a-z0-9-]+`, which cannot name a directory other than the one main
+   * chooses, so there is no second question to ask. See `skills-contract.ts`.
+   *
+   * `skills` is non-null from registration onward; the optional chaining is for
+   * the window between module load and `registerIpc`, which is the same reason
+   * every `sessions?.` call in this file has it.
+   */
+  handle(CH.skillsList, () => skills?.list());
+
+  handle(CH.skillsRead, (_event, payload) =>
+    skills?.readOne(parseSkillNameRequest(payload).name),
+  );
+
+  handle(CH.skillsWrite, (_event, payload) => {
+    const request = parseSkillWriteRequest(payload);
+    return skills?.write(request.name, request.body);
+  });
+
+  handle(CH.skillsRemove, (_event, payload) =>
+    skills?.remove(parseSkillNameRequest(payload).name),
+  );
 
   /**
    * Getting a theme file on and off disk (HIVE-80).
