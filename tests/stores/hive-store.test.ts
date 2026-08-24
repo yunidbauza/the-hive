@@ -5,7 +5,11 @@ import { PHRASES } from '@lib/swarm/phrases';
 import { isSession } from '@/types/entity';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
-import { resetProjectConfig } from '@lib/project-config';
+import {
+  projectConfigSnapshot,
+  resetProjectConfig,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 import { noteSessionTicket } from '@lib/session-history';
 import { requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
@@ -937,6 +941,36 @@ describe('hive-store', () => {
     });
 
     describe('spawn', () => {
+      /** The keys the seeded config declares, in file order (HIVE-94). */
+      const projectKeys = (): string[] =>
+        (projectConfigSnapshot()?.projects ?? []).map((project) => project.key);
+
+      /**
+       * A project whose three handles are all different (HIVE-94).
+       *
+       * The demo config sets `name` to the id, which cannot tell a name match
+       * apart from an id match — so the resolver's precedence and its
+       * case-insensitivity get a config built for the purpose.
+       */
+      const seedDistinctProject = () => {
+        const current = projectConfigSnapshot()!;
+        setProjectConfigForTest({
+          ...current,
+          projects: [
+            {
+              id: 'the-hive',
+              key: 'hive',
+              name: 'The Hive',
+              path: '/repos/the-hive',
+              icon: 'ph-folder',
+              origin: 'local',
+              status: 'ok',
+              isRepo: true,
+            },
+          ],
+        });
+      };
+
       it('creates a session on a known project and opens it', () => {
         const before = useHiveStore.getState().order.length;
         run('spawn apfm-web tidy the footer');
@@ -952,6 +986,78 @@ describe('hive-store', () => {
         expect(useUiStore.getState().activeTab).toBe(id);
       });
 
+      /**
+       * Key, id or name — all three land on the same project (HIVE-94).
+       *
+       * Table-driven because the point is that the four spellings are
+       * *interchangeable*, and four separate tests would let one quietly start
+       * resolving somewhere else without the shape of the failure saying so.
+       */
+      it.each([
+        ['a key', 'hive'],
+        ['a key in the wrong case', 'HIVE'],
+        ['an id', 'the-hive'],
+        ['a quoted display name', '"The Hive"'],
+      ])('spawns by %s', (_label, reference) => {
+        seedDistinctProject();
+        const before = useHiveStore.getState().order.length;
+
+        run(`spawn ${reference} do the thing`);
+
+        const state = useHiveStore.getState();
+        expect(state.order).toHaveLength(before + 1);
+        /*
+          The **resolved id**, never what was typed. `entity.project` is how
+          every other surface finds this session's project, and a session
+          recorded under an alias would point at nothing the moment that alias
+          was edited.
+        */
+        expect(state.entities[state.order.at(-1)!]).toMatchObject({
+          project: 'the-hive',
+          task: 'do the thing',
+        });
+      });
+
+      /**
+       * Two projects with the same display name refuse rather than race.
+       *
+       * Names are never uniqueness-checked, so this is ordinary — two folders
+       * both called `api`, a monorepo split, a pair of worktrees. Starting an
+       * agent in whichever sat first in the file is the "wrong repository,
+       * discovered later" failure exactness exists to prevent, and the refusal
+       * names the ids so the user can say which one they meant.
+       */
+      it('refuses an ambiguous name and names the candidates', () => {
+        const current = projectConfigSnapshot()!;
+        const entry = (id: string, key: string) => ({
+          id,
+          key,
+          name: 'api',
+          path: `/repos/${id}`,
+          icon: 'ph-folder',
+          origin: 'local' as const,
+          status: 'ok' as const,
+          isRepo: true,
+        });
+        setProjectConfigForTest({
+          ...current,
+          projects: [entry('client-api', 'ca'), entry('server-api', 'sa')],
+        });
+        const before = useHiveStore.getState().order.length;
+
+        run('spawn api do things');
+
+        expect(useHiveStore.getState().order).toHaveLength(before);
+        expect(lastLine()).toMatchObject({
+          text: '  api names 2 projects (client-api, server-api) — use a key',
+          color: 'red',
+        });
+
+        // And the key is the way out, so it must still resolve.
+        run('spawn sa do things');
+        expect(useHiveStore.getState().order).toHaveLength(before + 1);
+      });
+
       it('does not announce the spawn by id — the rail is where the session is met (HIVE-91)', () => {
         run('spawn apfm-web tidy the footer');
 
@@ -962,15 +1068,35 @@ describe('hive-store', () => {
         expect(transcript()).not.toContain(id);
       });
 
-      it('rejects a repo that is not a project', () => {
+      it('rejects a project reference that matches nothing, listing the keys', () => {
         const before = useHiveStore.getState().order.length;
         run('spawn not-a-repo do things');
 
         expect(useHiveStore.getState().order).toHaveLength(before);
+        /*
+          The **keys**, in config order (HIVE-94). Listing ids here would answer
+          "what could I have typed?" with the long strings the key exists to
+          replace, and the keys are what the Settings row shows.
+        */
         expect(lastLine()).toMatchObject({
-          text: '  unknown repo: not-a-repo — try one from the Projects panel',
+          text: `  unknown project: not-a-repo — try a key from Settings › Projects (${projectKeys().join(', ')})`,
           color: 'red',
         });
+      });
+
+      /**
+       * Exactness is the whole safety property (HIVE-94).
+       *
+       * A spawn lands in a folder and starts an agent in it, so a prefix match
+       * turns a typo into work done in the wrong repository — discovered later,
+       * after it has happened. Refusing costs a retype.
+       */
+      it('refuses a prefix rather than guessing which project was meant', () => {
+        const before = useHiveStore.getState().order.length;
+        run('spawn apfm do things');
+
+        expect(useHiveStore.getState().order).toHaveLength(before);
+        expect(lastLine()?.text).toContain('unknown project: apfm');
       });
 
       /**
@@ -979,7 +1105,7 @@ describe('hive-store', () => {
        * A regression guard with a real failure behind it. `spawn` used to
        * validate against `state.projects`, which was authoritative only because
        * it booted pre-seeded with five demo projects. Emptying that seed left
-       * the slice permanently empty, so the console answered "unknown repo" for
+       * the slice permanently empty, so the console answered "unknown project" for
        * every project the user could see in the Projects panel — a verb that
        * refused everything, on a screen listing the things it was refusing.
        */
@@ -1024,7 +1150,7 @@ describe('hive-store', () => {
        * can ever arrive, and the fabricated row stays in the rails and the
        * header counts. That is the exact lie this branch exists to delete.
        */
-      it('refuses any repo in a browser, where no refusal could ever arrive', () => {
+      it('refuses any project in a browser, where no refusal could ever arrive', () => {
         vi.mocked(isDesktop).mockReturnValue(false);
         resetProjectConfig();
         const before = useHiveStore.getState().order.length;
@@ -1032,7 +1158,11 @@ describe('hive-store', () => {
         run('spawn anything at all');
 
         expect(useHiveStore.getState().order).toHaveLength(before);
-        expect(lastLine()?.text).toContain('unknown repo: anything');
+        // No keys to list, so the refusal points at the only thing that would
+        // help: adding a project in the first place.
+        expect(lastLine()?.text).toContain(
+          'unknown project: anything — add one in Settings › Projects',
+        );
       });
 
       /**
@@ -1151,7 +1281,7 @@ describe('hive-store', () => {
       it('rejects a missing task as a usage error', () => {
         run('spawn apfm-web');
         expect(lastLine()).toMatchObject({
-          text: '  usage: spawn <repo> <task>',
+          text: '  usage: spawn <project> <task>',
           color: 'red',
         });
       });

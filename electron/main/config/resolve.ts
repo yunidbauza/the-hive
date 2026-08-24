@@ -4,9 +4,11 @@ import { basename, isAbsolute, join } from 'node:path';
 
 import {
   DEFAULT_PROJECT_ICON,
+  projectAliases,
   type ProjectConfig,
 } from '@shared/config-contract';
 
+import { deriveProjectKey } from './identity';
 import type { RawProject } from './parse';
 
 /**
@@ -26,6 +28,9 @@ import type { RawProject } from './parse';
  * - **Require a directory.** `pty.spawn` with a `cwd` that is a file fails
  *   inside the child, where the error is a spawn failure with no context.
  */
+
+/** Shared by the single-entry fallback below; never mutated. */
+const EMPTY: ReadonlySet<string> = new Set<string>();
 
 /**
  * Expand a leading `~`.
@@ -69,10 +74,21 @@ function decorate(
   real: string | null,
 ): Pick<
   ProjectConfig,
-  'id' | 'name' | 'icon' | 'origin' | 'shell' | 'claudeCommand' | 'env'
+  'id' | 'key' | 'name' | 'icon' | 'origin' | 'shell' | 'claudeCommand' | 'env'
 > {
   return {
     id: raw.id,
+    /**
+     * Defaulted here only for the single-entry path (HIVE-94).
+     *
+     * {@link resolveProjects} assigns keys **before** calling through, because
+     * uniqueness is a fact about the whole list and this function can see one
+     * entry. What reaches this fallback is therefore only `resolveProject`
+     * called directly — the `{ id: 'probe' }` throwaways `addProject` and
+     * `repointProject` use to validate a path, whose key nothing ever reads.
+     * Deriving one anyway keeps the return type honest without a cast.
+     */
+    key: raw.key ?? deriveProjectKey(raw.name ?? raw.id, EMPTY),
     name: raw.name ?? (real === null ? raw.id : basename(real)),
     icon: raw.icon ?? DEFAULT_PROJECT_ICON,
     origin: raw.origin ?? 'local',
@@ -141,6 +157,64 @@ export function resolveProject(raw: RawProject): ProjectConfig {
 }
 
 /**
+ * Give every entry a key, keeping the ones the file already declared (HIVE-94).
+ *
+ * Two passes, and the order is the whole point: every declared key is claimed
+ * *before* a single one is generated, so a generated key can never take a
+ * literal one out from under an entry further down the file — which would make
+ * the keys depend on where in the list a project happened to sit.
+ *
+ * A duplicate declared key is reported and the later entry is regenerated,
+ * mirroring how a duplicate *id* is reported. Unlike a duplicate id it does not
+ * disable the project: two entries claiming `ix` is a typo in an alias, not two
+ * projects claiming to be the same project, so the honest repair is to give the
+ * second one a key that works and say so.
+ */
+function withKeys(
+  raws: readonly RawProject[],
+  errors: string[],
+): RawProject[] {
+  const claimed = new Set<string>();
+  const declared = raws.map((raw) => {
+    if (raw.key === undefined) return raw;
+    if (claimed.has(raw.key)) {
+      errors.push(
+        `projects: duplicate key "${raw.key}" on "${raw.id}" — generating a new one`,
+      );
+      // Fall through to the generating pass by forgetting what it declared.
+      return { ...raw, key: undefined };
+    }
+    claimed.add(raw.key);
+    return raw;
+  });
+
+  /**
+   * Everything the resolver would already match, minus this entry's own handles.
+   *
+   * A generated key has to avoid the **whole address space**, not just the other
+   * keys — see {@link projectAliases} for the silent-redirect this prevents. Its
+   * own id and name are excluded because a project answering to itself under two
+   * fields is not a collision.
+   *
+   * A key the file *declares* is left alone even if it shadows something: it is
+   * the user's explicit choice in their own file, and quietly regenerating it
+   * would be the one thing `parse.ts` refuses to do with a key.
+   */
+  const addressesOf = (index: number): string[] =>
+    declared.flatMap((other, at) =>
+      at === index ? [] : projectAliases({ id: other.id, name: other.name }),
+    );
+
+  return declared.map((raw, index) => {
+    if (raw.key !== undefined) return raw;
+    const taken = new Set([...claimed, ...addressesOf(index)]);
+    const key = deriveProjectKey(raw.name ?? raw.id, taken);
+    claimed.add(key);
+    return { ...raw, key };
+  });
+}
+
+/**
  * Resolve every entry, rejecting ids claimed more than once.
  *
  * First wins. The alternative — last wins — makes the effective config depend
@@ -153,7 +227,7 @@ export function resolveProjects(
 ): ProjectConfig[] {
   const claimed = new Set<string>();
 
-  return raws.map((raw) => {
+  return withKeys(raws, errors).map((raw) => {
     if (claimed.has(raw.id)) {
       errors.push(
         `projects: duplicate id "${raw.id}" — keeping the first entry, ignoring this one`,

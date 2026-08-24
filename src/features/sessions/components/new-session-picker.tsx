@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import type { Effort, Model } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
+import { ProjectKey } from '@components/ui/project-key';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { can } from '@config/runtime';
 import { OptionStepper } from '@features/sessions/components/option-stepper';
@@ -75,19 +76,30 @@ export function NewSessionPicker() {
 
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Case-insensitive substring match on the project id, which is what the
-  // search box shows and what the user is reading.
+  /*
+    Case-insensitive substring match across all three things a project answers
+    to (HIVE-94) — its key, its id and its display name. Substring here, unlike
+    the console's `resolveProjectRef`, and deliberately so: this is a search box
+    whose results the user then *clicks*, so a loose match costs a glance, where
+    the console's would spawn an agent in the wrong folder.
+  */
   const query = pickerQuery.trim().toLowerCase();
   const matches =
     query === ''
       ? projects
-      : projects.filter((project) => project.id.toLowerCase().includes(query));
+      : projects.filter((project) =>
+          [project.key, project.id, project.name].some((field) =>
+            field.toLowerCase().includes(query),
+          ),
+        );
 
-  const spawn = (repo: string) => {
+  // Always a project **id** — the rows carry it, and `spawnSession` stores it
+  // on the entity (HIVE-94).
+  const spawn = (projectId: string) => {
     // Refused rather than trusted: every button that reaches here is already
     // disabled when the project has no real directory, but Enter in the search
     // box reaches here too (story 090).
-    if (!can.spawnSessionIn(repo)) return;
+    if (!can.spawnSessionIn(projectId)) return;
     // Task is empty on purpose: the picker starts a session, and the first
     // message gives it its job (story 043). `spawnSession` opens the new tab,
     // which also dismisses the picker.
@@ -96,7 +108,7 @@ export function NewSessionPicker() {
     // "no ticket" is `null`, the session field's is absent, and passing `null`
     // into an optional parameter would put a `ticket: null` on the entity that
     // nothing knows how to read (HIVE-73).
-    spawnSession(repo, '', newModel, newEffort, pickerTicket ?? undefined);
+    spawnSession(projectId, '', newModel, newEffort, pickerTicket ?? undefined);
   };
 
   return (
@@ -265,6 +277,7 @@ export function NewSessionPicker() {
                 <ProjectRow
                   key={project.id}
                   id={project.id}
+                  projectKey={project.key}
                   icon={project.icon}
                   onSelect={spawn}
                 />
@@ -325,10 +338,13 @@ function PinnedProject({
 /** One search result. Owns its own count subscription. */
 function ProjectRow({
   id,
+  projectKey,
   icon,
   onSelect,
 }: {
   id: string;
+  /** Not `key` — that name is React's, and a prop called `key` never arrives. */
+  projectKey: string;
   icon: string;
   onSelect: (id: string) => void;
 }) {
@@ -348,6 +364,9 @@ function ProjectRow({
         size={14}
         className={cn('shrink-0', access.spawnable ? 'text-brand' : 'text-subtle')}
       />
+      {/* The same chip the Settings row shows, so the alias is learned in
+          whichever of the two the user happens to be looking at (HIVE-94). */}
+      <ProjectKey value={projectKey} />
       <span
         className={cn(
           'min-w-0 flex-1 truncate font-mono text-[12.5px]',

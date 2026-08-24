@@ -15,6 +15,8 @@ import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 /**
  * The unmapped badge (story 090).
  *
@@ -41,6 +43,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
       icon: 'ph-folder',
       origin: 'local' as const,
       status,
+      key: testProjectKey(id),
       isRepo: true,
     })),
     notifications: { ...DEFAULT_NOTIFICATIONS },

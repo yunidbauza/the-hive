@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProjectConfig } from '../../../../electron/shared/config-contract';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 /**
  * The containment guard — **the security-critical module in this feature**.
  *
@@ -46,6 +48,7 @@ function mapProject(id: string, path: string | null, status = 'ok'): void {
     icon: 'ph-folder',
     origin: 'local',
     status: status as ProjectConfig['status'],
+    key: testProjectKey(id),
     isRepo: true,
   });
 }

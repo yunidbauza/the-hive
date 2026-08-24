@@ -1,5 +1,7 @@
 // @vitest-environment node
 import {
+  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -87,6 +89,7 @@ describe('path resolution', () => {
     expect(snapshot.projects).toEqual([
       {
         id: 'apfm-web',
+        key: 'aw',
         // `realpathSync` also canonicalises the tmpdir (/var → /private/var on
         // macOS), so the expectation is realpath'd too. Asserting the raw join
         // would be asserting that resolution did *not* happen.
@@ -380,10 +383,27 @@ describe('schema v1 compatibility (story 101)', () => {
     expect(entry?.icon).toBe('ph-folder');
     expect(entry?.origin).toBe('local');
 
-    // The upgrade is in memory. Reading someone's file and rewriting it before
-    // they asked for anything is a surprise, not a migration — a v1 file the
-    // user never edits through the UI stays v1 forever and keeps working.
-    expect(readFileSync(path, 'utf8')).toBe(original);
+    /*
+      The file is no longer byte-identical (HIVE-94): a project with no `key`
+      gets one generated, and the whole point of that key is that it is stable,
+      which only the file can promise.
+
+      What story 101 actually promised survives, and is asserted instead — the
+      **schema** is not migrated. A v1 file the user never saves through the UI
+      stays v1: the backfill records the key it generated and changes nothing
+      else about how the file declares itself.
+    */
+    const written = JSON.parse(readFileSync(path, 'utf8')) as {
+      version: number;
+      '//': string;
+      projects: { id: string; path: string; key: string }[];
+    };
+    expect(written.version).toBe(1);
+    expect(written['//']).toBe('hand-written under story 090');
+    expect(written.projects).toEqual([
+      { id: 'apfm-web', path: repo, key: entry?.key },
+    ]);
+    expect(entry?.key).toMatch(/^[a-z]{2,4}$/);
   });
 
   it('still accepts a v2 file', async () => {
@@ -1195,8 +1215,16 @@ describe('setProjectRuntime (story 104)', () => {
 
   it('refuses an unknown id, leaving the file byte-identical', async () => {
     const { path } = seedProject();
-    const before = readFileSync(path, 'utf8');
     const module = await mutable();
+    /*
+      Read *after* the first load, not before it. HIVE-94's backfill writes the
+      generated key on the way past, so a snapshot taken before then would make
+      this assert that the backfill wrote nothing — which is the opposite of
+      what the backfill is for. What is under test here is the refusal, and the
+      refusal must still leave the file exactly as it found it.
+    */
+    module.getConfig();
+    const before = readFileSync(path, 'utf8');
 
     const snapshot = module.setProjectRuntime({ id: 'nope', shell: '/bin/bash' });
 
@@ -1223,5 +1251,305 @@ describe('setProjectRuntime (story 104)', () => {
     expect(written.futureField).toEqual({ keep: true });
     expect(written['// note']).toBe('hi');
     expect(written.shell).toBe('/bin/bash');
+  });
+});
+
+/**
+ * The typing key (HIVE-94) — generated on add, backfilled on load, editable.
+ *
+ * The interesting property throughout is **stability**. A key is only worth
+ * having if the alias a user learned by reading it off a row is still that
+ * alias tomorrow, and generation alone cannot promise that: remove a project
+ * ahead of another in the list and the survivor's preferred key comes free.
+ * Only the file can promise it, which is why a read writes.
+ */
+describe('project keys', () => {
+  const entriesOnDisk = (path: string) =>
+    JSON.parse(readFileSync(path, 'utf8')).projects as Record<string, unknown>[];
+
+  describe('backfill on load', () => {
+    it('generates a key for every keyless project and records it, with no errors', async () => {
+      const one = join(sandbox, 'the-hive');
+      const two = join(sandbox, 'ai-sdk');
+      mkdirSync(one);
+      mkdirSync(two);
+      const path = writeConfig({
+        version: 2,
+        projects: [
+          { id: 'the-hive', name: 'the-hive', path: one },
+          { id: 'ai-sdk', name: 'ai-sdk', path: two },
+        ],
+      });
+      const module = await mutable();
+
+      const snapshot = module.getConfig();
+
+      expect(snapshot.errors).toEqual([]);
+      expect(snapshot.projects.map((project) => project.key)).toEqual([
+        'hive',
+        'as',
+      ]);
+      expect(entriesOnDisk(path).map((entry) => entry.key)).toEqual([
+        'hive',
+        'as',
+      ]);
+    });
+
+    it('writes once, then leaves the file alone on the next read', async () => {
+      const repo = join(sandbox, 'repo');
+      mkdirSync(repo);
+      const path = writeConfig({
+        version: 2,
+        projects: [{ id: 'repo', name: 'repo', path: repo }],
+      });
+      const module = await mutable();
+
+      module.getConfig();
+      const afterFirst = readFileSync(path, 'utf8');
+      module.reloadConfig();
+
+      expect(readFileSync(path, 'utf8')).toBe(afterFirst);
+    });
+
+    /**
+     * The duplicate-key notice survives the write that erases its evidence.
+     *
+     * `withKeys` reports that a hand-written alias was claimed twice and one of
+     * them had to be regenerated — but the file it then writes no longer has the
+     * duplicate, so re-reading it produces no such error. Dropping it would mean
+     * silently changing an alias the user typed and never telling them.
+     */
+    it('still reports a duplicate declared key after rewriting the file', async () => {
+      const one = join(sandbox, 'one');
+      const two = join(sandbox, 'two');
+      mkdirSync(one);
+      mkdirSync(two);
+      const path = writeConfig({
+        version: 2,
+        projects: [
+          { id: 'one', name: 'one', path: one, key: 'ix' },
+          { id: 'two', name: 'two', path: two, key: 'ix' },
+        ],
+      });
+      const module = await mutable();
+
+      const snapshot = module.getConfig();
+
+      expect(
+        snapshot.errors.some((error) =>
+          /duplicate key "ix" on "two"/.test(error),
+        ),
+      ).toBe(true);
+      // And the repair really landed: the file now holds two distinct keys.
+      const written = entriesOnDisk(path).map((entry) => entry.key);
+      expect(new Set(written).size).toBe(2);
+    });
+
+    it('leaves a key the file already declares exactly as it found it', async () => {
+      const repo = join(sandbox, 'repo');
+      mkdirSync(repo);
+      const path = writeConfig({
+        version: 2,
+        projects: [{ id: 'repo', name: 'repo', path: repo, key: 'zz' }],
+      });
+      const module = await mutable();
+
+      expect(module.getConfig().projects[0]?.key).toBe('zz');
+      expect(entriesOnDisk(path)[0].key).toBe('zz');
+    });
+
+    /*
+      A read that writes must still be a read that *works*. A config on a
+      read-only volume loads with usable keys in memory and says, in `errors`,
+      that they did not stick — refusing to launch over an alias would be
+      wildly out of proportion.
+    */
+    it('still loads with working keys when the file cannot be written', async () => {
+      const repo = join(sandbox, 'repo');
+      mkdirSync(repo);
+      const path = writeConfig({
+        version: 2,
+        projects: [{ id: 'repo', name: 'repo', path: repo }],
+      });
+      chmodSync(sandbox, 0o500);
+      try {
+        const module = await mutable();
+        const snapshot = module.getConfig();
+
+        expect(snapshot.projects[0]?.key).toMatch(/^[a-z]{2,4}$/);
+        expect(
+          snapshot.errors.some((error) =>
+            /could not save generated project keys/.test(error),
+          ),
+        ).toBe(true);
+      } finally {
+        chmodSync(sandbox, 0o700);
+        expect(existsSync(path)).toBe(true);
+      }
+    });
+
+    it('preserves per-entry keys it does not own', async () => {
+      const repo = join(sandbox, 'repo');
+      mkdirSync(repo);
+      const path = writeConfig({
+        version: 2,
+        projects: [{ id: 'repo', name: 'repo', path: repo, note: 'keep me' }],
+      });
+      const module = await mutable();
+
+      module.getConfig();
+
+      // Spread, never rebuilt — the same rule `renameProject` follows.
+      expect(entriesOnDisk(path)[0].note).toBe('keep me');
+    });
+  });
+
+  describe('addProject', () => {
+    it('gives a new project a key that does not collide with a declared one', async () => {
+      const existing = join(sandbox, 'existing');
+      const added = join(sandbox, 'incorpx-server');
+      mkdirSync(existing);
+      mkdirSync(added);
+      writeConfig({
+        version: 2,
+        projects: [{ id: 'existing', name: 'existing', path: existing, key: 'is' }],
+      });
+      const module = await mutable();
+
+      const snapshot = module.addProject({ path: added });
+
+      expect(snapshot.errors).toEqual([]);
+      expect(snapshot.projects[1]?.key).toBe('ise');
+    });
+
+    /*
+      The address space, not just the keys. `resolveProjectRef` tries key before
+      id, so a minted key equal to an existing id would silently take that id's
+      spawns.
+    */
+    it('never mints a key that is already another project’s id', async () => {
+      const existing = join(sandbox, 'web');
+      const added = join(sandbox, 'web-extension-builder');
+      mkdirSync(existing);
+      mkdirSync(added);
+      writeConfig({
+        version: 2,
+        projects: [
+          { id: 'web', name: 'Frontend', path: existing, key: 'fro' },
+        ],
+      });
+      const module = await mutable();
+
+      expect(module.addProject({ path: added }).projects[1]?.key).not.toBe(
+        'web',
+      );
+    });
+
+    it('derives the key from the name the caller gave, not the folder', async () => {
+      const added = join(sandbox, 'x');
+      mkdirSync(added);
+      writeConfig({ version: 2, projects: [] });
+      const module = await mutable();
+
+      expect(
+        module.addProject({ path: added, name: 'Command Centre' }).projects[0]
+          ?.key,
+      ).toBe('cc');
+    });
+  });
+
+  describe('setProjectKey', () => {
+    /**
+     * Two projects, both with declared keys.
+     *
+     * `extra` adds a per-entry key this build has never heard of. It is opt-in
+     * because an unknown key is *reported* — advisory, not fatal — and the
+     * tests that assert `errors` is empty would otherwise be asserting the
+     * fixture rather than the verb.
+     */
+    const seedTwo = async (extra: Record<string, unknown> = {}) => {
+      const one = join(sandbox, 'one');
+      const two = join(sandbox, 'two');
+      mkdirSync(one);
+      mkdirSync(two);
+      const path = writeConfig({
+        version: 2,
+        projects: [
+          { id: 'one', name: 'one', path: one, key: 'on', ...extra },
+          { id: 'two', name: 'two', path: two, key: 'tw' },
+        ],
+      });
+      return { path, module: await mutable() };
+    };
+
+    it('writes the new key and never touches the id', async () => {
+      const { path, module } = await seedTwo();
+
+      const snapshot = module.setProjectKey({ id: 'one', key: 'ix' });
+
+      expect(snapshot.errors).toEqual([]);
+      expect(snapshot.projects[0]).toMatchObject({ id: 'one', key: 'ix' });
+      expect(entriesOnDisk(path)[0]).toMatchObject({ id: 'one', key: 'ix' });
+      expect(module.getConfig().projects[0]?.key).toBe('ix');
+    });
+
+    it('preserves per-entry keys it does not own', async () => {
+      const { path, module } = await seedTwo({ note: 'keep me' });
+
+      module.setProjectKey({ id: 'one', key: 'ix' });
+
+      expect(entriesOnDisk(path)[0].note).toBe('keep me');
+    });
+
+    /*
+      Checked against the draft rather than the cache. The config is not
+      watched, so the renderer's list can be older than the file — a check
+      against the snapshot would happily write a key a hand edit had already
+      given to someone else.
+    */
+    it('refuses a key another project already holds, writing nothing', async () => {
+      const { path, module } = await seedTwo();
+      const before = readFileSync(path, 'utf8');
+
+      const snapshot = module.setProjectKey({ id: 'one', key: 'tw' });
+
+      expect(snapshot.errors[0]).toMatch(
+        /the key "tw" is already used by "two"/,
+      );
+      expect(readFileSync(path, 'utf8')).toBe(before);
+      expect(module.getConfig().projects[0]?.key).toBe('on');
+    });
+
+    it('refuses a key that is another project’s id, writing nothing', async () => {
+      const { path, module } = await seedTwo();
+      const before = readFileSync(path, 'utf8');
+
+      // `two` is an id, not a key — and refusing it is the whole point: the
+      // resolver tries key first, so accepting it would move `spawn two`.
+      const snapshot = module.setProjectKey({ id: 'one', key: 'two' });
+
+      expect(snapshot.errors[0]).toMatch(
+        /the key "two" is already used by "two"/,
+      );
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+
+    it('allows a project to be given the key it already has', async () => {
+      const { module } = await seedTwo();
+
+      // Confirming the status quo is not a collision — the same allowance
+      // `repointProject` makes for a project re-pointed at its own folder.
+      expect(module.setProjectKey({ id: 'one', key: 'on' }).errors).toEqual([]);
+    });
+
+    it('refuses an id that is not in the file, writing nothing', async () => {
+      const { path, module } = await seedTwo();
+      const before = readFileSync(path, 'utf8');
+
+      expect(module.setProjectKey({ id: 'nope', key: 'ix' }).errors[0]).toMatch(
+        /no project with id "nope"/,
+      );
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
   });
 });

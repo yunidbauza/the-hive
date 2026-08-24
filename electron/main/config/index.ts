@@ -9,8 +9,10 @@ import {
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
   emptySnapshot,
+  projectAliases,
   type AddProjectRequest,
   type ConfigSnapshot,
+  type ProjectConfig,
   type ProjectOrigin,
   type RemoveProjectRequest,
   type RenameProjectRequest,
@@ -18,13 +20,14 @@ import {
   type RepointProjectRequest,
   type SetJiraRequest,
   type SetNotificationsRequest,
+  type SetProjectKeyRequest,
   type SetProjectRuntimeRequest,
   type SetRuntimeRequest,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
 
-import { deriveProjectId } from './identity';
-import { parseConfig } from './parse';
+import { deriveProjectId, deriveProjectKey } from './identity';
+import { parseConfig, type RawProject } from './parse';
 import { configPath, describe } from './paths';
 import { resolveProject, resolveProjects } from './resolve';
 import { defaultShell } from './shell';
@@ -104,7 +107,7 @@ export function loadConfig(): ConfigSnapshot {
   const parsed = parseConfig(text, LABEL);
   const projects = resolveProjects(parsed.projects, parsed.errors);
 
-  return {
+  const snapshot: ConfigSnapshot = {
     configPath: path,
     templateWritten: false,
     shell: parsed.shell ?? shell,
@@ -135,6 +138,107 @@ export function loadConfig(): ConfigSnapshot {
     jira: { ...DEFAULT_JIRA, ...parsed.jira },
     errors: parsed.errors,
   };
+
+  return backfillKeys(path, parsed.projects, projects, snapshot);
+}
+
+/**
+ * Write the keys the resolver just invented back to the file (HIVE-94).
+ *
+ * A read that writes, which is unusual enough to justify: `ProjectConfig.key`
+ * is required, so *some* key exists in memory the moment a project is loaded,
+ * and a key that were regenerated on every launch would be a different key
+ * every time another project was added ahead of it in the list. The alias a
+ * user learned by reading it off a row has to still be that alias tomorrow, and
+ * the only place that can promise it is the file.
+ *
+ * Best-effort by construction. A config on a read-only volume, or one being
+ * held open by an editor, still loads with working keys — it just gets an
+ * `errors` line saying they did not stick. Refusing to launch over an alias
+ * would be wildly out of proportion.
+ *
+ * **It reformats the file, and that is the cost of the guarantee.** `writeConfig`
+ * re-serialises the whole document, so a config whose whitespace differs from
+ * `JSON.stringify(…, null, 2)` is rewritten on the first launch after upgrading
+ * — which, for the symlinked-into-dotfiles config `write.ts` deliberately
+ * supports, is a dirty working tree the user did not cause. It happens **once**:
+ * the next load finds every key present, `pending` is empty, and nothing is
+ * written. Comments, unknown keys, key order, file mode and the symlink itself
+ * all survive, because this goes through the same guarded write path every
+ * other mutation uses. The alternative — keeping the keys in memory only —
+ * regenerates them whenever the project list changes, which is not an alias
+ * anyone can learn.
+ */
+function backfillKeys(
+  path: string,
+  raws: readonly RawProject[],
+  resolved: readonly ProjectConfig[],
+  snapshot: ConfigSnapshot,
+): ConfigSnapshot {
+  const pending = new Map<string, string>();
+  const seen = new Set<string>();
+
+  raws.forEach((raw, index) => {
+    const project = resolved[index];
+    if (project === undefined) return;
+    /*
+      A duplicate id cannot be addressed in the file by id alone, so neither
+      entry is touched. The second one is disabled by `resolveProjects` anyway,
+      and writing the first one's key onto both would put a duplicate key in the
+      file to fix a missing one.
+    */
+    if (seen.has(raw.id)) {
+      pending.delete(raw.id);
+      return;
+    }
+    seen.add(raw.id);
+    if (raw.key !== project.key) pending.set(raw.id, project.key);
+  });
+
+  if (pending.size === 0) return snapshot;
+
+  const result = writeConfig(
+    (draft) => ({
+      ...draft,
+      projects: projectsOf(draft).map((entry) => {
+        const id = idOf(entry);
+        const key = id === null ? undefined : pending.get(id);
+        // Spread, never rebuilt — the same rule `renameProject` follows, and
+        // what keeps a per-entry key this build does not know about alive.
+        return key === undefined
+          ? entry
+          : { ...(entry as Record<string, unknown>), key };
+      }),
+    }),
+    // Nobody saved anything; they launched the app. Migrating their schema on
+    // the way past would be a second, unasked-for change — see `WriteOptions`.
+    { keepDeclaredVersion: true },
+  );
+
+  if (result.ok) {
+    /*
+      Carry forward anything the *pre-write* parse reported that the re-parse
+      cannot see any more. `withKeys` pushes a line when the file declared the
+      same key twice and one of them had to be regenerated — and the file it
+      just wrote no longer has that duplicate, so re-reading it produces no such
+      notice. Dropping it would mean silently changing an alias the user typed
+      by hand and never telling them.
+
+      Filtered rather than concatenated: an error about something still true of
+      the file (an unresolvable path) is produced by both parses, and reporting
+      it twice would be its own small lie.
+    */
+    const carried = snapshot.errors.filter(
+      (error) => !result.snapshot.errors.includes(error),
+    );
+    result.snapshot.errors.push(...carried);
+    return result.snapshot;
+  }
+
+  snapshot.errors.push(
+    `${LABEL}: could not save generated project keys to ${path} (${result.reason}) — they will be generated again on the next launch`,
+  );
+  return snapshot;
 }
 
 let cached: ConfigSnapshot | null = null;
@@ -177,6 +281,34 @@ function idOf(entry: unknown): string | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const id = (entry as Record<string, unknown>).id;
   return typeof id === 'string' ? id : null;
+}
+
+/** Read one entry's declared key off a raw draft entry (HIVE-94). */
+function keyOf(entry: unknown): string | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+  const key = (entry as Record<string, unknown>).key;
+  return typeof key === 'string' ? key : null;
+}
+
+/**
+ * Every string a draft entry already answers to (HIVE-94).
+ *
+ * Read off the *draft* rather than the snapshot for the reason every check in
+ * this file is: the config is not watched, so the cache can be older than the
+ * file. See {@link projectAliases} for why a key must avoid ids and names and
+ * not merely other keys.
+ */
+function aliasesOf(entry: unknown): string[] {
+  const id = idOf(entry);
+  if (id === null) return [];
+  const name = typeof entry === 'object' && entry !== null
+    ? (entry as Record<string, unknown>).name
+    : undefined;
+  return projectAliases({
+    id,
+    name: typeof name === 'string' ? name : null,
+    key: keyOf(entry),
+  });
 }
 
 /** Read one entry's declared path off a raw draft entry. */
@@ -258,6 +390,19 @@ export function addProject(
       const taken = new Set(
         entries.map(idOf).filter((id): id is string => id !== null),
       );
+      /*
+        The whole address space, not just the keys (HIVE-94).
+
+        A key must avoid every id and name too — `resolveProjectRef` searches
+        one space and tries key first, so a key equal to another project's id
+        would silently take that id's spawns. And only *declared* keys count as
+        claimed: an entry without one has not claimed anything yet, and
+        `resolveProjects` hands out generated keys only after every declared key
+        is, so the key minted here cannot be stolen by a backfill on the next
+        read.
+      */
+      const takenKeys = new Set(entries.flatMap(aliasesOf));
+      const name = request.name ?? basename(real);
 
       return {
         ...draft,
@@ -265,7 +410,8 @@ export function addProject(
           ...entries,
           {
             id: deriveProjectId(basename(real), taken),
-            name: request.name ?? basename(real),
+            key: deriveProjectKey(name, takenKeys),
+            name,
             path: request.path,
             icon: DEFAULT_PROJECT_ICON,
             origin,
@@ -329,6 +475,59 @@ export function renameProject(request: RenameProjectRequest): ConfigSnapshot {
         projects: entries.map((entry) =>
           idOf(entry) === request.id
             ? { ...(entry as Record<string, unknown>), name: request.name }
+            : entry,
+        ),
+      };
+    }),
+  );
+}
+
+/**
+ * Change one project's typing alias (HIVE-94).
+ *
+ * A sibling of {@link renameProject}, down to spreading the entry rather than
+ * rebuilding it, with one thing the rename does not have to do: a key must be
+ * **unique**, and the check runs against the draft rather than the cache. The
+ * config is deliberately not watched, so the renderer's list can be older than
+ * the file — a uniqueness check against the snapshot would happily write a key
+ * that a hand edit had already given to someone else, and the next read would
+ * report a duplicate the user never typed.
+ *
+ * `id` is untouched, which is the whole reason the key can be edited at all:
+ * sessions reference `entity.project`, and nothing downstream of here has ever
+ * seen the key.
+ */
+export function setProjectKey(request: SetProjectKeyRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      if (!entries.some((entry) => idOf(entry) === request.id)) {
+        throw new WriteRefused(`no project with id "${request.id}"`);
+      }
+
+      for (const entry of entries) {
+        // Skip the project being edited: re-typing the key it already has is a
+        // no-op the user is allowed to perform, exactly as `repointProject`
+        // lets a project be re-pointed at its own folder.
+        if (idOf(entry) === request.id) continue;
+        /*
+          Refused against the whole address space, not just the other keys. A
+          key that equals another project's **id** is the dangerous case — the
+          resolver tries key first, so that id's spawns would silently move —
+          and it is invisible to a check that only compares keys.
+        */
+        if (aliasesOf(entry).includes(request.key)) {
+          throw new WriteRefused(
+            `the key "${request.key}" is already used by "${idOf(entry) ?? 'an existing entry'}"`,
+          );
+        }
+      }
+
+      return {
+        ...draft,
+        projects: entries.map((entry) =>
+          idOf(entry) === request.id
+            ? { ...(entry as Record<string, unknown>), key: request.key }
             : entry,
         ),
       };

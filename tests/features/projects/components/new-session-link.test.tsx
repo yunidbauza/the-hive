@@ -16,6 +16,8 @@ import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 /**
  * Starting a session from the projects tree.
  *
@@ -44,6 +46,7 @@ function snapshot(
       icon: 'ph-folder',
       origin: 'local' as const,
       status,
+      key: testProjectKey(id),
       isRepo: true,
     })),
     notifications: { ...DEFAULT_NOTIFICATIONS },

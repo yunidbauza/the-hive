@@ -14,6 +14,8 @@ import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
+import { testProjectKey } from '@tests/support/project-key';
+
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
 const removeProjectFromConfig = vi.fn();
@@ -35,6 +37,7 @@ const entry = (over: Partial<ProjectConfig> & { id: string }): ProjectConfig => 
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
+  key: testProjectKey(over.id),
   isRepo: true,
   ...over,
 });

@@ -695,11 +695,33 @@ describe('TerminalSurface', () => {
   });
 
   describe('the keyboard, when interactive (story 095)', () => {
-    /** Drive the installed handler with a synthetic event. */
-    function press(init: Partial<KeyboardEventInit> & { key: string }): boolean {
+    /**
+     * Drive the installed handler, handing back both the verdict and the event.
+     *
+     * **`cancelable` is load-bearing, and it is why there is only one helper
+     * here.** `preventDefault()` on a non-cancelable event is a silent no-op
+     * that leaves `defaultPrevented` false, so a helper building plain
+     * `new KeyboardEvent('keydown', init)` would make any cancellation
+     * assertion unfalsifiable — it would fail against a perfectly correct
+     * handler. A real keydown is always cancelable; these have to be too, for
+     * *every* case rather than only the two that assert it today. Four other
+     * cases already cancel (`line-start`, `line-end`, `newline`, `app-chord`),
+     * and the next test to check one of them should not have to rediscover
+     * this.
+     */
+    function pressCancelable(init: Partial<KeyboardEventInit> & { key: string }): {
+      handled: boolean;
+      event: KeyboardEvent;
+    } {
       const handler = terminal().keyEventHandler;
       if (!handler) throw new Error('no custom key handler was installed');
-      return handler(new KeyboardEvent('keydown', init));
+      const event = new KeyboardEvent('keydown', { cancelable: true, ...init });
+      return { handled: handler(event), event };
+    }
+
+    /** The verdict alone, for the cases whose contract is only accept/decline. */
+    function press(init: Partial<KeyboardEventInit> & { key: string }): boolean {
+      return pressCancelable(init).handled;
     }
 
     function renderInteractive() {
@@ -990,12 +1012,22 @@ describe('TerminalSurface', () => {
       terminal().selection = 'copied text';
       const mac = /mac/i.test(navigator.platform || navigator.userAgent);
 
-      const handled = press(
+      const { handled, event } = pressCancelable(
         mac ? { key: 'c', metaKey: true } : { key: 'C', ctrlKey: true, shiftKey: true },
       );
 
       expect(handled).toBe(false);
       expect(writeText).toHaveBeenCalledWith('copied text');
+      /**
+       * Cancelled, not merely declined (HIVE-92).
+       *
+       * Returning `false` is not a cancel: xterm's `_keyDown` returns early on a
+       * false custom-handler result, *before* it would reach its own
+       * `cancel(event)`. The keydown keeps its default action, so the browser
+       * runs its native Copy against the focused helper textarea — racing the
+       * `clearSelection` above for the very selection it is trying to copy.
+       */
+      expect(event.defaultPrevented).toBe(true);
       /**
        * Cleared, so the next press means something different. On Linux bare
        * Ctrl+C copies only *because* there is a selection — leaving it would
@@ -1013,14 +1045,70 @@ describe('TerminalSurface', () => {
       renderInteractive();
       const mac = /mac/i.test(navigator.platform || navigator.userAgent);
 
-      expect(
-        press(
-          mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true },
-        ),
-      ).toBe(false);
+      const { handled, event } = pressCancelable(
+        mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true },
+      );
 
+      expect(handled).toBe(false);
       await vi.waitFor(() => expect(terminal().paste).toHaveBeenCalledWith('pasted'));
+      /**
+       * The whole of HIVE-92: without this, the clipboard arrives **twice**.
+       *
+       * Path A is the `terminal.paste` asserted above. Path B is the browser's
+       * own Paste, which an uncancelled keydown still performs against xterm's
+       * focused helper textarea — firing xterm's `paste` listener,
+       * `triggerDataEvent`, `onData`, and a second `transport.write`. On macOS
+       * the Edit menu's `{ role: 'paste' }` is a third route to the same
+       * duplicate, reached because an unhandled keydown is forwarded to the
+       * menu (`registerAccelerator: false` is not honoured there, so the fix
+       * cannot live in the menu).
+       *
+       * The xterm fake has no native paste listener, so path B cannot exist
+       * under happy-dom — which is exactly why the bug shipped green. This
+       * assertion stands in for it; the e2e paste-once scenario proves the real
+       * thing against a real Chromium.
+       */
+      expect(event.defaultPrevented).toBe(true);
 
+      vi.unstubAllGlobals();
+    });
+
+    /**
+     * Cancelling the keydown made these the *only* path (HIVE-92).
+     *
+     * Before the fix a rejected `readText` was survivable by accident: the
+     * browser's own Paste still ran, so the chord appeared to work. Now a
+     * rejection means the chord did nothing at all, and a failure that leaves
+     * no trace is the kind of silence that cost this bug a diagnosis. Still not
+     * rethrown — an unhandled rejection in a working app is worse — but it has
+     * to be greppable.
+     */
+    it('warns rather than failing silently when the clipboard rejects', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const denied = new Error('NotAllowedError');
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        clipboard: {
+          readText: vi.fn(() => Promise.reject(denied)),
+          writeText: vi.fn(() => Promise.reject(denied)),
+        },
+      });
+
+      renderInteractive();
+      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+
+      press(mac ? { key: 'v', metaKey: true } : { key: 'V', ctrlKey: true, shiftKey: true });
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith('terminal: clipboard paste failed', denied),
+      );
+
+      terminal().selection = 'copied text';
+      press(mac ? { key: 'c', metaKey: true } : { key: 'C', ctrlKey: true, shiftKey: true });
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith('terminal: clipboard copy failed', denied),
+      );
+
+      warn.mockRestore();
       vi.unstubAllGlobals();
     });
   });

@@ -2,6 +2,7 @@ import { DotsSixVertical } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 
 import { Icon } from '@components/ui/icon';
+import { ProjectKey } from '@components/ui/project-key';
 import { Tag } from '@components/ui/tag';
 import type { ProjectConfig } from '@shared/config-contract';
 
@@ -15,6 +16,8 @@ interface ProjectRowProps {
   onDragEnd: () => void;
   /** The inline name editor, when this row is being renamed. */
   editor: ReactNode;
+  /** The inline key editor, when this row's key is being changed (HIVE-94). */
+  keyEditor: ReactNode;
   /** The row's overflow menu. */
   menu: ReactNode;
 }
@@ -41,6 +44,7 @@ export function ProjectRow({
   onDrop,
   onDragEnd,
   editor,
+  keyEditor,
   menu,
 }: ProjectRowProps) {
   const detail = project.path ?? 'unresolved';
@@ -84,6 +88,17 @@ export function ProjectRow({
       </span>
 
       <Icon name={project.icon} className="shrink-0 text-muted" />
+
+      {/*
+        Between the icon and the name, and never hidden behind a hover: the key
+        is only worth having if it can be read off the list and typed (HIVE-94).
+      */}
+      {keyEditor ?? (
+        <ProjectKey
+          value={project.key}
+          title={`type "${project.key}" wherever a project is asked for`}
+        />
+      )}
 
       <div className="flex min-w-0 flex-1 flex-col">
         {editor ?? (

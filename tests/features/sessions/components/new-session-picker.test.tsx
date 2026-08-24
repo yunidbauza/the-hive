@@ -10,10 +10,16 @@ import {
 } from '@shared/config-contract';
 
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  projectConfigSnapshot,
+  resetProjectConfig,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
+
+import { testProjectKey } from '@tests/support/project-key';
 
 const search = () => screen.getByRole('textbox', { name: 'Search all projects' });
 const rowsFor = (name: RegExp) => screen.getAllByRole('button', { name });
@@ -105,11 +111,58 @@ describe('NewSessionPicker', () => {
       await user.type(search(), 'REFERRAL');
 
       // The pinned pills are unfiltered, so scope to the result rows — they are
-      // the ones whose name carries a count.
-      expect(rowsFor(/^referral-api \d+ active$/)).toHaveLength(1);
+      // the ones whose name carries a count. The key chip leads the row since
+      // HIVE-94, so it leads the accessible name too.
+      expect(rowsFor(/^re referral-api \d+ active$/)).toHaveLength(1);
       expect(
-        screen.queryByRole('button', { name: /^design-system \d+ active$/ }),
+        screen.queryByRole('button', { name: /^de design-system \d+ active$/ }),
       ).not.toBeInTheDocument();
+    });
+
+    /**
+     * The key is searchable, not merely displayed (HIVE-94).
+     *
+     * Without this the chip would be decoration: a user who learned `re` off a
+     * row would type it here and be told nothing matches, which is exactly the
+     * confusion an alias is supposed to remove.
+     */
+    it('finds a project by its key', async () => {
+      const user = userEvent.setup();
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 're');
+
+      expect(rowsFor(/^re referral-api \d+ active$/)).toHaveLength(1);
+    });
+
+    it('finds a project by its display name', async () => {
+      const user = userEvent.setup();
+      /*
+        The demo config sets every `name` to the id, which cannot tell a name
+        match apart from an id match — so this one project is given a display
+        name that shares nothing with either of its other two handles.
+      */
+      const current = projectConfigSnapshot()!;
+      setProjectConfigForTest({
+        ...current,
+        projects: [
+          {
+            id: 'the-hive',
+            key: 'th',
+            name: 'Command Centre',
+            path: '/repos/the-hive',
+            icon: 'ph-folder',
+            origin: 'local',
+            status: 'ok',
+            isRepo: true,
+          },
+        ],
+      });
+      render(<NewSessionPicker />);
+
+      await user.type(search(), 'command');
+
+      expect(rowsFor(/^th the-hive \d+ active$/)).toHaveLength(1);
     });
 
     it('matches a substring, not just a prefix', async () => {
@@ -138,10 +191,10 @@ describe('NewSessionPicker', () => {
       // apfm-web: hero-refresh, lead-form, e2e-quote. `tz-fix` is done and does
       // not count, which is what makes this a live number rather than a total.
       expect(
-        screen.getByRole('button', { name: 'apfm-web 3 active' }),
+        screen.getByRole('button', { name: 'ap apfm-web 3 active' }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'advisor-portal 1 active' }),
+        screen.getByRole('button', { name: 'ad advisor-portal 1 active' }),
       ).toBeInTheDocument();
     });
   });
@@ -326,6 +379,7 @@ describe('NewSessionPicker · unmapped projects', () => {
         icon: 'ph-folder',
         origin: 'local' as const,
         status,
+        key: testProjectKey(id),
         isRepo: true,
       })),
       env: {},
@@ -401,7 +455,7 @@ describe('NewSessionPicker · unmapped projects', () => {
 
     await user.type(search(), 'apfm');
 
-    const row = screen.getByRole('button', { name: 'apfm-web unmapped' });
+    const row = screen.getByRole('button', { name: 'ap apfm-web unmapped' });
     expect(row).toBeDisabled();
     expect(row).toHaveAttribute('title', expect.stringContaining('missing'));
   });

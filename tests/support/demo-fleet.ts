@@ -7,6 +7,9 @@ import type { PrRecord } from '@shared/github-contract';
 import { setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 
+import { testProjectKey } from './project-key';
+
+
 /**
  * A sample fleet, for tests that need one.
  *
@@ -578,6 +581,7 @@ export function seedDemoProjectConfig(): void {
       icon: project.icon,
       origin: 'local',
       status: 'ok',
+      key: testProjectKey(project.id),
       isRepo: true,
     })),
   });

@@ -84,7 +84,7 @@ describe('parseCommand', () => {
       });
 
       expect(parseCommand('spawn apfm-web do  this\nthen  that')).toMatchObject({
-        repo: 'apfm-web',
+        project: 'apfm-web',
         task: 'do this\nthen that',
       });
     });
@@ -144,11 +144,11 @@ describe('parseCommand', () => {
   });
 
   describe('spawn', () => {
-    it('takes a repo and the rest of the line as the task', () => {
+    it('takes a project and the rest of the line as the task', () => {
       expect(parseCommand('spawn apfm-web fix the footer')).toEqual({
         kind: 'spawn',
         raw: 'spawn apfm-web fix the footer',
-        repo: 'apfm-web',
+        project: 'apfm-web',
         task: 'fix the footer',
       });
     });
@@ -161,10 +161,62 @@ describe('parseCommand', () => {
       });
     });
 
-    it('reports usage when the repo is missing', () => {
+    it('reports usage when the project is missing', () => {
       expect(parseCommand('spawn')).toMatchObject({
         kind: 'usage',
         command: 'spawn',
+      });
+    });
+
+    /**
+     * Quoted project references (HIVE-94).
+     *
+     * A project can be named by its *display name*, which is prose and may
+     * contain spaces — and `spawn The Hive fix the bug` is unparseable by
+     * construction, because nothing in it says where the name stops. Quotes are
+     * how the user says so, and they are the convention every shell taught them.
+     */
+    it('takes a double-quoted project as one argument', () => {
+      expect(parseCommand('spawn "The Hive" fix the footer')).toEqual({
+        kind: 'spawn',
+        raw: 'spawn "The Hive" fix the footer',
+        project: 'The Hive',
+        task: 'fix the footer',
+      });
+    });
+
+    it('takes a single-quoted project too', () => {
+      expect(parseCommand("spawn 'The Hive' fix it")).toMatchObject({
+        project: 'The Hive',
+        task: 'fix it',
+      });
+    });
+
+    /*
+      An unterminated quote falls back to plain word-splitting rather than
+      swallowing the line. `"The` then fails to resolve and is reported as an
+      unknown project — a far better outcome than silently eating the task.
+    */
+    it('does not let an unterminated quote consume the task', () => {
+      expect(parseCommand('spawn "The Hive fix the footer')).toMatchObject({
+        project: '"The',
+        task: 'Hive fix the footer',
+      });
+    });
+
+    it('treats an empty quoted argument as a missing one', () => {
+      expect(parseCommand('spawn "" fix the footer')).toMatchObject({
+        kind: 'usage',
+        command: 'spawn',
+      });
+    });
+
+    // A quote elsewhere in the line is ordinary text: only the first character
+    // of the argument decides, and there is no escaping anywhere in the grammar.
+    it('leaves a quote inside the task alone', () => {
+      expect(parseCommand('spawn hive say "hello there"')).toMatchObject({
+        project: 'hive',
+        task: 'say "hello there"',
       });
     });
   });

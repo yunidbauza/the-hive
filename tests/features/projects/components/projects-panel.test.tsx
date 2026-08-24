@@ -182,6 +182,7 @@ describe('ProjectsPanel', () => {
             icon: 'ph-cube',
             origin: 'local',
             status: 'ok',
+            key: 'solo',
             isRepo: true,
           },
         ],

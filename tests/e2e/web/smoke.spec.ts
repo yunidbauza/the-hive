@@ -243,3 +243,49 @@ test('mounts a live xterm instance that has measured its container', async ({ pa
    */
   await expect(terminal.locator('canvas')).toHaveCount(0);
 });
+
+/**
+ * The console calls the thing a project, and says what a project can be (HIVE-94).
+ *
+ * Driven in a real browser rather than asserted against `HELP_LINES` directly,
+ * because what is at stake is what a *user* sees when they type `help` — the
+ * one place the grammar is discoverable. A unit test on the constant would pass
+ * just as happily if the console had stopped rendering it.
+ *
+ * The browser target is the right home: `help` is pure renderer, and with no
+ * config behind it the output is exactly the static grammar, so this cannot
+ * flake on whatever projects a machine happens to have.
+ */
+test('help names the spawn argument a project, and explains what one is', async ({
+  page,
+}) => {
+  const console_ = page.getByRole('textbox', { name: 'Overmind command' });
+
+  await console_.fill('help');
+  await console_.press('Enter');
+
+  const stage = page.getByRole('main');
+  await expect(
+    stage.getByText('spawn <project> <task>', { exact: false }),
+  ).toBeVisible();
+  await expect(
+    stage.getByText('<project> is a key, an id or a name', { exact: false }),
+  ).toBeVisible();
+  // The old wording is gone, not merely joined.
+  await expect(stage.getByText('spawn <repo>', { exact: false })).toHaveCount(0);
+});
+
+/**
+ * The placeholder follows the grammar (HIVE-94).
+ *
+ * It is the hint a user reads *before* they know `help` exists, so it teaching
+ * a spelling the parser no longer prefers is the worst version of this bug.
+ */
+test('the console placeholder names a project too', async ({ page }) => {
+  await expect(
+    page.getByRole('textbox', { name: 'Overmind command' }),
+  ).toHaveAttribute(
+    'placeholder',
+    'help · status · send <session> <message> · spawn <project> <task>',
+  );
+});

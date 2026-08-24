@@ -20,6 +20,7 @@ const project = (over: Partial<ProjectConfig> = {}): ProjectConfig => ({
   icon: 'ph-cube',
   origin: 'local',
   status: 'ok',
+  key: 'aw',
   isRepo: true,
   ...over,
 });

@@ -46,6 +46,23 @@ export interface ProjectConfig {
    * fallback rather than the schema.
    */
   id: string;
+  /**
+   * A short alias the user can type instead of the id (HIVE-94).
+   *
+   * Two to four lowercase letters, unique across the file, **derived** from the
+   * name when the entry does not declare one and editable afterwards. It exists
+   * because the id is a kebab slug of the folder name — up to forty characters
+   * — and `spawn incorpx-server …` is the whole name every time.
+   *
+   * An **alias, never an identity**: sessions reference projects through
+   * `entity.project`, so the id stays the thing that is stored and the key
+   * stays the thing that is typed. Changing a key strands nothing.
+   *
+   * Required here but optional in the file: `parse.ts` accepts an entry without
+   * one and {@link ProjectConfig} is the *resolved* shape, so by the time a
+   * snapshot exists every project has a key — see `resolveProjects`.
+   */
+  key: string;
   /** Display name. Defaults to the resolved directory's basename. */
   name: string;
   /** The resolved, symlink-free absolute path — or `null` when unusable. */
@@ -541,6 +558,69 @@ export const SUPPORTED_CONFIG_VERSIONS: readonly number[] = [1, 2];
 /** What a project entry gets when the file names no icon. */
 export const DEFAULT_PROJECT_ICON = 'ph-folder';
 
+/**
+ * What a project key is allowed to look like (HIVE-94).
+ *
+ * Two to four lowercase letters — no digits, no separators. The bound is what
+ * makes the key worth having: a key that could be eight characters long would
+ * drift back towards the id it exists to shorten, and one that could carry a
+ * digit would let the collision fallback mint `is2`, which is a slug rather
+ * than an alias.
+ *
+ * It lives in the contract rather than in `guards.ts` because **three** layers
+ * need it and they must not disagree: the IPC guard refuses a bad one, the
+ * config reader reports one, and the inline editor in Settings has to grey out
+ * *Enter to save* while the user is still typing. `guards.ts` is the boundary
+ * and pulls in the whole request surface behind it, so the renderer imports
+ * this file — as it already does for `unsafeEnvReason`.
+ */
+export const PROJECT_KEY_PATTERN = /^[a-z]{2,4}$/;
+
+/** The one sentence every layer uses to say what a key must be. */
+export const PROJECT_KEY_HINT = '2–4 lowercase letters';
+
+/**
+ * Whether a string is a usable project key.
+ *
+ * A function rather than a bare `.test()` at each call site so the pattern is
+ * never copied, and never accidentally given the `g` flag's stateful `lastIndex`
+ * by a future edit.
+ */
+export const isProjectKey = (value: string): boolean =>
+  PROJECT_KEY_PATTERN.test(value);
+
+/**
+ * Every string a project already answers to, lowercased (HIVE-94).
+ *
+ * A key is not unique merely by being unlike the other keys. `resolveProjectRef`
+ * searches **one address space** — key, then id, then name — and it searches key
+ * *first*, so a key that happens to equal another project's id silently takes
+ * that id's spawns. That is not hypothetical: a project at `~/repos/web` (id
+ * `web`) renamed to "Frontend" derives the key `fro` and leaves `web` free, and
+ * the next project called "Web Extension Builder" mints exactly `web` — after
+ * which `spawn web`, which had always meant the first, starts an agent in the
+ * second with no warning anywhere.
+ *
+ * So this is the set every *generated* key must avoid and every *typed* key is
+ * refused against. Ids and names are folded to lowercase because the resolver
+ * matches case-insensitively; a value that could never be a key (a forty
+ * character id) is harmless in the set and cheaper to include than to filter.
+ *
+ * A project's own handles are not excluded here — callers drop the entry being
+ * keyed, because a project answering to its own id under two fields is not a
+ * collision with anything.
+ */
+export function projectAliases(project: {
+  id: string;
+  name?: string | null;
+  key?: string | null;
+}): string[] {
+  const aliases = [project.id.toLowerCase()];
+  if (project.name) aliases.push(project.name.toLowerCase());
+  if (project.key) aliases.push(project.key.toLowerCase());
+  return aliases;
+}
+
 /** The last-resort shell: used off darwin when the password database has no usable entry. */
 export const DEFAULT_SHELL = '/bin/sh';
 
@@ -908,6 +988,21 @@ export interface RemoveProjectRequest {
 export interface RenameProjectRequest {
   id: string;
   name: string;
+}
+
+/**
+ * Payload of `config:set-project-key` (HIVE-94).
+ *
+ * A mirror of {@link RenameProjectRequest}, and for the same reason: `id` names
+ * the entry and is never rewritten. The difference is only in what is being
+ * edited — the name is what the project is *called*, the key is what it is
+ * *typed as* — and in uniqueness, which a name does not have to satisfy and a
+ * key does. Main checks that against the file it is about to write, not against
+ * the renderer's snapshot, because the config is deliberately not watched.
+ */
+export interface SetProjectKeyRequest {
+  id: string;
+  key: string;
 }
 
 /**

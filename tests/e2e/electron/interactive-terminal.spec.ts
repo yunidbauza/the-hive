@@ -681,3 +681,178 @@ test('Shift+Enter is a line break, not a submit', async ({}, testInfo) => {
     await app.close();
   }
 });
+
+/**
+ * The clipboard arrives once, not twice (HIVE-92).
+ *
+ * **Only a real Chromium can make this claim**, which is why the bug shipped
+ * with a green suite. The unit test drives `attachCustomKeyEventHandler`
+ * directly and the xterm fake has no native `paste` listener, so the duplicate
+ * path does not exist under happy-dom at all — there was nothing there to fail.
+ *
+ * The duplicate had two halves, and cancelling the keydown closes both:
+ *
+ * - **Path A**, correct: the handler reads `navigator.clipboard` and calls
+ *   `terminal.paste`, so bracketed paste is honoured.
+ * - **Path B**, the defect: an uncancelled keydown keeps its default action, so
+ *   the browser performs its own Paste against xterm's focused helper
+ *   `<textarea>`, firing xterm's `paste` listener and putting the same text on
+ *   stdin a second time. On macOS the Edit menu's `{ role: 'paste' }` is a
+ *   third route to it, reached because an unhandled keydown is forwarded to the
+ *   menu.
+ *
+ * Built, like `Shift+Enter` above, so the *old* behaviour fails loudly: the
+ * token is pasted into the middle of a command line, and the marker holds it
+ * exactly once when fixed and doubled when broken. Asserting a marker rather
+ * than the screen is this file's standing rule — the WebGL renderer paints into
+ * a canvas and takes the transcript out of the DOM.
+ */
+test('Cmd+V pastes the clipboard once, not twice', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  writeConfig(configPath, bootstrapped);
+  const marker = testInfo.outputPath('pasted.txt');
+
+  const done = testInfo.outputPath('paste-done.txt');
+
+  /**
+   * No shell metacharacters, and no substring a doubling could disguise:
+   * doubled it reads `hive-paste-92hive-paste-92`, which fails exact equality
+   * rather than merely looking odd.
+   */
+  const TOKEN = 'hive-paste-92';
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    /**
+     * The system clipboard, borrowed and put back.
+     *
+     * `menu.spec.ts` declines to touch it, on the grounds that reading the real
+     * clipboard makes the suite stateful against whatever else the machine is
+     * doing — and it is right. But the native Paste this spec exists to catch
+     * reads the OS clipboard and nothing else, so there is no way to drive the
+     * defect without it. Borrowing and restoring is the compromise.
+     *
+     * **The restore is text-only, and that limit is real rather than
+     * theoretical.** `clipboard.readText()` returns `''` for an image, a file
+     * or rich content, so a blind write-back would *destroy* such a clipboard
+     * rather than restore it. Hence the branch below: text is put back
+     * verbatim; anything else is cleared, which at least does not leave a shell
+     * command sitting on the developer's clipboard. Preserving a non-text
+     * clipboard would need `availableFormats()` and a reader per format, which
+     * is more machinery than this spec earns.
+     *
+     * Nothing else in the suite touches the clipboard, so the only writer to
+     * race is a human using their own machine mid-run.
+     */
+    const borrowed = await app.evaluate(({ clipboard }) => clipboard.readText());
+
+    try {
+      const page = await app.firstWindow();
+      await openLiveSession(page, {
+        ready: testInfo.outputPath('ready.txt'),
+        bootstrap: bootstrapped,
+      });
+
+    /**
+     * The clipboard holds a whole, self-submitting command — not a bare word
+     * pasted into a line being typed around it.
+     *
+     * That shape is forced by a race, and the race is worth recording because
+     * the obvious version of this test passes against the *broken* build. The
+     * two paths differ in timing as well as count: the native paste is
+     * synchronous inside the keydown, while the handler's own path awaits
+     * `navigator.clipboard.readText()`. A spec that typed `echo `, pressed the
+     * chord, then typed `> marker` would race the promise — on the fixed build
+     * the shell runs `echo > marker` before the token ever arrives, and the
+     * test fails for a reason that has nothing to do with the defect. (Measured,
+     * not assumed: the first draft did exactly this and reported an empty
+     * marker.)
+     *
+     * Pasting a complete command removes ordering from the assertion entirely.
+     * `>>` rather than `>` is the crux — an overwrite would leave the same file
+     * contents whether the command ran once or twice, which is precisely the
+     * distinction being tested.
+     */
+      await app.evaluate(
+        ({ clipboard }, command) => clipboard.writeText(command),
+        `printf ${TOKEN} >> '${marker}'\n`,
+      );
+
+    /**
+     * `Meta+V` on macOS, `Control+Shift+V` elsewhere, matching
+     * `decideTerminalKey`. The defect is macOS-shaped — nothing native is bound
+     * to `Ctrl+Shift+V` — but paste-once is the correct claim everywhere.
+     */
+      await page.keyboard.press(
+        process.platform === 'darwin' ? 'Meta+v' : 'Control+Shift+V',
+      );
+
+    /**
+     * Getting to a trustworthy count takes three steps, and each one is here
+     * because a simpler version of this test passed against the broken build.
+     *
+     * **1. Wait for the first delivery.** Proves the chord did something at all.
+     */
+      await expect
+        .poll(() => readMarker(marker), { timeout: 15_000 })
+        .not.toBeNull();
+
+    /**
+     * **2. Settle, so a *second* delivery has time to arrive.**
+     *
+     * A fixed wait, which this file otherwise refuses — and the exception is
+     * the point. Every other assertion here waits for something to *appear*,
+     * where polling is strictly better. This one asserts that something does
+     * **not** appear, and no amount of polling can distinguish "never happens"
+     * from "has not happened yet". A settle window is the only honest way to
+     * bound it.
+     *
+     * The two paths are not merely two writes, they are two *timings*: the
+     * native paste is synchronous inside the keydown, while the handler's own
+     * path resolves `navigator.clipboard.readText()` first. Measured on the
+     * broken build, that promise settles in about a millisecond; a second is
+     * three orders of magnitude of headroom.
+     *
+     * Skipping this is exactly how the first draft of this test passed against
+     * the defect: it typed the barrier command below immediately, so the late
+     * paste landed *after* the barrier and the count was read one delivery
+     * early.
+     */
+      await page.waitForTimeout(1000);
+
+    /**
+     * **3. Drain the shell.** A second command, typed and awaited, proves the
+     * pty has processed everything queued ahead of it — so the file now holds a
+     * final count rather than a snapshot caught between two appends.
+     */
+      await page.keyboard.type(`echo done > '${done}'`);
+      await page.keyboard.press('Enter');
+      await expectMarker(done, 'done');
+
+      // Exact, and deliberately not polled — see above. Doubled, this reads
+      // `hive-paste-92hive-paste-92` and fails loudly.
+      expect(readMarker(marker)).toBe(TOKEN);
+    } finally {
+      /**
+       * Swallowed, and the swallow is the point: if the app died mid-test, this
+       * `evaluate` rejects, and an unguarded rejection here would replace the
+       * real assertion error with a confusing one — then skip the close in the
+       * outer `finally` and leak the process.
+       */
+      await app
+        .evaluate(
+          ({ clipboard }, text) =>
+            text === '' ? clipboard.clear() : clipboard.writeText(text),
+          borrowed,
+        )
+        .catch(() => {});
+    }
+  } finally {
+    await app.close();
+  }
+});

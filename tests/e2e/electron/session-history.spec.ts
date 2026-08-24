@@ -71,14 +71,37 @@ test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN
       and asserting one of them here would be asserting the race.
 
       What is invariant — and what this spec exists for — is that the row comes
-      back, is grouped as a previous run, and cannot be opened. The `closed`
-      inference itself is pinned deterministically in
-      `tests/stores/hive-store.test.ts`, where there is no race to lose.
+      back and is grouped as a previous run. The `closed` inference itself is
+      pinned deterministically in `tests/stores/hive-store.test.ts`, where there
+      is no race to lose.
     */
-    await expect(row).toContainText(/closed|terminated/);
+    const ending = await row.textContent();
+    expect(ending).toMatch(/closed|terminated/);
 
-    // Inert, inherited from `openEntity`'s existing refusal of any ended row.
-    await expect(row).toBeDisabled();
+    /*
+      Openability follows the ending, so it is *read* from the row rather than
+      assumed — and that is the whole repair (HIVE-92 found it; HIVE-88 caused
+      it).
+
+      This used to assert `toBeDisabled()` unconditionally, with a comment about
+      `openEntity` refusing any ended row. That was true under HIVE-87, when
+      every ending was inert. HIVE-88 then made `closed` the one ending that
+      *opens* — it resumes the agent behind `--resume` — and left this assertion
+      behind: `session-table.tsx` now renders `openable = !ended || status ===
+      'closed'`.
+
+      The result was a test that contradicted itself. The assertion above
+      deliberately refuses to arbitrate the quit race, accepting either ending —
+      but `toBeDisabled()` silently held only for `terminated`, so the spec
+      passed or failed on exactly the coin-flip it had just declined to call.
+      Branching here keeps the spec race-agnostic *and* upgrades it: it now
+      pins HIVE-88's actual rule rather than a stale blanket claim.
+    */
+    if (ending?.includes('closed')) {
+      await expect(row).toBeEnabled();
+    } else {
+      await expect(row).toBeDisabled();
+    }
   } finally {
     await second.close();
   }

@@ -156,6 +156,7 @@ describe('ExplorerPanel — degraded states', () => {
           icon: 'ph-folder',
           origin: 'local',
           status: 'missing',
+          key: 'aw',
           isRepo: false,
         },
       ],
