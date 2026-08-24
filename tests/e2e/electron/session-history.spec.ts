@@ -57,26 +57,34 @@ test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN
     // The app boots into the orchestrator, so the table is already on screen.
     await expect(secondWindow.getByText('PREVIOUS RUN')).toBeVisible();
 
-    const row = secondWindow.getByRole('button', { name: new RegExp(id) });
+    /*
+      Anchored, because the row is no longer the only button that names this
+      session: HIVE-93 put a `resume` control beside it, whose accessible name
+      is `resume <id>`. An unanchored pattern matches both and Playwright's
+      strict mode — correctly — refuses to guess which one the test meant.
+    */
+    const row = secondWindow.getByRole('button', { name: new RegExp(`^${id}\\b`) });
     await expect(row).toBeVisible();
 
     /*
       An ending, whichever one the quit produced.
 
-      Deliberately not pinned to `closed`. Which ending this row carries depends
+      Deliberately not pinned to one word. Which ending this row carries depends
       on the race the ledger documents and refuses to arbitrate: if the pty exit
       is forwarded before the app finishes tearing down, `settleExit` records
       `terminated`; if the app dies first, the record still says `working` and
-      the renderer infers `closed`. Both are correct outcomes of the same quit,
-      and asserting one of them here would be asserting the race.
+      the renderer infers an app-close, which reads `done` (HIVE-93 — it read
+      `closed` until that story folded the third status away). Both are correct
+      outcomes of the same quit, and asserting one of them here would be
+      asserting the race.
 
       What is invariant — and what this spec exists for — is that the row comes
-      back and is grouped as a previous run. The `closed` inference itself is
-      pinned deterministically in `tests/stores/hive-store.test.ts`, where there
-      is no race to lose.
+      back and is grouped as a previous run. The inference itself is pinned
+      deterministically in `tests/stores/hive-store.test.ts`, where there is no
+      race to lose.
     */
     const ending = await row.textContent();
-    expect(ending).toMatch(/closed|terminated/);
+    expect(ending).toMatch(/done|terminated/);
 
     /*
       Openability follows the ending, so it is *read* from the row rather than
@@ -94,6 +102,25 @@ test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN
       one now holds for either outcome rather than only for `terminated`.
     */
     await expect(row).toBeDisabled();
+
+    /*
+      And the way back is a control, not the row (HIVE-93).
+
+      Offered only for the `done` half of the race above: an app-closed row kept
+      its uuid, so main reports it resumable, while a `terminated` one is a pty
+      this app watched die and has nothing to continue. Reading the ending
+      rather than assuming it is the same discipline as the two assertions
+      above — this spec refuses to arbitrate that race, so it must hold either
+      way.
+    */
+    const resume = secondWindow.getByRole('button', {
+      name: new RegExp(`^resume ${id}`),
+    });
+    if (ending?.includes('done')) {
+      await expect(resume).toBeVisible();
+    } else {
+      await expect(resume).toHaveCount(0);
+    }
   } finally {
     await second.close();
   }

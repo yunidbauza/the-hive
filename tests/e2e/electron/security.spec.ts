@@ -480,6 +480,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * are worth naming individually, because each carries something new *out* of
    * main and that is the direction this test is least equipped to notice.
    *
+   * `onFinished` (HIVE-93) is the same shape as `onCleared`: a `/done` is
+   * something the page is told about, and the renderer still cannot end a
+   * session — only learn that one ended. It does carry one thing out of main
+   * beyond the entity id, `resumable`, and that is deliberately a boolean
+   * rather than the uuid it derives from: the page decides whether to *offer*
+   * Resume, main owns which conversation that reopens, and Claude's session
+   * uuid has never crossed this bridge.
+   *
    * `onBranch` reports a branch and a working directory. Main learned both by
    * running `git rev-parse` in a directory a hook named, so the renderer is
    * being told a fact about a repository it already has the id of, and gains no
@@ -538,6 +546,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'note',
     'onBranch',
     'onCleared',
+    'onFinished',
     'onMetrics',
     'onName',
     'onStatus',
