@@ -236,6 +236,22 @@ export interface Session {
    * nothing behind it: the dot renders hollow only when this is present.
    */
   idleDetail?: IdleDetail;
+  /**
+   * The shell is still booting and Claude is not on screen yet (HIVE-101).
+   *
+   * Set the moment a spawn or a resume is asked for, cleared when the session
+   * reports `SessionStart` — or when the boot times out, or when the user types
+   * into it, whichever comes first. Absent for every session started before
+   * this field existed and for every restored row, which are not booting at
+   * all.
+   *
+   * **Not a `SessionStatus`.** A booting session is `working` by every measure
+   * a pty can take — output is pouring out of it — and that is exactly the
+   * reading that made the first seconds of every session look like work. This
+   * is a fact about what is *on screen*, not about what the agent is doing, so
+   * it is a field beside the status rather than a value inside it.
+   */
+  booting?: boolean;
   task: string; // one-line description
   pr: { n: number; state: PrState } | null;
   cost: string; // '$2.41'

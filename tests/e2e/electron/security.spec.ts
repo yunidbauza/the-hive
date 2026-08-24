@@ -488,6 +488,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * Resume, main owns which conversation that reopens, and Claude's session
    * uuid has never crossed this bridge.
    *
+   * `onReady` (HIVE-101) is the narrowest listener on the list: it carries the
+   * entity id and *nothing else*, because the fact is the whole message. It is
+   * worth naming anyway for the reason above — what a channel carries out of
+   * main is the direction this test is least equipped to notice, and "nothing"
+   * is a claim that should be written down rather than inferred from a missing
+   * field. In particular it does **not** carry Claude's session uuid, which the
+   * `SessionStart` hook behind it does have and which has never crossed this
+   * bridge.
+   *
    * `onBranch` reports a branch and a working directory. Main learned both by
    * running `git rev-parse` in a directory a hook named, so the renderer is
    * being told a fact about a repository it already has the id of, and gains no
@@ -549,6 +558,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'onFinished',
     'onMetrics',
     'onName',
+    'onReady',
     'onStatus',
     'onTicketIntent',
   ]);

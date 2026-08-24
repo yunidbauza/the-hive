@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, and `/done` |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, and the boot-ready signal |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered

@@ -55,6 +55,7 @@ export type PhraseKey =
   | 'loading.diagnostics'
   | 'loading.update'
   | 'loading.transitions'
+  | 'loading.session'
   // Working — an active session.
   | 'working.session'
   // Complete.
@@ -144,6 +145,25 @@ export const PHRASES = {
   'loading.file': ['Splicing…', 'Reading the strand…'],
   'loading.connection': ['Establishing psionic link…', 'Probing…'],
   'loading.diagnostics': ['Probing…', 'Scanning the sector…'],
+  /**
+   * A session's shell, still booting (HIVE-101).
+   *
+   * The longest loading pool in the file, and the only one that earns it: every
+   * other `loading.*` covers something measured in milliseconds, where a second
+   * phrase would never be seen. This one covers `direnv` on a cold environment,
+   * which prints its own advice about getting up to stretch — so the line
+   * rotates while the user waits, and a pool of two would start repeating
+   * inside ten seconds.
+   */
+  'loading.session': [
+    'Metamorphosing…',
+    'Mutating…',
+    'Evolving…',
+    'Spreading creep…',
+    'Morphing…',
+    'Establishing psionic link…',
+    'Hatching…',
+  ],
   'loading.update': ['incubating', 'morphing'],
   'loading.transitions': ['Reading the strain…', 'Burrowing…'],
   'working.session': [

@@ -28,6 +28,7 @@ describe('hook receiver', () => {
   let intents: HookTicketIntentEvent[];
   let cleared: string[];
   let dones: string[];
+  let readies: string[];
   let url: string;
 
   beforeEach(async () => {
@@ -35,11 +36,13 @@ describe('hook receiver', () => {
     intents = [];
     cleared = [];
     dones = [];
+    readies = [];
     receiver = createReceiver({
       onCleared: (entityId) => cleared.push(entityId),
       onEvent: (event) => events.push(event),
       onTicketIntent: (event) => intents.push(event),
       onDone: (entityId) => dones.push(entityId),
+      onReady: (entityId) => readies.push(entityId),
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
       onMetrics: () => {},
@@ -79,6 +82,107 @@ describe('hook receiver', () => {
    * token. What the app does afterwards — write `/exit`, record `done` — is
    * `sessions/index.test.ts`.
    */
+  /**
+   * The `/ready` route (HIVE-101).
+   *
+   * `/done`'s twin, and tested the same way for the same reason: the request
+   * carries no payload, so authority is the whole of what this route has to get
+   * right. What the app does afterwards — uncover the terminal, stop the
+   * timeout — is the renderer's, and is tested there.
+   */
+  describe('/ready', () => {
+    const ready = (
+      headers: Record<string, string> = {
+        [HOOK_HEADER_TOKEN]: receiver.token,
+        [HOOK_HEADER_SESSION]: 'sess-01',
+      },
+      init: RequestInit = {},
+    ) =>
+      fetch(receiver.readyUrl as string, {
+        method: 'POST',
+        headers,
+        ...init,
+      });
+
+    it('shares the socket with the hook route', () => {
+      const origin = (raw: string) => new URL(raw).origin;
+      expect(origin(receiver.readyUrl as string)).toBe(origin(url));
+      expect(new URL(receiver.readyUrl as string).pathname).toBe('/ready');
+    });
+
+    it('reports the session whose Claude is up', async () => {
+      const response = await ready();
+
+      expect(response.status).toBe(204);
+      expect(readies).toEqual(['sess-01']);
+    });
+
+    /**
+     * `/clear` starts a second Claude session inside the same pty and produces
+     * a second `SessionStart`. The receiver forwards both rather than
+     * de-duplicating: it holds no per-session state, and the renderer's action
+     * is idempotent precisely so that it does not have to.
+     */
+    it('reports every arrival, because a clear produces another one', async () => {
+      await ready();
+      await ready();
+
+      expect(readies).toEqual(['sess-01', 'sess-01']);
+    });
+
+    it('refuses a request without the launch token', async () => {
+      const response = await ready({
+        [HOOK_HEADER_TOKEN]: 'not-the-token',
+        [HOOK_HEADER_SESSION]: 'sess-01',
+      });
+
+      expect(response.status).toBe(403);
+      expect(readies).toEqual([]);
+    });
+
+    it('refuses a session the app does not have', async () => {
+      const response = await ready({
+        [HOOK_HEADER_TOKEN]: receiver.token,
+        [HOOK_HEADER_SESSION]: 'sess-gone',
+      });
+
+      expect(response.status).toBe(404);
+      expect(readies).toEqual([]);
+    });
+
+    it('refuses a request that names no session at all', async () => {
+      const response = await ready({ [HOOK_HEADER_TOKEN]: receiver.token });
+
+      expect(response.status).toBe(400);
+      expect(readies).toEqual([]);
+    });
+
+    it('is POST-only', async () => {
+      const response = await fetch(receiver.readyUrl as string, { method: 'GET' });
+
+      expect(response.status).toBe(404);
+      expect(readies).toEqual([]);
+    });
+
+    /**
+     * The hook that calls this runs inside a starting session, and a red line
+     * in the user's terminal on the first frame is exactly what this feature
+     * exists to prevent. So a body nothing reads is drained, never refused.
+     */
+    it('drains a body rather than refusing one', async () => {
+      const response = await ready(
+        {
+          [HOOK_HEADER_TOKEN]: receiver.token,
+          [HOOK_HEADER_SESSION]: 'sess-01',
+        },
+        { body: 'x'.repeat(4096) },
+      );
+
+      expect(response.status).toBe(204);
+      expect(readies).toEqual(['sess-01']);
+    });
+  });
+
   describe('/done', () => {
     const done = (
       headers: Record<string, string> = {
@@ -552,6 +656,7 @@ describe('hook receiver', () => {
         onEvent: () => order.push('status'),
         onTicketIntent: () => order.push('intent'),
         onDone: () => {},
+        onReady: () => {},
         knowsSession: () => true,
         onMetrics: () => {},
       });
@@ -651,6 +756,7 @@ describe('hook receiver', () => {
       onEvent: () => {},
       onTicketIntent: () => {},
       onDone: () => {},
+      onReady: () => {},
       knowsSession: () => true,
       onMetrics: () => {},
       port: 1,
@@ -667,6 +773,7 @@ describe('hook receiver', () => {
       },
       onTicketIntent: () => {},
       onDone: () => {},
+      onReady: () => {},
       knowsSession: () => true,
       onMetrics: () => {},
     });
@@ -686,14 +793,14 @@ describe('hook receiver', () => {
 
 describe('hook receiver tokens', () => {
   it('gives each receiver a distinct token', () => {
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, knowsSession: () => true });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, knowsSession: () => true });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true });
     expect(a.token).not.toBe(b.token);
     expect(a.token).toHaveLength(36);
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, knowsSession: () => true });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true });
     expect(receiver.url).toBeNull();
   });
 });
@@ -720,6 +827,7 @@ describe('the status line path', () => {
       onTicketIntent: () => {},
       onMetrics: (entityId, reported) => metrics.push({ entityId, reported }),
       onDone: () => {},
+      onReady: () => {},
       knowsSession: (entityId) => entityId !== 'sess-gone',
     });
     const started = await receiver.start();
@@ -756,6 +864,7 @@ describe('the status line path', () => {
       onTicketIntent: () => {},
       onMetrics: () => {},
       onDone: () => {},
+      onReady: () => {},
       knowsSession: () => true,
     });
     expect(unbound.metricsUrl).toBeNull();

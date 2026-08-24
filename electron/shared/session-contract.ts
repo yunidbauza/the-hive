@@ -307,6 +307,38 @@ export interface SessionFinishedEvent {
 }
 
 /**
+ * Claude is on screen — the shell's boot is over (HIVE-101).
+ *
+ * A session's first seconds belong to the login shell, not to Claude: `direnv`
+ * loads, a package manager reports, and the command line the app assembled is
+ * echoed back with every flag in it. None of that is the user's work, and on a
+ * real project it can run for a long time — long enough that `direnv` prints
+ * advice about stretching your legs.
+ *
+ * So the renderer covers the terminal until this arrives. The event carries the
+ * entity and nothing else, because there is nothing else to say: the *fact* is
+ * the message, exactly as with {@link SessionFinishedEvent}.
+ *
+ * ## It can arrive more than once
+ *
+ * `/clear` starts a new Claude session inside the same pty, which produces
+ * another `SessionStart` and therefore another one of these. The renderer must
+ * treat it as "is up" rather than "has just come up" — a session that is
+ * already revealed cannot be revealed harder.
+ *
+ * ## It can also never arrive
+ *
+ * A pty whose `claude` is missing, unauthenticated or wedged produces no
+ * `SessionStart` at all, and the error explaining why is sitting in the
+ * terminal underneath the cover. **Nothing in the renderer may wait on this
+ * event alone** — see `useSessionBoot` for the timeout and the keystroke that
+ * lift the cover without it.
+ */
+export interface SessionReadyEvent {
+  entityId: string;
+}
+
+/**
  * The model and thinking effort a session may be started with (story 109).
  *
  * **Closed sets, and they live here rather than in `src/types/entity.ts`

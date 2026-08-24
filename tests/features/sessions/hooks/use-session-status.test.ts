@@ -7,6 +7,7 @@ import type {
   SessionBranchEvent,
   SessionClearedEvent,
   SessionFinishedEvent,
+  SessionReadyEvent,
   SessionNameEvent,
   SessionStatusEvent,
   SessionTicketIntentEvent,
@@ -32,6 +33,7 @@ let listeners: ((event: SessionStatusEvent) => void)[];
 let nameListeners: ((event: SessionNameEvent) => void)[];
 let clearedListeners: ((event: SessionClearedEvent) => void)[];
 let finishedListeners: ((event: SessionFinishedEvent) => void)[];
+let readyListeners: ((event: SessionReadyEvent) => void)[];
 let branchListeners: ((event: SessionBranchEvent) => void)[];
 let metricsListeners: ((event: SessionMetricsEvent) => void)[];
 let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
@@ -77,6 +79,12 @@ function withBridge() {
       },
       onFinished: (callback: (event: SessionFinishedEvent) => void) => {
         finishedListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
+      onReady: (callback: (event: SessionReadyEvent) => void) => {
+        readyListeners.push(callback);
         return () => {
           disposals += 1;
         };
@@ -153,6 +161,7 @@ beforeEach(() => {
   nameListeners = [];
   clearedListeners = [];
   finishedListeners = [];
+  readyListeners = [];
   branchListeners = [];
   metricsListeners = [];
   intentListeners = [];
@@ -198,12 +207,12 @@ describe('useSessionStatus', () => {
 
     unmount();
 
-    // Status, name (HIVE-61), cleared, finished (HIVE-93), branch, metrics and
-    // ticket-intent (HIVE-78) — a leaked listener on any of them would keep
-    // writing to a store the unmounted shell no longer renders, the cleared one
-    // would go on minting sessions, and the finished one would go on bouncing
-    // the user back to the orchestrator.
-    expect(disposals).toBe(7);
+    // Status, name (HIVE-61), cleared, finished (HIVE-93), ready (HIVE-101),
+    // branch, metrics and ticket-intent (HIVE-78) — a leaked listener on any of
+    // them would keep writing to a store the unmounted shell no longer renders,
+    // the cleared one would go on minting sessions, and the finished one would
+    // go on bouncing the user back to the orchestrator.
+    expect(disposals).toBe(8);
   });
 
   it('applies a rename pushed from main', () => {

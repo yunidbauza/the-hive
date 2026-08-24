@@ -93,6 +93,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
       onCleared: () => {},
       onMetrics: () => {},
       onDone: (entityId) => declared.push(entityId),
+      onReady: () => {},
       knowsSession: (entityId) => entityId === ENTITY,
     });
 

@@ -13,6 +13,8 @@ import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
+import { SessionBootCover } from '@features/sessions/components/session-boot-cover';
+import { useSessionBoot } from '@features/sessions/hooks/use-session-boot';
 import { SettingsOverlay } from '@features/settings/components/settings-overlay';
 import {
   TERMINAL_CHORD_EVENT,
@@ -93,6 +95,18 @@ export function CenterStage() {
   const splitting = editorOpen && placement === 'split';
 
   const view = resolveView({ activeTab, picker, settings, entity, editorFull });
+  /**
+   * Whether the session on screen is still starting (HIVE-101).
+   *
+   * Asked for the active tab only. The hook also owns the timeout and the
+   * keystroke that lift the cover without a ready signal — both belong to
+   * whatever is on screen, which is this component's subject.
+   */
+  const terminalRegion = useRef<HTMLDivElement>(null);
+  const booting = useSessionBoot(
+    isEntityView(view) ? activeTab : null,
+    terminalRegion,
+  );
   const showingPicker = view === 'picker';
   /**
    * Both full-stage overlays hide the terminal region, not just the picker.
@@ -287,7 +301,15 @@ export function CenterStage() {
         */}
         {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
         <div
-          className="flex min-h-0 flex-1 flex-col"
+          /*
+            `relative` for the boot cover alone (HIVE-101), which fills this box
+            rather than the stage: the cover stands in for the *terminal*, so it
+            must not reach over the meta bar above it — the branch and status
+            there are worth reading while a session starts, and are the only
+            things on screen that say which session it is.
+          */
+          ref={terminalRegion}
+          className="relative flex min-h-0 flex-1 flex-col"
           onClick={focusMessageInput}
         >
           <TerminalHost
@@ -304,6 +326,17 @@ export function CenterStage() {
             fontSize={terminalAppearance.fontSize}
             scrollback={terminalAppearance.scrollback}
           />
+
+          {/*
+            Drawn over a terminal that is still mounted and still laid out —
+            never instead of one. See `SessionBootCover` for why that is a hard
+            requirement rather than a convenience.
+
+            Gated on the *active* tab, so switching away from a booting session
+            and back finds the cover still there, and a session booting in the
+            background covers nothing.
+          */}
+          {booting ? <SessionBootCover /> : null}
         </div>
 
         {view === 'orchestrator' ? <ConsoleInput /> : null}

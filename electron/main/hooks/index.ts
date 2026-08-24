@@ -66,6 +66,8 @@ export interface HookHandlers {
   onMetrics: (entityId: string, metrics: SessionMetrics) => void;
   /** A session declared itself finished — `/done` (HIVE-93). */
   onDone: (entityId: string) => void;
+  /** Claude is up and the shell's boot output is over (HIVE-101). */
+  onReady: (entityId: string) => void;
 }
 
 export interface HookRuntime {
@@ -130,6 +132,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       onCleared,
       onMetrics,
       onDone,
+      onReady,
     }) {
       const created = createReceiver({
         onEvent,
@@ -137,6 +140,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onCleared,
         onMetrics,
         onDone,
+        onReady,
         knowsSession,
         ...(port === undefined ? {} : { port }),
       });
@@ -167,6 +171,13 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
             status line whether or not that line renders anything.
           */
           sessionMetrics() ? (created.metricsUrl ?? undefined) : undefined,
+          /*
+            The ready URL rides along on the same terms (HIVE-101), and is not
+            behind the metrics preference: the boot overlay is not a metric, and
+            a user who has turned the status line off has not asked to watch
+            `direnv` again.
+          */
+          created.readyUrl ?? undefined,
         );
         receiver = created;
       } catch (cause) {

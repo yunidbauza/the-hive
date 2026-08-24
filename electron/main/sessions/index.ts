@@ -25,6 +25,7 @@ import {
   type SessionBranchEvent,
   type SessionClearedEvent,
   type SessionFinishedEvent,
+  type SessionReadyEvent,
   type SessionNameEvent,
   type SessionStatusEvent,
   type SessionTicketIntentEvent,
@@ -552,6 +553,13 @@ export function createSessions(options: SessionsOptions): Sessions {
       for it — see `armFinish`.
     */
     onDone: (entityId) => armFinish(entityId),
+    /*
+      Forwarded, and nothing more (HIVE-101). Main has no opinion about the
+      boot overlay: the renderer owns the cover, the timeout and the keystroke
+      that lift it, because all three are about what is on screen. What main
+      knows and the renderer cannot is that a real `SessionStart` arrived.
+    */
+    onReady: (entityId) => publishReady(entityId),
     onEvent: (event) => {
       /**
        * The tracker decides, not the event (HIVE-83).
@@ -789,6 +797,20 @@ export function createSessions(options: SessionsOptions): Sessions {
    * carrying only the entity, leaving the renderer to decide what a finished row
    * looks like and whether it was the tab in front of the user.
    */
+  /**
+   * Claude is up (HIVE-101).
+   *
+   * The thinnest publisher in this file, and deliberately so — there is no
+   * state to settle, nothing to tear down, and no race to arbitrate. It is
+   * also **not idempotent here on purpose**: `/clear` produces a second
+   * `SessionStart` and therefore a second one of these, and suppressing the
+   * repeat would mean main keeping a per-session flag to answer a question the
+   * renderer can answer for free.
+   */
+  function publishReady(entityId: string): void {
+    send(CH.sessionReady, { entityId } satisfies SessionReadyEvent);
+  }
+
   function publishFinished(entityId: string): void {
     /*
       Asked rather than assumed. `ledger.resumable` is the only thing that knows

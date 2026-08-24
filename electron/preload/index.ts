@@ -78,6 +78,7 @@ import type {
   SessionBranchEvent,
   SessionClearedEvent,
   SessionFinishedEvent,
+  SessionReadyEvent,
   SessionNameEvent,
   SessionStatusEvent,
   SessionTicketIntentEvent,
@@ -382,6 +383,8 @@ const bridge: HiveBridge = {
       subscribe<SessionClearedEvent>(CH.sessionCleared, callback),
     onFinished: (callback: (event: SessionFinishedEvent) => void) =>
       subscribe<SessionFinishedEvent>(CH.sessionFinished, callback),
+    onReady: (callback: (event: SessionReadyEvent) => void) =>
+      subscribe<SessionReadyEvent>(CH.sessionReady, callback),
     onBranch: (callback: (event: SessionBranchEvent) => void) =>
       subscribe<SessionBranchEvent>(CH.sessionBranch, callback),
     onTicketIntent: (callback: (event: SessionTicketIntentEvent) => void) =>

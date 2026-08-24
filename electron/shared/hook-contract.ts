@@ -340,6 +340,56 @@ export const doneCommand = (url: string): string =>
   ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}"`;
 
 /**
+ * The path a session posts to the moment Claude is actually up (HIVE-101).
+ *
+ * Its own route for {@link DONE_PATH}'s reason: nothing about it is a status
+ * tick. It carries no payload, names no Claude Code event the app models, and
+ * the receiver's answer to it is a *lifecycle* fact — the shell has finished
+ * whatever it was doing and the thing the user came for is on screen.
+ */
+export const READY_PATH = '/ready';
+
+/**
+ * The command the `SessionStart` hook runs to report that Claude is up.
+ *
+ * ## Why a `command` hook and not an `http` one
+ *
+ * Because the http one does not arrive. That is recorded above against Claude
+ * Code 2.1.227 and was re-measured for this story against a real binary in a
+ * real pty, with all three candidates wired to one server:
+ *
+ * ```
+ * SessionStart  command hook  -> +2050ms
+ * SessionStart  http hook     -> never arrived
+ * status line   (first call)  -> +2163ms
+ * ```
+ *
+ * So the command hook is both the only one that works and the earliest signal
+ * available — it beats the status line by about a tenth of a second, and both
+ * land around two seconds, which is when Claude's UI exists.
+ *
+ * ## Why it must print nothing, ever
+ *
+ * **A `SessionStart` hook's stdout is added to Claude's context.** Anything this
+ * command writes becomes part of the conversation the user is about to have, so
+ * `-s -o /dev/null` is not tidiness, it is correctness — and `2>/dev/null`
+ * covers the case where curl complains about a receiver that has gone away.
+ *
+ * `|| true` for the matching reason on the other side: a non-zero exit from a
+ * hook surfaces in the session as a failure the user did not cause and cannot
+ * act on. A ready signal that fails to send is a slightly longer loading view,
+ * which the timeout already covers. It is not an error worth showing anyone.
+ *
+ * No `--fail`, for the same reason `/done` has one: there, a stale token should
+ * be loud because the session will otherwise never close. Here it should be
+ * silent, because the overlay lifts on a timeout regardless.
+ */
+export const readyCommand = (url: string): string =>
+  `curl -s -m 3 -o /dev/null -X POST ${url}` +
+  ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
+  ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}" 2>/dev/null || true`;
+
+/**
  * The largest body the receiver will read.
  *
  * Hook payloads carry `tool_input`, which for an Edit is a whole file. The app

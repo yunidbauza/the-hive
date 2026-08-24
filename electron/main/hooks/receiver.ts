@@ -8,6 +8,7 @@ import {
   HOOK_MAX_BODY_BYTES,
   DONE_PATH,
   HOOK_PATH,
+  READY_PATH,
   HOOK_STATUS,
   HOOK_EVENTS,
   NOTIFICATION_TYPE_STATUS,
@@ -102,6 +103,19 @@ export interface ReceiverOptions {
    * it. It is the only input the app has that can honestly produce `done`.
    */
   onDone: (entityId: string) => void;
+  /**
+   * Claude is up — the shell has finished whatever it was doing (HIVE-101).
+   *
+   * Arrives from a `SessionStart` **command** hook, because the http one on
+   * that event does not arrive; see `readyCommand`. Like `onDone` it carries no
+   * payload: the request itself is the message.
+   *
+   * Fires at most usefully once, but is **not** guaranteed to fire once. A
+   * `/clear` starts a new Claude session inside the same pty and produces
+   * another `SessionStart`, so the handler on the other side has to be
+   * idempotent — a session that is already up cannot become more up.
+   */
+  onReady: (entityId: string) => void;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
   /** Overridable for tests; `0` asks the OS for any free port. */
@@ -135,6 +149,16 @@ export interface Receiver {
    * why that beats a third environment variable.
    */
   readonly doneUrl: string | null;
+  /**
+   * Where a starting session reports that Claude is up (HIVE-101).
+   *
+   * Same socket and same token as {@link Receiver.url}. Baked into the
+   * generated settings file's `SessionStart` command hook, the way
+   * {@link Receiver.metricsUrl} is baked into the status line script — a
+   * session is handed the URL it should call rather than being told to
+   * discover one.
+   */
+  readonly readyUrl: string | null;
   stop(): Promise<void>;
 }
 
@@ -149,6 +173,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onCleared,
     onMetrics,
     onDone,
+    onReady,
     knowsSession,
     port = 0,
   } = options;
@@ -306,6 +331,27 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (refusal !== null) return refusal;
 
     onDone(headers[HOOK_HEADER_SESSION] as string);
+    return 204;
+  }
+
+  /**
+   * Claude is up (HIVE-101).
+   *
+   * `handleDone`'s twin, and deliberately its equal in brevity: no body, no
+   * event vocabulary, nothing to disagree with. `reject` has already proved the
+   * token and that the app still has this session, which is the whole of what
+   * this needs to be trusted.
+   *
+   * What the app does next — lift the boot overlay, stop the timeout — belongs
+   * to the session layer. This file's job ends at "a real session said so".
+   */
+  function handleReady(
+    headers: Record<string, string | string[] | undefined>,
+  ): number {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    onReady(headers[HOOK_HEADER_SESSION] as string);
     return 204;
   }
 
@@ -475,6 +521,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return origin === null ? null : `${origin}${DONE_PATH}`;
     },
 
+    get readyUrl() {
+      return origin === null ? null : `${origin}${READY_PATH}`;
+    },
+
     start() {
       return new Promise<string | null>((resolve) => {
         const created = createServer((req, res) => {
@@ -487,9 +537,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           const path = req.url ?? '';
           const isMetrics = path === METRICS_PATH;
           const isDone = path === DONE_PATH;
+          const isReady = path === READY_PATH;
           if (
             req.method !== 'POST' ||
-            (path !== HOOK_PATH && !isMetrics && !isDone)
+            (path !== HOOK_PATH && !isMetrics && !isDone && !isReady)
           ) {
             res.writeHead(404).end();
             return;
@@ -504,11 +555,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             the same reason. Nothing a session sends here should be able to
             produce a red line in the user's terminal.
           */
-          const cap = isDone
-            ? 0
-            : isMetrics
-              ? METRICS_MAX_BODY_BYTES
-              : HOOK_MAX_BODY_BYTES;
+          const cap =
+            isDone || isReady
+              ? 0
+              : isMetrics
+                ? METRICS_MAX_BODY_BYTES
+                : HOOK_MAX_BODY_BYTES;
 
           let body = '';
           let bytes = 0;
@@ -543,9 +595,11 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             try {
               status = isDone
                 ? handleDone(req.headers)
-                : isMetrics
-                  ? handleMetrics(req.headers, body, truncated)
-                  : handle(req.headers, body, truncated);
+                : isReady
+                  ? handleReady(req.headers)
+                  : isMetrics
+                    ? handleMetrics(req.headers, body, truncated)
+                    : handle(req.headers, body, truncated);
             } catch {
               /**
                * A throw here must not take the app down. An uncaught exception

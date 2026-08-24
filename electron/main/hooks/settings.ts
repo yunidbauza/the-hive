@@ -7,6 +7,7 @@ import {
   HOOK_EVENTS,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
+  readyCommand,
 } from '@shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '@shared/metrics-contract';
 import { SESSION_THEMES, type SessionTheme } from '@shared/session-contract';
@@ -147,7 +148,11 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * a receiver that answers 403 to everything, which is a confusing way to
  * discover a missing field.
  */
-export function hookSettings(url: string, theme?: SessionTheme): HookSettings {
+export function hookSettings(
+  url: string,
+  theme?: SessionTheme,
+  readyUrl?: string,
+): HookSettings {
   const handler = {
     type: 'http',
     url,
@@ -168,9 +173,33 @@ export function hookSettings(url: string, theme?: SessionTheme): HookSettings {
     timeout: 10,
   };
 
+  /**
+   * `SessionStart` carries a second handler, and it is a `command` (HIVE-101).
+   *
+   * Not redundancy. The http handler above is subscribed to every event and
+   * **`SessionStart` is the one that never arrives** — measured, twice, and
+   * recorded in `hook-contract.ts`. So the app has no http-borne way to learn
+   * that Claude is up, which is precisely the moment the boot overlay needs.
+   *
+   * The http entry stays anyway, exactly as the note there argues: it costs one
+   * key in a generated file, and a future release that starts delivering it
+   * would simply make this arrive twice. The receiver is idempotent about that
+   * — a session that is already up cannot become more up.
+   */
+  const ready =
+    readyUrl === undefined
+      ? []
+      : [{ matcher: '*', hooks: [{ type: 'command', command: readyCommand(readyUrl) }] }];
+
   return {
     hooks: Object.fromEntries(
-      HOOK_EVENTS.map((event) => [event, [{ matcher: '*', hooks: [handler] }]]),
+      HOOK_EVENTS.map((event) => [
+        event,
+        [
+          { matcher: '*', hooks: [handler] },
+          ...(event === 'SessionStart' ? ready : []),
+        ],
+      ]),
     ),
     /*
       Unconditional, where `theme` is optional. The agent view is wrong for
@@ -294,6 +323,7 @@ export async function writeHookSettings(
   userDataPath: string,
   url: string,
   metricsUrl?: string,
+  readyUrl?: string,
 ): Promise<HookSettingsPaths> {
   await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
 
@@ -316,7 +346,7 @@ export async function writeHookSettings(
 
   for (const theme of SESSION_THEMES) {
     const path = join(userDataPath, hookSettingsFile(theme));
-    const settings = hookSettings(url, theme);
+    const settings = hookSettings(url, theme, readyUrl);
     if (statusLine !== undefined) settings.statusLine = statusLine;
     await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
     paths[theme] = path;

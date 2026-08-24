@@ -7,6 +7,7 @@ import {
   useClearSession,
   useFinishSession,
   useRenameSession,
+  useMarkSessionReady,
   useSetSessionBranch,
   useSetSessionMetrics,
   useSetSessionStatus,
@@ -62,6 +63,7 @@ export function useSessionStatus(): void {
   const clearSession = useClearSession();
   const finishSession = useFinishSession();
   const setSessionBranch = useSetSessionBranch();
+  const markSessionReady = useMarkSessionReady();
   const setSessionTicket = useSetSessionTicket();
   const setSessionMetrics = useSetSessionMetrics();
 
@@ -107,6 +109,21 @@ export function useSessionStatus(): void {
         finishSession(entityId, resumable);
       },
     );
+
+    /**
+     * Claude is up — uncover the terminal (HIVE-101).
+     *
+     * The plainest listener here after `onMetrics`, and for a stronger reason:
+     * the event carries only an entity id, because the fact *is* the message.
+     *
+     * It can arrive more than once — `/clear` starts a new Claude session in
+     * the same pty — and the store's action is idempotent for exactly that. It
+     * can also never arrive, which is why nothing about the cover depends on
+     * this listener alone; see `useSessionBoot`.
+     */
+    const disposeReady = bridge.session.onReady(({ entityId }) => {
+      markSessionReady(entityId);
+    });
 
     const disposeBranch = bridge.session.onBranch(({ entityId, branch, cwd }) => {
       setSessionBranch(entityId, branch, cwd);
@@ -169,6 +186,7 @@ export function useSessionStatus(): void {
       disposeName();
       disposeCleared();
       disposeFinished();
+      disposeReady();
       disposeBranch();
       disposeTicketIntent();
       disposeMetrics();
@@ -179,6 +197,7 @@ export function useSessionStatus(): void {
     clearSession,
     finishSession,
     setSessionBranch,
+    markSessionReady,
     setSessionTicket,
     setSessionMetrics,
   ]);

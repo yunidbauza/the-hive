@@ -353,6 +353,14 @@ interface HiveState {
    */
   finishSession: (id: string, resumable: boolean) => void;
   /**
+   * Claude is up; stop covering this session's terminal (HIVE-101).
+   *
+   * Idempotent, and safe for an id that has since ended or vanished — see the
+   * implementation for why all three of those are ordinary rather than
+   * exceptional.
+   */
+  markSessionReady: (id: string) => void;
+  /**
    * Pick an ended session's conversation back up (HIVE-93).
    *
    * The affordance `closed` used to carry as a status, now a verb. Puts the row
@@ -935,6 +943,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * the meta bar and the rails claim a task that nobody set.
        */
       task: task ?? '',
+      /**
+       * Covered until Claude is on screen (HIVE-101).
+       *
+       * Set here rather than when the pty reports anything, because the wait
+       * this hides *starts* here: the shell is already loading `direnv` before
+       * main has finished answering the spawn. Desktop only — the browser demo
+       * has no process to boot and no `SessionStart` will ever arrive to
+       * uncover it.
+       */
+      ...(isDesktop() ? { booting: true } : {}),
       pr: null,
       cost: '$0.02',
       model: resolvedModel,
@@ -2091,6 +2109,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       */
       const revived: Session = { ...current, status: 'idle' };
       /*
+        And covered again while it starts (HIVE-101). A resume runs the very
+        same login shell as a spawn — `direnv` reloads, the package manager
+        reports — so the wait it hides is identical and there is no reason the
+        second time through should be noisier than the first.
+      */
+      revived.booting = true;
+      /*
         The ending is over, so the record of *how* it ended goes with it —
         otherwise `isTerminated` keeps answering yes and the surface stays
         read-only. `resumable` deliberately stays: a session resumed once can be
@@ -2143,6 +2168,33 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     });
 
     useUiStore.getState().openTab(id);
+  },
+
+  /**
+   * Claude is up — uncover the terminal (HIVE-101).
+   *
+   * Deliberately tolerant, because every one of these is a real path:
+   *
+   * - **called twice** — `/clear` starts a second Claude session in the same
+   *   pty and produces a second `SessionStart`;
+   * - **called for a row that is already uncovered** — the timeout or a
+   *   keystroke got there first;
+   * - **called for an id that has ended or gone** — the report raced a `/done`.
+   *
+   * All three are no-ops rather than errors. Deleting an absent key is free, so
+   * the only thing worth guarding is writing a new object when nothing changed:
+   * `entities` is compared by identity all over this file, and a fresh map on
+   * every duplicate report would re-render the fleet for nothing.
+   */
+  markSessionReady: (id) => {
+    const current = get().entities[id];
+    if (!current || !isSession(current) || current.booting !== true) return;
+
+    set((state) => {
+      const uncovered: Session = { ...current };
+      delete uncovered.booting;
+      return { entities: { ...state.entities, [id]: uncovered } };
+    });
   },
 
   finishSession: (id, resumable) => {
@@ -3037,6 +3089,24 @@ export const useResumeSession = () =>
 /** `/done`: main reports the session's own ending through this (HIVE-93). */
 export const useFinishSession = () =>
   useHiveStore((state) => state.finishSession);
+
+/** Uncover a session whose Claude has finished starting (HIVE-101). */
+export const useMarkSessionReady = () =>
+  useHiveStore((state) => state.markSessionReady);
+
+/**
+ * Is this session still behind the boot cover? (HIVE-101)
+ *
+ * A boolean rather than the field, so a row that is not a session — or not
+ * there at all — answers `false` rather than `undefined`, and so the subscriber
+ * re-renders only when the answer flips rather than on every write to the
+ * entity.
+ */
+export const useSessionBooting = (id: string): boolean =>
+  useHiveStore((state) => {
+    const entity = state.entities[id];
+    return entity !== undefined && isSession(entity) && entity.booting === true;
+  });
 
 /**
  * Which terminal an id runs in — the id itself for anything that is not a

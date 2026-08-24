@@ -80,6 +80,7 @@ import type {
   SessionBranchEvent,
   SessionClearedEvent,
   SessionFinishedEvent,
+  SessionReadyEvent,
   SessionNameEvent,
   SessionStatusEvent,
   SessionTicketIntentEvent,
@@ -424,6 +425,18 @@ export const CH = {
    */
   sessionBranch: 'session:branch', // main → renderer
   /**
+   * Claude finished starting and the shell's noise is over (HIVE-101).
+   *
+   * Its own channel rather than a status, for `session:finished`'s reason: this
+   * is not something `ObservedStatus` can carry. A booting session is `working`
+   * by every pty measure — output is pouring out of it — and that is exactly
+   * the reading that made the first seconds of every session look like work.
+   *
+   * The renderer covers the terminal until this arrives, and lifts the cover on
+   * a timeout or a keystroke if it never does. See {@link SessionReadyEvent}.
+   */
+  sessionReady: 'session:ready', // main → renderer
+  /**
    * A prompt named a ticket the user intends to work on (HIVE-78).
    *
    * Carries the key and nothing else — never the prompt it was found in. See
@@ -551,6 +564,7 @@ export const EVENT_CHANNELS = [
   CH.sessionName,
   CH.sessionCleared,
   CH.sessionFinished,
+  CH.sessionReady,
   CH.sessionBranch,
   CH.sessionTicketIntent,
   CH.sessionMetrics,
@@ -1278,6 +1292,14 @@ export interface HiveBridge {
     /** `/done`: the session finished and its terminal is gone (HIVE-93). */
     onFinished(callback: (event: SessionFinishedEvent) => void): () => void;
     /**
+     * Claude is up and the shell's boot output is over (HIVE-101).
+     *
+     * May fire more than once — `/clear` starts a new Claude session in the
+     * same pty — and may never fire at all, if `claude` failed to start. The
+     * renderer must not wait on it alone.
+     */
+    onReady(callback: (event: SessionReadyEvent) => void): () => void;
+    /**
      * A session's real working directory and branch, as main observed them
      * (HIVE-78). Replaces the invented `feat/<id>` the store used to assign.
      */
@@ -1452,6 +1474,19 @@ export const BRIDGE_SESSION_KEYS = [
    * the other.
    */
   'onFinished',
+  /**
+   * HIVE-101's, and the narrowest listener on this list: main → renderer,
+   * carrying an entity id and **nothing else**, because the fact that Claude
+   * started is the whole message.
+   *
+   * Worth naming here anyway rather than waved through as "another listener".
+   * What it exposes to the page is a timing fact about a session the page
+   * already has the id of. What it deliberately does *not* carry is the thing
+   * its source has and this bridge has never passed: the `SessionStart` hook
+   * knows Claude's own session uuid, and that stays in main, where the ledger
+   * is the only thing that reads it.
+   */
+  'onReady',
   /**
    * HIVE-78's two. These were listeners, and at the time so was everything in
    * this list — HIVE-87 added the first two verbs, at the bottom.

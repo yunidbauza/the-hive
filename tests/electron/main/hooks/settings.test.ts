@@ -89,6 +89,66 @@ describe('hookSettings', () => {
     expect(handler.allowedEnvVars).toEqual([HOOK_ENV_SESSION, HOOK_ENV_TOKEN]);
   });
 
+  /**
+   * The `SessionStart` command hook (HIVE-101).
+   *
+   * The http handler above is subscribed to every event including this one, and
+   * **`SessionStart` is the one that never arrives** — measured twice against
+   * real binaries and recorded in `hook-contract.ts`. So this event, alone,
+   * carries a second handler of a different type, and these assertions are what
+   * stop the map builder being "simplified" back into one entry per event.
+   */
+  describe('the ready signal', () => {
+    const withReady = hookSettings(URL, undefined, 'http://127.0.0.1:9/ready');
+
+    it('adds a command hook to SessionStart and to nothing else', () => {
+      for (const event of HOOK_EVENTS) {
+        const entries = withReady.hooks[event] as { hooks: { type: string }[] }[];
+        const types = entries.flatMap((entry) => entry.hooks.map((h) => h.type));
+
+        expect(types).toEqual(
+          event === 'SessionStart' ? ['http', 'command'] : ['http'],
+        );
+      }
+    });
+
+    it('keeps the http handler on SessionStart even though it never arrives', () => {
+      /*
+        Deliberate: the entry costs one key in a generated file, and a release
+        that started delivering it would simply make the signal arrive twice —
+        which the renderer's action already tolerates.
+      */
+      const [first] = withReady.hooks.SessionStart as {
+        hooks: { type: string; url: string }[];
+      }[];
+
+      expect(first!.hooks[0]!.type).toBe('http');
+      expect(first!.hooks[0]!.url).toBe(URL);
+    });
+
+    it('reports to the ready URL, and prints nothing while doing it', () => {
+      const entries = withReady.hooks.SessionStart as {
+        hooks: { type: string; command?: string }[];
+      }[];
+      const command = entries[1]!.hooks[0]!.command as string;
+
+      expect(command).toContain('http://127.0.0.1:9/ready');
+      /*
+        A SessionStart hook's stdout is added to Claude's *context*, so silence
+        here is correctness rather than tidiness — and a non-zero exit would
+        surface in the session as a failure the user did not cause.
+      */
+      expect(command).toContain('-o /dev/null');
+      expect(command).toContain('|| true');
+    });
+
+    it('writes no command hook at all when there is no ready URL', () => {
+      const entries = settings.hooks.SessionStart as { hooks: unknown[] }[];
+
+      expect(entries).toHaveLength(1);
+    });
+  });
+
   it('is serialisable — it is written to disk as JSON', () => {
     expect(() => JSON.stringify(settings)).not.toThrow();
     expect(JSON.parse(JSON.stringify(settings))).toEqual(settings);

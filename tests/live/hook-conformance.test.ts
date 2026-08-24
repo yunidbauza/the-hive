@@ -401,6 +401,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
 
       const receiver = createReceiver({
         onDone: () => {},
+        onReady: () => {},
         knowsSession: (id) => id === 'sess-live',
         onMetrics: () => {},
         onEvent: (e) => {
