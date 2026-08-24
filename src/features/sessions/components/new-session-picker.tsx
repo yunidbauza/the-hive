@@ -230,11 +230,24 @@ export function NewSessionPicker() {
             value={newModel}
             onChange={setNewModel}
           />
+          {/*
+            Haiku does not think, so the scale beside it does not apply
+            (HIVE-100). Faded and out of reach rather than hidden: a control
+            that vanishes takes the layout with it and leaves the user wondering
+            what they did, where one that dims in place explains itself and
+            comes back the moment the model changes.
+
+            The stored effort is deliberately left alone. Switching to haiku and
+            back finds the scale exactly where it was, which is what makes this
+            a *disabled* control rather than a destructive one.
+          */}
           <OptionStepper
             label="thinking effort"
             options={EFFORTS}
             value={newEffort}
             onChange={setNewEffort}
+            disabled={newModel === 'haiku'}
+            disabledReason="not for haiku"
           />
         </div>
 

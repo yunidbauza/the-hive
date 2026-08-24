@@ -74,3 +74,53 @@ test('escape closes it', async ({ page }) => {
 
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
+
+/**
+ * Haiku takes the thinking scale out of reach (HIVE-100).
+ *
+ * The disabled state itself is asserted in the component tests. What only a
+ * real browser can show is that saying so **costs no layout**: the reason is
+ * appended to a label sitting in a half-width column, and the first draft wrapped
+ * — the whole stepper dropped a line the moment haiku was picked and rose again
+ * when it was not. A control that moves while you are choosing is worse than one
+ * that says less, which is why the reason is three words.
+ *
+ * **Honest about what this proves.** With `whitespace-nowrap` and `truncate` on
+ * that label the invariant holds by construction, so this does not fail if only
+ * those classes are removed — the current copy fits either way. It is a guard
+ * against the combination that actually broke it: longer copy *and* a label
+ * allowed to wrap. It also pins the fade itself, which is the whole of the
+ * signal for a sighted user and is a class nobody would notice going missing.
+ */
+test('picking haiku fades the thinking scale without moving it', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+
+  const effort = dialog.getByRole('radio', { name: 'max' });
+  const before = await effort.boundingBox();
+
+  await dialog.getByRole('radio', { name: 'haiku' }).click();
+
+  await expect(effort).toBeDisabled();
+  await expect(dialog.getByText(/not for haiku/)).toBeVisible();
+
+  const after = await effort.boundingBox();
+  expect(before).not.toBeNull();
+  expect(after).not.toBeNull();
+  // Within a pixel: the label is text, and a fractional advance width is not a
+  // layout regression.
+  expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after!.x - before!.x)).toBeLessThanOrEqual(1);
+
+  /*
+    And the fade is real rather than a class nobody applied — opacity is the
+    whole of the "this does not apply" signal for a sighted user.
+  */
+  const faded = await effort.evaluate((node) => {
+    const column = node.closest('div.flex-col');
+    return column === null ? '1' : getComputedStyle(column).opacity;
+  });
+  expect(Number(faded)).toBeLessThan(1);
+});
