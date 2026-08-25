@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   HOOK_HEADER_SESSION,
@@ -479,9 +479,13 @@ describe('hook receiver', () => {
      * A background task type this app has never seen is dropped with the
      * subagents — see `liveBackgroundShellIds` for the trade. `script` names a
      * shell, and assigning an unknown kind to it would repeat the subagent
-     * mistake in the other direction.
+     * mistake in the other direction. Dropped, but **not silently**: this is
+     * the one path that can bring a wrong `idle` back, and the live
+     * conformance test needs a real binary and an opt-in env var to see it.
      */
-    it('drops a background task type it does not know', async () => {
+    it('drops a background task type it does not know, and says so once', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
       const response = await post({
         hook_event_name: 'Stop',
         background_tasks: [{ id: 'z', type: 'something-new', status: 'running' }],
@@ -489,6 +493,48 @@ describe('hook receiver', () => {
 
       expect(response.status).toBe(204);
       expect(events[0]).toMatchObject({ backgroundShells: [] });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('something-new');
+
+      // Once per kind per receiver, not once per `Stop` — see `warnedTaskTypes`.
+      await post({
+        hook_event_name: 'Stop',
+        background_tasks: [{ id: 'z', type: 'something-new', status: 'running' }],
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      // A second unrecognised kind is its own news.
+      await post({
+        hook_event_name: 'Stop',
+        background_tasks: [{ id: 'q', type: 'another-new', status: 'running' }],
+      });
+      expect(warn).toHaveBeenCalledTimes(2);
+
+      warn.mockRestore();
+    });
+
+    /**
+     * The two kinds this app *does* have a reading for stay quiet — a warning
+     * on every `Stop` of an ordinary subagent run would be noise, and noise is
+     * how a real warning stops being read.
+     */
+    it('says nothing about the kinds it understands', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await post({
+        hook_event_name: 'Stop',
+        background_tasks: [
+          { id: 'a1bb2b63ce60a4e1c', type: 'subagent', status: 'running' },
+          { id: 'bcy0lrc5b', type: 'shell', status: 'running' },
+          // Not running, so not a missed detail whatever its kind is.
+          { id: 'gone', type: 'something-new', status: 'completed' },
+        ],
+      });
+
+      expect(events[0]).toMatchObject({ backgroundShells: ['bcy0lrc5b'] });
+      expect(warn).not.toHaveBeenCalled();
+
+      warn.mockRestore();
     });
 
     /**

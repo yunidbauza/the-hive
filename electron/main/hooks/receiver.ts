@@ -208,10 +208,18 @@ const isHookEvent = (value: unknown): value is HookEvent =>
  * union has one member this app already tracks better and one it needs; a
  * member that does not exist yet cannot be assigned to `script` — which is a
  * *shell* — without repeating the subagent mistake in the other direction.
- * `hook-conformance.test.ts` is what would catch it, being the one test that
- * asks the real binary.
+ *
+ * So it is dropped and **said out loud**: `onUnknownType` fires for a running
+ * entry of a kind this app has no reading for, and `createReceiver` turns that
+ * into one warning per kind per launch. Without it the only thing that could
+ * ever notice is `hook-conformance.test.ts`, which needs a real binary and an
+ * opt-in environment variable — a silent wrong `idle` is exactly the failure
+ * HIVE-90 exists to remove, and it should not be able to come back quietly.
  */
-function liveBackgroundShellIds(value: unknown): string[] | undefined {
+function liveBackgroundShellIds(
+  value: unknown,
+  onUnknownType: (type: string) => void,
+): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const ids: string[] = [];
   for (const entry of value) {
@@ -221,7 +229,16 @@ function liveBackgroundShellIds(value: unknown): string[] | undefined {
       type?: unknown;
       status?: unknown;
     };
-    if (type !== 'shell' || status !== 'running') continue;
+    if (status !== 'running') continue;
+    if (type !== 'shell') {
+      /*
+        `subagent` is a known member and tracked elsewhere, so it is dropped
+        quietly. Anything else is news.
+      */
+      if (typeof type === 'string' && type !== '' && type !== 'subagent')
+        onUnknownType(type);
+      continue;
+    }
     if (typeof id === 'string' && id !== '') ids.push(id);
   }
   return ids;
@@ -238,6 +255,26 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     knowsSession,
     port = 0,
   } = options;
+
+  /**
+   * Background-task kinds already reported, so the warning is **once per kind
+   * per receiver** rather than once per `Stop`.
+   *
+   * Per receiver rather than per module: a module-level set would make the
+   * first test that triggers it silence every test after, which is the shape
+   * of a fixture that passes for the wrong reason. It also keeps this file
+   * free of mutable module state, which nothing else here has.
+   */
+  const warnedTaskTypes = new Set<string>();
+  const noteUnknownTaskType = (type: string): void => {
+    if (warnedTaskTypes.has(type)) return;
+    warnedTaskTypes.add(type);
+    console.warn(
+      `[hive] ignoring an unrecognised background task type: ${type}.` +
+        ' A session running one reports plain idle, with no "script" detail —' +
+        ' see liveBackgroundShellIds in electron/main/hooks/receiver.ts.',
+    );
+  };
 
   const token = randomUUID();
   let server: Server | null = null;
@@ -486,7 +523,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       toolName = fields?.tool_name;
       agentId = fields?.agent_id;
       runInBackground = fields?.tool_input?.run_in_background;
-      backgroundShells = liveBackgroundShellIds(fields?.background_tasks);
+      backgroundShells = liveBackgroundShellIds(
+        fields?.background_tasks,
+        noteUnknownTaskType,
+      );
     }
 
     /**
