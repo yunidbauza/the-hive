@@ -90,6 +90,7 @@ import type {
 import type {
   SkillFile,
   SkillNameRequest,
+  SkillRenameRequest,
   SkillWriteRequest,
   SkillsSnapshot,
 } from '@shared/skills-contract';
@@ -266,10 +267,12 @@ const bridge: HiveBridge = {
       subscribe<FsChangedEvent>(CH.fsChanged, callback),
   },
   /*
-    HIVE-96. Four verbs, and not one of them names a path — see the contract for
-    why that is the whole security design rather than one layer of it. There is
-    no `onChanged` here on purpose: the pane is the only writer, and both
-    mutating verbs answer with the fresh snapshot.
+    HIVE-96, and HIVE-99's `rename`. Five verbs, and not one of them names a
+    path — `rename` names two skills, which is still none — see the contract for
+    why that is the whole security design rather than one layer of it, and
+    `BRIDGE_SKILLS_KEYS` for the argument the fifth verb had to make. There is
+    no `onChanged` here on purpose: the pane is the only writer, and every
+    mutating verb answers with the fresh snapshot.
   */
   skills: {
     list: (): Promise<SkillsSnapshot> => ipcRenderer.invoke(CH.skillsList),
@@ -279,6 +282,8 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.skillsWrite, request),
     remove: (request: SkillNameRequest): Promise<SkillsSnapshot> =>
       ipcRenderer.invoke(CH.skillsRemove, request),
+    rename: (request: SkillRenameRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsRename, request),
   },
   // Story 106. `status` takes no argument — see the contract for why that is
   // the security design and not an oversight.

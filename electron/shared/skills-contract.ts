@@ -88,6 +88,39 @@ export interface SkillNameRequest {
   name: string;
 }
 
+/**
+ * Move a skill's folder, because its frontmatter name changed (HIVE-99).
+ *
+ * ## Why this is a verb rather than a delete plus a write
+ *
+ * The folder name is mirrored from the frontmatter, so editing `name:` is a
+ * *rename* — but the pane could only express it as "write the new one", which
+ * left the old folder on disk, still internally consistent, still valid, and
+ * still injected. One action, two commands.
+ *
+ * The renderer cannot fix that on its own without a window in which both
+ * folders exist (write-then-delete) or neither does (delete-then-write). A
+ * crash, a refused write, or a spawn landing in between turns a rename into a
+ * duplicate or into a loss. `rename(2)` has no such window, and this request is
+ * what lets main perform it.
+ *
+ * ## Why two names and still no path
+ *
+ * Both fields go through the same `assertSkillName` as every other verb here,
+ * so the rule the docblock at the top of this file states is unchanged: a
+ * request names **skills**, not places. Two names is still zero paths.
+ *
+ * `to` is refused when it already exists rather than replaced. `rename(2)`
+ * would silently replace an empty target directory and fail `ENOTEMPTY` on a
+ * full one — two outcomes for one mistake, neither of them a refusal — and the
+ * pane's own collision check must not be the only thing standing between a
+ * typo and someone else's skill.
+ */
+export interface SkillRenameRequest {
+  from: string;
+  to: string;
+}
+
 export interface SkillWriteRequest {
   name: string;
   /**

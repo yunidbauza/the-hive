@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
@@ -237,6 +237,71 @@ test('creates a skill from Settings, beside the config', async ({}, testInfo) =>
     );
     expect(written).toContain('name: standup');
     expect(written).toContain('Summarise it.');
+  } finally {
+    await app.close();
+  }
+});
+
+test('renames a skill by its frontmatter, leaving one folder', async ({}, testInfo) => {
+  /**
+   * The whole of HIVE-99, on a real disk.
+   *
+   * The unit suites prove each half — the pane asks and calls `renameSkill`,
+   * main's runtime moves a folder — and neither can prove the thing the story
+   * is actually about, which is a **count of directories** after a click in
+   * the built app. The bug it replaces was invisible to every assertion of
+   * that kind: the save succeeded, the row appeared, the new file was correct,
+   * and a second skill quietly stayed behind serving the old command.
+   *
+   * So the load-bearing line here is the `readdirSync`. Everything above it is
+   * setup.
+   */
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+  const skillsDir = join(dirname(configPath), 'skills');
+
+  try {
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Skills' }).click();
+    await page.getByRole('button', { name: '+ New skill' }).click();
+    await page
+      .getByLabel('Skill source')
+      .fill('---\nname: standup\ndescription: Summarise the day\n---\nOne.\n');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: '/standup' })).toBeVisible();
+
+    /*
+      Rename it the only way the pane offers: edit the name in the frontmatter.
+      The body changes in the same edit, because that is the realistic case and
+      because the move and the write are two verbs — a rename that dropped the
+      edit would leave the folder right and the file stale.
+    */
+    await page
+      .getByLabel('Skill source')
+      .fill('---\nname: stand-up\ndescription: Summarise the day\n---\nTwo.\n');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    // It asks before moving a file the user did not ask to delete.
+    await expect(
+      page.getByRole('alertdialog', { name: 'Rename /standup to /stand-up?' }),
+    ).toBeVisible();
+    expect(readdirSync(skillsDir).sort()).toEqual(['standup']);
+
+    await page.getByRole('button', { name: 'Rename' }).click();
+
+    await expect(page.getByRole('button', { name: '/stand-up' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '/standup' })).toHaveCount(0);
+
+    // The line this test exists for: one folder, and it is the new one.
+    expect(readdirSync(skillsDir).sort()).toEqual(['stand-up']);
+
+    // And the edit that caused the rename is in it — the move carried the
+    // folder, the write that followed carried the body.
+    const moved = readFileSync(join(skillsDir, 'stand-up', 'SKILL.md'), 'utf8');
+    expect(moved).toContain('name: stand-up');
+    expect(moved).toContain('Two.');
   } finally {
     await app.close();
   }

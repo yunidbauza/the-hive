@@ -5,7 +5,17 @@ import { useSpawnSession } from '@stores/hive-store';
 import { useNewSessionDefaults } from '@stores/ui-store';
 
 interface NewSessionLinkProps {
+  /** What the spawn keys on. Never shown. */
   projectId: string;
+  /**
+   * What the accessible name says (HIVE-104).
+   *
+   * Both used to come from the id, which meant a screen-reader user heard the
+   * old word after a rename — under a row that had been fixed to show the new
+   * one. Two strings because they answer different questions: one identifies
+   * the project to the app, the other to the person.
+   */
+  projectName: string;
 }
 
 /**
@@ -37,7 +47,10 @@ interface NewSessionLinkProps {
  * button. This link has one path in, and `disabled` closes it — a second check
  * here would be a branch nothing can reach.
  */
-export function NewSessionLink({ projectId }: NewSessionLinkProps) {
+export function NewSessionLink({
+  projectId,
+  projectName,
+}: NewSessionLinkProps) {
   const access = useProjectAccess(projectId);
   const spawnSession = useSpawnSession();
   const { newModel, newEffort } = useNewSessionDefaults();
@@ -59,7 +72,7 @@ export function NewSessionLink({ projectId }: NewSessionLinkProps) {
         that this does not: sight of the model before you start on it.
       */
       title={access.reason ?? `Starts on ${newModel} · ${newEffort}`}
-      aria-label={`New session in ${projectId}`}
+      aria-label={`New session in ${projectName}`}
       className="flex items-center gap-1.5 rounded-lg py-[3px] pr-2.5 pl-[26px] text-left font-mono text-[11.5px] text-subtle hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-subtle"
     >
       <Plus size={10} weight="bold" aria-hidden="true" className="shrink-0" />

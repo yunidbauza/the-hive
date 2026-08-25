@@ -101,6 +101,11 @@ describe('exposed surface', () => {
       fourth reminder above. `skills` is the second namespace that writes to the
       disk, so a fifth verb appearing here is exactly the change this file exists
       to catch.
+
+      HIVE-99 is that fifth verb, and this assertion is what made adding it a
+      deliberate act: `rename` had to be argued for on `BRIDGE_SKILLS_KEYS` and
+      added there before this line would pass. Working as intended — the alarm
+      is not that a fifth verb is wrong, it is that one cannot arrive quietly.
     */
     expect(Object.keys(skills()).sort()).toEqual([...BRIDGE_SKILLS_KEYS].sort());
     /**
@@ -453,6 +458,32 @@ describe('theme verbs route to their channels (HIVE-80)', () => {
       suggestedName: 'x.json',
       contents: '{}',
     });
+  });
+});
+
+describe('the skills rename verb routes to its channel (HIVE-99)', () => {
+  it('invokes skills:rename with both names and nothing else', async () => {
+    await skills().rename({ from: 'standup', to: 'stand-up' });
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.skillsRename, {
+      from: 'standup',
+      to: 'stand-up',
+    });
+  });
+
+  it('does not route it to the write channel', () => {
+    /*
+      The distinction this verb exists for. Renaming used to be expressed as a
+      `skills:write` under the new name, which is what left the old folder on
+      disk — so a `rename` that quietly reached `skills:write` would reinstate
+      the bug with the new API's name on it.
+    */
+    void skills().rename({ from: 'standup', to: 'stand-up' });
+
+    expect(ipcRendererMock.invoke).not.toHaveBeenCalledWith(
+      CH.skillsWrite,
+      expect.anything(),
+    );
   });
 });
 

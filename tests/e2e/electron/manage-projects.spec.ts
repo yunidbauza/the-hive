@@ -211,7 +211,24 @@ test('renaming writes the file and never touches the id', async ({}, testInfo) =
     await input.fill('Alpha Renamed');
     await input.press('Enter');
 
-    await expect(page.getByText('Alpha Renamed')).toBeVisible();
+    // Settings shows it — its row menu is addressed by the new name.
+    await expect(
+      page.getByRole('button', { name: 'Actions for Alpha Renamed' }),
+    ).toBeVisible();
+
+    /*
+      And so does the left rail, in the same frame and with no restart
+      (HIVE-104). The rail's row drew `project.id`, which a rename deliberately
+      never touches, so this label used to read `alpha` forever — the config
+      file and the Settings row were both already correct.
+
+      Asserted here rather than in a spec of its own because this is the only
+      place a rename is *performed* end to end: a real menu, a real write by
+      main, and the snapshot it returns landing in the renderer.
+    */
+    const tree = page.locator('[data-panel="projects"]');
+    await expect(tree.getByText('Alpha Renamed')).toBeVisible();
+    await expect(tree.getByText('alpha', { exact: true })).toHaveCount(0);
 
     const written = JSON.parse(readFileSync(configPath, 'utf8'));
     expect(written.projects[0].name).toBe('Alpha Renamed');

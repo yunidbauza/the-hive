@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   parseSkillNameRequest,
+  parseSkillRenameRequest,
   parseSkillWriteRequest,
 } from '../../../electron/shared/guards';
 
@@ -110,5 +111,105 @@ describe('parseSkillWriteRequest', () => {
 
   it('refuses a missing body', () => {
     expect(() => parseSkillWriteRequest({ name: 'x' })).toThrow();
+  });
+});
+
+/**
+ * The only guard here with two name fields (HIVE-99).
+ *
+ * Which is the whole reason these cases exist in pairs. A guard that validated
+ * the destination and trusted the source — on the grounds that the source came
+ * from a list the renderer was *given* — would let a request name a folder main
+ * never listed, and `rename(2)` is not fussy about which of its two arguments
+ * was the dangerous one. Both run through the same `assertSkillName`, so every
+ * refusal below holds in both positions.
+ */
+describe('parseSkillRenameRequest', () => {
+  it('accepts two bare names', () => {
+    expect(
+      parseSkillRenameRequest({ from: 'standup', to: 'stand-up' }),
+    ).toEqual({ from: 'standup', to: 'stand-up' });
+  });
+
+  it('refuses a traversal in the destination', () => {
+    expect(() =>
+      parseSkillRenameRequest({ from: 'standup', to: '../../../etc' }),
+    ).toThrow();
+  });
+
+  it('refuses a traversal in the source, which is not the trusted one', () => {
+    expect(() =>
+      parseSkillRenameRequest({ from: '../../../etc/passwd', to: 'standup' }),
+    ).toThrow();
+  });
+
+  it('refuses a separator in either position', () => {
+    expect(() =>
+      parseSkillRenameRequest({ from: 'a/b', to: 'standup' }),
+    ).toThrow();
+    expect(() =>
+      parseSkillRenameRequest({ from: 'standup', to: 'a/b' }),
+    ).toThrow();
+  });
+
+  it('refuses the reserved name in either position', () => {
+    // Renaming *onto* `done` would shadow the built-in; renaming *away from*
+    // it would move a file the app owns and rewrites on every launch.
+    expect(() =>
+      parseSkillRenameRequest({ from: 'standup', to: 'done' }),
+    ).toThrow(/reserved/i);
+    expect(() =>
+      parseSkillRenameRequest({ from: 'done', to: 'standup' }),
+    ).toThrow(/reserved/i);
+  });
+
+  it('refuses uppercase, which would collide on a case-insensitive disk', () => {
+    expect(() =>
+      parseSkillRenameRequest({ from: 'standup', to: 'Standup' }),
+    ).toThrow();
+  });
+
+  it('refuses an empty name in either position', () => {
+    expect(() => parseSkillRenameRequest({ from: '', to: 'standup' })).toThrow();
+    expect(() => parseSkillRenameRequest({ from: 'standup', to: '' })).toThrow();
+  });
+
+  it('refuses a name that is not a string', () => {
+    expect(() =>
+      parseSkillRenameRequest({ from: 'standup', to: 42 }),
+    ).toThrow();
+  });
+
+  it('refuses a missing key', () => {
+    expect(() => parseSkillRenameRequest({ from: 'standup' })).toThrow();
+    expect(() => parseSkillRenameRequest({ to: 'standup' })).toThrow();
+  });
+
+  it('refuses an unexpected key, like every other parser here', () => {
+    expect(() =>
+      parseSkillRenameRequest({ from: 'a', to: 'b', root: '/etc' }),
+    ).toThrow();
+  });
+
+  it('refuses a prototype-polluting key', () => {
+    expect(() =>
+      parseSkillRenameRequest(
+        JSON.parse('{"from":"a","to":"b","__proto__":{"x":1}}'),
+      ),
+    ).toThrow();
+  });
+
+  it('carries two equal names through — intent is not this guard\'s business', () => {
+    /*
+      Refusing this here would be the boundary holding an opinion about what the
+      caller *meant* rather than about what the payload can *express*, which is
+      the line every other parser in this file keeps. It is not an assertion
+      that a self-rename works: main refuses it, because the destination exists
+      — see the runtime's tests.
+    */
+    expect(parseSkillRenameRequest({ from: 'standup', to: 'standup' })).toEqual({
+      from: 'standup',
+      to: 'standup',
+    });
   });
 });

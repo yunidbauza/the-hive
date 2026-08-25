@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
@@ -48,6 +48,21 @@ export interface SkillsRuntime {
   write(name: string, body: string): Promise<SkillsSnapshot>;
   /** Remove the folder, regenerate, and answer with the fresh snapshot. */
   remove(name: string): Promise<SkillsSnapshot>;
+  /**
+   * Move a skill's folder, regenerate, and answer with the fresh snapshot
+   * (HIVE-99).
+   *
+   * The one verb here the renderer could not have assembled from the others —
+   * see `skills-contract.ts` for why write-then-remove has a window that this
+   * does not. Rejects when `to` is taken, and when `from` is not there.
+   *
+   * The **body is not touched**. A rename leaves `to/SKILL.md` still declaring
+   * `from`, which `readUserSkills` reports as a mismatch — so a caller renaming
+   * because the frontmatter changed must follow with the {@link write} that
+   * carries the new name. `src/lib/skills.ts` does exactly that, in one call,
+   * and this stays a move rather than becoming a move-and-edit.
+   */
+  rename(from: string, to: string): Promise<SkillsSnapshot>;
 }
 
 export interface SkillsRuntimeOptions {
@@ -202,5 +217,59 @@ export function createSkillsRuntime({
       await rm(join(skillsRoot(), name), { recursive: true, force: true });
       return snapshot(await sync());
     },
+
+    async rename(from: string, to: string): Promise<SkillsSnapshot> {
+      const target = join(skillsRoot(), to);
+
+      /*
+        Refuse a taken name rather than letting `rename(2)` decide.
+
+        The syscall's answer to an existing target is not one answer: it
+        silently *replaces* an empty directory and fails ENOTEMPTY on a full
+        one. So a user renaming onto a skill they had emptied by hand would
+        lose it without a word, and renaming onto a real one would fail with an
+        errno that means nothing to them. The pane refuses this collision too
+        (`skillNameProblem`'s `taken`), and that is exactly why it is also
+        refused here: a boundary that is correct only while the UI in front of
+        it is correct is not a boundary.
+
+        Not atomic with the rename below, and it does not need to be. The only
+        writer to this tree is this process, and a folder appearing between the
+        two lines is a person with a text editor — for whom losing the race
+        means the rename fails, not that their file is replaced.
+      */
+      if (await exists(target)) {
+        throw new Error(`A skill called "${to}" already exists.`);
+      }
+
+      // One syscall, so there is no moment in which the skill exists twice or
+      // not at all — the whole reason this verb is in main.
+      await rename(join(skillsRoot(), from), target);
+      return snapshot(await sync());
+    },
   };
+}
+
+/**
+ * Is anything at all sitting on this name — directory, file, or dangling link?
+ *
+ * `lstat`, not `stat`, and the difference is not academic: `read.ts` counts a
+ * **symlink to a directory** as a skill folder, so a link is a name that is
+ * taken. `stat` would follow it, and a link left pointing at nothing — the
+ * dotfiles case, since the population most likely to symlink these in is the
+ * one most likely to have a stale one — would read as free.
+ */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    /*
+      Anything that cannot be stat'ed counts as absent, which is the safe
+      direction: the caller's next move is `rename(2)`, which fails loudly on a
+      path it cannot use. Reporting "taken" for an EACCES would refuse a rename
+      the OS would have allowed, on the strength of a guess.
+    */
+    return false;
+  }
 }

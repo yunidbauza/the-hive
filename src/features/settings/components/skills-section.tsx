@@ -6,6 +6,7 @@ import {
   frontmatterName,
   loadSkills,
   readSkill,
+  renameSkill,
   saveSkill,
   skillNameProblem,
 } from '@/lib/skills';
@@ -76,6 +77,23 @@ export function SkillsSection() {
     detail: string;
     confirmLabel: string;
     act: () => void;
+    /**
+     * Does editing the buffer invalidate this question? (HIVE-99)
+     *
+     * Only the rename one, and the difference is what each question *quotes*.
+     * "Rename /standup to /stand-up?" reads its destination out of the buffer,
+     * and this confirm is deliberately not modal — it appears beside a live
+     * `<textarea>` the user can keep typing in. Type on, and the question is
+     * asking about text that is no longer on screen, while `act` would write
+     * the text that was. Neither honouring the stale question nor silently
+     * switching to the new one is honest, so the question goes away and Save
+     * asks the current one.
+     *
+     * "Discard changes to /standup?" quotes nothing from the buffer — more
+     * typing only makes it more true — so it stays put, and the existing
+     * Escape-from-the-textarea behaviour is unchanged.
+     */
+    staleOnEdit?: boolean;
   } | null>(null);
   /**
    * Why the last write did not happen, or `null`.
@@ -113,6 +131,12 @@ export function SkillsSection() {
     .filter((name) => name !== open);
   const typed = buffer === null ? '' : frontmatterName(buffer);
   const problem = buffer === null ? null : skillNameProblem(typed, taken);
+
+  /** Type into the buffer, retiring any question that quoted it (HIVE-99). */
+  const edit = (next: string): void => {
+    setBuffer(next);
+    if (pending?.staleOnEdit === true) setPending(null);
+  };
 
   /** Run `act`, or ask first when there is unsaved work to lose. */
   const guard = (
@@ -192,28 +216,95 @@ export function SkillsSection() {
     );
   };
 
-  const save = (): void => {
-    if (buffer === null || problem !== null) return;
-    void saveSkill(typed, buffer).then((failure) => {
-      /*
-        Only claim success when there was one.
+  /**
+   * Write the buffer, moving the folder first when the name changed.
+   *
+   * `from` is the name the file is currently under, or `null` when there is
+   * nothing to move — a skill saved under its own name, or one that has never
+   * been on disk at all.
+   */
+  const commit = (from: string | null, body: string): void => {
+    /*
+      Only claim success when there was one.
 
-        `saveSkill` used to resolve either way, so this ran unconditionally: the
-        badge flipped to "saved" and the path header pointed at a file main had
-        refused to write. Being told a skill is saved while it is not is worse
-        than the failure itself, because the user stops looking.
+      `saveSkill` used to resolve either way, so the success path ran
+      unconditionally: the badge flipped to "saved" and the path header pointed
+      at a file main had refused to write. Being told a skill is saved while it
+      is not is worse than the failure itself, because the user stops looking.
+    */
+    const settle = (moved: boolean, failure: string | null): void => {
+      /*
+        Follow the file the moment it moves, even into a failure.
+
+        A move that lands before a failed write leaves the folder under the new
+        name with the old frontmatter inside it. Leaving `open` behind then
+        makes the pane's own `taken` list contain the name the user is trying
+        to save — `skillNameProblem` answers "you already have a skill called
+        …", Save goes disabled, and the invalid row cannot be opened either, so
+        the only way out is a text editor. Moving `open` with the file turns
+        the retry back into an ordinary Save.
       */
+      if (moved) setOpen(typed);
       if (failure !== null) {
         setError(failure);
         return;
       }
       setError(null);
-      // The folder is named from the frontmatter, so a rename lands as a new
-      // skill and the old one is removed by the user's own Delete — this story
-      // does not move files behind their back.
-      setOpen(typed);
-      setSaved(buffer);
-    });
+      setSaved(body);
+    };
+
+    if (from === null) {
+      void saveSkill(typed, body).then((failure) =>
+        settle(failure === null, failure),
+      );
+      return;
+    }
+
+    void renameSkill(from, typed, body).then(({ moved, error }) =>
+      settle(moved, error),
+    );
+  };
+
+  const save = (): void => {
+    if (buffer === null || problem !== null) return;
+    const body = buffer;
+
+    /*
+      A changed name is a **rename**, and it asks first (HIVE-99).
+
+      The folder is mirrored from the frontmatter, so editing `name:` and
+      pressing Save used to write the new folder and leave the old one — still
+      valid, still listed, still injected. One action produced two live
+      commands and the user was left to find the fork themselves.
+
+      Moving a file the user did not ask to delete is the thing HIVE-96 would
+      not do silently, and this does not do it silently either: it asks, in the
+      confirm this pane already owns, and only then moves. `open === null` is a
+      skill that has never been saved — there is nothing on disk to move, so
+      there is nothing to ask about.
+    */
+    if (open !== null && typed !== open) {
+      setPending({
+        question: `Rename /${open} to /${typed}?`,
+        // The second sentence is not decoration. A running session was started
+        // with the old plugin directory and keeps the command it was given —
+        // worth saying, because the user's next move is to try it in a live
+        // terminal and be confused when it still works.
+        detail:
+          'The old command stops working. Sessions already running keep it until they end.',
+        confirmLabel: 'Rename',
+        act: () => commit(open, body),
+        // The question quotes `typed`, and `act` closes over `body`. Both are
+        // this render's — so an edit retires the question rather than letting
+        // it answer for text that is no longer on screen.
+        staleOnEdit: true,
+      });
+      return;
+    }
+
+    // `null`, not `open`: an unchanged name has nothing to move, and asking
+    // main to rename a folder onto itself would be a syscall to say so.
+    commit(null, body);
   };
 
   const remove = (): void => {
@@ -398,7 +489,7 @@ export function SkillsSection() {
               body={buffer}
               dirty={dirty}
               problem={problem}
-              onChange={setBuffer}
+              onChange={edit}
               onSave={save}
               onDelete={remove}
             />
