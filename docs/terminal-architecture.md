@@ -357,3 +357,51 @@ Two gotchas worth knowing before writing a spec:
 - **Fixture transcripts are short** (the longest, `hero-refresh`, is eight
   lines), so a spec that needs scrollback must shrink the viewport *before* the
   terminal mounts.
+
+## Reading Claude Code's screen (HIVE-79)
+
+One rule in `lib/terminal/keymap.ts` is a screen-scrape of a UI this app does not
+own: `claimBareBack`, which decides whether a bare `←` at a live terminal belongs
+to the app or to the child process. It has to exist — `←` is how you leave a
+session everywhere else in the app, and Claude binds the same key to open *its*
+agent list, which is a second fleet view inside the fleet view.
+
+Everything about it is shaped by one lesson: **a claim about what Claude Code
+draws is not proven until a real `claude` has drawn it.** The rule that shipped
+before HIVE-79 was written against a staged xterm buffer, passed every unit test,
+and was wrong in both directions in production. Two assumptions cost the most:
+
+- **Claude writes a faint placeholder into its empty input.** `❯ Try "write a
+  test for …"`, as real cells, while its own footer still offers `← for agents` —
+  so Claude *would* navigate, and the app read the row as a typed message and
+  handed the key over. It arrives as `\x1b[39m❯\xa0\x1b[2mTry "…"`: **SGR 2**,
+  and typed input never is. That is why the surface reads *cell rendition* for
+  the caret's row rather than calling `translateToString` on it.
+- **Claude Code runs on the alternate screen buffer.** A guard on
+  `buffer.type !== 'alternate'` looks like the one non-scrape signal available —
+  `vim`, `less` and `htop` take that buffer, so surely Claude does not. It does.
+  The guard disabled the claim outright: every frame came back `foreign` and no
+  chord was ever raised, with every unit test still green.
+
+What the rule is allowed to rely on, therefore, is deliberately small: the caret's
+row is blank once a prompt marker is stripped, and a plain horizontal rule sits
+**immediately** above and below it. Claude's empty input is exactly one row tall
+at every width from 18 columns to 120. Anything looser reaches into other
+programs' chrome — `fzf --border`, `atuin`, a lazygit panel — where `←` is
+load-bearing; `isRuleRow` rejects any row carrying a box corner or vertical for
+the same reason.
+
+The third answer, `declined`, exists because the screen cannot always decide. A
+blank caret row touching one edge but not the other is either a message begun
+with `Shift+Enter` or a repaint that has not caught up, and those are
+indistinguishable. The key goes to the pty and the app *says so* — that is the
+`back-declined` chord and the strip the centre stage draws from it. It is
+deliberately rare: anything typed on the caret's row is silent, because a user
+pressing `←` to fix a typo has lost nothing and needs telling nothing.
+
+Coverage sits in three places, and none of them substitutes for the others:
+recordings from a real session in `tests/support/claude-frames.ts`, readable
+per-shape fixtures in `tests/lib/terminal/keymap.test.ts`, and `pnpm test:back` —
+a desktop e2e that drives a real `claude` and asserts the overmind, not Claude's
+agent list, is what `←` reaches. Only the last one could have caught either
+assumption above.

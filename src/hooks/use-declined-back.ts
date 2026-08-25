@@ -34,8 +34,11 @@ export const DECLINED_BACK_MS = 4_000;
  *
  * Re-armed on every announcement, so holding `←` down keeps the strip up rather
  * than flickering it: each event restarts the clock.
+ *
+ * `surface` is whatever the caller calls "the thing on screen" — an entity id
+ * here. Changing it clears the strip; this hook never looks at the value.
  */
-export function useDeclinedBack(): boolean {
+export function useDeclinedBack(surface: string | null): boolean {
   const [at, setAt] = useState<number | null>(null);
 
   useEffect(() => {
@@ -62,6 +65,19 @@ export function useDeclinedBack(): boolean {
     const timer = setTimeout(() => setAt(null), DECLINED_BACK_MS);
     return () => clearTimeout(timer);
   }, [at]);
+
+  /**
+   * The news belongs to the surface it happened on.
+   *
+   * Without this the strip outlives the view that raised it: press `←` with a
+   * half-written message, then leave with `⌘[`, and it follows the user to the
+   * overmind — where it advises them to press `⌘[` to reach the overmind. It
+   * would do the same on the way to another session, describing something that
+   * happened in a terminal they are no longer looking at.
+   */
+  useEffect(() => {
+    setAt(null);
+  }, [surface]);
 
   return at !== null;
 }

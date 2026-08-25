@@ -42,8 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, and the boot-ready signal |
-| `pnpm test:back` | The bare-`←` claim, driven against a **real `claude`** in the built app (HIVE-79) |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, and the bare-`←` claim in the built app |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -193,13 +192,7 @@ slice back; boot data is last run's ended sessions. Tests: `tests/support/`.
   processes leaks them. `__mocks__/node-pty.ts` records; assert spawn arguments,
   cwd, write/resize/kill routing, exit handling. What only a real process can
   show: terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks
-  actually send — `pnpm test:hooks`.
-- **A rule about what Claude Code draws is not proven until a real `claude` has
-  drawn it** (HIVE-79). The bare-`←` rule shipped against a staged buffer and
-  was wrong twice over: Claude writes a *faint placeholder* into its empty input
-  (so the row is not blank), and it runs on the **alternate screen buffer** (so
-  a guard built on `buffer.type` disabled the feature outright). Every unit test
-  passed through both. Recordings live in `tests/support/claude-frames.ts`; the
-  binary is the arbiter — `pnpm test:back`.
+  actually send — `pnpm test:hooks`; what it actually **draws**, which no staged
+  buffer can prove — `pnpm test:back` (HIVE-79, `docs/terminal-architecture.md`).
 - Never add a coverage-ignore comment to pass the gate. An untestable branch is
   usually a design smell — fix the shape instead.

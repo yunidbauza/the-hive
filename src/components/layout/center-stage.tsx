@@ -226,11 +226,21 @@ export function CenterStage() {
    * The other half of the same announcement (HIVE-79).
    *
    * Read here rather than inside `TerminalHost` because it is the *stage* that
-   * owns what is drawn over a terminal — the boot cover above it is the same
-   * shape — and because a hook that flipped state inside the host would
-   * re-render every kept-alive surface to show one strip.
+   * owns what is drawn over a terminal — the boot cover beside it is the same
+   * shape, read the same way, from the same component.
+   *
+   * It is worth being honest that this costs a render of every mounted surface,
+   * twice per announcement: neither `TerminalHost` nor `TerminalSurface` is
+   * memoized, so state flipped here reaches all of them. That is affordable
+   * only because the announcement is rare — see {@link claimBareBack}, which
+   * stays silent through ordinary editing. It would not be affordable on every
+   * arrow key, and an earlier revision that announced that often would have
+   * made this comment a lie.
+   *
+   * Scoped to the active tab, so the strip cannot outlive the terminal that
+   * raised it.
    */
-  const declinedBack = useDeclinedBack();
+  const declinedBack = useDeclinedBack(activeTab);
 
   const backToOrch = useBackToOrch();
   useEffect(() => {

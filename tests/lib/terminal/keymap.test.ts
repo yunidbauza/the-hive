@@ -14,7 +14,7 @@ import {
   type CursorContext,
   type KeyEventLike,
 } from '@lib/terminal/keymap';
-import { CLAUDE_FRAMES } from '@tests/support/claude-frames';
+import { CLAUDE_FRAMES, asCursorContext } from '@tests/support/claude-frames';
 
 /**
  * The keyboard matrix (story 095).
@@ -374,9 +374,19 @@ const RULE = '─'.repeat(100);
 const FOOTER = '  the-hive | main | Opus 5 (1M context) - high | [--------] --%';
 
 /** A frame, in the shape the surface reports it: rows plus the caret's index. */
-const frame = (rows: readonly string[], caretRow: number): CursorContext => ({
+const frame = (
+  rows: readonly string[],
+  caretRow: number,
+  /**
+   * What the *user* typed on the caret's row. Defaults to the raw row, which
+   * is what a terminal reports when Claude is not drawing its faint
+   * placeholder — i.e. almost always. The placeholder case passes `''`.
+   */
+  caretText?: string,
+): CursorContext => ({
   rows,
   caretRow,
+  caretText: caretText ?? rows[caretRow] ?? '',
 });
 
 /**
@@ -549,13 +559,52 @@ describe('isEmptyClaudePrompt — the frames a real session produces', () => {
   });
 
   it('is foreign when the caret is on a rule itself', () => {
-    // Not an input row at all — a transcript the user has scrolled into.
+    /**
+     * Not an input row at all — a transcript the user has scrolled into. Caught
+     * by the typed-row test rather than by a rule of its own: a row of rule
+     * characters does not survive {@link PROMPT_PREFIX} as empty, so it reads
+     * as "the user typed something" and the app steps aside. An explicit
+     * `isRuleRow(caret)` guard was written here first and removed — it could
+     * not be reached, and an unreachable branch is a claim nothing can check.
+     */
     expect(claimBareBack(frame([RULE, RULE, RULE], 1))).toBe('foreign');
   });
 
   it('is foreign when the caret index is outside the reported rows', () => {
     expect(claimBareBack(frame([], 0))).toBe('foreign');
     expect(claimBareBack(frame(['❯'], -1))).toBe('foreign');
+  });
+
+  it('is silent through ordinary editing, not merely declining', () => {
+    /**
+     * The noise this rule exists to avoid. Typing `helo` and pressing `←` three
+     * times to fix it is the single most common thing a user does in a session;
+     * each press must be `foreign`, not `declined`, or the strip appears over
+     * the input on every keystroke saying something that is not true.
+     */
+    for (const typed of ['❯ helo', '❯ h', '  a continuation row']) {
+      expect(claimBareBack(frame(['', RULE, typed, RULE], 2))).toBe('foreign');
+    }
+  });
+
+  it('will not read another program’s panel border as Claude’s frame', () => {
+    /**
+     * `fzf --border`, `atuin`, a lazygit panel: a box whose borders sit several
+     * rows from the caret with a list in between. An earlier revision searched
+     * eight rows either way for *any* edge, found these, and claimed `←` — in
+     * programs where `←` is load-bearing and the user is mid-search.
+     *
+     * Claude's empty input is exactly one row tall, at every width captured
+     * from a real session, so the edges must be touching the caret's row.
+     */
+    const panel = [
+      '┌─────────────────────────────┐',
+      '│ src/lib/terminal/keymap.ts  │',
+      '│ src/lib/terminal/ansi.ts    │',
+      '> ',
+      '└─────────────────────────────┘',
+    ];
+    expect(claimBareBack(frame(panel, 3))).toBe('foreign');
   });
 
   it('wants both edges, not just the one below the caret', () => {
@@ -604,7 +653,7 @@ describe('the frames of a real claude 2.1.245', () => {
   });
 
   it.each(CLAUDE_FRAMES)('$name -> $claim', (captured) => {
-    expect(claimBareBack(captured)).toBe(captured.claim);
+    expect(claimBareBack(asCursorContext(captured))).toBe(captured.claim);
   });
 });
 
@@ -637,15 +686,34 @@ describe('decideTerminalKey — bare ← at an empty Claude prompt', () => {
     ).toBe('app-chord');
   });
 
-  it('gives it back to the pty the moment something is typed — and says so', () => {
+  it('gives it back to the pty the moment something is typed, and stays quiet', () => {
     /**
-     * `back-declined` is a `to-pty` that the app hears about (HIVE-79). The
-     * key still reaches the child process, which is what keeps a half-written
-     * message editable; what changed is that the app no longer loses it in
-     * silence.
+     * `to-pty`, not `back-declined`. Nothing was lost: `←` on a row with a
+     * message on it moves the caret one column, which is what the user asked
+     * for and what Claude would have done anyway.
+     *
+     * This is the common case by a wide margin — every arrow key pressed while
+     * fixing a typo lands here — and an earlier revision announced on all of
+     * them, putting `← went to the session` over the input being edited four
+     * seconds at a time. See {@link claimBareBack}.
      */
     expect(
       decideTerminalKey(key({ key: 'ArrowLeft' }), { ...MAC, cursor: CLAUDE_TYPED }),
+    ).toBe('to-pty');
+  });
+
+  it('announces only the shape it genuinely cannot decide', () => {
+    /**
+     * A blank caret row with the frame's edges not touching it: either another
+     * line of a message begun with `Shift+Enter`, or a repaint that has not
+     * caught up on an input that really is empty. Indistinguishable from the
+     * screen — so the pty gets the key and the app says where it went.
+     */
+    expect(
+      decideTerminalKey(key({ key: 'ArrowLeft' }), {
+        ...MAC,
+        cursor: MULTILINE_CARET_ON_EMPTY_ROW,
+      }),
     ).toBe('back-declined');
   });
 

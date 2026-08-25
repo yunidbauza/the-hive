@@ -43,12 +43,25 @@ import type { CursorContext } from '@lib/terminal/keymap';
 /** A frame edge, drawn the full width of the terminal. */
 const rule = (width: number): string => '\u2500'.repeat(width);
 
-export interface CapturedFrame extends CursorContext {
+export interface CapturedFrame extends Omit<CursorContext, 'caretText'> {
   /** The state the session was driven into. */
   name: string;
   /** What the app must decide for a bare `<-` at this frame. */
   claim: 'claim' | 'declined' | 'foreign';
 }
+
+/**
+ * A recording, in the shape the surface hands over.
+ *
+ * `caretText` is the caret's row as the *user* typed it. These recordings carry
+ * no rendition (see the note above), so it is the raw row — which is correct
+ * for every frame here, none of which was showing Claude's faint placeholder.
+ */
+export const asCursorContext = (captured: CapturedFrame): CursorContext => ({
+  rows: captured.rows,
+  caretRow: captured.caretRow,
+  caretText: captured.rows[captured.caretRow] ?? '',
+});
 
 export const CLAUDE_FRAMES: readonly CapturedFrame[] = [
   {
@@ -77,7 +90,7 @@ export const CLAUDE_FRAMES: readonly CapturedFrame[] = [
   },
   {
     name: "text typed",
-    claim: 'declined',
+    claim: 'foreign',
     caretRow: 8,
     rows: [
       "",
@@ -101,7 +114,7 @@ export const CLAUDE_FRAMES: readonly CapturedFrame[] = [
   },
   {
     name: "text typed, caret sent home with ctrl-a",
-    claim: 'declined',
+    claim: 'foreign',
     caretRow: 8,
     rows: [
       "",
@@ -269,7 +282,7 @@ export const CLAUDE_FRAMES: readonly CapturedFrame[] = [
   },
   {
     name: "multi-line, caret at end of row 2",
-    claim: 'declined',
+    claim: 'foreign',
     caretRow: 8,
     rows: [
       "",
@@ -293,7 +306,7 @@ export const CLAUDE_FRAMES: readonly CapturedFrame[] = [
   },
   {
     name: "multi-line, caret on row 1",
-    claim: 'declined',
+    claim: 'foreign',
     caretRow: 8,
     rows: [
       "",

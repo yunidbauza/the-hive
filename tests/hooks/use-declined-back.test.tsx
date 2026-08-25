@@ -38,12 +38,12 @@ describe('useDeclinedBack', () => {
   });
 
   it('starts quiet', () => {
-    const { result } = renderHook(() => useDeclinedBack());
+    const { result } = renderHook(() => useDeclinedBack('sess-01'));
     expect(result.current).toBe(false);
   });
 
   it('raises on a declined bare ←', () => {
-    const { result } = renderHook(() => useDeclinedBack());
+    const { result } = renderHook(() => useDeclinedBack('sess-01'));
     announce('back-declined');
     expect(result.current).toBe(true);
   });
@@ -54,13 +54,13 @@ describe('useDeclinedBack', () => {
      * from this terminal. A strip saying "← went to the session" over a
      * successful departure would be describing the opposite of what happened.
      */
-    const { result } = renderHook(() => useDeclinedBack());
+    const { result } = renderHook(() => useDeclinedBack('sess-01'));
     announce('back');
     expect(result.current).toBe(false);
   });
 
   it('falls quiet again on its own', () => {
-    const { result } = renderHook(() => useDeclinedBack());
+    const { result } = renderHook(() => useDeclinedBack('sess-01'));
     announce('back-declined');
 
     act(() => {
@@ -81,7 +81,7 @@ describe('useDeclinedBack', () => {
      * the *first* one's clock — mid-keypress, while the user is still pressing
      * the key it is explaining.
      */
-    const { result } = renderHook(() => useDeclinedBack());
+    const { result } = renderHook(() => useDeclinedBack('sess-01'));
     announce('back-declined');
 
     act(() => {
@@ -100,8 +100,26 @@ describe('useDeclinedBack', () => {
     expect(result.current).toBe(false);
   });
 
+  it('goes quiet when the user leaves the terminal that raised it', () => {
+    /**
+     * Otherwise the strip outlives its subject: press `←` with a half-written
+     * message, leave with `⌘[`, and it follows the user to the overmind — where
+     * it advises pressing `⌘[` to reach the overmind. Same on the way to
+     * another session, describing a terminal they are no longer looking at.
+     */
+    const { result, rerender } = renderHook(
+      ({ surface }: { surface: string | null }) => useDeclinedBack(surface),
+      { initialProps: { surface: 'sess-01' as string | null } },
+    );
+    announce('back-declined');
+    expect(result.current).toBe(true);
+
+    rerender({ surface: 'orch' });
+    expect(result.current).toBe(false);
+  });
+
   it('stops listening when it goes away', () => {
-    const { result, unmount } = renderHook(() => useDeclinedBack());
+    const { result, unmount } = renderHook(() => useDeclinedBack('sess-01'));
     unmount();
 
     // No act() wrapper: nothing should be listening, so nothing should update.

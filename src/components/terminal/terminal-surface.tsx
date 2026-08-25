@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { Terminal, type IBufferLine } from '@xterm/xterm';
+import { Terminal, type IBufferCell, type IBufferLine } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
 
 import { isMacPlatform } from '@lib/platform';
@@ -99,7 +99,7 @@ const atBottom = (terminal: Terminal) =>
   shouldAutoScroll(terminal.buffer.active.viewportY, terminal.buffer.active.baseY);
 
 /**
- * One row, with Claude's own faint text blanked out (HIVE-79).
+ * The caret's row, with Claude's own faint text blanked out (HIVE-79).
  *
  * The cell-by-cell walk exists for exactly one thing: Claude Code writes a
  * placeholder into its empty input — `❯ Try "write a test for …"` — as real
@@ -108,13 +108,23 @@ const atBottom = (terminal: Terminal) =>
  * faint cells leaves the row holding what the *user* put there, which is the
  * only thing the decision is entitled to ask about.
  *
+ * **The caret's row and no other.** Applying this to the whole window would put
+ * the frame's edges through it too, and an edge Claude ever drew faint would
+ * read as an all-blank row — the frame would stop being found and the feature
+ * would switch itself off, silently and permanently, exactly as the
+ * alternate-buffer assumption did. Edges are matched on raw text; rendition is
+ * consulted only where the question is "did the user type this?".
+ *
+ * `scratch` is xterm's own reusable cell. Without it `getCell` allocates a
+ * fresh `CellData` per column, and `←` autorepeats when held.
+ *
  * Falls back to `translateToString` when the buffer will not hand over a cell,
- * so a row is never lost outright — worst case it reads as it did before.
+ * so the row is never lost outright — worst case it reads as it did before.
  */
-function readRow(line: IBufferLine): string {
+function readTypedRow(line: IBufferLine, scratch: IBufferCell): string {
   let text = '';
   for (let column = 0; column < line.length; column += 1) {
-    const cell = line.getCell(column);
+    const cell = line.getCell(column, scratch);
     if (!cell) return line.translateToString(true);
     // Width 0 is the trailing half of a wide glyph; it has no character of its
     // own and the leading half already contributed one.
@@ -149,22 +159,26 @@ function readRow(line: IBufferLine): string {
 function readCursorContext(terminal: Terminal): CursorContext | null {
   const buffer = terminal.buffer.active;
   const caret = buffer.baseY + buffer.cursorY;
-  if (!buffer.getLine(caret)) return null;
+  const caretLine = buffer.getLine(caret);
+  if (!caretLine) return null;
 
   const first = Math.max(0, caret - FRAME_SCAN);
   const rows: string[] = [];
   for (let row = first; row <= caret + FRAME_SCAN; row += 1) {
     /**
      * Right-trimmed, because a terminal row is padded to the full width. A row
-     * the buffer cannot report becomes `''`, which is neither a frame edge nor
-     * typed text — so a window that runs off the end of the buffer declines in
-     * the same way an unrecognised one does, rather than throwing.
+     * the buffer cannot report becomes `''`, which is not a frame edge — so a
+     * window that runs off the end of the buffer declines in the same way an
+     * unrecognised one does, rather than throwing.
      */
-    const line = buffer.getLine(row);
-    rows.push(line ? readRow(line) : '');
+    rows.push(buffer.getLine(row)?.translateToString(true) ?? '');
   }
 
-  return { rows, caretRow: caret - first };
+  return {
+    rows,
+    caretRow: caret - first,
+    caretText: readTypedRow(caretLine, buffer.getNullCell()),
+  };
 }
 
 /**

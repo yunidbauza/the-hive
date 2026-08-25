@@ -189,27 +189,40 @@ export function lineMotion(
  */
 export interface CursorContext {
   /**
-   * The rows around the caret, top to bottom, each right-trimmed — with
-   * **dim cells blanked out**.
+   * The rows around the caret, top to bottom, each right-trimmed — **raw**.
    *
    * A bounded window — see {@link FRAME_SCAN}. Rows the buffer cannot report
-   * are `''`, which is not a rule and not a frame edge, so an unreadable
-   * window fails the same way an unrecognised one does.
+   * are `''`, which is not a frame edge, so an unreadable window fails the same
+   * way an unrecognised one does.
    *
-   * The blanking is not a detail, it is the defect (HIVE-79). Claude Code
-   * writes a **placeholder** into its empty input — `❯ Try "write a test
-   * for …"` — as real cells on the caret row, and its own footer still offers
-   * `← for agents` while it is showing, so Claude *would* navigate. Read as
-   * plain text that row is indistinguishable from a typed message, so the app
-   * declined the key and the user landed in Claude's agent list. Measured from
-   * a real session, the placeholder arrives as `\x1b[39m❯\xa0\x1b[2mTry "…"`:
-   * **SGR 2, faint**, and typed input never is. So the surface hands over what
-   * the *user* put on each row, and this module's question — "is anything
-   * typed?" — becomes answerable again.
+   * Raw, deliberately, and that is a correction rather than a default. These
+   * rows exist to find the frame's **edges**, and an earlier revision handed
+   * them over with faint cells blanked — which would mean that an edge Claude
+   * ever chose to draw faint reads as an all-blank row, {@link isRuleRow} finds
+   * nothing, and the whole feature switches itself off silently and
+   * permanently. That is the same shape as the alternate-buffer trap recorded
+   * above, and nothing in this repository's unit suites could catch it.
+   * Rendition is consulted for exactly one row, for the one question that needs
+   * it: see {@link CursorContext.caretText}.
    */
   rows: readonly string[];
   /** Which entry of {@link CursorContext.rows} the caret is on. */
   caretRow: number;
+  /**
+   * The caret's own row, with **faint cells blanked out**.
+   *
+   * The one place rendition is read, and it is the defect (HIVE-79). Claude
+   * Code writes a **placeholder** into its empty input — `❯ Try "write a test
+   * for …"` — as real cells on the caret row, and its own footer goes on
+   * offering `← for agents` while it is showing, so Claude *would* navigate.
+   * Read as plain text that row is indistinguishable from a typed message, so
+   * the app declined the key and the user landed in Claude's agent list.
+   * Measured from a real session, the placeholder arrives as
+   * `\x1b[39m❯\xa0\x1b[2mTry "…"` — **SGR 2, faint** — and typed input never
+   * is. So this carries what the *user* put on that row, and "is anything
+   * typed?" becomes answerable again.
+   */
+  caretText: string;
 }
 
 /**
@@ -239,11 +252,15 @@ export interface CursorContext {
 /**
  * How far from the caret the frame is looked for, in rows.
  *
- * Bounded rather than open-ended, because the cost of not finding an edge is
- * exactly the pre-existing behaviour — the key goes to the pty — while the cost
- * of scanning the whole scrollback on every keystroke is paid on every
- * keystroke. Eight rows covers an input box several lines tall; past that the
- * input is plainly not empty and declining is the right answer anyway.
+ * Only the **announcement** search uses the whole window; the claim itself
+ * looks at the two rows either side of the caret and nothing else. So the
+ * window's size decides one thing: how tall a message can be before a blank
+ * caret row inside it stops being recognised as ambiguous. Past eight rows the
+ * app falls silent — `foreign`, not `declined` — which is the honest answer
+ * rather than a compromise: with no edge in reach there is no evidence this is
+ * Claude's input at all, and announcing on a guess is what the whole ticket is
+ * about. Bounded rather than open-ended because the alternative is scanning
+ * scrollback on a keystroke.
  */
 export const FRAME_SCAN = 8;
 
@@ -290,10 +307,24 @@ const MIN_RULE_WIDTH = 8;
  */
 const MIN_RULE_SHARE = 0.6;
 
+/**
+ * Box-drawing corners, junctions and verticals — everything a *border* has and
+ * a *rule* does not.
+ *
+ * The one glyph class that separates Claude's input frame from every other
+ * program's chrome. Claude draws two plain horizontal rules, sometimes with a
+ * name written into the upper one; it never draws a corner. `fzf --border`,
+ * `atuin`, lazygit and the welcome box Claude itself prints at startup all do —
+ * and a border row is otherwise ~90% rule characters, so a share test alone
+ * reads it as an edge. `←` is load-bearing inside every one of those.
+ */
+const BOX_JUNCTION = /[┌┐└┘├┤┬┴┼│┃╭╮╰╯╠╣╦╩╬║]/u;
+
 /** Is this row an edge of Claude's input frame? */
 function isRuleRow(row: string): boolean {
   const trimmed = row.trim();
   if (trimmed.length < MIN_RULE_WIDTH) return false;
+  if (BOX_JUNCTION.test(trimmed)) return false;
   const rule = trimmed.match(RULE)?.length ?? 0;
   return rule / trimmed.length >= MIN_RULE_SHARE;
 }
@@ -360,32 +391,72 @@ export type BareBackClaim =
  * longer fails open *silently*: condition 2 without condition 3 is `declined`,
  * and the surface says so.
  */
-export function claimBareBack({ rows, caretRow }: CursorContext): BareBackClaim {
+export function claimBareBack({
+  rows,
+  caretRow,
+  caretText,
+}: CursorContext): BareBackClaim {
   if (caretRow < 0 || caretRow >= rows.length) return 'foreign';
-  if (isRuleRow(rows[caretRow])) return 'foreign';
 
-  let bottom = -1;
-  for (let row = caretRow + 1; row < rows.length; row += 1) {
-    if (isRuleRow(rows[row])) {
-      bottom = row;
-      break;
+  /**
+   * Anything typed on the caret's own row and the app is silent — not even a
+   * decline.
+   *
+   * This is the common case by a wide margin: a user pressing `←` to fix a
+   * typo. Claude moves the caret one column, which is exactly what they asked
+   * for; nothing was lost and there is nothing to announce. An earlier revision
+   * answered `declined` here, and the strip then appeared on *every* arrow key
+   * during ordinary editing — saying `← went to the session` over the input
+   * being edited, which is both noise and untrue.
+   */
+  if (!isBlankInputRow(caretText)) return 'foreign';
+
+  /**
+   * The edges have to be **touching** the caret's row.
+   *
+   * Claude's empty input is exactly one row tall — rule, `❯`, rule — in every
+   * frame captured from a real session, at every width from 18 columns to 120.
+   * Requiring adjacency rather than "an edge somewhere within
+   * {@link FRAME_SCAN}" is what keeps this from claiming keys inside other
+   * programs' chrome: `fzf --border`, `atuin`, a lazygit panel all draw a box
+   * whose borders sit several rows away with a list in between, and a looser
+   * search finds those borders and calls them Claude's frame. `←` is
+   * load-bearing in every one of them.
+   */
+  const above = caretRow - 1;
+  const below = caretRow + 1;
+  const edgeAbove = above >= 0 && isRuleRow(rows[above]);
+  const edgeBelow = below < rows.length && isRuleRow(rows[below]);
+  if (edgeAbove && edgeBelow) return 'claim';
+
+  /**
+   * **The caret has to be touching the frame on at least one side.**
+   *
+   * This is what keeps the announcement off other programs' chrome. Both
+   * shapes the app genuinely cannot decide have exactly one edge against the
+   * caret: a message begun with `Shift+Enter` puts the caret on a blank row
+   * with the frame's *bottom* edge under it and the typed rows above; a
+   * repaint caught mid-flight leaves the *top* edge above the caret and stale
+   * text below. A box whose borders are several rows away with a list between
+   * them — `fzf --border`, `atuin`, a lazygit panel — touches neither, and is
+   * not this app's business in any of the three answers.
+   */
+  if (!edgeAbove && !edgeBelow) return 'foreign';
+
+  /**
+   * One edge touching, the other somewhere in reach: the ambiguous shape.
+   *
+   * Either the input holds another line, or a repaint has not caught up and it
+   * really is empty. Indistinguishable from the screen — so the key goes to the
+   * pty and the app says where it went.
+   */
+  const hasEdge = (from: number, step: number): boolean => {
+    for (let row = from; row >= 0 && row < rows.length; row += step) {
+      if (isRuleRow(rows[row])) return true;
     }
-  }
-  if (bottom === -1) return 'foreign';
-
-  let top = -1;
-  for (let row = caretRow - 1; row >= 0; row -= 1) {
-    if (isRuleRow(rows[row])) {
-      top = row;
-      break;
-    }
-  }
-  if (top === -1) return 'foreign';
-
-  for (let row = top + 1; row < bottom; row += 1) {
-    if (!isBlankInputRow(rows[row])) return 'declined';
-  }
-  return 'claim';
+    return false;
+  };
+  return hasEdge(below, 1) && hasEdge(above, -1) ? 'declined' : 'foreign';
 }
 
 /**

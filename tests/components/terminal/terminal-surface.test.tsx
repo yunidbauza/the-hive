@@ -853,6 +853,26 @@ describe('TerminalSurface', () => {
         expect(press({ key: 'ArrowLeft' })).toBe(false);
       });
 
+      it('matches the frame’s edges on raw text, faint or not', () => {
+        /**
+         * The trap this shape exists to close. Rendition is read for the
+         * caret's row only; an earlier revision put the whole window through
+         * it, which meant an edge Claude ever drew faint became an all-blank
+         * row, the frame stopped being found, and the feature switched itself
+         * off silently and permanently — the same class of failure as assuming
+         * Claude does not use the alternate buffer.
+         */
+        renderInteractive();
+        const mock = terminal();
+        mock.bufferLines = [RULE, '❯ ', RULE];
+        // Both edges drawn faint; the input row is not.
+        mock.bufferDim = ['d'.repeat(RULE.length), '', 'd'.repeat(RULE.length)];
+        mock.buffer.active.baseY = 0;
+        mock.buffer.active.cursorY = 1;
+
+        expect(press({ key: 'ArrowLeft' })).toBe(false);
+      });
+
       it('still reads a typed message on a row that also carries a hint', () => {
         // The other side of the same rule: normal cells are the user's, and one
         // faint cell beside them does not make the row empty.

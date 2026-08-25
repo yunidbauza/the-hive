@@ -58,6 +58,16 @@ export class MockTerminal {
        * `translateToString(trimRight, start, end)`. Returns `undefined` for a
        * row that was never staged, exactly as xterm does past the buffer's end.
        */
+      /**
+       * xterm's reusable cell. The surface passes it to `getCell` so a row read
+       * on every `←` does not allocate one object per column; this fake ignores
+       * it and answers from the staged strings.
+       */
+      getNullCell: () => ({
+        getChars: () => '',
+        getWidth: () => 1,
+        isDim: () => 0,
+      }),
       getLine: (row: number) => {
         const text = this.bufferLines[row];
         if (text === undefined) return undefined;
@@ -84,6 +94,7 @@ export class MockTerminal {
               isDim: () => (faint[column] === 'd' ? 1 : 0),
             };
           },
+
         };
       },
     },
