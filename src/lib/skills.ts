@@ -140,6 +140,56 @@ export const saveSkill = (
 export const deleteSkill = (name: string): Promise<string | null> =>
   mutate((bridge) => bridge.skills.remove({ name }));
 
+/**
+ * Rename a skill and save the body that renamed it (HIVE-99).
+ *
+ * ## Why the two calls live in here rather than in the pane
+ *
+ * Because of what is true between them. `skills.rename` moves the folder and
+ * nothing else, so for one round trip `to/SKILL.md` still declares `from` —
+ * which is precisely the mismatch `read.ts` refuses, so main's answer to the
+ * move reports the skill as *invalid*. That is a true snapshot of a state the
+ * user never asked for and cannot act on, and publishing it would flash an
+ * amber "does not match the folder" row mid-save.
+ *
+ * So the intermediate snapshot is kept and not emitted, and one `emit()` at the
+ * end publishes the settled result. This is the only place in this module that
+ * assigns `snapshot` without emitting, and it is safe for exactly one reason:
+ * **every** path out of here emits, including the failure one.
+ *
+ * ## What a failure leaves behind
+ *
+ * If the move succeeds and the write does not, the folder is `to` and the file
+ * inside it still says `from`. The skill is not lost — it is on disk, under the
+ * name the user asked for — but it is invalid, so it stops being injected until
+ * the body is written. That is why the `catch` still emits: the pane renders
+ * main's own reason on the row, the buffer stays in the editor, and Save
+ * retries the write. Visible and recoverable, which is the standard HIVE-96 set
+ * when it chose a duplicate over a silent delete.
+ */
+export async function renameSkill(
+  from: string,
+  to: string,
+  body: string,
+): Promise<string | null> {
+  const bridge = window.hive;
+  // No bridge is the browser demo, which is header-only and never calls this.
+  if (!bridge) return 'Custom skills are only available in the desktop app.';
+
+  try {
+    snapshot = await bridge.skills.rename({ from, to });
+    snapshot = await bridge.skills.write({ name: to, body });
+    emit();
+    return null;
+  } catch (cause) {
+    console.error('[hive] the skill was not renamed:', cause);
+    // Whatever the last step that *did* succeed produced — which is the point:
+    // a half-done rename has to be on screen, not swallowed.
+    emit();
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
 /** Test-only: drop the snapshot and every subscriber. */
 export function resetSkills(): void {
   snapshot = null;

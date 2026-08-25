@@ -178,6 +178,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *   skill lives, only which skill it means.
    * - **The reserved name is refused at the boundary**, so the built-in
    *   `/done` cannot be shadowed by a write from the page.
+   *
+   * HIVE-99 adds `rename` to that namespace — the first verb here with two
+   * name fields, and the reason the list below has five entries rather than
+   * four. It changes what the page may *do* to those files (move one) and not
+   * where it may reach: both fields go through the same `assertSkillName`, so
+   * it can name no directory `remove` could not already name, and it refuses a
+   * destination that exists rather than replacing it. The argument for the
+   * fifth verb is recorded on `BRIDGE_SKILLS_KEYS`.
    */
   expect(surface.top).toEqual([
     'appInfo',
@@ -194,7 +202,13 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'ui',
     'updates',
   ]);
-  expect(surface.skills).toEqual(['list', 'read', 'remove', 'write']);
+  expect(surface.skills).toEqual([
+    'list',
+    'read',
+    'remove',
+    'rename',
+    'write',
+  ]);
   expect(surface.theme).toEqual(['pick', 'save']);
   expect(surface.ui).toEqual(['reportForeground']);
   expect(surface.integrations).toEqual(['status']);

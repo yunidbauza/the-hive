@@ -55,6 +55,7 @@ import type { SessionNoteRequest } from './session-history-contract';
 import { RESERVED_SKILL_NAME, SKILL_NAME_PATTERN } from './skills-contract';
 import type {
   SkillNameRequest,
+  SkillRenameRequest,
   SkillWriteRequest,
 } from './skills-contract';
 
@@ -1320,6 +1321,28 @@ export function assertSkillName(value: unknown, label: string): string {
 export function parseSkillNameRequest(input: unknown): SkillNameRequest {
   const raw = assertShape(input, ['name'], 'skillName');
   return { name: assertSkillName(raw.name, 'skillName.name') };
+}
+
+/**
+ * `skills:rename` — two names, and still not a path between them (HIVE-99).
+ *
+ * The only guard here with two name fields, which is exactly why both run
+ * through {@link assertSkillName} rather than one being trusted because it came
+ * from a list the renderer was given. `from` arrives from the page the same way
+ * `to` does, and a guard that validated only the new name would let a request
+ * name a *source* main never listed.
+ *
+ * Nothing checks that the two differ. A rename onto itself is a `rename(2)`
+ * that does nothing, which is the right answer to a request that asks for
+ * nothing — the pane does not send one, and refusing it here would be this
+ * boundary holding an opinion about intent rather than about representation.
+ */
+export function parseSkillRenameRequest(input: unknown): SkillRenameRequest {
+  const raw = assertShape(input, ['from', 'to'], 'skillRename');
+  return {
+    from: assertSkillName(raw.from, 'skillRename.from'),
+    to: assertSkillName(raw.to, 'skillRename.to'),
+  };
 }
 
 /**

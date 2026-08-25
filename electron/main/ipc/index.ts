@@ -63,6 +63,7 @@ import {
   parseSetRuntimeRequest,
   parseSessionNoteRequest,
   parseSkillNameRequest,
+  parseSkillRenameRequest,
   parseSkillWriteRequest,
   parseWriteRequest,
 } from '@shared/guards';
@@ -1336,10 +1337,10 @@ export function registerIpcHandlers(): void {
   });
 
   /**
-   * Custom skills (HIVE-96).
+   * Custom skills (HIVE-96, HIVE-99).
    *
    * The `fs` block above validates twice — a string-shape guard here, then real
-   * containment in `fs/paths.ts` — because it accepts a path. These four
+   * containment in `fs/paths.ts` — because it accepts a path. These five
    * validate once, and that is not a weaker design: `assertSkillName` admits
    * only `[a-z0-9-]+`, which cannot name a directory other than the one main
    * chooses, so there is no second question to ask. See `skills-contract.ts`.
@@ -1362,6 +1363,11 @@ export function registerIpcHandlers(): void {
   handle(CH.skillsRemove, (_event, payload) =>
     skills?.remove(parseSkillNameRequest(payload).name),
   );
+
+  handle(CH.skillsRename, (_event, payload) => {
+    const request = parseSkillRenameRequest(payload);
+    return skills?.rename(request.from, request.to);
+  });
 
   /**
    * Getting a theme file on and off disk (HIVE-80).

@@ -6,6 +6,7 @@ import {
   frontmatterName,
   loadSkills,
   readSkill,
+  renameSkill,
   saveSkill,
   skillNameProblem,
 } from '@/lib/skills';
@@ -192,9 +193,18 @@ export function SkillsSection() {
     );
   };
 
-  const save = (): void => {
-    if (buffer === null || problem !== null) return;
-    void saveSkill(typed, buffer).then((failure) => {
+  /**
+   * Write the buffer, moving the folder first when the name changed.
+   *
+   * `from` is the name the file is currently under, or `null` when there is
+   * nothing to move — a skill saved under its own name, or one that has never
+   * been on disk at all.
+   */
+  const commit = (from: string | null, body: string): void => {
+    const written =
+      from === null ? saveSkill(typed, body) : renameSkill(from, typed, body);
+
+    void written.then((failure) => {
       /*
         Only claim success when there was one.
 
@@ -208,12 +218,47 @@ export function SkillsSection() {
         return;
       }
       setError(null);
-      // The folder is named from the frontmatter, so a rename lands as a new
-      // skill and the old one is removed by the user's own Delete — this story
-      // does not move files behind their back.
       setOpen(typed);
-      setSaved(buffer);
+      setSaved(body);
     });
+  };
+
+  const save = (): void => {
+    if (buffer === null || problem !== null) return;
+    const body = buffer;
+
+    /*
+      A changed name is a **rename**, and it asks first (HIVE-99).
+
+      The folder is mirrored from the frontmatter, so editing `name:` and
+      pressing Save used to write the new folder and leave the old one — still
+      valid, still listed, still injected. One action produced two live
+      commands and the user was left to find the fork themselves.
+
+      Moving a file the user did not ask to delete is the thing HIVE-96 would
+      not do silently, and this does not do it silently either: it asks, in the
+      confirm this pane already owns, and only then moves. `open === null` is a
+      skill that has never been saved — there is nothing on disk to move, so
+      there is nothing to ask about.
+    */
+    if (open !== null && typed !== open) {
+      setPending({
+        question: `Rename /${open} to /${typed}?`,
+        // The second sentence is not decoration. A running session was started
+        // with the old plugin directory and keeps the command it was given —
+        // worth saying, because the user's next move is to try it in a live
+        // terminal and be confused when it still works.
+        detail:
+          'The old command stops working. Sessions already running keep it until they end.',
+        confirmLabel: 'Rename',
+        act: () => commit(open, body),
+      });
+      return;
+    }
+
+    // `null`, not `open`: an unchanged name has nothing to move, and asking
+    // main to rename a folder onto itself would be a syscall to say so.
+    commit(null, body);
   };
 
   const remove = (): void => {

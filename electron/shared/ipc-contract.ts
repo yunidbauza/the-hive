@@ -91,6 +91,7 @@ import type {
 import type {
   SkillFile,
   SkillNameRequest,
+  SkillRenameRequest,
   SkillWriteRequest,
   SkillsSnapshot,
 } from './skills-contract';
@@ -499,13 +500,14 @@ export const CH = {
   fsUnwatch: 'fs:unwatch',
   fsChanged: 'fs:changed', // main → renderer
   /**
-   * Custom skills (HIVE-96). Four verbs, and not one of them takes a path.
+   * Custom skills (HIVE-96, HIVE-99). Five verbs, and not one of them takes a
+   * path.
    *
    * Stricter than the `fs` block above, which has to admit a project-relative
    * path because the explorer navigates a tree. A skill request names a
    * **skill**, and main already knows the one directory skills live in — see
    * `skills-contract.ts` for why that makes traversal unrepresentable rather
-   * than merely filtered.
+   * than merely filtered. `skills:rename` names two of them and still no path.
    *
    * No event channel. A write is request/response and answers with the fresh
    * snapshot, the way the config's mutating verbs do; the Settings pane is the
@@ -515,6 +517,7 @@ export const CH = {
   skillsRead: 'skills:read',
   skillsWrite: 'skills:write',
   skillsRemove: 'skills:remove',
+  skillsRename: 'skills:rename',
   appInfo: 'app:info',
   /**
    * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
@@ -1095,13 +1098,13 @@ export interface HiveBridge {
   /**
    * The custom skills The Hive injects into the sessions it starts (HIVE-96).
    *
-   * Four verbs, none of which names a path. `fs` above must accept a
+   * Five verbs, none of which names a path. `fs` above must accept a
    * project-relative path and defend containment on the resolved result; here
    * a request names a skill, and `SKILL_NAME_PATTERN` cannot express a
    * separator or a dot segment — so main's `join` is total and there is no
-   * second check to forget.
+   * second check to forget. `rename` names two skills, which is still no path.
    *
-   * `write` and `remove` answer with the fresh snapshot rather than `void`, so
+   * Every mutating verb answers with the fresh snapshot rather than `void`, so
    * the pane never has to follow a mutation with a read, and the two can never
    * disagree about what is on disk.
    */
@@ -1111,6 +1114,16 @@ export interface HiveBridge {
     /** Write, regenerate the plugin, and answer with the fresh snapshot. */
     write(request: SkillWriteRequest): Promise<SkillsSnapshot>;
     remove(request: SkillNameRequest): Promise<SkillsSnapshot>;
+    /**
+     * Move a skill's folder (HIVE-99).
+     *
+     * The verb the renderer could not synthesise: writing the new name and
+     * deleting the old one leaves a window in which both exist, and doing it
+     * the other way leaves one in which neither does. Main does it in one
+     * `rename(2)`, and refuses a `to` that is already taken rather than
+     * replacing it.
+     */
+    rename(request: SkillRenameRequest): Promise<SkillsSnapshot>;
   };
   /**
    * External tooling this app can see but does not own (story 106).
@@ -1416,6 +1429,12 @@ export const RESIZE_THROTTLE_MS = 50;
  * `[a-z0-9-]+`, so the directory a request can reach is not a matter of
  * validation but of what the name is able to express. `fs`, by contrast, has to
  * accept a path and defend containment on the resolved result.
+ *
+ * HIVE-99 adds a fifth verb to that namespace and nothing to this list. It
+ * widens what the page may *do* to those files — move one — without widening
+ * where it may reach: `rename` names two skills under the same rule, and the
+ * argument for it is recorded on {@link BRIDGE_SKILLS_KEYS} rather than here,
+ * because it is a change to one namespace and not to the surface.
  */
 export const BRIDGE_KEYS = [
   'appInfo',
@@ -1434,15 +1453,42 @@ export const BRIDGE_KEYS = [
 ] as const;
 
 /**
- * The exact key set of `window.hive.skills` (HIVE-96).
+ * The exact key set of `window.hive.skills` (HIVE-96, HIVE-99).
  *
- * Four, and the count is the security story the way it is for `jira` and
- * `integrations`: two readers and two writers, all four bounded to one
+ * Five, and the count is the security story the way it is for `jira` and
+ * `integrations`: two readers and three writers, all five bounded to one
  * directory by the shape of what they accept rather than by a check they
- * perform. A fifth verb here is a change to what the renderer may do to the
+ * perform. A sixth verb here is a change to what the renderer may do to the
  * user's disk, and should be argued for in this comment before it is written.
+ *
+ * ## The argument for the fifth (HIVE-99)
+ *
+ * The four above could not express a **rename**, and the renderer's attempt at
+ * one was a duplicate: a skill's folder is named from its frontmatter, so
+ * editing `name:` and saving wrote a second folder and left the first — valid,
+ * listed, and still injected into every new session. One user action, two live
+ * commands, and the user had to discover the fork themselves.
+ *
+ * Synthesising it from the existing verbs cannot be made correct from here.
+ * `write` then `remove` leaves a window in which both folders exist; `remove`
+ * then `write` leaves one in which neither does. A crash, a refused write, or a
+ * spawn landing in that window turns the rename into exactly the duplicate this
+ * is meant to end, or into a skill that is simply gone. `rename(2)` has no such
+ * window, and only main can call it.
+ *
+ * What it does **not** widen: `rename` names two skills and no path, so the
+ * bound above is unchanged — `SKILL_NAME_PATTERN` on both fields, one directory
+ * main chose. It cannot reach a file `remove` could not already reach, and it
+ * refuses a `to` that exists rather than replacing it, so it cannot destroy a
+ * skill that `remove` was not already able to destroy.
  */
-export const BRIDGE_SKILLS_KEYS = ['list', 'read', 'write', 'remove'] as const;
+export const BRIDGE_SKILLS_KEYS = [
+  'list',
+  'read',
+  'write',
+  'remove',
+  'rename',
+] as const;
 
 /** The exact key set of `window.hive.session`. */
 export const BRIDGE_SESSION_KEYS = [

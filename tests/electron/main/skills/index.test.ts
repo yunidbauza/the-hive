@@ -1,5 +1,12 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -190,5 +197,136 @@ describe('createSkillsRuntime', () => {
 
     expect(snapshot.skills).toEqual([]);
     expect(await pluginSkills()).toEqual(['done']);
+  });
+});
+
+/**
+ * Moving a skill's folder (HIVE-99).
+ *
+ * The verb exists because the renderer's version of a rename was a duplicate:
+ * the folder is named from the frontmatter, so editing `name:` and saving wrote
+ * the new folder and left the old one — valid, listed, and still injected. The
+ * first test here is the one the story is about: **one** folder afterwards.
+ */
+describe('createSkillsRuntime.rename', () => {
+  const userSkills = (): Promise<string[]> =>
+    readdir(join(hiveDir, 'skills')).then((names) => names.sort());
+
+  it('moves the folder, leaving exactly one behind', async () => {
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+
+    await skills.rename('standup', 'stand-up');
+
+    expect(await userSkills()).toEqual(['stand-up']);
+  });
+
+  it('takes the file with it', async () => {
+    // A move, not a re-create: the body is whatever was in the old folder.
+    const skills = runtime();
+    await skills.write('standup', `${skill('standup')}Extra line.\n`);
+
+    await skills.rename('standup', 'stand-up');
+
+    expect((await skills.readOne('stand-up')).body).toContain('Extra line.');
+  });
+
+  it('leaves the plugin dir with the new command and not the old one', async () => {
+    /*
+      The acceptance criterion the user actually feels: the next session has
+      `/stand-up` and does **not** have `/standup`. Between the move and the
+      body write the folder and its frontmatter disagree, so main reports the
+      skill invalid and drops it from the plugin — which is why the caller
+      follows with the write, asserted in the next test.
+    */
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+
+    await skills.rename('standup', 'stand-up');
+    await skills.write('stand-up', skill('stand-up'));
+
+    expect(await pluginSkills()).toEqual(['done', 'stand-up']);
+  });
+
+  it('answers with a snapshot in which the moved skill is invalid until rewritten', async () => {
+    /*
+      Not a wart to be hidden — it is the true state of the disk, and the pane
+      relies on it: if the follow-up write fails, this is the snapshot that puts
+      an actionable reason on the row rather than silently losing the skill.
+    */
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+
+    const snapshot = await skills.rename('standup', 'stand-up');
+
+    expect(snapshot.skills).toEqual([]);
+    expect(snapshot.invalid[0]?.name).toBe('stand-up');
+    expect(snapshot.invalid[0]?.reason).toMatch(/does not match the folder/i);
+  });
+
+  it('refuses a destination that already exists, rather than replacing it', async () => {
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+    await skills.write('ship-it', skill('ship-it'));
+
+    await expect(skills.rename('standup', 'ship-it')).rejects.toThrow(
+      /already exists/i,
+    );
+    expect(await userSkills()).toEqual(['ship-it', 'standup']);
+  });
+
+  it('refuses an existing destination even when it is empty', async () => {
+    /*
+      The case `rename(2)` gets silently wrong. An empty target directory is
+      *replaced* by the syscall with no error at all, so a user who had emptied
+      a skill folder by hand would lose the name without a word. A full one
+      fails ENOTEMPTY — two outcomes for one mistake, and neither is a refusal,
+      which is why the check is ours.
+    */
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+    await mkdir(join(hiveDir, 'skills', 'ship-it'), { recursive: true });
+
+    await expect(skills.rename('standup', 'ship-it')).rejects.toThrow(
+      /already exists/i,
+    );
+    expect(await userSkills()).toEqual(['ship-it', 'standup']);
+  });
+
+  it('refuses a destination taken by a folder main reports as invalid', async () => {
+    // An invalid skill is still a folder with a SKILL.md in it, and the most
+    // likely invalid skill is one whose name and folder already disagree —
+    // exactly the name a user renaming things is likely to type.
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+    await writeSkill('stand-up', skill('something-else'));
+
+    await expect(skills.rename('standup', 'stand-up')).rejects.toThrow(
+      /already exists/i,
+    );
+  });
+
+  it('refuses a destination taken by a dangling symlink', async () => {
+    /*
+      `lstat`, not `stat`. `read.ts` counts a symlink-to-directory as a skill
+      folder, so a link is a name that is taken — and a link left pointing at
+      nothing would read as free under `stat` and then be silently replaced.
+    */
+    const skills = runtime();
+    await skills.write('standup', skill('standup'));
+    await symlink(
+      join(hiveDir, 'skills', 'nowhere'),
+      join(hiveDir, 'skills', 'stand-up'),
+    );
+
+    await expect(skills.rename('standup', 'stand-up')).rejects.toThrow(
+      /already exists/i,
+    );
+  });
+
+  it('rejects when the source is not there', async () => {
+    // Straight from `rename(2)`. Nothing to translate: the pane only ever names
+    // a skill it has listed, so this is a bug or a hand-edit mid-save.
+    await expect(runtime().rename('ghost', 'stand-up')).rejects.toThrow();
   });
 });
