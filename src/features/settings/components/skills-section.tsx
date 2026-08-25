@@ -77,6 +77,23 @@ export function SkillsSection() {
     detail: string;
     confirmLabel: string;
     act: () => void;
+    /**
+     * Does editing the buffer invalidate this question? (HIVE-99)
+     *
+     * Only the rename one, and the difference is what each question *quotes*.
+     * "Rename /standup to /stand-up?" reads its destination out of the buffer,
+     * and this confirm is deliberately not modal — it appears beside a live
+     * `<textarea>` the user can keep typing in. Type on, and the question is
+     * asking about text that is no longer on screen, while `act` would write
+     * the text that was. Neither honouring the stale question nor silently
+     * switching to the new one is honest, so the question goes away and Save
+     * asks the current one.
+     *
+     * "Discard changes to /standup?" quotes nothing from the buffer — more
+     * typing only makes it more true — so it stays put, and the existing
+     * Escape-from-the-textarea behaviour is unchanged.
+     */
+    staleOnEdit?: boolean;
   } | null>(null);
   /**
    * Why the last write did not happen, or `null`.
@@ -114,6 +131,12 @@ export function SkillsSection() {
     .filter((name) => name !== open);
   const typed = buffer === null ? '' : frontmatterName(buffer);
   const problem = buffer === null ? null : skillNameProblem(typed, taken);
+
+  /** Type into the buffer, retiring any question that quoted it (HIVE-99). */
+  const edit = (next: string): void => {
+    setBuffer(next);
+    if (pending?.staleOnEdit === true) setPending(null);
+  };
 
   /** Run `act`, or ask first when there is unsaved work to lose. */
   const guard = (
@@ -201,26 +224,45 @@ export function SkillsSection() {
    * been on disk at all.
    */
   const commit = (from: string | null, body: string): void => {
-    const written =
-      from === null ? saveSkill(typed, body) : renameSkill(from, typed, body);
+    /*
+      Only claim success when there was one.
 
-    void written.then((failure) => {
+      `saveSkill` used to resolve either way, so the success path ran
+      unconditionally: the badge flipped to "saved" and the path header pointed
+      at a file main had refused to write. Being told a skill is saved while it
+      is not is worse than the failure itself, because the user stops looking.
+    */
+    const settle = (moved: boolean, failure: string | null): void => {
       /*
-        Only claim success when there was one.
+        Follow the file the moment it moves, even into a failure.
 
-        `saveSkill` used to resolve either way, so this ran unconditionally: the
-        badge flipped to "saved" and the path header pointed at a file main had
-        refused to write. Being told a skill is saved while it is not is worse
-        than the failure itself, because the user stops looking.
+        A move that lands before a failed write leaves the folder under the new
+        name with the old frontmatter inside it. Leaving `open` behind then
+        makes the pane's own `taken` list contain the name the user is trying
+        to save — `skillNameProblem` answers "you already have a skill called
+        …", Save goes disabled, and the invalid row cannot be opened either, so
+        the only way out is a text editor. Moving `open` with the file turns
+        the retry back into an ordinary Save.
       */
+      if (moved) setOpen(typed);
       if (failure !== null) {
         setError(failure);
         return;
       }
       setError(null);
-      setOpen(typed);
       setSaved(body);
-    });
+    };
+
+    if (from === null) {
+      void saveSkill(typed, body).then((failure) =>
+        settle(failure === null, failure),
+      );
+      return;
+    }
+
+    void renameSkill(from, typed, body).then(({ moved, error }) =>
+      settle(moved, error),
+    );
   };
 
   const save = (): void => {
@@ -252,6 +294,10 @@ export function SkillsSection() {
           'The old command stops working. Sessions already running keep it until they end.',
         confirmLabel: 'Rename',
         act: () => commit(open, body),
+        // The question quotes `typed`, and `act` closes over `body`. Both are
+        // this render's — so an edit retires the question rather than letting
+        // it answer for text that is no longer on screen.
+        staleOnEdit: true,
       });
       return;
     }
@@ -443,7 +489,7 @@ export function SkillsSection() {
               body={buffer}
               dirty={dirty}
               problem={problem}
-              onChange={setBuffer}
+              onChange={edit}
               onSave={save}
               onDelete={remove}
             />

@@ -211,7 +211,10 @@ describe('renameSkill', () => {
     });
     bridge({ rename, write });
 
-    await expect(renameSkill('standup', 'stand-up', body)).resolves.toBeNull();
+    await expect(renameSkill('standup', 'stand-up', body)).resolves.toEqual({
+      moved: true,
+      error: null,
+    });
 
     /*
       Order is load-bearing. Writing first would create the new folder and
@@ -251,6 +254,36 @@ describe('renameSkill', () => {
     unsubscribe();
   });
 
+  it('never parks the intermediate in the snapshot, even unemitted', async () => {
+    /*
+      Skipping `emit()` is not what keeps the mid-rename state off screen, and
+      believing it was is the bug this pins. `useSyncExternalStore` re-reads
+      `getSnapshot()` on every render of every subscriber, not only when it is
+      notified — so a snapshot parked in module state between the two awaits is
+      published by the next unrelated re-render, notification or no.
+
+      Reading it here at the one moment it could exist is the only way to say
+      that from a test: `write` runs after the move, so this callback *is* the
+      window.
+    */
+    let midRename: string[] | undefined;
+    bridge({
+      rename: () => Promise.resolve(snapshot(['mid-rename'])),
+      write: () => {
+        // Recorded, not asserted here: an assertion that throws inside the
+        // chain is caught by `renameSkill` and reported as a failed rename,
+        // which would hide the real reason under a wrong one.
+        midRename = skillsSnapshot()?.skills.map((s) => s.name);
+        return Promise.resolve(snapshot(['stand-up']));
+      },
+    });
+
+    await renameSkill('standup', 'stand-up', body);
+
+    expect(midRename).not.toContain('mid-rename');
+    expect(skillsSnapshot()?.skills.map((s) => s.name)).toEqual(['stand-up']);
+  });
+
   it('reports a refused move and leaves the snapshot alone', async () => {
     bridge({ list: () => Promise.resolve(snapshot(['standup'])) });
     await loadSkills();
@@ -259,10 +292,11 @@ describe('renameSkill', () => {
       write: vi.fn(),
     });
 
-    await expect(renameSkill('standup', 'ship-it', body)).resolves.toMatch(
-      /already exists/i,
-    );
+    const outcome = await renameSkill('standup', 'ship-it', body);
 
+    expect(outcome.error).toMatch(/already exists/i);
+    // `moved: false` is what tells the pane to leave the editor where it is.
+    expect(outcome.moved).toBe(false);
     // Nothing moved, so what the pane is holding is still exactly true.
     expect(skillsSnapshot()?.skills.map((s) => s.name)).toEqual(['standup']);
   });
@@ -282,8 +316,8 @@ describe('renameSkill', () => {
     /*
       The folder is `stand-up` and the file inside still says `standup`, so the
       skill is on disk under the name the user asked for but is not injected.
-      Recoverable — Save retries the write — but only if the pane is *shown*
-      it, which is why the failure path emits too.
+      Recoverable, but only if the pane is *shown* it — which is why the failure
+      path emits too, and why `moved` comes back true.
     */
     const listener = vi.fn();
     const unsubscribe = subscribeSkills(listener);
@@ -298,19 +332,25 @@ describe('renameSkill', () => {
       write: () => Promise.reject(new Error('EACCES')),
     });
 
-    await expect(renameSkill('standup', 'stand-up', body)).resolves.toMatch(
-      /EACCES/,
-    );
+    const outcome = await renameSkill('standup', 'stand-up', body);
 
+    expect(outcome.error).toMatch(/EACCES/);
+    /*
+      The load-bearing half. Without it the pane leaves `open` on the old name,
+      the new name turns up in its own `taken` list, Save goes disabled, and
+      the user's only way out of a half-done rename is a text editor.
+    */
+    expect(outcome.moved).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
     expect(skillsSnapshot()?.invalid[0]?.name).toBe('stand-up');
     unsubscribe();
   });
 
   it('refuses without a bridge, and calls nothing', async () => {
-    await expect(renameSkill('standup', 'stand-up', body)).resolves.toMatch(
-      /desktop app/i,
-    );
+    await expect(renameSkill('standup', 'stand-up', body)).resolves.toEqual({
+      moved: false,
+      error: expect.stringMatching(/desktop app/i),
+    });
   });
 });
 

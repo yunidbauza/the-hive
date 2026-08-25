@@ -199,12 +199,13 @@ describe('parseSkillRenameRequest', () => {
     ).toThrow();
   });
 
-  it('carries a no-op rename through — intent is not this guard\'s business', () => {
+  it('carries two equal names through — intent is not this guard\'s business', () => {
     /*
-      Two equal names is a `rename(2)` that does nothing. Refusing it here would
-      be the boundary holding an opinion about what the caller *meant* rather
-      than about what the payload can *express*, which is the line every other
-      parser in this file keeps.
+      Refusing this here would be the boundary holding an opinion about what the
+      caller *meant* rather than about what the payload can *express*, which is
+      the line every other parser in this file keeps. It is not an assertion
+      that a self-rename works: main refuses it, because the destination exists
+      — see the runtime's tests.
     */
     expect(parseSkillRenameRequest({ from: 'standup', to: 'standup' })).toEqual({
       from: 'standup',

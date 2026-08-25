@@ -1332,10 +1332,15 @@ export function parseSkillNameRequest(input: unknown): SkillNameRequest {
  * `to` does, and a guard that validated only the new name would let a request
  * name a *source* main never listed.
  *
- * Nothing checks that the two differ. A rename onto itself is a `rename(2)`
- * that does nothing, which is the right answer to a request that asks for
- * nothing — the pane does not send one, and refusing it here would be this
- * boundary holding an opinion about intent rather than about representation.
+ * Nothing checks that the two differ, and that is a statement about *this*
+ * layer only: whether a request makes sense is not a question about what it can
+ * express, which is all a guard decides. Two equal names are two valid names.
+ *
+ * What happens to one downstream is main's business, and main refuses it — the
+ * destination exists, because it is the source. The pane never sends one, so
+ * this is unreachable rather than a behaviour anyone relies on; it is written
+ * down because an earlier draft of this comment promised the opposite (a
+ * harmless no-op) and a future caller could have believed it.
  */
 export function parseSkillRenameRequest(input: unknown): SkillRenameRequest {
   const raw = assertShape(input, ['from', 'to'], 'skillRename');

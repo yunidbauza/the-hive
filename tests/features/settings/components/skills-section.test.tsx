@@ -52,7 +52,9 @@ beforeEach(() => {
   // `null` is success — the mutators resolve with the reason they failed.
   saveSkill.mockResolvedValue(null);
   deleteSkill.mockResolvedValue(null);
-  renameSkill.mockResolvedValue(null);
+  // A rename resolves with what it *did*, not just whether it worked — the
+  // middle outcome (moved, then failed to write) is what recovery hangs on.
+  renameSkill.mockResolvedValue({ moved: true, error: null });
   readSkill.mockImplementation((name: string) =>
     Promise.resolve({
       name,
@@ -625,7 +627,10 @@ describe('SkillsSection renaming', () => {
   });
 
   it('reports a refused rename instead of claiming it moved', async () => {
-    renameSkill.mockResolvedValue('A skill called "stand-up" already exists.');
+    renameSkill.mockResolvedValue({
+      moved: false,
+      error: 'A skill called "stand-up" already exists.',
+    });
     setSkillsForTest(withSkills('standup'));
 
     await retype('standup', 'stand-up');
@@ -637,5 +642,109 @@ describe('SkillsSection renaming', () => {
     );
     // Still unsaved, so Save retries rather than the user losing the edit.
     expect(screen.getByText('unsaved')).toBeInTheDocument();
+    // Nothing moved, so the editor stays over the file it is still editing.
+    expect(
+      screen.getByText('/home/u/.hive/skills/standup/SKILL.md'),
+    ).toBeInTheDocument();
+  });
+
+  it('follows a move that landed before the write failed, so Save can retry', async () => {
+    /*
+      The half-done rename, and the one case where doing nothing traps the user.
+
+      The folder is `stand-up` and the file inside still says `standup`, so main
+      lists it invalid. If the editor stayed on `standup`, the pane's own
+      `taken` list — which counts invalid rows — would contain `stand-up`, the
+      name the user is trying to save. `skillNameProblem` answers "you already
+      have a skill called stand-up", Save goes disabled, and the invalid row is
+      `disabled` so it cannot be opened either: the only way out is a text
+      editor. Following the file turns the retry back into an ordinary Save.
+    */
+    renameSkill.mockResolvedValue({ moved: true, error: 'EACCES' });
+    setSkillsForTest(withSkills('standup'));
+
+    await retype('standup', 'stand-up');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    // Main's answer to the half-done move, as the pane would receive it.
+    setSkillsForTest(
+      snapshot({
+        invalid: [
+          {
+            name: 'stand-up',
+            reason: 'Frontmatter name "standup" does not match the folder.',
+            valid: false,
+          },
+        ],
+      }),
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('EACCES');
+    // The editor followed the file, so the retry is a plain write.
+    expect(
+      screen.getByText('/home/u/.hive/skills/stand-up/SKILL.md'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+
+    saveSkill.mockClear();
+    renameSkill.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(saveSkill).toHaveBeenCalledWith('stand-up', renamed('stand-up'));
+    // Not a second rename: the folder already has the name it was asked for.
+    expect(renameSkill).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('retires the question when the buffer it quotes is edited', async () => {
+    /*
+      The confirm is deliberately not modal — it sits beside a live textarea —
+      and its question quotes the buffer ("Rename /standup to /stand-up?")
+      while its action closes over it. Type on and it would answer for text
+      that is no longer on screen: the stale body written, the stale name
+      moved to, and a second rename queued behind it.
+    */
+    setSkillsForTest(withSkills('standup'));
+
+    await retype('standup', 'stand-up');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Skill source'), ' Extra.');
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(renameSkill).not.toHaveBeenCalled();
+
+    // Asking again asks about the text that is actually there.
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    expect(renameSkill).toHaveBeenCalledWith(
+      'standup',
+      'stand-up',
+      `${renamed('stand-up')} Extra.`,
+    );
+  });
+
+  it('keeps the discard question up while the user keeps typing', async () => {
+    // The counterpart, and the reason the rule is a flag rather than blanket.
+    // "Discard changes to /standup?" quotes nothing from the buffer — more
+    // typing only makes it more true — so it stays, and Escape still cancels.
+    setSkillsForTest(withSkills('standup', 'triage'));
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+    await userEvent.type(await screen.findByLabelText('Skill source'), ' more');
+    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    expect(
+      screen.getByRole('alertdialog', { name: /Discard changes/ }),
+    ).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Skill source'), ' and more');
+
+    expect(
+      screen.getByRole('alertdialog', { name: /Discard changes/ }),
+    ).toBeInTheDocument();
   });
 });
