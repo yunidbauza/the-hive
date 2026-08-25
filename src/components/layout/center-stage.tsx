@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 
+import { useDeclinedBack } from '@/hooks/use-declined-back';
 import { isEntityView, resolveView } from '@/lib/resolve-view';
 import { cn } from '@/lib/utils';
 import { isTerminated } from '@/types/entity';
@@ -7,6 +8,7 @@ import { isTerminated } from '@/types/entity';
 import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { TerminalHost } from '@components/terminal/terminal-host';
 import { SplitHandle } from '@components/ui/split-handle';
+import { TerminalHint } from '@components/ui/terminal-hint';
 import { EditorPane } from '@features/editor/components/editor-pane';
 import { EditorTabStrip } from '@features/editor/components/editor-tab-strip';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
@@ -16,8 +18,10 @@ import { NewSessionPicker } from '@features/sessions/components/new-session-pick
 import { SessionBootCover } from '@features/sessions/components/session-boot-cover';
 import { useSessionBoot } from '@features/sessions/hooks/use-session-boot';
 import { SettingsOverlay } from '@features/settings/components/settings-overlay';
+import { isMacPlatform } from '@lib/platform';
 import {
   TERMINAL_CHORD_EVENT,
+  backChordLabel,
   type TerminalChordDetail,
 } from '@lib/terminal/keymap';
 import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transport';
@@ -218,6 +222,16 @@ export function CenterStage() {
    * emits means the chord exists exactly where it was declined, and every text
    * field in the app keeps its native bindings.
    */
+  /**
+   * The other half of the same announcement (HIVE-79).
+   *
+   * Read here rather than inside `TerminalHost` because it is the *stage* that
+   * owns what is drawn over a terminal — the boot cover above it is the same
+   * shape — and because a hook that flipped state inside the host would
+   * re-render every kept-alive surface to show one strip.
+   */
+  const declinedBack = useDeclinedBack();
+
   const backToOrch = useBackToOrch();
   useEffect(() => {
     const onChord = (event: Event) => {
@@ -337,6 +351,32 @@ export function CenterStage() {
             background covers nothing.
           */}
           {booting ? <SessionBootCover /> : null}
+
+          {/*
+            The app saying where the user just went (HIVE-79).
+
+            Anchored to the foot of the terminal region because that is where
+            the caret is, and the caret is what the user was watching when `←`
+            did something they did not ask for. `absolute` so it costs the
+            terminal no layout — a strip that resized the surface would refit
+            xterm and reflow the transcript to announce a keystroke.
+
+            Gated on the event alone. A second gate on "is this terminal live"
+            was written first and taken out: only an interactive surface
+            installs a key handler at all (`terminal-surface.tsx`), so nothing
+            else can raise this, and the region it sits in is already hidden
+            along with the terminal whenever an overlay or a full-stage editor
+            covers it. A condition that can never be false is not a safety net,
+            it is a branch no test can reach.
+          */}
+          {declinedBack ? (
+            <TerminalHint
+              className="absolute inset-x-0 bottom-0"
+              said="← went to the session"
+              chord={backChordLabel(isMacPlatform())}
+              does="returns to the overmind"
+            />
+          ) : null}
         </div>
 
         {view === 'orchestrator' ? <ConsoleInput /> : null}

@@ -772,18 +772,26 @@ describe('TerminalSurface', () => {
      * two drift.
      */
     describe('the rows it reads for the bare ← decision', () => {
-      /** Stage a cursor row and the row below it, as xterm would report them. */
-      function stageRows(rows: string[], cursorX: number) {
+      const RULE = '─'.repeat(96);
+
+      /**
+       * Stage a window of rows and put the caret on one of them.
+       *
+       * A **window** rather than two rows since HIVE-79: the decision needs an
+       * edge above the caret as well as below it, so a frame is at minimum
+       * rule / input / rule and the caret is never on row zero.
+       */
+      function stageRows(rows: string[], cursorY: number, cursorX: number) {
         const mock = terminal();
         mock.bufferLines = rows;
         mock.buffer.active.baseY = 0;
-        mock.buffer.active.cursorY = 0;
+        mock.buffer.active.cursorY = cursorY;
         mock.buffer.active.cursorX = cursorX;
       }
 
       it('takes bare ← when the buffer shows an empty Claude prompt', () => {
         renderInteractive();
-        stageRows(['❯ ', '─'.repeat(96)], 2);
+        stageRows([RULE, '❯ ', RULE], 1, 2);
 
         // Handled here, not sent on: the pty must not also see the arrow.
         expect(press({ key: 'ArrowLeft' })).toBe(false);
@@ -791,7 +799,7 @@ describe('TerminalSurface', () => {
 
       it('gives the key back to the pty once something is typed', () => {
         renderInteractive();
-        stageRows(['❯ hello', '─'.repeat(96)], 7);
+        stageRows([RULE, '❯ hello', RULE], 1, 7);
 
         expect(press({ key: 'ArrowLeft' })).toBe(true);
       });
@@ -801,10 +809,59 @@ describe('TerminalSurface', () => {
          * The caret sent back to the start of a half-typed message with
          * `Ctrl-A`. Reading only the left-hand side would see an empty prompt
          * and navigate away mid-sentence; reading the row sees the message.
-         * Same staged row as above, caret at column 2 instead of 7.
+         * Same staged rows as above, caret at column 2 instead of 7.
          */
         renderInteractive();
-        stageRows(['❯ hello', '─'.repeat(96)], 2);
+        stageRows([RULE, '❯ hello', RULE], 1, 2);
+
+        expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+
+      it('reads the whole input, not just the row the caret is on (HIVE-79)', () => {
+        /**
+         * `Shift+Enter` after typing: the caret sits on an empty second input
+         * row with the frame's bottom edge right under it. Reading two rows saw
+         * an empty row above a rule and swallowed the key, throwing the user
+         * out of a session with a half-written message in it.
+         */
+        renderInteractive();
+        stageRows([RULE, '❯ hi there', '', RULE], 2, 0);
+
+        expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+
+      it('sees through Claude’s placeholder to the empty input under it', () => {
+        /**
+         * **The root cause of HIVE-79.** Claude draws `Try "…"` into its empty
+         * input as real cells and keeps offering `← for agents` in the footer,
+         * so it would navigate — but `translateToString` reports a full row and
+         * the app used to hand the key over. The placeholder is `\x1b[2m` and
+         * typed input is not, which is what the surface reads instead.
+         */
+        renderInteractive();
+        // `❯ ` in the default colour, then every cell of the hint faint —
+        // exactly what a real session sends: `\x1b[39m❯\xa0\x1b[2mTry "…"`.
+        const marker = '❯ ';
+        const hint = 'Try "write a test for keymap.ts"';
+        const mock = terminal();
+        mock.bufferLines = [RULE, marker + hint, RULE];
+        mock.bufferDim = ['', '.'.repeat(marker.length) + 'd'.repeat(hint.length), ''];
+        mock.buffer.active.baseY = 0;
+        mock.buffer.active.cursorY = 1;
+
+        // Claimed: the pty must not see it.
+        expect(press({ key: 'ArrowLeft' })).toBe(false);
+      });
+
+      it('still reads a typed message on a row that also carries a hint', () => {
+        // The other side of the same rule: normal cells are the user's, and one
+        // faint cell beside them does not make the row empty.
+        renderInteractive();
+        const mock = terminal();
+        mock.bufferLines = [RULE, '❯ hello there', RULE];
+        mock.bufferDim = ['', '', ''];
+        mock.buffer.active.baseY = 0;
+        mock.buffer.active.cursorY = 1;
 
         expect(press({ key: 'ArrowLeft' })).toBe(true);
       });
@@ -817,13 +874,75 @@ describe('TerminalSurface', () => {
         expect(press({ key: 'ArrowLeft' })).toBe(true);
       });
 
-      it('reports the row below the caret, not the caret’s own', () => {
-        // A rule *on* the cursor row is not the frame's bottom edge. If the
-        // surface read the wrong row this would swallow the key.
+      it('does not read the caret’s own row as the frame’s edge', () => {
+        // A rule *on* the cursor row is not an input row at all. If the surface
+        // read the wrong row this would swallow the key.
         renderInteractive();
-        stageRows(['─'.repeat(96), 'not a rule'], 0);
+        stageRows([RULE, RULE, RULE], 1, 0);
 
         expect(press({ key: 'ArrowLeft' })).toBe(true);
+      });
+    });
+
+    describe('announcing a bare ← it could not claim (HIVE-79)', () => {
+      const RULE = '─'.repeat(96);
+
+      /** Every `TERMINAL_CHORD_EVENT` raised while `run` executes. */
+      function chordsDuring(run: () => void): string[] {
+        const seen: string[] = [];
+        const onChord = (event: Event) => {
+          seen.push((event as CustomEvent<{ chord: string }>).detail.chord);
+        };
+        window.addEventListener(TERMINAL_CHORD_EVENT, onChord);
+        try {
+          run();
+        } finally {
+          window.removeEventListener(TERMINAL_CHORD_EVENT, onChord);
+        }
+        return seen;
+      }
+
+      function stage(rows: string[], cursorY: number) {
+        const mock = terminal();
+        mock.bufferLines = rows;
+        mock.buffer.active.baseY = 0;
+        mock.buffer.active.cursorY = cursorY;
+      }
+
+      it('hands the key on AND says it lost it', () => {
+        /**
+         * The asymmetry the ticket is about. Every other announcement here is
+         * also a claim, so the pty must not see the key; this one is the
+         * opposite — the key belongs to the child process exactly as it always
+         * did, and the event carries only the news.
+         */
+        renderInteractive();
+        stage([RULE, '❯ hi there', '', RULE], 2);
+
+        let handedOn: boolean | undefined;
+        const chords = chordsDuring(() => {
+          handedOn = press({ key: 'ArrowLeft' });
+        });
+
+        expect(handedOn).toBe(true);
+        expect(chords).toEqual(['back-declined']);
+      });
+
+      it('says nothing when there was no claim to lose', () => {
+        // A plain shell. Announcing here would put a hint about leaving a
+        // session over somebody's `ls` output.
+        renderInteractive();
+        stage(['$ ls', 'app % '], 1);
+
+        expect(chordsDuring(() => press({ key: 'ArrowLeft' }))).toEqual([]);
+      });
+
+      it('says nothing when it did claim the key', () => {
+        // The claim raises `back`, which is navigation, not news.
+        renderInteractive();
+        stage([RULE, '❯ ', RULE], 1);
+
+        expect(chordsDuring(() => press({ key: 'ArrowLeft' }))).toEqual(['back']);
       });
     });
 

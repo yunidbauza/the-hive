@@ -38,6 +38,15 @@ export class MockTerminal {
    */
   bufferLines: string[] = [];
 
+  /**
+   * Which cells of {@link bufferLines} are faint, as a per-row mask (HIVE-79).
+   *
+   * One character per column: `d` for a dim cell, anything else for a normal
+   * one. A row with no entry is entirely normal, which is what almost every
+   * test wants — only the ones staging Claude's input placeholder care.
+   */
+  bufferDim: string[] = [];
+
   readonly buffer = {
     active: {
       viewportY: 0,
@@ -52,10 +61,28 @@ export class MockTerminal {
       getLine: (row: number) => {
         const text = this.bufferLines[row];
         if (text === undefined) return undefined;
+        const faint = this.bufferDim[row] ?? '';
         return {
+          length: text.length,
           translateToString: (trimRight?: boolean, start?: number, end?: number) => {
             const slice = text.slice(start ?? 0, end);
             return trimRight === true ? slice.replace(/\s+$/u, '') : slice;
+          },
+          /**
+           * Enough of `IBufferCell` for the placeholder rule (HIVE-79).
+           *
+           * `isDim` is the load-bearing one: Claude Code draws the hint in its
+           * empty input with `\x1b[2m`, and telling that from a typed message
+           * is the whole reason the surface reads cells rather than calling
+           * `translateToString`.
+           */
+          getCell: (column: number) => {
+            if (column < 0 || column >= text.length) return undefined;
+            return {
+              getChars: () => text[column] ?? '',
+              getWidth: () => 1,
+              isDim: () => (faint[column] === 'd' ? 1 : 0),
+            };
           },
         };
       },

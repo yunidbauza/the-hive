@@ -14,6 +14,7 @@ import { CenterStage } from '@components/layout/center-stage';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useEditorStore } from '@stores/editor-store';
 import { useHiveStore } from '@stores/hive-store';
+import { DECLINED_BACK_MS } from '@/hooks/use-declined-back';
 import { TERMINAL_CHORD_EVENT } from '@lib/terminal/keymap';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
@@ -424,6 +425,62 @@ describe('CenterStage — the escape chord', () => {
     emitChord('back');
 
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+  });
+
+  describe('a chord it wanted and could not have (HIVE-79)', () => {
+    const hint = () => screen.queryByTestId('terminal-hint');
+
+    it('says where the key went, and where the way back is', () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      emitChord('back-declined');
+
+      const strip = hint();
+      expect(strip).not.toBeNull();
+      expect(strip?.textContent).toContain('← went to the session');
+      expect(strip?.textContent).toContain('returns to the overmind');
+    });
+
+    it('stays on the session — it is news, not navigation', () => {
+      /**
+       * The distinction the whole event carries. `back` means the app took the
+       * key and should leave; `back-declined` means the pty took it and the
+       * user is still here. Navigating on it would take the user somewhere on
+       * the strength of a keystroke that had already gone elsewhere.
+       */
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      emitChord('back-declined');
+
+      expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+    });
+
+    it('goes quiet again on its own', () => {
+      vi.useFakeTimers();
+      try {
+        render(<CenterStage />);
+        act(() => useUiStore.getState().openTab('hero-refresh'));
+
+        emitChord('back-declined');
+        expect(hint()).not.toBeNull();
+
+        act(() => vi.advanceTimersByTime(DECLINED_BACK_MS));
+        expect(hint()).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('is not raised by an ordinary declined chord', () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      emitChord('back');
+
+      expect(hint()).toBeNull();
+    });
   });
 });
 

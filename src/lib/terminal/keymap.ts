@@ -28,7 +28,21 @@ export type TerminalKeyAction =
   /** Insert a line break without submitting. See {@link NEWLINE_SEQUENCE}. */
   | 'newline'
   /** An app navigation chord: not xterm's, not the pty's. Let it bubble. */
-  | 'app-chord';
+  | 'app-chord'
+  /**
+   * A bare `←` the app wanted and could not have (HIVE-79).
+   *
+   * Behaves as {@link TerminalKeyAction} `to-pty` — the pty gets the key,
+   * because that is what a declined claim means — and differs from it in one
+   * respect: the app is *told*. The whole defect this exists for is that the
+   * app used to lose the key and the user in the same silent instant; it never
+   * learned the key had happened, so it could not say where the user had gone.
+   *
+   * Raised only where the app had a claim to lose — the caret inside Claude's
+   * input frame — never for `←` in a shell, where nothing was declined and an
+   * announcement would be noise. See {@link BareBackClaim}.
+   */
+  | 'back-declined';
 
 /**
  * The bytes `Home` and `End` put on a pty's stdin.
@@ -150,81 +164,238 @@ export function lineMotion(
 }
 
 /**
- * What the terminal can say about the two rows the `←` decision needs.
+ * What the terminal can say about the rows the `←` decision needs (HIVE-79).
  *
- * Deliberately two strings and nothing else. The surface reads them out of
- * xterm's buffer and hands them over; this module never sees a `Terminal`, so
- * the decision stays a pure function of text and the seam holds.
+ * A **window** of rows rather than two, and that widening is the fix. The
+ * two-row version — the caret's row plus the one below it — was wrong in both
+ * directions against frames captured from a real `claude`:
+ *
+ * - It **stole** `←` from a user mid-message. Type a line, press `Shift+Enter`,
+ *   and the caret sits on an empty second input row with the frame's bottom
+ *   rule directly beneath it. Both conditions passed, so the app claimed the
+ *   key and threw the user out of a session with a half-written message in it —
+ *   the regression story 110 and HIVE-65 fixed one surface over.
+ * - It **leaked** `←` at an input that really was empty, because the row below
+ *   the caret is not always the frame's edge: clear a two-line message and
+ *   Claude repaints the first row before the second, leaving stale text where
+ *   the rule was expected.
+ *
+ * Neither is reachable from a cleverer look at two rows: the information needed
+ * — *is there anything in the whole input?* — is not in them. So the surface
+ * hands over the rows around the caret and this module finds the frame itself.
+ *
+ * Still deliberately strings and nothing else. This module never sees a
+ * `Terminal`, so the decision stays a pure function of text and the seam holds.
  */
 export interface CursorContext {
-  /** The whole row the caret is on, right-trimmed. */
-  line: string;
-  /** The whole row directly below it, right-trimmed. */
-  below: string;
+  /**
+   * The rows around the caret, top to bottom, each right-trimmed — with
+   * **dim cells blanked out**.
+   *
+   * A bounded window — see {@link FRAME_SCAN}. Rows the buffer cannot report
+   * are `''`, which is not a rule and not a frame edge, so an unreadable
+   * window fails the same way an unrecognised one does.
+   *
+   * The blanking is not a detail, it is the defect (HIVE-79). Claude Code
+   * writes a **placeholder** into its empty input — `❯ Try "write a test
+   * for …"` — as real cells on the caret row, and its own footer still offers
+   * `← for agents` while it is showing, so Claude *would* navigate. Read as
+   * plain text that row is indistinguishable from a typed message, so the app
+   * declined the key and the user landed in Claude's agent list. Measured from
+   * a real session, the placeholder arrives as `\x1b[39m❯\xa0\x1b[2mTry "…"`:
+   * **SGR 2, faint**, and typed input never is. So the surface hands over what
+   * the *user* put on each row, and this module's question — "is anything
+   * typed?" — becomes answerable again.
+   */
+  rows: readonly string[];
+  /** Which entry of {@link CursorContext.rows} the caret is on. */
+  caretRow: number;
 }
+
+/**
+ * **Claude Code runs on the alternate screen buffer. Measured, not assumed.**
+ *
+ * Recorded because it is a trap, and one this change fell into: an
+ * `alternate === 'alternate' -> foreign` guard was written here on the very
+ * reasonable premise that `vim`, `less` and `htop` take the alternate buffer
+ * while Claude draws its transcript inline. It looked like the one signal in
+ * this module that was not a screen-scrape, and it would have been — except
+ * that the premise is false. Against a real `claude` 2.1.245 inside the app,
+ * `terminal.buffer.active.type` is **`'alternate'`**, so the guard disabled the
+ * bare-`←` claim outright: every frame came back `foreign` and no chord was
+ * ever raised.
+ *
+ * Nothing short of the desktop end-to-end spec could have caught it. Every unit
+ * test passed, because every unit test staged the buffer the author believed
+ * Claude used.
+ *
+ * So there is no cheap "is this a full-screen TUI?" test available here, and a
+ * future one must not be built on the buffer type. What separates Claude from
+ * `vim` is what always did: the input frame — a rule above the caret and a rule
+ * below it, with nothing typed between them.
+ */
+
+
+/**
+ * How far from the caret the frame is looked for, in rows.
+ *
+ * Bounded rather than open-ended, because the cost of not finding an edge is
+ * exactly the pre-existing behaviour — the key goes to the pty — while the cost
+ * of scanning the whole scrollback on every keystroke is paid on every
+ * keystroke. Eight rows covers an input box several lines tall; past that the
+ * input is plainly not empty and declining is the right answer anyway.
+ */
+export const FRAME_SCAN = 8;
 
 /**
  * Prompt markers that may precede an empty input.
  *
  * `❯` is what Claude Code draws today (verified against a real pty capture at
- * 100 columns). The others cost nothing and cover the box-drawn variants — a
- * left border, or the plain `>` older revisions used.
+ * 100 columns). `!` is **bash mode**, where Claude replaces the `❯` outright
+ * rather than adding to it — an empty bash-mode prompt renders as a lone `!`,
+ * and the old pattern read that as typed content and let the key go. The rest
+ * cost nothing and cover the box-drawn variants: a left border, or the plain
+ * `>` older revisions used.
+ *
+ * `#` is deliberately **absent**. Memory mode renders as `❯ #`, but there the
+ * `#` is a character the user typed and can delete; treating it as chrome would
+ * claim a key from someone who had begun writing.
  */
-const PROMPT_PREFIX = /^[\s│┃]*[❯>›»]?\s*/u;
+const PROMPT_PREFIX = /^[\s│┃]*[❯>›»!]?\s*/u;
 
 /** Horizontal rule characters, light and heavy. */
 const RULE = /[─━]/gu;
 
 /**
- * How much rule has to be there before it counts as Claude's input frame.
+ * The shortest run of rule that can be a frame edge.
  *
- * Claude draws the rule the full width of the terminal, so at any usable size
- * this is ~80–200 characters. Twenty is far below that and far above anything
- * that turns up by accident in a diff, a table, or a box-drawn TUI *row* — the
- * point is to be unmistakable, not to be tight.
+ * Claude draws the rule the full width of the terminal, so this is normally
+ * 80–200 characters. The floor exists only to keep `───` in a diff or a
+ * transcript from reading as an edge.
  */
-const MIN_RULE_WIDTH = 20;
+const MIN_RULE_WIDTH = 8;
+
+/**
+ * How much of a frame edge has to actually be rule.
+ *
+ * Not all of it: Claude writes the worktree or branch name *into* the top
+ * rule — `───────── HIVE-keymap-bug ──` — so an edge is mostly rule rather than
+ * purely rule.
+ *
+ * A *share* rather than a count is also what fixes a narrow terminal: at
+ * eighteen columns the edge is eighteen rule characters, under the old absolute
+ * floor of twenty, and the app stopped claiming the key there. Requiring the
+ * row to be *mostly* rule is what lets the floor come down safely — a
+ * box-drawn TUI row like `├── Files ──┤` carries too much else to qualify.
+ */
+const MIN_RULE_SHARE = 0.6;
+
+/** Is this row an edge of Claude's input frame? */
+function isRuleRow(row: string): boolean {
+  const trimmed = row.trim();
+  if (trimmed.length < MIN_RULE_WIDTH) return false;
+  const rule = trimmed.match(RULE)?.length ?? 0;
+  return rule / trimmed.length >= MIN_RULE_SHARE;
+}
+
+/** Is this row of the input carrying anything the user typed? */
+const isBlankInputRow = (row: string): boolean =>
+  row.replace(PROMPT_PREFIX, '') === '';
+
+/**
+ * What the app may do with a bare `←` at this screen.
+ *
+ * Three answers rather than two, because "no" has two very different meanings
+ * and the app needs to tell them apart (HIVE-79).
+ */
+export type BareBackClaim =
+  /** Claude's input, and empty: the app takes the key. */
+  | 'claim'
+  /**
+   * Claude's input, and **not** empty — or not provably empty. The pty gets the
+   * key, which is correct while a message is being written and merely unlucky
+   * when a repaint hid the evidence. Either way the app knows it lost the key,
+   * which is what {@link TerminalKeyAction} `back-declined` exists to say.
+   */
+  | 'declined'
+  /**
+   * Not Claude's input at all — a shell, another TUI, an unreadable buffer. The
+   * app has no business here and does not announce anything: a user pressing
+   * `←` in `vim` is moving the caret, not missing a chord.
+   */
+  | 'foreign';
+
+/**
+ * Where the caret is, and whether the app may have the `←` (HIVE-79).
+ *
+ * **This is the whole of the bare-`←` decision, and it is deliberately narrow.**
+ *
+ * Two conditions, in the order they are cheapest to disprove:
+ *
+ * 1. **The caret is inside a frame** — a rule row somewhere above it and a rule
+ *    row somewhere below it, within {@link FRAME_SCAN}. This is what makes the
+ *    test *Claude-specific* rather than prompt-shaped. A login shell survives
+ *    `claude` exiting (story 096), and plenty of shell prompts are a bare `❯`;
+ *    without this a user who quit Claude and went back to their shell would
+ *    find `←` silently stolen. There is no rule under a shell prompt.
+ *
+ * 2. **Every row of the input is empty** once a prompt marker is stripped —
+ *    the whole region between the two edges, not just the caret's row. Claude
+ *    itself only offers the binding when the input is empty; its own footer
+ *    proves it, reading `⏸ manual mode on · ← 2 agents` at an empty prompt and
+ *    dropping the `← 2 agents` the moment a character is typed. Testing the
+ *    whole region means the app takes the key precisely when Claude would have
+ *    navigated, and never when it would have moved the caret.
+ *
+ *    Whole **rows**, deliberately, rather than the part before the caret. Those
+ *    differ in one case that matters: a half-typed message whose caret has been
+ *    sent back to the start with `Ctrl-A` or `Home`. There is nothing to the
+ *    caret's left, but the message is still there and Claude would not
+ *    navigate.
+ *
+ * Failure is still **open**: anything unrecognised leaves the key with the pty,
+ * which is exactly the behaviour before any of this existed. The opposite
+ * default — swallow when unsure — would break line editing in every TUI the app
+ * has never seen, and would do it silently. What has changed is that the app no
+ * longer fails open *silently*: condition 2 without condition 3 is `declined`,
+ * and the surface says so.
+ */
+export function claimBareBack({ rows, caretRow }: CursorContext): BareBackClaim {
+  if (caretRow < 0 || caretRow >= rows.length) return 'foreign';
+  if (isRuleRow(rows[caretRow])) return 'foreign';
+
+  let bottom = -1;
+  for (let row = caretRow + 1; row < rows.length; row += 1) {
+    if (isRuleRow(rows[row])) {
+      bottom = row;
+      break;
+    }
+  }
+  if (bottom === -1) return 'foreign';
+
+  let top = -1;
+  for (let row = caretRow - 1; row >= 0; row -= 1) {
+    if (isRuleRow(rows[row])) {
+      top = row;
+      break;
+    }
+  }
+  if (top === -1) return 'foreign';
+
+  for (let row = top + 1; row < bottom; row += 1) {
+    if (!isBlankInputRow(rows[row])) return 'declined';
+  }
+  return 'claim';
+}
 
 /**
  * Is the caret sitting in Claude Code's input with nothing typed?
  *
- * **This is the whole of the bare-`←` decision, and it is deliberately narrow.**
- *
- * Two conditions, and both are needed:
- *
- * 1. **The whole input row is empty** once a prompt marker is stripped. This is
- *    what keeps `←` working while a message is being edited, and it is not a
- *    guess about Claude's internals — Claude itself only offers the binding
- *    when the input is empty. Its own footer proves it: at an empty prompt it
- *    reads `⏸ manual mode on · ← 2 agents`, and the `← 2 agents` affordance
- *    disappears the moment a character is typed. Intercepting on exactly that
- *    condition means we take the key precisely when Claude would have
- *    navigated, and never when it would have moved the caret.
- *
- *    The **whole row**, deliberately, rather than the part before the caret.
- *    Those differ in one case that matters: a half-typed message whose caret
- *    has been sent back to the start with `Ctrl-A` or `Home`. There is nothing
- *    to the caret's left, but the message is still there and Claude would not
- *    navigate — so reading only the left-hand side would throw the user out of
- *    a session they were mid-sentence in.
- *
- * 2. **The row below is a horizontal rule** — the bottom edge of Claude's input
- *    frame. This is what makes the rule *Claude-specific* rather than
- *    prompt-shaped. A login shell survives `claude` exiting (story 096), and
- *    plenty of shell prompts are a bare `❯` or `>`; without this condition a
- *    user who quit Claude and went back to their shell would find `←` silently
- *    stolen. There is no rule under a shell prompt.
- *
- * Failure is **open**: anything unrecognised returns `false` and the key goes
- * to the pty, which is exactly the behaviour before this existed. The opposite
- * default — swallow when unsure — would break line editing in every TUI the app
- * has never seen, and would do it silently.
+ * The boolean half of {@link claimBareBack}, kept because that is the question
+ * most callers and every test actually asks.
  */
-export function isEmptyClaudePrompt({ line, below }: CursorContext): boolean {
-  const rule = below.match(RULE)?.length ?? 0;
-  if (rule < MIN_RULE_WIDTH) return false;
-  return line.replace(PROMPT_PREFIX, '') === '';
-}
+export const isEmptyClaudePrompt = (cursor: CursorContext): boolean =>
+  claimBareBack(cursor) === 'claim';
 
 /**
  * `←` with no modifiers at all.
@@ -288,7 +459,14 @@ export const TERMINAL_CHORD_EVENT = 'hive:terminal-chord';
 
 /** What a {@link TERMINAL_CHORD_EVENT} carries. */
 export interface TerminalChordDetail {
-  chord: 'back';
+  /**
+   * `back` — the app has the key and should navigate.
+   *
+   * `back-declined` — the app wanted the key, the pty got it, and the user is
+   * now somewhere the app did not send them (HIVE-79). Nothing to navigate;
+   * something to *say*. See {@link TerminalKeyAction} `back-declined`.
+   */
+  chord: 'back' | 'back-declined';
 }
 
 /** How that chord is written in the key-hint row. */
@@ -363,9 +541,17 @@ export function decideTerminalKey(
    * Without it, `←` opens Claude Code's *own* agent list inside a session — a
    * second, competing fleet view in an app whose entire purpose is being the
    * fleet view.
+   *
+   * A declined claim is **announced rather than dropped** (HIVE-79). The key
+   * still goes to the pty — that is what declining means, and it is what keeps
+   * a half-written message editable — but the app hears about it, so losing the
+   * key is no longer the same event as losing the user. See
+   * {@link BareBackClaim} for the three answers and why "no" needed two of them.
    */
-  if (isBareBack(event) && cursor && isEmptyClaudePrompt(cursor)) {
-    return 'app-chord';
+  if (isBareBack(event) && cursor) {
+    const claim = claimBareBack(cursor);
+    if (claim === 'claim') return 'app-chord';
+    if (claim === 'declined') return 'back-declined';
   }
 
   /**

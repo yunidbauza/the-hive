@@ -40,6 +40,7 @@
     "test:e2e:web": "playwright test --project=web",
     "test:e2e:electron": "PW_ELECTRON_ONLY=1 playwright test --project=electron",
     "test:pty": "electron-vite build && ELECTRON_RUN_AS_NODE=1 electron scripts/run-pty-conformance.mjs",
+    "test:back": "HIVE_LIVE_BACK_PROOF=1 PW_ELECTRON_ONLY=1 playwright test --project=electron tests/e2e/electron/bare-back-claim.spec.ts",
     "test:hooks": "HIVE_LIVE_HOOK_PROOF=1 vitest run tests/live/hook-conformance.test.ts",
     "test:statusline": "HIVE_LIVE_STATUSLINE_PROOF=1 vitest run tests/live/statusline-conformance.test.ts",
     "test:skills": "HIVE_LIVE_SKILLS_PROOF=1 vitest run tests/live/skills-conformance.test.ts",
