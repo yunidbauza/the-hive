@@ -166,6 +166,67 @@ export interface Receiver {
 const isHookEvent = (value: unknown): value is HookEvent =>
   typeof value === 'string' && (HOOK_EVENTS as readonly string[]).includes(value);
 
+/**
+ * The ids of the background **shells** a payload reports still running
+ * (HIVE-90).
+ *
+ * Returns `undefined` when the payload carried no `background_tasks` key at
+ * all, and an array — possibly empty — when it did. That distinction is the
+ * whole contract; see {@link HookStatusEvent.backgroundShells} for why an
+ * observed empty list and a silent body must not collapse into each other.
+ *
+ * ## `background_tasks` is a union, and that is why `type` is filtered
+ *
+ * The name suggests one kind of thing and it is two. Measured against 2.1.245,
+ * a session whose only background work is a **subagent**:
+ *
+ * ```
+ * Stop  background_tasks: [
+ *   { id: 'a1bb2b63ce60a4e1c', type: 'subagent', status: 'running',
+ *     agent_type: 'general-purpose', description: '…' }
+ * ]
+ * ```
+ *
+ * — the same array a backgrounded `Bash` puts a `type: 'shell'` entry in. So
+ * an unfiltered read makes a live subagent arrive as a background shell, and
+ * a session that has reported `idle (agents)` since HIVE-83 starts reporting
+ * `idle (script)` about an agent. Subagents are tracked from `SubagentStart` /
+ * `SubagentStop`, which is both a finer signal and a *fresher* one: the same
+ * measurement shows a subagent still listed as `running` in the
+ * `background_tasks` of its own `SubagentStop`, because the list is a snapshot
+ * taken before the stop is applied. Shells are the half with no such pair —
+ * no hook fires when a backgrounded process dies — which is exactly why this
+ * list is worth reading for them and not for agents.
+ *
+ * `status === 'running'` is filtered for the obvious reason, and an entry with
+ * no string `id` is dropped because ids are the only part of an entry this app
+ * keeps.
+ *
+ * **What the `type` filter costs:** a third kind of background task, added in
+ * some later release, is dropped here and a session running one would report a
+ * plain `idle`. That is a real risk and the honest reading of it is that the
+ * union has one member this app already tracks better and one it needs; a
+ * member that does not exist yet cannot be assigned to `script` — which is a
+ * *shell* — without repeating the subagent mistake in the other direction.
+ * `hook-conformance.test.ts` is what would catch it, being the one test that
+ * asks the real binary.
+ */
+function liveBackgroundShellIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { id, type, status } = entry as {
+      id?: unknown;
+      type?: unknown;
+      status?: unknown;
+    };
+    if (type !== 'shell' || status !== 'running') continue;
+    if (typeof id === 'string' && id !== '') ids.push(id);
+  }
+  return ids;
+}
+
 export function createReceiver(options: ReceiverOptions): Receiver {
   const {
     onEvent,
@@ -385,6 +446,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     let toolName: unknown;
     let agentId: unknown;
     let runInBackground: unknown;
+    let backgroundShells: string[] | undefined;
 
     if (truncated) {
       // The prefix is all there is; see EVENT_IN_PREFIX.
@@ -412,6 +474,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               tool_name?: unknown;
               agent_id?: unknown;
               tool_input?: { run_in_background?: unknown };
+              background_tasks?: unknown;
             })
           : undefined;
       event = fields?.hook_event_name;
@@ -423,6 +486,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       toolName = fields?.tool_name;
       agentId = fields?.agent_id;
       runInBackground = fields?.tool_input?.run_in_background;
+      backgroundShells = liveBackgroundShellIds(fields?.background_tasks);
     }
 
     /**
@@ -502,6 +566,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       ...(typeof toolName === 'string' ? { toolName } : {}),
       ...(typeof agentId === 'string' && agentId !== '' ? { agentId } : {}),
       ...(runInBackground === true ? { runInBackground: true } : {}),
+      ...(backgroundShells === undefined ? {} : { backgroundShells }),
     });
     return 204;
   }

@@ -340,6 +340,177 @@ describe('hook receiver', () => {
   });
 
   /**
+   * The live background-task list (HIVE-90).
+   *
+   * `Stop` and `SubagentStop` report what is still running, which is the only
+   * thing that can see a backgrounded process **end** — Claude Code emits no
+   * hook when one dies. The bodies below are the measured shape, 2.1.245.
+   */
+  describe('background tasks', () => {
+    it('forwards the ids of the tasks a Stop reports running', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        stop_hook_active: false,
+        last_assistant_message: 'Started it.',
+        background_tasks: [
+          {
+            id: 'bcy0lrc5b',
+            type: 'shell',
+            status: 'running',
+            description: 'Run sleep 40 then echo in background',
+            command: 'sleep 40; echo finished-bg',
+          },
+        ],
+        session_crons: [],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({
+        event: 'Stop',
+        backgroundShells: ['bcy0lrc5b'],
+      });
+    });
+
+    /**
+     * The case HIVE-90 exists for: an **observed** empty list. It must survive
+     * as `[]` and not be dropped for looking falsy — absence means the body
+     * did not say, and the tracker keeps inferring on that.
+     */
+    it('forwards an empty list as an observation, not as silence', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        last_assistant_message: 'It printed finished-bg.',
+        background_tasks: [],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ event: 'Stop', backgroundShells: [] });
+    });
+
+    it('says nothing for an event that carries no list at all', async () => {
+      const response = await post({ hook_event_name: 'Stop' });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).not.toHaveProperty('backgroundShells');
+    });
+
+    it('carries the list off a SubagentStop too', async () => {
+      const response = await post({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a95ea9629a0d69ec6',
+        background_tasks: [
+          { id: 'bcy0lrc5b', type: 'shell', status: 'running' },
+        ],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({
+        event: 'SubagentStop',
+        agentId: 'a95ea9629a0d69ec6',
+        backgroundShells: ['bcy0lrc5b'],
+      });
+    });
+
+    /**
+     * A task listed under any other status is not something the session is
+     * parked on, and an entry with no usable id is nothing this app can hold.
+     * Both are dropped — but the list stays an observation, so a body whose
+     * every entry is dropped still reports `[]` rather than falling silent.
+     */
+    it('keeps only running tasks that name themselves', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        background_tasks: [
+          { id: 'a', type: 'shell', status: 'running' },
+          { id: 'b', type: 'shell', status: 'completed' },
+          { id: '', type: 'shell', status: 'running' },
+          { type: 'shell', status: 'running' },
+          'not an object',
+          null,
+        ],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ backgroundShells: ['a'] });
+    });
+
+    /**
+     * `background_tasks` is a union, and a live **subagent** sits in it under
+     * `type: 'subagent'` (measured, 2.1.245). Counting one as a shell is how
+     * the first cut of HIVE-90 turned a session's `idle (agents)` into
+     * `idle (script)`; `SubagentStart` / `SubagentStop` is the finer and
+     * fresher signal for agents, so entries of that type are dropped here.
+     * The list is still an observation, so a body of nothing but subagents
+     * reports `[]` — there really is no shell running.
+     */
+    it('drops a subagent, which is not a background shell', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        background_tasks: [
+          {
+            id: 'a1bb2b63ce60a4e1c',
+            type: 'subagent',
+            status: 'running',
+            agent_type: 'general-purpose',
+            description: 'Run bash command and report output',
+          },
+        ],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ backgroundShells: [] });
+    });
+
+    it('keeps the shell out of a list that mixes the two', async () => {
+      const response = await post({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1bb2b63ce60a4e1c',
+        background_tasks: [
+          { id: 'a1bb2b63ce60a4e1c', type: 'subagent', status: 'running' },
+          { id: 'bcy0lrc5b', type: 'shell', status: 'running' },
+        ],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ backgroundShells: ['bcy0lrc5b'] });
+    });
+
+    /**
+     * A background task type this app has never seen is dropped with the
+     * subagents — see `liveBackgroundShellIds` for the trade. `script` names a
+     * shell, and assigning an unknown kind to it would repeat the subagent
+     * mistake in the other direction.
+     */
+    it('drops a background task type it does not know', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        background_tasks: [{ id: 'z', type: 'something-new', status: 'running' }],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ backgroundShells: [] });
+    });
+
+    /**
+     * `last_assistant_message` precedes `background_tasks` on the wire, so a
+     * final message over `HOOK_MAX_BODY_BYTES` truncates the list away. The
+     * receiver must then say nothing rather than report an empty one — this is
+     * the residual limitation armedIdle's doc records.
+     */
+    it('says nothing about a list an oversized body truncated away', async () => {
+      const response = await post({
+        hook_event_name: 'Stop',
+        last_assistant_message: 'x'.repeat(128 * 1024),
+        background_tasks: [{ id: 'a', type: 'shell', status: 'running' }],
+      });
+
+      expect(response.status).toBe(204);
+      expect(events[0]).toMatchObject({ event: 'Stop', status: 'idle' });
+      expect(events[0]).not.toHaveProperty('backgroundShells');
+    });
+  });
+
+  /**
    * `SessionEnd` and the `reason` gate.
    *
    * Only `clear` may be acted on. The others all mean the process is going

@@ -146,6 +146,49 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  * `UserPromptSubmit` once `sleep 30` exited, well inside the deadline, and
  * that is exactly the re-invoke spec §2.3 documents. The assertion below is
  * written to the measurement, not the brief.
+ *
+ * ## The sixth scenario, and the field the fifth one's run never looked at
+ * (HIVE-90)
+ *
+ * The fifth scenario only ever exercises a shell that **outlives** its turn,
+ * which is the case the tracker's inference happens to get right. A shell that
+ * finishes *inside* its turn — started, waited for, collected, turn ended —
+ * gets no re-invoke, so nothing ever cleared `bgShells` and the `Stop` reported
+ * `idle (script)` about a process that had already exited. After HIVE-89 that
+ * stopped being a wrong dot and became silence: a live detail suppresses
+ * `session.idle` and `session.input_needed` alike, so the one session that was
+ * genuinely the user's announced nothing until they typed.
+ *
+ * What the sixth scenario measured is that Claude Code was already saying so.
+ * `Stop` and `SubagentStop` carry a `background_tasks` array — the live list,
+ * `[{id, type, status: 'running', …}]` while the shell runs and `[]` once it
+ * has exited, in **both** scenarios. It is the only observation of a
+ * backgrounded process *ending* that exists, since no hook fires when one dies,
+ * and `receiver.ts` now reads it and `tracker.ts` replaces `bgShells` from it.
+ * The two scenarios below are therefore a pair: the fifth pins that a live
+ * shell still reads `idle (script)` at `Stop`, and the sixth that a finished
+ * one does not.
+ *
+ * And this file earned its keep again on the way: the first cut read
+ * `background_tasks` whole, and the **subagent** scenario went red. The array
+ * is a union — a live subagent sits in it as
+ * `{ id: '<agent id>', type: 'subagent', status: 'running', agent_type: … }`,
+ * alongside the shells — so an unfiltered read turned that scenario's
+ * `idle (agents)` into `idle (script)` on its `SubagentStop`. Two things
+ * followed. `receiver.ts` filters to `type: 'shell'`, and subagents keep being
+ * tracked from `SubagentStart` / `SubagentStop`, which is also the *fresher*
+ * signal: the same run shows a subagent still listed as `running` in the
+ * `background_tasks` of its own `SubagentStop`, the list being a snapshot taken
+ * before the stop is applied. A unit test could not have found either, because
+ * both are facts about a body this file's author would otherwise have written
+ * from the same wrong belief.
+ *
+ * The residual limitation is on the wire order, and this file cannot catch it:
+ * `last_assistant_message` precedes `background_tasks`, so a final message over
+ * `HOOK_MAX_BODY_BYTES` truncates the list away and the tracker falls back to
+ * inferring. `receiver.test.ts` pins that case with a body it builds itself,
+ * which is the right tool for it — the belief being tested there is about a
+ * byte cap this app chose, not about what Claude Code sends.
  */
 const RUN = process.env.HIVE_LIVE_HOOK_PROOF === '1';
 
@@ -194,7 +237,17 @@ interface Scenario {
    * That re-invoke landed well inside this scenario's deadline even though
    * the prompt told the agent not to wait for the shell.
    */
-  clearedBy?: 'SubagentStop' | 'UserPromptSubmit';
+  clearedBy?: 'SubagentStop' | 'UserPromptSubmit' | 'Stop';
+  /**
+   * This scenario really did background a shell (HIVE-90).
+   *
+   * Without it the sixth scenario could pass vacuously: "the `Stop` carried no
+   * `idleDetail`" is trivially true of a run where no shell was ever started,
+   * which is the one way an agent could disobey the prompt and still look
+   * green. Asserted off a `PostToolUse` carrying `run_in_background`, which is
+   * the event the tracker's own inference feeds on.
+   */
+  backgroundsAShell?: true;
 }
 
 /**
@@ -208,6 +261,8 @@ interface Scenario {
  */
 interface TestStatusEvent extends SessionStatusEvent {
   toolUseId?: string;
+  /** Also test-only, and for the same reason — see `Scenario.backgroundsAShell`. */
+  runInBackground?: boolean;
 }
 
 const scenarios: Scenario[] = [
@@ -336,6 +391,80 @@ const scenarios: Scenario[] = [
     answerAt: null,
     completesTool: false,
     clearedBy: 'UserPromptSubmit',
+    backgroundsAShell: true,
+  },
+  {
+    scenario: 'a background shell that finished inside its turn',
+    /**
+     * Every tool named, and no others — the one prompt here that has to
+     * over-specify.
+     *
+     * "Poll it until it finishes" is the natural phrasing and it is too open:
+     * a real run took it as licence to reach for `Monitor`, which needs a
+     * permission this driver never answers, so the turn never ended and the
+     * scenario failed on a shape that had nothing to do with what it tests.
+     * The other scenarios can be loose because their assertions are about the
+     * *first* thing the agent does; this one asserts on the `Stop`, so
+     * everything between the prompt and it has to be reachable without a
+     * human. A foreground `sleep` is the wait, and `Read` is the collection —
+     * both auto-approved in this pty, as scenario three's `Bash` sibling
+     * already demonstrates.
+     */
+    prompt:
+      "Use the Bash tool with run_in_background set to true to run this exact command: 'sleep 12; echo finished-bg'. Then use the Bash tool a second time, in the foreground and without run_in_background, to run 'sleep 20'. Then use the Read tool on the background shell's output file and tell me exactly what it printed. Use only the Bash and Read tools.",
+    type: null,
+    /**
+     * `idle` with **no detail** on the main agent's own `Stop` — the assertion
+     * HIVE-90 exists for, and the one that fails on the build before it.
+     */
+    status: 'idle',
+    kinds: ['session.idle'],
+    presentedCount: 1,
+    /**
+     * Measured trace, 2.1.245, timings from the driver's Enter at ~11s:
+     *
+     * ```
+     * 13.84  PreToolUse   Bash   tool_input.run_in_background: true
+     * 14.63  PostToolUse  Bash   tool_response.backgroundTaskId: 'bnnydgra2'
+     * 18.02  PreToolUse   Read   tasks/bnnydgra2.output      <- the collection
+     * 18.04  PostToolUse  Read
+     *   … the wait, then a Read that finds the output …
+     * 30.61  PostToolUse  Read   content: 'finished-bg\n\n[exited with code 0]\n'
+     * 32.71  Stop                background_tasks: []
+     * 37.00  SubagentStop        background_tasks: []        <- phantom, agent_type ''
+     * 92.82  Notification        idle_prompt
+     * ```
+     *
+     * Two things that trace settles. The collecting tool is a **`Read` of the
+     * task's output file**, not a tool with the shell's identity in its name —
+     * so "retire the shell when the tool that collects it finishes" had
+     * nothing to key on, and the design that keys on `background_tasks`
+     * instead is the measurement's, not the brief's. And `Stop` carries that
+     * list at all, which the ticket did not know: it asked whether *anything*
+     * was observable, and the answer is the whole live account, on the one
+     * event where it is needed.
+     *
+     * 70s puts the assertions comfortably after a `Stop` at ~40s and well
+     * before the `idle_prompt` sixty seconds later, which would otherwise race
+     * the exactly-one-row assertion.
+     */
+    deadline: 70,
+    /** Nothing to answer — the agent waits for the shell itself. */
+    answerAt: null,
+    /**
+     * No permission is ever requested, so there is no blocked tool to prove
+     * leaves `waiting`. The `Read` pairs still exercise `PostToolUse`, and
+     * `held.outstanding` below is what proves they all paired.
+     */
+    completesTool: false,
+    /**
+     * The `Stop` itself — there is no later clearing event, because there is
+     * nothing left to clear. That is the difference from the scenario above,
+     * and stating it as `'Stop'` rather than omitting the field keeps the
+     * assertion a claim about *which* event rather than an absence of one.
+     */
+    clearedBy: 'Stop',
+    backgroundsAShell: true,
   },
 ];
 
@@ -354,6 +483,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       answerAt,
       completesTool,
       clearedBy,
+      backgroundsAShell,
     }) => {
       const statuses: TestStatusEvent[] = [];
       const raised: HiveNotification[] = [];
@@ -414,6 +544,9 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
             ...(e.runInBackground === undefined
               ? {}
               : { runInBackground: e.runInBackground }),
+            ...(e.backgroundShells === undefined
+              ? {}
+              : { backgroundShells: e.backgroundShells }),
             ...(e.notificationType === undefined
               ? {}
               : { notificationType: e.notificationType }),
@@ -432,6 +565,9 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
               : { idleDetail: derived.detail }),
             // Test-only: never forwarded past this point, see `TestStatusEvent`.
             ...(e.toolUseId === undefined ? {} : { toolUseId: e.toolUseId }),
+            ...(e.runInBackground === undefined
+              ? {}
+              : { runInBackground: e.runInBackground }),
           });
         },
         onTicketIntent: () => undefined,
@@ -609,6 +745,20 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         expect(statuses[stopIdx]?.status).toBe(expectedStatus);
         expect(statuses[stopIdx]?.idleDetail).toBe(expectedIdleDetail);
 
+        /*
+          The shell really was backgrounded (HIVE-90). Without this the sixth
+          scenario's "no `idleDetail` on `Stop`" is trivially true of a run
+          where the agent ignored the prompt and ran the command in the
+          foreground — see `Scenario.backgroundsAShell`.
+        */
+        if (backgroundsAShell === true) {
+          expect(
+            statuses.some(
+              (s) => s.event === 'PostToolUse' && s.runInBackground === true,
+            ),
+          ).toBe(true);
+        }
+
         /**
          * `idleDetail` clears once, on the right trigger — not a phantom one.
          *
@@ -626,8 +776,16 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
          * necessarily the real clearing event.
          */
         expect(clearedBy).toBeDefined();
+        /*
+          From `stopIdx`, not `stopIdx + 1` (HIVE-90). The sixth scenario's
+          clearing event *is* the `Stop` — its background shell had already
+          exited, so the list on that body is empty and the detail never
+          stands at all. For the two scenarios whose `Stop` does carry a
+          detail, that first element fails the predicate and the search is
+          the one it always was.
+        */
         const cleared = statuses
-          .slice(stopIdx + 1)
+          .slice(stopIdx)
           .find((s) => s.idleDetail === undefined);
         expect(cleared).toBeDefined();
         expect(cleared?.event).toBe(clearedBy);

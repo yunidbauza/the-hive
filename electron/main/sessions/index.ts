@@ -566,6 +566,9 @@ export function createSessions(options: SessionsOptions): Sessions {
         ...(event.runInBackground === undefined
           ? {}
           : { runInBackground: event.runInBackground }),
+        ...(event.backgroundShells === undefined
+          ? {}
+          : { backgroundShells: event.backgroundShells }),
         ...(event.notificationType === undefined
           ? {}
           : { notificationType: event.notificationType }),

@@ -22,6 +22,14 @@ export interface TrackerInput {
   toolName?: string;
   agentId?: string;
   runInBackground?: boolean;
+  /**
+   * What Claude Code says is still running in the background, by id (HIVE-90).
+   *
+   * An observation, not an inference — see {@link Session.bgShells}. `[]` means
+   * "asked, nothing running"; `undefined` means the event did not say, and the
+   * inference stands.
+   */
+  backgroundShells?: string[];
   notificationType?: HookNotificationType;
 }
 
@@ -49,6 +57,36 @@ interface Session {
    */
   blockedNames: Map<string, string>;
   agents: Set<string>;
+  /**
+   * The background shells this session is believed to still be running.
+   *
+   * ## Two ways in, and only one of them is trustworthy (HIVE-90)
+   *
+   * **The observation.** `Stop` and `SubagentStop` carry Claude Code's own
+   * live `background_tasks` list, and when one arrives it *replaces* this set
+   * wholesale — see the `backgroundShells` branch in `apply()`. That is the
+   * only path that can ever see a shell **end**, because Claude Code emits no
+   * hook when a backgrounded process dies.
+   *
+   * **The inference**, kept as the fallback for a body that carried no list: a
+   * `PostToolUse` with `run_in_background` adds, and `UserPromptSubmit`
+   * clears. It is what shipped in HIVE-84 and it is wrong in both directions
+   * on its own — it cannot see a shell that finished inside its turn (so the
+   * detail stayed on `script` until the next prompt), and it forgets a shell
+   * that is genuinely still running the moment the user types (so the next
+   * `Stop` read as a true idle). HIVE-89 made the first of those expensive:
+   * a live detail suppresses `session.idle` *and* `session.input_needed`, so
+   * a session that was genuinely the user's announced nothing at all.
+   *
+   * ## Why the two id spaces do not need to agree
+   *
+   * The inference adds a `tool_use_id`; the observation carries Claude Code's
+   * own task ids (`bcy0lrc5b`). They never mix in a way that matters, because
+   * an observation replaces rather than merges, and because membership here is
+   * only ever *counted* — `derive()` asks whether the set is empty, never
+   * which shell an entry is. Reconciling the spaces would mean reading
+   * `tool_response.backgroundTaskId` off every `PostToolUse` to buy nothing.
+   */
   bgShells: Set<string>;
   /**
    * Tools this turn whose `PreToolUse` was truncated past `tool_use_id`, by
@@ -179,6 +217,28 @@ export function createStatusTracker(): StatusTracker {
     apply(input) {
       const s = at(input.entityId);
 
+      /**
+       * An observation outranks the inference (HIVE-90).
+       *
+       * Applied before the switch rather than inside the `Stop` and
+       * `SubagentStop` cases, because the rule is about the *payload* and not
+       * about which event delivered it: any body that reports its live
+       * background shells is more authoritative than a set assembled from the
+       * tool events that opened each one. Those two are the only events
+       * measured carrying the list, so today this is where it lands — but a
+       * release that starts sending it elsewhere is then already handled,
+       * where an event-keyed version would quietly keep guessing.
+       *
+       * Before the switch, so `derive()` at the end of every case already sees
+       * it. The one case that also writes this set is `UserPromptSubmit`,
+       * whose clear runs afterwards and therefore wins; that is correct and
+       * costs nothing, since a `UserPromptSubmit` carries no list to overrule.
+       */
+      if (input.backgroundShells !== undefined) {
+        s.bgShells.clear();
+        for (const id of input.backgroundShells) s.bgShells.add(id);
+      }
+
       switch (input.event) {
         case 'SessionStart':
           sessions.set(input.entityId, empty());
@@ -186,10 +246,22 @@ export function createStatusTracker(): StatusTracker {
 
         case 'UserPromptSubmit':
           /**
-           * Also the only observable end of a background shell: Claude Code
-           * emits no hook when a backgrounded process dies, and re-invokes the
-           * agent when it collects the result. Clearing here means the state is
-           * never sticky, at the cost of briefly under-reporting a second job.
+           * Also the background-shell inference's only way to stop being
+           * sticky — and no longer the only way a shell's end is *seen*
+           * (HIVE-90).
+           *
+           * Claude Code still emits no hook when a backgrounded process dies,
+           * so nothing here observes one. What this clear buys is that the
+           * inference cannot hold a shell forever; what it costs is that a
+           * shell genuinely still running is forgotten the moment the user
+           * types. That was a real defect while the inference was all there
+           * was: the next `Stop` read as a true idle and raised
+           * `session.idle` mid-shell, then the shell's own re-invoke ended in
+           * a second `Stop` and a second row. The `background_tasks` list on
+           * that same `Stop` now restores the shell before `derive()` runs —
+           * see {@link Session.bgShells} — so the clear is corrected within
+           * one event and only a body too large to carry the list is left
+           * paying for it.
            *
            * ## Why `outstanding` is not cleared wholesale here (HIVE-86)
            *

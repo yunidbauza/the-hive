@@ -72,6 +72,11 @@ describe('createStatusTracker', () => {
     });
   });
 
+  /**
+   * The fallback path: a `Stop` that carried no `background_tasks` list, so
+   * the inference is all there is (HIVE-90). A body over
+   * `HOOK_MAX_BODY_BYTES` is the case that still reaches here.
+   */
   it('reports idle (script) for an open background shell', () => {
     const t = createStatusTracker();
     const e = 'sess-4';
@@ -89,10 +94,191 @@ describe('createStatusTracker', () => {
       status: 'idle',
       detail: 'script',
     });
-    // The only observable end: the agent is re-invoked with the result.
+    // Without a list, the inference's only way out: the re-invoke that
+    // collects the result.
     expect(t.apply({ entityId: e, event: 'UserPromptSubmit' })).toEqual({
       status: 'working',
     });
+  });
+
+  /**
+   * HIVE-90's case: the shell finished *inside* the turn.
+   *
+   * The agent started it, waited for it, read the result and ended the turn —
+   * so there is no re-invoke coming, and the inference alone would hold
+   * `script` until the user typed. Measured against 2.1.245, that `Stop`
+   * carries `background_tasks: []`, and an observed empty list is what retires
+   * the shell. Announcing this turn is the whole point: with the detail still
+   * standing, HIVE-89's `session.idle` never fires and `session.input_needed`
+   * stays suppressed under the same detail.
+   */
+  it('retires a background shell that finished inside its turn', () => {
+    const t = createStatusTracker();
+    const e = 'sess-4a';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'S', toolName: 'Bash' });
+    t.apply({
+      entityId: e,
+      event: 'PostToolUse',
+      toolUseId: 'S',
+      toolName: 'Bash',
+      runInBackground: true,
+    });
+    // The agent collected the output itself, still inside the turn.
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'R', toolName: 'Read' });
+    t.apply({ entityId: e, event: 'PostToolUse', toolUseId: 'R', toolName: 'Read' });
+
+    expect(t.apply({ entityId: e, event: 'Stop', backgroundShells: [] })).toEqual({
+      status: 'idle',
+    });
+    expect(t.held(e).bgShells).toBe(0);
+  });
+
+  it('keeps idle (script) when the list says the shell is still running', () => {
+    const t = createStatusTracker();
+    const e = 'sess-4b';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'S', toolName: 'Bash' });
+    t.apply({
+      entityId: e,
+      event: 'PostToolUse',
+      toolUseId: 'S',
+      toolName: 'Bash',
+      runInBackground: true,
+    });
+
+    expect(
+      t.apply({ entityId: e, event: 'Stop', backgroundShells: ['bcy0lrc5b'] }),
+    ).toEqual({ status: 'idle', detail: 'script' });
+    // A phantom `SubagentStop` carries the same list and changes nothing.
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'SubagentStop',
+        agentId: 'phantom',
+        backgroundShells: ['bcy0lrc5b'],
+      }),
+    ).toEqual({ status: 'idle', detail: 'script' });
+    // And the `Stop` after the re-invoke, once it has exited.
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    expect(t.apply({ entityId: e, event: 'Stop', backgroundShells: [] })).toEqual({
+      status: 'idle',
+    });
+  });
+
+  /**
+   * The sibling defect, same root (HIVE-90).
+   *
+   * `UserPromptSubmit` clears the inference, so a prompt typed while a shell is
+   * still running used to land the *next* `Stop` as a true idle — one
+   * `session.idle` mid-shell, and a second one when the shell's own re-invoke
+   * ended. The list on that `Stop` restores the shell inside the same event,
+   * so the stretch produces exactly one true idle: the last one.
+   */
+  it('restores a shell the typed prompt cleared, so one stretch is one idle', () => {
+    const t = createStatusTracker();
+    const e = 'sess-4c';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'S', toolName: 'Bash' });
+    t.apply({
+      entityId: e,
+      event: 'PostToolUse',
+      toolUseId: 'S',
+      toolName: 'Bash',
+      runInBackground: true,
+    });
+    t.apply({ entityId: e, event: 'Stop', backgroundShells: ['bcy0lrc5b'] });
+
+    // The user types while the shell runs. The inference forgets it here.
+    expect(t.apply({ entityId: e, event: 'UserPromptSubmit' })).toEqual({
+      status: 'working',
+    });
+    expect(t.held(e).bgShells).toBe(0);
+
+    // …and this `Stop` would have read as a true idle. The list corrects it.
+    expect(
+      t.apply({ entityId: e, event: 'Stop', backgroundShells: ['bcy0lrc5b'] }),
+    ).toEqual({ status: 'idle', detail: 'script' });
+
+    // The shell's own re-invoke, and the one true idle of the stretch.
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    expect(t.apply({ entityId: e, event: 'Stop', backgroundShells: [] })).toEqual({
+      status: 'idle',
+    });
+  });
+
+  /**
+   * A shell the inference never saw open at all — its `PostToolUse` was
+   * truncated past `tool_use_id`, so nothing was ever added. The list is an
+   * account of what is running, not a diff against what this app recorded.
+   */
+  it('adopts a background shell the inference never recorded', () => {
+    const t = createStatusTracker();
+    const e = 'sess-4d';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    expect(
+      t.apply({ entityId: e, event: 'Stop', backgroundShells: ['bnnydgra2'] }),
+    ).toEqual({ status: 'idle', detail: 'script' });
+    expect(t.held(e).bgShells).toBe(1);
+  });
+
+  /**
+   * A live subagent never reaches this set (HIVE-90). `receiver.ts` filters
+   * `type: 'subagent'` out of `background_tasks`, so what arrives here while
+   * an agent runs is an empty shell list — and `agents` outranks `script` in
+   * `derive()` anyway. Pinned because the first cut of HIVE-90 got this wrong
+   * in the receiver and turned `idle (agents)` into `idle (script)`.
+   */
+  it('keeps idle (agents) when the shell list is empty', () => {
+    const t = createStatusTracker();
+    const e = 'sess-4f';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'SubagentStart', agentId: 'X' });
+    expect(
+      t.apply({ entityId: e, event: 'Stop', backgroundShells: [] }),
+    ).toEqual({ status: 'idle', detail: 'agents' });
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'SubagentStop',
+        agentId: 'X',
+        backgroundShells: [],
+      }),
+    ).toEqual({ status: 'idle' });
+  });
+
+  it('leaves the inference alone when an event carries no list', () => {
+    const t = createStatusTracker();
+    const e = 'sess-4e';
+
+    t.apply({ entityId: e, event: 'UserPromptSubmit' });
+    t.apply({ entityId: e, event: 'PreToolUse', toolUseId: 'S', toolName: 'Bash' });
+    t.apply({
+      entityId: e,
+      event: 'PostToolUse',
+      toolUseId: 'S',
+      toolName: 'Bash',
+      runInBackground: true,
+    });
+    // A truncated `Stop` body: no list reached the tracker.
+    expect(t.apply({ entityId: e, event: 'Stop' })).toEqual({
+      status: 'idle',
+      detail: 'script',
+    });
+    // The `idle_prompt` a minute later carries no list either, and the detail
+    // stands — this is the residual limitation armedIdle's doc records.
+    expect(
+      t.apply({
+        entityId: e,
+        event: 'Notification',
+        notificationType: 'idle_prompt',
+      }),
+    ).toEqual({ status: 'idle', detail: 'script' });
   });
 
   it('stays waiting when a subagent blocks after the main agent stopped', () => {

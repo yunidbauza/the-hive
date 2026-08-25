@@ -451,6 +451,48 @@ export interface HookStatusEvent {
   agentId?: string;
   /** `tool_input.run_in_background` on a `Bash` call. */
   runInBackground?: boolean;
+  /**
+   * The background **shells** Claude Code reports still running, by id
+   * (HIVE-90).
+   *
+   * `Stop` and `SubagentStop` carry a `background_tasks` array — the live list,
+   * authored by Claude Code itself rather than inferred from the tool events
+   * that opened each shell. Measured against 2.1.245, a shell started with
+   * `run_in_background` and left running:
+   *
+   * ```
+   * Stop  background_tasks: [
+   *   { id: 'bcy0lrc5b', type: 'shell', status: 'running',
+   *     description: '…', command: 'sleep 40; echo finished-bg' }
+   * ]
+   * ```
+   *
+   * and the same shell once it has exited — whether it outlived the turn or
+   * finished inside it — `background_tasks: []`. That second case is the whole
+   * of HIVE-90: the inference in `tracker.ts` had no way to see it, because
+   * Claude Code emits no hook when a backgrounded process dies.
+   *
+   * **Shells, not tasks**, and the difference is load-bearing: the same array
+   * also carries `type: 'subagent'` entries, which this app tracks from
+   * `SubagentStart` / `SubagentStop` instead and more freshly. `receiver.ts`'s
+   * `liveBackgroundShellIds` is where that filter lives and why.
+   *
+   * ## Empty and absent are different, deliberately
+   *
+   * `[]` is an **observation**: the session was asked and reported nothing
+   * running. `undefined` is **silence** — either an event that does not carry
+   * the key at all, or a `Stop` body over {@link HOOK_MAX_BODY_BYTES}, since
+   * `last_assistant_message` precedes `background_tasks` on the wire and a long
+   * final message truncates the list away. Collapsing the two would turn a
+   * body the app could not read into "nothing is running", which is the
+   * announce-too-early defect this field exists to remove. `tracker.ts` trusts
+   * an observation and falls back to its inference on silence.
+   *
+   * Ids only: the rest of each entry is a description and a command line the
+   * app has no reading for, and forwarding a user's command text through the
+   * status channel is not something this needs to do to count what is running.
+   */
+  backgroundShells?: string[];
 }
 
 /**

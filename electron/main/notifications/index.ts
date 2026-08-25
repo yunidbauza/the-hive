@@ -371,14 +371,17 @@ export function createNotifier(options: NotifierOptions): Notifier {
    *   follows would announce both — and "idle → working → idle inside one
    *   turn must not announce twice" is the rule the ticket set. One early row
    *   is the cheaper mistake.
-   * - The tracker clears `bgShells` on every `UserPromptSubmit` (HIVE-84's
-   *   stated trade-off, `tracker.ts`), so a prompt typed while a shell is
-   *   still running lands the next `Stop` as a true idle, and the shell's own
-   *   re-invoke can then raise once more. Conversely a shell that finished
-   *   *inside* its turn leaves `script` standing until the next prompt, which
-   *   silences both this kind and `input_needed` for that stretch. Both are
-   *   the tracker's to fix, not this file's: the ticket's contract is that
-   *   the detail is trusted in the idle window, and this file trusts it.
+   * - A background shell whose `Stop` body was over `HOOK_MAX_BODY_BYTES`
+   *   leaves the tracker on its inference, which cannot see a shell that
+   *   finished inside its turn — so `script` stands until the next prompt and
+   *   silences both this kind and `input_needed` for that stretch. This was
+   *   the ordinary case until HIVE-90; `Stop` and `SubagentStop` carry a live
+   *   `background_tasks` list, the tracker replaces `bgShells` from it, and
+   *   what is left is only the truncated body — `last_assistant_message`
+   *   precedes the list on the wire, so a final message over 64 KB takes it
+   *   with it. Still the tracker's to fix rather than this file's, and the
+   *   contract is unchanged: the detail is trusted in the idle window, and
+   *   this file trusts it.
    * - `/clear` and an Escape-interrupted turn leave the arm where it was. Harmless:
    *   nothing reaches a `Stop` again without a `UserPromptSubmit`, which
    *   re-arms anyway. See the `/clear` note above `announcedInputNeeded`.
