@@ -217,6 +217,7 @@ export function NewSessionPicker() {
             <PinnedProject
               key={project.id}
               id={project.id}
+              name={project.name}
               icon={project.icon}
               onSelect={spawn}
             />
@@ -290,6 +291,7 @@ export function NewSessionPicker() {
                 <ProjectRow
                   key={project.id}
                   id={project.id}
+                  name={project.name}
                   projectKey={project.key}
                   icon={project.icon}
                   onSelect={spawn}
@@ -321,10 +323,15 @@ export function NewSessionPicker() {
  */
 function PinnedProject({
   id,
+  name,
   icon,
   onSelect,
 }: {
+  /** Keys the access lookup and the spawn. Never drawn. */
   id: string;
+  /** Drawn (HIVE-104). The tile sits directly above the search rows, so an
+      id here and a name there would be one screen disagreeing with itself. */
+  name: string;
   icon: string;
   onSelect: (id: string) => void;
 }) {
@@ -343,7 +350,7 @@ function PinnedProject({
         size={15}
         className={access.spawnable ? 'text-brand' : 'text-subtle'}
       />
-      {id}
+      {name}
     </button>
   );
 }
@@ -351,11 +358,22 @@ function PinnedProject({
 /** One search result. Owns its own count subscription. */
 function ProjectRow({
   id,
+  name,
   projectKey,
   icon,
   onSelect,
 }: {
+  /** Keys the access lookup and the spawn. Never drawn. */
   id: string;
+  /**
+   * Drawn (HIVE-104).
+   *
+   * The filter above already matches on the name, so before this the picker
+   * would take the *new* name, find the project, and label the hit with the
+   * *old* id. Searching by a string the surface never displays is worse than
+   * not matching on it at all.
+   */
+  name: string;
   /** Not `key` — that name is React's, and a prop called `key` never arrives. */
   projectKey: string;
   icon: string;
@@ -386,7 +404,7 @@ function ProjectRow({
           access.spawnable ? 'text-ink' : 'text-subtle',
         )}
       >
-        {id}
+        {name}
       </span>
       {/*
         The refusal replaces the session count rather than joining it: a row

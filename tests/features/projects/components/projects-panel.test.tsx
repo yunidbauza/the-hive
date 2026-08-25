@@ -193,6 +193,47 @@ describe('ProjectsPanel', () => {
     expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
   });
 
+  /**
+   * A renamed project, end to end through the panel (HIVE-104).
+   *
+   * `seedDemoProjectConfig` sets every `name` to its `id`, exactly as
+   * `addProject` does for a freshly mapped directory — which is why this bug
+   * survived so long and why the whole suite above cannot see it. This is the
+   * one test that hands the panel a snapshot where the two disagree.
+   *
+   * Driven by replacing the snapshot rather than by calling `renameProject`,
+   * because that is what a rename *arrives* as: main writes the file and
+   * returns a new snapshot, `mutate` installs it, and `useProjects()`
+   * re-derives. No restart, no remount — the rail simply repaints.
+   */
+  it('repaints a renamed project under its new name', () => {
+    render(<ProjectsPanel />);
+    expect(projectToggle('design-system')).toBeInTheDocument();
+
+    act(() => {
+      setProjectConfigForTest({
+        ...emptySnapshot('/tmp/hive/config.json'),
+        projects: [
+          {
+            id: 'design-system',
+            // The rename writes this and leaves `id` alone, because `id` is
+            // what every live session's `entity.project` points at.
+            name: 'Design System',
+            path: '/repos/design-system',
+            icon: 'ph-cube',
+            origin: 'local',
+            status: 'ok',
+            key: 'ds',
+            isRepo: true,
+          },
+        ],
+      });
+    });
+
+    expect(screen.getByText('Design System')).toBeInTheDocument();
+    expect(screen.queryByText('design-system')).not.toBeInTheDocument();
+  });
+
   /*
    * There was a test here asserting the panel ignored the store's `projects`
    * slice — the thing that used to put five unmapped repositories in a fresh

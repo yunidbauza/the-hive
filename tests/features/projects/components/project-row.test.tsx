@@ -27,7 +27,20 @@ import { testProjectKey } from '@tests/support/project-key';
 
 const CONFIG_PATH = '/home/dev/.hive/config.json';
 
-const PROJECT = { id: 'apfm-web', icon: 'ph-globe-hemisphere-west' };
+/**
+ * `name` disagrees with `id` on purpose (HIVE-104).
+ *
+ * `addProject` derives both from the same directory basename, so an
+ * un-renamed project reads identically either way — which is how the rail drew
+ * `id` this long without anyone noticing. A fixture whose handles agree cannot
+ * tell a name match from an id match, so this one's do not.
+ */
+const PROJECT = {
+  id: 'apfm-web',
+  name: 'APFM Web',
+  key: testProjectKey('apfm-web'),
+  icon: 'ph-globe-hemisphere-west',
+};
 
 function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnapshot {
   return {
@@ -67,6 +80,45 @@ afterEach(() => {
 });
 
 describe('ProjectRow', () => {
+  /**
+   * The regression HIVE-104 exists for.
+   *
+   * A rename writes `name` and leaves `id` alone — `id` is the stable key
+   * `entity.project` points at, and rewriting it would strand every session.
+   * So the rename was always correct at every layer and the rail was simply
+   * reading the wrong field, permanently, across restarts.
+   *
+   * Both halves are asserted. "Shows the name" alone would pass a row that
+   * printed both.
+   */
+  describe('the label', () => {
+    it('is the display name', () => {
+      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+      render(<ProjectRow project={PROJECT} />);
+
+      expect(screen.getByText('APFM Web')).toBeInTheDocument();
+    });
+
+    it('is not the id', () => {
+      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+      render(<ProjectRow project={PROJECT} />);
+
+      expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
+    });
+
+    it('carries no key chip — the rail is the quiet surface', () => {
+      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+
+      render(<ProjectRow project={PROJECT} />);
+
+      // Settings and the picker both show the alias; the rail deliberately
+      // does not, which is the design call HIVE-104 settled.
+      expect(screen.queryByText(PROJECT.key)).not.toBeInTheDocument();
+    });
+  });
+
   it('shows no badge with no config — the browser demo is unchanged', () => {
     render(<ProjectRow project={PROJECT} />);
 
@@ -116,7 +168,7 @@ describe('ProjectRow', () => {
     // surprised when the picker refuses.
     expect(
       screen.getByRole('button', { expanded: true }),
-    ).toHaveAccessibleName('apfm-web unmapped 3 active sessions');
+    ).toHaveAccessibleName('APFM Web unmapped 3 active sessions');
   });
 
   /**
@@ -128,7 +180,7 @@ describe('ProjectRow', () => {
    * or beside the folder name.
    */
   describe('the new-session link', () => {
-    const LINK = 'New session in apfm-web';
+    const LINK = 'New session in APFM Web';
 
     it('follows the last session', () => {
       setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
