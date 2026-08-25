@@ -76,7 +76,6 @@ import type {
 import type {
   SessionEffort,
   SessionModel,
-  SessionTheme,
   SessionBranchEvent,
   SessionClearedEvent,
   SessionFinishedEvent,
@@ -615,20 +614,6 @@ export interface SpawnRequest {
    * which is what every spawn did before this field existed.
    */
   name?: string;
-  /**
-   * Which way round to paint `claude`'s own UI.
-   *
-   * The renderer is the only side that knows: the app's theme lives in
-   * `localStorage`, which main cannot read. Absent means dark, which is both
-   * Claude Code's default and the app's.
-   *
-   * It is read **at spawn** rather than subscribed to, because a session's
-   * settings file is fixed for its lifetime — a theme toggle repaints the app
-   * and every terminal palette with it, and leaves already-running agents
-   * dressed the way they started. Restarting a session picks up the current
-   * theme, which is the only moment `claude` reads the file again.
-   */
-  theme?: SessionTheme;
   /**
    * Pick the conversation up where a previous run left it (HIVE-88).
    *

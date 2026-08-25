@@ -7,7 +7,6 @@ import {
   createStaticTransport,
 } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
-import { currentTheme } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 
 /**
@@ -130,17 +129,6 @@ export function resolveTransport(entityId: string): TerminalTransport {
   return createPtyTransport(terminalOf(session), session.project, {
     ...(session.model === undefined ? {} : { model: session.model }),
     ...(session.effort === undefined ? {} : { effort: session.effort }),
-    /**
-     * Read from the app rather than the entity, unlike the two above.
-     *
-     * The model is a property of the *session* and is recorded on the row; the
-     * theme is a property of how the app looks right now, and there is nothing
-     * on the row to read. This path is reachable after a restart —
-     * `reopenChannel` clears the transport's `spawnRequested` latch, so the
-     * next surface remount spawns through here — and without this that spawn
-     * would silently fall back to dark inside a light app.
-     */
-    theme: currentTheme(),
     /**
      * A conversation being picked up rather than begun (HIVE-88, HIVE-93).
      *

@@ -4,6 +4,7 @@ import {
   MAX_THEME_BYTES,
   SYNTAX_KEYS,
   TERMINAL_KEYS,
+  TERMINAL_SURFACE_KEYS,
   THEME_MODES,
   UI_KEYS,
   type HiveTheme,
@@ -132,10 +133,25 @@ function colourComplaint(value: unknown): string {
 
 const MODE_NAMES = THEME_MODES;
 
+/**
+ * `keys` are required; `optional` are read when present and never demanded.
+ *
+ * The distinction arrived with HIVE-82's surface colours. They cannot be
+ * required — every theme exported before that ticket has exactly the eleven
+ * terminal keys, and demanding a twelfth would reject all of them — and they
+ * must not be *unknown* either, or importing a file this app exported would
+ * warn about two colours and silently drop them. `surfacesOf` in `ansi.ts`
+ * derives them from `bg` when they are absent, so omitting them costs a theme
+ * nothing but the chance to choose.
+ */
 const GROUPS = [
-  { name: 'ui', keys: UI_KEYS },
-  { name: 'syntax', keys: SYNTAX_KEYS },
-  { name: 'terminal', keys: TERMINAL_KEYS },
+  { name: 'ui', keys: UI_KEYS, optional: [] as readonly string[] },
+  { name: 'syntax', keys: SYNTAX_KEYS, optional: [] as readonly string[] },
+  {
+    name: 'terminal',
+    keys: TERMINAL_KEYS,
+    optional: TERMINAL_SURFACE_KEYS as readonly string[],
+  },
 ] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -295,11 +311,12 @@ export function importTheme(raw: string, fileName: string): ImportResult {
       const rawGroup: Record<string, unknown> = isPlainObject(rawGroupValue)
         ? rawGroupValue
         : {};
-      const knownKeys = new Set<string>(group.keys);
+      const knownKeys = new Set<string>([...group.keys, ...group.optional]);
       const merged: Record<string, string> = {};
 
-      // Rule 5: parse every known key present in the file.
-      for (const key of group.keys) {
+      // Rule 5: parse every known key present in the file — optional ones
+      // included, which is the only place they differ from required keys.
+      for (const key of [...group.keys, ...group.optional]) {
         if (key in rawGroup) {
           const value = rawGroup[key];
           if (!isColour(value)) {

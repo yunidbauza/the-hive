@@ -115,37 +115,23 @@ describe('parseSpawnRequest', () => {
   });
 
   /**
-   * The theme is a closed set for a sharper reason than `model` is.
+   * The theme no longer crosses this boundary at all (HIVE-82).
    *
-   * It does not become a flag *value* — it chooses which of two settings files
-   * goes on the command line, so a value outside the list names a path that was
-   * never written and starts a session with no hooks at all. Rejecting is right
-   * rather than defaulting: a renderer sending an unknown theme has a bug, and
-   * quietly dressing the session in dark would hide it.
+   * It used to be a closed set with a sharper reason than `model`'s: it chose
+   * which of two settings files went on the command line, so an unknown value
+   * named a path that was never written. There is one file now, and Claude's
+   * own theme is pinned to `dark-ansi` inside it — an `-ansi` theme emits ANSI
+   * indices, which xterm resolves against the active palette at paint time, so
+   * a running session follows the app without being told anything.
+   *
+   * Asserted as a *rejection* rather than simply deleted: `assertShape` refuses
+   * unexpected keys, so a renderer still sending one is a renderer that thinks
+   * it is choosing something, and it should hear about it.
    */
-  describe('theme', () => {
-    it.each(['dark', 'light'])('accepts %s', (theme) => {
-      expect(parseSpawnRequest({ ...validSpawn, theme })).toEqual({
-        ...validSpawn,
-        theme,
-      });
-    });
-
-    it('omits the key entirely when it was not sent', () => {
-      expect(parseSpawnRequest({ ...validSpawn })).not.toHaveProperty('theme');
-    });
-
-    it.each([
-      ['the unresolved preference', { theme: 'system' }],
-      ['a theme differing only in case', { theme: 'Dark' }],
-      ['one of Claude Code’s other themes', { theme: 'dark-daltonized' }],
-      ['a non-string', { theme: 1 }],
-      ['a path fragment', { theme: '../claude-hooks.settings.dark.json' }],
-    ])('rejects %s', (_label, patch) => {
-      expect(() => parseSpawnRequest({ ...validSpawn, ...patch })).toThrow(
-        IpcValidationError,
-      );
-    });
+  it('rejects a theme, which is no longer part of a spawn', () => {
+    expect(() => parseSpawnRequest({ ...validSpawn, theme: 'dark' })).toThrow(
+      IpcValidationError,
+    );
   });
 
   describe('model and effort (story 109)', () => {

@@ -66,10 +66,11 @@ describe('resolveTransport', () => {
     expect(createPtyTransport).toHaveBeenCalledWith(
       SESSION_ID,
       SESSION_PROJECT,
-      // No fixture records a model, so nothing is claimed and the session gets
-      // the bare `claude` command (story 109). The theme is not the session's
-      // to record — it describes the app, and is read at spawn.
-      { theme: 'dark' },
+      // Empty since HIVE-82: no fixture records a model, so nothing is claimed
+      // and the session gets the bare `claude` command (story 109) — and the
+      // app's theme no longer travels here at all, because Claude's own theme
+      // is pinned and its colours resolve against the palette at paint time.
+      {},
     );
   });
 
@@ -96,9 +97,6 @@ describe('resolveTransport', () => {
     expect(createPtyTransport).toHaveBeenCalledWith(id, SESSION_PROJECT, {
       model: 'haiku',
       effort: 'low',
-      // Not recorded on the row like the two above: the theme describes the
-      // app, so this path reads it at spawn rather than replaying a choice.
-      theme: 'dark',
     });
   });
 
@@ -122,7 +120,6 @@ describe('resolveTransport', () => {
 
     expect(createPtyTransport).toHaveBeenCalledWith('old-01', SESSION_PROJECT, {
       model: 'haiku',
-      theme: 'dark',
       resume: true,
     });
   });

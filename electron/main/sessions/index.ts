@@ -20,7 +20,6 @@ import {
   spawnRefusal,
   type SessionEffort,
   type SessionModel,
-  type SessionTheme,
   SESSION_NAME_DISPLAY_MAX,
   type SessionBranchEvent,
   type SessionClearedEvent,
@@ -156,17 +155,6 @@ export interface OpenRequest {
    * fails either simply omits the flag.
    */
   name?: string;
-  /**
-   * Which way round `claude` paints its own UI (see `hooks/settings.ts`).
-   *
-   * Carried on `restart` for the same reason `model` is: it is a property of
-   * how the session is dressed rather than an instruction it may have acted on.
-   * A restart is also the *only* moment a running session can pick up a theme
-   * toggle, because the settings file is read once at startup.
-   *
-   * Absent means dark, which is Claude Code's default and the app's.
-   */
-  theme?: SessionTheme;
   /**
    * Continue the conversation a previous run left under this id (HIVE-88).
    *
@@ -1383,7 +1371,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       that depends on something the renderer told us about *itself* rather than
       about the session.
     */
-    const settingsPath = hooks?.settingsPathFor(request.theme);
+    const settingsPath = hooks?.settingsPathFor();
 
     /**
      * The generated plugin, read but **not** regenerated here (HIVE-96).
@@ -1483,10 +1471,9 @@ export function createSessions(options: SessionsOptions): Sessions {
         sessionUuid,
         resume,
         /*
-          The theme rides in from the renderer, which is the only side that
-          knows it, and picks which of the two settings files this session
-          reads. Absent means dark — `settingsPathFor`'s own default — so a
-          spawn from main's own paths is byte-identical to what it was.
+          One file for every session since HIVE-82: nothing in it varies by
+          theme any more, because Claude's is pinned to `dark-ansi` and the
+          colours resolve against the terminal's palette at paint time.
         */
         ...(settingsPath == null ? {} : { settingsPath }),
         /*

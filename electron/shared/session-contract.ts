@@ -365,23 +365,15 @@ export type SessionModel = (typeof SESSION_MODELS)[number];
 export const SESSION_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 export type SessionEffort = (typeof SESSION_EFFORTS)[number];
 
-/**
- * Which way round a session's own UI is painted.
- *
- * A wire value for the same reason `SessionModel` is one: the renderer owns the
- * app's theme — it lives in `appearance-store`, in `localStorage`, where main
- * cannot see it — and main owns the settings file `claude` reads at startup. So
- * the theme has to cross, and the boundary that validates it has to be able to
- * name every acceptable value.
- *
- * Deliberately **not** the app's own theme type. `appearance-store` is free to
- * grow a third option, a system-follows mode, or a named palette; this list is
- * the two things Claude Code's `theme` setting is being told, and the mapping
- * between them belongs to whoever spawns, not to this contract. It is passed
- * to `claude` verbatim through its settings file, so the spellings are its.
- */
-export const SESSION_THEMES = ['dark', 'light'] as const;
-export type SessionTheme = (typeof SESSION_THEMES)[number];
+/*
+  `SESSION_THEMES` / `SessionTheme` lived here until HIVE-82.
+
+  The app's theme used to cross this boundary so main could pick which of two
+  settings files a session read. It no longer crosses at all: Claude's own theme
+  is pinned to `dark-ansi`, and under an `-ansi` theme every colour it emits is
+  an ANSI index that xterm resolves against the active palette at paint time. A
+  theme toggle therefore repaints running sessions without telling anyone.
+*/
 
 /** Silence for this long means idle. */
 export const ACTIVITY_IDLE_MS = 2_000;

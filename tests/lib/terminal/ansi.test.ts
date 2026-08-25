@@ -61,6 +61,9 @@ describe('TERM palette (dark)', () => {
       black: '#0b1023',
       bg: '#0b1023',
       selection: '#222c55',
+      // The surfaces (HIVE-82): `--cc-term-input` and `--cc-hover`.
+      surface: '#0e1430',
+      surfaceAlt: '#1b2344',
     });
   });
 
@@ -113,6 +116,10 @@ describe('TERM_LIGHT palette', () => {
       black: '--cc-ink',
       bg: '--cc-term-bg',
       selection: '--cc-code-selection',
+      // The surfaces (HIVE-82) mirror the app's own raised fills over this
+      // ground, which is what makes a panel Claude paints look like a panel.
+      surface: '--cc-panel',
+      surfaceAlt: '--cc-chip',
     };
 
     for (const [key, token] of Object.entries(mirror)) {
@@ -175,7 +182,13 @@ describe('toSgrIndexed', () => {
     expect(toSgrIndexed('amber')).toBe(`${ESC}[33m`);
     expect(toSgrIndexed('blue')).toBe(`${ESC}[34m`);
     expect(toSgrIndexed('cyan')).toBe(`${ESC}[36m`);
-    expect(toSgrIndexed('dim')).toBe(`${ESC}[90m`);
+    /*
+      256-colour, not slot 90 (HIVE-82). `brightBlack` is a panel fill now — a
+      program painting a surface asks for it — so the app's own secondary text
+      moved to an index nothing else claims. Still indexed, which is what keeps
+      a theme toggle repainting transcript text written minutes ago.
+    */
+    expect(toSgrIndexed('dim')).toBe(`${ESC}[38;5;244m`);
   });
 
   it('maps ink to the default foreground rather than to white', () => {
@@ -225,14 +238,29 @@ describe('XTERM_THEME', () => {
    * theme builder, not by editing the dark values. Every dark slot is spelled
    * out so a future palette refactor cannot quietly restyle dark mode.
    */
-  it('is unchanged by the arrival of a light theme', () => {
-    expect(XTERM_THEME).toEqual({
+  /**
+   * Every slot, pinned — including the two HIVE-82 moved.
+   *
+   * `black` and `brightBlack` are **surfaces** now rather than `palette.black`
+   * and `palette.dim`, because those are the slots a program paints a panel
+   * with and binding them to text colours is what put a near-black bar across a
+   * light terminal. The dark values barely move; the light ones move a long way,
+   * which is why the light theme has assertions of its own below.
+   */
+  it('maps every slot, with the surfaces where text colours used to be', () => {
+    const { extendedAnsi, ...slots } = XTERM_THEME;
+
+    // 16..244 inclusive — the ramp exists only to carry `dim` at its end.
+    expect(extendedAnsi).toHaveLength(229);
+    expect(extendedAnsi.at(-1)).toBe(TERM.dim);
+
+    expect(slots).toEqual({
       background: '#0b1023',
       foreground: '#dbe4ff',
       selectionBackground: '#222c55',
       cursor: '#dbe4ff',
       cursorAccent: '#0b1023',
-      black: '#0b1023',
+      black: '#0e1430',
       red: '#ff8d85',
       green: '#7ee2b8',
       yellow: '#ffc06e',
@@ -240,7 +268,7 @@ describe('XTERM_THEME', () => {
       magenta: '#7edce2',
       cyan: '#7edce2',
       white: '#dbe4ff',
-      brightBlack: '#7c88b8',
+      brightBlack: '#1b2344',
       brightRed: '#ff8d85',
       brightGreen: '#7ee2b8',
       brightYellow: '#ffc06e',
@@ -275,17 +303,50 @@ describe('XTERM_THEME_LIGHT', () => {
   });
 
   /**
-   * The mirror-image failure, and the one that actually bites.
+   * `black` is a **surface**, and it is not the ground (HIVE-82).
    *
-   * xterm answers an OSC 11 background query with `theme.background`, so a CLI
-   * that detects a light terminal will *choose* ANSI 30 for body text. Mapped
-   * to the background — which is what mirroring dark's `black: bg` would do —
-   * that renders at 1:1, and `minimumContrastRatio` defaults to 1, so nothing
-   * corrects it.
+   * This test used to assert the opposite — `black` had to be `ink` — on the
+   * reasoning that xterm answers an OSC 11 query with `theme.background`, so a
+   * CLI detecting a light terminal *chooses* ANSI 30 for body text, and a light
+   * `black` renders that at 1:1 with nothing to correct it.
+   *
+   * The hazard is real and has not been waved away; it has been paid for. The
+   * "nothing to correct it" clause was the load-bearing half, and
+   * `terminal-surface.tsx` now passes `minimumContrastRatio: 4.5`, so xterm
+   * lifts exactly that foreground. What could *not* be paid for was the other
+   * direction: Claude paints its submitted-prompt row with this slot, and a
+   * background has no rescue — xterm adjusts foregrounds only. One of the two
+   * had to give, and only one of them had a mechanism behind it.
+   *
+   * Still never equal to the ground, which is the half of the old rule that
+   * survives intact: a panel the same colour as the surface behind it is not a
+   * panel.
    */
-  it('never maps black to the background it is painted on', () => {
+  it('maps black to a surface distinct from the ground', () => {
     expect(XTERM_THEME_LIGHT.black).not.toBe(XTERM_THEME_LIGHT.background);
-    expect(XTERM_THEME_LIGHT.black).toBe(TERM_LIGHT.ink);
+    expect(XTERM_THEME_LIGHT.black).toBe(TERM_LIGHT.surface);
+    expect(XTERM_THEME_LIGHT.brightBlack).toBe(TERM_LIGHT.surfaceAlt);
+  });
+
+  /**
+   * The surfaces are light in the light theme, which is the whole fix.
+   *
+   * Asserted by luminance rather than by value so it keeps meaning something if
+   * the palette is retuned: what matters is that a panel Claude paints reads as
+   * a panel on this ground, not that it is one particular near-white.
+   */
+  it('keeps its surfaces on the light side of the ground', () => {
+    const brightness = (hex: string) =>
+      Number.parseInt(hex.slice(1, 3), 16) +
+      Number.parseInt(hex.slice(3, 5), 16) +
+      Number.parseInt(hex.slice(5, 7), 16);
+
+    expect(brightness(TERM_LIGHT.surface!)).toBeGreaterThan(
+      brightness(TERM_LIGHT.ink),
+    );
+    expect(brightness(TERM_LIGHT.surfaceAlt!)).toBeGreaterThan(
+      brightness(TERM_LIGHT.ink),
+    );
   });
 });
 

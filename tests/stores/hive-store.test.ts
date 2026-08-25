@@ -1208,15 +1208,19 @@ describe('hive-store', () => {
         });
 
         /**
-         * The app's own theme rides along, because `claude` paints its UI from
-         * its settings file rather than from the terminal's palette.
+         * The app's theme no longer rides along (HIVE-82).
          *
-         * Without it a light-themed Hive started dark-themed agents, and the
-         * user's own submitted prompt came back as a near-black bar across a
-         * white terminal — the palette in `ansi.ts` decides what the *named*
-         * colours mean and cannot touch a colour Claude states outright.
+         * It used to, because `claude` paints its own UI from its settings file
+         * rather than from the terminal's palette — without it a light-themed
+         * Hive started dark-themed agents and the user's own submitted prompt
+         * came back as a near-black bar across a white terminal.
+         *
+         * Claude is pinned to `dark-ansi` now, which emits ANSI *indices*. The
+         * palette in `ansi.ts` decides what those mean, and it is re-read at
+         * paint time — so the thing a spawn used to have to state is now simply
+         * true, for running sessions as much as new ones.
          */
-        it('carries the app’s resolved theme', () => {
+        it('sends no theme — the palette decides, at paint time', () => {
           useAppearanceStore.setState({ theme: 'light' });
 
           run('spawn apfm-web tidy the footer');
@@ -1224,20 +1228,7 @@ describe('hive-store', () => {
           expect(requestSpawn).toHaveBeenCalledWith(
             expect.any(String),
             'apfm-web',
-            expect.objectContaining({ theme: 'light' }),
-          );
-        });
-
-        /** `system` is a preference, not a palette — it must arrive resolved. */
-        it('resolves the system preference before sending it', () => {
-          useAppearanceStore.setState({ theme: 'system', systemDark: false });
-
-          run('spawn apfm-web tidy the footer');
-
-          expect(requestSpawn).toHaveBeenCalledWith(
-            expect.any(String),
-            'apfm-web',
-            expect.objectContaining({ theme: 'light' }),
+            expect.not.objectContaining({ theme: expect.anything() }),
           );
         });
 

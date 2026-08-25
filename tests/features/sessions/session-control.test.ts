@@ -40,37 +40,28 @@ describe('restartSession', () => {
       projectId: 'apfm-web',
       cols: 80,
       rows: 24,
-      // The app's theme, always sent — see the assertions below for why it is
-      // read here rather than carried on the request.
-      theme: 'dark',
     });
   });
 
   /**
-   * A restart is the only moment a running session can change theme: `claude`
-   * reads its settings file once, at startup. Three comments in main say so,
-   * and for a while nothing sent the value that made them true.
+   * A restart no longer carries a theme, and no longer needs to (HIVE-82).
+   *
+   * It used to be the only moment a running session could change one, because
+   * `claude` reads its settings file once at startup — which is exactly what
+   * made a theme toggle leave running agents dressed the way they started.
+   * Claude's theme is pinned to `dark-ansi` now, so every colour it emits is an
+   * ANSI index that xterm resolves against the active palette at paint time. A
+   * toggle repaints running sessions without restarting anything, so a restart
+   * has nothing left to carry.
    */
-  it('dresses the new process in the app’s current theme', () => {
+  it('sends no theme, because a restart is no longer how one is changed', () => {
     const restart = withBridge();
     useAppearanceStore.setState({ theme: 'light' });
 
     void restartSession(REQUEST);
 
     expect(restart).toHaveBeenCalledWith(
-      expect.objectContaining({ theme: 'light' }),
-    );
-  });
-
-  /** `system` is a preference, not a palette — the wire only takes resolved. */
-  it('resolves the system preference before sending it', () => {
-    const restart = withBridge();
-    useAppearanceStore.setState({ theme: 'system', systemDark: true });
-
-    void restartSession(REQUEST);
-
-    expect(restart).toHaveBeenCalledWith(
-      expect.objectContaining({ theme: 'dark' }),
+      expect.not.objectContaining({ theme: expect.anything() }),
     );
   });
 

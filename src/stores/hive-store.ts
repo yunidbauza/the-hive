@@ -47,7 +47,6 @@ import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import { SESSION_EFFORTS, SESSION_MODELS } from '@shared/session-contract';
 import type { SessionHistoryEntry } from '@shared/session-history-contract';
-import { currentTheme } from '@stores/appearance-store';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -1032,7 +1031,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * the app and every terminal palette; agents already running keep the
          * chrome they were started with until they are restarted.
          */
-        theme: currentTheme(),
       }).then((outcome) => {
         /*
           The ticket link, so it survives a quit (HIVE-87) — and **after** the
@@ -2201,7 +2199,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     void requestSpawn(terminalId, current.project, {
       ...(current.model === undefined ? {} : { model: current.model }),
       ...(current.effort === undefined ? {} : { effort: current.effort }),
-      theme: currentTheme(),
       resume: true,
     });
 

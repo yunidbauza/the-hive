@@ -43,6 +43,22 @@ export interface TermPalette {
   black: string;
   bg: string;
   selection: string;
+  /**
+   * The two **surface** roles (HIVE-82).
+   *
+   * Optional, because every theme exported under HIVE-80 has exactly the eleven
+   * keys above and must keep working unchanged. Absent, they are derived from
+   * `bg` — see {@link surfacesOf} — so an old file gets sane fills rather than
+   * the text colours the ANSI slots used to hand out.
+   *
+   * `surface` is the terminal's own ground raised by one step; `surfaceAlt` is
+   * raised again. They exist because a program painting a *panel* asks the
+   * palette for `black` or `brightBlack`, and those were bound to text colours
+   * here — which is how a submitted-prompt row became a near-black bar across a
+   * white terminal. See {@link xtermThemeFor}.
+   */
+  surface?: string;
+  surfaceAlt?: string;
 }
 
 /**
@@ -122,6 +138,64 @@ export type { TermColor };
 
 const ESC = '\u001b';
 
+/**
+ * Where the transcript's `dim` lives now: 256-colour index 244 (HIVE-82).
+ *
+ * It used to be slot 90, `brightBlack`. That slot is a **surface** since
+ * HIVE-82 — a program painting a panel asks for it — so leaving the app's own
+ * secondary text there would have put a fill colour on a fill colour.
+ *
+ * 244 rather than a number picked at random: it is a mid-grey in the standard
+ * 256-colour ramp, so a third-party program that happens to emit it gets
+ * something close to what it asked for. And unlike the sixteen base slots, the
+ * extended range carries no competing convention to break.
+ *
+ * Still an *index*, which is the whole point — see {@link SGR_INDEX}. It
+ * resolves from `extendedAnsi` at paint time, so a theme toggle repaints
+ * transcript text written minutes ago.
+ */
+const DIM_INDEX = 244;
+
+/**
+ * The two surface colours a palette actually paints with.
+ *
+ * Derived from `bg` when a theme does not carry them, which is every theme
+ * exported before HIVE-82. Blending toward `ink` rather than toward white or
+ * black is what makes one rule serve both modes: a dark theme's ground moves
+ * up, a light theme's moves down, and neither has to know which it is.
+ */
+export function surfacesOf(palette: TermPalette): {
+  surface: string;
+  surfaceAlt: string;
+} {
+  return {
+    surface: palette.surface ?? mix(palette.bg, palette.ink, 0.05),
+    surfaceAlt: palette.surfaceAlt ?? mix(palette.bg, palette.ink, 0.11),
+  };
+}
+
+/** `#rrggbb` → the three channels. Anything else answers black, not a throw. */
+function channels(hex: string): [number, number, number] {
+  const raw = hex.replace('#', '');
+  if (raw.length !== 6) return [0, 0, 0];
+  return [
+    Number.parseInt(raw.slice(0, 2), 16),
+    Number.parseInt(raw.slice(2, 4), 16),
+    Number.parseInt(raw.slice(4, 6), 16),
+  ];
+}
+
+/** `amount` of `toward`, blended into `base`. */
+function mix(base: string, toward: string, amount: number): string {
+  const from = channels(base);
+  const to = channels(toward);
+  const channel = (index: number): string =>
+    Math.round(from[index]! + (to[index]! - from[index]!) * amount)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
 /** Reset all SGR attributes. */
 export const SGR_RESET = `${ESC}[0m`;
 
@@ -142,7 +216,7 @@ export const SGR_RESET = `${ESC}[0m`;
  */
 const SGR_INDEX: Record<TermColor, number> = {
   ink: 39, // default foreground
-  dim: 90, // brightBlack
+  dim: DIM_INDEX,
   green: 32,
   blue: 34,
   amber: 33, // yellow
@@ -152,7 +226,13 @@ const SGR_INDEX: Record<TermColor, number> = {
 
 /** The SGR escape that selects `color`'s slot as the foreground. */
 export function toSgrIndexed(color: TermColor): string {
-  return `${ESC}[${SGR_INDEX[color]}m`;
+  const slot = SGR_INDEX[color];
+  /*
+    256-colour form for `dim`, plain SGR for the rest. `38;5;n` is the only
+    spelling that reaches an `extendedAnsi` entry, and 39/32/34/33/31/36 are
+    single parameters that would be wrong in that form.
+  */
+  return slot === DIM_INDEX ? `${ESC}[38;5;${slot}m` : `${ESC}[${slot}m`;
 }
 
 /** Wrap `text` in the escape for `color`'s slot, then reset. */
@@ -211,13 +291,51 @@ export function colorize(text: string, color: TermColor): string {
  * of the surface behind it.
  */
 export function xtermThemeFor(palette: TermPalette) {
+  const { surface, surfaceAlt } = surfacesOf(palette);
+
   return {
     background: palette.bg,
     foreground: palette.ink,
     selectionBackground: palette.selection,
     cursor: palette.ink,
     cursorAccent: palette.bg,
-    black: palette.black,
+    /**
+     * The transcript's `dim`, and nothing else in the extended range (HIVE-82).
+     *
+     * `extendedAnsi` starts at index 16, so the array is padded to reach 244.
+     * Padding with `bg` rather than leaving holes: xterm falls back to its own
+     * 256-colour ramp for an `undefined` entry, and a sparse array here would
+     * make *which* indices the app defines depend on array length.
+     */
+    extendedAnsi: Array.from({ length: DIM_INDEX - 16 + 1 }, (_, index) =>
+      index === DIM_INDEX - 16 ? palette.dim : palette.bg,
+    ),
+    /**
+     * `black` and `brightBlack` are **surfaces**, not text (HIVE-82).
+     *
+     * This is the inversion the whole ticket turns on, so it is worth saying
+     * exactly what changed and why the old mapping was defensible.
+     *
+     * Claude Code paints its own chrome from these two slots — the
+     * submitted-prompt row, the composer sidebar, the bash block — and until
+     * HIVE-82 they held `palette.black` and `palette.dim`, both *text* colours.
+     * In the light palette `black` is `#2c2f34`, so the row the user had just
+     * typed came out as a near-black bar across a white terminal. That was the
+     * bug, and it is the same bug in dark: `dim` is `#7c88b8`, a light
+     * periwinkle slab on navy.
+     *
+     * The old mapping had a real reason — a CLI that detects a light terminal
+     * picks slot 30 for body text, and against a light `black` that text is
+     * invisible. That reason has not gone away; it has moved. `minimumContrast
+     * Ratio` in `terminal-surface.tsx` now rescues exactly that case, which is
+     * what the note on `TERM_LIGHT.black` said was unavailable at its default
+     * of 1. A rescued foreground is a legible compromise; an unreadable panel
+     * is not rescuable at all, because xterm adjusts foregrounds only.
+     *
+     * The app's own secondary text no longer relies on that rescue: it moved
+     * off slot 90 to {@link DIM_INDEX}.
+     */
+    black: surface,
     red: palette.red,
     green: palette.green,
     yellow: palette.amber,
@@ -225,7 +343,8 @@ export function xtermThemeFor(palette: TermPalette) {
     magenta: palette.magenta,
     cyan: palette.cyan,
     white: palette.ink,
-    brightBlack: palette.dim,
+    /** The second surface — see {@link xtermThemeFor}'s note on `black`. */
+    brightBlack: surfaceAlt,
     brightRed: palette.red,
     brightGreen: palette.green,
     brightYellow: palette.amber,

@@ -16,6 +16,7 @@ import {
 } from '../../../../electron/shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '../../../../electron/shared/metrics-contract';
 import {
+  CLAUDE_THEME,
   hookSettings,
   metricsScript,
   statusLineSettings,
@@ -99,7 +100,7 @@ describe('hookSettings', () => {
    * stop the map builder being "simplified" back into one entry per event.
    */
   describe('the ready signal', () => {
-    const withReady = hookSettings(URL, undefined, 'http://127.0.0.1:9/ready');
+    const withReady = hookSettings(URL, 'http://127.0.0.1:9/ready');
 
     it('adds a command hook to SessionStart and to nothing else', () => {
       for (const event of HOOK_EVENTS) {
@@ -173,11 +174,11 @@ describe('hookSettings', () => {
  * written here is one they can neither find among their settings nor revoke.
  */
 describe('the settings file grants no permissions', () => {
-  it('writes no permissions block for either theme', async () => {
+  it('writes no permissions block', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-done-'));
-    const paths = await writeHookSettings(dir, 'http://127.0.0.1:51234/hook');
+    const path = await writeHookSettings(dir, 'http://127.0.0.1:51234/hook');
 
-    for (const path of Object.values(paths)) {
+    {
       const raw = await readFile(path, 'utf8');
       const written = JSON.parse(raw) as Record<string, unknown>;
 
@@ -296,8 +297,8 @@ describe('writeHookSettings', () => {
   it('omits statusLine entirely when no metrics URL is given', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const paths = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
-    const written = JSON.parse(await readFile(paths.dark, 'utf8')) as {
+    const path = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
       hooks: unknown;
       statusLine?: unknown;
     };
@@ -310,12 +311,12 @@ describe('writeHookSettings', () => {
   it('writes both halves when one is given', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const paths = await writeHookSettings(
+    const path = await writeHookSettings(
       dir,
       'http://127.0.0.1:1234/hook',
       'http://127.0.0.1:1234/statusline',
     );
-    const written = JSON.parse(await readFile(paths.dark, 'utf8')) as {
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
       hooks: unknown;
       statusLine?: { type: string; command: string };
     };
@@ -328,7 +329,7 @@ describe('writeHookSettings', () => {
   it('never reads or writes anything outside the directory it was given', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const paths = await writeHookSettings(
+    const path = await writeHookSettings(
       dir,
       'http://127.0.0.1:1234/hook',
       'http://127.0.0.1:1234/statusline',
@@ -336,40 +337,38 @@ describe('writeHookSettings', () => {
 
     // The user's own ~/.claude/settings.json is theirs; this module has no
     // business anywhere near it.
-    expect(paths.dark.startsWith(dir)).toBe(true);
-    expect(paths.light.startsWith(dir)).toBe(true);
+    expect(path.startsWith(dir)).toBe(true);
   });
 
   /**
-   * One file per theme, differing in exactly one key.
+   * One file, and Claude's theme in it is an **`-ansi`** one (HIVE-82).
    *
-   * Two immutable files rather than one rewritten at spawn: a theme toggle must
-   * not reach backwards into a session already reading the file, whose other
-   * half — the hooks — is what makes its status reportable at all.
+   * This was two files, one per theme, because the theme was pinned at spawn
+   * and a toggle must not reach backwards into a session already reading one.
+   *
+   * The assertion is on the literal value rather than on "not dark and not
+   * light", because the `-ansi` part is the whole mechanism: under it Claude
+   * emits ANSI indices instead of 24-bit colour, and an index is what xterm
+   * resolves against the active palette at paint time. Pinning `dark` or
+   * `light` here would compile, pass a negative assertion, and silently restore
+   * the bug — including for scrollback, which truecolor can never repaint.
    */
-  it('writes a file for each theme, and only the theme differs', async () => {
+  it('writes one file, pinning Claude to an indexed palette', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const paths = await writeHookSettings(
+    const path = await writeHookSettings(
       dir,
       'http://127.0.0.1:1234/hook',
       'http://127.0.0.1:1234/statusline',
     );
 
-    expect(paths.dark).not.toBe(paths.light);
-
-    const dark = JSON.parse(await readFile(paths.dark, 'utf8')) as Record<
-      string,
-      unknown
-    >;
-    const light = JSON.parse(await readFile(paths.light, 'utf8')) as Record<
+    const written = JSON.parse(await readFile(path, 'utf8')) as Record<
       string,
       unknown
     >;
 
-    expect(dark.theme).toBe('dark');
-    expect(light.theme).toBe('light');
-    expect({ ...dark, theme: null }).toEqual({ ...light, theme: null });
+    expect(written.theme).toBe(CLAUDE_THEME);
+    expect(written.theme).toBe('dark-ansi');
   });
 
   /**
@@ -381,16 +380,14 @@ describe('writeHookSettings', () => {
    * removes what it is racing for. Verified against Claude Code 2.1.228: the
    * footer's `← 2 agents` affordance disappears and a bare `←` does nothing.
    */
-  it('disables the agent view in both files', async () => {
+  it('disables the agent view', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
 
-    const paths = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
+    const path = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
 
-    for (const path of [paths.dark, paths.light]) {
-      const written = JSON.parse(await readFile(path, 'utf8')) as {
-        disableAgentView?: boolean;
-      };
-      expect(written.disableAgentView).toBe(true);
-    }
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      disableAgentView?: boolean;
+    };
+    expect(written.disableAgentView).toBe(true);
   });
 });

@@ -135,6 +135,57 @@ The light palette is the one place a terminal colour and a CSS token hold the
 same value — deliberately, and enforced by a test rather than by convention.
 See **Theming** below.
 
+### Slots 30 and 90 are surfaces (HIVE-82)
+
+A palette decides what the *named* colours mean. Until HIVE-82 it named eleven
+text colours and one ground, and `xtermThemeFor` bound ANSI `black` to
+`palette.black` and `brightBlack` to `palette.dim` — both text.
+
+**Claude Code paints its own chrome out of exactly those two slots**: the
+submitted-prompt row, the composer sidebar, the bash block. So in the light
+theme the row the user had just typed came back as a near-black bar across a
+white terminal, and in dark as a light periwinkle slab on navy. The same
+mismatch made an `AskUserQuestion` unreadable at **1.05:1**.
+
+The palette now carries two surface roles, `surface` and `surfaceAlt`, and the
+two slots resolve to them. They are **optional** in a theme file — `surfacesOf`
+blends them out of `bg` when absent — so every theme exported under HIVE-80
+imports unchanged.
+
+The rule this replaced had a real reason: a CLI that detects a light terminal
+picks slot 30 for body text, and against a light surface that text disappears.
+That reason has moved rather than gone. `terminal-surface.tsx` passes
+`minimumContrastRatio: 4.5`, so xterm lifts exactly that foreground — the rescue
+the old note in `ansi.ts` correctly said was unavailable at the default of `1`.
+A **background** has no equivalent: xterm adjusts foregrounds only. One of the
+two had to give, and only one had a mechanism behind it.
+
+The app's own `dim` transcript colour moved off slot 90 to 256-colour index
+`244`, so it never depends on that rescue. It is still an *index*, which is what
+keeps a theme toggle repainting transcript text written minutes ago.
+
+### Why this is what makes a running session follow the theme
+
+`hooks/settings.ts` pins Claude Code's own theme to **`dark-ansi`**, and that is
+the other half of the fix rather than a cosmetic preference.
+
+Under `dark` or `light`, Claude emits **24-bit** colour — measured against
+2.1.245, the submitted-prompt row is `rgb(55,55,55)` and `rgb(240,240,240)`. A
+truecolor cell stores its resolved RGB, so re-theming the terminal cannot reach
+it: scrollback would stay wrong forever, and the live frame would stay wrong
+until the process restarted, because the setting is read once at startup.
+
+Under `dark-ansi` it emits **no truecolor at all** — every colour is an ANSI
+index. An index is resolved against the active theme at paint time, so
+reassigning `options.theme` repaints Claude's chrome *including scrollback*,
+with nothing re-read and nothing restarted. That is why nothing in this app
+tells a running session about a theme change: there is nothing to tell it.
+
+`dark-ansi` rather than a `light-ansi`/`dark-ansi` pair, because a pinned theme
+must be right in both modes and only one of them is. Its `text` is
+`ansi:whiteBright` → `palette.ink`, which follows the mode. `light-ansi`'s
+`text` is `ansi:black`, which is now a surface — invisible.
+
 ## Renderers: which terminal paints how
 
 | Surface | Renderer | Why |

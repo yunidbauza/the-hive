@@ -10,7 +10,6 @@ import {
   readyCommand,
 } from '@shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '@shared/metrics-contract';
-import { SESSION_THEMES, type SessionTheme } from '@shared/session-contract';
 
 /**
  * The settings file the app hands every session (HIVE-62, HIVE-79).
@@ -50,36 +49,33 @@ import { SESSION_THEMES, type SessionTheme } from '@shared/session-contract';
  * by one entry every time a session starts.
  */
 
-/**
- * The directory both settings files and the status line script live in.
- *
- * Named as a directory rather than kept as a `HOOK_SETTINGS_FILE` pointing at
- * one of the two, which is what it briefly was: a constant called "the settings
- * file" that silently meant *the dark one* is a trap for the next caller, and
- * the only thing this value is actually used for is `mkdir`. Paths come from
- * {@link hookSettingsFile}, which cannot be read without picking a theme.
- */
+/** The directory the settings file and the status line script live in. */
 export const HOOK_SETTINGS_DIR = 'hive';
 
 /**
- * Where the files live inside userData — one per theme.
+ * What Claude Code's own UI is dressed in, for every session (HIVE-82).
  *
- * Two files rather than one rewritten in place, because the theme is decided
- * per **spawn** and the file has to still be true for every session already
- * reading it. Rewriting would make a theme toggle reach backwards into sessions
- * that started under the other one, on a file whose other half — the hooks — is
- * load-bearing. Two immutable files cost one extra `writeFile` per launch and
- * make the choice a matter of which path goes on the command line. See
- * {@link hookSettingsFile}.
+ * A constant rather than a value chosen per spawn, and that is the fix rather
+ * than a simplification — see {@link HookSettings.theme}. It is spelled here so
+ * the settings file and the test that pins it read the same word.
  */
-export const hookSettingsFile = (theme: SessionTheme): string =>
-  join(HOOK_SETTINGS_DIR, `claude-hooks.settings.${theme}.json`);
+export const CLAUDE_THEME = 'dark-ansi';
+
+/**
+ * Where the file lives inside userData.
+ *
+ * **One file, because nothing in it varies any more.** It was briefly two —
+ * `claude-hooks.settings.{dark,light}.json` — because the theme was pinned per
+ * spawn and a toggle must not reach backwards into a session already reading
+ * one. {@link CLAUDE_THEME} removed the variation, and the pair with it.
+ */
+export const HOOK_SETTINGS_FILE = join(
+  HOOK_SETTINGS_DIR,
+  'claude-hooks.settings.json',
+);
 
 /** The status line script, beside the settings files that name it. */
 export const METRICS_SCRIPT_FILE = join(HOOK_SETTINGS_DIR, 'statusline.sh');
-
-/** Both settings files, by the theme each one dresses a session in. */
-export type HookSettingsPaths = Record<SessionTheme, string>;
 
 export interface HookSettings {
   hooks: Record<string, unknown[]>;
@@ -89,16 +85,38 @@ export interface HookSettings {
     refreshInterval: number;
   };
   /**
-   * Claude Code's own UI theme, which the Hive sets to match the app's.
+   * Claude Code's own UI theme, which the Hive pins to `dark-ansi` (HIVE-82).
    *
    * The terminal's palette already follows the app theme — `ansi.ts` owns that
    * — but a palette only decides what the *named* colours mean. Claude Code
-   * paints its own chrome with explicit colours from this setting, so in the
-   * app's light theme a dark-themed Claude drew the user's own prompt as a
-   * near-black bar across a white terminal. Measured against 2.1.228: the
-   * submitted-prompt row is `#373737` under `dark` and `#f0f0f0` under `light`.
+   * paints its own chrome from this setting, and under `dark` or `light` it
+   * paints in **24-bit** colour: measured against 2.1.245, the submitted-prompt
+   * row is `rgb(55,55,55)` and `rgb(240,240,240)` respectively.
+   *
+   * That is what made the old arrangement unfixable. A value chosen at spawn is
+   * read once and kept for the life of the process, so toggling the app left
+   * every running session dressed the way it started — an `AskUserQuestion`
+   * drawn in `#ffffff` on the light terminal's `#f7fafb`, which is 1.05:1. And
+   * because the colours were truecolor, xterm stored the resolved RGB per cell,
+   * so even re-theming the terminal could not repaint what was already on
+   * screen.
+   *
+   * `dark-ansi` fixes both at once, and it is measured rather than assumed:
+   * under it Claude emits **zero** truecolor — every colour is an ANSI index,
+   * which xterm resolves against the active theme at paint time. So a Hive
+   * theme toggle repaints Claude's chrome, scrollback included, with nothing
+   * re-read and nothing restarted.
+   *
+   * **Pinned rather than paired with `light-ansi`.** Its slot choices are the
+   * ones `xtermThemeFor` already resolves correctly in both modes —
+   * `text: ansi:whiteBright` → `palette.ink`, which is `#dbe4ff` on dark and
+   * `#2c2f34` on light. `light-ansi` would be wrong the moment the app went
+   * dark: its `text: ansi:black` resolves to the palette's surface.
+   *
+   * The counterpart is in `ansi.ts`: `black` and `brightBlack` had to stop
+   * being text colours, because that is what Claude paints its panels with.
    */
-  theme?: SessionTheme;
+  theme?: typeof CLAUDE_THEME;
   /**
    * Claude Code's agent view, which the Hive turns off in every session.
    *
@@ -148,11 +166,7 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * a receiver that answers 403 to everything, which is a confusing way to
  * discover a missing field.
  */
-export function hookSettings(
-  url: string,
-  theme?: SessionTheme,
-  readyUrl?: string,
-): HookSettings {
+export function hookSettings(url: string, readyUrl?: string): HookSettings {
   const handler = {
     type: 'http',
     url,
@@ -208,7 +222,7 @@ export function hookSettings(
       not. See the two fields on `HookSettings` for what each one costs.
     */
     disableAgentView: true,
-    ...(theme === undefined ? {} : { theme }),
+    theme: CLAUDE_THEME,
     /*
       No `permissions` block, deliberately (HIVE-93). `/done`'s `curl` is
       authorised by `allowed-tools` in the generated skill's own frontmatter
@@ -324,7 +338,7 @@ export async function writeHookSettings(
   url: string,
   metricsUrl?: string,
   readyUrl?: string,
-): Promise<HookSettingsPaths> {
+): Promise<string> {
   await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
 
   let statusLine: HookSettings['statusLine'];
@@ -342,15 +356,10 @@ export async function writeHookSettings(
     statusLine = statusLineSettings(scriptPath);
   }
 
-  const paths = {} as HookSettingsPaths;
+  const path = join(userDataPath, HOOK_SETTINGS_FILE);
+  const settings = hookSettings(url, readyUrl);
+  if (statusLine !== undefined) settings.statusLine = statusLine;
+  await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 
-  for (const theme of SESSION_THEMES) {
-    const path = join(userDataPath, hookSettingsFile(theme));
-    const settings = hookSettings(url, theme, readyUrl);
-    if (statusLine !== undefined) settings.statusLine = statusLine;
-    await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-    paths[theme] = path;
-  }
-
-  return paths;
+  return path;
 }

@@ -5,10 +5,9 @@ import {
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
-import type { SessionTheme } from '@shared/session-contract';
 
 import { createReceiver, type Receiver } from './receiver';
-import { writeHookSettings, type HookSettingsPaths } from './settings';
+import { writeHookSettings } from './settings';
 
 /**
  * The hook pipeline, as one thing the session layer can hold (HIVE-62).
@@ -79,15 +78,13 @@ export interface HookRuntime {
    */
   start(handlers: HookHandlers): Promise<void>;
   /**
-   * The `--settings` argument for a session dressed in `theme`, or `null` when
-   * hooks are not available.
+   * The `--settings` argument, or `null` when hooks are not available.
    *
-   * A function rather than a property because there is now one file per theme
-   * — see `settings.ts` for why both are written up front rather than one
-   * rewritten. `theme` is optional and omitting it answers with the dark file,
-   * which is what every caller got before the light one existed.
+   * A function rather than a property because it answers `null` until `start`
+   * has resolved, so callers must ask at spawn rather than capture it. It took
+   * a theme until HIVE-82, when the file stopped varying by one.
    */
-  settingsPathFor(theme?: SessionTheme): string | null;
+  settingsPathFor(): string | null;
   /**
    * The environment a session's pty needs for its hooks to be attributable.
    *
@@ -118,11 +115,11 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
   const { userDataPath, port, sessionMetrics = () => true } = options;
 
   let receiver: Receiver | null = null;
-  let settingsPaths: HookSettingsPaths | null = null;
+  let settingsPath: string | null = null;
 
   return {
-    settingsPathFor(theme = 'dark') {
-      return settingsPaths?.[theme] ?? null;
+    settingsPathFor() {
+      return settingsPath;
     },
 
     async start({
@@ -161,7 +158,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           construction — the bind succeeded — but it is read rather than rebuilt
           so the path lives in exactly one place.
         */
-        settingsPaths = await writeHookSettings(
+        settingsPath = await writeHookSettings(
           userDataPath,
           url,
           /*
@@ -195,20 +192,20 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 
     doneUrl(): string | null {
       /*
-        Gated on `settingsPaths` as well as the receiver, exactly as `envFor` is.
+        Gated on `settingsPath` as well as the receiver, exactly as `envFor` is.
         A bound socket whose settings file failed to write is a session with no
         `HIVE_HOOK_TOKEN` in its environment, so the command would build a
         request that could only ever be refused — and a `/done` that 403s is
         worse than one that says up front it cannot finish the session.
       */
       const running = receiver;
-      if (running === null || settingsPaths === null) return null;
+      if (running === null || settingsPath === null) return null;
       return running.doneUrl;
     },
 
     envFor(entityId): Record<string, string> {
       const running = receiver;
-      if (running === null || settingsPaths === null) return {};
+      if (running === null || settingsPath === null) return {};
       return {
         [HOOK_ENV_SESSION]: entityId,
         [HOOK_ENV_TOKEN]: running.token,
@@ -218,7 +215,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     async stop() {
       const running = receiver;
       receiver = null;
-      settingsPaths = null;
+      settingsPath = null;
       if (running !== null) await running.stop();
     },
   };

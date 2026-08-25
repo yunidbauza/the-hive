@@ -39,13 +39,32 @@ export const TERMINAL_KEYS = [
   'cyan', 'magenta', 'selection',
 ] as const;
 
+/**
+ * The surface roles, added by HIVE-82 and **optional on purpose**.
+ *
+ * Kept out of {@link TERMINAL_KEYS} rather than appended to it, because that
+ * list is what the importer requires and what the banner counts. Every theme
+ * exported before this ticket carries exactly eleven terminal colours, and a
+ * required twelfth would reject all of them — a format break for a value the
+ * app can derive. `surfacesOf` in `ansi.ts` blends them out of `bg` when they
+ * are absent, so an old file gets sane panel fills rather than the text colours
+ * the ANSI slots used to hand out.
+ *
+ * A theme that *does* declare them wins, which is the whole reason they are
+ * nameable: derived surfaces are a floor, not a ceiling.
+ */
+export const TERMINAL_SURFACE_KEYS = ['surface', 'surfaceAlt'] as const;
+
 export type UiKey = (typeof UI_KEYS)[number];
 export type SyntaxKey = (typeof SYNTAX_KEYS)[number];
 export type TerminalKey = (typeof TERMINAL_KEYS)[number];
 
 export type UiColors = Record<UiKey, string>;
 export type SyntaxColors = Record<SyntaxKey, string>;
-export type TerminalColors = Record<TerminalKey, string>;
+export type TerminalSurfaceKey = (typeof TERMINAL_SURFACE_KEYS)[number];
+
+export type TerminalColors = Record<TerminalKey, string> &
+  Partial<Record<TerminalSurfaceKey, string>>;
 
 export type ThemeModeName = 'dark' | 'light';
 

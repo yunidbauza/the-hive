@@ -14,7 +14,6 @@ import { CLONE_ENTITY_ID } from '@shared/config-contract';
 import type {
   SessionEffort,
   SessionModel,
-  SessionTheme,
 } from '@shared/session-contract';
 
 /**
@@ -339,18 +338,6 @@ export interface SpawnOptions {
    */
   name?: string;
   /**
-   * Which way round to paint `claude`'s own UI inside the terminal.
-   *
-   * The one option here that describes the *app* rather than the session. It
-   * exists because the app's theme lives in `localStorage`, which main cannot
-   * read, and `claude` decides its own chrome from a settings file main writes
-   * — so without this a light-themed Hive ran dark-themed agents and drew the
-   * user's own submitted prompt as a near-black bar across a white terminal.
-   *
-   * Absent means dark, which is both defaults agreeing rather than a guess.
-   */
-  theme?: SessionTheme;
-  /**
    * Pick the conversation up where a previous run left it (HIVE-88).
    *
    * Set by `resolve-transport.ts` for a row restored under PREVIOUS RUN, which
@@ -378,7 +365,7 @@ export interface SpawnOptions {
 export function requestSpawn(
   entityId: string,
   projectId: string,
-  { task, model, effort, name, theme, resume }: SpawnOptions = {},
+  { task, model, effort, name, resume }: SpawnOptions = {},
 ): Promise<SpawnOutcome> {
   /**
    * The bridge is read inside the try, not before it.
@@ -453,8 +440,6 @@ export function requestSpawn(
        * refusal in the console instead of a session that quietly opens unnamed.
        */
       ...(name === undefined ? {} : { name }),
-      /** Same spread, same reason. A closed set, so the guard owns the rest. */
-      ...(theme === undefined ? {} : { theme }),
       /**
        * Sent only when true (HIVE-88). `false` is the same request as absent,
        * and absent is what every spawn before this field sent — keeping the

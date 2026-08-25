@@ -4,7 +4,6 @@ import { isDesktop } from '@config/runtime';
 import { reopenChannel } from '@lib/terminal/pty-transport';
 import { isSendableSessionName } from '@shared/session-contract';
 import type { SpawnRefusal } from '@shared/session-contract';
-import { currentTheme } from '@stores/appearance-store';
 
 
 /**
@@ -130,7 +129,6 @@ export async function restartSession(request: RestartRequest): Promise<void> {
      * mean every restart control had to remember to look it up, and one that
      * forgot would silently restart a session into the wrong chrome.
      */
-    theme: currentTheme(),
   });
 
   /**

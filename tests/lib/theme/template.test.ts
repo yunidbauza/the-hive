@@ -26,6 +26,13 @@ describe('the downloaded template', () => {
   it('is fully populated, not a skeleton', () => {
     const parsed = JSON.parse(themeTemplateJson());
     expect(Object.keys(parsed.modes.dark.ui)).toHaveLength(27);
-    expect(Object.keys(parsed.modes.light.terminal)).toHaveLength(11);
+    /*
+      Thirteen since HIVE-82: the eleven required terminal colours plus the two
+      surfaces. The template offers them even though the format does not require
+      them, which is the point of a template — a theme author who starts here
+      chooses their own panel fills rather than getting the ones `surfacesOf`
+      blends out of `bg`.
+    */
+    expect(Object.keys(parsed.modes.light.terminal)).toHaveLength(13);
   });
 });

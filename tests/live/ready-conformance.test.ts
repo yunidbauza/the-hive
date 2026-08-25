@@ -75,7 +75,7 @@ describe.skipIf(!enabled)('ready-signal conformance', () => {
       writeFileSync(
         settingsPath,
         JSON.stringify(
-          hookSettings(url as string, undefined, receiver.readyUrl as string),
+          hookSettings(url as string, receiver.readyUrl as string),
         ),
         'utf8',
       );

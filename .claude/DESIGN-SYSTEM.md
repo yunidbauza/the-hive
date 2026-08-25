@@ -155,9 +155,25 @@ an imported theme (HIVE-80) travels the same path these two do.
 | `red` | `#ff8d85` | `#b3271f` | `--cc-code-constant` | errors |
 | `cyan` | `#7edce2` | `#0b6b7d` | `--cc-code-type` | orchestrator-injected lines, PR refs |
 | `magenta` | `#7edce2` | `#6f42c1` | `--cc-code-keyword` | ANSI slot 35 |
-| `black` | `#0b1023` | `#2c2f34` | `--cc-ink` | ANSI slot 30 |
+| `black` | `#0b1023` | `#2c2f34` | `--cc-ink` | text colour a theme may still name |
 | `bg` | `#0b1023` | `#f7fafb` | `--cc-term-bg` | terminal background |
 | `selection` | `#222c55` | `#cfe3f7` | `--cc-code-selection` | selection highlight |
+| `surface` | `#0e1430` | `#ffffff` | `--cc-panel` | **ANSI slot 30** — panels a program paints |
+| `surfaceAlt` | `#1b2344` | `#edf2f4` | `--cc-chip` | **ANSI slot 90** — the second fill |
+
+`surface` and `surfaceAlt` arrived with HIVE-82, and they are the reason slots 30
+and 90 no longer hold text colours. Claude Code paints its own chrome — the
+submitted-prompt row, the composer sidebar, the bash block — out of exactly those
+two slots, so binding them to `black` and `dim` drew a near-black bar across a
+light terminal. They are **optional** in a theme file: `surfacesOf` in `ansi.ts`
+blends them out of `bg` when a theme does not name them, so every theme exported
+before HIVE-82 still imports unchanged.
+
+The old rule they replace was not wrong, it was outvoted: a CLI that detects a
+light terminal picks slot 30 for body text, and against a light `surface` that
+text would vanish. `terminal-surface.tsx` passes `minimumContrastRatio: 4.5`, so
+xterm lifts that foreground. A background has no such rescue — xterm adjusts
+foregrounds only — which is what decided it.
 
 `magenta` equals `cyan` in dark and always has: the concept never specified one,
 so slot 35 has always rendered as cyan. Naming it lets the light palette give

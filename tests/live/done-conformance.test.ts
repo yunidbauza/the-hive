@@ -110,8 +110,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
       file would test this file's idea of the app rather than the app.
     */
     await writePluginDir(pluginRoot, '0.0.0-test', NO_SKILLS, receiver.doneUrl);
-    const paths = await writeHookSettings(userData, url as string);
-    settingsPath = paths.dark;
+    settingsPath = await writeHookSettings(userData, url as string);
   });
 
   afterAll(async () => {

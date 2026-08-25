@@ -22,6 +22,9 @@ import '@xterm/xterm/css/xterm.css';
 /** xterm's line-height is a multiple of the font size, not a CSS length. */
 const LINE_HEIGHT = 1.4;
 
+/** WCAG AA for body text. See the note where it is passed to xterm. */
+const MINIMUM_CONTRAST_RATIO = 4.5;
+
 /**
  * Fallbacks for a caller that expresses no preference — the orchestrator
  * console, and every test that renders a surface directly. The *settings* live
@@ -299,6 +302,25 @@ export function TerminalSurface({
       fontSize,
       lineHeight: LINE_HEIGHT,
       scrollback,
+      /**
+       * The floor that makes the surface slots safe (HIVE-82).
+       *
+       * `black` and `brightBlack` are panel fills now, not text. That is right
+       * for the programs that paint panels with them, and wrong for the older
+       * convention where a CLI detecting a light terminal picks slot 30 for
+       * body text — against a light `black`, that text would be invisible.
+       *
+       * xterm's answer is to adjust the *foreground* until it clears a ratio
+       * against whatever it is drawn on. At its default of `1` it does nothing,
+       * which is what `ansi.ts` used to record as the reason the old mapping
+       * had to stand. At 4.5 it holds body text to WCAG AA and leaves anything
+       * already legible untouched.
+       *
+       * It cannot rescue a background, which is the asymmetry the whole
+       * inversion rests on: a bad foreground is recoverable, a near-black slab
+       * across a white terminal is not.
+       */
+      minimumContrastRatio: MINIMUM_CONTRAST_RATIO,
       theme: xtermThemeFor(palette),
     });
 

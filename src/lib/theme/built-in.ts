@@ -47,6 +47,9 @@ export const BUILT_IN_THEME: HiveTheme = {
         bg: '#0b1023', ink: '#dbe4ff', dim: '#7c88b8', black: '#0b1023',
         green: '#7ee2b8', blue: '#8fb5ff', amber: '#ffc06e', red: '#ff8d85',
         cyan: '#7edce2', magenta: '#7edce2', selection: '#222c55',
+        // The two surfaces (HIVE-82) — `--cc-term-input` and `--cc-hover`,
+        // the raised fills the app already uses over this ground.
+        surface: '#0e1430', surfaceAlt: '#1b2344',
       },
     },
     light: {
@@ -74,6 +77,9 @@ export const BUILT_IN_THEME: HiveTheme = {
         bg: '#f7fafb', ink: '#2c2f34', dim: '#6b6e74', black: '#2c2f34',
         green: '#2e6b52', blue: '#334fa9', amber: '#a1541a', red: '#b3271f',
         cyan: '#0b6b7d', magenta: '#6f42c1', selection: '#cfe3f7',
+        // `--cc-panel` and `--cc-chip`. The mirror of dark's pair: the ground
+        // raised one step, then two.
+        surface: '#ffffff', surfaceAlt: '#edf2f4',
       },
     },
   },
