@@ -24,8 +24,8 @@ interface ProjectRowProps {
    * showing the old word forever, and `project.name` was a *type error* in
    * this file — the correct field was not merely unused, it was unreachable.
    *
-   * `Project` stays the drawing shape for anything that only keys on the id.
-   * A display surface takes the display shape.
+   * A display surface takes the display shape. `Project` is the identity half
+   * and no longer types any component — see the note on {@link ProjectRowData}.
    */
   project: ProjectRowData;
 }

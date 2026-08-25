@@ -4,7 +4,12 @@ import { useRef } from 'react';
 
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { cn } from '@/lib/utils';
-import type { Effort, Model } from '@/types/entity';
+// `ProjectRow` is aliased because this file declares a component of that name.
+import type {
+  Effort,
+  Model,
+  ProjectRow as ProjectRowData,
+} from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
 import { ProjectKey } from '@components/ui/project-key';
@@ -216,9 +221,7 @@ export function NewSessionPicker() {
           {projects.slice(0, PINNED_COUNT).map((project) => (
             <PinnedProject
               key={project.id}
-              id={project.id}
-              name={project.name}
-              icon={project.icon}
+              project={project}
               onSelect={spawn}
             />
           ))}
@@ -290,10 +293,7 @@ export function NewSessionPicker() {
               matches.map((project) => (
                 <ProjectRow
                   key={project.id}
-                  id={project.id}
-                  name={project.name}
-                  projectKey={project.key}
-                  icon={project.icon}
+                  project={project}
                   onSelect={spawn}
                 />
               ))
@@ -322,19 +322,13 @@ export function NewSessionPicker() {
  * `useProjectAccess`, and a hook cannot be called from inside a loop callback.
  */
 function PinnedProject({
-  id,
-  name,
-  icon,
+  project,
   onSelect,
 }: {
-  /** Keys the access lookup and the spawn. Never drawn. */
-  id: string;
-  /** Drawn (HIVE-104). The tile sits directly above the search rows, so an
-      id here and a name there would be one screen disagreeing with itself. */
-  name: string;
-  icon: string;
+  project: ProjectRowData;
   onSelect: (id: string) => void;
 }) {
+  const { id, name, icon } = project;
   const access = useProjectAccess(id);
 
   return (
@@ -350,6 +344,11 @@ function PinnedProject({
         size={15}
         className={access.spawnable ? 'text-brand' : 'text-subtle'}
       />
+      {/*
+        The name, not the id (HIVE-104). These tiles sit directly above the
+        search rows, so an id here and a name there would be one screen
+        disagreeing with itself about what a project is called.
+      */}
       {name}
     </button>
   );
@@ -357,28 +356,20 @@ function PinnedProject({
 
 /** One search result. Owns its own count subscription. */
 function ProjectRow({
-  id,
-  name,
-  projectKey,
-  icon,
+  project,
   onSelect,
 }: {
-  /** Keys the access lookup and the spawn. Never drawn. */
-  id: string;
-  /**
-   * Drawn (HIVE-104).
-   *
-   * The filter above already matches on the name, so before this the picker
-   * would take the *new* name, find the project, and label the hit with the
-   * *old* id. Searching by a string the surface never displays is worse than
-   * not matching on it at all.
-   */
-  name: string;
-  /** Not `key` — that name is React's, and a prop called `key` never arrives. */
-  projectKey: string;
-  icon: string;
+  project: ProjectRowData;
   onSelect: (id: string) => void;
 }) {
+  /*
+    Destructured here rather than threaded in as four primitives, which is what
+    this used to take. `key` was the reason it could not simply take the row:
+    that name is React's, and a prop called `key` never arrives — so the row's
+    alias had to be smuggled in under `projectKey`. As a *field* it is nothing
+    special, and the workaround goes with the prop list.
+  */
+  const { id, name, key: projectKey, icon } = project;
   const sessions = useProjectSessions(id);
   const access = useProjectAccess(id);
 
@@ -398,6 +389,12 @@ function ProjectRow({
       {/* The same chip the Settings row shows, so the alias is learned in
           whichever of the two the user happens to be looking at (HIVE-94). */}
       <ProjectKey value={projectKey} />
+      {/*
+        The name, which is one of the three things the filter above matches on
+        (HIVE-104). This drew the id, so the picker would take the *new* name,
+        find the project, and label the hit with the *old* one — searching by a
+        string the row never displays is worse than not matching on it at all.
+      */}
       <span
         className={cn(
           'min-w-0 flex-1 truncate font-mono text-[12.5px]',

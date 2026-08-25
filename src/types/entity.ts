@@ -285,10 +285,17 @@ export interface Project {
  * Both the seed and the merge are gone; `source` went with them rather than
  * lingering as a discriminant with one inhabitant and no readers.
  *
- * Still a **separate type** rather than one more field on {@link Project}:
- * `Project` is the shape the rail needs to *draw* one, and `name` is a display
- * concern the config supplies. Keeping them apart is what stops a display name
- * leaking into the places that key on `entity.project`.
+ * Still a **separate type** rather than one more field on {@link Project} — but
+ * the reason has narrowed, and the old one is worth retiring rather than
+ * repeating. It used to read "`Project` is the shape the rail needs to *draw*
+ * one": the rail's row took a `Project` and drew `project.id`. That was the
+ * HIVE-104 bug, and the row takes this type now.
+ *
+ * So `Project` has no standalone consumer left in `src/` or `electron/` — it is
+ * the identity half of this shape, and nothing but `DemoFleet` names it alone.
+ * What the split still buys is direction: a value typed `Project` cannot be
+ * mistaken for something displayable, which is what keeps a display name out of
+ * the places that key on `entity.project`. It no longer describes a component.
  */
 export interface ProjectRow extends Project {
   /** Display name, as the config declares it. */
