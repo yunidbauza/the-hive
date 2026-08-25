@@ -99,6 +99,44 @@ test('the tree starts a session, and the link stays below the last one', async (
   }
 });
 
+/**
+ * The rail draws the display name, in the built app (HIVE-104).
+ *
+ * The bug this pins was a *field* mistake, not a propagation one: the row
+ * rendered `project.id`, which a rename deliberately never touches, so the old
+ * label survived every reload. Worth an electron spec rather than leaving it to
+ * jsdom because the claim is about what the shipped renderer paints out of a
+ * config file main actually read — and because the fixture that made this
+ * unprovable (`name` pinned to `id`) lived here.
+ *
+ * A restart is not simulated; the spec *is* the restart. The app boots against
+ * a config whose two fields disagree, which is the state a renamed project is
+ * left in on disk.
+ */
+test('the tree labels a project with its name, not its id', async ({}, testInfo) => {
+  writeProjectConfig(testInfo.outputPath('hive-config.json'), {
+    id: 'apfm-web',
+    name: 'APFM Web',
+    path: REAL_DIRECTORY,
+  });
+
+  const { app, page } = await launch((name) => testInfo.outputPath(name));
+
+  try {
+    const tree = page.locator('[data-panel="projects"]');
+
+    await expect(tree.getByText('APFM Web')).toBeVisible();
+    // Both halves: a row printing name *and* id would pass the first alone.
+    await expect(tree.getByText('apfm-web', { exact: true })).toHaveCount(0);
+    // The start link speaks the same name the row shows.
+    await expect(
+      tree.getByRole('button', { name: 'New session in APFM Web' }),
+    ).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
 test('a project whose path does not resolve offers a refusal, not a start', async ({}, testInfo) => {
   writeFileSync(
     testInfo.outputPath('hive-config.json'),

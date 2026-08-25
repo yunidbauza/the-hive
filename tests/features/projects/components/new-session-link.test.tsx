@@ -29,6 +29,15 @@ import { testProjectKey } from '@tests/support/project-key';
 
 const CONFIG_PATH = '/home/dev/.hive/config.json';
 const PROJECT = 'apfm-web';
+/**
+ * Deliberately not the id (HIVE-104).
+ *
+ * `addProject` derives both from the same directory basename, so a project
+ * that has never been renamed reads identically either way — which is exactly
+ * how the rail drew the id for this long without anyone noticing. A fixture
+ * whose two handles agree cannot tell the two apart, so this one disagrees.
+ */
+const PROJECT_NAME = 'APFM Web';
 
 function snapshot(
   projects: { id: string; status: ProjectStatus }[],
@@ -82,7 +91,7 @@ afterEach(() => {
 describe('NewSessionLink', () => {
   it('spawns on its own project, with an empty task', async () => {
     setProjectConfigForTest(snapshot([{ id: PROJECT, status: 'ok' }]));
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     await userEvent.click(screen.getByRole('button'));
 
@@ -101,7 +110,7 @@ describe('NewSessionLink', () => {
     useUiStore.getState().setNewModel('sonnet');
     useUiStore.getState().setNewEffort('low');
 
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
     await userEvent.click(screen.getByRole('button'));
 
     const session = lastSession();
@@ -111,15 +120,15 @@ describe('NewSessionLink', () => {
 
   it('opens the new session, the way every other spawn does', async () => {
     setProjectConfigForTest(snapshot([{ id: PROJECT, status: 'ok' }]));
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     await userEvent.click(screen.getByRole('button'));
 
     expect(useUiStore.getState().activeTab).toBe(lastSession().id);
   });
 
-  it('names its project in the accessible name', () => {
-    render(<NewSessionLink projectId={PROJECT} />);
+  it('names its project by its display name, not its id', () => {
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     /**
      * The visible label is just `new session`. A screen-reader user arriving
@@ -131,15 +140,19 @@ describe('NewSessionLink', () => {
      * control — is a Playwright problem, not a jsdom one: Testing Library
      * matches a string name in full, Playwright matches a substring. It is
      * asserted where it bites, in `tests/e2e/electron/projects-tree.spec.ts`.
+     *
+     * The *name*, not the id (HIVE-104): the row this hangs under shows the
+     * name, and a screen-reader user who heard `apfm-web` under a row reading
+     * "APFM Web" would be told about two projects where there is one.
      */
     expect(screen.getByRole('button')).toHaveAccessibleName(
-      'New session in apfm-web',
+      'New session in APFM Web',
     );
   });
 
   it('refuses a project the config never mentions, and says why', async () => {
     setProjectConfigForTest(snapshot([{ id: 'referral-api', status: 'ok' }]));
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     const link = screen.getByRole('button');
     expect(link).toBeDisabled();
@@ -151,7 +164,7 @@ describe('NewSessionLink', () => {
 
   it('refuses a broken entry, with its reason verbatim', () => {
     setProjectConfigForTest(snapshot([{ id: PROJECT, status: 'missing' }]));
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     const link = screen.getByRole('button');
     expect(link).toBeDisabled();
@@ -163,7 +176,7 @@ describe('NewSessionLink', () => {
     useUiStore.getState().setNewModel('haiku');
     useUiStore.getState().setNewEffort('max');
 
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     // The steppers that decide this live in the picker, and the picker is not
     // open. Without the tooltip the click commits to a model the user cannot
@@ -186,7 +199,7 @@ describe('NewSessionLink', () => {
    * the tree. Asserting it costs a line; discovering it costs a bug.
    */
   it('defaults to enabled before any config has arrived', () => {
-    render(<NewSessionLink projectId={PROJECT} />);
+    render(<NewSessionLink projectId={PROJECT} projectName={PROJECT_NAME} />);
 
     expect(screen.getByRole('button')).toBeEnabled();
   });

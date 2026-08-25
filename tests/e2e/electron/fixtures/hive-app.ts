@@ -208,10 +208,15 @@ const STUB_CLAUDE_COMMAND = 'true; false';
  * reason {@link STUB_CLAUDE_COMMAND} gives — and `sh`, not the user's `$SHELL`,
  * because zsh and bash differ in prompt behaviour and a suite that passes only
  * on the author's machine is worthless.
+ *
+ * `name` defaults to the id, which is what `addProject` writes for a freshly
+ * mapped directory — but it is a *parameter* now (HIVE-104). Hard-coding
+ * `name: id` meant no e2e spec could tell the two fields apart, which is
+ * precisely how a rail that drew the id shipped past this suite.
  */
 export function writeProjectConfig(
   configPath: string,
-  { id, path }: { id: string; path: string },
+  { id, name, path }: { id: string; name?: string; path: string },
 ): void {
   writeFileSync(
     configPath,
@@ -219,7 +224,7 @@ export function writeProjectConfig(
       version: 2,
       shell: '/bin/sh',
       claudeCommand: STUB_CLAUDE_COMMAND,
-      projects: [{ id, name: id, path, icon: 'ph-cube' }],
+      projects: [{ id, name: name ?? id, path, icon: 'ph-cube' }],
     }),
   );
 }

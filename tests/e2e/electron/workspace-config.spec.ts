@@ -54,9 +54,20 @@ test('a valid mapping makes its project spawnable and an unresolvable one unmapp
     (name) => testInfo.outputPath(name),
     JSON.stringify({
       version: 1,
+      /*
+        `name` is declared, not left to the fallback (HIVE-104). The rail draws
+        the display name now, and `resolve.ts` fills a missing one from the
+        mapped directory's *basename* — so omitting it here would label the row
+        after whatever folder this checkout happens to live in. This spec is
+        about mapping, not naming; pinning the name keeps it that way.
+      */
       projects: [
-        { id: 'apfm-web', path: realDirectory },
-        { id: 'referral-api', path: '/nowhere/that/exists' },
+        { id: 'apfm-web', name: 'apfm-web', path: realDirectory },
+        {
+          id: 'referral-api',
+          name: 'referral-api',
+          path: '/nowhere/that/exists',
+        },
       ],
     }),
   );
@@ -183,7 +194,12 @@ test('HIVE_CONFIG_PATH wins over ~/.hive/config.json', async ({}, testInfo) => {
 
   const { app, page } = await launchWithConfig(
     (name) => testInfo.outputPath(name),
-    JSON.stringify({ version: 1, projects: [{ id: 'apfm-web', path: scratch }] }),
+    // `name` declared for the reason the mapping spec above gives: without it
+    // the rail's label would be `basename(scratch)` rather than the id.
+    JSON.stringify({
+      version: 1,
+      projects: [{ id: 'apfm-web', name: 'apfm-web', path: scratch }],
+    }),
   );
 
   try {

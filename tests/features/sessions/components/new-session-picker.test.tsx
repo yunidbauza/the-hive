@@ -91,9 +91,12 @@ describe('NewSessionPicker', () => {
     render(<NewSessionPicker />);
 
     /**
-     * A pill's accessible name is the bare project id; a search row's also
+     * A pill's accessible name is the bare project name; a search row's also
      * carries its count ("apfm-web 3 active"). Five fixtures, four pinned —
      * `infra-terraform` is reachable through search only.
+     *
+     * The demo config sets every `name` to its `id`, so these two read the
+     * same here. The tile that tells them apart is below.
      */
     for (const id of ['apfm-web', 'referral-api', 'advisor-portal', 'design-system']) {
       expect(screen.getByRole('button', { name: id })).toBeInTheDocument();
@@ -101,6 +104,41 @@ describe('NewSessionPicker', () => {
     expect(
       screen.queryByRole('button', { name: 'infra-terraform' }),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The pinned tile is a display surface too (HIVE-104).
+   *
+   * The ticket named the search row; the tile has the same defect and sits
+   * directly above it. Fixing only the row would leave one screen showing the
+   * new name in its results and the old id in the tiles over them, which is
+   * worse than the consistent wrongness it replaced.
+   */
+  it('labels a pinned tile with the name, not the id', () => {
+    const current = projectConfigSnapshot()!;
+    setProjectConfigForTest({
+      ...current,
+      projects: [
+        {
+          id: 'the-hive',
+          key: 'th',
+          name: 'Command Centre',
+          path: '/repos/the-hive',
+          icon: 'ph-folder',
+          origin: 'local',
+          status: 'ok',
+          isRepo: true,
+        },
+      ],
+    });
+    render(<NewSessionPicker />);
+
+    expect(
+      screen.getByRole('button', { name: 'Command Centre' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole('button', { name: /the-hive/ }),
+    ).toHaveLength(0);
   });
 
   describe('search', () => {
@@ -162,7 +200,20 @@ describe('NewSessionPicker', () => {
 
       await user.type(search(), 'command');
 
-      expect(rowsFor(/^th the-hive \d+ active$/)).toHaveLength(1);
+      /**
+       * Labelled with the name that was searched for (HIVE-104).
+       *
+       * This asserted `/^th the-hive …/` — a hit on "command" rendered as
+       * `the-hive`. Matching on a string the row never displays is worse than
+       * not matching on it: the user types the new name, gets a result, and is
+       * shown the old one.
+       */
+      expect(rowsFor(/^th Command Centre \d+ active$/)).toHaveLength(1);
+      // `queryAllByRole`, not `rowsFor`: the helper's `getAllByRole` throws on
+      // zero, which is the answer this half wants.
+      expect(
+        screen.queryAllByRole('button', { name: /the-hive/ }),
+      ).toHaveLength(0);
     });
 
     it('matches a substring, not just a prefix', async () => {
@@ -237,6 +288,42 @@ describe('NewSessionPicker', () => {
 
       expect(useHiveStore.getState().entities['sess-01']).toMatchObject({
         project: 'design-system',
+      });
+    });
+
+    /**
+     * Only the *label* moved to the name (HIVE-104).
+     *
+     * The demo config gives every project a `name` equal to its `id`, so every
+     * spawn assertion above passes whichever field the row keys on. This one
+     * clicks a tile labelled "Command Centre" and demands the entity record
+     * `the-hive` — the id, which is what `entity.project` has always meant and
+     * what a rename deliberately never touches.
+     */
+    it('still stores the id on the entity, not the label', async () => {
+      const user = userEvent.setup();
+      const current = projectConfigSnapshot()!;
+      setProjectConfigForTest({
+        ...current,
+        projects: [
+          {
+            id: 'the-hive',
+            key: 'th',
+            name: 'Command Centre',
+            path: '/repos/the-hive',
+            icon: 'ph-folder',
+            origin: 'local',
+            status: 'ok',
+            isRepo: true,
+          },
+        ],
+      });
+      render(<NewSessionPicker />);
+
+      await user.click(screen.getByRole('button', { name: 'Command Centre' }));
+
+      expect(useHiveStore.getState().entities['sess-01']).toMatchObject({
+        project: 'the-hive',
       });
     });
 
