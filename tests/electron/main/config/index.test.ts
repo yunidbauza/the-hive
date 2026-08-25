@@ -78,26 +78,26 @@ afterEach(() => {
 
 describe('path resolution', () => {
   it('expands ~ to the home directory', async () => {
-    mkdirSync(join(home, 'repos', 'apfm-web'), { recursive: true });
+    mkdirSync(join(home, 'repos', 'nova-web'), { recursive: true });
     writeConfig({
       version: 1,
-      projects: [{ id: 'apfm-web', path: '~/repos/apfm-web' }],
+      projects: [{ id: 'nova-web', path: '~/repos/nova-web' }],
     });
 
     const snapshot = await loadConfig();
 
     expect(snapshot.projects).toEqual([
       {
-        id: 'apfm-web',
-        key: 'aw',
+        id: 'nova-web',
+        key: 'nw',
         // `realpathSync` also canonicalises the tmpdir (/var → /private/var on
         // macOS), so the expectation is realpath'd too. Asserting the raw join
         // would be asserting that resolution did *not* happen.
-        path: realpathSync(join(home, 'repos', 'apfm-web')),
+        path: realpathSync(join(home, 'repos', 'nova-web')),
         status: 'ok',
         // The v1 upgrade, applied in memory (story 101). The file on disk is
         // still v1 and stays that way until the user saves something.
-        name: 'apfm-web',
+        name: 'nova-web',
         icon: 'ph-folder',
         origin: 'local',
         isRepo: false,
@@ -108,7 +108,7 @@ describe('path resolution', () => {
   it('rejects a relative path as not-absolute', async () => {
     writeConfig({
       version: 1,
-      projects: [{ id: 'apfm-web', path: 'repos/apfm-web' }],
+      projects: [{ id: 'nova-web', path: 'repos/nova-web' }],
     });
 
     const snapshot = await loadConfig();
@@ -117,7 +117,7 @@ describe('path resolution', () => {
       path: null,
       status: 'not-absolute',
     });
-    expect(snapshot.errors.join('\n')).toContain('apfm-web');
+    expect(snapshot.errors.join('\n')).toContain('nova-web');
   });
 
   it('resolves a symlink to its target, so the path handed to node-pty is the one validated', async () => {
@@ -125,7 +125,7 @@ describe('path resolution', () => {
     const link = join(sandbox, 'linked-repo');
     mkdirSync(real);
     symlinkSync(real, link);
-    writeConfig({ version: 1, projects: [{ id: 'apfm-web', path: link }] });
+    writeConfig({ version: 1, projects: [{ id: 'nova-web', path: link }] });
 
     const snapshot = await loadConfig();
 
@@ -139,7 +139,7 @@ describe('path resolution', () => {
   it('reports a path that does not exist as missing', async () => {
     writeConfig({
       version: 1,
-      projects: [{ id: 'apfm-web', path: join(sandbox, 'nope') }],
+      projects: [{ id: 'nova-web', path: join(sandbox, 'nope') }],
     });
 
     const snapshot = await loadConfig();
@@ -150,7 +150,7 @@ describe('path resolution', () => {
   it('reports a file where a directory is expected as not-a-directory', async () => {
     const file = join(sandbox, 'a-file');
     writeFileSync(file, '');
-    writeConfig({ version: 1, projects: [{ id: 'apfm-web', path: file }] });
+    writeConfig({ version: 1, projects: [{ id: 'nova-web', path: file }] });
 
     const snapshot = await loadConfig();
 
@@ -170,8 +170,8 @@ describe('duplicate ids', () => {
     writeConfig({
       version: 1,
       projects: [
-        { id: 'apfm-web', path: first },
-        { id: 'apfm-web', path: second },
+        { id: 'nova-web', path: first },
+        { id: 'nova-web', path: second },
       ],
     });
 
@@ -180,7 +180,7 @@ describe('duplicate ids', () => {
     expect(snapshot.projects[0]?.status).toBe('ok');
     expect(snapshot.projects[0]?.path?.endsWith('first')).toBe(true);
     expect(snapshot.projects[1]).toMatchObject({
-      id: 'apfm-web',
+      id: 'nova-web',
       path: null,
       status: 'duplicate-id',
     });
@@ -200,7 +200,7 @@ describe('malformed input', () => {
   });
 
   it('rejects a wrong schema version rather than guessing at it', async () => {
-    writeConfig({ version: 99, projects: [{ id: 'apfm-web', path: sandbox }] });
+    writeConfig({ version: 99, projects: [{ id: 'nova-web', path: sandbox }] });
 
     const snapshot = await loadConfig();
 
@@ -213,7 +213,7 @@ describe('malformed input', () => {
     mkdirSync(repo);
     writeConfig({
       version: 1,
-      projects: [{ id: 'apfm-web', path: repo }],
+      projects: [{ id: 'nova-web', path: repo }],
       shel: '/bin/bash',
     });
 
@@ -344,14 +344,14 @@ describe('caching', () => {
 
     writeFileSync(
       path,
-      JSON.stringify({ version: 1, projects: [{ id: 'apfm-web', path: repo }] }),
+      JSON.stringify({ version: 1, projects: [{ id: 'nova-web', path: repo }] }),
     );
 
     // Still the first read — the file is not watched (out of scope).
     expect(module.getConfig().projects).toEqual([]);
 
     expect(module.reloadConfig().projects[0]).toMatchObject({
-      id: 'apfm-web',
+      id: 'nova-web',
       status: 'ok',
     });
     expect(module.getConfig().projects).toHaveLength(1);
@@ -366,7 +366,7 @@ describe('schema v1 compatibility (story 101)', () => {
       {
         '//': 'hand-written under story 090',
         version: 1,
-        projects: [{ id: 'apfm-web', path: repo }],
+        projects: [{ id: 'nova-web', path: repo }],
       },
       null,
       2,
@@ -401,7 +401,7 @@ describe('schema v1 compatibility (story 101)', () => {
     expect(written.version).toBe(1);
     expect(written['//']).toBe('hand-written under story 090');
     expect(written.projects).toEqual([
-      { id: 'apfm-web', path: repo, key: entry?.key },
+      { id: 'nova-web', path: repo, key: entry?.key },
     ]);
     expect(entry?.key).toMatch(/^[a-z]{2,4}$/);
   });

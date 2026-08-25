@@ -304,8 +304,8 @@ describe('parseDiagnoseCommandRequest', () => {
   });
 
   it('accepts an id', () => {
-    expect(parseDiagnoseCommandRequest({ id: 'apfm-web' })).toEqual({
-      id: 'apfm-web',
+    expect(parseDiagnoseCommandRequest({ id: 'nova-web' })).toEqual({
+      id: 'nova-web',
     });
   });
 
@@ -323,8 +323,8 @@ describe('parseDiagnoseEnvRequest', () => {
   });
 
   it('accepts an id', () => {
-    expect(parseDiagnoseEnvRequest({ id: 'apfm-web' })).toEqual({
-      id: 'apfm-web',
+    expect(parseDiagnoseEnvRequest({ id: 'nova-web' })).toEqual({
+      id: 'nova-web',
     });
   });
 

@@ -10,12 +10,12 @@ import { useUiStore } from '@stores/ui-store';
 
 const pr = (overrides: Partial<Pr> = {}): Pr => ({
   n: 482,
-  repo: 'apfm-web',
+  repo: 'nova-web',
   title: 'Hero: semantic token refactor',
   state: 'open',
   findings: 2,
   checks: 'passing',
-  url: 'https://github.com/acme/apfm-web/pull/482',
+  url: 'https://github.com/acme/nova-web/pull/482',
   branch: 'feat/hero-refresh',
   session: 'hero-refresh',
   ...overrides,
@@ -32,7 +32,7 @@ describe('PrCard', () => {
 
     expect(screen.getByText('#482')).toBeInTheDocument();
     expect(screen.getByText('Hero: semantic token refactor')).toBeInTheDocument();
-    expect(screen.getByText('apfm-web')).toBeInTheDocument();
+    expect(screen.getByText('nova-web')).toBeInTheDocument();
   });
 
   it('renders the badges the rule table composes', () => {
@@ -104,11 +104,11 @@ describe('PrCard', () => {
     /** `subtle` at 10.5px falls under 3:1 on the raised fill in light mode. */
     it('lifts the repo line off subtle on a live card', () => {
       render(<PrCard pr={pr({ state: 'open' })} />);
-      expect(screen.getByText('apfm-web')).toHaveClass('text-muted');
+      expect(screen.getByText('nova-web')).toHaveClass('text-muted');
 
       cleanup();
       render(<PrCard pr={pr({ state: 'merged' })} />);
-      expect(screen.getByText('apfm-web')).toHaveClass('text-subtle');
+      expect(screen.getByText('nova-web')).toHaveClass('text-subtle');
     });
   });
 
@@ -130,7 +130,7 @@ describe('PrCard', () => {
 
       expect(link).toHaveAttribute(
         'href',
-        'https://github.com/acme/apfm-web/pull/482',
+        'https://github.com/acme/nova-web/pull/482',
       );
       expect(link).toHaveAttribute('target', '_blank');
     });
@@ -160,7 +160,7 @@ describe('PrCard', () => {
       );
 
       expect(open).toHaveBeenCalledWith(
-        'https://github.com/acme/apfm-web/pull/482',
+        'https://github.com/acme/nova-web/pull/482',
         '_blank',
         'noopener,noreferrer',
       );

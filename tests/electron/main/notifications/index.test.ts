@@ -69,12 +69,12 @@ describe('session status', () => {
     const n = notifier();
 
     n.observe(CH.sessionStatus, {
-      entityId: 'apfm-web',
+      entityId: 'nova-web',
       status: 'idle',
       event: 'SessionStart',
     });
     n.observe(CH.sessionStatus, {
-      entityId: 'apfm-web',
+      entityId: 'nova-web',
       status: 'idle',
       event: 'Stop',
     });

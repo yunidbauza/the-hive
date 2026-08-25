@@ -83,8 +83,8 @@ describe('parseCommand', () => {
         message: 'first\nsecond',
       });
 
-      expect(parseCommand('spawn apfm-web do  this\nthen  that')).toMatchObject({
-        project: 'apfm-web',
+      expect(parseCommand('spawn nova-web do  this\nthen  that')).toMatchObject({
+        project: 'nova-web',
         task: 'do this\nthen that',
       });
     });
@@ -145,18 +145,18 @@ describe('parseCommand', () => {
 
   describe('spawn', () => {
     it('takes a project and the rest of the line as the task', () => {
-      expect(parseCommand('spawn apfm-web fix the footer')).toEqual({
+      expect(parseCommand('spawn nova-web fix the footer')).toEqual({
         kind: 'spawn',
-        raw: 'spawn apfm-web fix the footer',
-        project: 'apfm-web',
+        raw: 'spawn nova-web fix the footer',
+        project: 'nova-web',
         task: 'fix the footer',
       });
     });
 
     it('reports usage when the task is missing', () => {
-      expect(parseCommand('spawn apfm-web')).toEqual({
+      expect(parseCommand('spawn nova-web')).toEqual({
         kind: 'usage',
-        raw: 'spawn apfm-web',
+        raw: 'spawn nova-web',
         command: 'spawn',
       });
     });

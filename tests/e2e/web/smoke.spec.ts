@@ -137,7 +137,7 @@ test('paints no seeded session, project or ticket in the fleet surfaces', async 
   page,
 }) => {
   const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
-  const seeded = ['hero-refresh', 'lead-form', 'apfm-web', 'referral-api'];
+  const seeded = ['hero-refresh', 'lead-form', 'nova-web', 'referral-api'];
 
   // The projects tree: no seeded repository, and no session under one.
   const projects = page.locator('[data-panel="projects"]');

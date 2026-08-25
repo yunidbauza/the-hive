@@ -484,7 +484,7 @@ describe('useSessionStatus — the ready signal', () => {
           [id]: {
             kind: 'session',
             id,
-            project: 'apfm-web',
+            project: 'nova-web',
             status: 'idle',
             task: '',
             cost: '$0.00',

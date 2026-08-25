@@ -28,7 +28,7 @@ import { testProjectKey } from '@tests/support/project-key';
  */
 
 const CONFIG_PATH = '/home/dev/.hive/config.json';
-const PROJECT = 'apfm-web';
+const PROJECT = 'nova-web';
 /**
  * Deliberately not the id (HIVE-104).
  *
@@ -37,7 +37,7 @@ const PROJECT = 'apfm-web';
  * how the rail drew the id for this long without anyone noticing. A fixture
  * whose two handles agree cannot tell the two apart, so this one disagrees.
  */
-const PROJECT_NAME = 'APFM Web';
+const PROJECT_NAME = 'NOVA Web';
 
 function snapshot(
   projects: { id: string; status: ProjectStatus }[],
@@ -142,11 +142,11 @@ describe('NewSessionLink', () => {
      * asserted where it bites, in `tests/e2e/electron/projects-tree.spec.ts`.
      *
      * The *name*, not the id (HIVE-104): the row this hangs under shows the
-     * name, and a screen-reader user who heard `apfm-web` under a row reading
-     * "APFM Web" would be told about two projects where there is one.
+     * name, and a screen-reader user who heard `nova-web` under a row reading
+     * "NOVA Web" would be told about two projects where there is one.
      */
     expect(screen.getByRole('button')).toHaveAccessibleName(
-      'New session in APFM Web',
+      'New session in NOVA Web',
     );
   });
 

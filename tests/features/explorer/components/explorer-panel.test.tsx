@@ -79,7 +79,7 @@ beforeEach(() => {
    * first mapped one — so these tests got a tree on the overmind tab, which is
    * exactly the behaviour that was removed: a file tree for a repository no
    * session on screen was working in. `hero-refresh` is the demo fleet's session
-   * on `apfm-web`, which is the project `seedTree` above describes.
+   * on `nova-web`, which is the project `seedTree` above describes.
    *
    * The no-session state has its own test in the degraded-states block below.
    */
@@ -150,13 +150,13 @@ describe('ExplorerPanel — degraded states', () => {
       ...emptySnapshot('/tmp/hive/config.json'),
       projects: [
         {
-          id: 'apfm-web',
-          name: 'apfm-web',
+          id: 'nova-web',
+          name: 'nova-web',
           path: null,
           icon: 'ph-folder',
           origin: 'local',
           status: 'missing',
-          key: 'aw',
+          key: 'nw',
           isRepo: false,
         },
       ],
@@ -214,7 +214,7 @@ describe('ExplorerPanel — the tree', () => {
 
     expect(await screen.findByText('README.md')).toBeInTheDocument();
     expect(screen.getByText('src')).toBeInTheDocument();
-    expect(readDir).toHaveBeenCalledWith('apfm-web', '');
+    expect(readDir).toHaveBeenCalledWith('nova-web', '');
   });
 
   /**
@@ -231,7 +231,7 @@ describe('ExplorerPanel — the tree', () => {
     await userEvent.click(row('src'));
 
     expect(await screen.findByText('app.ts')).toBeInTheDocument();
-    expect(readDir).toHaveBeenCalledWith('apfm-web', 'src');
+    expect(readDir).toHaveBeenCalledWith('nova-web', 'src');
   });
 
   it('collapses again, and collapse-all closes everything', async () => {
@@ -259,7 +259,7 @@ describe('ExplorerPanel — the tree', () => {
     expect(useEditorStore.getState().openFiles.map((f) => f.relPath)).toEqual([
       'README.md',
     ]);
-    expect(useEditorStore.getState().activeKey).toBe('apfm-web:README.md');
+    expect(useEditorStore.getState().activeKey).toBe('nova-web:README.md');
   });
 
   /**
@@ -274,7 +274,7 @@ describe('ExplorerPanel — the tree', () => {
 
     await userEvent.click(row('README.md'));
 
-    expect(useEditorStore.getState().activeKey).toBe('apfm-web:README.md');
+    expect(useEditorStore.getState().activeKey).toBe('nova-web:README.md');
     expect(useUiStore.getState()).toMatchObject({ settings: false, picker: false });
   });
 

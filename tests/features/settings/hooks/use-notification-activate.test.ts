@@ -41,9 +41,9 @@ describe('useNotificationActivate', () => {
     (window as { hive?: unknown }).hive = bridge;
     renderHook(() => useNotificationActivate());
 
-    listeners[0]?.({ entityId: 'apfm-web' });
+    listeners[0]?.({ entityId: 'nova-web' });
 
-    expect(useUiStore.getState().activeTab).toBe('apfm-web');
+    expect(useUiStore.getState().activeTab).toBe('nova-web');
   });
 
   it('unsubscribes on unmount', () => {

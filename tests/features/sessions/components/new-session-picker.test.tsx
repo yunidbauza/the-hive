@@ -92,13 +92,13 @@ describe('NewSessionPicker', () => {
 
     /**
      * A pill's accessible name is the bare project name; a search row's also
-     * carries its count ("apfm-web 3 active"). Five fixtures, four pinned —
+     * carries its count ("nova-web 3 active"). Five fixtures, four pinned —
      * `infra-terraform` is reachable through search only.
      *
      * The demo config sets every `name` to its `id`, so these two read the
      * same here. The tile that tells them apart is below.
      */
-    for (const id of ['apfm-web', 'referral-api', 'advisor-portal', 'design-system']) {
+    for (const id of ['nova-web', 'referral-api', 'advisor-portal', 'design-system']) {
       expect(screen.getByRole('button', { name: id })).toBeInTheDocument();
     }
     expect(
@@ -239,10 +239,10 @@ describe('NewSessionPicker', () => {
     it('shows each project’s active session count', () => {
       render(<NewSessionPicker />);
 
-      // apfm-web: hero-refresh, lead-form, e2e-quote. `tz-fix` is done and does
+      // nova-web: hero-refresh, lead-form, e2e-quote. `tz-fix` is done and does
       // not count, which is what makes this a live number rather than a total.
       expect(
-        screen.getByRole('button', { name: 'ap apfm-web 3 active' }),
+        screen.getByRole('button', { name: 'no nova-web 3 active' }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole('button', { name: 'ad advisor-portal 1 active' }),
@@ -550,7 +550,7 @@ describe('NewSessionPicker · unmapped projects', () => {
    * "Unmapped" now means *declared but unresolvable*, not *absent from the
    * config*.
    *
-   * This used to declare only `referral-api` and assert that `apfm-web` was
+   * This used to declare only `referral-api` and assert that `nova-web` was
    * still listed — pinned, disabled, explained. It could be listed because the
    * seeded projects were merged into `useProjects()` whatever the config said.
    * With the config as the only source, a project the picker lists is by
@@ -561,13 +561,13 @@ describe('NewSessionPicker · unmapped projects', () => {
   it('disables a pinned project whose path is missing, and says why', () => {
     setProjectConfigForTest(
       snapshot([
-        { id: 'apfm-web', status: 'missing' },
+        { id: 'nova-web', status: 'missing' },
         { id: 'referral-api', status: 'ok' },
       ]),
     );
     render(<NewSessionPicker />);
 
-    const pinned = screen.getByRole('button', { name: 'apfm-web' });
+    const pinned = screen.getByRole('button', { name: 'nova-web' });
 
     expect(pinned).toBeDisabled();
     expect(pinned).toHaveAttribute(
@@ -585,18 +585,18 @@ describe('NewSessionPicker · unmapped projects', () => {
     setProjectConfigForTest(snapshot([{ id: 'referral-api', status: 'ok' }]));
     render(<NewSessionPicker />);
 
-    expect(screen.queryByRole('button', { name: 'apfm-web' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'nova-web' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'referral-api' })).toBeEnabled();
   });
 
   it('disables a search row and replaces its count with the refusal', async () => {
     const user = userEvent.setup();
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'missing' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'missing' }]));
     render(<NewSessionPicker />);
 
-    await user.type(search(), 'apfm');
+    await user.type(search(), 'nova');
 
-    const row = screen.getByRole('button', { name: 'ap apfm-web unmapped' });
+    const row = screen.getByRole('button', { name: 'no nova-web unmapped' });
     expect(row).toBeDisabled();
     expect(row).toHaveAttribute('title', expect.stringContaining('missing'));
   });
@@ -607,7 +607,7 @@ describe('NewSessionPicker · unmapped projects', () => {
     render(<NewSessionPicker />);
     const before = Object.keys(useHiveStore.getState().entities).length;
 
-    await user.type(search(), 'apfm');
+    await user.type(search(), 'nova');
     await user.keyboard('{Enter}');
 
     // The buttons are disabled, but Enter in the search box does not go
@@ -618,11 +618,11 @@ describe('NewSessionPicker · unmapped projects', () => {
 
   it('still spawns into a project that resolves', async () => {
     const user = userEvent.setup();
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
     render(<NewSessionPicker />);
     const before = Object.keys(useHiveStore.getState().entities).length;
 
-    await user.click(screen.getByRole('button', { name: 'apfm-web' }));
+    await user.click(screen.getByRole('button', { name: 'nova-web' }));
 
     expect(Object.keys(useHiveStore.getState().entities)).toHaveLength(before + 1);
   });
@@ -675,7 +675,7 @@ describe('NewSessionPicker · unmapped projects', () => {
   });
 
   it('shows no first-run notice once the file exists', () => {
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
     render(<NewSessionPicker />);
 
     expect(screen.queryByText(/no projects yet/)).not.toBeInTheDocument();
@@ -754,13 +754,13 @@ describe('NewSessionPicker · opened for a ticket', () => {
     openForTicket('HIVE-73');
     render(<NewSessionPicker />);
 
-    await user.click(rowsFor(/^apfm-web/)[0]);
+    await user.click(rowsFor(/^nova-web/)[0]);
 
     const linked = Object.values(useHiveStore.getState().entities).filter(
       (entity) => entity.kind === 'session' && entity.ticket === 'HIVE-73',
     );
     expect(linked).toHaveLength(1);
-    expect(linked[0]?.kind === 'session' && linked[0].project).toBe('apfm-web');
+    expect(linked[0]?.kind === 'session' && linked[0].project).toBe('nova-web');
   });
 
   it('carries the chosen model and effort onto the linked session', async () => {
@@ -770,7 +770,7 @@ describe('NewSessionPicker · opened for a ticket', () => {
     useUiStore.getState().setNewEffort('low');
     render(<NewSessionPicker />);
 
-    await user.click(rowsFor(/^apfm-web/)[0]);
+    await user.click(rowsFor(/^nova-web/)[0]);
 
     const linked = Object.values(useHiveStore.getState().entities).find(
       (entity) => entity.kind === 'session' && entity.ticket === 'HIVE-73',
@@ -797,7 +797,7 @@ describe('NewSessionPicker · opened for a ticket', () => {
     const before = linkedCount();
     render(<NewSessionPicker />);
 
-    await user.click(rowsFor(/^apfm-web/)[0]);
+    await user.click(rowsFor(/^nova-web/)[0]);
 
     expect(linkedCount()).toBe(before);
   });

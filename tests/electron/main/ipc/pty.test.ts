@@ -40,7 +40,7 @@ const SPAWN = {
   sessionId: 'a',
   shell: '/bin/zsh',
   args: [] as string[],
-  cwd: '/repos/apfm-web',
+  cwd: '/repos/nova-web',
   env: {},
   cols: 80,
   rows: 24,

@@ -99,9 +99,9 @@ describe('clearSession', () => {
      */
     const taken = new Set(Object.keys(state().entities));
 
-    const first = state().spawnSession('apfm-web', 'one');
+    const first = state().spawnSession('nova-web', 'one');
     const cleared = state().clearSession(first!)!;
-    const second = state().spawnSession('apfm-web', 'two');
+    const second = state().spawnSession('nova-web', 'two');
 
     for (const id of [first, cleared, second]) {
       expect(id).not.toBeNull();
@@ -131,7 +131,7 @@ describe('clearSession', () => {
       order: [...current.order, 'sess-01'],
     }));
 
-    const spawned = state().spawnSession('apfm-web', 'after the collision')!;
+    const spawned = state().spawnSession('nova-web', 'after the collision')!;
 
     expect(spawned).not.toBe('sess-01');
     // The planted row survived rather than being overwritten by its namesake.

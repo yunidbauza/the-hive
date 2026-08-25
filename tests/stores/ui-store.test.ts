@@ -99,17 +99,17 @@ describe('ui-store — view state', () => {
   it('toggleProject collapses and expands', () => {
     const { toggleProject } = useUiStore.getState();
 
-    toggleProject('apfm-web');
-    expect(useUiStore.getState().collapsed['apfm-web']).toBe(true);
+    toggleProject('nova-web');
+    expect(useUiStore.getState().collapsed['nova-web']).toBe(true);
 
-    toggleProject('apfm-web');
-    expect(useUiStore.getState().collapsed['apfm-web']).toBe(false);
+    toggleProject('nova-web');
+    expect(useUiStore.getState().collapsed['nova-web']).toBe(false);
   });
 
   it('tracks each project independently', () => {
-    useUiStore.getState().toggleProject('apfm-web');
+    useUiStore.getState().toggleProject('nova-web');
 
-    expect(useUiStore.getState().collapsed['apfm-web']).toBe(true);
+    expect(useUiStore.getState().collapsed['nova-web']).toBe(true);
     expect(useUiStore.getState().collapsed['referral-api']).toBeUndefined();
   });
 
@@ -125,9 +125,9 @@ describe('ui-store — view state', () => {
     const { openPicker, setPickerQuery, closePicker } = useUiStore.getState();
 
     openPicker();
-    setPickerQuery('apfm');
+    setPickerQuery('nova');
     closePicker();
-    expect(useUiStore.getState().pickerQuery).toBe('apfm');
+    expect(useUiStore.getState().pickerQuery).toBe('nova');
 
     openPicker();
     expect(useUiStore.getState().pickerQuery).toBe('');
@@ -159,7 +159,7 @@ describe('ui-store — view state', () => {
     state.openTab('webhooks');
     state.setLeftTab('agents');
     state.setSelIdx(7);
-    state.toggleProject('apfm-web');
+    state.toggleProject('nova-web');
 
     useUiStore.getState().reset();
 
@@ -240,11 +240,11 @@ describe('settings overlay (story 101)', () => {
  */
 describe('the explorer tree', () => {
   it('toggles a directory open and closed', () => {
-    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
-    expect(useUiStore.getState().explorerExpanded['apfm-web:src']).toBe(true);
+    useUiStore.getState().toggleExplorerDir('nova-web', 'src');
+    expect(useUiStore.getState().explorerExpanded['nova-web:src']).toBe(true);
 
-    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
-    expect(useUiStore.getState().explorerExpanded['apfm-web:src']).toBe(false);
+    useUiStore.getState().toggleExplorerDir('nova-web', 'src');
+    expect(useUiStore.getState().explorerExpanded['nova-web:src']).toBe(false);
   });
 
   /**
@@ -252,7 +252,7 @@ describe('the explorer tree', () => {
    * it was left rather than inheriting whatever the last one had expanded.
    */
   it('keeps one project’s expansion separate from another’s', () => {
-    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    useUiStore.getState().toggleExplorerDir('nova-web', 'src');
 
     expect(useUiStore.getState().explorerExpanded['referral-api:src']).toBeUndefined();
   });
@@ -263,7 +263,7 @@ describe('the explorer tree', () => {
    * session in it.
    */
   it('collapses every project at once', () => {
-    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    useUiStore.getState().toggleExplorerDir('nova-web', 'src');
     useUiStore.getState().toggleExplorerDir('referral-api', 'lib');
 
     useUiStore.getState().collapseExplorer();
@@ -280,7 +280,7 @@ describe('the explorer tree', () => {
    * wrong repository is worse than showing none.
    */
   it('starts with nothing expanded', () => {
-    useUiStore.getState().toggleExplorerDir('apfm-web', 'src');
+    useUiStore.getState().toggleExplorerDir('nova-web', 'src');
 
     useUiStore.getState().reset();
 

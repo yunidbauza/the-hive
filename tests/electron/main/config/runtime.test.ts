@@ -45,13 +45,13 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
 });
 
 const project = (over: Partial<ProjectConfig> = {}): ProjectConfig => ({
-  id: 'apfm-web',
-  name: 'apfm-web',
-  path: '/tmp/apfm-web',
+  id: 'nova-web',
+  name: 'nova-web',
+  path: '/tmp/nova-web',
   icon: 'ph-folder',
   origin: 'local',
   status: 'ok',
-  key: 'aw',
+  key: 'nw',
   isRepo: true,
   ...over,
 });
@@ -238,7 +238,7 @@ describe('diagnoseCommand — searching PATH', () => {
 
     const result = diagnoseCommand(
       effectiveRuntime(snapshot(), project({ env: { PATH: bin } })),
-      'apfm-web',
+      'nova-web',
       { PATH: '/nowhere' },
     );
 
@@ -246,7 +246,7 @@ describe('diagnoseCommand — searching PATH', () => {
     // the diagnostic describes a session nobody is running.
     expect(result.path).toBe(bin);
     expect(result.resolved).toBe(claude);
-    expect(result.projectId).toBe('apfm-web');
+    expect(result.projectId).toBe('nova-web');
   });
 
   it('reports an empty PATH rather than throwing', () => {

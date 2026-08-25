@@ -26,7 +26,7 @@ describe('buildPrQuery', () => {
    * repository.
    */
   it('asks GitHub for the viewer’s own pull requests', () => {
-    const { open, merged } = buildPrVariables(['repo:acme/apfm-web']);
+    const { open, merged } = buildPrVariables(['repo:acme/nova-web']);
 
     expect(open).toContain('author:@me');
     expect(merged).toContain('author:@me');
@@ -73,7 +73,7 @@ describe('buildPrQuery', () => {
    */
   it('pages open and merged separately', () => {
     const query = buildPrQuery();
-    const { open, merged } = buildPrVariables(['repo:acme/apfm-web']);
+    const { open, merged } = buildPrVariables(['repo:acme/nova-web']);
 
     expect(query).toContain('open: search(query: $open, type: ISSUE, first: 100)');
     expect(query).toContain(
@@ -85,7 +85,7 @@ describe('buildPrQuery', () => {
 
   /** Search defaults to relevance, which is not a thing a PR panel means. */
   it('orders both searches by when they were last updated', () => {
-    const { open, merged } = buildPrVariables(['repo:acme/apfm-web']);
+    const { open, merged } = buildPrVariables(['repo:acme/nova-web']);
 
     expect(open).toContain('sort:updated-desc');
     expect(merged).toContain('sort:updated-desc');
@@ -97,7 +97,7 @@ describe('buildPrQuery', () => {
    * question — "was this touched recently" — and drop a PR for being quiet.
    */
   it('puts no date qualifier in either expression', () => {
-    const { open, merged } = buildPrVariables(['repo:acme/apfm-web']);
+    const { open, merged } = buildPrVariables(['repo:acme/nova-web']);
 
     expect(open).not.toContain('updated:');
     expect(merged).not.toContain('updated:');
@@ -110,10 +110,10 @@ describe('repoQualifiers', () => {
   it('scopes the search to each configured repository', () => {
     expect(
       repoQualifiers([
-        { owner: 'acme', name: 'apfm-web' },
+        { owner: 'acme', name: 'nova-web' },
         { owner: 'other', name: 'referral-api' },
       ]),
-    ).toEqual(['repo:acme/apfm-web', 'repo:other/referral-api']);
+    ).toEqual(['repo:acme/nova-web', 'repo:other/referral-api']);
   });
 
   /**
@@ -131,7 +131,7 @@ describe('repoQualifiers', () => {
     ['a smuggled author', { owner: 'acme', name: 'web author:someone' }],
     ['a slash', { owner: 'acme', name: 'web/extra' }],
     ['a quote', { owner: 'acme', name: 'web"' }],
-    ['a hostile owner', { owner: 'acme is:public', name: 'apfm-web' }],
+    ['a hostile owner', { owner: 'acme is:public', name: 'nova-web' }],
     ['an empty name', { owner: 'acme', name: '' }],
   ])('drops a repository with %s', (_label, repo: RepoRef) => {
     expect(repoQualifiers([repo])).toEqual([]);
@@ -158,14 +158,14 @@ describe('repoQualifiers', () => {
 describe('buildPrVariables', () => {
   it('binds both expressions, scoped to every repository', () => {
     const variables = buildPrVariables([
-      'repo:acme/apfm-web',
+      'repo:acme/nova-web',
       'repo:other/referral-api',
     ]);
 
     expect(variables).toEqual({
-      open: 'is:pr author:@me is:open repo:acme/apfm-web repo:other/referral-api sort:updated-desc',
+      open: 'is:pr author:@me is:open repo:acme/nova-web repo:other/referral-api sort:updated-desc',
       merged:
-        'is:pr author:@me is:merged repo:acme/apfm-web repo:other/referral-api sort:updated-desc',
+        'is:pr author:@me is:merged repo:acme/nova-web repo:other/referral-api sort:updated-desc',
     });
   });
 

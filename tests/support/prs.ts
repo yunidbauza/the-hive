@@ -13,8 +13,8 @@ export function prRecord(overrides: Partial<PrRecord> = {}): PrRecord {
   return {
     number: 482,
     title: 'Hero: semantic token refactor',
-    url: 'https://github.com/acme/apfm-web/pull/482',
-    repo: 'apfm-web',
+    url: 'https://github.com/acme/nova-web/pull/482',
+    repo: 'nova-web',
     owner: 'acme',
     branch: 'feat/hero-refresh',
     state: 'open',

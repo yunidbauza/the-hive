@@ -17,10 +17,10 @@ import { seedDemoFleet } from '@tests/support/demo-fleet';
  */
 const pr = (over: Partial<TicketPr> = {}): TicketPr => ({
   n: 482,
-  repo: 'apfm-web',
+  repo: 'nova-web',
   state: 'open',
   findings: 0,
-  url: 'https://github.com/demo/apfm-web/pull/482',
+  url: 'https://github.com/demo/nova-web/pull/482',
   session: 'hero-refresh',
   ...over,
 });
@@ -41,7 +41,7 @@ describe('TicketPrRow', () => {
     render(<TicketPrRow pr={pr()} />);
 
     expect(screen.getByText('#482')).toBeInTheDocument();
-    expect(screen.getByText('apfm-web')).toBeInTheDocument();
+    expect(screen.getByText('nova-web')).toBeInTheDocument();
     expect(screen.getByText('open')).toBeInTheDocument();
   });
 
@@ -88,7 +88,7 @@ describe('TicketPrRow', () => {
 
     expect(link).toHaveAttribute(
       'href',
-      'https://github.com/demo/apfm-web/pull/482',
+      'https://github.com/demo/nova-web/pull/482',
     );
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });

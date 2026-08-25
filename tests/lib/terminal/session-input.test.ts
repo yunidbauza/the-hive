@@ -51,7 +51,7 @@ afterEach(() => {
 
 /** Bring an entity to `live` the way a mounted surface would. */
 const openSession = (id: string) => {
-  createPtyTransport(id, 'apfm-web').onData(() => {});
+  createPtyTransport(id, 'nova-web').onData(() => {});
 };
 
 const exit = (id: string) => {

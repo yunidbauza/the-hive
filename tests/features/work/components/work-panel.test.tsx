@@ -102,7 +102,7 @@ describe('WorkPanel', () => {
 
     const ticket = within(card('GRAC-3010'));
     expect(ticket.getByText('referral-api')).toBeInTheDocument();
-    expect(ticket.getByText('apfm-web')).toBeInTheDocument();
+    expect(ticket.getByText('nova-web')).toBeInTheDocument();
   });
 
   it('opens a session’s tab from its row', async () => {

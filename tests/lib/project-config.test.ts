@@ -98,7 +98,7 @@ describe('projectAccess with no snapshot', () => {
   it('leaves every project spawnable, which is what keeps the browser demo whole', () => {
     expect(projectConfigSnapshot()).toBeNull();
 
-    expect(projectAccess('apfm-web')).toEqual({
+    expect(projectAccess('nova-web')).toEqual({
       spawnable: true,
       reason: null,
       invalid: false,
@@ -109,9 +109,9 @@ describe('projectAccess with no snapshot', () => {
 
 describe('projectAccess with a snapshot', () => {
   it('allows a mapped, resolvable project', () => {
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
-    expect(projectAccess('apfm-web')).toEqual({
+    expect(projectAccess('nova-web')).toEqual({
       spawnable: true,
       reason: null,
       invalid: false,
@@ -119,7 +119,7 @@ describe('projectAccess with a snapshot', () => {
   });
 
   it('refuses a project the config never mentions, and names the file to edit', () => {
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
     const access = projectAccess('referral-api');
 
@@ -137,9 +137,9 @@ describe('projectAccess with a snapshot', () => {
   ] as const)(
     'refuses a %s entry and carries the reason verbatim',
     (status, expected) => {
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status }]));
 
-      const access = projectAccess('apfm-web');
+      const access = projectAccess('nova-web');
 
       expect(access.spawnable).toBe(false);
       // Amber, not muted: the entry exists and is wrong.
@@ -161,7 +161,7 @@ describe('loadProjectConfig', () => {
   it('stores what the bridge returns and notifies subscribers', async () => {
     const listener = vi.fn();
     subscribeProjectConfig(listener);
-    const expected = snapshot([{ id: 'apfm-web', status: 'ok' }]);
+    const expected = snapshot([{ id: 'nova-web', status: 'ok' }]);
     withBridge(() => Promise.resolve(expected));
 
     await loadProjectConfig();
@@ -171,23 +171,23 @@ describe('loadProjectConfig', () => {
   });
 
   it('re-reads on reload, which is what makes an edit visible without a restart', async () => {
-    const first = snapshot([{ id: 'apfm-web', status: 'missing' }]);
-    const second = snapshot([{ id: 'apfm-web', status: 'ok' }]);
+    const first = snapshot([{ id: 'nova-web', status: 'missing' }]);
+    const second = snapshot([{ id: 'nova-web', status: 'ok' }]);
     withBridge(
       () => Promise.resolve(first),
       () => Promise.resolve(second),
     );
 
     await loadProjectConfig();
-    expect(projectAccess('apfm-web').spawnable).toBe(false);
+    expect(projectAccess('nova-web').spawnable).toBe(false);
 
     await reloadProjectConfig();
-    expect(projectAccess('apfm-web').spawnable).toBe(true);
+    expect(projectAccess('nova-web').spawnable).toBe(true);
   });
 
   it('stays permissive when the channel itself fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'missing' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'missing' }]));
     withBridge(() => Promise.reject(new Error('channel gone')));
 
     await reloadProjectConfig();
@@ -195,7 +195,7 @@ describe('loadProjectConfig', () => {
     // A broken IPC hop is not something the user can fix by editing their
     // config, so it must not lock the app.
     expect(projectConfigSnapshot()).toBeNull();
-    expect(projectAccess('apfm-web').spawnable).toBe(true);
+    expect(projectAccess('nova-web').spawnable).toBe(true);
     expect(console.error).toHaveBeenCalled();
   });
 

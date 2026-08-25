@@ -48,7 +48,7 @@ describe('TicketNewSessionLink', () => {
   });
 
   it('clears the search query so a reopen shows no stale filter', async () => {
-    useUiStore.getState().setPickerQuery('apfm');
+    useUiStore.getState().setPickerQuery('nova');
 
     render(<TicketNewSessionLink ticketKey="HIVE-73" />);
     await userEvent.click(screen.getByRole('button'));

@@ -30,7 +30,7 @@ describe('TicketSessionRow', () => {
     render(<TicketSessionRow id="hero-refresh" />);
 
     expect(screen.getByText('hero-refresh')).toBeInTheDocument();
-    expect(screen.getByText('apfm-web')).toBeInTheDocument();
+    expect(screen.getByText('nova-web')).toBeInTheDocument();
   });
 
   /**

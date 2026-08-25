@@ -53,7 +53,7 @@ test('never renders a seeded PR', async ({ page }) => {
   }
 
   await expect(page.getByText('Hero: semantic token refactor')).toHaveCount(0);
-  await expect(page.getByText('apfm-web')).toHaveCount(0);
+  await expect(page.getByText('nova-web')).toHaveCount(0);
 });
 
 /** The skeleton is for a read in flight, and a browser never has one. */

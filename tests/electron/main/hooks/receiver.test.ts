@@ -752,10 +752,10 @@ describe('hook receiver', () => {
       await post({
         hook_event_name: 'Notification',
         notification_type: 'idle_prompt',
-        cwd: '/repos/apfm-web',
+        cwd: '/repos/nova-web',
       });
 
-      expect(events[0].cwd).toBe('/repos/apfm-web');
+      expect(events[0].cwd).toBe('/repos/nova-web');
     });
   });
 

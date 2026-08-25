@@ -31,7 +31,7 @@ describe('SessionRow', () => {
      * an honest one, and it is what every session shows for the moment between
      * spawning and main's first `git rev-parse` coming back.
      */
-    const id = useHiveStore.getState().spawnSession('apfm-web');
+    const id = useHiveStore.getState().spawnSession('nova-web');
     render(<SessionRow id={id} />);
 
     expect(screen.getByText('—')).toBeInTheDocument();
@@ -39,7 +39,7 @@ describe('SessionRow', () => {
   });
 
   it('renders the branch once main has observed one', () => {
-    const id = useHiveStore.getState().spawnSession('apfm-web');
+    const id = useHiveStore.getState().spawnSession('nova-web');
     act(() =>
       useHiveStore
         .getState()

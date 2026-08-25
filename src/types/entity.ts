@@ -127,7 +127,7 @@ export interface Session {
    * rather than spawn a second process in the same directory.
    */
   terminalId?: string;
-  project: string; // 'apfm-web'
+  project: string; // 'nova-web'
   /**
    * The Jira issue this session was started for, if it was started from one.
    *

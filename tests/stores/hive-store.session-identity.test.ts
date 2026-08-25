@@ -16,7 +16,7 @@ import { useHiveStore } from '@stores/hive-store';
 
 /** A session with a project and no ticket — the PROJECTS-tab spawn. */
 function spawn(): string {
-  return useHiveStore.getState().spawnSession('apfm-web');
+  return useHiveStore.getState().spawnSession('nova-web');
 }
 
 function sessionAt(id: string) {
@@ -159,7 +159,7 @@ describe('setSessionTicket', () => {
   it('de-duplicates against a session already named for the ticket', () => {
     const first = useHiveStore
       .getState()
-      .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+      .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
     const second = spawn();
 
     useHiveStore.getState().setSessionTicket(second, 'HIVE-73');
@@ -177,7 +177,7 @@ describe('setSessionTicket', () => {
      */
     const id = useHiveStore
       .getState()
-      .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+      .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
 
     useHiveStore.getState().setSessionTicket(id, 'HIVE-99');
 

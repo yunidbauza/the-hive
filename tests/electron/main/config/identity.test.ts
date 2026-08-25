@@ -20,7 +20,7 @@ describe('deriveProjectId', () => {
   it('kebab-cases the directory name', () => {
     expect(deriveProjectId('My Project', none)).toBe('my-project');
     expect(deriveProjectId('The_Hive', none)).toBe('the-hive');
-    expect(deriveProjectId('apfm.web', none)).toBe('apfm-web');
+    expect(deriveProjectId('nova.web', none)).toBe('nova-web');
   });
 
   it('strips characters outside [a-z0-9-] and collapses runs', () => {
@@ -79,7 +79,7 @@ describe('deriveProjectKey', () => {
   it('takes the initials of a multi-word name', () => {
     expect(deriveProjectKey('incorpx-server', none)).toBe('is');
     expect(deriveProjectKey('ai-sdk', none)).toBe('as');
-    expect(deriveProjectKey('APFM Web', none)).toBe('aw');
+    expect(deriveProjectKey('NOVA Web', none)).toBe('nw');
   });
 
   it('takes a short single word whole', () => {
@@ -117,7 +117,7 @@ describe('deriveProjectKey', () => {
     // `[a-z]{2,4}` has no room for a digit, so mapping one in is impossible;
     // splitting on it keeps the initials meaningful.
     expect(deriveProjectKey('incorpx2-server', none)).toBe('is');
-    expect(deriveProjectKey('APFM', none)).toBe('apfm');
+    expect(deriveProjectKey('NOVA', none)).toBe('nova');
   });
 
   it('always produces something the pattern accepts', () => {

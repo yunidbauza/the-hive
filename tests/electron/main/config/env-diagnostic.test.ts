@@ -148,12 +148,12 @@ describe('diagnoseEnv', () => {
 
     const result = await diagnoseEnv(
       runtime({ shell, env: { AWS_PROFILE: 'hive' } }),
-      'apfm-web',
+      'nova-web',
       cwd(),
       baseEnv,
     );
 
-    expect(result.projectId).toBe('apfm-web');
+    expect(result.projectId).toBe('nova-web');
     expect(result.vars[0]).toMatchObject({ actual: 'incorp', overridden: true });
   });
 
@@ -255,7 +255,7 @@ describe('diagnoseEnv — matches what a real session gets (story 108, fix round
     try {
       const result = await diagnoseEnv(
         runtime({ shell, env: { MARKER: 'no' } }),
-        'apfm-web',
+        'nova-web',
         projectDir,
         baseEnv,
       );

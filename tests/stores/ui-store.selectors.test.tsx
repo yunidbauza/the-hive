@@ -87,7 +87,7 @@ describe('ui-store selectors', () => {
 
   it('useProjectCollapsed defaults to expanded and follows the toggle', () => {
     const { result } = renderHook(() => ({
-      collapsed: useProjectCollapsed('apfm-web'),
+      collapsed: useProjectCollapsed('nova-web'),
       toggleProject: useToggleProject(),
     }));
 
@@ -95,7 +95,7 @@ describe('ui-store selectors', () => {
     expect(result.current.collapsed).toBe(false);
 
     act(() => {
-      result.current.toggleProject('apfm-web');
+      result.current.toggleProject('nova-web');
     });
 
     expect(result.current.collapsed).toBe(true);
@@ -117,14 +117,14 @@ describe('ui-store selectors', () => {
 
     act(() => {
       result.current.actions.openPicker();
-      result.current.actions.setPickerQuery('apfm');
+      result.current.actions.setPickerQuery('nova');
       result.current.actions.setNewModel('sonnet');
       result.current.actions.setNewEffort('max');
     });
 
     expect(result.current.state).toEqual({
       picker: true,
-      pickerQuery: 'apfm',
+      pickerQuery: 'nova',
       // The header's entry point — no ticket, and `openPicker` assigns it on
       // every open rather than leaving whatever was there before (HIVE-73).
       pickerTicket: null,

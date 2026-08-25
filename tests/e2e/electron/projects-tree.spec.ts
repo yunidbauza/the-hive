@@ -38,7 +38,7 @@ async function launch(outputPath: (name: string) => string) {
 
 test('the tree starts a session, and the link stays below the last one', async ({}, testInfo) => {
   writeProjectConfig(testInfo.outputPath('hive-config.json'), {
-    id: 'apfm-web',
+    id: 'nova-web',
     path: REAL_DIRECTORY,
   });
 
@@ -47,11 +47,11 @@ test('the tree starts a session, and the link stays below the last one', async (
   try {
     const tree = page.locator('[data-panel="projects"]');
     const rows = tree.locator('> div > *');
-    const link = page.getByRole('button', { name: 'New session in apfm-web' });
+    const link = page.getByRole('button', { name: 'New session in nova-web' });
 
     // Nothing is running, so the link sits directly under the folder row.
     await expect(rows).toHaveCount(2);
-    await expect(rows.last()).toHaveAccessibleName('New session in apfm-web');
+    await expect(rows.last()).toHaveAccessibleName('New session in nova-web');
 
     /**
      * The regression this whole arrangement is guarding.
@@ -89,7 +89,7 @@ test('the tree starts a session, and the link stays below the last one', async (
 
     // And the tree grew a session row *above* the link, which stays last.
     await expect(rows).toHaveCount(3);
-    await expect(rows.last()).toHaveAccessibleName('New session in apfm-web');
+    await expect(rows.last()).toHaveAccessibleName('New session in nova-web');
 
     await rail.screenshot({
       path: 'test-results/evidence/projects-new-session-running.png',
@@ -115,8 +115,8 @@ test('the tree starts a session, and the link stays below the last one', async (
  */
 test('the tree labels a project with its name, not its id', async ({}, testInfo) => {
   writeProjectConfig(testInfo.outputPath('hive-config.json'), {
-    id: 'apfm-web',
-    name: 'APFM Web',
+    id: 'nova-web',
+    name: 'NOVA Web',
     path: REAL_DIRECTORY,
   });
 
@@ -125,12 +125,12 @@ test('the tree labels a project with its name, not its id', async ({}, testInfo)
   try {
     const tree = page.locator('[data-panel="projects"]');
 
-    await expect(tree.getByText('APFM Web')).toBeVisible();
+    await expect(tree.getByText('NOVA Web')).toBeVisible();
     // Both halves: a row printing name *and* id would pass the first alone.
-    await expect(tree.getByText('apfm-web', { exact: true })).toHaveCount(0);
+    await expect(tree.getByText('nova-web', { exact: true })).toHaveCount(0);
     // The start link speaks the same name the row shows.
     await expect(
-      tree.getByRole('button', { name: 'New session in APFM Web' }),
+      tree.getByRole('button', { name: 'New session in NOVA Web' }),
     ).toBeVisible();
   } finally {
     await app.close();
@@ -145,7 +145,7 @@ test('a project whose path does not resolve offers a refusal, not a start', asyn
       shell: '/bin/sh',
       claudeCommand: 'true; false',
       projects: [
-        { id: 'apfm-web', name: 'apfm-web', path: REAL_DIRECTORY, icon: 'ph-cube' },
+        { id: 'nova-web', name: 'nova-web', path: REAL_DIRECTORY, icon: 'ph-cube' },
         {
           id: 'referral-api',
           name: 'referral-api',
@@ -169,7 +169,7 @@ test('a project whose path does not resolve offers a refusal, not a start', asyn
     await expect(refused).toHaveAttribute('title', /nowhere\/that\/exists|missing/);
 
     await expect(
-      page.getByRole('button', { name: 'New session in apfm-web' }),
+      page.getByRole('button', { name: 'New session in nova-web' }),
     ).toBeEnabled();
   } finally {
     await app.close();

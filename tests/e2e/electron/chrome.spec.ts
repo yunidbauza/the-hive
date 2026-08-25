@@ -11,7 +11,7 @@ import {
 } from './fixtures/hive-app';
 
 /** A project id, and a directory that certainly exists on any machine here. */
-const PROJECT = 'apfm-web';
+const PROJECT = 'nova-web';
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
 /**

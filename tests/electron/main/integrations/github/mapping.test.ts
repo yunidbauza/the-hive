@@ -24,7 +24,7 @@ const NOW = Date.parse('2026-08-09T12:00:00Z');
 const node = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   number: 482,
   title: 'Hero: semantic token refactor',
-  url: 'https://github.com/acme/apfm-web/pull/482',
+  url: 'https://github.com/acme/nova-web/pull/482',
   isDraft: false,
   state: 'OPEN',
   reviewDecision: null,
@@ -32,7 +32,7 @@ const node = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   updatedAt: '2026-08-09T11:00:00Z',
   mergedAt: null,
   author: { login: 'octocat' },
-  repository: { name: 'apfm-web', owner: { login: 'acme' } },
+  repository: { name: 'nova-web', owner: { login: 'acme' } },
   reviewThreads: { nodes: [] },
   commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
   ...over,
@@ -161,8 +161,8 @@ describe('toPrRecord', () => {
     expect(toPrRecord(node())).toEqual({
       number: 482,
       title: 'Hero: semantic token refactor',
-      url: 'https://github.com/acme/apfm-web/pull/482',
-      repo: 'apfm-web',
+      url: 'https://github.com/acme/nova-web/pull/482',
+      repo: 'nova-web',
       owner: 'acme',
       branch: 'feat/hero-refresh',
       state: 'open',
@@ -200,7 +200,7 @@ describe('toPrRecord', () => {
     ['no repository', { repository: undefined }],
     ['a null repository', { repository: null }],
     ['a repository with no name', { repository: { owner: { login: 'acme' } } }],
-    ['a repository with no owner', { repository: { name: 'apfm-web' } }],
+    ['a repository with no owner', { repository: { name: 'nova-web' } }],
   ])('answers null for a node with %s', (_label, over) => {
     expect(toPrRecord(node(over))).toBeNull();
   });
@@ -271,7 +271,7 @@ describe('collectPrs', () => {
 
     expect(prs.map((pr) => [pr.number, pr.repo])).toEqual([
       [2, 'referral-api'],
-      [1, 'apfm-web'],
+      [1, 'nova-web'],
     ]);
   });
 

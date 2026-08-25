@@ -41,13 +41,13 @@ function withGh(): string {
 }
 
 const project = (over: Partial<ProjectConfig> = {}): ProjectConfig => ({
-  id: 'apfm-web',
-  name: 'apfm-web',
-  path: '/repos/apfm-web',
+  id: 'nova-web',
+  name: 'nova-web',
+  path: '/repos/nova-web',
   icon: 'ph-cube',
   origin: 'local',
   status: 'ok',
-  key: 'aw',
+  key: 'nw',
   isRepo: true,
   ...over,
 });
@@ -65,7 +65,7 @@ const SWEEP = JSON.stringify({
         {
           number: 482,
           title: 'Hero: semantic token refactor',
-          url: 'https://github.com/acme/apfm-web/pull/482',
+          url: 'https://github.com/acme/nova-web/pull/482',
           isDraft: false,
           state: 'OPEN',
           reviewDecision: 'APPROVED',
@@ -73,7 +73,7 @@ const SWEEP = JSON.stringify({
           updatedAt: '2026-08-09T11:00:00Z',
           mergedAt: null,
           author: { login: 'octocat' },
-          repository: { name: 'apfm-web', owner: { login: 'acme' } },
+          repository: { name: 'nova-web', owner: { login: 'acme' } },
           reviewThreads: { nodes: [{ isResolved: false }] },
           commits: {
             nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }],
@@ -90,7 +90,7 @@ const runner = (): RunAsync => (_file, args) => {
   if (args[0] === 'repo') {
     return Promise.resolve({
       code: 0,
-      stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+      stdout: JSON.stringify({ nameWithOwner: 'acme/nova-web' }),
       stderr: '',
       timedOut: false,
     });
@@ -197,10 +197,10 @@ describe('createGithub', () => {
   it('sweeps what resolved even when another project failed', async () => {
     const mixed: RunAsync = (_file, args, options) => {
       if (args[0] === 'repo') {
-        return options?.cwd === '/repos/apfm-web'
+        return options?.cwd === '/repos/nova-web'
           ? Promise.resolve({
               code: 0,
-              stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+              stdout: JSON.stringify({ nameWithOwner: 'acme/nova-web' }),
               stderr: '',
               timedOut: false,
             })

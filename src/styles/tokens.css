@@ -80,7 +80,7 @@
    *
    * `--cc-brand` is a *text* colour and flips between themes for legibility on
    * a panel. These are *surfaces*: the hive mark's tile and the primary action
-   * keep the same APFM blue in light and dark, exactly as the concept does
+   * keep the same signature blue in light and dark, exactly as the concept does
    * (`var(--blue-600/700/800)`, which its light theme leaves alone). Reusing
    * `--cc-brand` here would repaint the logo tile pale blue in dark mode.
    */

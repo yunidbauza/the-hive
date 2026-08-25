@@ -9,7 +9,7 @@ import { useAppearanceStore } from '@stores/appearance-store';
 
 const REQUEST = {
   entityId: 'hero-refresh',
-  projectId: 'apfm-web',
+  projectId: 'nova-web',
   cols: 80,
   rows: 24,
 };
@@ -37,7 +37,7 @@ describe('restartSession', () => {
     // The renderer never sees a pty session id — main mints one and maps it.
     expect(restart).toHaveBeenCalledWith({
       sessionId: 'hero-refresh',
-      projectId: 'apfm-web',
+      projectId: 'nova-web',
       cols: 80,
       rows: 24,
     });

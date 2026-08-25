@@ -121,7 +121,7 @@ test('the arrows edit a soft-wrapped command instead of moving the selection', a
 
   // Long enough to wrap at the default width, and deliberately free of any
   // newline — the whole point is that the string looks single-line.
-  const command = `spawn apfm-web ${'rework the onboarding flow and its empty states '.repeat(4)}`;
+  const command = `spawn nova-web ${'rework the onboarding flow and its empty states '.repeat(4)}`;
   await field.fill(command);
 
   // Premise check: it really did wrap. Without this the test passes vacuously.

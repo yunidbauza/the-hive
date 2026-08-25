@@ -42,10 +42,10 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
       'id is stable and referenced by sessions; name is what you see; key is the 2-4 letter alias you type into the console ("spawn <key> <task>"), generated for you if you leave it out. "~" is expanded; the path must be an existing directory.',
     '//example': [
       {
-        id: 'apfm-web',
+        id: 'nova-web',
         key: 'aw',
-        name: 'APFM Web',
-        path: '~/repos/apfm-web',
+        name: 'NOVA Web',
+        path: '~/repos/nova-web',
         icon: 'ph-folder',
         origin: 'local',
       },

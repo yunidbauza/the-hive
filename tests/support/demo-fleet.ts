@@ -106,7 +106,7 @@ function createSessions(): Session[] {
   return [
     session(
       'hero-refresh',
-      'apfm-web',
+      'nova-web',
       'feat/hero-refresh',
       'working',
       'Refactor hero to semantic tokens',
@@ -124,7 +124,7 @@ function createSessions(): Session[] {
     ),
     session(
       'lead-form',
-      'apfm-web',
+      'nova-web',
       'fix/lead-form-validation',
       'waiting',
       'Fix lead form validation',
@@ -243,7 +243,7 @@ function createSessions(): Session[] {
     ),
     session(
       'e2e-quote',
-      'apfm-web',
+      'nova-web',
       'test/e2e-quote-flow',
       'idle',
       'E2E coverage for quote flow',
@@ -379,7 +379,7 @@ export function createDemoFleet(): DemoFleet {
     ],
     agentOrder: ['slack-agent', 'pr-reviewer', 'standup-agent'],
     projects: [
-      { id: 'apfm-web', icon: 'ph-globe-hemisphere-west' },
+      { id: 'nova-web', icon: 'ph-globe-hemisphere-west' },
       { id: 'referral-api', icon: 'ph-cube' },
       { id: 'advisor-portal', icon: 'ph-users-three' },
       { id: 'design-system', icon: 'ph-swatches' },
@@ -446,8 +446,8 @@ export function createDemoFleet(): DemoFleet {
       {
         number: 482,
         title: 'Hero: semantic token refactor',
-        url: 'https://github.com/demo/apfm-web/pull/482',
-        repo: 'apfm-web',
+        url: 'https://github.com/demo/nova-web/pull/482',
+        repo: 'nova-web',
         owner: 'demo',
         branch: 'feat/hero-refresh',
         state: 'open',

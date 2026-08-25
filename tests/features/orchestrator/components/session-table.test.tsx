@@ -105,7 +105,7 @@ describe('SessionTable', () => {
     // Two cells, not one joined string: a `PROJECT · BRANCH` header can never
     // line up with the values under it, because the label sits where the phrase
     // puts it and each branch starts where its project name ends.
-    expect(within(row).getByText('apfm-web')).toBeInTheDocument();
+    expect(within(row).getByText('nova-web')).toBeInTheDocument();
     expect(within(row).getByText('feat/hero-refresh')).toBeInTheDocument();
     /*
       Resolved from the live PR list by branch, not read off the session
@@ -131,7 +131,7 @@ describe('SessionTable', () => {
 
     expect(link).toHaveAttribute(
       'href',
-      'https://github.com/demo/apfm-web/pull/482',
+      'https://github.com/demo/nova-web/pull/482',
     );
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveClass('underline');
@@ -166,7 +166,7 @@ describe('SessionTable', () => {
     act(() => {
       useHiveStore.getState().reset();
     });
-    const id = useHiveStore.getState().spawnSession('apfm-web');
+    const id = useHiveStore.getState().spawnSession('nova-web');
 
     render(<SessionTable />);
     const row = rows()[0];
@@ -320,7 +320,7 @@ describe('SessionTable', () => {
     expect(rows()).toHaveLength(10);
 
     act(() => {
-      useHiveStore.getState().spawnSession('apfm-web', 'a new thing');
+      useHiveStore.getState().spawnSession('nova-web', 'a new thing');
     });
 
     expect(rows()).toHaveLength(11);
@@ -338,7 +338,7 @@ describe('SessionTable', () => {
         useHiveStore.getState().hydrateSessions([
           {
             id: 'old-01',
-            project: 'apfm-web',
+            project: 'nova-web',
             task: '',
             status: 'working',
             branch: 'feat/old',
@@ -387,7 +387,7 @@ describe('SessionTable', () => {
         useHiveStore.getState().hydrateSessions([
           {
             id: 'old-term',
-            project: 'apfm-web',
+            project: 'nova-web',
             task: '',
             status: 'terminated',
             createdAt: 1,
@@ -463,7 +463,7 @@ describe('SessionTable', () => {
         useHiveStore.getState().hydrateSessions([
           {
             id: 'gone-01',
-            project: 'apfm-web',
+            project: 'nova-web',
             task: '',
             status: 'terminated',
             createdAt: 1,
@@ -561,7 +561,7 @@ describe('SessionTable', () => {
         useHiveStore.getState().hydrateSessions([
           {
             id: 'live-01',
-            project: 'apfm-web',
+            project: 'nova-web',
             task: '',
             status: 'idle',
             createdAt: 1,

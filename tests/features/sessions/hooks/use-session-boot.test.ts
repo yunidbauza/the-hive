@@ -35,7 +35,7 @@ describe('useSessionBoot', () => {
           [id]: {
             kind: 'session',
             id,
-            project: 'apfm-web',
+            project: 'nova-web',
             status: 'idle',
             task: '',
             cost: '$0.00',
@@ -71,7 +71,7 @@ describe('useSessionBoot', () => {
           'sess-old': {
             kind: 'session',
             id: 'sess-old',
-            project: 'apfm-web',
+            project: 'nova-web',
             status: 'idle',
             task: '',
             cost: '$0.00',

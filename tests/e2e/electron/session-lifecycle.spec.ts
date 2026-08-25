@@ -24,7 +24,7 @@ import { launchHive, startSession } from './fixtures/hive-app';
 
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 const SESSION = 'sess-01';
-const PROJECT = 'apfm-web';
+const PROJECT = 'nova-web';
 
 /**
  * A stand-in for `claude`: records that it ran, with its cwd, then exits.
@@ -655,12 +655,12 @@ test('an unmapped project is refused by name, with the file to edit', async ({},
             () => 'no refusal',
             (cause: Error) => cause.message,
           ),
-      ['ghost-session', 'apfm-web'],
+      ['ghost-session', 'nova-web'],
     );
 
     // Names the project *and* the file. "Not mapped" alone sends the user
     // looking for a setting that does not exist.
-    expect(message).toContain('apfm-web is not mapped');
+    expect(message).toContain('nova-web is not mapped');
     expect(message).toContain(configPath);
   } finally {
     await app.close();

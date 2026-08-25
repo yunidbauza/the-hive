@@ -76,7 +76,7 @@ describe('useProjectWatcher', () => {
   it('watches the visible project and stops on unmount', () => {
     const { unmount } = render(<Watcher />);
 
-    expect(watchProject).toHaveBeenCalledWith('apfm-web');
+    expect(watchProject).toHaveBeenCalledWith('nova-web');
 
     unmount();
     expect(unwatchProject).toHaveBeenCalled();
@@ -84,7 +84,7 @@ describe('useProjectWatcher', () => {
 
   it('follows the active session to another project', async () => {
     render(<Watcher />);
-    expect(watchProject).toHaveBeenLastCalledWith('apfm-web');
+    expect(watchProject).toHaveBeenLastCalledWith('nova-web');
 
     await act(async () => {
       useUiStore.getState().openTab('webhooks');
@@ -98,7 +98,7 @@ describe('useProjectWatcher', () => {
     const before = useUiStore.getState().fsRevision;
 
     await act(async () => {
-      emitChange?.({ projectId: 'apfm-web', paths: ['src/app.ts'] });
+      emitChange?.({ projectId: 'nova-web', paths: ['src/app.ts'] });
     });
 
     expect(useUiStore.getState().fsRevision).toBe(before + 1);
@@ -115,10 +115,10 @@ describe('useProjectWatcher', () => {
     render(<Watcher />);
 
     await act(async () => {
-      emitChange?.({ projectId: 'apfm-web', paths: ['README.md'] });
+      emitChange?.({ projectId: 'nova-web', paths: ['README.md'] });
     });
 
-    expect(reconcile).toHaveBeenCalledWith('apfm-web', ['README.md']);
+    expect(reconcile).toHaveBeenCalledWith('nova-web', ['README.md']);
   });
 
   it('ignores an event for another project', async () => {
@@ -137,13 +137,13 @@ describe('useProjectWatcher', () => {
       ...emptySnapshot('/tmp/hive/config.json'),
       projects: [
         {
-          id: 'apfm-web',
-          name: 'apfm-web',
+          id: 'nova-web',
+          name: 'nova-web',
           path: null,
           icon: 'ph-folder',
           origin: 'local',
           status: 'missing',
-          key: 'aw',
+          key: 'nw',
           isRepo: false,
         },
       ],

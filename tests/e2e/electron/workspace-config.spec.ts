@@ -62,7 +62,7 @@ test('a valid mapping makes its project spawnable and an unresolvable one unmapp
         about mapping, not naming; pinning the name keeps it that way.
       */
       projects: [
-        { id: 'apfm-web', name: 'apfm-web', path: realDirectory },
+        { id: 'nova-web', name: 'nova-web', path: realDirectory },
         {
           id: 'referral-api',
           name: 'referral-api',
@@ -74,7 +74,7 @@ test('a valid mapping makes its project spawnable and an unresolvable one unmapp
 
   try {
     // The left rail's projects panel is the default tab.
-    const mapped = page.getByRole('button', { name: /^apfm-web/ });
+    const mapped = page.getByRole('button', { name: /^nova-web/ });
     await expect(mapped).toBeVisible();
     await expect(mapped).not.toContainText('unmapped');
 
@@ -85,10 +85,10 @@ test('a valid mapping makes its project spawnable and an unresolvable one unmapp
 
     // And the picker refuses the ones it cannot open. `exact` matters: a
     // pinned pill's accessible name is the bare id, while the search row below
-    // it also carries a count ("apfm-web 3 active").
+    // it also carries a count ("nova-web 3 active").
     await page.getByRole('button', { name: 'New session', exact: true }).click();
     await expect(
-      page.getByRole('button', { name: 'apfm-web', exact: true }),
+      page.getByRole('button', { name: 'nova-web', exact: true }),
     ).toBeEnabled();
     await expect(
       page.getByRole('button', { name: 'referral-api', exact: true }),
@@ -103,7 +103,7 @@ test('an invalid entry surfaces its reason without blocking launch', async ({}, 
     (name) => testInfo.outputPath(name),
     JSON.stringify({
       version: 1,
-      projects: [{ id: 'apfm-web', path: '/definitely/not/here' }],
+      projects: [{ id: 'nova-web', path: '/definitely/not/here' }],
     }),
   );
 
@@ -112,7 +112,7 @@ test('an invalid entry surfaces its reason without blocking launch', async ({}, 
     // most: one mistyped path must never stop the app starting.
     await expect(page.locator('header')).toContainText('The Hive');
 
-    const row = page.getByRole('button', { name: /^apfm-web/ });
+    const row = page.getByRole('button', { name: /^nova-web/ });
     await expect(row).toContainText('unmapped');
     // The status reason travels all the way to the tooltip, verbatim.
     await expect(row.getByTitle(/missing/)).toBeVisible();
@@ -134,13 +134,13 @@ test('a malformed file still launches the app, with nothing spawnable', async ({
      * An unreadable config declares nothing, so the rail lists nothing — and
      * says why rather than sitting blank.
      *
-     * It used to assert `apfm-web` was present and marked `unmapped`, because
+     * It used to assert `nova-web` was present and marked `unmapped`, because
      * five projects were seeded into the store and the rail merged them in
      * whatever the config said. That merge is what made a broken config look
      * like a working app with five repositories in it.
      */
     await expect(page.getByText(/No projects mapped/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: /^apfm-web/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^nova-web/ })).toHaveCount(0);
   } finally {
     await app.close();
   }
@@ -198,13 +198,13 @@ test('HIVE_CONFIG_PATH wins over ~/.hive/config.json', async ({}, testInfo) => {
     // the rail's label would be `basename(scratch)` rather than the id.
     JSON.stringify({
       version: 1,
-      projects: [{ id: 'apfm-web', name: 'apfm-web', path: scratch }],
+      projects: [{ id: 'nova-web', name: 'nova-web', path: scratch }],
     }),
   );
 
   try {
     await expect(
-      page.getByRole('button', { name: /^apfm-web/ }),
+      page.getByRole('button', { name: /^nova-web/ }),
     ).not.toContainText('unmapped');
   } finally {
     await app.close();

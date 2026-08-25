@@ -108,7 +108,7 @@ afterEach(() => {
 
 describe('PtyTransport — pass-throughs', () => {
   it('forwards write verbatim, tagged with the session id', () => {
-    createPtyTransport('sess-a', 'apfm-web').write('');
+    createPtyTransport('sess-a', 'nova-web').write('');
 
     expect(bridge.write).toHaveBeenCalledWith({
       sessionId: 'sess-a',
@@ -117,7 +117,7 @@ describe('PtyTransport — pass-throughs', () => {
   });
 
   it('forwards resize verbatim, tagged with the session id', () => {
-    createPtyTransport('sess-a', 'apfm-web').resize(120, 40);
+    createPtyTransport('sess-a', 'nova-web').resize(120, 40);
 
     expect(bridge.resize).toHaveBeenCalledWith({
       sessionId: 'sess-a',
@@ -144,7 +144,7 @@ describe('PtyTransport — subscribe before spawn', () => {
       return Promise.resolve();
     });
 
-    const transport = createPtyTransport('sess-a', 'apfm-web');
+    const transport = createPtyTransport('sess-a', 'nova-web');
     const originalAdd = bridge.data.add.bind(bridge.data);
     bridge.data.add = (cb: DataCb) => {
       order.push('subscribe');
@@ -157,19 +157,19 @@ describe('PtyTransport — subscribe before spawn', () => {
   });
 
   it('spawns with the project id and a conventional default geometry', () => {
-    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+    createPtyTransport('sess-a', 'nova-web').onData(() => {});
 
     expect(bridge.spawn).toHaveBeenCalledWith({
       sessionId: 'sess-a',
-      projectId: 'apfm-web',
+      projectId: 'nova-web',
       cols: 80,
       rows: 24,
     });
   });
 
   it('asks main to resume only when told to, and only as true (HIVE-88)', () => {
-    createPtyTransport('sess-a', 'apfm-web', { resume: true }).onData(() => {});
-    createPtyTransport('sess-b', 'apfm-web', { resume: false }).onData(() => {});
+    createPtyTransport('sess-a', 'nova-web', { resume: true }).onData(() => {});
+    createPtyTransport('sess-b', 'nova-web', { resume: false }).onData(() => {});
 
     expect(bridge.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'sess-a', resume: true }),
@@ -188,8 +188,8 @@ describe('PtyTransport — subscribe before spawn', () => {
     const first: string[] = [];
     const second: string[] = [];
 
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => first.push(chunk));
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => second.push(chunk));
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => first.push(chunk));
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => second.push(chunk));
 
     pushData('sess-a', 'hello', 1);
 
@@ -200,7 +200,7 @@ describe('PtyTransport — subscribe before spawn', () => {
 
   it('ignores chunks belonging to another session', () => {
     const chunks: string[] = [];
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => chunks.push(chunk));
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => chunks.push(chunk));
 
     pushData('sess-b', 'not yours', 1);
 
@@ -215,7 +215,7 @@ describe('PtyTransport — the disposer', () => {
      * process would end a running agent because the user looked at something
      * else — the single most destructive thing this file could get wrong.
      */
-    const transport = createPtyTransport('sess-a', 'apfm-web');
+    const transport = createPtyTransport('sess-a', 'nova-web');
     const kept: string[] = [];
     const dropped: string[] = [];
 
@@ -232,7 +232,7 @@ describe('PtyTransport — the disposer', () => {
 
   it('keeps buffering while nothing is subscribed, and replays on return', () => {
     // "Switch away for thirty seconds and back shows what happened while away."
-    const transport = createPtyTransport('sess-a', 'apfm-web');
+    const transport = createPtyTransport('sess-a', 'nova-web');
     const dispose = transport.onData(() => {});
     dispose();
 
@@ -245,7 +245,7 @@ describe('PtyTransport — the disposer', () => {
   });
 
   it('does not respawn when a surface remounts', () => {
-    const transport = createPtyTransport('sess-a', 'apfm-web');
+    const transport = createPtyTransport('sess-a', 'nova-web');
     transport.onData(() => {})();
     transport.onData(() => {});
 
@@ -255,7 +255,7 @@ describe('PtyTransport — the disposer', () => {
 
 describe('PtyTransport — replay ordering', () => {
   it('delivers the buffered transcript before any live chunk', () => {
-    const transport = createPtyTransport('sess-a', 'apfm-web');
+    const transport = createPtyTransport('sess-a', 'nova-web');
     transport.onData(() => {});
     pushData('sess-a', 'first', 1);
     pushData('sess-a', 'second', 2);
@@ -279,7 +279,7 @@ describe('PtyTransport — replay ordering', () => {
      * the app — and the cap is only real if the oldest chunks are actually
      * evicted rather than merely counted.
      */
-    const transport = createPtyTransport('sess-a', 'apfm-web');
+    const transport = createPtyTransport('sess-a', 'nova-web');
     transport.onData(() => {});
 
     const chunk = 'x'.repeat(64 * 1024);
@@ -307,7 +307,7 @@ describe('PtyTransport — flow control', () => {
      * channel, not whether the terminal is keeping up.
      */
     let report: (() => void) | undefined;
-    createPtyTransport('sess-a', 'apfm-web').onData((_chunk, parsed) => {
+    createPtyTransport('sess-a', 'nova-web').onData((_chunk, parsed) => {
       report = parsed;
     });
 
@@ -322,7 +322,7 @@ describe('PtyTransport — flow control', () => {
     // A lifecycle notice never crossed the IPC boundary, so there is no
     // outstanding batch to release and acking one would corrupt the window.
     const reports: (undefined | (() => void))[] = [];
-    createPtyTransport('sess-a', 'apfm-web').onData((_chunk, parsed) => {
+    createPtyTransport('sess-a', 'nova-web').onData((_chunk, parsed) => {
       reports.push(parsed);
     });
 
@@ -337,7 +337,7 @@ describe('PtyTransport — flow control', () => {
 describe('PtyTransport — lifecycle lines', () => {
   function transcriptAfter(drive: () => void): string {
     const seen: string[] = [];
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => seen.push(chunk));
     drive();
     return seen.join('');
   }
@@ -520,13 +520,13 @@ describe('sessionChannelState', () => {
   });
 
   it('is live once a transport has requested a spawn', () => {
-    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+    createPtyTransport('sess-a', 'nova-web').onData(() => {});
 
     expect(sessionChannelState('sess-a')).toBe('live');
   });
 
   it('is exited after the process ends', () => {
-    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+    createPtyTransport('sess-a', 'nova-web').onData(() => {});
 
     for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
 
@@ -534,7 +534,7 @@ describe('sessionChannelState', () => {
   });
 
   it('is exited after the host is lost, not live', () => {
-    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+    createPtyTransport('sess-a', 'nova-web').onData(() => {});
 
     for (const cb of [...bridge.lost]) {
       cb({ sessionId: 'sess-a', reason: 'host-crashed' });
@@ -547,7 +547,7 @@ describe('sessionChannelState', () => {
 describe('reopenChannel', () => {
   it('lets a restarted entity receive data again', () => {
     const seen: string[] = [];
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => seen.push(chunk));
     for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
 
     reopenChannel('sess-a');
@@ -561,7 +561,7 @@ describe('reopenChannel', () => {
 
   it('does not report a gap on the new generation’s first chunk', () => {
     const seen: string[] = [];
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => seen.push(chunk));
     pushData('sess-a', 'first', 1);
     pushData('sess-a', 'second', 2);
     for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
@@ -582,15 +582,15 @@ describe('reopenChannel', () => {
 describe('requestSpawn', () => {
   it('asks main exactly once, however many callers ask', async () => {
     await Promise.all([
-      requestSpawn('sess-a', 'apfm-web'),
-      requestSpawn('sess-a', 'apfm-web'),
+      requestSpawn('sess-a', 'nova-web'),
+      requestSpawn('sess-a', 'nova-web'),
     ]);
 
     expect(bridge.spawn).toHaveBeenCalledTimes(1);
   });
 
   it('carries the task on the spawn request', async () => {
-    await requestSpawn('sess-a', 'apfm-web', { task: 'fix the hero' });
+    await requestSpawn('sess-a', 'nova-web', { task: 'fix the hero' });
 
     expect(bridge.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ task: 'fix the hero' }),
@@ -603,13 +603,13 @@ describe('requestSpawn', () => {
      * message gives it its job (story 044). Sent on the wire, main's guard
      * rejects it and every picker-started session fails to spawn.
      */
-    await requestSpawn('sess-a', 'apfm-web', { task: '' });
+    await requestSpawn('sess-a', 'nova-web', { task: '' });
 
     expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
   });
 
   it('omits a whitespace-only task for the same reason', async () => {
-    await requestSpawn('sess-a', 'apfm-web', { task: '   ' });
+    await requestSpawn('sess-a', 'nova-web', { task: '   ' });
 
     expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
   });
@@ -629,7 +629,7 @@ describe('requestSpawn', () => {
      * the IPC boundary as a *value*, not as text at a prompt, so it has no use
      * for the line structure `sendToSession` now preserves.
      */
-    await requestSpawn('sess-a', 'apfm-web', {
+    await requestSpawn('sess-a', 'nova-web', {
       task: 'fix the login\nand the signup flow',
     });
 
@@ -642,7 +642,7 @@ describe('requestSpawn', () => {
     // Main refuses the whole spawn on a stray byte; dropping it sends the task
     // the user meant, which is the better outcome for a paste that carries one.
     // Written by code point so this file stays free of literal control bytes.
-    await requestSpawn('sess-a', 'apfm-web', { task: 'tidy\u0007 up' });
+    await requestSpawn('sess-a', 'nova-web', { task: 'tidy\u0007 up' });
 
     expect(bridge.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ task: 'tidy up' }),
@@ -654,7 +654,7 @@ describe('requestSpawn', () => {
 
     // `spawnSession` calls this fire-and-forget after creating the entity; a
     // synchronous throw would take the whole action down.
-    await expect(requestSpawn('sess-a', 'apfm-web')).resolves.toMatchObject({
+    await expect(requestSpawn('sess-a', 'nova-web')).resolves.toMatchObject({
       ok: false,
     });
   });
@@ -662,19 +662,19 @@ describe('requestSpawn', () => {
   it('omits the task key entirely when there is none', async () => {
     // Not `task: undefined` — the IPC guard rejects unexpected keys, and an
     // explicit undefined survives the structured clone as an own property.
-    await requestSpawn('sess-a', 'apfm-web');
+    await requestSpawn('sess-a', 'nova-web');
 
     expect(bridge.spawn.mock.calls[0]?.[0]).not.toHaveProperty('task');
   });
 
   it("resolves with main's refusal rather than throwing", async () => {
     bridge.spawn.mockRejectedValueOnce(
-      new Error('apfm-web is not mapped — add it to /tmp/hive.json'),
+      new Error('nova-web is not mapped — add it to /tmp/hive.json'),
     );
 
-    await expect(requestSpawn('sess-a', 'apfm-web')).resolves.toEqual({
+    await expect(requestSpawn('sess-a', 'nova-web')).resolves.toEqual({
       ok: false,
-      reason: 'apfm-web is not mapped — add it to /tmp/hive.json',
+      reason: 'nova-web is not mapped — add it to /tmp/hive.json',
     });
   });
 
@@ -682,15 +682,15 @@ describe('requestSpawn', () => {
     bridge.spawn.mockRejectedValueOnce(new Error('session limit reached (12)'));
 
     const seen: string[] = [];
-    await requestSpawn('sess-a', 'apfm-web');
-    createPtyTransport('sess-a', 'apfm-web').onData((chunk) => seen.push(chunk));
+    await requestSpawn('sess-a', 'nova-web');
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => seen.push(chunk));
 
     expect(seen.join('')).toContain('session limit reached (12)');
   });
 
   it('hands a mounting surface the same request, so nothing spawns twice', async () => {
-    const pending = requestSpawn('sess-a', 'apfm-web');
-    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+    const pending = requestSpawn('sess-a', 'nova-web');
+    createPtyTransport('sess-a', 'nova-web').onData(() => {});
 
     await pending;
 
@@ -698,10 +698,10 @@ describe('requestSpawn', () => {
   });
 
   it('does not re-request for a surface that mounts after an exit', async () => {
-    await requestSpawn('sess-a', 'apfm-web');
+    await requestSpawn('sess-a', 'nova-web');
     for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
 
-    createPtyTransport('sess-a', 'apfm-web').onData(() => {});
+    createPtyTransport('sess-a', 'nova-web').onData(() => {});
 
     // Attach-never-respawn: a tab switch past a finished session must not
     // silently start it working again (story 094).

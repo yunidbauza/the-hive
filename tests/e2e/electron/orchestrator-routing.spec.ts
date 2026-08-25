@@ -44,7 +44,7 @@ test.describe.configure({ mode: 'serial' });
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 const SESSION = 'sess-01';
 const UNOPENED = 'sess-02';
-const PROJECT = 'apfm-web';
+const PROJECT = 'nova-web';
 /** A fixture project the scratch config deliberately does not map. */
 const UNMAPPED = 'referral-api';
 
@@ -353,7 +353,7 @@ test('send resolves a target that is not a key in the entities map', async () =>
  * Through the real console, against a config whose keys the app itself
  * generated on launch — which is the part a unit test cannot claim. The scratch
  * config declares no `key` at all, exactly as every config written before this
- * build does, so `aw` exists here only because the backfill put it there.
+ * build does, so `nw` exists here only because the backfill put it there.
  */
 test('spawn resolves a project by the key the app generated for it', async () => {
   await backToOrchestrator();
@@ -366,8 +366,8 @@ test('spawn resolves a project by the key the app generated for it', async () =>
   */
   const task = 'started-by-key';
 
-  // `aw` is the initials of `apfm-web`. Nothing wrote it — the backfill did.
-  await run(`spawn aw ${task}`);
+  // `nw` is the initials of `nova-web`. Nothing wrote it — the backfill did.
+  await run(`spawn nw ${task}`);
 
   await expect
     .poll(() => readMarker(out('argv.txt'))?.split('\n'), { timeout: 20_000 })
@@ -378,7 +378,7 @@ test('spawn resolves a project by the key the app generated for it', async () =>
  * A reference that matches nothing is refused, and the refusal is *useful*.
  *
  * Exactness is the safety property: a spawn lands in a folder and starts an
- * agent in it, so `apfm` must not be guessed into `apfm-web`. Refusing costs a
+ * agent in it, so `nova` must not be guessed into `nova-web`. Refusing costs a
  * retype — and the refusal lists the keys, which is the shortest thing that
  * would have worked.
  */
@@ -386,15 +386,15 @@ test('a prefix is refused, and the refusal lists the keys', async () => {
   await backToOrchestrator();
   const before = await consoleText();
 
-  await run('spawn apfm do things');
+  await run('spawn nova do things');
 
   await expect
     .poll(consoleText, { timeout: 15_000 })
-    .toContain('unknown project: apfm');
+    .toContain('unknown project: nova');
   const now = await consoleText();
   expect(now).toContain('try a key from Settings › Projects');
   // The keys the backfill generated for the two declared projects.
-  expect(now).toContain('aw, ra');
+  expect(now).toContain('nw, ra');
   // Nothing was spawned: the console grew only the refusal.
   expect(now.length).toBeGreaterThan(before.length);
 });

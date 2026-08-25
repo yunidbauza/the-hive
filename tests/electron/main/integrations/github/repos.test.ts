@@ -14,13 +14,13 @@ import type { RunAsync } from '../../../../../electron/main/integrations/github/
  */
 
 const project = (over: Partial<ProjectConfig> = {}): ProjectConfig => ({
-  id: 'apfm-web',
-  name: 'apfm-web',
-  path: '/repos/apfm-web',
+  id: 'nova-web',
+  name: 'nova-web',
+  path: '/repos/nova-web',
   icon: 'ph-cube',
   origin: 'local',
   status: 'ok',
-  key: 'aw',
+  key: 'nw',
   isRepo: true,
   ...over,
 });
@@ -52,20 +52,20 @@ const answering = (
 
 describe('createRepoResolver', () => {
   it('asks gh what repository a project directory is', async () => {
-    const { run, calls } = answering({ '/repos/apfm-web': 'acme/apfm-web' });
+    const { run, calls } = answering({ '/repos/nova-web': 'acme/nova-web' });
     const resolver = createRepoResolver('/usr/bin/gh', run);
 
     await expect(resolver.resolve([project()])).resolves.toEqual({
-      repos: [{ owner: 'acme', name: 'apfm-web' }],
+      repos: [{ owner: 'acme', name: 'nova-web' }],
       failure: null,
     });
-    expect(calls).toEqual(['/repos/apfm-web']);
+    expect(calls).toEqual(['/repos/nova-web']);
   });
 
   it('runs it in the project directory, with a constant argv', async () => {
     const run = vi.fn<RunAsync>().mockResolvedValue({
       code: 0,
-      stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+      stdout: JSON.stringify({ nameWithOwner: 'acme/nova-web' }),
       stderr: '',
       timedOut: false,
     });
@@ -75,7 +75,7 @@ describe('createRepoResolver', () => {
     expect(run).toHaveBeenCalledWith(
       '/usr/bin/gh',
       ['repo', 'view', '--json', 'nameWithOwner'],
-      { cwd: '/repos/apfm-web' },
+      { cwd: '/repos/nova-web' },
     );
   });
 
@@ -84,14 +84,14 @@ describe('createRepoResolver', () => {
    * poller would spawn a `gh` per project per minute to re-learn a constant.
    */
   it('asks once per directory, however many sweeps', async () => {
-    const { run, calls } = answering({ '/repos/apfm-web': 'acme/apfm-web' });
+    const { run, calls } = answering({ '/repos/nova-web': 'acme/nova-web' });
     const resolver = createRepoResolver('/usr/bin/gh', run);
 
     await resolver.resolve([project()]);
     await resolver.resolve([project()]);
     await resolver.resolve([project()]);
 
-    expect(calls).toEqual(['/repos/apfm-web']);
+    expect(calls).toEqual(['/repos/nova-web']);
   });
 
   /**
@@ -118,7 +118,7 @@ describe('createRepoResolver', () => {
     });
     await resolver.resolve([project()]);
 
-    expect(calls).toEqual(['/repos/apfm-web']);
+    expect(calls).toEqual(['/repos/nova-web']);
   });
 
   /**
@@ -146,7 +146,7 @@ describe('createRepoResolver', () => {
       }
       return Promise.resolve({
         code: 0,
-        stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+        stdout: JSON.stringify({ nameWithOwner: 'acme/nova-web' }),
         stderr: '',
         timedOut: false,
       });
@@ -161,7 +161,7 @@ describe('createRepoResolver', () => {
     loggedIn = true;
 
     const second = await resolver.resolve([project()]);
-    expect(second.repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
+    expect(second.repos).toEqual([{ owner: 'acme', name: 'nova-web' }]);
     expect(second.failure).toBeNull();
     expect(calls).toHaveLength(2);
   });
@@ -206,10 +206,10 @@ describe('createRepoResolver', () => {
   /** A repository that resolved is not lost because a later one failed. */
   it('keeps the repositories it did resolve', async () => {
     const run: RunAsync = (_file, _args, options) =>
-      options?.cwd === '/repos/apfm-web'
+      options?.cwd === '/repos/nova-web'
         ? Promise.resolve({
             code: 0,
-            stdout: JSON.stringify({ nameWithOwner: 'acme/apfm-web' }),
+            stdout: JSON.stringify({ nameWithOwner: 'acme/nova-web' }),
             stderr: '',
             timedOut: false,
           })
@@ -225,7 +225,7 @@ describe('createRepoResolver', () => {
       project({ id: 'other', path: '/repos/other' }),
     ]);
 
-    expect(result.repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
+    expect(result.repos).toEqual([{ owner: 'acme', name: 'nova-web' }]);
     expect(result.failure?.kind).toBe('unauthenticated');
   });
 
@@ -235,16 +235,16 @@ describe('createRepoResolver', () => {
    */
   it('dedupes repositories, case-insensitively', async () => {
     const { run } = answering({
-      '/repos/apfm-web': 'acme/apfm-web',
-      '/repos/apfm-web-worktree': 'Acme/APFM-Web',
+      '/repos/nova-web': 'acme/nova-web',
+      '/repos/nova-web-worktree': 'Acme/NOVA-Web',
     });
 
     const repos = await createRepoResolver('/usr/bin/gh', run).resolve([
       project(),
-      project({ id: 'wt', path: '/repos/apfm-web-worktree' }),
+      project({ id: 'wt', path: '/repos/nova-web-worktree' }),
     ]);
 
-    expect(repos.repos).toEqual([{ owner: 'acme', name: 'apfm-web' }]);
+    expect(repos.repos).toEqual([{ owner: 'acme', name: 'nova-web' }]);
   });
 
   it.each([
@@ -252,7 +252,7 @@ describe('createRepoResolver', () => {
     ['a directory that is not a git repo', project({ isRepo: false })],
     ['an entry the config marked unusable', project({ status: 'missing' })],
   ])('never asks about %s', async (_label, entry) => {
-    const { run, calls } = answering({ '/repos/apfm-web': 'acme/apfm-web' });
+    const { run, calls } = answering({ '/repos/nova-web': 'acme/nova-web' });
 
     await expect(
       createRepoResolver('/usr/bin/gh', run).resolve([entry]),

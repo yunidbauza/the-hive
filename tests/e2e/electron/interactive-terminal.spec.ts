@@ -26,7 +26,7 @@ import { launchHive, startSession } from './fixtures/hive-app';
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
 const SESSION = 'sess-01';
-const PROJECT = 'apfm-web';
+const PROJECT = 'nova-web';
 
 /**
  * The bootstrap has to be *finished* before a spec types, not merely started.

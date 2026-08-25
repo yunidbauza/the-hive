@@ -9,8 +9,8 @@ import { currentRowFor, useOpenEntity } from '@stores/hive-store';
  * because only main can, and this opens the tab, because only the renderer
  * knows what opening a session means.
  *
- * Without it a notification is a dead end — it tells you `apfm-web` finished
- * and then leaves you to find `apfm-web` yourself, which is most of the work it
+ * Without it a notification is a dead end — it tells you `nova-web` finished
+ * and then leaves you to find `nova-web` yourself, which is most of the work it
  * was supposed to save.
  *
  * Mounted once, at the composition root, like `useSessionStatus`. A per-session

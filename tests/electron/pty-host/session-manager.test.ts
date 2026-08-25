@@ -40,7 +40,7 @@ const SPAWN: SpawnCommand = {
   sessionId: 'hero-refresh',
   shell: '/bin/zsh',
   args: ['-l'],
-  cwd: '/repos/apfm-web',
+  cwd: '/repos/nova-web',
   env: {},
   cols: 80,
   rows: 24,
@@ -150,8 +150,8 @@ describe('spawn arguments', () => {
     expect(call.args).toEqual(['-l']);
     // The cwd arrives already resolved from story 090 — the host does not
     // know what a project is.
-    expect(call.options.cwd).toBe('/repos/apfm-web');
-    expect(spawnEnv().PWD).toBe('/repos/apfm-web');
+    expect(call.options.cwd).toBe('/repos/nova-web');
+    expect(spawnEnv().PWD).toBe('/repos/nova-web');
   });
 
   it('asks for Buffers, not strings', () => {

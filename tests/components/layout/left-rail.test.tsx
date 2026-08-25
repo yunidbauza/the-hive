@@ -72,13 +72,13 @@ describe('LeftRail', () => {
   it('preserves each panel’s state across tab switches', async () => {
     render(<LeftRail />);
 
-    useUiStore.getState().toggleProject('apfm-web');
-    expect(useUiStore.getState().collapsed['apfm-web']).toBe(true);
+    useUiStore.getState().toggleProject('nova-web');
+    expect(useUiStore.getState().collapsed['nova-web']).toBe(true);
 
     await userEvent.click(screen.getByRole('tab', { name: 'Agents' }));
     await userEvent.click(screen.getByRole('tab', { name: 'Projects' }));
 
-    expect(useUiStore.getState().collapsed['apfm-web']).toBe(true);
+    expect(useUiStore.getState().collapsed['nova-web']).toBe(true);
   });
 
   it('points the tab panel at the tab that names it', async () => {

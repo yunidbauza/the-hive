@@ -127,7 +127,7 @@ describe('hive-store', () => {
 
   describe('spawnSession', () => {
     it('creates a session, appends it to the order, and opens its tab', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       const state = useHiveStore.getState();
 
       expect(state.order.at(-1)).toBe(id);
@@ -159,9 +159,9 @@ describe('hive-store', () => {
        * reading `HIVE-73` is the ambiguity the suffix removes.
        */
       const store = useHiveStore.getState();
-      const first = store.spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
-      const second = store.spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
-      const third = store.spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+      const first = store.spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
+      const second = store.spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
+      const third = store.spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
 
       const nameOf = (id: string) => {
         const entity = useHiveStore.getState().entities[id];
@@ -184,12 +184,12 @@ describe('hive-store', () => {
        */
       const first = useHiveStore
         .getState()
-        .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+        .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
       useHiveStore.getState().setSessionStatus(first, 'terminated');
 
       const second = useHiveStore
         .getState()
-        .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+        .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
 
       const entity = useHiveStore.getState().entities[second];
       expect(isSession(entity) && entity.name).toBe('HIVE-73-2');
@@ -209,7 +209,7 @@ describe('hive-store', () => {
 
       const id = useHiveStore
         .getState()
-        .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+        .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
 
       // Nothing yet: the spawn has been asked for but has not answered.
       expect(noteSessionTicket).not.toHaveBeenCalled();
@@ -233,7 +233,7 @@ describe('hive-store', () => {
 
       useHiveStore
         .getState()
-        .spawnSession('apfm-web', '', 'opus', 'high', 'HIVE-73');
+        .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
 
       await Promise.resolve();
       await Promise.resolve();
@@ -243,7 +243,7 @@ describe('hive-store', () => {
     it('says nothing at all when no ticket named the session', async () => {
       vi.mocked(isDesktop).mockReturnValue(true);
 
-      useHiveStore.getState().spawnSession('apfm-web');
+      useHiveStore.getState().spawnSession('nova-web');
 
       await Promise.resolve();
       await Promise.resolve();
@@ -253,35 +253,35 @@ describe('hive-store', () => {
     it('leaves a session with no ticket unnamed', () => {
       // Every other spawn is byte-identical to what HIVE-61 shipped: no name
       // on the entity, so main falls back to the entity id on the command line.
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       const session = useHiveStore.getState().entities[id];
 
       expect(isSession(session) && session.name).toBeUndefined();
     });
 
     it('starts idle when no task is given', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       const session = useHiveStore.getState().entities[id];
 
       expect(isSession(session) && session.status).toBe('idle');
     });
 
     it('starts working when a task is given', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web', 'Fix the nav');
+      const id = useHiveStore.getState().spawnSession('nova-web', 'Fix the nav');
       const session = useHiveStore.getState().entities[id];
 
       expect(isSession(session) && session.status).toBe('working');
     });
 
     it('seeds three transcript lines', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web', 'Fix the nav');
+      const id = useHiveStore.getState().spawnSession('nova-web', 'Fix the nav');
       const session = useHiveStore.getState().entities[id];
 
       expect(isSession(session) && session.lines).toHaveLength(3);
     });
 
     it('defaults to opus / high effort', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       const session = useHiveStore.getState().entities[id];
 
       expect(isSession(session) && session.model).toBe('opus');
@@ -291,7 +291,7 @@ describe('hive-store', () => {
     it('honours an explicit model and effort', () => {
       const id = useHiveStore
         .getState()
-        .spawnSession('apfm-web', 'Spike', 'haiku', 'low');
+        .spawnSession('nova-web', 'Spike', 'haiku', 'low');
       const session = useHiveStore.getState().entities[id];
 
       expect(isSession(session) && session.model).toBe('haiku');
@@ -299,8 +299,8 @@ describe('hive-store', () => {
     });
 
     it('gives each session a distinct id', () => {
-      const first = useHiveStore.getState().spawnSession('apfm-web');
-      const second = useHiveStore.getState().spawnSession('apfm-web');
+      const first = useHiveStore.getState().spawnSession('nova-web');
+      const second = useHiveStore.getState().spawnSession('nova-web');
 
       expect(first).not.toBe(second);
     });
@@ -525,7 +525,7 @@ describe('hive-store', () => {
 
         expect(rows).toHaveLength(10);
         expect(rows[0]).toContain('hero-refresh');
-        expect(rows[0]).toContain('apfm-web · feat/hero-refresh');
+        expect(rows[0]).toContain('nova-web · feat/hero-refresh');
         // Agents have no branch and are not part of the fleet table.
         expect(transcript()).not.toContain('slack-agent');
       });
@@ -732,7 +732,7 @@ describe('hive-store', () => {
       const ticketSession = () =>
         useHiveStore
           .getState()
-          .spawnSession('apfm-web', '', 'opus', 'high', 'INCORP-455');
+          .spawnSession('nova-web', '', 'opus', 'high', 'INCORP-455');
 
       it('routes to a ticket session by its key', () => {
         const id = ticketSession();
@@ -793,7 +793,7 @@ describe('hive-store', () => {
         // path is the only thing needed — no rename, so no title-stream guards.
         useHiveStore
           .getState()
-          .spawnSession('apfm-web', '', 'opus', 'high', 'lead-form');
+          .spawnSession('nova-web', '', 'opus', 'high', 'lead-form');
 
         run('send lead-form hello');
 
@@ -814,8 +814,8 @@ describe('hive-store', () => {
         // `ticketSessionName` de-duplicates case-*sensitively*, so two keys that
         // differ only in case both keep their name — and both then answer to one
         // case-insensitive target.
-        const first = store.spawnSession('apfm-web', '', 'opus', 'high', 'Duplicate');
-        const second = store.spawnSession('apfm-web', '', 'opus', 'high', 'duplicate');
+        const first = store.spawnSession('nova-web', '', 'opus', 'high', 'Duplicate');
+        const second = store.spawnSession('nova-web', '', 'opus', 'high', 'duplicate');
 
         run('send DUPLICATE hello');
 
@@ -978,13 +978,13 @@ describe('hive-store', () => {
 
       it('creates a session on a known project and opens it', () => {
         const before = useHiveStore.getState().order.length;
-        run('spawn apfm-web tidy the footer');
+        run('spawn nova-web tidy the footer');
 
         const state = useHiveStore.getState();
         expect(state.order).toHaveLength(before + 1);
         const id = state.order.at(-1)!;
         expect(state.entities[id]).toMatchObject({
-          project: 'apfm-web',
+          project: 'nova-web',
           task: 'tidy the footer',
         });
         // Newly spawned sessions are open and in nav order immediately.
@@ -1064,7 +1064,7 @@ describe('hive-store', () => {
       });
 
       it('does not announce the spawn by id — the rail is where the session is met (HIVE-91)', () => {
-        run('spawn apfm-web tidy the footer');
+        run('spawn nova-web tidy the footer');
 
         const id = useHiveStore.getState().order.at(-1)!;
         // The name does not exist yet, so the only line possible would carry
@@ -1098,10 +1098,10 @@ describe('hive-store', () => {
        */
       it('refuses a prefix rather than guessing which project was meant', () => {
         const before = useHiveStore.getState().order.length;
-        run('spawn apfm do things');
+        run('spawn nova do things');
 
         expect(useHiveStore.getState().order).toHaveLength(before);
-        expect(lastLine()?.text).toContain('unknown project: apfm');
+        expect(lastLine()?.text).toContain('unknown project: nova');
       });
 
       /**
@@ -1117,7 +1117,7 @@ describe('hive-store', () => {
       it('accepts a project the config declares', () => {
         const before = useHiveStore.getState().order.length;
 
-        run('spawn apfm-web do things');
+        run('spawn nova-web do things');
 
         expect(useHiveStore.getState().order).toHaveLength(before + 1);
         expect(lastLine()?.text).not.toContain('unknown repo');
@@ -1139,7 +1139,7 @@ describe('hive-store', () => {
         resetProjectConfig();
         const before = useHiveStore.getState().order.length;
 
-        run('spawn apfm-web do things');
+        run('spawn nova-web do things');
 
         expect(useHiveStore.getState().order).toHaveLength(before + 1);
         expect(lastLine()?.text).not.toContain('unknown repo');
@@ -1181,11 +1181,11 @@ describe('hive-store', () => {
         });
 
         it('carries the task to the spawn request', () => {
-          run('spawn apfm-web tidy the footer');
+          run('spawn nova-web tidy the footer');
 
           expect(requestSpawn).toHaveBeenCalledWith(
             expect.any(String),
-            'apfm-web',
+            'nova-web',
             expect.objectContaining({ task: 'tidy the footer' }),
           );
         });
@@ -1198,11 +1198,11 @@ describe('hive-store', () => {
            * leave the chip claiming opus/high over a session running under
            * whatever `claude` happened to default to.
            */
-          run('spawn apfm-web tidy the footer');
+          run('spawn nova-web tidy the footer');
 
           expect(requestSpawn).toHaveBeenCalledWith(
             expect.any(String),
-            'apfm-web',
+            'nova-web',
             expect.objectContaining({ model: 'opus', effort: 'high' }),
           );
         });
@@ -1223,11 +1223,11 @@ describe('hive-store', () => {
         it('sends no theme — the palette decides, at paint time', () => {
           useAppearanceStore.setState({ theme: 'light' });
 
-          run('spawn apfm-web tidy the footer');
+          run('spawn nova-web tidy the footer');
 
           expect(requestSpawn).toHaveBeenCalledWith(
             expect.any(String),
-            'apfm-web',
+            'nova-web',
             expect.not.objectContaining({ theme: expect.anything() }),
           );
         });
@@ -1235,11 +1235,11 @@ describe('hive-store', () => {
         it('sends the picker’s choice, not the defaults', () => {
           useHiveStore
             .getState()
-            .spawnSession('apfm-web', 'tidy the footer', 'haiku', 'low');
+            .spawnSession('nova-web', 'tidy the footer', 'haiku', 'low');
 
           expect(requestSpawn).toHaveBeenCalledWith(
             expect.any(String),
-            'apfm-web',
+            'nova-web',
             expect.objectContaining({ model: 'haiku', effort: 'low' }),
           );
         });
@@ -1247,21 +1247,21 @@ describe('hive-store', () => {
         it("prints main's refusal verbatim, in red", async () => {
           vi.mocked(requestSpawn).mockResolvedValue({
             ok: false,
-            reason: 'apfm-web is not mapped — add it to /tmp/hive.json',
+            reason: 'nova-web is not mapped — add it to /tmp/hive.json',
           });
 
-          run('spawn apfm-web tidy the footer');
+          run('spawn nova-web tidy the footer');
 
           await vi.waitFor(() =>
             expect(lastLine()).toEqual({
-              text: '  apfm-web is not mapped — add it to /tmp/hive.json',
+              text: '  nova-web is not mapped — add it to /tmp/hive.json',
               color: 'red',
             }),
           );
         });
 
         it('says nothing extra when the spawn is accepted', async () => {
-          run('spawn apfm-web tidy the footer');
+          run('spawn nova-web tidy the footer');
           await vi.waitFor(() => expect(requestSpawn).toHaveBeenCalled());
 
           expect(lastLine()?.color).not.toBe('red');
@@ -1269,13 +1269,13 @@ describe('hive-store', () => {
       });
 
       it('asks for no process on the browser target', () => {
-        run('spawn apfm-web tidy the footer');
+        run('spawn nova-web tidy the footer');
 
         expect(requestSpawn).not.toHaveBeenCalled();
       });
 
       it('rejects a missing task as a usage error', () => {
-        run('spawn apfm-web');
+        run('spawn nova-web');
         expect(lastLine()).toMatchObject({
           text: '  usage: spawn <project> <task>',
           color: 'red',
@@ -1520,7 +1520,7 @@ describe('hive-store', () => {
    */
   describe('setSessionMetrics', () => {
     it('merges a partial report over what the session already said', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       useHiveStore.getState().setSessionMetrics(id, {
         contextPct: 46,
         fiveHourPct: 12,
@@ -1540,7 +1540,7 @@ describe('hive-store', () => {
      * still the best available, so silence must not erase it.
      */
     it('keeps a value a later payload simply did not mention', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       useHiveStore.getState().setSessionMetrics(id, { sevenDayPct: 63 });
 
       useHiveStore.getState().setSessionMetrics(id, { contextPct: 46 });
@@ -1557,7 +1557,7 @@ describe('hive-store', () => {
      * high, confident, and about a conversation that no longer exists.
      */
     it('clears the context percentage when the session reports it as null', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       useHiveStore.getState().setSessionMetrics(id, { contextPct: 92 });
 
       useHiveStore.getState().setSessionMetrics(id, { contextPct: null });
@@ -1581,7 +1581,7 @@ describe('hive-store', () => {
     };
 
     it('carries the detail alongside idle', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       useHiveStore.getState().setSessionStatus(id, 'idle', 'agents');
 
       expect(detailOf(id)).toBe('agents');
@@ -1596,7 +1596,7 @@ describe('hive-store', () => {
      * for a session with nothing left running.
      */
     it('clears a stale detail when the next event carries none', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       useHiveStore.getState().setSessionStatus(id, 'idle', 'agents');
       expect(detailOf(id)).toBe('agents');
 
@@ -1607,7 +1607,7 @@ describe('hive-store', () => {
     });
 
     it('clears a stale detail on a same-status update that drops it', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       useHiveStore.getState().setSessionStatus(id, 'idle', 'script');
 
       useHiveStore.getState().setSessionStatus(id, 'idle');
@@ -1642,7 +1642,7 @@ describe('hive-store', () => {
   describe('hydrateSessions', () => {
     const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
       id: 'sess-01',
-      project: 'apfm-web',
+      project: 'nova-web',
       task: '',
       status: 'working',
       createdAt: 1,
@@ -1712,7 +1712,7 @@ describe('hive-store', () => {
         cwd: '/repos/the-hive',
         model: 'haiku',
         effort: 'low',
-        project: 'apfm-web',
+        project: 'nova-web',
       });
     });
 
@@ -1725,7 +1725,7 @@ describe('hive-store', () => {
 
       useHiveStore
         .getState()
-        .hydrateSessions([record({ id: live, project: 'apfm-web', status: 'done' })]);
+        .hydrateSessions([record({ id: live, project: 'nova-web', status: 'done' })]);
 
       const entity = useHiveStore.getState().entities[live];
       expect(statusOf(live)).not.toBe('done');
@@ -2064,7 +2064,7 @@ describe('hive-store', () => {
   describe('reviving a restored session', () => {
     const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
       id: 'old-01',
-      project: 'apfm-web',
+      project: 'nova-web',
       task: '',
       status: 'working',
       createdAt: 1,

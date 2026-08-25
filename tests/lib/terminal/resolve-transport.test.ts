@@ -51,7 +51,7 @@ afterEach(() => {
 
 /** A session from the demo fleet, because the project id has to resolve. */
 const SESSION_ID = 'hero-refresh';
-const SESSION_PROJECT = 'apfm-web';
+const SESSION_PROJECT = 'nova-web';
 
 describe('resolveTransport', () => {
   it('gives a session the PTY transport on desktop, with its project', () => {

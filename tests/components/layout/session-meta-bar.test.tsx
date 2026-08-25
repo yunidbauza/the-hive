@@ -45,7 +45,7 @@ describe('SessionMetaBar', () => {
        * it sits directly above the terminal — so it is the one that made
        * `feat/sess-01` look most authoritative while the session was on `main`.
        */
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
 
       render(<SessionMetaBar entity={entity(id)} />);
 
@@ -53,7 +53,7 @@ describe('SessionMetaBar', () => {
     });
 
     it('shows the real branch once main reports it', () => {
-      const id = useHiveStore.getState().spawnSession('apfm-web');
+      const id = useHiveStore.getState().spawnSession('nova-web');
       act(() =>
         useHiveStore
           .getState()
@@ -91,7 +91,7 @@ describe('SessionMetaBar', () => {
 
       expect(link).toHaveAttribute(
         'href',
-        'https://github.com/demo/apfm-web/pull/482',
+        'https://github.com/demo/nova-web/pull/482',
       );
       expect(link).toHaveAttribute('target', '_blank');
       // No opener handed to the page being opened.

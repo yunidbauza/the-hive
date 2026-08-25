@@ -156,9 +156,9 @@ describe('hive-store selectors', () => {
 
   describe('useProjectSessions', () => {
     it('returns a project\'s non-done sessions', () => {
-      const { result } = renderHook(() => useProjectSessions('apfm-web'));
+      const { result } = renderHook(() => useProjectSessions('nova-web'));
 
-      // hero-refresh, lead-form, e2e-quote — all apfm-web and none done.
+      // hero-refresh, lead-form, e2e-quote — all nova-web and none done.
       expect(result.current).toEqual([
         'hero-refresh',
         'lead-form',
@@ -180,7 +180,7 @@ describe('hive-store selectors', () => {
 
     it('omits terminated sessions too (story 108)', () => {
       // The left rail lists what is *running* in a project. A dead pty is not.
-      const { result } = renderHook(() => useProjectSessions('apfm-web'));
+      const { result } = renderHook(() => useProjectSessions('nova-web'));
 
       act(() =>
         useHiveStore.getState().setSessionStatus('lead-form', 'terminated'),
@@ -281,7 +281,7 @@ describe('hive-store selectors', () => {
             'fe-shared': {
               ...(state.entities['hero-refresh'] as Session),
               id: 'fe-shared',
-              project: 'apfm-web',
+              project: 'nova-web',
               branch: 'feat/shared',
             },
             'be-shared': {
@@ -325,7 +325,7 @@ describe('hive-store selectors', () => {
       act(() => {
         useHiveStore.setState((state) => ({
           prs: state.prs.map((pr) =>
-            pr.number === 482 ? { ...pr, repo: 'apfm-web-renamed' } : pr,
+            pr.number === 482 ? { ...pr, repo: 'nova-web-renamed' } : pr,
           ),
         }));
       });
@@ -352,10 +352,10 @@ describe('hive-store selectors', () => {
       expect(result.current).toEqual([
         {
           n: 482,
-          repo: 'apfm-web',
+          repo: 'nova-web',
           state: 'open',
           findings: 2,
-          url: 'https://github.com/demo/apfm-web/pull/482',
+          url: 'https://github.com/demo/nova-web/pull/482',
           session: 'hero-refresh',
         },
       ]);
@@ -524,13 +524,13 @@ describe('hive-store selectors', () => {
       });
 
       act(() => {
-        useHiveStore.setState({ prs: [twin('apfm-web'), twin('referral-api')] });
+        useHiveStore.setState({ prs: [twin('nova-web'), twin('referral-api')] });
       });
 
       const { result } = renderHook(() => useTicketPrs('GRAC-3018'));
 
       expect(result.current.map((pr) => pr.repo)).toEqual([
-        'apfm-web',
+        'nova-web',
         'referral-api',
       ]);
     });
@@ -1114,7 +1114,7 @@ describe('hive-store selectors', () => {
       expect(result.current).toEqual({
         n: 482,
         state: 'open',
-        url: 'https://github.com/demo/apfm-web/pull/482',
+        url: 'https://github.com/demo/nova-web/pull/482',
       });
     });
 
@@ -1185,7 +1185,7 @@ describe('hive-store selectors', () => {
 
       const { result } = renderHook(() => useSessionPr('hero-refresh'));
 
-      // Newer by `updatedAt`, and still not this session's — `apfm-web` is.
+      // Newer by `updatedAt`, and still not this session's — `nova-web` is.
       expect(result.current?.n).toBe(482);
     });
 
@@ -1247,8 +1247,8 @@ describe('hive-store selectors', () => {
             {
               number: 999,
               title: 'Landed an hour ago',
-              url: 'https://github.com/demo/apfm-web/pull/999',
-              repo: 'apfm-web',
+              url: 'https://github.com/demo/nova-web/pull/999',
+              repo: 'nova-web',
               owner: 'demo',
               branch: 'feat/hero-refresh',
               state: 'merged',

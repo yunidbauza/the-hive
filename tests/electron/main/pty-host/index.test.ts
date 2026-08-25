@@ -107,7 +107,7 @@ describe('registerPtyHost', () => {
       sessionId: 'hero-refresh',
       shell: '/bin/zsh',
       args: [],
-      cwd: '/repos/apfm-web',
+      cwd: '/repos/nova-web',
       env: {},
       cols: 80,
       rows: 24,

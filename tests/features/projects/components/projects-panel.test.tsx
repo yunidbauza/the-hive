@@ -11,7 +11,7 @@ import { emptySnapshot } from '@shared/config-contract';
 
 /** The five demo projects, in config order, with their live-session counts. */
 const FIXTURE_PROJECTS = [
-  ['apfm-web', 3],
+  ['nova-web', 3],
   ['referral-api', 3],
   ['advisor-portal', 1],
   ['design-system', 1],
@@ -67,7 +67,7 @@ describe('ProjectsPanel', () => {
   });
 
   /**
-   * The ticket's acceptance criteria say apfm-web has 2 active sessions. The
+   * The ticket's acceptance criteria say nova-web has 2 active sessions. The
    * fixtures give it three — hero-refresh (working), lead-form (waiting), and
    * e2e-quote (idle). The code is the source of truth; see the UPDATED SPECS
    * note on HIVE-17.
@@ -118,10 +118,10 @@ describe('ProjectsPanel', () => {
 
     expect(screen.getByText('hero-refresh')).toBeInTheDocument();
 
-    await userEvent.click(projectToggle('apfm-web'));
+    await userEvent.click(projectToggle('nova-web'));
 
     expect(screen.queryByText('hero-refresh')).not.toBeInTheDocument();
-    expect(projectToggle('apfm-web')).toHaveAttribute('aria-expanded', 'false');
+    expect(projectToggle('nova-web')).toHaveAttribute('aria-expanded', 'false');
     // Its siblings are unaffected.
     expect(screen.getByText('webhooks')).toBeInTheDocument();
   });
@@ -134,11 +134,11 @@ describe('ProjectsPanel', () => {
   it('remembers collapsed projects across an unmount', async () => {
     const { unmount } = render(<ProjectsPanel />);
 
-    await userEvent.click(projectToggle('apfm-web'));
+    await userEvent.click(projectToggle('nova-web'));
     unmount();
     render(<ProjectsPanel />);
 
-    expect(projectToggle('apfm-web')).toHaveAttribute('aria-expanded', 'false');
+    expect(projectToggle('nova-web')).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('hero-refresh')).not.toBeInTheDocument();
   });
 
@@ -169,7 +169,7 @@ describe('ProjectsPanel', () => {
    */
   it('follows the config, and drops projects it no longer declares', () => {
     render(<ProjectsPanel />);
-    expect(projectToggle('apfm-web')).toBeInTheDocument();
+    expect(projectToggle('nova-web')).toBeInTheDocument();
 
     act(() => {
       setProjectConfigForTest({
@@ -190,7 +190,7 @@ describe('ProjectsPanel', () => {
     });
 
     expect(projectToggle('solo')).toBeInTheDocument();
-    expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
+    expect(screen.queryByText('nova-web')).not.toBeInTheDocument();
   });
 
   /**

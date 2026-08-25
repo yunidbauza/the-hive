@@ -531,7 +531,7 @@ describe('CenterStage — text fields keep their native bindings', () => {
 describe('CenterStage — the editor', () => {
   const openAFile = async () => {
     await act(async () => {
-      useEditorStore.getState().openFile('apfm-web', 'src/app.ts');
+      useEditorStore.getState().openFile('nova-web', 'src/app.ts');
     });
   };
 

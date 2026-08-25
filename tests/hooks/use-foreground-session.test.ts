@@ -25,7 +25,7 @@ const session: Session = {
   kind: 'session',
   id: 'sess-03',
   terminalId: 'term-3',
-  project: 'apfm-web',
+  project: 'nova-web',
   status: 'idle',
   task: 'refresh the hero',
   cost: '$0.00',
@@ -102,7 +102,7 @@ function seed({ activeTab, picker, settings, editorFull, editorSplit }: Case['st
     settings: settings ?? false,
   });
   useEditorStore.setState({
-    activeKey: editorFull || editorSplit ? 'apfm-web:src/index.ts' : null,
+    activeKey: editorFull || editorSplit ? 'nova-web:src/index.ts' : null,
   });
   useAppearanceStore.setState({
     editorPlacement: editorFull ? 'full' : editorSplit ? 'split' : 'full',

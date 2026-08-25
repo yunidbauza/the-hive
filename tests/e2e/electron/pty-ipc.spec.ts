@@ -62,7 +62,7 @@ test('a session spawned from the renderer runs a real shell and streams back seq
        * line, where `exit` would run in the session's own shell and close it.
        */
       claudeCommand: 'true; false',
-      projects: [{ id: 'apfm-web', path: REAL_DIRECTORY }],
+      projects: [{ id: 'nova-web', path: REAL_DIRECTORY }],
     }),
   );
 
@@ -99,7 +99,7 @@ test('a session spawned from the renderer runs a real shell and streams back seq
         hive.pty.ack({ sessionId, seq: event.seq });
       });
 
-      await hive.pty.spawn({ sessionId, projectId: 'apfm-web', cols: 200, rows: 24 });
+      await hive.pty.spawn({ sessionId, projectId: 'nova-web', cols: 200, rows: 24 });
       hive.pty.write({ sessionId, data: 'echo HELLO_FROM_A_REAL_PTY; exit\n' });
 
       const exitCode = await exited;
@@ -147,7 +147,7 @@ test('refuses to spawn into a project with no usable directory', async ({}, test
       try {
         await window.hive!.pty.spawn({
           sessionId: 'nowhere',
-          projectId: 'apfm-web',
+          projectId: 'nova-web',
           cols: 80,
           rows: 24,
         });
@@ -160,7 +160,7 @@ test('refuses to spawn into a project with no usable directory', async ({}, test
     // Refused in main, where the config lives — the host does not know what a
     // project is, and spawning a shell in an arbitrary directory would be a
     // worse answer than saying no.
-    expect(rejection).toContain('apfm-web');
+    expect(rejection).toContain('nova-web');
     expect(rejection).toMatch(/not mapped|usable directory/);
   } finally {
     await app.close();

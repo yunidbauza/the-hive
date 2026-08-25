@@ -21,7 +21,7 @@ import {
 const session = (over: Partial<Session> = {}): Session => ({
   kind: 'session',
   id: 'sess-01',
-  project: 'apfm-web',
+  project: 'nova-web',
   branch: 'feat/sess-01',
   status: 'idle',
   task: '',

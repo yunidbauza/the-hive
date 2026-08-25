@@ -14,13 +14,13 @@ import type { RunAsync } from '../../../../../electron/main/integrations/github/
  * readable.
  */
 
-const REPOS: RepoRef[] = [{ owner: 'acme', name: 'apfm-web' }];
+const REPOS: RepoRef[] = [{ owner: 'acme', name: 'nova-web' }];
 const NOW = Date.parse('2026-08-09T12:00:00Z');
 
 const prNode = (over: Record<string, unknown> = {}) => ({
   number: 482,
   title: 'Hero: semantic token refactor',
-  url: 'https://github.com/acme/apfm-web/pull/482',
+  url: 'https://github.com/acme/nova-web/pull/482',
   isDraft: false,
   state: 'OPEN',
   reviewDecision: null,
@@ -28,7 +28,7 @@ const prNode = (over: Record<string, unknown> = {}) => ({
   updatedAt: '2026-08-09T11:00:00Z',
   mergedAt: null,
   author: { login: 'octocat' },
-  repository: { name: 'apfm-web', owner: { login: 'acme' } },
+  repository: { name: 'nova-web', owner: { login: 'acme' } },
   reviewThreads: { nodes: [{ isResolved: false }] },
   commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
   ...over,
@@ -67,7 +67,7 @@ describe('createGithubClient', () => {
     expect(result.value).toHaveLength(1);
     expect(result.value[0]).toMatchObject({
       number: 482,
-      repo: 'apfm-web',
+      repo: 'nova-web',
       owner: 'acme',
       findings: 1,
       checks: 'passing',
@@ -88,15 +88,15 @@ describe('createGithubClient', () => {
     expect(file).toBe('/usr/bin/gh');
     expect(args.slice(0, 3)).toEqual(['api', 'graphql', '-f']);
     expect(args).toContain(
-      'open=is:pr author:@me is:open repo:acme/apfm-web sort:updated-desc',
+      'open=is:pr author:@me is:open repo:acme/nova-web sort:updated-desc',
     );
     expect(args).toContain(
-      'merged=is:pr author:@me is:merged repo:acme/apfm-web sort:updated-desc',
+      'merged=is:pr author:@me is:merged repo:acme/nova-web sort:updated-desc',
     );
 
     const query = args.find((arg) => arg.startsWith('query='));
     expect(query).toBeDefined();
-    expect(query).not.toContain('apfm-web');
+    expect(query).not.toContain('nova-web');
   });
 
   /** Nothing to sweep is a configuration answer, and never a request. */

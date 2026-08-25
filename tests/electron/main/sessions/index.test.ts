@@ -63,13 +63,13 @@ const CONFIG: ConfigSnapshot = {
   env: {},
   projects: [
     {
-      id: 'apfm-web',
-      name: 'apfm-web',
-      path: '/repos/apfm-web',
+      id: 'nova-web',
+      name: 'nova-web',
+      path: '/repos/nova-web',
       icon: 'ph-folder',
       origin: 'local',
       status: 'ok',
-      key: 'aw',
+      key: 'nw',
       isRepo: true,
     },
     {
@@ -133,7 +133,7 @@ function fakeSupervisor(): PtyHostSupervisor {
   } as unknown as PtyHostSupervisor;
 }
 
-const OPEN = { entityId: 'hero-refresh', projectId: 'apfm-web', cols: 80, rows: 24 };
+const OPEN = { entityId: 'hero-refresh', projectId: 'nova-web', cols: 80, rows: 24 };
 
 /** Pinned so the command line is a constant rather than a moving target. */
 const TEST_UUID = '00000000-0000-4000-8000-000000000000';
@@ -230,7 +230,7 @@ describe('what a session runs', () => {
      * running `claude`.
      */
     expect(spawned[0]!.args).toEqual(['-l']);
-    expect(spawned[0]!.cwd).toBe('/repos/apfm-web');
+    expect(spawned[0]!.cwd).toBe('/repos/nova-web');
   });
 
   it('writes the bootstrap as input after the shell speaks', () => {
@@ -1360,7 +1360,7 @@ describe('the ledger', () => {
     withLedger(written).open(OPEN);
 
     expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
-      project: 'apfm-web',
+      project: 'nova-web',
       status: 'working',
       sessionUuid: TEST_UUID,
     });

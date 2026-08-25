@@ -255,7 +255,7 @@ describe('Header', () => {
 
     it('clears any stale query as it opens', async () => {
       const user = userEvent.setup();
-      useUiStore.setState({ pickerQuery: 'apfm' });
+      useUiStore.setState({ pickerQuery: 'nova' });
       render(<Header />);
 
       await user.click(screen.getByRole('button', { name: 'New session' }));

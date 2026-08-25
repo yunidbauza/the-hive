@@ -9,7 +9,7 @@ interface ProjectKeyEditorProps {
    * **excluding this project's own**.
    *
    * A map rather than a set so the refusal can name the culprit: "already used"
-   * asks the user to go hunting, where "already used by APFM Web" is a row they
+   * asks the user to go hunting, where "already used by NOVA Web" is a row they
    * can go and look at. Passed in rather than read here because only
    * `projects-list.tsx` can see the other rows, and this editor fetching its
    * own list would be a second source of truth for the same fact.

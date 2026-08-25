@@ -35,13 +35,13 @@ describe('the boot flag', () => {
       this hides *starts* here: the shell is already loading `direnv` before
       main has finished answering.
     */
-    const id = state().spawnSession('apfm-web');
+    const id = state().spawnSession('nova-web');
 
     expect(sessionAt(id).booting).toBe(true);
   });
 
   it('uncovers it when Claude reports itself up', () => {
-    const id = state().spawnSession('apfm-web');
+    const id = state().spawnSession('nova-web');
 
     state().markSessionReady(id);
 
@@ -54,7 +54,7 @@ describe('the boot flag', () => {
    * already uncovered cannot be uncovered harder.
    */
   it('tolerates being told twice', () => {
-    const id = state().spawnSession('apfm-web');
+    const id = state().spawnSession('nova-web');
     state().markSessionReady(id);
     const after = state().entities;
 
@@ -86,7 +86,7 @@ describe('the boot flag', () => {
    * from an absent key — which these snapshots are compared on.
    */
   it('removes the key rather than setting it false', () => {
-    const id = state().spawnSession('apfm-web');
+    const id = state().spawnSession('nova-web');
     state().markSessionReady(id);
 
     expect('booting' in sessionAt(id)).toBe(false);
@@ -113,7 +113,7 @@ describe('the boot flag — a boot that goes quiet', () => {
 
   /** Spawned, then reported working the way a shell's own output makes it. */
   const booting = (task?: string) => {
-    const id = state().spawnSession('apfm-web', task);
+    const id = state().spawnSession('nova-web', task);
     state().setSessionStatus(id, 'working');
     expect(sessionAt(id).booting).toBe(true);
     return id;
@@ -173,7 +173,7 @@ describe('the boot flag — a boot that goes quiet', () => {
      * both "no change" and "the cover must lift", and dropping it would leave a
      * cover nothing could ever remove.
      */
-    const id = state().spawnSession('apfm-web');
+    const id = state().spawnSession('nova-web');
     expect(sessionAt(id).status).toBe('idle');
 
     state().setSessionStatus(id, 'idle');

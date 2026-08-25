@@ -217,12 +217,12 @@ describe('RuntimeSection — workspace environment', () => {
 
   it('gives each env editor a distinct accessible name once a project is also shown', async () => {
     const user = userEvent.setup();
-    install({ projects: [entry({ id: 'apfm-web', env: { FOO: 'bar' } })] });
+    install({ projects: [entry({ id: 'nova-web', env: { FOO: 'bar' } })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
 
     // Both groups are individually addressable by name — this is what lets
@@ -251,7 +251,7 @@ describe('RuntimeSection — workspace environment', () => {
 
 describe('RuntimeSection — per-project overrides', () => {
   it('shows nothing until a project is picked', () => {
-    install({ projects: [entry({ id: 'apfm-web' })] });
+    install({ projects: [entry({ id: 'nova-web' })] });
     render(<RuntimeSection />);
 
     expect(
@@ -261,12 +261,12 @@ describe('RuntimeSection — per-project overrides', () => {
 
   it('shows the inherited value as a placeholder, not a value', async () => {
     const user = userEvent.setup();
-    install({ shell: '/bin/sh', projects: [entry({ id: 'apfm-web' })] });
+    install({ shell: '/bin/sh', projects: [entry({ id: 'nova-web' })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
 
     const field = screen.getByRole('textbox', { name: 'Shell override' });
@@ -278,12 +278,12 @@ describe('RuntimeSection — per-project overrides', () => {
 
   it('sets an override', async () => {
     const user = userEvent.setup();
-    install({ projects: [entry({ id: 'apfm-web' })] });
+    install({ projects: [entry({ id: 'nova-web' })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
     await user.type(
       screen.getByRole('textbox', { name: 'Shell override' }),
@@ -291,19 +291,19 @@ describe('RuntimeSection — per-project overrides', () => {
     );
 
     expect(setProjectRuntimeConfig).toHaveBeenCalledWith({
-      id: 'apfm-web',
+      id: 'nova-web',
       shell: '/bin/bash',
     });
   });
 
   it('clears an override with null rather than an empty string', async () => {
     const user = userEvent.setup();
-    install({ projects: [entry({ id: 'apfm-web', shell: '/bin/bash' })] });
+    install({ projects: [entry({ id: 'nova-web', shell: '/bin/bash' })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
     const field = screen.getByRole('textbox', { name: 'Shell override' });
     await user.clear(field);
@@ -312,19 +312,19 @@ describe('RuntimeSection — per-project overrides', () => {
     // The whole point of the three-state contract: "" would spawn a shell
     // named "", null restores inheritance.
     expect(setProjectRuntimeConfig).toHaveBeenCalledWith({
-      id: 'apfm-web',
+      id: 'nova-web',
       shell: null,
     });
   });
 
   it('saves env vars, and clears the key entirely when emptied', async () => {
     const user = userEvent.setup();
-    install({ projects: [entry({ id: 'apfm-web', env: { FOO: 'bar' } })] });
+    install({ projects: [entry({ id: 'nova-web', env: { FOO: 'bar' } })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
     // Scoped to the project's own named group: the Defaults group now carries
     // its own EnvEditor too (story 108), so an unscoped query would find two
@@ -341,7 +341,7 @@ describe('RuntimeSection — per-project overrides', () => {
     // `null`, not `{}` — leaving `"env": {}` behind is litter in a file people
     // hand-edit.
     expect(setProjectRuntimeConfig).toHaveBeenCalledWith({
-      id: 'apfm-web',
+      id: 'nova-web',
       env: null,
     });
   });
@@ -393,19 +393,19 @@ describe('RuntimeSection — diagnostic', () => {
 
   it('asks about the selected project', async () => {
     const user = userEvent.setup();
-    diagnoseAgentCommand.mockResolvedValue({ ...found, projectId: 'apfm-web' });
-    install({ projects: [entry({ id: 'apfm-web' })] });
+    diagnoseAgentCommand.mockResolvedValue({ ...found, projectId: 'nova-web' });
+    install({ projects: [entry({ id: 'nova-web' })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
     await user.click(
       screen.getByRole('button', { name: /Check this project’s command/ }),
     );
 
-    expect(diagnoseAgentCommand).toHaveBeenCalledWith({ id: 'apfm-web' });
+    expect(diagnoseAgentCommand).toHaveBeenCalledWith({ id: 'nova-web' });
   });
 
   it('drops a stale verdict when the project changes', async () => {
@@ -453,19 +453,19 @@ describe('RuntimeSection — environment diagnostic', () => {
 
   it('asks about the selected project’s environment', async () => {
     const user = userEvent.setup();
-    diagnoseSessionEnv.mockResolvedValue({ ...kept, projectId: 'apfm-web' });
-    install({ projects: [entry({ id: 'apfm-web' })] });
+    diagnoseSessionEnv.mockResolvedValue({ ...kept, projectId: 'nova-web' });
+    install({ projects: [entry({ id: 'nova-web' })] });
     render(<RuntimeSection />);
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Project' }),
-      'apfm-web',
+      'nova-web',
     );
     await user.click(
       screen.getByRole('button', { name: /Check this project’s environment/ }),
     );
 
-    expect(diagnoseSessionEnv).toHaveBeenCalledWith({ id: 'apfm-web' });
+    expect(diagnoseSessionEnv).toHaveBeenCalledWith({ id: 'nova-web' });
   });
 
   it('shows a pending state while the probe is in flight, and clears it after', async () => {

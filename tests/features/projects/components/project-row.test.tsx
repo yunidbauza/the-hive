@@ -36,9 +36,9 @@ const CONFIG_PATH = '/home/dev/.hive/config.json';
  * tell a name match from an id match, so this one's do not.
  */
 const PROJECT = {
-  id: 'apfm-web',
-  name: 'APFM Web',
-  key: testProjectKey('apfm-web'),
+  id: 'nova-web',
+  name: 'NOVA Web',
+  key: testProjectKey('nova-web'),
   icon: 'ph-globe-hemisphere-west',
 };
 
@@ -93,23 +93,23 @@ describe('ProjectRow', () => {
    */
   describe('the label', () => {
     it('is the display name', () => {
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
       render(<ProjectRow project={PROJECT} />);
 
-      expect(screen.getByText('APFM Web')).toBeInTheDocument();
+      expect(screen.getByText('NOVA Web')).toBeInTheDocument();
     });
 
     it('is not the id', () => {
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
       render(<ProjectRow project={PROJECT} />);
 
-      expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
+      expect(screen.queryByText('nova-web')).not.toBeInTheDocument();
     });
 
     it('carries no key chip — the rail is the quiet surface', () => {
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
       render(<ProjectRow project={PROJECT} />);
 
@@ -126,7 +126,7 @@ describe('ProjectRow', () => {
   });
 
   it('shows no badge for a project that resolves', () => {
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
     render(<ProjectRow project={PROJECT} />);
 
@@ -145,7 +145,7 @@ describe('ProjectRow', () => {
   });
 
   it('marks a broken entry in amber, with its reason verbatim', () => {
-    setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'missing' }]));
+    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'missing' }]));
 
     render(<ProjectRow project={PROJECT} />);
 
@@ -159,7 +159,7 @@ describe('ProjectRow', () => {
 
     render(<ProjectRow project={PROJECT} />);
 
-    // apfm-web has three live fixture sessions; being unmapped changes what a
+    // nova-web has three live fixture sessions; being unmapped changes what a
     // user can *start*, not what the rail reports about what is running.
     //
     // "unmapped" lands inside the row's accessible name on purpose. The badge
@@ -168,7 +168,7 @@ describe('ProjectRow', () => {
     // surprised when the picker refuses.
     expect(
       screen.getByRole('button', { expanded: true }),
-    ).toHaveAccessibleName('APFM Web unmapped 3 active sessions');
+    ).toHaveAccessibleName('NOVA Web unmapped 3 active sessions');
   });
 
   /**
@@ -180,10 +180,10 @@ describe('ProjectRow', () => {
    * or beside the folder name.
    */
   describe('the new-session link', () => {
-    const LINK = 'New session in APFM Web';
+    const LINK = 'New session in NOVA Web';
 
     it('follows the last session', () => {
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
       const { container } = render(<ProjectRow project={PROJECT} />);
 
@@ -195,7 +195,7 @@ describe('ProjectRow', () => {
 
     it('sits directly under a project with nothing running', () => {
       useHiveStore.getState().reset();
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
       const { container } = render(<ProjectRow project={PROJECT} />);
 
@@ -205,7 +205,7 @@ describe('ProjectRow', () => {
     });
 
     it('is gone when the project is collapsed', async () => {
-      setProjectConfigForTest(snapshot([{ id: 'apfm-web', status: 'ok' }]));
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 
       render(<ProjectRow project={PROJECT} />);
       await userEvent.click(screen.getByRole('button', { expanded: true }));

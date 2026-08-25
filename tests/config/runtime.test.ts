@@ -64,11 +64,11 @@ describe('can', () => {
     });
 
     it('permits every project when no config has been read', () => {
-      expect(can.spawnSessionIn('apfm-web')).toBe(true);
+      expect(can.spawnSessionIn('nova-web')).toBe(true);
 
       withBridge();
 
-      expect(can.spawnSessionIn('apfm-web')).toBe(true);
+      expect(can.spawnSessionIn('nova-web')).toBe(true);
     });
 
     it('refuses a project the config cannot resolve', () => {
@@ -80,13 +80,13 @@ describe('can', () => {
         env: {},
         projects: [
           {
-            id: 'apfm-web',
-            name: 'apfm-web',
-            path: '/repos/apfm-web',
+            id: 'nova-web',
+            name: 'nova-web',
+            path: '/repos/nova-web',
             icon: 'ph-folder',
             origin: 'local',
             status: 'ok',
-            key: 'aw',
+            key: 'nw',
             isRepo: true,
           },
           {
@@ -108,7 +108,7 @@ describe('can', () => {
         errors: [],
       });
 
-      expect(can.spawnSessionIn('apfm-web')).toBe(true);
+      expect(can.spawnSessionIn('nova-web')).toBe(true);
       expect(can.spawnSessionIn('referral-api')).toBe(false);
       expect(can.spawnSessionIn('advisor-portal')).toBe(false);
     });

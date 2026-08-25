@@ -94,7 +94,7 @@ describe('ProjectsSection', () => {
    * without offering rows nobody could remove.
    *
    * There is no merge and no seed now. A store full of sessions naming
-   * `apfm-web` must still not put `apfm-web` in this list — only the config
+   * `nova-web` must still not put `nova-web` in this list — only the config
    * does that — which is what the seeded fleet below is here to prove.
    */
   it('lists the config and nothing the sessions merely name', () => {
@@ -103,8 +103,8 @@ describe('ProjectsSection', () => {
     render(<ProjectsSection />);
 
     expect(screen.getByText('The Hive')).toBeInTheDocument();
-    // Seeded sessions name apfm-web. The config does not declare it.
-    expect(screen.queryByText('apfm-web')).not.toBeInTheDocument();
+    // Seeded sessions name nova-web. The config does not declare it.
+    expect(screen.queryByText('nova-web')).not.toBeInTheDocument();
     // And the muted "N demo projects also appear in the rail" line is gone.
     expect(
       screen.queryByText(/demo projects from the sample data/i),
@@ -215,13 +215,13 @@ describe('ProjectsSection', () => {
 
     it('confirms instead of removing when the project owns live sessions', async () => {
       const user = userEvent.setup();
-      // The fixtures already run live sessions on apfm-web, so declaring it in
+      // The fixtures already run live sessions on nova-web, so declaring it in
       // the config produces a row that owns live sessions — the case story 101
       // disabled and this story unlocks with a confirmation.
-      seed([entry({ id: 'apfm-web', name: 'APFM' })]);
+      seed([entry({ id: 'nova-web', name: 'NOVA' })]);
 
       render(<ProjectsSection />);
-      await user.click(screen.getByRole('button', { name: 'Actions for APFM' }));
+      await user.click(screen.getByRole('button', { name: 'Actions for NOVA' }));
       await user.click(screen.getByRole('menuitem', { name: /remove/i }));
 
       expect(removeProjectFromConfig).not.toHaveBeenCalled();

@@ -62,7 +62,7 @@ const choose = (label: RegExp) =>
  *
  * The live-session gate is exercised through the **real** store rather than a
  * mocked hook, following `projects-section.test.tsx`: the fixtures already run
- * live sessions on `apfm-web`, so declaring that id is how a test produces a
+ * live sessions on `nova-web`, so declaring that id is how a test produces a
  * project that owns one.
  */
 describe('ProjectsList', () => {
@@ -292,22 +292,22 @@ describe('ProjectsList', () => {
     });
 
     it('confirms first when the project owns live sessions', async () => {
-      render(<ProjectsList entries={[entry({ id: 'apfm-web', name: 'APFM' })]} />);
+      render(<ProjectsList entries={[entry({ id: 'nova-web', name: 'NOVA' })]} />);
 
-      await openMenu('APFM');
+      await openMenu('NOVA');
       await choose(/remove/i);
 
       expect(removeProjectFromConfig).not.toHaveBeenCalled();
       expect(screen.getByRole('alertdialog')).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole('button', { name: /^remove$/i }));
-      expect(removeProjectFromConfig).toHaveBeenCalledWith({ id: 'apfm-web' });
+      expect(removeProjectFromConfig).toHaveBeenCalledWith({ id: 'nova-web' });
     });
 
     it('writes nothing when the confirmation is cancelled', async () => {
-      render(<ProjectsList entries={[entry({ id: 'apfm-web', name: 'APFM' })]} />);
+      render(<ProjectsList entries={[entry({ id: 'nova-web', name: 'NOVA' })]} />);
 
-      await openMenu('APFM');
+      await openMenu('NOVA');
       await choose(/remove/i);
       await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
@@ -330,14 +330,14 @@ describe('ProjectsList', () => {
         .filter(
           (entity) =>
             entity?.kind === 'session' &&
-            entity.project === 'apfm-web' &&
+            entity.project === 'nova-web' &&
             entity.status !== 'done',
         ).length;
       // The fixtures are the point of this test; guard against them changing.
       expect(live).toBeGreaterThan(1);
 
-      render(<ProjectsList entries={[entry({ id: 'apfm-web', name: 'APFM' })]} />);
-      await openMenu('APFM');
+      render(<ProjectsList entries={[entry({ id: 'nova-web', name: 'NOVA' })]} />);
+      await openMenu('NOVA');
       await choose(/remove/i);
 
       expect(

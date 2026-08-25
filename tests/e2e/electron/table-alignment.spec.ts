@@ -36,7 +36,7 @@ import {
  */
 const test = base;
 
-const PROJECT = 'apfm-web';
+const PROJECT = 'nova-web';
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
 /**
