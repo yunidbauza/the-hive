@@ -47,9 +47,19 @@ import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
  *
  * **The floors have a hard ceiling, and it is not a matter of taste.** At
  * `MIN_WINDOW_SIZE` (1100px, `electron/shared/window.ts`) in comfortable
- * density the two rails leave the centre stage 516px, and `px-[18px]` leaves
- * the flex line 480 of that. The fixed columns and the five `gap-2.5`s take
- * 240, so **the three floors must sum to 240 or less**.
+ * density, **with the rails at their default widths**, the two rails leave the
+ * centre stage 516px and `px-[18px]` leaves the flex line 480 of that. The
+ * fixed columns and the five `gap-2.5`s take 240, so **the three floors must
+ * sum to 240 or less**.
+ *
+ * The rails are draggable since HIVE-105, so "the stage is 516px" is a fact
+ * about the default and not a guarantee: `STAGE_MIN_FRACTION` in
+ * `lib/rail-width.ts` promises the stage only 20% of the window, which at 1100px
+ * is 220. A user who drags both rails wide can starve this table below any
+ * floor it could sensibly have, and it scrolls sideways when they do. That is
+ * out of these numbers' reach and always was — the point of the budget is that
+ * the table fits the layout the app *opens* in, on the smallest window it
+ * allows.
  *
  * ## What happens when they do not, and why nothing caught it
  *
