@@ -91,16 +91,40 @@ export interface FsFailure {
  */
 export type FsResult<T> = { ok: true; value: T } | { ok: false; error: FsFailure };
 
-/** `fs:read-dir`. `relPath` is `''` for the project root. */
+/** `fs:read-dir`. `relPath` is `''` for the root — see {@link ReadDirRequest.sessionId}. */
 export interface ReadDirRequest {
   projectId: string;
   relPath: string;
+  /**
+   * Which session's working directory to root at, when it is not the project's.
+   *
+   * ## Why a session id and not a path
+   *
+   * Property 1 at the top of this file — *no verb takes a path* — is the reason
+   * this is an opaque id rather than the directory itself. Main holds the cwd it
+   * observed from that session's own hook payloads and looks it up here; a
+   * renderer that wants to read somewhere else has nothing to put in the request.
+   * Handing a path across would have inverted the whole design.
+   *
+   * ## What main does with it
+   *
+   * It widens the root **only** for a session whose cwd is a linked git worktree
+   * of the mapped project — the case the explorer exists to show honestly, where
+   * an agent has moved into a worktree kept outside the repository. Anything
+   * else, including a session that wandered into `/tmp`, falls back to the
+   * project root. See `electron/main/fs/session-roots.ts`.
+   *
+   * Optional everywhere: without it, every verb behaves exactly as it did.
+   */
+  sessionId?: string;
 }
 
 /** `fs:read-file`. */
 export interface ReadFileRequest {
   projectId: string;
   relPath: string;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
 }
 
 /** `fs:write-file`. */
@@ -116,6 +140,8 @@ export interface WriteFileRequest {
    * check exists for is an agent rewriting the file underneath the editor.
    */
   baseMtimeMs: number;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
 }
 
 /** What `fs:write-file` answers with. */
@@ -129,9 +155,62 @@ export type WriteFileResult =
   | { ok: false; conflict: true; mtimeMs: number }
   | { ok: false; conflict?: false; error: FsFailure };
 
-/** `fs:watch`. One watcher exists at a time; this replaces it. */
+/**
+ * `fs:root` — which root a read for this project and session resolves under.
+ *
+ * A **read**, and the only verb here that answers with a path. That is a
+ * deliberate exception to property 1 at the top of this file, and worth stating
+ * plainly: property 1 is that no verb *takes* a path, so that a renderer cannot
+ * name a directory. Answering with one grants nothing — the renderer already
+ * holds the project's path from the config and the session's cwd from the
+ * session stream, so this discloses nothing new. What it adds is main's
+ * **verdict**, which the renderer cannot compute and was previously guessing.
+ *
+ * Three things needed that verdict and each was wrong without it:
+ *
+ * - **The editor's buffer key.** `projectId + relPath` identified a file only
+ *   while every root was the project root. With an external worktree as a root,
+ *   two different files share a key and the second `openFile` focuses the
+ *   first — so the user edits and saves into the wrong tree.
+ * - **The watcher's reconciliation.** The single watcher is rooted wherever main
+ *   resolved, and its paths are relative to *that*, so a change in a worktree
+ *   was marking a project-root buffer stale and vice versa.
+ * - **The explorer's header.** It named a worktree whenever the session's cwd
+ *   differed from the project, including when main had **refused** that cwd and
+ *   served the project root — the right label over the wrong files, which is the
+ *   exact untruth the header exists to prevent.
+ */
+export interface RootRequest {
+  projectId: string;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
+}
+
+/** What `fs:root` answers with. */
+export interface RootInfo {
+  /** The absolute directory every `relPath` in this pairing resolves under. */
+  root: string;
+  /**
+   * Whether that is the session's own worktree rather than the project root.
+   *
+   * `false` covers both "no session" and "main refused this session's cwd", and
+   * the renderer must not tell them apart: in both cases the tree is the
+   * project's, and that is the only fact any caller acts on.
+   */
+  widened: boolean;
+}
+
+/**
+ * `fs:watch`. One watcher exists at a time; this replaces it.
+ *
+ * Carries the session for the same reason the reads do: a watcher rooted at the
+ * project while the tree shows a worktree outside it would report changes to
+ * files nobody is looking at, and stay silent about the ones they are.
+ */
 export interface WatchRequest {
   projectId: string;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
 }
 
 /**

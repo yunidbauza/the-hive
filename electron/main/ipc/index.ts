@@ -26,9 +26,10 @@ import type {
   FsChangedEvent,
   FsRefusal,
   FsResult,
+  RootInfo,
   WriteFileResult,
 } from '@shared/fs-contract';
-import type { GhResult, PrsSnapshot } from '@shared/github-contract';
+import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
@@ -36,6 +37,7 @@ import {
   parseDiagnoseCommandRequest,
   parseReadDirRequest,
   parseReadFileRequest,
+  parseRootRequest,
   parseWatchRequest,
   parseWriteFileRequest,
   parseDiagnoseEnvRequest,
@@ -61,6 +63,7 @@ import {
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
+  parseSearchPrsRequest,
   parseSessionNoteRequest,
   parseSkillNameRequest,
   parseSkillRenameRequest,
@@ -115,8 +118,11 @@ import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { isSafeExternalUrl } from '../external-links';
 import {
   createFsWatchLayer,
+  forgetProbedRoots,
   readDirectory,
   readFileContent,
+  readRoot,
+  setSessionCwdLookup,
   writeFileContent,
   type FsWatchLayer,
 } from '../fs';
@@ -673,6 +679,12 @@ export function registerIpcHandlers(): void {
   handle(CH.notificationsDismiss, (_event, payload) =>
     hub.dismiss(parseDismissRequest(payload)),
   );
+  // No payload, so there is nothing to validate and nothing to lose on the way
+  // in — which is the whole argument for this being its own verb rather than
+  // `dismiss(null)`. See `CH.notificationsClear`.
+  handle(CH.notificationsClear, () => {
+    hub.clearInbox();
+  });
 
   /**
    * Now the hub exists, the updater has somewhere to raise into.
@@ -761,6 +773,17 @@ export function registerIpcHandlers(): void {
     hooks,
     ledger,
   });
+
+  /**
+   * The explorer may follow a session into a worktree kept outside the mapped
+   * project — but only on main's own observation of where that session is.
+   *
+   * Injected rather than imported, because `fs/` must not depend on
+   * `sessions/`: the session layer already reaches the filesystem, so the
+   * import would close a cycle. `fs/session-roots.ts` holds the rules that make
+   * the widened root safe; this only supplies the fact.
+   */
+  setSessionCwdLookup((entityId) => sessions?.observedCwd(entityId));
 
   cloneFlow = createCloneFlow({
     sessions,
@@ -901,7 +924,20 @@ export function registerIpcHandlers(): void {
    * because it was never trusted with the input.
    */
   handle(CH.configGet, (): ConfigSnapshot => getConfig());
-  handle(CH.configReload, (): ConfigSnapshot => reloadConfig());
+  handle(CH.configReload, (): ConfigSnapshot => {
+    /*
+      A reload can repoint, add or remove a project, which changes which
+      repository a directory should be measured against. `session-roots` caches
+      git's answer per directory *including refusals*, so without this a project
+      fixed in Settings would keep answering from the setup that caused the
+      refusal for the rest of the app's life.
+
+      Here rather than inside `reloadConfig`, so the config layer does not have
+      to know that a filesystem cache exists. This handler already owns both.
+    */
+    forgetProbedRoots();
+    return reloadConfig();
+  });
 
   /**
    * Config mutation (story 101).
@@ -1222,6 +1258,16 @@ export function registerIpcHandlers(): void {
     return github.prs();
   });
 
+  handle(
+    CH.githubSearchPrs,
+    async (_event, payload): Promise<GhResult<PrRecord[]>> => {
+      const request = parseSearchPrsRequest(payload);
+      // Same race as `github:prs` — see the note there.
+      await loginEnvStatus();
+      return github.searchPrs(request.term, request.projectId);
+    },
+  );
+
   handle(CH.jiraStatus, (): JiraStatus => jira.status());
   handle(CH.jiraSetToken, (_event, payload): JiraStatus =>
     jira.setToken(parseSetJiraTokenRequest(payload)),
@@ -1311,6 +1357,12 @@ export function registerIpcHandlers(): void {
   );
 
   handle(
+    CH.fsRoot,
+    (_event, payload): Promise<FsResult<RootInfo>> =>
+      readRoot(parseRootRequest(payload)),
+  );
+
+  handle(
     CH.fsReadFile,
     (_event, payload): Promise<FsResult<FileContent | FsRefusal>> =>
       readFileContent(parseReadFileRequest(payload)),
@@ -1329,7 +1381,8 @@ export function registerIpcHandlers(): void {
    * updates" and keeps its manual refresh, which is the honest degradation.
    */
   handle(CH.fsWatch, async (_event, payload): Promise<void> => {
-    await fsWatch?.watchProject(parseWatchRequest(payload).projectId);
+    const request = parseWatchRequest(payload);
+    await fsWatch?.watchProject(request.projectId, request.sessionId);
   });
 
   handle(CH.fsUnwatch, (): void => {

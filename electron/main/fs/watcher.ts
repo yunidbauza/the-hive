@@ -4,7 +4,7 @@ import { sep } from 'node:path';
 import type { FsChangedEvent } from '@shared/fs-contract';
 import { HIDDEN_ENTRIES } from '@shared/fs-contract';
 
-import { projectRoot } from './paths';
+import { rootFor } from './paths';
 
 /**
  * One recursive watcher, for the project the explorer is currently showing.
@@ -63,7 +63,7 @@ interface ActiveWatch {
 }
 
 export interface FsWatchLayer {
-  watchProject(projectId: string): Promise<void>;
+  watchProject(projectId: string, sessionId?: string): Promise<void>;
   unwatch(): void;
   dispose(): void;
 }
@@ -101,14 +101,17 @@ export function createFsWatchLayer(
   };
 
   return {
-    async watchProject(projectId) {
+    async watchProject(projectId, sessionId) {
       /**
        * Resolved through the same guard every read goes through, so "watch" is
        * not a second, weaker way to name a directory. An unknown or unusable
        * project throws here exactly as it would on a read.
        */
       const generation = ++requested;
-      const root = await projectRoot(projectId);
+      // `rootFor`, not `projectRoot`: a session working in a worktree outside
+      // the project is watched where it actually is, or the tree the panel
+      // shows would never refresh while the one it does not would.
+      const root = await rootFor(projectId, sessionId);
 
       /**
        * Two `fs:watch` calls in flight — a fast session switch across projects

@@ -224,6 +224,22 @@ export interface Sessions {
   restart(request: OpenRequest): Promise<void>;
   /** Live entity ids, for diagnostics and the session cap. */
   entities(): string[];
+  /**
+   * The working directory this session was last observed in, or `undefined`.
+   *
+   * **Main's own observation**, taken from that session's hook payloads — never
+   * anything the renderer said. That provenance is the reason the explorer's
+   * root may follow it: `fs/session-roots.ts` widens the read boundary on the
+   * strength of this value, and a renderer-supplied path would have made that
+   * a hole rather than a feature.
+   *
+   * `undefined` until the first hook carrying a cwd arrives, which is the
+   * ordinary state for a session that has just spawned — and answered correctly
+   * for one that has since **exited**, because its editor tabs outlive it and
+   * re-rooting them at the project would put the wrong bytes in front of the
+   * user under the right filename.
+   */
+  observedCwd(entityId: string): string | undefined;
   diagnostics(): PtyDiagnostics[];
   dispose(): void;
 }
@@ -444,6 +460,23 @@ export function createSessions(options: SessionsOptions): Sessions {
    * the overwhelming majority of the time it would not.
    */
   const lastBranch = new Map<string, { branch: string | null; cwd: string }>();
+  /**
+   * Where each session was last observed working — **kept after it exits**.
+   *
+   * Separate from {@link lastBranch}, which `settleExit` deletes so that a
+   * restarted session reusing the same entity id does not have its first branch
+   * read suppressed as a repeat. That deletion is right for branch publishing
+   * and wrong for this: the explorer's root and every editor buffer opened from
+   * a session resolve through `observedCwd`, and a session ending does not close
+   * its tabs. Forgetting the cwd there would silently re-root those buffers at
+   * the project — so a file opened from a worktree would reload the project's
+   * copy of itself, and a save would then be offered as an overwrite of the
+   * wrong file.
+   *
+   * Bounded by the number of sessions opened in one run, which is the same
+   * bound the ledger already carries, and each entry is one short string.
+   */
+  const lastCwd = new Map<string, string>();
 
   const activity: ActivityTracker = createActivityTracker({
     onStatus: (entityId, status) => {
@@ -995,6 +1028,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     if (seen !== undefined && seen.branch === branch && seen.cwd === cwd) return;
 
     lastBranch.set(entityId, { branch, cwd });
+    lastCwd.set(entityId, cwd);
     /*
       HIVE-87. The same fact the renderer is about to be told, kept where it
       survives a quit. `branch` is nullable here and the record's is optional,
@@ -1641,6 +1675,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     },
 
     entities: () => registry.entities(),
+    observedCwd: (entityId) => lastCwd.get(entityId),
     diagnostics: () => ptyIpc.diagnostics(),
 
     dispose() {

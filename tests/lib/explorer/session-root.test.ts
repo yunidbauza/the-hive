@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { containsPath, relativeRoot } from '@lib/explorer/session-root';
+import {
+  containsPath,
+  relativeRoot,
+  rootDisplay,
+} from '@lib/explorer/session-root';
 
 /**
  * Where the explorer roots for a session that moved (HIVE-78).
@@ -76,5 +80,50 @@ describe('relativeRoot', () => {
       expect(relativeRoot(undefined, '/w/app/src')).toBe('');
       expect(relativeRoot('', '/w/app/src')).toBe('');
     });
+  });
+});
+
+/**
+ * What the header says, as opposed to what the tree prepends.
+ *
+ * The pair exists because `relativeRoot` answers `''` for two situations that
+ * must not read the same: a session at the project root, and one working
+ * somewhere a prefix cannot reach. The second is the case the explorer used to
+ * render as the first — the bare project name over a tree that was not the
+ * project's.
+ */
+describe('rootDisplay', () => {
+  it('says nothing for a session at the project root', () => {
+    expect(rootDisplay('/w/app', '/w/app')).toEqual({ suffix: '', full: null });
+  });
+
+  it('names an in-project worktree by its own last segment', () => {
+    expect(rootDisplay('/w/app', '/w/app/.claude/worktrees/hive-pr')).toEqual({
+      suffix: 'hive-pr',
+      full: '/w/app/.claude/worktrees/hive-pr',
+    });
+  });
+
+  it('describes a worktree outside the project rather than discarding it', () => {
+    // `relativeRoot` answers `''` here — correctly, since no prefix can express
+    // it. The header must still say where the tree actually is.
+    expect(relativeRoot('/w/app', '/w/trees/side')).toBe('');
+    expect(rootDisplay('/w/app', '/w/trees/side')).toEqual({
+      suffix: 'side',
+      full: '/w/trees/side',
+    });
+  });
+
+  it('ignores a trailing separator on either side', () => {
+    expect(rootDisplay('/w/app/', '/w/app')).toEqual({ suffix: '', full: null });
+    expect(rootDisplay('/w/app', '/w/trees/side/')).toEqual({
+      suffix: 'side',
+      full: '/w/trees/side',
+    });
+  });
+
+  it('says nothing when either input is missing', () => {
+    expect(rootDisplay(null, '/w/trees/side')).toEqual({ suffix: '', full: null });
+    expect(rootDisplay('/w/app', undefined)).toEqual({ suffix: '', full: null });
   });
 });

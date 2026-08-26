@@ -5,8 +5,9 @@ import { Icon } from '@components/ui/icon';
 import { TreeNode } from '@features/explorer/components/tree-node';
 import { useDirectory } from '@features/explorer/hooks/use-directory';
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
+import { useExplorerRoot } from '@features/explorer/hooks/use-explorer-root';
 import { useProjectAccess } from '@hooks/use-project-config';
-import { baseName, hasFsBridge } from '@lib/explorer/fs-client';
+import { hasFsBridge } from '@lib/explorer/fs-client';
 import { useEditorLayout } from '@stores/appearance-store';
 import { useEditorActions } from '@stores/editor-store';
 import { useProjects } from '@stores/hive-store';
@@ -36,7 +37,14 @@ import {
  * instead, and this panel reads the revision counter it bumps.
  */
 export function ExplorerPanel() {
-  const { project, root: subRoot } = useExplorerProject();
+  const { project, root: subRoot, sessionId, display, branch } = useExplorerProject();
+  /**
+   * Main's verdict on which tree the reads below actually resolve under.
+   *
+   * `null` until it answers. The header and the buffer key both depend on it,
+   * and both were wrong while the renderer inferred it — see `useExplorerRoot`.
+   */
+  const explorerRoot = useExplorerRoot(project?.id ?? null, sessionId);
   // Only to tell the two empty states apart — see the branch below.
   const projects = useProjects();
   const access = useProjectAccess(project?.id ?? '');
@@ -63,14 +71,42 @@ export function ExplorerPanel() {
   const bridge = hasFsBridge();
 
   const projectId = project?.id ?? null;
-  const usable = bridge && projectId !== null && access.spawnable;
+  /*
+    `explorerRoot === null` is "main has not said yet", and reading before then
+    would open buffers keyed against a root we are guessing at. One round trip,
+    once per session change.
+  */
+  const usable =
+    bridge && projectId !== null && access.spawnable && explorerRoot !== null;
 
   /**
    * Rooted at the session's own directory, which is the project root for every
    * session that has not moved (HIVE-78).
    */
-  const root = useDirectory(projectId ?? '', subRoot, usable, refreshToken);
+  const root = useDirectory(
+    projectId ?? '',
+    subRoot,
+    usable,
+    refreshToken,
+    sessionId,
+  );
   const revealStage = useRevealStage();
+
+  /**
+   * The worktree name the header speaks, or `''` for the project root.
+   *
+   * Two sources, because there are two mechanisms and only one of them needs
+   * main's permission. An **in-project** worktree is reached by a prefix this
+   * panel prepends, so `display.suffix` is authoritative — main resolves the
+   * same path by construction. An **out-of-project** one is a second root main
+   * had to grant, so nothing may be said about it until main says `widened`.
+   */
+  const rootSuffix =
+    explorerRoot?.widened === true
+      ? (explorerRoot.path.split('/').pop() ?? '')
+      : subRoot === ''
+        ? ''
+        : display.suffix;
 
   const onOpenFile = useCallback(
     (relPath: string) => {
@@ -84,7 +120,7 @@ export function ExplorerPanel() {
        * caller closes what was open before opening the next.
        */
       if (nav === 'single') closeAll();
-      openFile(projectId, relPath);
+      openFile(projectId, relPath, sessionId, explorerRoot?.key ?? '');
       /**
        * The rail is clickable behind a full-stage overlay now, so a file opened
        * from here would otherwise land *behind* settings or the picker: the row
@@ -94,7 +130,7 @@ export function ExplorerPanel() {
        */
       revealStage();
     },
-    [projectId, nav, closeAll, openFile, revealStage],
+    [projectId, sessionId, explorerRoot, nav, closeAll, openFile, revealStage],
   );
 
   /**
@@ -166,20 +202,63 @@ export function ExplorerPanel() {
           The header says when the tree is *not* at the project root (HIVE-78).
           Silently showing a worktree's contents under the project's name is the
           same class of untruth this story removed from the branch label: the
-          files would be right and the label would be wrong. The full relative
-          path stays in the tooltip; the visible suffix is the last segment,
-          because a 130px rail cannot carry `.claude/worktrees/…` and the
-          worktree's own name is the part that identifies it.
+          files would be right and the label would be wrong. The full path stays
+          in the tooltip; the visible suffix is the last segment, because a
+          268px rail cannot carry `.claude/worktrees/…` and the worktree's own
+          name is the part that identifies it.
+
+          `display`, not `subRoot`. The prefix is `''` for two situations that
+          must not read the same — a session at the project root, and one
+          working in a worktree kept *outside* the project, which is now a root
+          main resolves rather than a prefix this panel prepends. Reading the
+          suffix off the prefix meant the second case rendered as the first: the
+          bare project name over a tree that was not the project's.
+        */}
+        {/*
+          `explorerRoot`, not `display`, decides whether a worktree is named.
+
+          `display` is derived from the session's cwd, which is what the
+          *renderer* knows — and main widens the root only for a cwd it has
+          proved is a registered worktree of this project. When that proof
+          fails, main serves the project root while `display` still had a
+          worktree's name for it: the right label over the wrong files, which is
+          the untruth this header exists to prevent, inverted.
+
+          So the suffix is spoken only when main says the tree really is
+          somewhere else. The in-project case keeps `display`, because there the
+          prefix is the renderer's own and main honours it by construction.
         */}
         <span
           className="flex-1 truncate font-mono text-[11.5px] tracking-wide text-subtle uppercase"
-          title={subRoot === '' ? project.name : `${project.name}/${subRoot}`}
+          title={
+            explorerRoot?.widened === true
+              ? explorerRoot.path
+              : (display.full ?? project.name)
+          }
         >
           {project.name}
-          {subRoot === '' ? null : (
-            <span className="text-muted"> · {baseName(subRoot)}</span>
+          {rootSuffix === '' ? null : (
+            <span className="text-muted"> · {rootSuffix}</span>
           )}
         </span>
+
+        {/*
+          The branch, when one has been observed.
+
+          Not decoration: the two questions a user asks of a file tree
+          mid-session are *which directory* and *which branch*, and the panel
+          could answer neither. `branchLabel`'s em dash is deliberately not used
+          here — the rail already prints it in the session meta bar, and a
+          second em dash in a 268px column is noise rather than an answer.
+        */}
+        {branch === undefined ? null : (
+          <span
+            className="max-w-[110px] shrink-0 truncate rounded-full border border-border bg-chip px-1.5 py-px font-mono text-[9.5px] text-brand"
+            title={`On branch ${branch}`}
+          >
+            {branch}
+          </span>
+        )}
 
         <button
           type="button"
@@ -240,6 +319,8 @@ export function ExplorerPanel() {
               parentPath={subRoot}
               depth={0}
               refreshToken={refreshToken}
+              sessionId={sessionId}
+              rootKey={explorerRoot?.key ?? ''}
               onOpenFile={onOpenFile}
             />
           ))

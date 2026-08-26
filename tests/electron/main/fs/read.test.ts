@@ -29,8 +29,11 @@ vi.mock('../../../../electron/main/config', () => ({
   getConfig: () => ({ projects }),
 }));
 
-const { readDirectory, readFileContent } = await import(
+const { readDirectory, readFileContent, readRoot } = await import(
   '../../../../electron/main/fs/read'
+);
+const { setSessionCwdLookup, forgetProbedRoots } = await import(
+  '../../../../electron/main/fs/session-roots'
 );
 
 let root: string;
@@ -53,6 +56,8 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   projects.length = 0;
+  setSessionCwdLookup(null);
+  forgetProbedRoots();
 });
 
 describe('readDirectory', () => {
@@ -222,5 +227,46 @@ describe('readFileContent', () => {
 
     expect(!result.ok && result.error.code).toBe('EOUTSIDE');
     rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+/**
+ * `fs:root` — the verdict the renderer stopped guessing at.
+ *
+ * The interesting assertion is the **refusal** case: a session whose cwd is not
+ * a worktree of this project answers `widened: false` with the project's own
+ * root, so the header cannot name a tree that is not on screen. That case is
+ * indistinguishable from "no session" on purpose — both mean the tree is the
+ * project's, and nothing downstream acts on the difference.
+ */
+describe('readRoot', () => {
+  it('answers the project root when there is no session', async () => {
+    const result = await readRoot({ projectId: 'demo' });
+
+    expect(result).toEqual({
+      ok: true,
+      value: { root, widened: false },
+    });
+  });
+
+  it('answers the project root for a cwd it refuses', async () => {
+    const wandered = realpathSync(mkdtempSync(join(tmpdir(), 'hive-fs-away-')));
+    setSessionCwdLookup(() => wandered);
+
+    const result = await readRoot({ projectId: 'demo', sessionId: 'sess-a' });
+
+    // Not a worktree of anything, so no second root — and the caller is told
+    // `false` rather than left to infer it from a path it can see is different.
+    expect(result).toEqual({ ok: true, value: { root, widened: false } });
+    rmSync(wandered, { recursive: true, force: true });
+  });
+
+  it('refuses an unknown project the way every other verb does', async () => {
+    const result = await readRoot({ projectId: 'nope' });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'EPROJECT', message: 'no such project' },
+    });
   });
 });

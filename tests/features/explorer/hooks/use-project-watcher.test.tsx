@@ -19,15 +19,20 @@ import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet'
  * bought — the subscription's lifetime is the app's, not a tab's.
  */
 
-const { onFsChanged, unwatchProject, watchProject } = vi.hoisted(() => ({
-  onFsChanged: vi.fn(),
-  unwatchProject: vi.fn(),
-  watchProject: vi.fn(),
-}));
+const { hasFsBridge, onFsChanged, readRoot, unwatchProject, watchProject } =
+  vi.hoisted(() => ({
+    hasFsBridge: vi.fn(),
+    onFsChanged: vi.fn(),
+    readRoot: vi.fn(),
+    unwatchProject: vi.fn(),
+    watchProject: vi.fn(),
+  }));
 
 vi.mock('@lib/explorer/fs-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@lib/explorer/fs-client')>()),
+  hasFsBridge,
   onFsChanged,
+  readRoot,
   unwatchProject,
   watchProject,
 }));
@@ -40,9 +45,35 @@ function Watcher() {
   return null;
 }
 
+/**
+ * Render, then let main's root verdict land.
+ *
+ * The watcher deliberately does not subscribe until it knows which root it is
+ * watching — its events are reconciled against that key, and reconciling
+ * against a guess is the bug the verdict exists to prevent. So every test here
+ * has one await between mounting and watching.
+ */
+async function renderWatcher() {
+  const result = render(<Watcher />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  return result;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   emitChange = null;
+  /*
+    The watcher waits for main's verdict on which root it is about to watch —
+    reconciling the first burst of events against a guessed root is exactly what
+    this indirection removed. So the tests have to answer.
+  */
+  hasFsBridge.mockReturnValue(true);
+  readRoot.mockResolvedValue({
+    ok: true,
+    value: { root: '/w/nova-web', widened: false },
+  });
 
   watchProject.mockResolvedValue(true);
   unwatchProject.mockResolvedValue(undefined);
@@ -73,28 +104,33 @@ afterEach(() => {
 });
 
 describe('useProjectWatcher', () => {
-  it('watches the visible project and stops on unmount', () => {
-    const { unmount } = render(<Watcher />);
+  it('watches the visible project and stops on unmount', async () => {
+    const { unmount } = await renderWatcher();
 
-    expect(watchProject).toHaveBeenCalledWith('nova-web');
+    // The session rides along so main can root the watcher where that session
+    // is actually working — see `fs/session-roots.ts`.
+    expect(watchProject).toHaveBeenCalledWith('nova-web', 'hero-refresh');
 
     unmount();
     expect(unwatchProject).toHaveBeenCalled();
   });
 
   it('follows the active session to another project', async () => {
-    render(<Watcher />);
-    expect(watchProject).toHaveBeenLastCalledWith('nova-web');
+    await renderWatcher();
+    expect(watchProject).toHaveBeenLastCalledWith('nova-web', 'hero-refresh');
 
     await act(async () => {
       useUiStore.getState().openTab('webhooks');
     });
+    await act(async () => {
+      await Promise.resolve();
+    });
 
-    expect(watchProject).toHaveBeenLastCalledWith('referral-api');
+    expect(watchProject).toHaveBeenLastCalledWith('referral-api', 'webhooks');
   });
 
   it('bumps the tree revision on a change', async () => {
-    render(<Watcher />);
+    await renderWatcher();
     const before = useUiStore.getState().fsRevision;
 
     await act(async () => {
@@ -112,17 +148,22 @@ describe('useProjectWatcher', () => {
     // Spied before the render: the hook selects the action once, so a spy
     // installed afterwards would be watching a function nothing calls.
     const reconcile = vi.spyOn(useEditorStore.getState(), 'reconcile');
-    render(<Watcher />);
+    await renderWatcher();
 
     await act(async () => {
       emitChange?.({ projectId: 'nova-web', paths: ['README.md'] });
     });
 
-    expect(reconcile).toHaveBeenCalledWith('nova-web', ['README.md']);
+    /*
+      The third argument is the root the watcher is rooted at. Without it,
+      a change at `<worktree>/README.md` and one at `<project>/README.md`
+      arrive as the same string and reconcile the wrong buffer.
+    */
+    expect(reconcile).toHaveBeenCalledWith('nova-web', ['README.md'], '');
   });
 
   it('ignores an event for another project', async () => {
-    render(<Watcher />);
+    await renderWatcher();
     const before = useUiStore.getState().fsRevision;
 
     await act(async () => {

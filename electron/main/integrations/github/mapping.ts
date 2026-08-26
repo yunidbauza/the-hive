@@ -268,3 +268,41 @@ export function collectPrs(
     return right.updatedAt.localeCompare(left.updatedAt);
   });
 }
+
+/**
+ * The same payload, read for a **search** rather than a sweep.
+ *
+ * Two filters the sweep applies are deliberately absent, and each would be a
+ * bug here:
+ *
+ * - **The author check.** `collectPrs` re-checks every node against the
+ *   viewer's login behind `author:@me`, belt and braces on "mine". A search is
+ *   explicitly not about mine, so the same check would silently discard every
+ *   result the user asked for.
+ * - **The twenty-four hour merged window.** That window exists because the
+ *   panel is a *standing* list, where a merge from last month is finished
+ *   business nobody needs a row for. A search is a question, and "PRs about
+ *   carapace" plainly includes the one merged in March. Hiding it would look
+ *   like the search was broken.
+ *
+ * The sort is shared: open above merged, newest first within each. A search
+ * result set reads like the list it replaces, so it is ordered like it.
+ */
+export function collectSearchPrs(payload: unknown): PrRecord[] {
+  if (!isRecord(payload)) return [];
+
+  const records: PrRecord[] = [];
+
+  for (const key of ['open', 'merged'] as const) {
+    for (const node of nodesOf(payload, key)) {
+      const record = toPrRecord(node);
+      if (record !== null) records.push(record);
+    }
+  }
+
+  return records.sort((left, right) => {
+    const landed = Number(left.state === 'merged') - Number(right.state === 'merged');
+    if (landed !== 0) return landed;
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+}

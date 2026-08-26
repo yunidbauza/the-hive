@@ -36,11 +36,13 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  RootInfo,
+  RootRequest,
   WatchRequest,
   WriteFileRequest,
   WriteFileResult,
 } from '@shared/fs-contract';
-import type { GhResult, PrsSnapshot } from '@shared/github-contract';
+import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import {
   CH,
   type AckRequest,
@@ -252,6 +254,8 @@ const bridge: HiveBridge = {
     into the contract first, and that is where a reviewer would see it.
   */
   fs: {
+    root: (request: RootRequest): Promise<FsResult<RootInfo>> =>
+      ipcRenderer.invoke(CH.fsRoot, request) as Promise<FsResult<RootInfo>>,
     readDir: (request: ReadDirRequest): Promise<FsResult<DirEntry[]>> =>
       ipcRenderer.invoke(CH.fsReadDir, request),
     readFile: (
@@ -295,6 +299,11 @@ const bridge: HiveBridge = {
   // list is what makes a handler that executes a binary safe to expose.
   github: {
     prs: (): Promise<GhResult<PrsSnapshot>> => ipcRenderer.invoke(CH.githubPrs),
+    /** PRs matching a term, whoever wrote them. See `CH.githubSearchPrs`. */
+    searchPrs: (term: string, projectId?: string): Promise<GhResult<PrRecord[]>> =>
+      ipcRenderer.invoke(CH.githubSearchPrs, { term, projectId }) as Promise<
+        GhResult<PrRecord[]>
+      >,
   },
   /*
     HIVE-67. Four verbs, and none of them returns a token — see the contract for
@@ -355,6 +364,9 @@ const bridge: HiveBridge = {
     /** Drop one notification from the hub for good (HIVE-93). */
     dismiss: (id: string) =>
       ipcRenderer.invoke(CH.notificationsDismiss, id) as Promise<void>,
+    /** Empty the inbox. Deliberately not `dismiss(null)` — see the channel. */
+    clear: (): Promise<void> =>
+      ipcRenderer.invoke(CH.notificationsClear) as Promise<void>,
     /** The hub marked something read — including from a desktop toast click. */
     onRead: (callback: (event: NotificationReadEvent) => void) =>
       subscribe<NotificationReadEvent>(CH.notificationsRead, callback),

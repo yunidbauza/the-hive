@@ -29,6 +29,7 @@ import {
 import type {
   ReadDirRequest,
   ReadFileRequest,
+  RootRequest,
   WatchRequest,
   WriteFileRequest,
 } from './fs-contract';
@@ -1005,6 +1006,38 @@ export function parseJiraSearchRequest(input: unknown): JiraSearchRequest {
   };
 }
 
+/**
+ * `github:search-prs` — the PRs panel's search row.
+ *
+ * The first `github:` payload there has ever been, and the checks are the ones
+ * that keep the channel's claim true.
+ *
+ * `term` goes through {@link assertText}, which bounds the length and refuses
+ * control characters. It is deliberately **not** pattern-matched beyond that: a
+ * search term is prose, and a guard that admitted only "safe-looking" words
+ * would refuse the ones users actually type. What makes it safe is where it
+ * lands — a bound GraphQL variable inside an expression main composed — and
+ * `safeSearchTerm` in `query.ts`, which removes the one character that could
+ * turn a term into a qualifier.
+ *
+ * `projectId` is an ordinary entity id. It is looked up in the config main
+ * wrote, so an id naming nothing narrows the search to no repositories at all
+ * and is refused downstream. That is the safe direction: the failure of a bad
+ * id is *fewer* results, never results from somewhere the user did not map.
+ */
+export function parseSearchPrsRequest(input: unknown): {
+  term: string;
+  projectId?: string;
+} {
+  const raw = assertShape(input, ['term'], 'searchPrs', ['projectId']);
+  return {
+    term: assertText(raw.term, 'searchPrs.term'),
+    ...(raw.projectId !== undefined
+      ? { projectId: assertId(raw.projectId, 'searchPrs.projectId') }
+      : {}),
+  };
+}
+
 export function parseJiraIssueRequest(input: unknown): JiraIssueRequest {
   const raw = assertShape(input, ['key'], 'jiraIssue');
   return { key: assertJiraIssueKey(raw.key, 'jiraIssue.key') };
@@ -1217,19 +1250,38 @@ export function assertRelPath(value: unknown, label: string): string {
   return path;
 }
 
+/**
+ * `sessionId` is validated as an ordinary entity id and nothing more.
+ *
+ * That is the whole check it needs, and the reason is where the value is used:
+ * main looks it up in the cwd registry **it** populated from that session's own
+ * hook payloads, and an id naming no session simply resolves to nothing. There
+ * is no path in this payload to sanitise, which is property 1 of
+ * `fs-contract.ts` holding exactly as designed.
+ */
 export function parseReadDirRequest(input: unknown): ReadDirRequest {
-  const raw = assertShape(input, ['projectId', 'relPath'], 'readDir');
+  const raw = assertShape(input, ['projectId', 'relPath'], 'readDir', [
+    'sessionId',
+  ]);
   return {
     projectId: assertId(raw.projectId, 'readDir.projectId'),
     relPath: assertRelPath(raw.relPath, 'readDir.relPath'),
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'readDir.sessionId') }
+      : {}),
   };
 }
 
 export function parseReadFileRequest(input: unknown): ReadFileRequest {
-  const raw = assertShape(input, ['projectId', 'relPath'], 'readFile');
+  const raw = assertShape(input, ['projectId', 'relPath'], 'readFile', [
+    'sessionId',
+  ]);
   return {
     projectId: assertId(raw.projectId, 'readFile.projectId'),
     relPath: assertRelPath(raw.relPath, 'readFile.relPath'),
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'readFile.sessionId') }
+      : {}),
   };
 }
 
@@ -1250,6 +1302,7 @@ export function parseWriteFileRequest(input: unknown): WriteFileRequest {
     input,
     ['projectId', 'relPath', 'text', 'baseMtimeMs'],
     'writeFile',
+    ['sessionId'],
   );
 
   const text = assertString(raw.text, 'writeFile.text');
@@ -1285,12 +1338,35 @@ export function parseWriteFileRequest(input: unknown): WriteFileRequest {
     relPath: assertRelPath(raw.relPath, 'writeFile.relPath'),
     text,
     baseMtimeMs,
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'writeFile.sessionId') }
+      : {}),
+  };
+}
+
+/**
+ * `fs:root` — a project and, optionally, a session. Same two values the reads
+ * already carry, validated the same way: an id is an id, and there is no path
+ * in this payload either.
+ */
+export function parseRootRequest(input: unknown): RootRequest {
+  const raw = assertShape(input, ['projectId'], 'root', ['sessionId']);
+  return {
+    projectId: assertId(raw.projectId, 'root.projectId'),
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'root.sessionId') }
+      : {}),
   };
 }
 
 export function parseWatchRequest(input: unknown): WatchRequest {
-  const raw = assertShape(input, ['projectId'], 'watch');
-  return { projectId: assertId(raw.projectId, 'watch.projectId') };
+  const raw = assertShape(input, ['projectId'], 'watch', ['sessionId']);
+  return {
+    projectId: assertId(raw.projectId, 'watch.projectId'),
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'watch.sessionId') }
+      : {}),
+  };
 }
 
 /**

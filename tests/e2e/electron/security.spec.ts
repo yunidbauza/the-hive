@@ -212,11 +212,34 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   expect(surface.theme).toEqual(['pick', 'save']);
   expect(surface.ui).toEqual(['reportForeground']);
   expect(surface.integrations).toEqual(['status']);
-  expect(surface.github).toEqual(['prs']);
+  /**
+   * Two now, and `searchPrs` is the widening to look at.
+   *
+   * What bounds it: it names a **project**, not a repository — an id main looks
+   * up in the config it wrote, so an id naming nothing narrows to no
+   * repositories rather than widening to all of GitHub — and its term travels
+   * as a bound GraphQL variable inside a search expression main composed, with
+   * `safeSearchTerm` removing the one character that could turn a term into a
+   * qualifier. The widest reach it grants is the user's own mapped projects.
+   *
+   * A verb that took a repository *name* is still the one this list exists to
+   * make impossible to add quietly.
+   */
+  expect(surface.github).toEqual(['prs', 'searchPrs']);
+  /**
+   * `root` is the only verb on this bridge that **answers** with a path.
+   *
+   * It takes none — the rule that no fs verb accepts a path is intact — and it
+   * discloses nothing the renderer does not already hold from the config and
+   * the session stream. What it adds is main's *verdict* on which root a read
+   * resolves under, which the renderer was previously inferring and getting
+   * wrong for any working directory main had refused.
+   */
   expect(surface.fs).toEqual([
     'onChanged',
     'readDir',
     'readFile',
+    'root',
     'unwatch',
     'watch',
     'writeFile',
@@ -261,8 +284,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * not already ask for — it exists so a clicked *row* and a clicked *toast*
    * reach one router instead of two.
    */
+  /**
+   * `clear` is the Inbox's Clear all, and it is a **separate verb from
+   * `dismiss` on purpose**: the id guard on that one exists so that a caller
+   * who loses an argument cannot empty the inbox, and widening it to accept
+   * `null` would have traded that guarantee away for one fewer entry here. It
+   * takes no payload at all, which is the narrowest a mutating verb can be.
+   */
   expect(surface.notifications).toEqual([
     'act',
+    'clear',
     'delivery',
     // HIVE-93 — a deliberate widening; see BRIDGE_NOTIFICATIONS_KEYS.
     'dismiss',

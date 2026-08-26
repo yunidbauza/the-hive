@@ -17,6 +17,7 @@ import {
   type CursorContext,
   type TerminalChordDetail,
 } from '@lib/terminal/keymap';
+import { handleWebLink, terminalLinkHandler } from '@lib/terminal/open-link';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 
 import '@xterm/xterm/css/xterm.css';
@@ -352,6 +353,20 @@ export function TerminalSurface({
       fontFamily,
       fontSize,
       lineHeight: LINE_HEIGHT,
+      /**
+       * OSC 8 hyperlinks — the `⧉ artifact` chip Claude Code emits, and any
+       * program that marks up its own links rather than printing a bare URL.
+       *
+       * A **different code path** from the web-links addon below, with its own
+       * default, and that default is worse: xterm's `OscLinkProvider` puts a
+       * browser `confirm()` reading *"This link could potentially be
+       * dangerous"* in front of the same broken `window.open()`. So an explicit
+       * hyperlink asked the user to accept a warning and then did nothing.
+       *
+       * Both paths land on one handler so the two kinds of link cannot behave
+       * differently, and the scheme check stays where it belongs — in main.
+       */
+      linkHandler: terminalLinkHandler,
       scrollback,
       /**
        * The floor that makes the surface slots safe (HIVE-82).
@@ -377,9 +392,18 @@ export function TerminalSurface({
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    // Makes a URL pasted into a transcript clickable, which is the difference
-    // between "looks like a terminal" and "behaves like one".
-    terminal.loadAddon(new WebLinksAddon());
+    /*
+      Makes a URL pasted into a transcript clickable, which is the difference
+      between "looks like a terminal" and "behaves like one".
+
+      **The handler is ours, and that is the entire fix.** The addon's default
+      calls `window.open()` with no URL and assigns `location.href` afterwards,
+      which this app's `setWindowOpenHandler` denies — so every link in terminal
+      output was detected, underlined, and then silently dead on click. See
+      `lib/terminal/open-link.ts` for the full account. The OSC 8 half of the
+      same bug is fixed by `linkHandler` in the options above.
+    */
+    terminal.loadAddon(new WebLinksAddon(handleWebLink));
 
     /**
      * Who owns a keystroke (story 095). Read-only surfaces skip it entirely —

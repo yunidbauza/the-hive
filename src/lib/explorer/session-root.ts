@@ -75,3 +75,40 @@ export function relativeRoot(
 
   return target.slice(root.length + 1);
 }
+
+/**
+ * What the explorer's header should say the tree is rooted at.
+ *
+ * `relativeRoot` above answers a *mechanical* question — which prefix to
+ * prepend to every path — and answers `''` for two very different situations:
+ * a session sitting in the project root, and a session working somewhere the
+ * prefix cannot reach. The header cannot use it, because those two must not
+ * read the same. The first is "the project"; the second is a worktree the
+ * panel is now genuinely rooted at, through the session root main resolves.
+ *
+ * So this answers the *display* question instead, from the same two inputs:
+ *
+ * - `suffix` — the directory's own name, or `''` when the tree is at the
+ *   project root. A 268px rail cannot carry `.claude/worktrees/hive-pr-column`,
+ *   and the last segment is the part that identifies which worktree it is.
+ * - `full` — the whole path, for the `title`, where there is room to be exact.
+ *
+ * Unlike `relativeRoot`, a cwd **outside** the project is described rather than
+ * discarded. That is the whole point: the tree really is showing that directory
+ * now, and a header that omitted it would be the untruth this pair of functions
+ * exists to prevent.
+ */
+export function rootDisplay(
+  projectPath: string | null | undefined,
+  cwd: string | undefined,
+): { suffix: string; full: string | null } {
+  if (!projectPath || !cwd) return { suffix: '', full: null };
+
+  const root = projectPath.endsWith(SEP) ? projectPath.slice(0, -1) : projectPath;
+  const target = cwd.endsWith(SEP) ? cwd.slice(0, -1) : cwd;
+
+  if (target === root) return { suffix: '', full: null };
+
+  const segments = target.split(SEP);
+  return { suffix: segments[segments.length - 1] ?? '', full: target };
+}

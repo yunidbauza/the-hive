@@ -214,7 +214,9 @@ describe('ExplorerPanel — the tree', () => {
 
     expect(await screen.findByText('README.md')).toBeInTheDocument();
     expect(screen.getByText('src')).toBeInTheDocument();
-    expect(readDir).toHaveBeenCalledWith('nova-web', '');
+    // The session id goes with every read, so main can root at a worktree that
+    // session moved into — including one outside the project.
+    expect(readDir).toHaveBeenCalledWith('nova-web', '', 'hero-refresh');
   });
 
   /**
@@ -231,7 +233,7 @@ describe('ExplorerPanel — the tree', () => {
     await userEvent.click(row('src'));
 
     expect(await screen.findByText('app.ts')).toBeInTheDocument();
-    expect(readDir).toHaveBeenCalledWith('nova-web', 'src');
+    expect(readDir).toHaveBeenCalledWith('nova-web', 'src', 'hero-refresh');
   });
 
   it('collapses again, and collapse-all closes everything', async () => {
@@ -259,7 +261,9 @@ describe('ExplorerPanel — the tree', () => {
     expect(useEditorStore.getState().openFiles.map((f) => f.relPath)).toEqual([
       'README.md',
     ]);
-    expect(useEditorStore.getState().activeKey).toBe('nova-web:README.md');
+    // `project:root:path` — the empty middle segment is the project root, which
+    // is what every buffer carried implicitly before worktrees became roots.
+    expect(useEditorStore.getState().activeKey).toBe('nova-web::README.md');
   });
 
   /**
@@ -274,7 +278,9 @@ describe('ExplorerPanel — the tree', () => {
 
     await userEvent.click(row('README.md'));
 
-    expect(useEditorStore.getState().activeKey).toBe('nova-web:README.md');
+    // `project:root:path` — the empty middle segment is the project root, which
+    // is what every buffer carried implicitly before worktrees became roots.
+    expect(useEditorStore.getState().activeKey).toBe('nova-web::README.md');
     expect(useUiStore.getState()).toMatchObject({ settings: false, picker: false });
   });
 

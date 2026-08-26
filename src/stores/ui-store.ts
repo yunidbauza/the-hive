@@ -23,6 +23,29 @@ interface UiState {
   selIdx: number; // orchestrator table selection
   leftTab: LeftTab;
   railTab: RailTab;
+  /**
+   * What the PRs panel's search box holds. `''` means the panel shows the
+   * ordinary sweep — the user's own open and recently-merged pull requests.
+   *
+   * View state, so it lives here rather than beside the results in
+   * `hive-store`: the *term* is what the user is looking at, and the PRs that
+   * come back are domain data. A keystroke must not re-render anything that
+   * subscribes to the fleet.
+   */
+  prSearchTerm: string;
+  /**
+   * Whether the search reaches every mapped project rather than the active
+   * session's.
+   *
+   * Unchecked is the default and means "this session's project". **Not
+   * persisted**, and reset whenever the search is cleared or the session
+   * changes — a scope the user set for one question must not silently govern
+   * the next one, which is the failure mode of every remembered filter.
+   *
+   * With no session there is nothing narrower to offer, so the panel shows this
+   * checked and disabled rather than pretending a narrower scope exists.
+   */
+  prSearchAllRepos: boolean;
   collapsed: Record<string, boolean>; // project id -> collapsed
   picker: boolean; // new-session overlay open
   pickerQuery: string;
@@ -68,6 +91,10 @@ interface UiState {
   setSelIdx: (index: number) => void;
   setLeftTab: (tab: LeftTab) => void;
   setRailTab: (tab: RailTab) => void;
+  setPrSearchTerm: (term: string) => void;
+  setPrSearchAllRepos: (all: boolean) => void;
+  /** Empty the box and put the scope back to the session's project. */
+  clearPrSearch: () => void;
   /**
    * Show a rail tab, revealing the rail if it was hidden (HIVE-93).
    *
@@ -102,6 +129,8 @@ const initialUiState = {
   selIdx: 0,
   leftTab: 'projects' as LeftTab,
   railTab: 'inbox' as RailTab,
+  prSearchTerm: '',
+  prSearchAllRepos: false,
   collapsed: {} as Record<string, boolean>,
   picker: false,
   pickerQuery: '',
@@ -135,6 +164,16 @@ export const useUiStore = create<UiState>()((set) => ({
   setSelIdx: (index) => set({ selIdx: index }),
   setLeftTab: (tab) => set({ leftTab: tab }),
   setRailTab: (tab) => set({ railTab: tab }),
+
+  /*
+    Clearing the box resets the scope with it. The two belong to one question,
+    and leaving `all repos` switched on for the *next* search is exactly the
+    stale-filter behaviour the flag is documented as avoiding.
+  */
+  setPrSearchTerm: (term) =>
+    set(term === '' ? { prSearchTerm: '', prSearchAllRepos: false } : { prSearchTerm: term }),
+  setPrSearchAllRepos: (all) => set({ prSearchAllRepos: all }),
+  clearPrSearch: () => set({ prSearchTerm: '', prSearchAllRepos: false }),
 
   // `showActivityRail: true` unconditionally rather than a toggle — see the
   // interface note for why the bell must not flip it.
@@ -300,6 +339,16 @@ export const useRailState = () => useUiStore(useShallow(railStateSelector));
 
 /** Switch rail panels — the activity rail's tab bar (story 050). */
 export const useSetRailTab = () => useUiStore((state) => state.setRailTab);
+
+/** The PRs panel's search box: what is typed, and how wide it reaches. */
+export const usePrSearchTerm = () => useUiStore((state) => state.prSearchTerm);
+export const usePrSearchAllRepos = () =>
+  useUiStore((state) => state.prSearchAllRepos);
+export const useSetPrSearchTerm = () =>
+  useUiStore((state) => state.setPrSearchTerm);
+export const useSetPrSearchAllRepos = () =>
+  useUiStore((state) => state.setPrSearchAllRepos);
+export const useClearPrSearch = () => useUiStore((state) => state.clearPrSearch);
 
 /**
  * Whether the activity rail is mounted (story 020).

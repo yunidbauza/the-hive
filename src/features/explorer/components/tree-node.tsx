@@ -16,6 +16,10 @@ interface TreeNodeProps {
   parentPath: string;
   depth: number;
   refreshToken: number;
+  /** Whose working directory the tree is rooted at. See `useExplorerProject`. */
+  sessionId?: string;
+  /** Which tree these paths are relative to. `''` is the project root. */
+  rootKey: string;
   onOpenFile: (relPath: string) => void;
 }
 
@@ -46,6 +50,8 @@ export function TreeNode({
   parentPath,
   depth,
   refreshToken,
+  sessionId,
+  rootKey,
   onOpenFile,
 }: TreeNodeProps) {
   const relPath = childPath(parentPath, entry.name);
@@ -54,9 +60,17 @@ export function TreeNode({
   const activeKey = useActiveFileKey();
 
   const isDir = entry.kind === 'dir';
-  const isActive = !isDir && activeKey === fileKey(projectId, relPath);
+  // Keyed with the root, or a file open from a worktree would highlight the
+  // same-named row in the project's tree and vice versa.
+  const isActive = !isDir && activeKey === fileKey(projectId, relPath, rootKey);
 
-  const children = useDirectory(projectId, relPath, isDir && expanded, refreshToken);
+  const children = useDirectory(
+    projectId,
+    relPath,
+    isDir && expanded,
+    refreshToken,
+    sessionId,
+  );
   /**
    * Per node, so two folders opening at once do not read as a chorus. It holds
    * for the life of the row, which outlives the read it labels.
@@ -118,6 +132,8 @@ export function TreeNode({
               parentPath={relPath}
               depth={depth + 1}
               refreshToken={refreshToken}
+              sessionId={sessionId}
+              rootKey={rootKey}
               onOpenFile={onOpenFile}
             />
           ))}

@@ -15,6 +15,17 @@ beforeEach(() => {
   resetNotifIds();
 });
 
+/**
+ * The notification rows, and only those.
+ *
+ * The panel is a column of buttons *plus* a header that is also a button, so
+ * "every button in the inbox" stopped meaning "every card" when Clear all
+ * landed. `data-notification` is the card's own identity in the DOM — see
+ * `notification-card.tsx`.
+ */
+const cards = () =>
+  Array.from(document.querySelectorAll<HTMLElement>('[data-notification]'));
+
 describe('InboxPanel', () => {
   /**
    * The app boots with nothing in the inbox, which is the honest state: no
@@ -33,6 +44,43 @@ describe('InboxPanel', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
+  /**
+   * The header exists only when there is something to head. On the empty state
+   * a "Clear all" over a sprite saying *Nothing needs you* would be a control
+   * for a list that is not there — which the empty-state test above already
+   * asserts by counting buttons.
+   */
+  it('heads the list with a count and a way to empty it', () => {
+    useHiveStore
+      .getState()
+      .hydrateNotifs([
+        notif({ id: 'a', unread: true }),
+        notif({ id: 'b', unread: false }),
+      ]);
+
+    render(<InboxPanel />);
+
+    expect(screen.getByText('2 notifications · 1 unread')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear all' })).toBeInTheDocument();
+  });
+
+  it('clears every card when Clear all is pressed', async () => {
+    useHiveStore
+      .getState()
+      .hydrateNotifs([
+        notif({ id: 'a', title: 'first' }),
+        notif({ id: 'b', title: 'second' }),
+      ]);
+
+    render(<InboxPanel />);
+    await userEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+
+    expect(screen.queryByText('first')).toBeNull();
+    expect(screen.queryByText('second')).toBeNull();
+    // Straight to the empty state — no confirm step, and nothing left behind.
+    expect(screen.getByText(/Nothing needs you\./)).toBeInTheDocument();
+  });
+
   it('renders what the store holds, newest first', () => {
     useHiveStore
       .getState()
@@ -43,7 +91,7 @@ describe('InboxPanel', () => {
 
     render(<InboxPanel />);
 
-    const titles = screen.getAllByRole('button').map((b) => b.textContent);
+    const titles = cards().map((b) => b.textContent);
     expect(titles[0]).toContain('newer');
     expect(titles[1]).toContain('older');
   });
@@ -56,9 +104,7 @@ describe('InboxPanel', () => {
 
     render(<InboxPanel />);
 
-    expect(screen.getAllByRole('button')[0].textContent).toContain(
-      'just arrived',
-    );
+    expect(cards()[0]?.textContent).toContain('just arrived');
   });
 
   it('caps the rendered list at the shared cap', () => {
@@ -67,7 +113,7 @@ describe('InboxPanel', () => {
     }
 
     render(<InboxPanel />);
-    expect(screen.getAllByRole('button')).toHaveLength(NOTIFICATION_CAP);
+    expect(cards()).toHaveLength(NOTIFICATION_CAP);
   });
 
   /**
@@ -83,7 +129,7 @@ describe('InboxPanel', () => {
       ]);
 
     render(<InboxPanel />);
-    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(cards()).toHaveLength(2);
   });
 
   /** A duplicate id is one notification, however many times it arrives. */
@@ -92,7 +138,7 @@ describe('InboxPanel', () => {
     useHiveStore.getState().pushNotif(notif({ id: 'dup' }));
 
     render(<InboxPanel />);
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(cards()).toHaveLength(1);
   });
 
   it('jumps to the session a card names', async () => {
@@ -104,7 +150,7 @@ describe('InboxPanel', () => {
       ]);
 
     render(<InboxPanel />);
-    await user.click(screen.getByRole('button'));
+    await user.click(cards()[0] as HTMLElement);
 
     expect(useUiStore.getState().activeTab).toBe('call-notes');
   });
@@ -117,7 +163,7 @@ describe('InboxPanel', () => {
 
     render(<InboxPanel />);
 
-    for (const button of screen.getAllByRole('button')) {
+    for (const button of cards()) {
       expect(button).not.toHaveClass('bg-chip');
     }
   });

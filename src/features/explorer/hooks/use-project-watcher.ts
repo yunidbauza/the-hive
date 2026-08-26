@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
+import { useExplorerRoot } from '@features/explorer/hooks/use-explorer-root';
 import { useProjectAccess } from '@hooks/use-project-config';
 import {
   onFsChanged,
@@ -45,24 +46,43 @@ export function useProjectWatcher(): void {
    * Widening what is watched costs nothing here — `reconcile` already filters
    * by path, and the tree re-reads only its expanded directories.
    */
-  const { project } = useExplorerProject();
+  const { project, sessionId } = useExplorerProject();
+  /*
+    The same verdict the panel asks for, and asked here rather than threaded
+    from there because this hook is mounted at the composition root and the
+    panel is not always mounted at all. Main's probe cache makes the second read
+    free, and both calls resolve identically by construction — they ask the same
+    question about the same pairing.
+  */
+  const root = useExplorerRoot(project?.id ?? null, sessionId);
   const access = useProjectAccess(project?.id ?? '');
   const bumpFsRevision = useBumpFsRevision();
   const reconcile = useReconcileFiles();
 
   const projectId = project?.id ?? null;
-  const watchable = projectId !== null && access.spawnable;
+  /*
+    `root === null` means main has not answered yet. Watching before then would
+    mean reconciling the first burst of events against a root key we are only
+    guessing at, which is the guess this whole mechanism removed.
+  */
+  const watchable = projectId !== null && access.spawnable && root !== null;
 
   useEffect(() => {
-    if (!watchable || projectId === null) return;
+    if (!watchable || projectId === null || root === null) return;
 
     let live = true;
-    void watchProject(projectId);
+    /*
+      The session goes with it, so a worktree kept outside the project is
+      watched where it actually is. Without it the panel would show one tree and
+      listen to another — refreshes for files nobody has open, silence for the
+      ones they do.
+    */
+    void watchProject(projectId, sessionId);
 
     const stop = onFsChanged((event) => {
       if (!live || event.projectId !== projectId) return;
       bumpFsRevision();
-      reconcile(event.projectId, event.paths);
+      reconcile(event.projectId, event.paths, root.key);
     });
 
     return () => {
@@ -70,5 +90,5 @@ export function useProjectWatcher(): void {
       stop();
       void unwatchProject();
     };
-  }, [watchable, projectId, bumpFsRevision, reconcile]);
+  }, [watchable, projectId, sessionId, root, bumpFsRevision, reconcile]);
 }

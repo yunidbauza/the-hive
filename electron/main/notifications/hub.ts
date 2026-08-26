@@ -96,8 +96,13 @@ export interface NotificationHubOptions {
    * `announceRead`, for the same reason: main can dismiss on its own — a
    * clicked desktop toast — and the renderer has no way to observe that
    * without being told.
+   *
+   * `null` means the whole buffer went — `clearInbox`, the Inbox's Clear all.
+   * One event rather than one per row, because the renderer's handler is a
+   * filter over its own list and N of them would be N re-renders of a list
+   * about to be empty either way.
    */
-  announceDismissed: (id: string) => void;
+  announceDismissed: (id: string | null) => void;
   /**
    * How many are still unread, after every change to the buffer.
    *
@@ -166,6 +171,22 @@ export interface NotificationHub {
    * be raised again by the very next event that would have been a duplicate.
    */
   dismiss(id: string): void;
+  /**
+   * Drop **every** notification from the buffer — the Inbox's Clear all.
+   *
+   * Its own method rather than `dismiss(null)`, for the reason recorded on
+   * `CH.notificationsClear`: the id guard on `dismiss` exists to stop a lost
+   * argument from emptying the inbox, and widening it would trade that
+   * guarantee for one fewer function.
+   *
+   * **Not {@link NotificationHub.clear}**, which is a *reset* — it wipes the
+   * dedup set too, so everything the hub has ever seen becomes raisable again.
+   * That is right for a config reload and wrong for a user gesture: clearing
+   * the inbox must not re-arm fifty notifications to be raised by the next
+   * duplicate event. Every id stays remembered here, exactly as a single
+   * dismissal leaves its own behind.
+   */
+  clearInbox(): void;
   /**
    * Carry out an action, exactly as clicking the desktop toast would.
    *
@@ -413,6 +434,23 @@ export function createNotificationHub(
     }
   };
 
+  /**
+   * The bulk gesture. Same two follow-ups as `dismiss`, once.
+   *
+   * `announceDismissed(null)` rather than one call per row: the renderer's
+   * handler is a filter over its own list, so N events would be N re-renders of
+   * a list that is about to be empty either way.
+   *
+   * An already-empty buffer announces nothing, so a double-click on Clear all
+   * does not push a second event at every window.
+   */
+  const clearInbox = (): void => {
+    if (buffer.length === 0) return;
+    buffer = [];
+    announceDismissed(null);
+    announce();
+  };
+
   const remember = (id: string): void => {
     seen.add(id);
     if (seen.size <= SEEN_CAP) return;
@@ -525,6 +563,8 @@ export function createNotificationHub(
     promote,
 
     dismiss,
+
+    clearInbox,
 
     activate,
 

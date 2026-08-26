@@ -53,11 +53,13 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  RootInfo,
+  RootRequest,
   WatchRequest,
   WriteFileRequest,
   WriteFileResult,
 } from './fs-contract';
-import type { GhResult, PrsSnapshot } from './github-contract';
+import type { GhResult, PrRecord, PrsSnapshot } from './github-contract';
 import type {
   JiraComment,
   JiraIdentity,
@@ -233,6 +235,26 @@ export const CH = {
    * renderer cannot name a repository, a host, or a flag.
    */
   githubPrs: 'github:prs',
+  /**
+   * Search pull requests — the PRs panel's search row.
+   *
+   * **The first `github:` channel that takes a payload**, so the paragraph above
+   * needs qualifying rather than repeating. Two values reach main: a search
+   * term and, optionally, a project id.
+   *
+   * Neither reaches the argv as a name of anything. The id is looked up in the
+   * config main wrote and validated — an id naming no project narrows to
+   * nothing and is refused, never widened — and the term travels as a bound
+   * GraphQL variable inside a search expression whose `repo:` scope main
+   * composed itself. `safeSearchTerm` strips the one character that could add a
+   * qualifier there, because a term is data in that little language only by
+   * convention.
+   *
+   * So the invariant is unchanged and the wording is not: a renderer still
+   * cannot name a repository, a host, or a flag. What it can now do is say
+   * *which of the user's own projects* to look in, and what to look for.
+   */
+  githubSearchPrs: 'github:search-prs',
   notificationsActivate: 'notifications:activate', // main → renderer
   /**
    * A notification was raised (HIVE-75). main → renderer.
@@ -264,10 +286,31 @@ export const CH = {
    * renderer hydrates from: dropping the row locally would bring it straight
    * back on the next reload, with the hub still holding it.
    *
-   * Takes one id and never `null` — there is no "dismiss everything", because
-   * dismissal follows an action and you cannot act on fifty rows at once.
+   * Takes one id and never `null`. "Dismiss everything" is
+   * {@link CH.notificationsClear}, a **separate verb** — see the note there for
+   * why widening this one would have been the wrong shape.
    */
   notificationsDismiss: 'notifications:dismiss',
+  /**
+   * Empty the inbox. Renderer → main. Takes no payload.
+   *
+   * ## Why not `dismiss(null)`
+   *
+   * `markRead` takes `id | null` and the obvious move was to match it. The
+   * guard on `dismiss` argues against it in as many words: `null` is rejected
+   * there precisely so that **a caller who loses an argument cannot empty the
+   * inbox**, and `parseDismissRequest` exists to hold that line. Widening it
+   * would delete the guarantee to save a channel.
+   *
+   * A verb with no payload keeps it. There is no argument to lose, "clear
+   * everything" cannot be reached by accident from a malformed dismissal, and
+   * the two gestures stay distinguishable in a log.
+   *
+   * The distinction is not pedantic: dismissal follows an action on one row,
+   * and clearing is the user saying they are done with all of them at once.
+   * They are different intentions, and the second one is destructive.
+   */
+  notificationsClear: 'notifications:clear',
   /**
    * Read-state changed in the hub (HIVE-75). main → renderer.
    *
@@ -494,6 +537,16 @@ export const CH = {
    * makes `fsUnwatch` take no payload: there is only ever one thing to stop.
    */
   fsReadDir: 'fs:read-dir',
+  /**
+   * Which root a read for this project and session resolves under.
+   *
+   * The one `fs:` verb that **answers** with a path. It takes none — the rule
+   * above is intact — and it discloses nothing the renderer does not already
+   * hold; what it adds is main's verdict on whether the session's working
+   * directory was accepted as a second root. See `fs-contract.ts` → `RootInfo`
+   * for the three things that were guessing without it.
+   */
+  fsRoot: 'fs:root',
   fsReadFile: 'fs:read-file',
   fsWriteFile: 'fs:write-file',
   fsWatch: 'fs:watch',
@@ -1070,6 +1123,8 @@ export interface HiveBridge {
    */
   fs: {
     readDir(request: ReadDirRequest): Promise<FsResult<DirEntry[]>>;
+    /** Which root this pairing resolves under. See {@link RootInfo}. */
+    root(request: RootRequest): Promise<FsResult<RootInfo>>;
     /**
      * Read a file, or say why not.
      *
@@ -1148,6 +1203,13 @@ export interface HiveBridge {
    */
   github: {
     prs(): Promise<GhResult<PrsSnapshot>>;
+    /**
+     * PRs matching `term`, whoever wrote them.
+     *
+     * `projectId` narrows to one mapped project; omitting it means all of them.
+     * There is no third, wider option — see {@link CH.githubSearchPrs}.
+     */
+    searchPrs(term: string, projectId?: string): Promise<GhResult<PrRecord[]>>;
   };
   /**
    * Jira (HIVE-67).
@@ -1246,6 +1308,13 @@ export interface HiveBridge {
      * a locally-dropped row returns on the next reload.
      */
     dismiss(id: string): Promise<void>;
+    /**
+     * Empty the inbox — the Clear all row.
+     *
+     * No argument, deliberately: see {@link CH.notificationsClear}. The echo
+     * arrives on `onDismissed` with a `null` id.
+     */
+    clear(): Promise<void>;
     /** The hub marked something read — including from a desktop toast click. */
     onRead(callback: (event: NotificationReadEvent) => void): () => void;
     /**
@@ -1561,6 +1630,13 @@ export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
  */
 export const BRIDGE_FS_KEYS = [
   'readDir',
+  /*
+    A read, and the only verb here that answers with a path. It grants nothing
+    — the renderer already holds the project's path and the session's cwd — and
+    what it adds is main's *verdict* on which root a read resolves under, which
+    the renderer was previously inferring and getting wrong.
+  */
+  'root',
   'readFile',
   'writeFile',
   'watch',
@@ -1571,12 +1647,17 @@ export const BRIDGE_FS_KEYS = [
 /**
  * The exact key set of `window.hive.github`.
  *
- * One. A second verb that took a repository name would be the addition this
- * list exists to make impossible to add quietly: it would turn a bounded read
- * of the user's own configured projects into a general-purpose GitHub client
- * driven by the renderer.
+ * Two. The rule this list enforces is unchanged: **a verb that took a
+ * repository name** would turn a bounded read of the user's own configured
+ * projects into a general-purpose GitHub client driven by the renderer, and
+ * adding one must never be quiet.
+ *
+ * `searchPrs` is not that verb, which is why it is here rather than refused. It
+ * names a *project* — an id main looks up in its own config — and every
+ * repository the search reaches is still one the config maps. The widest it
+ * goes is all of the user's projects.
  */
-export const BRIDGE_GITHUB_KEYS = ['prs'] as const;
+export const BRIDGE_GITHUB_KEYS = ['prs', 'searchPrs'] as const;
 
 /**
  * The exact key set of `window.hive.jira` (HIVE-67).
@@ -1628,9 +1709,24 @@ export interface NotificationReadEvent {
   unread: boolean;
 }
 
-/** What {@link CH.notificationsDismissed} carries. */
+/**
+ * What {@link CH.notificationsDismissed} carries.
+ *
+ * `id` is `null` when the whole buffer went — {@link CH.notificationsClear}, or
+ * anything else in main that empties it. Exactly the shape
+ * {@link NotificationReadEvent} already uses for "all of them", and for the
+ * same reason: one channel with a scope beats two channels that must be kept in
+ * step, and every consumer of this event already has to handle a row it has
+ * never heard of.
+ *
+ * The asymmetry with `parseDismissRequest` — which refuses `null` — is
+ * deliberate and is not a contradiction. That guard protects main from a
+ * *renderer* that lost an argument. This is main telling the renderer what it
+ * has already done, where the only thing a lost argument can cost is one
+ * stale row until the next hydration.
+ */
 export interface NotificationDismissedEvent {
-  id: string;
+  id: string | null;
 }
 
 /**
@@ -1673,6 +1769,10 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   // and dismissed are different facts about a notification, and only one of them
   // takes the row out of `list`.
   'dismiss',
+  // The Inbox's Clear all. A separate verb from `dismiss` rather than
+  // `dismiss(null)`, so the id guard that stops a lost argument from emptying
+  // the inbox keeps meaning what it says — see `CH.notificationsClear`.
+  'clear',
   // HIVE-81. The mirror of `onRead`: main can dismiss on its own — a clicked
   // desktop toast — and the renderer has to be told.
   'onDismissed',

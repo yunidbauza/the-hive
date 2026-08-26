@@ -29,7 +29,7 @@ import type { Ticket } from '@/types/ticket';
 
 import { isDesktop } from '@config/runtime';
 import { reset as resetClock } from '@lib/fake-clock';
-import { readPullRequests } from '@lib/github';
+import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
 import {
   projectConfigSnapshot,
@@ -131,6 +131,30 @@ export type TicketSource =
  * Jira one. Unifying them would mean a union with fields that are meaningless
  * on one side, which is how a shared type becomes a lie.
  */
+/**
+ * The PRs panel's search, as the store holds it.
+ *
+ * `term` is carried alongside the results so a stale answer can be dropped: a
+ * search is debounced and asynchronous, and two in flight can settle out of
+ * order. Comparing what came back against what the store last asked for is what
+ * stops the slower of the two from painting over the newer.
+ */
+export interface PrSearchState {
+  /** What produced `results`. `''` when nothing has been searched. */
+  term: string;
+  /**
+   * `null` until the first answer lands, and again once the search is cleared.
+   *
+   * **Kept across a re-search**, deliberately: a user narrowing or widening an
+   * existing search keeps the previous rows on screen while the new ones are in
+   * flight, rather than watching the panel blink to empty and back. `searching`
+   * is the flag that says an answer is on its way.
+   */
+  results: PrRecord[] | null;
+  searching: boolean;
+  error: string | null;
+}
+
 export type PrSource =
   /** A read is in flight and there is nothing yet. The boot state. */
   | { kind: 'loading' }
@@ -215,6 +239,28 @@ interface HiveState {
   /** Sweep GitHub and install the answer. Never throws. */
   refreshPrs: () => Promise<void>;
 
+  /**
+   * What the PRs panel's search box found, or `null` when nothing is searched.
+   *
+   * A **separate list from {@link HiveState.prs}**, and that is the whole
+   * design. The sweep is a standing answer to "what of mine is open" that the
+   * poller keeps current and the WORK tab resolves against; a search is a
+   * question asked once, about anyone's work. Installing results into `prs`
+   * would let a search for someone else's pull request quietly change what a
+   * ticket card says is attached to it.
+   */
+  prSearch: PrSearchState;
+  /**
+   * Run a search. `projectId` narrows to one mapped project; omitting it means
+   * all of them.
+   *
+   * Debounced by the caller, not here — the store has no business owning a
+   * timer, and the panel is the thing that knows a keystroke happened.
+   */
+  searchPrs: (term: string, projectId?: string) => Promise<void>;
+  /** Drop the results. The panel goes back to showing the sweep. */
+  clearPrSearch: () => void;
+
   spawnSession: (
     /**
      * A project **id**, already resolved — never a key or a display name.
@@ -253,6 +299,21 @@ interface HiveState {
    * renderer hydrates from — a local-only removal comes straight back.
    */
   dismissNotif: (id: string) => void;
+  /**
+   * Empty the inbox in one gesture — the panel's **Clear all**.
+   *
+   * The bulk counterpart to {@link HiveState.dismissNotif}, and it clears
+   * rather than marks read on purpose: a user who asks for this is saying they
+   * are done with all of it, and leaving fifty read rows behind answers a
+   * question nobody asked.
+   *
+   * **No undo.** The decision on HIVE's rail was instant-and-final, which is
+   * only defensible because a notification is a *pointer* — the session, the
+   * PR and the ticket it named all still exist, and every one of them is
+   * reachable from a surface that is not the inbox. Nothing is destroyed here
+   * except the reminder.
+   */
+  clearNotifs: () => void;
   pushNotif: (notif: HiveNotification) => void;
   /**
    * Merge main's buffer into what is already here, newest first (HIVE-75).
@@ -304,8 +365,13 @@ interface HiveState {
    * and writes through to main. This is the echo of a dismissal main decided on
    * its own — a clicked desktop toast — so writing back would send main a
    * message about the thing it just told us.
+   *
+   * `null` means the whole buffer went, mirroring {@link HiveState.applyRead}.
+   * The renderer's own Clear all has already emptied the list by the time the
+   * echo arrives, so this is only load-bearing for a *second* window, or for a
+   * clear main decided on by itself.
    */
-  applyDismiss: (id: string) => void;
+  applyDismiss: (id: string | null) => void;
   appendEntityLines: (
     id: string,
     lines: TermLine[],
@@ -453,6 +519,16 @@ const staleTitles = new Map<string, string>();
  * to say "a request started" and "a request finished".
  */
 let inFlightPrSweep: Promise<void> | null = null;
+
+/**
+ * A monotonic ticket for PR searches, so a slow answer cannot overwrite a fast
+ * one that came after it.
+ *
+ * Module scope for the same reason `inFlightPrSweep` is: nothing renders it, and
+ * putting a counter in the store would re-render every subscriber to say a
+ * request had been numbered.
+ */
+let prSearchTicket = 0;
 
 /**
  * The Jira sweep in flight, or `null`.
@@ -878,6 +954,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   /** Loading until the first sweep answers, for the same reason as above. */
   prSource: { kind: 'loading' } as PrSource,
+  prSearch: { term: '', results: null, searching: false, error: null } as PrSearchState,
 
   /**
    * Create a session and open its tab.
@@ -1580,6 +1657,20 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   },
 
   /**
+   * Local first, then the hub — the same order and the same fire-and-forget as
+   * {@link HiveState.dismissNotif}, one scale up.
+   *
+   * `notifications.clear()` rather than a loop of `dismiss(id)`: N invokes for
+   * one gesture, each of which broadcasts its own event to every window, and a
+   * buffer trimmed by the cap between render and click would leave the loop
+   * dismissing ids the hub no longer holds.
+   */
+  clearNotifs: () => {
+    set({ notifs: [] });
+    void window.hive?.notifications.clear();
+  },
+
+  /**
    * Dedups by id, because the stream subscribes before it hydrates.
    *
    * That order is deliberate — see `use-notification-stream.ts` — and it can
@@ -1605,7 +1696,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   applyDismiss: (id) =>
     set((state) => ({
-      notifs: state.notifs.filter((notif) => notif.id !== id),
+      notifs:
+        id === null
+          ? []
+          : state.notifs.filter((notif) => notif.id !== id),
     })),
 
   hydrateNotifs: (notifs) =>
@@ -2853,6 +2947,79 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     return inFlightPrSweep;
   },
 
+  searchPrs: async (term, projectId) => {
+    /*
+      A monotonic ticket, not the term.
+
+      Comparing terms is not enough: the debounce re-runs on a *scope* change
+      too — ticking "All repos" re-queries the same words — so two requests can
+      be in flight for one term, and the narrow one landing last would leave
+      narrow results sitting under a checked "All repos". A counter is the only
+      thing that distinguishes them, because the only difference between the two
+      requests is which one was asked for second.
+    */
+    prSearchTicket += 1;
+    const ticket = prSearchTicket;
+
+    set((state) => ({
+      prSearch: { ...state.prSearch, term, searching: true, error: null },
+    }));
+
+    if (!isDesktop()) {
+      set({
+        prSearch: {
+          term,
+          results: [],
+          searching: false,
+          error: 'Search needs the desktop app — this is the browser preview.',
+        },
+      });
+      return;
+    }
+
+    const result = await searchPullRequests(term, projectId);
+
+    // Superseded while it was out. Whatever this found is about a question the
+    // user has already moved on from — a different term, or the same term at a
+    // different scope.
+    if (ticket !== prSearchTicket) return;
+
+    if (result === null) {
+      set({
+        prSearch: {
+          term,
+          results: [],
+          searching: false,
+          error: 'The app could not reach its own main process.',
+        },
+      });
+      return;
+    }
+
+    if (!result.ok) {
+      set({
+        prSearch: {
+          term,
+          results: [],
+          searching: false,
+          error: result.error.message,
+        },
+      });
+      return;
+    }
+
+    set({
+      prSearch: { term, results: result.value, searching: false, error: null },
+    });
+  },
+
+  clearPrSearch: () => {
+    // Retires anything in flight, so a search cancelled mid-request cannot
+    // land its results into an empty box.
+    prSearchTicket += 1;
+    set({ prSearch: { term: '', results: null, searching: false, error: null } });
+  },
+
   reset: () => {
     spawnCounter = 0;
     staleTitles.clear();
@@ -2860,6 +3027,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // one — dropping the handle makes the next caller start fresh.
     inFlightPrSweep = null;
     inFlightTicketSweep = null;
+    // Same rule for a search in flight: bumping the ticket retires it, so its
+    // answer cannot install itself into the fresh state.
+    prSearchTicket += 1;
     /**
      * Nothing in this store stamps through the clock any more — the activity
      * feed was its only caller and the project explorer replaced it. The rewind
@@ -2874,6 +3044,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       metrics: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
+      prSearch: { term: '', results: null, searching: false, error: null },
     });
   },
 }));
@@ -3814,24 +3985,54 @@ export const useNotifs = () => useHiveStore((state) => state.notifs);
  * for the reason spelled out on {@link useTicketPrs}: this builds new objects,
  * and shallow-comparing freshly-built objects never matches.
  */
+/**
+ * `PrRecord` → `Pr`: everything main sent, plus the session that owns it.
+ *
+ * **Resolved, never stored** — see `Pr.session`. Shared by the sweep and the
+ * search so a card behaves identically whichever list it came from.
+ */
+const resolvePrs = (
+  records: readonly PrRecord[],
+  fleet: ReturnType<typeof selectSessionFacets>,
+): Pr[] =>
+  records.map((pr) => ({
+    n: pr.number,
+    repo: pr.repo,
+    title: pr.title,
+    state: pr.state,
+    findings: pr.findings,
+    checks: pr.checks,
+    url: pr.url,
+    branch: pr.branch,
+    session: sessionForPr(pr, fleet),
+  }));
+
 export const usePrs = (): Pr[] => {
   const prs = useHiveStore((state) => state.prs);
   const fleet = useHiveStore(selectSessionFacets);
 
+  return useMemo(() => resolvePrs(prs, fleet), [prs, fleet]);
+};
+
+/**
+ * The **searched** pull requests, resolved the same way.
+ *
+ * A search result is a `PrRecord` like any other, so it earns its owning
+ * session by the same branch match — a search that turns up a PR the fleet is
+ * working on should open that terminal, exactly as the sweep's rows do. Sharing
+ * `resolvePrs` is what guarantees the two lists cannot start disagreeing about
+ * what a card offers.
+ *
+ * `null` while nothing has been searched, which is how the panel tells "no
+ * results" from "no search".
+ */
+export const usePrSearchResults = (): Pr[] | null => {
+  const results = useHiveStore((state) => state.prSearch.results);
+  const fleet = useHiveStore(selectSessionFacets);
+
   return useMemo(
-    () =>
-      prs.map((pr) => ({
-        n: pr.number,
-        repo: pr.repo,
-        title: pr.title,
-        state: pr.state,
-        findings: pr.findings,
-        checks: pr.checks,
-        url: pr.url,
-        branch: pr.branch,
-        session: sessionForPr(pr, fleet),
-      })),
-    [prs, fleet],
+    () => (results === null ? null : resolvePrs(results, fleet)),
+    [results, fleet],
   );
 };
 
@@ -3870,6 +4071,12 @@ export const usePrSource = () => useHiveStore((state) => state.prSource);
 /** Sweep GitHub. The poller's entry point — see `hooks/use-pr-refresh.ts`. */
 export const useRefreshPrs = () => useHiveStore((state) => state.refreshPrs);
 
+/** What the PRs panel's search found, and whether it is still looking. */
+export const usePrSearch = () => useHiveStore((state) => state.prSearch);
+export const useSearchPrs = () => useHiveStore((state) => state.searchPrs);
+export const useClearPrSearchResults = () =>
+  useHiveStore((state) => state.clearPrSearch);
+
 
 /** Mark one notification read, by its id (story 051, HIVE-75). */
 export const useMarkRead = () => useHiveStore((state) => state.markRead);
@@ -3877,6 +4084,9 @@ export const useMarkRead = () => useHiveStore((state) => state.markRead);
 /** Remove a notification the user has acted on (HIVE-93). */
 export const useDismissNotif = () =>
   useHiveStore((state) => state.dismissNotif);
+
+/** Empty the inbox — the panel's Clear all. */
+export const useClearNotifs = () => useHiveStore((state) => state.clearNotifs);
 
 /** Push a notification — the stream's entry point (stories 051, 061, HIVE-75). */
 export const usePushNotif = () => useHiveStore((state) => state.pushNotif);

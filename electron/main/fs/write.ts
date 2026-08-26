@@ -34,6 +34,7 @@ export async function writeFileContent(
     const { absolute } = await resolveForWrite(
       request.projectId,
       request.relPath,
+      request.sessionId,
     );
 
     const current = await stat(absolute);

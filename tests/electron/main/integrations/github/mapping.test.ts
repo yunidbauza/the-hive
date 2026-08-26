@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   collectPrs,
+  collectSearchPrs,
   countFindings,
   readViewerLogin,
   toChecks,
@@ -387,5 +388,81 @@ describe('collectPrs', () => {
 
   it('answers an empty list for a payload it cannot read', () => {
     expect(collectPrs(null, 'octocat', NOW)).toEqual([]);
+  });
+});
+
+/**
+ * The search reading of the same payload.
+ *
+ * Every test here is about a filter that is deliberately **absent**, because
+ * each one would silently discard exactly what the user asked for.
+ */
+describe('collectSearchPrs', () => {
+  const NODE = {
+    number: 482,
+    title: 'carapace plates',
+    url: 'https://github.com/acme/nova-web/pull/482',
+    isDraft: false,
+    state: 'OPEN',
+    reviewDecision: null,
+    headRefName: 'feat/plates',
+    updatedAt: '2026-08-10T10:00:00Z',
+    mergedAt: null,
+    author: { login: 'someone-else' },
+    repository: { name: 'nova-web', owner: { login: 'acme' } },
+    reviewThreads: { nodes: [] },
+    commits: { nodes: [] },
+  };
+
+  it('keeps a PR written by someone else', () => {
+    const prs = collectSearchPrs({ open: { nodes: [NODE] }, merged: { nodes: [] } });
+
+    // The author check `collectPrs` applies would discard every result a search
+    // exists to find.
+    expect(prs.map((pr) => pr.number)).toEqual([482]);
+  });
+
+  it('keeps a merged PR however old it is', () => {
+    const ancient = {
+      ...NODE,
+      number: 12,
+      state: 'MERGED',
+      mergedAt: '2020-01-01T00:00:00Z',
+      updatedAt: '2020-01-01T00:00:00Z',
+    };
+
+    const prs = collectSearchPrs({ open: { nodes: [] }, merged: { nodes: [ancient] } });
+
+    // The sweep's twenty-four hour window is about a *standing list*. A search
+    // is a question, and hiding the answer would look like a broken search.
+    expect(prs.map((pr) => pr.number)).toEqual([12]);
+  });
+
+  it('stacks open above merged, newest first within each', () => {
+    const prs = collectSearchPrs({
+      open: {
+        nodes: [
+          { ...NODE, number: 1, updatedAt: '2026-08-09T09:00:00Z' },
+          { ...NODE, number: 2, updatedAt: '2026-08-10T09:00:00Z' },
+        ],
+      },
+      merged: {
+        nodes: [
+          {
+            ...NODE,
+            number: 3,
+            state: 'MERGED',
+            mergedAt: '2026-08-10T08:00:00Z',
+          },
+        ],
+      },
+    });
+
+    expect(prs.map((pr) => pr.number)).toEqual([2, 1, 3]);
+  });
+
+  it('answers empty for a payload with nothing in it', () => {
+    expect(collectSearchPrs(null)).toEqual([]);
+    expect(collectSearchPrs({})).toEqual([]);
   });
 });

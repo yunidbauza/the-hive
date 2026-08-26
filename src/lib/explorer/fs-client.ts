@@ -4,6 +4,7 @@ import type {
   FsChangedEvent,
   FsRefusal,
   FsResult,
+  RootInfo,
   WriteFileResult,
 } from '@shared/fs-contract';
 
@@ -39,22 +40,52 @@ export function hasFsBridge(): boolean {
   return Boolean(window.hive?.fs);
 }
 
+/**
+ * `sessionId` is threaded through every verb from here down.
+ *
+ * It names the session whose working directory the request is *about*, and main
+ * uses it to decide which root to resolve under — the project's, or a linked
+ * worktree of it that the session moved into. It is optional throughout, so the
+ * browser target and every caller that has no session behave exactly as before.
+ *
+ * The renderer never sends a path for this. It sends an id, and main answers
+ * from the cwd it observed itself; see `electron/main/fs/session-roots.ts`.
+ */
+/**
+ * Which root a read for this project and session resolves under.
+ *
+ * The one verb here that answers with a path, and the reason it exists is that
+ * three renderer decisions — the buffer key, the watcher's reconciliation, and
+ * the explorer header — were *inferring* main's verdict and getting it wrong
+ * whenever main refused a session's working directory. See `RootInfo`.
+ */
+export async function readRoot(
+  projectId: string,
+  sessionId?: string,
+): Promise<FsResult<RootInfo>> {
+  const bridge = window.hive?.fs;
+  if (!bridge) return NO_BRIDGE;
+  return bridge.root({ projectId, sessionId });
+}
+
 export async function readDir(
   projectId: string,
   relPath: string,
+  sessionId?: string,
 ): Promise<FsResult<DirEntry[]>> {
   const bridge = window.hive?.fs;
   if (!bridge) return NO_BRIDGE;
-  return bridge.readDir({ projectId, relPath });
+  return bridge.readDir({ projectId, relPath, sessionId });
 }
 
 export async function readFile(
   projectId: string,
   relPath: string,
+  sessionId?: string,
 ): Promise<FsResult<FileContent | FsRefusal>> {
   const bridge = window.hive?.fs;
   if (!bridge) return NO_BRIDGE;
-  return bridge.readFile({ projectId, relPath });
+  return bridge.readFile({ projectId, relPath, sessionId });
 }
 
 export async function writeFile(
@@ -62,10 +93,11 @@ export async function writeFile(
   relPath: string,
   text: string,
   baseMtimeMs: number,
+  sessionId?: string,
 ): Promise<WriteFileResult> {
   const bridge = window.hive?.fs;
   if (!bridge) return { ...NO_BRIDGE, conflict: false };
-  return bridge.writeFile({ projectId, relPath, text, baseMtimeMs });
+  return bridge.writeFile({ projectId, relPath, text, baseMtimeMs, sessionId });
 }
 
 /**
@@ -77,11 +109,14 @@ export async function writeFile(
  * this reject would turn a degraded feature into an unhandled rejection in an
  * effect.
  */
-export async function watchProject(projectId: string): Promise<boolean> {
+export async function watchProject(
+  projectId: string,
+  sessionId?: string,
+): Promise<boolean> {
   const bridge = window.hive?.fs;
   if (!bridge) return false;
   try {
-    await bridge.watch({ projectId });
+    await bridge.watch({ projectId, sessionId });
     return true;
   } catch {
     return false;

@@ -8,6 +8,8 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  RootInfo,
+  RootRequest,
 } from '@shared/fs-contract';
 import {
   BINARY_SNIFF_BYTES,
@@ -15,7 +17,8 @@ import {
   MAX_FILE_BYTES,
 } from '@shared/fs-contract';
 
-import { asFailure, resolveExisting } from './paths';
+import { asFailure, projectRoot, resolveExisting } from './paths';
+import { sessionRoot } from './session-roots';
 
 /**
  * The two read verbs.
@@ -68,6 +71,7 @@ export async function readDirectory(
     const { absolute } = await resolveExisting(
       request.projectId,
       request.relPath,
+      request.sessionId,
     );
 
     const names = await readdir(absolute);
@@ -125,6 +129,7 @@ export async function readFileContent(
     const { absolute } = await resolveExisting(
       request.projectId,
       request.relPath,
+      request.sessionId,
     );
 
     const stats = await stat(absolute);
@@ -169,6 +174,34 @@ export async function readFileContent(
     } finally {
       await handle.close();
     }
+  } catch (cause) {
+    return { ok: false, error: asFailure(cause) };
+  }
+}
+
+/**
+ * Which root a read for this project and session resolves under.
+ *
+ * The verdict `rootFor` reaches internally, returned rather than kept — see
+ * `RootInfo` for the three renderer decisions that were guessing at it. It runs
+ * the same resolution the reads run, so the answer cannot drift from what a
+ * read would actually do; the probe cache makes the second call free.
+ *
+ * `widened` is deliberately one bit. "No session" and "main refused this
+ * session's cwd" are different reasons for the same outcome, and the renderer
+ * has no business telling them apart: in both cases the tree is the project's.
+ */
+export async function readRoot(
+  request: RootRequest,
+): Promise<FsResult<RootInfo>> {
+  try {
+    const project = await projectRoot(request.projectId);
+    const session = await sessionRoot(project, request.sessionId);
+
+    return {
+      ok: true,
+      value: { root: session ?? project, widened: session !== null },
+    };
   } catch (cause) {
     return { ok: false, error: asFailure(cause) };
   }
