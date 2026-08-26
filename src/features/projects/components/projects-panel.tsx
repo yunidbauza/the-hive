@@ -1,4 +1,5 @@
 import { EmptyState, EmptyStatePath } from '@components/ui/empty-state';
+import { NewProjectLink } from '@features/projects/components/new-project-link';
 import { ProjectRow } from '@features/projects/components/project-row';
 import { useProjects } from '@stores/hive-store';
 
@@ -16,6 +17,14 @@ import { useProjects } from '@stores/hive-store';
  * the config and only the config now, which means a fresh install lands here
  * with nothing — and the panel has to explain that rather than render a blank
  * column that looks like a bug.
+ *
+ * ## Why the way in leads both states
+ *
+ * `NewProjectLink` is the panel's one control and is rendered first either
+ * way, so a fresh install can map its first repository from the rail it is
+ * already looking at, and a full tree can gain another without the control
+ * drifting down past the fold. Every other row in here belongs to a project;
+ * this one belongs to the list.
  */
 export function ProjectsPanel() {
   const projects = useProjects();
@@ -23,6 +32,7 @@ export function ProjectsPanel() {
   if (projects.length === 0) {
     return (
       <div data-panel="projects" className="flex flex-col gap-0.5">
+        <NewProjectLink />
         {/*
           "mapped", not "yet" — and deliberately not the same sentence the
           Settings screen uses for its own empty list. Two surfaces saying "No
@@ -47,6 +57,7 @@ export function ProjectsPanel() {
 
   return (
     <div data-panel="projects" className="flex flex-col gap-0.5">
+      <NewProjectLink />
       {projects.map((project) => (
         <ProjectRow key={project.id} project={project} />
       ))}

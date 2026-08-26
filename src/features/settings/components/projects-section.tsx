@@ -2,12 +2,12 @@ import { GitBranch, Plus } from '@phosphor-icons/react';
 import { useState } from 'react';
 
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
-import { addProjectToConfig, chooseProjectDirectory } from '@/lib/project-config';
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
 import { ProjectsList } from '@features/settings/components/projects-list';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import { useAddProject } from '@hooks/use-add-project';
 import { useProjectConfig } from '@hooks/use-project-config';
 
 /**
@@ -35,13 +35,14 @@ export function ProjectsSection() {
   const phrase = useSwarmPhrase('empty.settingsProjects');
 
   /**
-   * Whether a dialog is open, so the button cannot be double-fired.
+   * Choosing a folder and writing it — shared with the projects rail, which
+   * offers the same act from `NewProjectLink` (`@hooks/use-add-project`).
    *
-   * Not a loading spinner: the native dialog is modal to the window, so there
-   * is nothing to spin *over*. This exists only to stop a second `invoke`
-   * racing the first, which would open two dialogs and write twice.
+   * The two slices may not import each other, and the flow has three
+   * guarantees worth stating once rather than twice: one dialog per click, a
+   * write of exactly the path it returned, nothing at all when it is closed.
    */
-  const [choosing, setChoosing] = useState(false);
+  const { addProject, choosing } = useAddProject();
 
   /**
    * Which pane this section is showing (story 102).
@@ -55,20 +56,6 @@ export function ProjectsSection() {
   const [view, setView] = useState<'list' | 'clone'>('list');
 
   const declared = snapshot?.projects ?? [];
-
-  const onAdd = async () => {
-    if (choosing) return;
-    setChoosing(true);
-    try {
-      const path = await chooseProjectDirectory();
-      // Cancelled, or no bridge to ask. Nothing to write, and nothing to say:
-      // the user closed a dialog they opened.
-      if (path === null) return;
-      await addProjectToConfig({ path });
-    } finally {
-      setChoosing(false);
-    }
-  };
 
   if (view === 'clone') {
     return <CloneRepoView onDone={() => setView('list')} />;
@@ -112,7 +99,7 @@ export function ProjectsSection() {
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => void onAdd()}
+          onClick={addProject}
           disabled={choosing}
           className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
         >

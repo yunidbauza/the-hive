@@ -53,7 +53,23 @@ describe('ProjectsPanel', () => {
 
     expect(screen.getByText(/No projects mapped/i)).toBeInTheDocument();
     expect(screen.getByText('Settings → Projects')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    /*
+      One control, and only one: the way to fix the emptiness the panel is
+      explaining. This asserted *no* buttons before `NewProjectLink` existed,
+      which was standing in for "no rows" — the claim it makes directly now.
+    */
+    expect(screen.getAllByRole('button')).toEqual([
+      screen.getByRole('button', { name: 'Add a new project' }),
+    ]);
+  });
+
+  /** The way in is above the tree, whether or not there is a tree. */
+  it('offers a way to map a project in both states', () => {
+    render(<ProjectsPanel />);
+
+    expect(
+      screen.getByRole('button', { name: 'Add a new project' }),
+    ).toBeInTheDocument();
   });
 
   it('renders every configured project, in config order', () => {
