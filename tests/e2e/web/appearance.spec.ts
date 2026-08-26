@@ -202,3 +202,37 @@ test('a shipped theme offers no Remove', async ({ page }) => {
   await expect(page.getByRole('menuitem', { name: 'Export…' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Remove' })).toHaveCount(0);
 });
+
+/**
+ * The theme grid flows; the tile does not stretch.
+ *
+ * A fixed column count is trivially assertable in a unit test and proves the
+ * wrong thing — what matters is the resolved track width at two real viewport
+ * sizes, which needs layout. It also catches the failure mode this class is
+ * most exposed to: `grid-cols-[repeat(auto-fill,minmax(min(212px,100%),212px))]`
+ * is a nested-function arbitrary value, and if Tailwind ever stops emitting it
+ * the grid silently collapses to one column with everything full-width.
+ */
+test('theme tiles keep their size and flow to fill the row', async ({ page }) => {
+  await openSettings(page);
+
+  const card = page.getByRole('button', { name: 'Hive Built in' });
+  const columns = async () =>
+    page.evaluate(() => {
+      const grid = document.querySelector<HTMLElement>('[class*="auto-fill"]');
+      return getComputedStyle(grid!).gridTemplateColumns.split(' ').length;
+    });
+
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const narrowTile = (await card.boundingBox())!.width;
+  const narrowColumns = await columns();
+
+  await page.setViewportSize({ width: 1900, height: 900 });
+  const wideTile = (await card.boundingBox())!.width;
+  const wideColumns = await columns();
+
+  // More room buys more themes per row...
+  expect(wideColumns).toBeGreaterThan(narrowColumns);
+  // ...and never a bigger tile.
+  expect(wideTile).toBe(narrowTile);
+});
