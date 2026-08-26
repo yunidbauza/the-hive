@@ -107,3 +107,137 @@ test('the counts still end on the rail line when narrow', async ({ page }) => {
     Math.abs(countsBox!.x + countsBox!.width - railBox!.x),
   ).toBeLessThanOrEqual(1);
 });
+
+/**
+ * Resizable rails (HIVE-105).
+ *
+ * The clamp is proved arithmetically in `tests/lib/rail-width.test.ts`. What
+ * only a browser can show is that the arithmetic actually reaches the screen:
+ * happy-dom performs no layout, so a unit test can assert what
+ * `--cc-rail-w-left` was set to but never what the rail *measures*, and the
+ * stage's real share of the window is the one thing this feature promises.
+ */
+test.describe('resizing a rail', () => {
+  /** Drag a slider with the keyboard — no pointer geometry to get wrong. */
+  const widen = async (
+    page: import('@playwright/test').Page,
+    name: string,
+    key: string,
+    presses: number,
+  ) => {
+    const handle = page.getByRole('slider', { name });
+    await handle.focus();
+    for (let i = 0; i < presses; i += 1) await handle.press(key);
+  };
+
+  const stageShare = async (page: import('@playwright/test').Page) => {
+    const stage = await page.getByRole('main').boundingBox();
+    const width = page.viewportSize()!.width;
+    return stage!.width / width;
+  };
+
+  test('a rail actually grows when its handle is dragged', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
+    const before = (await rail.boundingBox())!.width;
+
+    await widen(page, 'Resize the navigation rail', 'ArrowRight', 5);
+
+    const after = (await rail.boundingBox())!.width;
+    expect(after).toBeGreaterThan(before);
+    // Five 8px steps.
+    expect(after - before).toBeCloseTo(40, 0);
+  });
+
+  /**
+   * **The invariant, measured.** Both rails dragged as far as they will go, and
+   * the terminal still holds a fifth of the window.
+   */
+  test('the stage keeps its fifth with both rails dragged to the stop', async ({
+    page,
+  }) => {
+    await page.goto('/?sim=0');
+
+    await widen(page, 'Resize the navigation rail', 'ArrowRight', 60);
+    await widen(page, 'Resize the activity rail', 'ArrowLeft', 60);
+
+    expect(await stageShare(page)).toBeGreaterThanOrEqual(0.2);
+  });
+
+  /**
+   * The header's cluster is sized from `--cc-rail-w-right`, so a rail that
+   * moves without it is a visible misalignment. The two specs at the top of
+   * this file assert that relationship at the default width; this asserts it
+   * survives a resize, which is the case HIVE-105 could newly break.
+   */
+  test('the header stays aligned to a resized activity rail', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    await widen(page, 'Resize the activity rail', 'ArrowLeft', 10);
+
+    const countsBox = await page.getByTestId('status-counts').boundingBox();
+    const railBox = await page
+      .getByRole('complementary', { name: 'Activity' })
+      .boundingBox();
+
+    expect(
+      Math.abs(countsBox!.x + countsBox!.width - railBox!.x),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  test('a double-click returns the rail to its default width', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
+    const before = (await rail.boundingBox())!.width;
+
+    await widen(page, 'Resize the navigation rail', 'ArrowRight', 5);
+    expect((await rail.boundingBox())!.width).toBeGreaterThan(before);
+
+    await page.getByRole('slider', { name: 'Resize the navigation rail' }).dblclick();
+
+    expect((await rail.boundingBox())!.width).toBeCloseTo(before, 0);
+  });
+
+  /** The width is in `localStorage`, so it has to come back with the page. */
+  test('a resized rail survives a reload', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
+    await widen(page, 'Resize the navigation rail', 'ArrowRight', 5);
+    const resized = (await rail.boundingBox())!.width;
+
+    await page.reload();
+
+    expect((await rail.boundingBox())!.width).toBeCloseTo(resized, 0);
+  });
+
+  /**
+   * The terminal refits *during* the gesture, not on release. The stage owns
+   * `min-w-0` and xterm's fit addon reacts to the resize that follows, so this
+   * is really asserting that chain is unbroken — a fit that only settled on
+   * pointer-up would be a visibly different feature.
+   */
+  test('the terminal follows the rail mid-drag', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    const screenEl = page.locator('.xterm-screen').first();
+    await expect(screenEl).toBeVisible();
+    const before = (await screenEl.boundingBox())!.width;
+
+    const handle = page.getByRole('slider', { name: 'Resize the navigation rail' });
+    const box = (await handle.boundingBox())!;
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 120, box.y + box.height / 2, { steps: 10 });
+
+    // Measured before the button is released — that is the whole point.
+    await expect
+      .poll(async () => (await screenEl.boundingBox())!.width)
+      .toBeLessThan(before);
+
+    await page.mouse.up();
+  });
+});

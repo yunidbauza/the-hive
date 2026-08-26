@@ -425,8 +425,9 @@ export function CenterStage() {
             <SplitHandle
               axis={splitAxis}
               containerRef={splitRef}
-              ratio={splitRatio}
-              onRatio={setSplitRatio}
+              label="Resize the editor"
+              value={splitRatio}
+              onValue={setSplitRatio}
             />
           ) : null}
 
