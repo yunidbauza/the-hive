@@ -1,9 +1,11 @@
 import { ArrowClockwise } from '@phosphor-icons/react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
+import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import { isSession } from '@/types/entity';
 
 import { EmptyState } from '@components/ui/empty-state';
+import { PullIndicator } from '@components/ui/pull-indicator';
 import { PrCard } from '@features/pull-requests/components/pr-card';
 import { PrListSkeleton } from '@features/pull-requests/components/pr-card-skeleton';
 import { PrSearchRow } from '@features/pull-requests/components/pr-search-row';
@@ -147,6 +149,20 @@ export function PrsPanel() {
   };
 
   /*
+    Overscrolling the top of the list forces a sweep.
+
+    Off during a search and during the first load. A search replaces the list
+    rather than filtering it, so pulling there would refresh a list the user
+    cannot currently see — and the results it *can* see would not move, which
+    reads as the gesture being broken rather than as it having done something
+    elsewhere.
+  */
+  const pull = usePullToRefresh({
+    onRefresh: refresh,
+    disabled: searching || source.kind === 'loading',
+  });
+
+  /*
     The skeleton *replaces* the list rather than sitting above it, and only on
     the first sweep — `loading` is only ever set when the source is not already
     live, so a refresh with rows on screen keeps them.
@@ -202,7 +218,13 @@ export function PrsPanel() {
   }
 
   return (
-    <div data-panel="prs" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
+    <div
+      ref={pull.ref}
+      data-panel="prs"
+      className="flex flex-col gap-[var(--cc-list-gap-sm)]"
+    >
+      <PullIndicator distance={pull.distance} phase={pull.phase} />
+
       <PrSearchRow projectId={projectId} />
       <SourceNotice source={source} onRetry={retry} />
 

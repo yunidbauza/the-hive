@@ -1,9 +1,11 @@
 import { ArrowClockwise } from '@phosphor-icons/react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
+import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import { useTicketRefresh } from '@/hooks/use-ticket-refresh';
 
 import { EmptyState } from '@components/ui/empty-state';
+import { PullIndicator } from '@components/ui/pull-indicator';
 import { SwarmLine } from '@components/ui/swarm-line';
 import { TicketCard } from '@features/work/components/ticket-card';
 import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
@@ -145,6 +147,16 @@ export function WorkPanel() {
   };
 
   /*
+    Overscrolling the top of the list forces a read, rather than waiting out
+    the minute. Disabled while the first sweep is still running: there is no
+    list to pull yet, and the skeleton below replaces the panel wholesale.
+  */
+  const pull = usePullToRefresh({
+    onRefresh: refresh,
+    disabled: source.kind === 'loading',
+  });
+
+  /*
     The skeleton *replaces* the list rather than sitting above it.
 
     On the first read there is nothing to sit above, and on a retry the list is
@@ -161,7 +173,13 @@ export function WorkPanel() {
   }
 
   return (
-    <div data-panel="work" className="flex flex-col gap-[var(--cc-list-gap)]">
+    <div
+      ref={pull.ref}
+      data-panel="work"
+      className="flex flex-col gap-[var(--cc-list-gap)]"
+    >
+      <PullIndicator distance={pull.distance} phase={pull.phase} />
+
       <SourceNotice source={source} onRetry={retry} />
 
       {tickets.map((ticket) => (
