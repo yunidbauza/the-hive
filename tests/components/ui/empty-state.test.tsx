@@ -91,6 +91,64 @@ describe('EmptyState', () => {
   });
 
   /**
+   * A control is not copy. In the left column the sentences hang off it would
+   * read as another one of them; centred under the flavour line it reads as the
+   * thing to press — and whatever sentence survives it goes *underneath*,
+   * because that half names the way out this panel cannot take itself.
+   */
+  it('puts a control under the flavour line and the sentence under the control', () => {
+    render(
+      <EmptyState
+        phrase="empty.projects"
+        control={<button type="button">new project</button>}
+        action="Or clone one in Settings."
+      />,
+    );
+
+    const control = screen.getByRole('button', { name: 'new project' });
+    const sentence = screen.getByText('Or clone one in Settings.');
+
+    expect(control.parentElement?.children[0]).toBe(control);
+    expect(control.parentElement?.children[1]).toBe(sentence);
+    expect(document.querySelector('[data-swarm-line]')).not.toBeNull();
+  });
+
+  /**
+   * The flavour line is a sentence, so a panel whose emptiness it already
+   * reports has nothing left for the body to say. What is asserted here is the
+   * separator: with no `children`, the action is the whole sentence and must
+   * not arrive with the leading space that would have joined it to one.
+   */
+  it('lets the flavour line be the message, with no body sentence', () => {
+    render(
+      <EmptyState
+        phrase="empty.projects"
+        control={<button type="button">new project</button>}
+        action="Or clone one in Settings."
+      />,
+    );
+
+    expect(screen.getByText('Or clone one in Settings.').textContent).toBe(
+      'Or clone one in Settings.',
+    );
+  });
+
+  it('renders a control with no sentence of any kind under it', () => {
+    render(
+      <EmptyState
+        phrase="empty.projects"
+        control={<button type="button">new project</button>}
+      />,
+    );
+
+    const control = screen.getByRole('button', { name: 'new project' });
+
+    // The flavour line is a paragraph of its own, one level up; what must not
+    // exist is an empty one under the control.
+    expect(control.parentElement?.children).toHaveLength(1);
+  });
+
+  /**
    * Twenty-odd call sites predate the prop, and their layout was tuned against
    * a bare paragraph. Wrapping all of them in a flex container to add nothing
    * would be a silent re-spacing of panels this change has no business

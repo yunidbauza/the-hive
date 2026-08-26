@@ -18,13 +18,20 @@ import { useProjects } from '@stores/hive-store';
  * with nothing — and the panel has to explain that rather than render a blank
  * column that looks like a bug.
  *
- * ## Why the way in leads both states
+ * ## Where the way in sits, in each state
  *
- * `NewProjectLink` is the panel's one control and is rendered first either
- * way, so a fresh install can map its first repository from the rail it is
- * already looking at, and a full tree can gain another without the control
- * drifting down past the fold. Every other row in here belongs to a project;
- * this one belongs to the list.
+ * `NewProjectLink` is the panel's one control, and both states offer it — a
+ * fresh install maps its first repository from the rail it is already looking
+ * at, and a full tree gains another without the control drifting down past the
+ * fold. What differs is what it has to lead.
+ *
+ * Above a tree it leads a list: every other row in here belongs to a project,
+ * this one belongs to the list. Above an *empty* state it led the sprite and
+ * the line explaining the emptiness, which put the answer before the question
+ * and left the copy pointing back up the column at it. So the empty branch
+ * hands it to `EmptyState` as the `control` instead, and reads in the order
+ * the user acts in: what the panel is, then what to press, then the one thing
+ * this rail cannot do for them.
  */
 export function ProjectsPanel() {
   const projects = useProjects();
@@ -32,32 +39,31 @@ export function ProjectsPanel() {
   if (projects.length === 0) {
     return (
       <div data-panel="projects" className="flex flex-col gap-0.5">
-        <NewProjectLink />
         {/*
-          "mapped", not "yet" — and deliberately not the same sentence the
-          Settings screen uses for its own empty list. Two surfaces saying "No
-          projects yet." in one app reads as one message rendered twice; this
-          one names what is missing, which is a mapping.
+          No body sentence, on purpose. "No projects mapped." said in prose
+          exactly what "No hatcheries detected." says in the swarm register one
+          line above it — the same fact, twice, in two voices. The flavour line
+          is the message now, and what is left below the button is the half the
+          line cannot carry.
 
-          The action names the control directly above it. It used to send a
-          fresh install to Settings, which was the only way to map a project
-          and is now a detour past the button in the same panel — the sentence
-          outlived the constraint that made it true. Settings stays in it for
-          the one thing the rail cannot do: fetch a repository that is not on
-          this machine yet.
+          That half is Settings, and only Settings. The sentence used to send a
+          fresh install there because it was the only way to map a project; the
+          button made it a detour past itself, and then had to be pointed at
+          with the word "above" to repair the order. It keeps the one thing the
+          rail genuinely cannot do — fetch a repository that is not on this
+          machine yet — and gives up the rest to the control.
         */}
         <EmptyState
           phrase="empty.projects"
           creature="overlord"
+          control={<NewProjectLink variant="cta" />}
           action={
             <>
-              Use <EmptyStatePath>+ new project</EmptyStatePath> above, or clone
-              one in <EmptyStatePath>Settings → Projects</EmptyStatePath>.
+              Or clone one in{' '}
+              <EmptyStatePath>Settings → Projects</EmptyStatePath>.
             </>
           }
-        >
-          No projects mapped.
-        </EmptyState>
+        />
       </div>
     );
   }

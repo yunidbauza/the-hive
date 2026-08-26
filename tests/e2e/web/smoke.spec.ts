@@ -82,7 +82,15 @@ test('renders the header chrome', async ({ page }) => {
 test('opens every panel on an empty state, not on sample data', async ({ page }) => {
   const rail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
 
-  await expect(page.getByText(/No projects mapped/i)).toBeVisible();
+  /*
+    The projects rail's prose restatement of its flavour line is gone; the
+    block it leaves is the drawn line, the control, and the destination the
+    rail cannot route to. `swarm.spec.ts` owns the line's text.
+  */
+  await expect(rail.locator('[data-swarm-line]').first()).toBeVisible();
+  await expect(
+    rail.getByRole('button', { name: 'Add a new project' }),
+  ).toBeVisible();
   await expect(page.getByText('Settings → Projects')).toBeVisible();
 
   await rail.getByRole('tab', { name: /^Agents/ }).click();

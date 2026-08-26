@@ -15,17 +15,21 @@ import type { PhraseKey } from '@lib/swarm/phrases';
 export const RAIL_CREATURE_SIZE = 44;
 
 /**
- * A creature without a phrase is a compile error, not a silent no-op.
+ * A creature — or a control — without a phrase is a compile error, not a silent
+ * no-op.
  *
- * The sprite is rendered inside the flavoured branch, so `creature` alone would
+ * Both are rendered inside the flavoured branch, so either one alone would
  * type-check, lint, and draw nothing — with no error to explain why. Twenty-odd
  * call sites still pass neither, and they keep working; what the union removes
- * is the one combination that looks correct and isn't.
+ * is the combinations that look correct and aren't.
+ *
+ * `children` is required in the un-flavoured arm and optional in the flavoured
+ * one, because the flavour line is itself a sentence: a panel whose emptiness
+ * the line already reports, and whose way out is a control, has nothing left
+ * for the body to say that would not be the same fact twice.
  */
 type EmptyStateProps = {
-  /** What is missing. One sentence. */
-  children: ReactNode;
-  /** How to fix it. One sentence, or a control. */
+  /** How to fix it. One sentence. */
   action?: ReactNode;
 } & (
   | {
@@ -33,8 +37,24 @@ type EmptyStateProps = {
       phrase: PhraseKey;
       /** The sprite above the flavour line. 44px — see the note above. */
       creature?: Creature;
+      /**
+       * The way out this panel can take *itself* — a control, not a sentence.
+       *
+       * `action` names a destination the panel cannot route to, so it stays
+       * prose. This is a button, and it re-centres the block: a control the eye
+       * has to find is worth more than the left edge the copy is aligned to.
+       */
+      control?: ReactNode;
+      /** What is missing. One sentence — or nothing; see the note above. */
+      children?: ReactNode;
     }
-  | { phrase?: undefined; creature?: never }
+  | {
+      phrase?: undefined;
+      creature?: never;
+      control?: never;
+      /** What is missing. One sentence. */
+      children: ReactNode;
+    }
 );
 
 /**
@@ -75,19 +95,47 @@ type EmptyStateProps = {
  * the two lines of copy beneath it and reads as a mark, not an illustration.
  * The centred 96–120px block the full-stage surfaces use is exactly what a rail
  * must not have, and `SwarmCreature` documents the same split from its side.
+ *
+ * ## Why a control centres the block
+ *
+ * `control` is the one prop that changes the layout, and only because a button
+ * is not copy. Left-aligned it would sit in the column the sentences hang off
+ * and read as another line of them; centred under the flavour line it reads as
+ * the thing to press. The sentence that survives it goes *underneath*, because
+ * it names the way out this panel cannot take — and a footnote to a control is
+ * the shape that says so.
+ *
+ * Still quiet, still not a hero: the block gains 10px of air and a border, not
+ * a fill. The register above this one belongs to Settings.
  */
 export function EmptyState({
   children,
   action,
   phrase,
   creature,
+  control,
 }: EmptyStateProps) {
-  const body = (
-    <p className="px-1 py-1 text-[11.5px] leading-[1.45] text-subtle">
-      {children}
-      {action === undefined ? null : <> {action}</>}
-    </p>
-  );
+  /**
+   * The separator is the tell that an absent half rendered anyway, in both
+   * directions: no leading space when the body is only an action, and no
+   * trailing one when it is only children.
+   */
+  const sentence =
+    children === undefined ? (
+      action
+    ) : (
+      <>
+        {children}
+        {action === undefined ? null : <> {action}</>}
+      </>
+    );
+
+  const body =
+    sentence === undefined ? null : (
+      <p className="px-1 py-1 text-[11.5px] leading-[1.45] text-subtle">
+        {sentence}
+      </p>
+    );
 
   /**
    * The un-flavoured case returns the bare paragraph rather than a wrapper
@@ -98,15 +146,30 @@ export function EmptyState({
    */
   if (phrase === undefined) return body;
 
+  const centred = control !== undefined;
+
   return (
-    <div className="flex flex-col gap-[3px]">
+    <div
+      className={
+        centred
+          ? 'flex flex-col items-center gap-[3px] text-center'
+          : 'flex flex-col gap-[3px]'
+      }
+    >
       {creature === undefined ? null : (
         <div className="px-1 pb-0.5">
           <SwarmCreature creature={creature} size={RAIL_CREATURE_SIZE} />
         </div>
       )}
       <SwarmLine phraseKey={phrase} />
-      {body}
+      {centred ? (
+        <div className="mt-2.5 flex max-w-[24ch] flex-col items-center gap-[7px]">
+          {control}
+          {body}
+        </div>
+      ) : (
+        body
+      )}
     </div>
   );
 }

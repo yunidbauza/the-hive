@@ -70,6 +70,33 @@ describe('NewProjectLink', () => {
     ).toHaveTextContent('new project');
   });
 
+  /**
+   * Two registers, one control. The border is the whole difference: same role,
+   * same accessible name, same visible word — so nothing reached by name, by
+   * voice or by a screen reader can tell the empty state's button from the
+   * tree's ghost line, and nothing should, because they do the same thing.
+   *
+   * The `mb-2.5` is the other half of the pair: the panel's `gap-0.5` is the
+   * rhythm between *rows*, and the line above the tree is not a row. What the
+   * gap actually looks like is Playwright's to say; what is asserted here is
+   * that the two registers stayed one control.
+   */
+  it('keeps the same control in both registers', () => {
+    const { unmount } = render(<NewProjectLink />);
+
+    const line = screen.getByRole('button', { name: 'Add a new project' });
+    expect(line).toHaveTextContent('new project');
+    expect(line.className).toContain('mb-2.5');
+    expect(line.className).not.toContain('border');
+
+    unmount();
+    render(<NewProjectLink variant="cta" />);
+
+    const cta = screen.getByRole('button', { name: 'Add a new project' });
+    expect(cta).toHaveTextContent('new project');
+    expect(cta.className).toContain('border-border');
+  });
+
   it('cannot open a second dialog while one is open', async () => {
     const user = userEvent.setup();
     chooseProjectDirectory.mockReturnValue(new Promise<string | null>(() => {}));

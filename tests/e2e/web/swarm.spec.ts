@@ -75,7 +75,13 @@ const RAILS = [
     rail: 'Projects, work, and agents',
     pool: 'empty.projects' as const,
     cast: 'overlord',
-    keeps: 'No projects mapped.',
+    /*
+      This was "No projects mapped." until the flavour line made it a
+      restatement — the same fact in prose one line under the same fact in
+      swarm. What the panel keeps is the half the line cannot carry, and it is
+      still the instruction this spec exists to protect.
+    */
+    keeps: 'Or clone one in Settings → Projects.',
   },
   {
     tab: 'Agents',

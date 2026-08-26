@@ -40,7 +40,15 @@ test('the projects tab explains that nothing is mapped', async ({ page }) => {
     name: 'Projects, work, and agents',
   });
 
-  await expect(page.getByText(/No projects mapped/i)).toBeVisible();
+  /*
+    The prose restatement of the flavour line is gone, so what proves the panel
+    explained itself is the block it leaves: a drawn line, the control that
+    fixes the emptiness, and the one destination the rail cannot route to.
+  */
+  await expect(rail.locator('[data-swarm-line]').first()).toBeVisible();
+  await expect(
+    rail.getByRole('button', { name: 'Add a new project' }),
+  ).toBeVisible();
   await expect(page.getByText('Settings → Projects')).toBeVisible();
 
   await rail.screenshot({ path: 'test-results/evidence/projects-empty.png' });

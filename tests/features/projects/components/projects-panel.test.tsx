@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ProjectsPanel } from '@features/projects/components/projects-panel';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import { PHRASES } from '@lib/swarm/phrases';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet, seedDemoProjectConfig } from '@tests/support/demo-fleet';
@@ -51,27 +52,44 @@ describe('ProjectsPanel', () => {
 
     render(<ProjectsPanel />);
 
-    expect(screen.getByText(/No projects mapped/i)).toBeInTheDocument();
     /*
-      The copy points at the control in this panel first. It named Settings
-      alone while that was the only way to map a project; the button above
-      made that sentence a detour past itself. Settings survives in it for
-      the one thing the rail cannot do — fetch a repository that is not on
-      this machine yet — so both halves are asserted.
+      The flavour line is the message. It was followed by "No projects mapped."
+      — the same fact in prose, one line under the same fact in swarm — and
+      dropping that restatement is half of what this state is, so its absence
+      is asserted rather than left as a thing nobody looks at.
     */
-    expect(screen.getByText('+ new project')).toBeInTheDocument();
-    expect(screen.getByText('Settings → Projects')).toBeInTheDocument();
+    const flavour = document.querySelector('[data-swarm-line]');
+    expect(PHRASES['empty.projects']).toContain(flavour?.textContent);
+    expect(screen.queryByText(/No projects mapped/i)).not.toBeInTheDocument();
+
     /*
       One control, and only one: the way to fix the emptiness the panel is
       explaining. This asserted *no* buttons before `NewProjectLink` existed,
       which was standing in for "no rows" — the claim it makes directly now.
+
+      It is a real button, not the text `+ new project` set in `EmptyStatePath`
+      — the span this component uses for destinations it cannot route to, worn
+      for one release by the one thing in here that *is* clickable.
     */
-    expect(screen.getAllByRole('button')).toEqual([
-      screen.getByRole('button', { name: 'Add a new project' }),
-    ]);
+    const control = screen.getByRole('button', { name: 'Add a new project' });
+    expect(screen.getAllByRole('button')).toEqual([control]);
+    expect(screen.queryByText('+ new project')).not.toBeInTheDocument();
+
+    /*
+      Settings keeps the half the rail genuinely cannot do — fetch a repository
+      that is not on this machine — and sits *under* the control, which is what
+      retired the word "above" from the sentence.
+    */
+    const settings = screen.getByText('Settings → Projects');
+    expect(settings.tagName).toBe('SPAN');
+    expect(control.parentElement?.children[0]).toBe(control);
+    expect(control.parentElement?.children[1]).toContainElement(settings);
   });
 
-  /** The way in is above the tree, whether or not there is a tree. */
+  /**
+   * The way in is offered in both states — above the tree when there is one,
+   * inside the empty state when there is not.
+   */
   it('offers a way to map a project in both states', () => {
     render(<ProjectsPanel />);
 

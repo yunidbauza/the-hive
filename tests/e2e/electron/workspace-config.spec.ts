@@ -139,7 +139,7 @@ test('a malformed file still launches the app, with nothing spawnable', async ({
      * whatever the config said. That merge is what made a broken config look
      * like a working app with five repositories in it.
      */
-    await expect(page.getByText(/No projects mapped/i)).toBeVisible();
+    await expect(page.getByText('Settings → Projects')).toBeVisible();
     await expect(page.getByRole('button', { name: /^nova-web/ })).toHaveCount(0);
   } finally {
     await app.close();
