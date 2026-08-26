@@ -88,6 +88,7 @@ import type {
 import type {
   SessionHistoryEntry,
   SessionNoteRequest,
+  SessionPrRequest,
 } from '@shared/session-history-contract';
 import type {
   SkillFile,
@@ -408,13 +409,15 @@ const bridge: HiveBridge = {
       subscribe<SessionTicketIntentEvent>(CH.sessionTicketIntent, callback),
     onMetrics: (callback: (event: SessionMetricsEvent) => void) =>
       subscribe<SessionMetricsEvent>(CH.sessionMetrics, callback),
-    // HIVE-87. The namespace's first two verbs — everything above is a
-    // subscription. `history` is read once at boot; `note` carries the one fact
-    // about a session that main cannot establish for itself.
+    // HIVE-87. The namespace's first invoking verbs — everything above is a
+    // subscription. `history` is read once at boot; `note` and `pr` carry the
+    // two facts about a session that main cannot establish for itself.
     history: (): Promise<SessionHistoryEntry[]> =>
       ipcRenderer.invoke(CH.sessionHistory),
     note: (request: SessionNoteRequest): Promise<void> =>
       ipcRenderer.invoke(CH.sessionNote, request),
+    pr: (request: SessionPrRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.sessionPr, request),
   },
   // HIVE-80. Neither verb takes a destination path — the dialog chooses it —
   // so this does not widen the bridge into a general file picker.

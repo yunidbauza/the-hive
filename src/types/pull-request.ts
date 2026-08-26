@@ -62,16 +62,37 @@ export interface TicketPr {
  * input, and the page to open. Findings and checks are deliberately absent —
  * they have no glyph that fits, and the PRs panel exists to show them.
  *
- * **Resolved from the live list, never read off the session.** `Session.pr` was
- * the obvious place for this and is the reason the column was empty for as long
- * as it existed: nothing has ever written that field, on any code path, and the
- * fixtures made the emptiness look like an absence of pull requests rather than
- * an absence of a writer. `TicketPr` above records the same discovery — this is
- * the last surface to stop reading it.
+ * **Resolved from the live list first, and only then from the session.**
+ * `Session.pr` was the obvious place for this and is the reason the column was
+ * empty for as long as it existed: nothing ever wrote that field, on any code
+ * path, and the fixtures made the emptiness look like an absence of pull
+ * requests rather than an absence of a writer. `TicketPr` above records the
+ * same discovery.
+ *
+ * Resolving live fixed it for *this week's* work and left the rest of the
+ * column empty, because the sweep is open PRs plus 24 hours of merges: a row
+ * whose PR landed on Tuesday matched nothing on Thursday. `Session.lastPr` is
+ * the answer to that — a PR the app saw and wrote down, offered only when the
+ * live list has nothing, and marked as remembered by the absence of `state`.
  */
 export interface SessionPr {
   n: number;
-  state: PrListState;
+  /**
+   * The live state — **absent when this is a remembered PR** rather than one
+   * the current sweep can see.
+   *
+   * The optionality is the whole honesty of the fallback. `Session.lastPr` is
+   * written down when a sweep resolves it and is never revisited, so by the
+   * time it is being read the PR may have been approved, merged or closed. A
+   * state carried across that gap would be a claim nothing stands behind — and
+   * because state is rendered as a *colour*, it would be the most confident
+   * thing in the cell.
+   *
+   * So a remembered PR arrives here without one, and both surfaces render it
+   * neutral and say "last seen" in the words a screen reader gets. Present
+   * means the sweep matched this branch a moment ago and the colour is earned.
+   */
+  state?: PrListState;
   /** The GitHub page. What the `#123` link opens. */
   url: string;
 }

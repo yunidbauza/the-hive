@@ -6,6 +6,7 @@ import {
   STATUS_TEXT,
   StatusDot,
   statusLabel,
+  statusText,
 } from '@components/ui/status-dot';
 
 describe('StatusDot', () => {
@@ -100,7 +101,7 @@ describe('StatusDot', () => {
     );
 
     expect(
-      screen.getByText('hero-refresh status: idle (agents)'),
+      screen.getByText('hero-refresh status: working (agents)'),
     ).toBeInTheDocument();
   });
 
@@ -146,12 +147,19 @@ describe('StatusDot', () => {
     expect(STATUS_LABEL.online).toBe('online');
   });
 
-  it('draws a hollow dot when something is still running', () => {
+  /**
+   * Green, not grey. The ring is what distinguishes this from a session whose
+   * agent is producing output right now; the hue no longer is, because the
+   * label beside it reads `working (agents)` and a grey ring under a green word
+   * would be the dot and the text disagreeing.
+   */
+  it('draws a hollow green dot when something is still running', () => {
     const { container } = render(<StatusDot status="idle" detail="agents" />);
     const dot = container.firstElementChild as HTMLElement;
 
-    expect(dot.className).toContain('border-subtle');
+    expect(dot.className).toContain('border-green');
     expect(dot.className).not.toContain('bg-subtle');
+    expect(dot.className).not.toContain('border-subtle');
   });
 
   it('stays solid for a plain idle session', () => {
@@ -176,10 +184,30 @@ describe('StatusDot', () => {
     expect(dot.className).not.toContain('border-brand');
   });
 
-  it('names what is still running', () => {
-    expect(statusLabel('idle', 'agents')).toBe('idle (agents)');
-    expect(statusLabel('idle', 'script')).toBe('idle (script)');
+  /**
+   * `working (…)`, not `idle (…)`.
+   *
+   * The status is still `idle` — that is what a hook observed about the main
+   * agent — but the word is a claim about whether the task is progressing, and
+   * a user scanning for something to pick up read "idle" as exactly that while
+   * three subagents were mid-task. `scripts` is plural where the detail is
+   * singular: the value names a kind of thing, the label names however many.
+   */
+  it('names a quiet session with something running as working', () => {
+    expect(statusLabel('idle', 'agents')).toBe('working (agents)');
+    expect(statusLabel('idle', 'script')).toBe('working (scripts)');
     expect(statusLabel('idle')).toBe('idle');
     expect(statusLabel('waiting')).toBe('needs input');
+  });
+
+  /**
+   * The colour has to move with the word, or the two loudest signals in the
+   * cell contradict each other.
+   */
+  it('paints a quiet session with something running in working green', () => {
+    expect(statusText('idle', 'agents')).toBe(STATUS_TEXT.working);
+    expect(statusText('idle', 'script')).toBe(STATUS_TEXT.working);
+    expect(statusText('idle')).toBe(STATUS_TEXT.idle);
+    expect(statusText('terminated')).toBe(STATUS_TEXT.terminated);
   });
 });

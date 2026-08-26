@@ -8,7 +8,7 @@ import {
   isSession,
 } from '@/types/entity';
 
-import { STATUS_TEXT, statusLabel } from '@components/ui/status-dot';
+import { statusLabel, statusText } from '@components/ui/status-dot';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { prStateText } from '@features/shared/pr-presentation';
 import {
@@ -19,7 +19,6 @@ import {
   useNavOrder,
   useOpenEntity,
   useResumeSession,
-  useRestoredSessions,
   useSessionPr,
 } from '@stores/hive-store';
 import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
@@ -45,16 +44,56 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  * the ratio: below them the columns truncate rather than collapsing to nothing,
  * which is what keeps the table readable in a narrow window.
  *
- * **The floors have a hard ceiling, and it is not a matter of taste.** Splitting
- * `PROJECT · BRANCH` in two added a second floor *and* a second `gap-2.5`, and
- * the first draft of this map (100/120) spent 90px more than the joined cell
- * did. That is enough to overflow the center stage at `MIN_WINDOW_SIZE` (1100px,
- * `electron/shared/window.ts`) in comfortable density, where the two rails leave
- * it 516px: the scroll container is `overflow-y-auto`, so `overflow-x` resolves
- * to `auto` and the table grows a horizontal scrollbar that hides the `PR` cell
- * and steals height from the terminal below. 80/100 is what fits exactly at that
- * width, measured rather than reasoned. Raising either floor re-breaks it, and
- * truncation is not the cost it looks like — every column carries a `title`.
+ * **The floors have a hard ceiling, and it is not a matter of taste.** At
+ * `MIN_WINDOW_SIZE` (1100px, `electron/shared/window.ts`) in comfortable
+ * density the two rails leave the centre stage 516px, and `px-[18px]` leaves
+ * the flex line 480 of that. The fixed columns and the five `gap-2.5`s take
+ * 240, so **the three floors must sum to 240 or less**.
+ *
+ * ## What happens when they do not, and why nothing caught it
+ *
+ * They overflow, and — this is the part worth writing down — they overflow
+ * *differently* in the header and in a row, so the columns come apart. The
+ * header's cells are direct children of the 480px line. A row's five leftmost
+ * cells are inside the row button, which is `flex-1` and therefore 480 minus
+ * `PR`, its gap and the padding: the same leftover, which is exactly why the
+ * two agree at any width where the floors fit. Past that point the header's
+ * cells overflow the line and the row's overflow the *button*, and `PR` — the
+ * one cell outside it — stays put. Measured at 1100px, that put the header's
+ * `PR` 22px right of every row's.
+ *
+ * Which is where these numbers come from. The map before this story read
+ * 120/80/100 and this comment claimed it "fits exactly at that width, measured
+ * rather than reasoned"; it summed to 300 against a budget of 278, and no test
+ * had ever looked at the table below the default 1440px window. The claim was
+ * reasoned after all.
+ *
+ * ## What `STATUS` cost, and who paid
+ *
+ * `STATUS` was 90px, sized for `terminated` — the longest word the column could
+ * hold while a quiet session with subagents running was called `idle (agents)`
+ * and was allowed to clip. Renaming that to `working (agents)` and
+ * `working (scripts)` made the longest value 17 characters, which the browser
+ * measures at 127.9px in this face at 12.5px. A clipped status is worse than a
+ * clipped branch: a branch truncates to a prefix that is still recognisably
+ * itself, while `working (scr…` is a word the table has stopped saying.
+ *
+ * 132px, not 128 — four pixels of margin over a measurement taken on one
+ * machine's font stack, because the fallback chain here ends in a generic
+ * `monospace` whose metrics are the operating system's business.
+ *
+ * So the budget for the three variable floors drops from 278 to 236, and they
+ * are set to 88/64/76 — 228, with 8px of slack rather than the 22px of debt
+ * they carried before. It comes out of their **floors** and not their ratio:
+ * the 2:1:2 split governs how *slack* is shared, and at any window wide enough
+ * to have slack it is untouched. `table-alignment.spec.ts` asserts all of this
+ * at 1100px, because this paragraph is arithmetic and that is a measurement.
+ *
+ * **One case is still over budget**, and it was before this story too: a table
+ * that reserves the Resume column spends another 62px, which no floor here can
+ * find at 1100px. It is left rather than paid for, because paying would mean a
+ * `PROJECT` column of five characters on every window; a fleet with a resumable
+ * row on a 1100px window scrolls its table sideways.
  *
  * ## Why `BRANCH` is its own column
  *
@@ -89,10 +128,18 @@ import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
  */
 const COL = {
   caret: 'w-3 shrink-0',
-  session: 'min-w-[120px] flex-[2] truncate',
-  status: 'w-[90px] shrink-0 truncate',
-  project: 'min-w-[80px] flex-[1] truncate',
-  branch: 'min-w-[100px] flex-[2] truncate',
+  session: 'min-w-[88px] flex-[2] truncate',
+  /*
+    Wide enough for `working (scripts)`, and **not** `truncate`. The class is
+    what let the old width look survivable: it clipped the parenthetical to an
+    ellipsis, which reads as "idle" with something after it rather than as a
+    value the column could not hold. Without it a value that does not fit
+    overflows visibly, which is the honest failure and the one a Playwright
+    assertion can see.
+  */
+  status: 'w-[132px] shrink-0',
+  project: 'min-w-[64px] flex-[1] truncate',
+  branch: 'min-w-[76px] flex-[2] truncate',
   pr: 'w-[34px] shrink-0',
   action: 'w-[52px] shrink-0',
 } as const;
@@ -122,12 +169,16 @@ const COL = {
  * the first session arrives.
  */
 export function SessionTable() {
+  /**
+   * Both newest-first, and both partitions of one list.
+   *
+   * The table paints them in exactly this order and `useNavOrder` flattens them
+   * in exactly this order, which is what keeps the caret and the rows agreeing
+   * about where "here" is.
+   */
   const active = useActiveSessions();
   const ended = useEndedSessions();
-  /** Last run's fleet (HIVE-87). Fixed for the life of the app session. */
-  const restored = useRestoredSessions();
-  const empty =
-    active.length === 0 && ended.length === 0 && restored.length === 0;
+  const empty = active.length === 0 && ended.length === 0;
   /**
    * Drawn unconditionally, though only rendered when the table is empty: a hook
    * cannot sit behind the `empty` branch. The cost is one array index on a
@@ -143,11 +194,24 @@ export function SessionTable() {
   const reserveAction = useHasResumable();
 
   return (
-    <div className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]">
+    <div
+      data-testid="session-table"
+      className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]"
+    >
       <div className="flex items-center gap-2.5 px-2 pb-1.5 text-[11px] tracking-[0.06em] text-term-head">
         <span className={COL.caret} />
         <span className={COL.session}>SESSION</span>
-        <span className={COL.status}>STATUS</span>
+        {/*
+          A second measurement handle, for `COL`'s width note. The status column
+          is the only one that must never truncate — a branch cut to a prefix is
+          still recognisably itself, while `working (scr…` is a word the table
+          has stopped saying — so an e2e measures this cell against the widest
+          label at the minimum window size. happy-dom performs no layout, so
+          that claim is unassertable anywhere but a real browser.
+        */}
+        <span className={COL.status} data-col="status">
+          STATUS
+        </span>
         <span className={COL.project}>PROJECT</span>
         <span className={COL.branch}>BRANCH</span>
         {/*
@@ -197,36 +261,26 @@ export function SessionTable() {
       ))}
 
       {/*
-        Last run's fleet, **above** ENDED (HIVE-87).
+        "ENDED", not "COMPLETED" (story 108). The group holds three different
+        endings — work that finished, a process that quit, and a row the app
+        outlived — and only one of them was ever completed. The row's own status
+        word and its `title` say which.
 
-        Above rather than below because of where the eye lands and when the
-        group exists. At launch this is the only group on the table, so it sits
-        directly under the column header; as work starts, live rows push it down
-        and this run's endings collect beneath it. The ended half of the table
-        then reads oldest to newest, top to bottom.
+        There used to be a fourth group above this one, PREVIOUS RUN, holding
+        last run's fleet (HIVE-87). It is gone, and what it was really fixing is
+        worth stating because the fix is now somewhere else. Its argument was
+        that "what did I just finish?" is a question about *this* run, and that
+        a launch or two would bury today's two endings under yesterday's twenty.
+        Both true — but that burial was an artefact of the list being in
+        insertion order, so the top of the ended half was always its oldest row.
 
-        Its own divider rather than a fourth kind of row inside ENDED: that
-        group answers "what did I just finish?", about this session of the app,
-        and a launch or two would bury the answer under rows from before.
-      */}
-      {restored.length > 0 ? (
-        <>
-          <div className="flex items-center gap-2 px-2 pt-3.5 pb-1.5">
-            <span className="shrink-0 text-[11px] tracking-[0.06em] text-term-head">
-              PREVIOUS RUN
-            </span>
-            <span className="flex-1 border-t border-border" />
-          </div>
-          {restored.map((id) => (
-            <SessionTableRow key={id} id={id} reserveAction={reserveAction} />
-          ))}
-        </>
-      ) : null}
-
-      {/*
-        "ENDED", not "COMPLETED" (story 108). The group now holds two different
-        endings — work that finished and a process that quit — and only one of
-        them was ever completed. The row's own status word says which.
+        `useEndedSessions` sorts by recency now, so today's endings are at the
+        top because they *are* the most recent, and last week's are below them
+        without a heading having to say so. The divider was answering an
+        ordering question with a layout device, and it answered it worse than
+        ordering does: a session that ended thirty seconds before the app was
+        quit spent the next launch filed under a heading called PREVIOUS RUN,
+        below rows that had ended days earlier.
       */}
       {ended.length > 0 ? (
         <>
@@ -372,7 +426,10 @@ function SessionTableRow({
       <span className={cn(COL.session, 'text-ink')} title={entityLabel(entity)}>
         {entityLabel(entity)}
       </span>
-      <span className={cn(COL.status, STATUS_TEXT[entity.status])}>
+      <span
+        className={cn(COL.status, statusText(entity.status, entity.idleDetail))}
+        data-col="status"
+      >
         {statusLabel(entity.status, entity.idleDetail)}
       </span>
       <span className={cn(COL.project, 'text-subtle')} title={entity.project}>
@@ -414,10 +471,23 @@ function SessionTableRow({
           */
           className={cn(
             'underline underline-offset-2',
-            prStateText(pr.state),
+            /*
+              Neutral for a **remembered** PR — one the current sweep cannot
+              see, offered from `Session.lastPr`. Every colour in `prStateText`
+              asserts something current about GitHub (green is "alive and not
+              yet landed"), and a number the app wrote down days ago has no
+              standing to assert any of them. `text-subtle` is the same
+              treatment the `—` beside it gets, which is the honest neighbour:
+              this cell knows a number and nothing else about it.
+            */
+            pr.state === undefined ? 'text-subtle' : prStateText(pr.state),
             'hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
           )}
-          title={`#${String(pr.n)} · ${pr.state} — open on GitHub`}
+          title={
+            pr.state === undefined
+              ? `#${String(pr.n)} · last seen on this session — open on GitHub`
+              : `#${String(pr.n)} · ${pr.state} — open on GitHub`
+          }
           /*
             The state is *in* the label rather than in an `sr-only` span beside
             it. An `aria-label` replaces an element's content for accessibility
@@ -426,7 +496,11 @@ function SessionTableRow({
             would then have been the only carrier of the state, which is the one
             thing this cell has always refused to do.
           */
-          aria-label={`Open PR #${String(pr.n)} on GitHub — ${pr.state}`}
+          aria-label={
+            pr.state === undefined
+              ? `Open PR #${String(pr.n)} on GitHub — last seen on this session`
+              : `Open PR #${String(pr.n)} on GitHub — ${pr.state}`
+          }
         >
           #{pr.n}
         </a>

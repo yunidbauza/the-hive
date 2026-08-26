@@ -106,6 +106,80 @@ describe('session ledger', () => {
 
       expect(ledger.all().map((record) => record.id)).toEqual(['sess-01']);
     });
+
+    /**
+     * The pull request a session produced, across a quit.
+     *
+     * This file used to refuse a `pr` field, on the theory that a restored row
+     * re-associates through `branch`. It cannot: the renderer matches against a
+     * sweep holding open PRs plus 24 hours of merges, so a session that landed
+     * one last Tuesday matched nothing and its `PR` cell read `—`. A fifth
+     * writer — `session:pr` — now sends this, and it survives the same way
+     * every other field here does.
+     */
+    it('round-trips the pull request a session produced', () => {
+      const pr = {
+        number: 118,
+        repo: 'the-hive',
+        url: 'https://github.com/demo/the-hive/pull/118',
+      };
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'the-hive', task: '', status: 'working' });
+      ledger.record('sess-01', { pr });
+      ledger.flush();
+
+      const reopened = createSessionLedger(file, () => 2000);
+      expect(reopened.all()[0]).toMatchObject({ id: 'sess-01', pr });
+    });
+
+    /**
+     * A later sweep resolving a different PR — a branch reused, or a second one
+     * raised — replaces rather than merging into. Only one PR is remembered,
+     * which is what the 34px column can show.
+     */
+    it('replaces a remembered pull request rather than merging into it', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', {
+        pr: { number: 1, repo: 'p', url: 'https://github.com/demo/p/pull/1' },
+      });
+      ledger.record('sess-01', {
+        pr: { number: 2, repo: 'p', url: 'https://github.com/demo/p/pull/2' },
+      });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.pr).toEqual({
+        number: 2,
+        repo: 'p',
+        url: 'https://github.com/demo/p/pull/2',
+      });
+    });
+
+    /**
+     * All three fields or nothing, unlike the flat optionals beside it — and
+     * still only that field, never the row. A `number` with no `url` renders a
+     * `#123` that links nowhere; nineteen good rows should not be lost over it.
+     */
+    it('drops a malformed pull request without dropping the record', () => {
+      writeFileSync(
+        file,
+        JSON.stringify([
+          {
+            id: 'sess-01',
+            project: 'p',
+            task: '',
+            status: 'done',
+            createdAt: 1,
+            pr: { number: 7 },
+          },
+        ]),
+        'utf8',
+      );
+
+      const records = readLedger(file);
+      expect(records).toHaveLength(1);
+      expect(records[0]).not.toHaveProperty('pr');
+    });
   });
 
   /**

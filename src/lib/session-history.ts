@@ -1,5 +1,6 @@
 import type {
   SessionNoteRequest,
+  SessionPrRequest,
   SessionHistoryEntry,
 } from '@shared/session-history-contract';
 
@@ -65,5 +66,26 @@ export function noteSessionTicket(request: SessionNoteRequest): void {
 
   void bridge.session.note(request).catch((cause: unknown) => {
     console.error('[hive] could not record the session ticket:', cause);
+  });
+}
+
+/**
+ * Tell main which pull request a session produced.
+ *
+ * The **second** field of a record main cannot author, and it is the renderer's
+ * for a different reason from the ticket's: main does not sweep GitHub. The
+ * store resolves a row's PR from the live sweep on every tick and calls this
+ * only when the answer changes, so a steady fleet under a running poller sends
+ * nothing at all.
+ *
+ * Fire and forget, exactly like {@link noteSessionTicket}. A failure costs a
+ * `#123` in next launch's fleet table and nothing in this one.
+ */
+export function noteSessionPr(request: SessionPrRequest): void {
+  const bridge = window.hive;
+  if (!bridge) return;
+
+  void bridge.session.pr(request).catch((cause: unknown) => {
+    console.error('[hive] could not record the session pull request:', cause);
   });
 }

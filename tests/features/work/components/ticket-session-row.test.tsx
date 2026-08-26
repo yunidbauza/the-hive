@@ -60,7 +60,7 @@ describe('TicketSessionRow', () => {
     render(<TicketSessionRow id="rails-upgrade" />);
 
     expect(
-      screen.getByText('rails-upgrade status: idle (agents)'),
+      screen.getByText('rails-upgrade status: working (agents)'),
     ).toBeInTheDocument();
   });
 

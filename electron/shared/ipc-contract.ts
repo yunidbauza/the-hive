@@ -89,6 +89,7 @@ import type {
 import type {
   SessionHistoryEntry,
   SessionNoteRequest,
+  SessionPrRequest,
 } from './session-history-contract';
 import type {
   SkillFile,
@@ -525,6 +526,16 @@ export const CH = {
    * answer than main can compute, and hands it over rather than main guessing.
    */
   sessionNote: 'session:note', // renderer → main, invoke
+  /**
+   * The **second** fact about a session that main cannot work out for itself.
+   *
+   * Which pull request a session produced is an answer only the renderer has:
+   * main does not sweep GitHub. A channel of its own rather than a field on
+   * `session:note`, for the reason `session:branch` is not a field on
+   * `session:status` — one is a user's decision, settled once; this is a
+   * by-product of a poller, re-evaluated every minute.
+   */
+  sessionPr: 'session:pr', // renderer → main, invoke
   /**
    * The project filesystem — the explorer and the editor.
    *
@@ -1403,6 +1414,15 @@ export interface HiveBridge {
      * failure costs a ticket link in the history and nothing else.
      */
     note(request: SessionNoteRequest): Promise<void>;
+    /**
+     * Tell main which pull request a session produced.
+     *
+     * The renderer's job because the renderer is what sweeps GitHub. Sent only
+     * when the answer changes, so a steady fleet costs nothing per sweep. Fire
+     * and forget, exactly like `note` — a failure costs a `#123` in next
+     * launch's fleet table and nothing in this one.
+     */
+    pr(request: SessionPrRequest): Promise<void>;
   };
   /**
    * Getting a theme file on and off disk (HIVE-80).
@@ -1615,6 +1635,21 @@ export const BRIDGE_SESSION_KEYS = [
    */
   'history',
   'note',
+  /**
+   * The third verb, and the same shape of claim as `note`.
+   *
+   * `pr` accepts one entity id and one `{number, repo, url}` for it, guarded by
+   * `parseSessionPrRequest` — the id by `assertId`, the repository by
+   * `assertText`, and the URL as an absolute **https** URL, because it is the
+   * one field on this bridge that later becomes an `href`. It can do nothing
+   * else: main refuses a note for an entity it has no record of, so a sweep
+   * cannot invent fleet rows out of GitHub's answer.
+   *
+   * What it newly exposes to the renderer is nothing — this is renderer → main.
+   * What it lets the renderer *store* is a pull request number the renderer
+   * already read from GitHub with the user's own `gh` credentials.
+   */
+  'pr',
 ] as const;
 
 /** The exact key set of `window.hive.integrations`. */

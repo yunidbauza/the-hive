@@ -86,7 +86,7 @@ describe('SessionMetaBar', () => {
       render(<SessionMetaBar entity={entity('hero-refresh')} />);
 
       const link = screen.getByRole('link', {
-        name: 'Open PR #482 on GitHub',
+        name: 'Open PR #482 on GitHub — open',
       });
 
       expect(link).toHaveAttribute(
@@ -130,7 +130,7 @@ describe('SessionMetaBar', () => {
 
       render(<SessionMetaBar entity={entity('rails-upgrade')} />);
 
-      expect(screen.getByText('idle (agents)')).toBeInTheDocument();
+      expect(screen.getByText('working (agents)')).toBeInTheDocument();
     });
 
     it('renames a waiting session to "needs input"', () => {

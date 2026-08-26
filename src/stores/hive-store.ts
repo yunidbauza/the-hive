@@ -36,7 +36,7 @@ import {
   resolveProjectRef,
   subscribeProjectConfig,
 } from '@lib/project-config';
-import { noteSessionTicket } from '@lib/session-history';
+import { noteSessionPr, noteSessionTicket } from '@lib/session-history';
 import { pickPhrase } from '@lib/swarm/phrases';
 import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
@@ -46,7 +46,10 @@ import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import { SESSION_EFFORTS, SESSION_MODELS } from '@shared/session-contract';
-import type { SessionHistoryEntry } from '@shared/session-history-contract';
+import type {
+  SessionHistoryEntry,
+  SessionPrRequest,
+} from '@shared/session-history-contract';
 import { useUiStore } from '@stores/ui-store';
 
 /**
@@ -726,13 +729,18 @@ function restoredStatus(
 /**
  * A restored row that has come back to life stops being restored (HIVE-88).
  *
- * `restored` records where a row came from, which is durable; the section it
- * belongs in depends on whether it is running *now*, which is not. Reopening a
- * PREVIOUS RUN row spawns a process under its own id, and the first live
- * status that process reports is the moment the row is this run's fleet. Left
- * in place, the flag put one entity in two groups: `useActiveSessions` keys on
- * the status and `useRestoredSessions` on the flag, and a `working` row with
- * `restored: true` satisfied both — two rows, one agent.
+ * `restored` records where a row came from, which is durable; whether the row
+ * is live depends on what it is doing *now*, which is not. Reopening a restored
+ * row spawns a process under its own id, and the first live status that process
+ * reports is the moment the row is this run's fleet.
+ *
+ * Left in place, the flag put one entity in two groups: while the fleet table
+ * drew a PREVIOUS RUN divider, `useActiveSessions` keyed on the status and the
+ * restored list keyed on the flag, and a `working` row with `restored: true`
+ * satisfied both — two rows, one agent. That divider is gone, so the
+ * double-draw is no longer reachable that way, but clearing the flag is still
+ * right for the reason it always was: the row is not a previous run's any more,
+ * and `endedReason` would go on describing it as one.
  *
  * Only a **live** status revives. A spawn that fails settles `terminated`
  * without the row ever having run, and that is still last run's row.
@@ -744,7 +752,74 @@ function reviveIfLive(updated: Session): Session {
   if (updated.restored === true && !isEnded(updated.status)) {
     delete updated.restored;
   }
-  return updated;
+  return stampLifecycle(updated);
+}
+
+/**
+ * Keep `endedAt` agreeing with the status it describes.
+ *
+ * Stamped **once**, by whichever write first puts a row in an ended status, and
+ * removed again if the row comes back to life. Both halves matter: without the
+ * stamp the fleet table has nothing to sort ended rows by, and without the
+ * clear a resumed session would carry the time it stopped while running.
+ *
+ * Idempotent on purpose, because an ending is reached by more paths than it
+ * looks like — `/done` and the pty exit that follows it both arrive, and
+ * `settleExit` can be reached twice (`ptyExit` and `ptyLost`). Re-stamping would
+ * make a row's ending drift later every time something re-observed it, which is
+ * exactly the value the table would then sort on.
+ *
+ * Mutates and returns the session, which every caller has just spread into a
+ * fresh object — the same shape as {@link reviveIfLive} beside it, and it is
+ * called *from* there so the two can never be applied separately.
+ */
+function stampLifecycle(session: Session): Session {
+  if (isEnded(session.status)) {
+    if (session.endedAt === undefined) session.endedAt = Date.now();
+  } else if (session.endedAt !== undefined) {
+    delete session.endedAt;
+  }
+  return session;
+}
+
+/**
+ * When a row last mattered — what every fleet list sorts on, descending.
+ *
+ * `endedAt` for a row that is over, `createdAt` for one that is not, and `0`
+ * for a row nobody timestamped. Zero rather than `Infinity` is the whole point
+ * of the fallback: a fixture or a record from an older build has no claim to
+ * being the newest thing on the table, and sorting unknowns to the *top* would
+ * put exactly the least-known rows in the position the eye reads first.
+ */
+const recencyOf = (session: Session): number =>
+  session.endedAt ?? session.createdAt ?? 0;
+
+/**
+ * Newest first, and **stable** for everything that ties.
+ *
+ * `Array.prototype.sort` is stable, and the ids arrive in `order` — so rows
+ * that cannot be told apart by time keep the sequence they were inserted in
+ * rather than an arbitrary one. That is the whole handling of the untimestamped
+ * case, and it is deliberately a *no-op* rather than a guess: a fixture, or a
+ * record from a build before `createdAt` existed, carries no claim about when
+ * it happened, and inventing one from its position would be making the same
+ * mistake `Session.branch` was fixed for. Every row the app itself creates or
+ * restores has a timestamp, so ties do not arise outside of tests.
+ *
+ * Takes the entities map rather than a list of sessions because every caller
+ * has already filtered `order` down to ids and would otherwise have to look
+ * each one up twice.
+ */
+function byRecency(
+  ids: readonly string[],
+  entities: Record<string, Entity>,
+): string[] {
+  return [...ids].sort((a, b) => {
+    const left = entities[a];
+    const right = entities[b];
+    if (!left || !isSession(left) || !right || !isSession(right)) return 0;
+    return recencyOf(right) - recencyOf(left);
+  });
 }
 
 /**
@@ -1029,6 +1104,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * uncover it.
        */
       ...(isDesktop() ? { booting: true } : {}),
+      /*
+        What the fleet table sorts a live row by. Stamped here rather than
+        derived from the id, because ids are reused across a restart and a
+        `/clear` successor is minted out of sequence — neither says when.
+      */
+      createdAt: Date.now(),
       cost: '$0.02',
       model: resolvedModel,
       effort: resolvedEffort,
@@ -1784,7 +1865,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         const live = item.live === true && stored.endedBy === 'app-closed';
         const status = live ? (item.status as SessionStatus) : stored.status;
 
-        entities[item.id] = {
+        entities[item.id] = stampLifecycle({
           kind: 'session',
           id: item.id,
           project: item.project,
@@ -1825,6 +1906,24 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           ...(item.branch === undefined ? {} : { branch: item.branch }),
           ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
           /*
+            The times the row really had, not the moment it was restored.
+            `createdAt` is required on a record so it always lands; `endedAt` is
+            not, and a record without one has already been stamped at load by
+            `ledger.ts` — a row that claims to be live in a file main is reading
+            back plainly is not. A live row promoted below keeps `createdAt` and
+            has its `endedAt` removed by `stampLifecycle`, so a session the app
+            outlived and then found still running does not sort as though it had
+            finished.
+          */
+          createdAt: item.createdAt,
+          ...(item.endedAt === undefined ? {} : { endedAt: item.endedAt }),
+          /*
+            The pull request this session was last seen to own. Written down by
+            a sweep in some previous run — the live list cannot answer for it any
+            more, which is the entire reason it is on the record.
+          */
+          ...(item.pr === undefined ? {} : { lastPr: item.pr }),
+          /*
             Checked against the closed lists rather than trusted (HIVE-87).
             `ledger.ts` casts these on the way in and says the store validates
             them — which was not true until now, so a hand-edited file or one
@@ -1835,7 +1934,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           */
           ...(isKnownModel(item.model) ? { model: item.model } : {}),
           ...(isKnownEffort(item.effort) ? { effort: item.effort } : {}),
-        };
+        });
         order.push(item.id);
         restored += 1;
       }
@@ -2254,14 +2353,22 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       */
       delete revived.endedBy;
       /*
-        And it is no longer a row the app merely *outlived* (HIVE-88). Left set,
-        `useRestoredSessions` keys on it while `useActiveSessions` keys on the
-        status — so a resumed row satisfies both and the table draws it twice,
-        under ACTIVE and under PREVIOUS RUN, sharing one selection index. That
-        double-draw is the exact bug HIVE-88 fixed; `reviveIfLive` clears the
-        flag when a live status arrives, and this is the other way in.
+        And it is no longer a row the app merely *outlived* (HIVE-88). While the
+        table drew a PREVIOUS RUN divider, leaving this set made a resumed row
+        satisfy both that group and ACTIVE, so it was drawn twice sharing one
+        selection index — the exact double-draw HIVE-88 fixed. The divider is
+        gone and that particular symptom with it, but the flag still feeds
+        `endedReason`, which would otherwise go on calling a live session
+        something the app outlived. `reviveIfLive` clears it when a live status
+        arrives; this is the other way in.
       */
       delete revived.restored;
+      /*
+        And it stopped being over, so the moment it stopped is not a fact about
+        it any more (see `stampLifecycle`). Left in place, a resumed row would
+        go on sorting among the ended ones by the time it used to have.
+      */
+      stampLifecycle(revived);
       return { entities: { ...state.entities, [id]: revived } };
     });
 
@@ -2371,6 +2478,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         would draw a hollow ring on an ended row (HIVE-83).
       */
       delete finished.idleDetail;
+      // When it stopped — what the fleet table sorts ENDED by. See
+      // `stampLifecycle`; `/done` reaches an ending without going through
+      // `setSessionStatus`, so it has to stamp for itself.
+      stampLifecycle(finished);
       return { entities: { ...state.entities, [target]: finished } };
     });
 
@@ -2405,6 +2516,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       project: current.project,
       status: 'idle',
       task: '',
+      // A successor is a new session on an old terminal, so it is new *now* —
+      // not when its predecessor opened. The two rows sit next to each other in
+      // `order` and the table has to be able to tell them apart.
+      createdAt: Date.now(),
       cost: '$0.00',
       lines: [],
       /**
@@ -2471,6 +2586,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         resumable: false,
       };
       delete retired.idleDetail;
+      // See `finishSession` — `/clear` is the other ending that never passes
+      // through `setSessionStatus`.
+      stampLifecycle(retired);
       const entities: Record<string, Entity> = {
         ...state.entities,
         [targetId]: retired,
@@ -2799,17 +2917,39 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * comparison covers `stale` because a sweep succeeding after a failure is a
    * real change — it is what takes the "may be out of date" banner down.
    */
-  hydratePrs: (prs, repos) =>
+  hydratePrs: (prs, repos) => {
+    /**
+     * What this sweep taught the fleet about itself, computed **before** the
+     * write and applied inside it.
+     *
+     * Read through `get()` rather than from the updater's argument so the
+     * notes can leave the `set` call: a zustand updater must be pure — it is
+     * the wrong place to fire IPC — and the two see the same state, because
+     * `set` is synchronous and nothing runs between these two lines.
+     */
+    const learned = learnSessionPrs(get(), prs);
+
     set((state) => {
       const source = state.prSource;
       const settled =
         source.kind === 'live' && !source.stale && source.repos === repos;
+      const entities = rememberSessionPrs(state.entities, learned);
 
       return {
         prs: samePrs(prs, state.prs) ? state.prs : prs,
         prSource: settled ? source : { kind: 'live', stale: false, repos },
+        // Omitted rather than assigned when nothing was learned — the common
+        // case by a wide margin, once a fleet's PRs have settled. Writing an
+        // identical map back would wake every entity subscriber on every tick
+        // of a once-a-minute poller.
+        ...(entities === state.entities ? {} : { entities }),
       };
-    }),
+    });
+
+    // Fire-and-forget, and only for what actually changed. A steady fleet under
+    // a running poller sends nothing.
+    for (const note of learned) noteSessionPr(note);
+  },
 
   /**
    * A sweep failed — **staleness over emptiness**, exactly as
@@ -3117,33 +3257,38 @@ export const useIdleDetailCounts = () =>
 export const useNavOrder = () =>
   useHiveStore(
     useShallow((state) => {
-      const active: string[] = [];
       /**
-       * Three buckets since HIVE-87, and the order of the last two is not
-       * arbitrary — it is the table's.
+       * **Two** buckets, each newest-first, and both facts are the table's
+       * rather than this selector's.
        *
-       * `session-table.tsx` renders PREVIOUS RUN *above* ENDED, so the keyboard
-       * order has to as well. This selector exists precisely to keep the caret
-       * and the rows agreeing about where "here" is; a partition that flattened
-       * in a different order from the one on screen would make the down arrow
-       * skip a group and come back to it, which is the exact failure the note
-       * above is about.
+       * There were three until the fleet table stopped drawing a PREVIOUS RUN
+       * divider: restored rows are ended rows, and once every group sorts by
+       * recency they interleave with this run's endings correctly on their own.
+       * The `restored` flag is still on the entity — Resume and `endedReason`
+       * both read it — it simply no longer partitions anything.
+       *
+       * This selector exists precisely to keep the caret and the rows agreeing
+       * about where "here" is, so the partition *and* the sort have to match
+       * `session-table.tsx` exactly. A flattening in a different order from the
+       * one on screen makes the down arrow skip a row and come back to it.
        */
-      const restored: string[] = [];
+      const active: string[] = [];
       const ended: string[] = [];
       for (const id of state.order) {
         const entity = state.entities[id];
         if (!entity || !isSession(entity)) continue;
-        if (entity.restored === true) restored.push(id);
-        else if (isEnded(entity.status)) ended.push(id);
+        if (isEnded(entity.status)) ended.push(id);
         else active.push(id);
       }
-      return [...active, ...restored, ...ended];
+      return [
+        ...byRecency(active, state.entities),
+        ...byRecency(ended, state.entities),
+      ];
     }),
   );
 
 /**
- * Sessions either side of the orchestrator table's COMPLETED divider (041).
+ * Sessions either side of the orchestrator table's ENDED divider (041).
  *
  * Two flat selectors rather than one returning `{ active, done }`. `useShallow`
  * compares the *returned value's* own properties, so an object of two freshly
@@ -3153,6 +3298,13 @@ export const useNavOrder = () =>
  *
  * Derived here rather than in the component so they stay consistent with
  * `useNavOrder()`, which flattens the same partition into the keyboard order.
+ *
+ * **Both are newest-first** (`byRecency`). The table used to paint `order`
+ * straight through, which is insertion order — so the newest session was at the
+ * bottom of the live group, and the ended half read oldest-first from the top,
+ * with last run's rows arriving in the ledger's own oldest-ending-first
+ * sequence. The one row a fleet table exists to show first was reliably the one
+ * furthest from the header.
  */
 const isActiveSession = (entity: Entity | undefined) =>
   entity !== undefined && isSession(entity) && !isEnded(entity.status);
@@ -3160,67 +3312,53 @@ const isActiveSession = (entity: Entity | undefined) =>
 export const useActiveSessions = () =>
   useHiveStore(
     useShallow((state) =>
-      state.order.filter((id) => isActiveSession(state.entities[id])),
+      byRecency(
+        state.order.filter((id) => isActiveSession(state.entities[id])),
+        state.entities,
+      ),
     ),
   );
 
 /**
- * The other side of the divider: finished *and* terminated (story 108).
+ * The other side of the divider: finished *and* terminated (story 108), and
+ * since this story **also last run's**.
  *
  * One group rather than two, because the divider answers "is this still going?"
  * and both answers are no. The row itself says which kind of ended it is, which
  * is where that distinction is actually useful.
  *
- * **Excludes `closed` (HIVE-87).** That is a third group with its own divider,
- * and the reason is the question this one answers. "What did I just finish?" is
- * about *this* session of the app; a row the app outlived answers a different
- * question, and a launch or two would leave the honest answer to the first one
- * buried under rows from previous runs.
+ * ## Why PREVIOUS RUN is gone
+ *
+ * It used to be a third group with a divider of its own, and this selector
+ * excluded `restored` rows to feed it. The justification was real but was
+ * entirely about *ordering*: "what did I just finish?" is about this run of the
+ * app, and while every list was in insertion order a launch or two buried
+ * today's two endings under yesterday's twenty. A divider was the cheapest way
+ * to keep the recent answer at the top.
+ *
+ * Sorting by recency answers the same question directly and better. Today's
+ * endings are at the top because they are the most recent, and a row from last
+ * week is below them without needing a heading to say so — while the awkward
+ * case the divider handled badly, a session that ended thirty seconds before
+ * the app was quit and now sits under a heading called PREVIOUS RUN, simply
+ * lands where it belongs.
+ *
+ * `restored` is still on the entity and still load-bearing: Resume is only
+ * offered on rows main says are resumable, and `endedReason` uses it to explain
+ * *how* a row ended. It just no longer decides which list a row is in.
  */
 export const useEndedSessions = () =>
   useHiveStore(
     useShallow((state) =>
-      state.order.filter((id) => {
-        const entity = state.entities[id];
-        return (
-          entity !== undefined &&
-          isSession(entity) &&
-          isEnded(entity.status) &&
-          entity.restored !== true
-        );
-      }),
-    ),
-  );
-
-/**
- * Rows the app outlived — last run's fleet (HIVE-87).
- *
- * A third group rather than a flag on the ended one, for the reason above: they
- * are the answer to a different question, and they get their own divider.
- *
- * Keyed on `restored`, not on `closed`, and the difference is the whole reason
- * the flag exists. `settleExit` is the only writer of an ended status, so a
- * session that quit normally last run comes back as `terminated` —
- * indistinguishable, by status alone, from one that quit ten seconds ago in
- * this run. Grouping on `closed` sent every one of those into ENDED.
- *
- * Nothing *sets* `restored` at runtime — only `hydrateSessions` does, once, at
- * boot — so this list only ever shrinks: a row reopened from here comes back
- * to life under its own id, and `reviveIfLive` clears the flag on the first
- * live status so the row moves to ACTIVE rather than appearing in both groups
- * (HIVE-88). It is capped by the ledger rather than here: the file it came from
- * holds at most `HISTORY_CAP` ended records, so there is no second cap to drift
- * out of step with the first.
- */
-export const useRestoredSessions = () =>
-  useHiveStore(
-    useShallow((state) =>
-      state.order.filter((id) => {
-        const entity = state.entities[id];
-        return (
-          entity !== undefined && isSession(entity) && entity.restored === true
-        );
-      }),
+      byRecency(
+        state.order.filter((id) => {
+          const entity = state.entities[id];
+          return (
+            entity !== undefined && isSession(entity) && isEnded(entity.status)
+          );
+        }),
+        state.entities,
+      ),
     ),
   );
 
@@ -3783,17 +3921,39 @@ export function resolveSessionPr(
   branch: string | undefined,
   project: string | undefined,
   prs: readonly PrRecord[],
+  /**
+   * The PR this session was last seen to own, if the live list cannot answer.
+   *
+   * Consulted **only** when the branch match finds nothing, never as a tie
+   * break, because a live record is strictly better information: it is current,
+   * it carries a state, and it is about the branch the session is on *now*.
+   *
+   * It is offered without a state, which is what marks the answer as a memory —
+   * see {@link SessionPr.state}. It is what fills the column for the ordinary
+   * case the live match cannot reach: a session that raised a PR, saw it merged
+   * more than a day ago, and has since had its worktree torn down so its branch
+   * reads `main` again.
+   */
+  remembered?: Session['lastPr'],
 ): SessionPr | null {
+  const fallback: SessionPr | null =
+    remembered === undefined
+      ? null
+      : { n: remembered.number, url: remembered.url };
+
   /*
     An unobserved branch matches nothing — the same guard `sessionForPr` states
     for the same reason (HIVE-78). The empty string is excluded too: it is what
     `branchLabel` already treats as absent, and a `''` here would be a value
     that compares equal to nothing while looking like it could.
+
+    An unobserved branch falls through to the memory rather than to `null`: a
+    row whose branch nobody ever read is exactly the row that most needs one.
   */
-  if (branch === undefined || branch === '') return null;
+  if (branch === undefined || branch === '') return fallback;
 
   const candidates = prs.filter((pr) => pr.branch === branch);
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) return fallback;
 
   const sameProject =
     project === undefined
@@ -3811,6 +3971,93 @@ export function resolveSessionPr(
   });
 
   return { n: best.number, state: best.state, url: best.url };
+}
+
+/**
+ * What a sweep just taught the fleet — one entry per session whose pull
+ * request has *changed*, and nothing for the rest.
+ *
+ * Pure, and separate from applying it, because the two halves go to different
+ * places: the entities patch belongs inside `set`, and the IPC belongs outside
+ * it. Computing the list once and handing it to both is what keeps them from
+ * disagreeing about which rows were touched.
+ *
+ * ## Why every session, live or ended
+ *
+ * The row that most needs remembering is the one that has just finished: a
+ * session raises its PR near the end of its life, and the sweep that first sees
+ * that PR usually lands *after* the session is over. Skipping ended rows would
+ * miss precisely the case this exists for.
+ *
+ * ## Why only when it changes
+ *
+ * The poller runs once a minute for as long as the app is open. Writing on
+ * every tick would be a store write, a re-render and an IPC round trip per
+ * session per minute, all of it re-recording the same number. Comparing against
+ * what the entity already holds makes a settled fleet free.
+ *
+ * Note that this only ever *adds* knowledge. A PR that drops out of the sweep —
+ * merged more than a day ago, say — leaves the memory alone rather than
+ * clearing it, which is the whole point: the memory outliving the live record
+ * is the feature.
+ */
+function learnSessionPrs(
+  state: HiveState,
+  prs: readonly PrRecord[],
+): SessionPrRequest[] {
+  const learned: SessionPrRequest[] = [];
+
+  for (const id of state.order) {
+    const entity = state.entities[id];
+    if (!entity || !isSession(entity)) continue;
+
+    /*
+      Resolved without the fallback: this is asking what the *live* list says,
+      and passing the memory in would make a row that already has one resolve
+      to itself and compare equal forever — correct, but only by accident.
+    */
+    const live = resolveSessionPr(entity.branch, entity.project, prs);
+    if (live === null) continue;
+
+    const known = entity.lastPr;
+    if (known?.number === live.n && known.url === live.url) continue;
+
+    /*
+      `project`, not the PR's own repository. The two are allowed to differ —
+      `resolveSessionPr` disambiguates on repo rather than filtering on it, so a
+      checkout named differently from its GitHub repository still resolves — and
+      what is recorded here is only ever compared and rendered.
+    */
+    learned.push({
+      entityId: id,
+      pr: { number: live.n, repo: entity.project, url: live.url },
+    });
+  }
+
+  return learned;
+}
+
+/**
+ * Apply {@link learnSessionPrs}'s answer to the entities map.
+ *
+ * Returns **the same map** when there is nothing to apply, which is what lets
+ * `hydratePrs` leave `entities` out of its patch entirely on a quiet tick. A
+ * fresh object here would be a new identity for every entity subscriber in the
+ * app, once a minute, to say nothing had changed.
+ */
+function rememberSessionPrs(
+  entities: Record<string, Entity>,
+  learned: readonly SessionPrRequest[],
+): Record<string, Entity> {
+  if (learned.length === 0) return entities;
+
+  const next = { ...entities };
+  for (const note of learned) {
+    const entity = next[note.entityId];
+    if (!entity || !isSession(entity)) continue;
+    next[note.entityId] = { ...entity, lastPr: note.pr };
+  }
+  return next;
 }
 
 /**
@@ -4058,10 +4305,16 @@ export const useSessionPr = (id: string): SessionPr | null => {
   const session = entity !== undefined && isSession(entity) ? entity : undefined;
   const branch = session?.branch;
   const project = session?.project;
+  /*
+    A third memo input, and it changes about as often as the other two: it is
+    written once per session by the sweep that first resolves a PR for it, and
+    then never again unless the answer genuinely changes.
+  */
+  const remembered = session?.lastPr;
 
   return useMemo(
-    () => resolveSessionPr(branch, project, prs),
-    [branch, project, prs],
+    () => resolveSessionPr(branch, project, prs, remembered),
+    [branch, project, prs, remembered],
   );
 };
 

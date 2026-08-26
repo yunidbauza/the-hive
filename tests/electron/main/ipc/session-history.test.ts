@@ -95,10 +95,17 @@ const RECORDS = [
   { id: 'old-01', project: 'p', task: '', status: 'working', createdAt: 2 },
 ];
 
+/**
+ * One spy across every ledger the module builds, so `session:pr` can be
+ * asserted on what it *wrote* rather than on what it returned — the handler
+ * returns nothing, which is the whole shape of a fire-and-forget note.
+ */
+const ledgerRecord = vi.fn();
+
 vi.mock('../../../../electron/main/sessions/ledger', () => ({
   createSessionLedger: () => ({
     begin: vi.fn(),
-    record: vi.fn(),
+    record: ledgerRecord,
     resumable: () => undefined,
     all: () => RECORDS.map((record) => ({ ...record })),
     flush: vi.fn(),
@@ -173,5 +180,53 @@ describe('session:history (HIVE-88)', () => {
     delete live.live;
 
     expect((await history()).find((record) => record.id === 'live-01')?.live).toBe(true);
+  });
+});
+
+/**
+ * `session:pr` — the renderer telling main which pull request a session
+ * produced.
+ *
+ * The second fact about a session main cannot author, and the reason the fleet
+ * table's `PR` column was empty for anything older than a day: the sweep the
+ * renderer resolves against holds open PRs plus 24 hours of merges, so nothing
+ * durable existed to fall back on.
+ */
+describe('session:pr', () => {
+  const pr = {
+    number: 118,
+    repo: 'nova-web',
+    url: 'https://github.com/demo/nova-web/pull/118',
+  };
+
+  const send = (payload: unknown) =>
+    handlers.get(CH.sessionPr)!(trustedEvent, payload);
+
+  it('records the pull request against a session main knows about', () => {
+    send({ entityId: 'old-01', pr });
+
+    expect(ledgerRecord).toHaveBeenCalledWith('old-01', { pr });
+  });
+
+  /**
+   * A sweep answers about every branch the user has open, including branches
+   * belonging to sessions this app never ran. `record` *merges into whatever is
+   * there*, so without this check one poll tick could invent fleet rows out of
+   * GitHub's answer.
+   */
+  it('refuses a note for an entity it has no record of', () => {
+    send({ entityId: 'never-ran', pr });
+
+    expect(ledgerRecord).not.toHaveBeenCalled();
+  });
+
+  it('rejects a payload that is not a pull request', () => {
+    // `url` is the one field on this bridge that later becomes an `href`.
+    expect(() =>
+      send({ entityId: 'old-01', pr: { ...pr, url: 'javascript:alert(1)' } }),
+    ).toThrow();
+    expect(() => send({ entityId: 'old-01', pr: { ...pr, number: 0 } })).toThrow();
+    expect(() => send({ entityId: 'old-01' })).toThrow();
+    expect(ledgerRecord).not.toHaveBeenCalled();
   });
 });

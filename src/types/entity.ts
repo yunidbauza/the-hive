@@ -2,6 +2,7 @@ import type { TermLine } from '@/types/terminal';
 
 import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionEffort, SessionModel } from '@shared/session-contract';
+import type { SessionPrRecord } from '@shared/session-history-contract';
 
 /**
  * Session lifecycle. Agents are always `online` and are tracked separately.
@@ -185,6 +186,47 @@ export interface Session {
    * after a busy day buried today's two endings under yesterday's twenty.
    */
   restored?: boolean;
+  /**
+   * When this session started, and when it stopped — in epoch milliseconds.
+   *
+   * **What the fleet table sorts on**, and the reason they had to exist at all:
+   * every list in this store was in `order`, which is insertion order, so the
+   * table read oldest-first from the top. For live rows that is spawn order and
+   * merely backwards; for ended rows it was worse than backwards, because
+   * restored rows arrive in the ledger's own oldest-ending-first sequence and a
+   * `/clear` successor takes its predecessor's slot rather than the end. There
+   * was no field anywhere that could answer "which of these two finished more
+   * recently", which is the question a fleet table is for.
+   *
+   * `endedAt` is stamped **once**, by the write that first puts the row in an
+   * ended status, and cleared when a row comes back to life — see
+   * `stampLifecycle` in `hive-store.ts`. Both are absent on a row nobody has
+   * timestamped: a hand-built fixture, or a record from a build before this
+   * existed. Absent sorts last rather than first, so an unknown time never
+   * claims to be the newest thing on the table, and rows that are all unknown
+   * keep the order they were inserted in.
+   *
+   * The ledger has carried both since HIVE-87 (`SessionRecord`), so a restored
+   * row keeps the times it really had rather than being stamped at hydrate.
+   */
+  createdAt?: number;
+  endedAt?: number;
+  /**
+   * The last pull request seen on this session's branch (HIVE-100 follow-up).
+   *
+   * A *memory*, not a resolution — `useSessionPr` still prefers the live sweep
+   * and only falls back to this. It exists because the two facts the live match
+   * is built from both decay: the sweep holds open PRs plus 24 hours of merges,
+   * and `branch` is wherever the agent is *now*, which is back on the default
+   * branch the moment a worktree is torn down. Between them, a session that
+   * raised and landed a PR three days ago matched nothing, and its `PR` cell
+   * read `—` exactly like a branch that never had one.
+   *
+   * Carries **no state**, deliberately. A state remembered here would be a
+   * claim about GitHub that nothing keeps current, and the cell renders a
+   * remembered PR in neutral rather than in a colour it cannot stand behind.
+   */
+  lastPr?: SessionPrRecord;
   status: SessionStatus;
   /**
    * How a `done` session came to be done (HIVE-93).

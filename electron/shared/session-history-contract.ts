@@ -31,19 +31,31 @@ export const SESSION_HISTORY_FILE = 'sessions.json';
 export const HISTORY_CAP = 20;
 
 /**
+ * The pull request a session produced, as it survives a restart.
+ *
+ * Three fields and deliberately no state — see {@link SessionRecord.pr}, which
+ * is the only place this is stored.
+ */
+export interface SessionPrRecord {
+  number: number;
+  /** GitHub's repository name, as the sweep reported it — not the project id. */
+  repo: string;
+  /** The GitHub page. What a `#123` link opens. */
+  url: string;
+}
+
+/**
  * One session, as it survives a restart.
  *
- * Row metadata only. Four fields that look like they belong here do not:
+ * Row metadata only. Three fields that look like they belong here do not:
  *
  * - `lines` — the transcript is Claude Code's own file
  *   (`~/.claude/projects/<escaped-cwd>/<uuid>.jsonl`). Copying it here would
  *   grow the ledger without bound to duplicate something already on disk.
- * - `pr` and `cost` — both are dead fields on `Session`. `pr` is only ever
- *   assigned `null`, and `cost` only ever the literals `'$0.02'` and `'$0.00'`;
- *   nothing has ever updated either, and `SessionMetrics` carries no cost at
- *   all. Persisting them would persist placeholders as though they were
- *   measurements. A restored row re-associates with its PR through `branch`,
- *   which is a fact somebody actually observed.
+ * - `cost` — a dead field on `Session`, only ever the literals `'$0.02'` and
+ *   `'$0.00'`; nothing has ever updated it, and `SessionMetrics` carries no
+ *   cost at all. Persisting it would persist a placeholder as though it were a
+ *   measurement.
  * - `terminalId` — the pty it names is gone. Worse, a restored successor
  *   pointing at a predecessor that retention has pruned would break
  *   `terminalIdFor` silently, so restored rows stand alone.
@@ -119,6 +131,38 @@ export interface SessionRecord {
    * a Resume button, so the tooltip and the control contradicted each other.
    */
   endedBy?: 'finished';
+  /**
+   * The last pull request seen on this session's branch.
+   *
+   * The field this file used to refuse, on the theory that "a restored row
+   * re-associates with its PR through `branch`, which is a fact somebody
+   * actually observed". Both halves of that sentence are true and the
+   * conclusion still does not follow, because the *other* operand of the match
+   * is not durable: the sweep the renderer resolves against holds the user's
+   * open pull requests plus those merged inside `GH_MERGED_WINDOW_MS` (24
+   * hours). A session that raised and landed a PR last Tuesday matches nothing,
+   * so every restored row's `PR` cell read `—` — indistinguishable from a
+   * branch that never had one, which is why it never looked like a bug.
+   *
+   * Compounding it, `branch` is what main last *observed*, and a session that
+   * worked in a worktree is observed back on the default branch the moment the
+   * worktree is torn down. The branch is not wrong — it is deliberately the
+   * live answer (HIVE-78) — it is simply no longer the branch the work
+   * happened on.
+   *
+   * So the association is written down when it is observed, rather than
+   * re-derived from two facts that both decay. **No state is kept**, and that
+   * is the honest part: a state persisted here would be a claim about GitHub
+   * that the file cannot keep current, and a stale "open" beside a PR that
+   * merged a week ago is worse than no state at all. The renderer renders a
+   * remembered PR in neutral, and says in the title that it is the last one
+   * seen rather than a live match.
+   *
+   * Authored by the renderer over `session:pr`, for the reason
+   * {@link SessionNoteRequest} gives about the ticket key: main does not sweep
+   * GitHub, the renderer does.
+   */
+  pr?: SessionPrRecord;
   createdAt: number;
   /** When the session ended, if it has. What retention sorts on. */
   endedAt?: number;
@@ -177,4 +221,25 @@ export interface SessionHistoryEntry extends SessionRecord {
 export interface SessionNoteRequest {
   entityId: string;
   ticket: string;
+}
+
+/**
+ * The renderer telling main which pull request a session produced.
+ *
+ * The **second** field of a record main cannot author, and a separate request
+ * from {@link SessionNoteRequest} rather than an optional field on it — the
+ * same split `session:branch` makes against `session:status`, for the same
+ * reason. The two facts have different producers and different cadences: a
+ * ticket key is settled once, by a user naming an issue the renderer has just
+ * confirmed exists, while this is a by-product of the GitHub sweep and is
+ * re-evaluated every minute for the life of the app. Folding them together
+ * would make one guard answer for both, and would make a sweep-driven write
+ * look like a user's decision.
+ *
+ * Sent only when the answer **changes**, so a steady fleet under a running
+ * poller produces no IPC at all.
+ */
+export interface SessionPrRequest {
+  entityId: string;
+  pr: SessionPrRecord;
 }

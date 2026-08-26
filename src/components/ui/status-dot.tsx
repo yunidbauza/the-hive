@@ -69,8 +69,16 @@ export const STATUS_LABEL: Record<DotStatus, string> = {
  * serve. A ring is a border rather than a fill, so it survives the light theme
  * where a lightened grey washes out.
  *
- * **Only ever applied to grey.** `waiting` keeps its solid amber so "something
- * needs you" stays the loudest thing on screen.
+ * **Only ever applied to one status**, `idle` with a detail — the one state
+ * where the main agent is quiet and something else is not. `waiting` keeps its
+ * solid amber so "something needs you" stays the loudest thing on screen.
+ *
+ * That entry is now `working`'s green rather than `idle`'s grey, because the
+ * label beside it says `working (agents)` and a grey ring under a green word
+ * would be the dot and the text disagreeing. The ring is what still separates
+ * it from a solid green session; the hue no longer is. `STATUS_RING.idle` is
+ * therefore unreachable in practice and is kept only so the record stays total
+ * — the same reason `STATUS_FILL` lists every member.
  */
 const STATUS_RING: Record<DotStatus, string> = {
   working: 'border-green',
@@ -82,15 +90,56 @@ const STATUS_RING: Record<DotStatus, string> = {
 };
 
 /**
- * The word beside the dot, including what is still running.
+ * What a quiet session with something still running is *called*.
  *
- * A function rather than a sixth entry in `STATUS_LABEL`, because the detail is
- * orthogonal to the status: the detail rides alongside `SessionStatus` rather
- * than multiplying its members, and the dot's palette is unchanged by it.
+ * `working (agents)` and `working (scripts)`, not `idle (agents)`.
+ *
+ * The status is still `idle` and that is still correct — it is what a hook
+ * observed about the **main agent**, and nothing about the observation has
+ * changed. What changed is the reading. "Idle" is a word about a person having
+ * stopped, and a user scanning a fleet table for something to pick up read it
+ * as exactly that, while three subagents were mid-task and a build was running.
+ * The parenthetical was carrying the entire meaning and losing, because the
+ * first word is the one the eye takes.
+ *
+ * `scripts` rather than the detail's own `script`: the value names a *kind* of
+ * thing still running and the label names however many of them there are, and
+ * the plural reads correctly for one. Written here rather than widening
+ * `IdleDetail`, because the union is what a hook payload says and this is what
+ * a table says.
+ *
+ * A function rather than two more entries in `STATUS_LABEL`, because the detail
+ * is orthogonal to the status: it rides alongside `SessionStatus` rather than
+ * multiplying its members.
  */
+const DETAIL_LABEL: Record<IdleDetail, string> = {
+  agents: 'agents',
+  script: 'scripts',
+};
+
 export function statusLabel(status: DotStatus, detail?: IdleDetail): string {
-  if (status === 'idle' && detail !== undefined) return `idle (${detail})`;
+  if (status === 'idle' && detail !== undefined) {
+    return `working (${DETAIL_LABEL[detail]})`;
+  }
   return STATUS_LABEL[status];
+}
+
+/**
+ * The colour that goes with {@link statusLabel}'s word.
+ *
+ * A function for the same reason the label is one, and it has to exist rather
+ * than callers indexing `STATUS_TEXT` directly: a row that now *says* `working`
+ * must not be painted in `idle`'s grey, or the two loudest signals in the cell
+ * disagree with each other.
+ *
+ * The dot keeps carrying the distinction the colour no longer does. It is a
+ * hollow ring here and a solid disc on a genuinely working session, so "the
+ * agent itself is producing output" and "the agent is parked while its
+ * subagents run" are still two different marks — see {@link STATUS_RING}.
+ */
+export function statusText(status: DotStatus, detail?: IdleDetail): string {
+  if (status === 'idle' && detail !== undefined) return STATUS_TEXT.working;
+  return STATUS_TEXT[status];
 }
 
 interface StatusDotProps {
@@ -147,7 +196,15 @@ export function StatusDot({
       aria-hidden={label ? undefined : 'true'}
       className={cn(
         'inline-flex size-[7px] shrink-0 rounded-full',
-        hollow ? `border-[1.5px] ${STATUS_RING[status]}` : STATUS_FILL[status],
+        /*
+          `STATUS_RING.working`, not `STATUS_RING[status]`. `hollow` is only
+          ever true for `idle` with a detail, and that row is labelled and
+          coloured as working — see `statusText`. Indexing by `status` here
+          would draw the one grey ring under the one green word.
+        */
+        hollow
+          ? `border-[1.5px] ${STATUS_RING.working}`
+          : STATUS_FILL[status],
         pulsing && 'animate-ccpulse',
         className,
       )}

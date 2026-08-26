@@ -52,7 +52,10 @@ import {
   SESSION_NAME_MAX,
   isSendableSessionName,
 } from './session-contract';
-import type { SessionNoteRequest } from './session-history-contract';
+import type {
+  SessionNoteRequest,
+  SessionPrRequest,
+} from './session-history-contract';
 import { RESERVED_SKILL_NAME, SKILL_NAME_PATTERN } from './skills-contract';
 import type {
   SkillNameRequest,
@@ -362,6 +365,66 @@ export function parseSessionNoteRequest(input: unknown): SessionNoteRequest {
   return {
     entityId: assertId(raw.entityId, 'sessionNote.entityId'),
     ticket: assertText(raw.ticket, 'sessionNote.ticket'),
+  };
+}
+
+/**
+ * A pull request number: a positive integer, bounded.
+ *
+ * Bounded for {@link assertSeq}'s reason turned around — nothing downstream
+ * spends this, but it is rendered into a `#123` and into an accessible label,
+ * and a payload of `1e308` would produce a cell the table cannot lay out. The
+ * ceiling is deliberately generous; no repository is near it.
+ */
+function assertPrNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return fail(`${label}: expected an integer, got ${describe(value)}`);
+  }
+  if (value < 1 || value > 10_000_000) return fail(`${label}: out of range`);
+  return value;
+}
+
+/**
+ * The URL a remembered pull request opens.
+ *
+ * Checked as an **absolute https URL** rather than as free text, because this
+ * is the one field here that becomes an `href`. `assertText` would let
+ * `javascript:…` through, and a value the renderer read back out of its own
+ * ledger and put on a link is exactly the shape of a stored-XSS carrier. The
+ * scheme is the whole check: the host is GitHub's business, not this guard's,
+ * and pinning it here would break the moment somebody points the app at an
+ * enterprise instance.
+ */
+function assertHttpsUrl(value: unknown, label: string): string {
+  const text = assertText(value, label);
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return fail(`${label}: not a URL`);
+  }
+  if (url.protocol !== 'https:') return fail(`${label}: must be https`);
+  return text;
+}
+
+/**
+ * The renderer telling main which pull request a session produced.
+ *
+ * `repo` takes {@link assertText} rather than a pattern: it is GitHub's own
+ * repository name as the sweep reported it, it is only ever compared and
+ * rendered, and it never reaches a path or a command line.
+ */
+export function parseSessionPrRequest(input: unknown): SessionPrRequest {
+  const raw = assertShape(input, ['entityId', 'pr'], 'sessionPr');
+  const pr = assertShape(raw.pr, ['number', 'repo', 'url'], 'sessionPr.pr');
+
+  return {
+    entityId: assertId(raw.entityId, 'sessionPr.entityId'),
+    pr: {
+      number: assertPrNumber(pr.number, 'sessionPr.pr.number'),
+      repo: assertText(pr.repo, 'sessionPr.pr.repo'),
+      url: assertHttpsUrl(pr.url, 'sessionPr.pr.url'),
+    },
   };
 }
 

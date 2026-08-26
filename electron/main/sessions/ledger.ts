@@ -156,6 +156,32 @@ const cleanName = (value: unknown): string | undefined => {
 };
 
 /**
+ * A remembered pull request, revalidated on the way in.
+ *
+ * All three fields or nothing, unlike the flat optionals beside it: `number`
+ * without a `url` renders a `#123` that links nowhere, and a `url` without a
+ * `number` has nothing to render at all. There is no partially-useful version
+ * of this field, so a malformed one is dropped whole — the same field-by-field
+ * leniency {@link reviveRecord} applies, at the granularity where it means
+ * something.
+ *
+ * The `url` is **not** scheme-checked here. It was when it crossed the bridge
+ * (`parseSessionPrRequest`), and this file's posture is that a value on disk is
+ * re-typed rather than re-authorised — the renderer resolves it against its own
+ * CSP before it becomes an `href`.
+ */
+const prRecord = (value: unknown): SessionRecord['pr'] => {
+  if (!isObject(value)) return undefined;
+  const number = finite(value.number);
+  const repo = text(value.repo);
+  const url = text(value.url);
+  if (number === undefined || repo === undefined || url === undefined) {
+    return undefined;
+  }
+  return { number, repo, url };
+};
+
+/**
  * One record, revalidated on the way in.
  *
  * Field by field rather than all-or-nothing, in both directions: a row missing
@@ -190,6 +216,7 @@ function reviveRecord(raw: unknown): SessionRecord | undefined {
     branch: text(raw.branch),
     cwd: text(raw.cwd),
     sessionUuid: text(raw.sessionUuid),
+    pr: prRecord(raw.pr),
     ...(raw.endedBy === 'finished' ? { endedBy: 'finished' as const } : {}),
     endedAt: finite(raw.endedAt),
     /*

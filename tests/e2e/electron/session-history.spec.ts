@@ -27,7 +27,7 @@ const test = base;
 const PROJECT = 'nova-web';
 const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 
-test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN', async ({}, testInfo) => {
+test('start a session, quit, relaunch — it is still listed, under ENDED', async ({}, testInfo) => {
   const userDataDir = testInfo.outputPath('user-data');
   const configPath = testInfo.outputPath('hive-config.json');
   writeProjectConfig(configPath, { id: PROJECT, path: REAL_DIRECTORY });
@@ -54,8 +54,19 @@ test('start a session, quit, relaunch — it is still listed, under PREVIOUS RUN
   await secondWindow.waitForSelector('header');
 
   try {
-    // The app boots into the orchestrator, so the table is already on screen.
-    await expect(secondWindow.getByText('PREVIOUS RUN')).toBeVisible();
+    /*
+      The app boots into the orchestrator, so the table is already on screen.
+
+      ENDED, not PREVIOUS RUN. That group is gone: it was a layout answer to an
+      ordering problem — while the lists were in insertion order, the top of
+      ENDED was always its oldest row — and the fleet lists sort by recency now,
+      so last run's rows land among this run's by when they actually ended.
+
+      `exact` because `getByText` is a case-insensitive substring match by
+      default, and the header's own counts line reads "… · 0 ended".
+    */
+    await expect(secondWindow.getByText('ENDED', { exact: true })).toBeVisible();
+    await expect(secondWindow.getByText('PREVIOUS RUN')).toBeHidden();
 
     /*
       Anchored, because the row is no longer the only button that names this
@@ -142,7 +153,7 @@ test('a fresh profile still boots with an empty fleet', async ({}, testInfo) => 
 
   try {
     await expect(window.getByTestId('session-table-empty')).toBeVisible();
-    await expect(window.getByText('PREVIOUS RUN')).toBeHidden();
+    await expect(window.getByText('ENDED', { exact: true })).toBeHidden();
   } finally {
     await app.close();
   }

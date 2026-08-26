@@ -23,7 +23,6 @@ import {
   useEndedSessions,
   useHiveStore,
   useNavOrder,
-  useRestoredSessions,
 } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
@@ -68,6 +67,7 @@ vi.mock('@lib/terminal/pty-transport', () => ({
 */
 vi.mock('@lib/session-history', () => ({
   noteSessionTicket: vi.fn(),
+  noteSessionPr: vi.fn(),
   readSessionHistory: vi.fn(() => Promise.resolve([])),
 }));
 
@@ -2135,17 +2135,31 @@ describe('hive-store', () => {
       return entity && isSession(entity) ? entity.restored : 'missing';
     };
 
+    /**
+     * `restored` is read off the entities rather than from a selector.
+     *
+     * There used to be a `useRestoredSessions()` here, feeding the table's
+     * PREVIOUS RUN group. That group is gone — a recency sort answers the
+     * question it was drawn for — but the *flag* is not: Resume and
+     * `endedReason` both read it, and `reviveIfLive` clearing it is still the
+     * thing these tests are about. So the provenance is asserted directly,
+     * which is where it now lives.
+     */
     const partition = () => {
       const { result } = renderHook(() => ({
         active: useActiveSessions(),
-        restored: useRestoredSessions(),
         ended: useEndedSessions(),
         nav: useNavOrder(),
       }));
-      return result.current;
+      const state = useHiveStore.getState();
+      const restored = state.order.filter((id) => {
+        const entity = state.entities[id];
+        return entity !== undefined && isSession(entity) && entity.restored === true;
+      });
+      return { ...result.current, restored };
     };
 
-    it('leaves PREVIOUS RUN the moment a live status lands', () => {
+    it('stops being marked restored the moment a live status lands', () => {
       useHiveStore.getState().hydrateSessions([record()]);
       expect(partition().restored).toEqual(['old-01']);
 
@@ -2183,7 +2197,7 @@ describe('hive-store', () => {
       expect(restoredOf('b')).toBeUndefined();
     });
 
-    it('stays in PREVIOUS RUN when only an ended status is written', () => {
+    it('stays marked restored when only an ended status is written', () => {
       // A process that failed to start settles `terminated` without ever
       // having been live. That is still last run's row, and it stays put.
       useHiveStore.getState().hydrateSessions([record()]);
@@ -2313,12 +2327,14 @@ describe('hive-store', () => {
       );
     });
 
-    it('stops being a PREVIOUS RUN row, so it is not drawn twice', () => {
+    it('stops being marked as a previous run, so nothing calls it one', () => {
       /*
-        `useActiveSessions` keys on the status and `useRestoredSessions` on
-        `restored`. A resumed row that kept the flag satisfied both and the
-        table drew it under ACTIVE *and* PREVIOUS RUN, sharing one selection
-        index — the exact double-draw HIVE-88 fixed.
+        While the table drew a PREVIOUS RUN divider this was a double-draw: the
+        restored list keyed on `restored` and `useActiveSessions` on the status,
+        so a resumed row satisfied both and appeared twice under one selection
+        index — the bug HIVE-88 fixed. The divider is gone; the flag still feeds
+        `endedReason`, which would otherwise describe a live session as one the
+        app outlived.
       */
       useHiveStore.getState().hydrateSessions([
         record({ id: 'closed-01', resumable: true }),
@@ -2383,7 +2399,7 @@ describe('hive-store', () => {
       expect(partition().restored).toEqual([]);
     });
 
-    it('keeps a genuinely previous-run row in PREVIOUS RUN', () => {
+    it('keeps a genuinely previous-run row marked restored', () => {
       useHiveStore.getState().hydrateSessions([
         record({ id: 'old-01' }),
         record({ id: 'old-02', status: 'terminated' }),
@@ -2525,6 +2541,178 @@ describe('searchPrs — which answer wins', () => {
       results: null,
       searching: false,
       error: null,
+    });
+  });
+
+/**
+ * When a row started and when it stopped — the two fields the fleet table
+ * sorts on (the "most recent at the top" fix).
+ *
+ * Every list in this store used to be `order`, which is insertion order, so the
+ * newest session was at the bottom of the live group and the ended half read
+ * oldest-first from the top. There was no field anywhere that could answer
+ * "which of these two finished more recently", which is the question a fleet
+ * table is for.
+ */
+describe('lifecycle timestamps', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoProjectConfig();
+  });
+
+  afterEach(() => {
+    useHiveStore.getState().reset();
+  });
+
+    const sessionAt = (id: string) => {
+      const entity = useHiveStore.getState().entities[id];
+      if (!entity || !isSession(entity)) throw new Error(`no session ${id}`);
+      return entity;
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-08-26T09:00:00Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stamps a spawn with the moment it happened', () => {
+      const id = useHiveStore.getState().spawnSession('the-hive');
+
+      expect(sessionAt(id).createdAt).toBe(Date.parse('2026-08-26T09:00:00Z'));
+      expect(sessionAt(id)).not.toHaveProperty('endedAt');
+    });
+
+    it('stamps an ending as the status crosses into it', () => {
+      const id = useHiveStore.getState().spawnSession('the-hive');
+
+      vi.setSystemTime(new Date('2026-08-26T10:00:00Z'));
+      useHiveStore.getState().setSessionStatus(id, 'terminated');
+
+      expect(sessionAt(id).endedAt).toBe(Date.parse('2026-08-26T10:00:00Z'));
+    });
+
+    /**
+     * An ending is reached by more paths than it looks like — `/done` and the
+     * pty exit that follows it both arrive, and `settleExit` can be reached
+     * twice. Re-stamping would make a row's ending drift later every time
+     * something re-observed it, which is exactly the value the table sorts on.
+     */
+    it('stamps once, however many writes observe the same ending', () => {
+      const id = useHiveStore.getState().spawnSession('the-hive');
+      useHiveStore.getState().setSessionStatus(id, 'terminated');
+      const first = sessionAt(id).endedAt;
+
+      vi.setSystemTime(new Date('2026-08-26T11:00:00Z'));
+      useHiveStore.getState().appendEntityLines(id, [], 'terminated');
+
+      expect(sessionAt(id).endedAt).toBe(first);
+    });
+
+    it('stamps /done and /clear, which never pass through setSessionStatus', () => {
+      const finished = useHiveStore.getState().spawnSession('the-hive');
+      const cleared = useHiveStore.getState().spawnSession('the-hive');
+
+      vi.setSystemTime(new Date('2026-08-26T12:00:00Z'));
+      useHiveStore.getState().finishSession(finished, true);
+      const successor = useHiveStore.getState().clearSession(cleared);
+
+      const at = Date.parse('2026-08-26T12:00:00Z');
+      expect(sessionAt(finished).endedAt).toBe(at);
+      expect(sessionAt(cleared).endedAt).toBe(at);
+      // A successor is a new session on an old terminal — new *now*, not when
+      // its predecessor opened.
+      expect(sessionAt(successor!).createdAt).toBe(at);
+      expect(sessionAt(successor!)).not.toHaveProperty('endedAt');
+    });
+
+    it('clears the stamp when a row comes back to life', () => {
+      useHiveStore.getState().hydrateSessions([
+        {
+          id: 'old-01',
+          project: 'nova-web',
+          task: '',
+          status: 'terminated',
+          createdAt: 1,
+          endedAt: 2,
+          resumable: true,
+        },
+      ]);
+      expect(sessionAt('old-01').endedAt).toBe(2);
+
+      useHiveStore.getState().resumeSession('old-01');
+
+      expect(sessionAt('old-01')).not.toHaveProperty('endedAt');
+      expect(sessionAt('old-01').createdAt).toBe(1);
+    });
+
+    /**
+     * The times the row really had, not the moment it was restored — otherwise
+     * every launch would file last week's endings as though they had all just
+     * happened, in whatever order the ledger listed them.
+     */
+    it('restores the times a record carried rather than stamping at hydrate', () => {
+      useHiveStore.getState().hydrateSessions([
+        {
+          id: 'old-02',
+          project: 'nova-web',
+          task: '',
+          status: 'terminated',
+          createdAt: 111,
+          endedAt: 222,
+        },
+      ]);
+
+      expect(sessionAt('old-02')).toMatchObject({
+        createdAt: 111,
+        endedAt: 222,
+      });
+    });
+
+    /**
+     * A record main is still running is not history, whatever the file says
+     * (HIVE-88). It must not sort as though it had finished.
+     */
+    it('drops a restored endedAt from a row main still runs', () => {
+      useHiveStore.getState().hydrateSessions([
+        {
+          id: 'old-03',
+          project: 'nova-web',
+          task: '',
+          status: 'working',
+          createdAt: 111,
+          endedAt: 222,
+          live: true,
+        },
+      ]);
+
+      expect(sessionAt('old-03').status).toBe('working');
+      expect(sessionAt('old-03')).not.toHaveProperty('endedAt');
+    });
+
+    /** The remembered PR rides back with the rest of the record. */
+    it('restores the pull request the record was carrying', () => {
+      useHiveStore.getState().hydrateSessions([
+        {
+          id: 'old-04',
+          project: 'nova-web',
+          task: '',
+          status: 'terminated',
+          createdAt: 1,
+          pr: {
+            number: 118,
+            repo: 'nova-web',
+            url: 'https://github.com/demo/nova-web/pull/118',
+          },
+        },
+      ]);
+
+      expect(sessionAt('old-04')).toMatchObject({
+        lastPr: { number: 118, url: 'https://github.com/demo/nova-web/pull/118' },
+      });
     });
   });
 });

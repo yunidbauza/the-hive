@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 import { branchLabel, entityLabel, isSession } from '@/types/entity';
 
-import { STATUS_TEXT, StatusDot, statusLabel } from '@components/ui/status-dot';
+import { StatusDot, statusLabel, statusText } from '@components/ui/status-dot';
 import { useEntity, useOpenEntity } from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
@@ -48,7 +48,7 @@ export function SessionRow({ id }: SessionRowProps) {
         <span
           className={cn(
             'shrink-0 text-[10.5px] font-semibold',
-            STATUS_TEXT[entity.status],
+            statusText(entity.status, entity.idleDetail),
           )}
         >
           {statusLabel(entity.status, entity.idleDetail)}

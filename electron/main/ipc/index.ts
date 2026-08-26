@@ -65,6 +65,7 @@ import {
   parseSetRuntimeRequest,
   parseSearchPrsRequest,
   parseSessionNoteRequest,
+  parseSessionPrRequest,
   parseSkillNameRequest,
   parseSkillRenameRequest,
   parseSkillWriteRequest,
@@ -895,6 +896,21 @@ export function registerIpcHandlers(): void {
     const request = parseSessionNoteRequest(raw);
     if (!ledger?.all().some((record) => record.id === request.entityId)) return;
     ledger.record(request.entityId, { ticket: request.ticket });
+  });
+
+  /**
+   * The renderer naming the pull request a session produced.
+   *
+   * The same two rules as `session:note` above, and for the same reasons: the
+   * payload is guarded, and it may not *create* a record. A sweep answers about
+   * every branch the user has open, including branches belonging to sessions
+   * this app never ran, so without the `all()` check one poll tick could invent
+   * fleet rows out of GitHub's answer.
+   */
+  handle(CH.sessionPr, (_event, raw: unknown): void => {
+    const request = parseSessionPrRequest(raw);
+    if (!ledger?.all().some((record) => record.id === request.entityId)) return;
+    ledger.record(request.entityId, { pr: request.pr });
   });
 
   handle(CH.appInfo, (): AppInfo => {

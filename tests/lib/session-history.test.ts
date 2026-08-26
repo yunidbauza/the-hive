@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  noteSessionPr,
   noteSessionTicket,
   readSessionHistory,
 } from '@lib/session-history';
@@ -91,6 +92,44 @@ describe('session history', () => {
       expect(() =>
         noteSessionTicket({ entityId: 'sess-01', ticket: 'HIVE-87' }),
       ).not.toThrow();
+      await Promise.resolve();
+    });
+  });
+
+  /**
+   * The second fact main cannot author, and the renderer's for a different
+   * reason from the ticket's: main does not sweep GitHub.
+   */
+  describe('noteSessionPr', () => {
+    const request = {
+      entityId: 'sess-01',
+      pr: {
+        number: 118,
+        repo: 'nova-web',
+        url: 'https://github.com/demo/nova-web/pull/118',
+      },
+    };
+
+    it('hands the resolved pull request to main', () => {
+      const pr = vi.fn(() => Promise.resolve());
+      bridgeWith({ pr });
+
+      noteSessionPr(request);
+
+      expect(pr).toHaveBeenCalledWith(request);
+    });
+
+    it('does nothing at all without a bridge', () => {
+      delete window.hive;
+
+      expect(() => noteSessionPr(request)).not.toThrow();
+    });
+
+    it('swallows a rejection rather than surfacing an unhandled one', async () => {
+      // A failure costs a `#123` in next launch's fleet table and nothing here.
+      bridgeWith({ pr: vi.fn(() => Promise.reject(new Error('nope'))) });
+
+      expect(() => noteSessionPr(request)).not.toThrow();
       await Promise.resolve();
     });
   });

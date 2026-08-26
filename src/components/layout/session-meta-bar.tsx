@@ -13,6 +13,7 @@ import {
   STATUS_LABEL,
   STATUS_TEXT,
   statusLabel,
+  statusText,
 } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
 import { useSessionPr } from '@stores/hive-store';
@@ -92,7 +93,7 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
             {branchLabel(session)}
           </Chip>
 
-          <Chip className={STATUS_TEXT[session.status]}>
+          <Chip className={statusText(session.status, session.idleDetail)}>
             {/* No `label` — the status word sits immediately beside the dot. */}
             <StatusDot status={session.status} detail={session.idleDetail} />
             {statusLabel(session.status, session.idleDetail)}
@@ -109,16 +110,35 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
               href={pr.url}
               target="_blank"
               rel="noreferrer"
-              aria-label={`Open PR #${String(pr.n)} on GitHub`}
+              /*
+                The state is in the label when there is one, and "last seen" is
+                in it when there is not — a remembered PR must not be announced
+                as though the app had just looked it up (`SessionPr.state`).
+              */
+              aria-label={
+                pr.state === undefined
+                  ? `Open PR #${String(pr.n)} on GitHub — last seen on this session`
+                  : `Open PR #${String(pr.n)} on GitHub — ${pr.state}`
+              }
               className="shrink-0 rounded-full hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
             >
-              <Chip className={prStateText(pr.state)}>
+              {/*
+                Neutral when the sweep cannot see this PR any more. The colours
+                in `prStateText` each assert something current about GitHub —
+                green is "alive and not yet landed" — and a remembered number
+                has no standing to assert any of them.
+              */}
+              <Chip
+                className={
+                  pr.state === undefined ? 'text-subtle' : prStateText(pr.state)
+                }
+              >
                 <GitPullRequest
                   size={13}
                   aria-hidden="true"
                   className="shrink-0"
                 />
-                {`#${pr.n} · ${pr.state}`}
+                {`#${pr.n} · ${pr.state ?? 'last seen'}`}
               </Chip>
             </a>
           ) : null}

@@ -20,6 +20,21 @@ vi.mock('@/lib/github', () => ({
   readPullRequests: () => readPullRequests(),
 }));
 
+/**
+ * The other half of a sweep since the PR column stopped being empty: what the
+ * sweep taught the fleet is written down, and main is told so it survives a
+ * quit. Mocked here rather than exercised through the bridge, because what is
+ * under test is *when* the store speaks — which rows, and how often — not the
+ * IPC, which `lib/session-history` owns.
+ */
+const noteSessionPr = vi.fn();
+
+vi.mock('@lib/session-history', () => ({
+  noteSessionPr: (request: unknown) => noteSessionPr(request),
+  noteSessionTicket: vi.fn(),
+  readSessionHistory: vi.fn(),
+}));
+
 const ok = (snapshot: Partial<PrsSnapshot> = {}): GhResult<PrsSnapshot> => ({
   ok: true,
   value: { prs: [prRecord()], repos: 2, ...snapshot },
@@ -33,6 +48,7 @@ const refused = (kind: GhErrorKind): GhResult<PrsSnapshot> => ({
 beforeEach(() => {
   useHiveStore.getState().reset();
   readPullRequests.mockReset();
+  noteSessionPr.mockReset();
   // The desktop target is `window.hive` being present — feature-detect the
   // bridge, never the user agent.
   window.hive = {} as unknown as Window['hive'];
@@ -245,6 +261,121 @@ describe('refreshPrs', () => {
     await useHiveStore.getState().refreshPrs();
 
     expect(readPullRequests).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * What a sweep teaches the fleet about itself (the PR-column fix).
+   *
+   * Resolving live filled the column for this week's work and left the rest of
+   * it empty, because the sweep is open PRs plus 24 hours of merges. So the
+   * answer is written down when it is seen — onto the entity, and through to
+   * main, which is the only half that survives a quit.
+   */
+  describe('remembering what the sweep found', () => {
+    const withSession = (over: Record<string, unknown> = {}) => {
+      const id = useHiveStore.getState().spawnSession('nova-web');
+      useHiveStore.setState((state) => ({
+        entities: {
+          ...state.entities,
+          [id]: {
+            ...state.entities[id],
+            branch: 'feat/hero-refresh',
+            project: 'nova-web',
+            ...over,
+          },
+        },
+      }));
+      return id;
+    };
+
+    it('writes the resolved PR onto the session and tells main', async () => {
+      const id = withSession();
+      readPullRequests.mockResolvedValue(ok());
+
+      await useHiveStore.getState().refreshPrs();
+
+      expect(useHiveStore.getState().entities[id]).toMatchObject({
+        lastPr: {
+          number: 482,
+          repo: 'nova-web',
+          url: 'https://github.com/acme/nova-web/pull/482',
+        },
+      });
+      expect(noteSessionPr).toHaveBeenCalledWith({
+        entityId: id,
+        pr: {
+          number: 482,
+          repo: 'nova-web',
+          url: 'https://github.com/acme/nova-web/pull/482',
+        },
+      });
+    });
+
+    /**
+     * The poller runs once a minute for as long as the app is open. Writing on
+     * every tick would be a store write, a re-render and an IPC round trip per
+     * session per minute, all of it re-recording the same number.
+     */
+    it('says nothing on a second sweep that found the same PR', async () => {
+      withSession();
+      readPullRequests.mockResolvedValue(ok());
+
+      await useHiveStore.getState().refreshPrs();
+      const entities = useHiveStore.getState().entities;
+      noteSessionPr.mockClear();
+
+      await useHiveStore.getState().refreshPrs();
+
+      expect(noteSessionPr).not.toHaveBeenCalled();
+      // Not merely equal — the same object, so no entity subscriber wakes.
+      expect(useHiveStore.getState().entities).toBe(entities);
+    });
+
+    /**
+     * A session raises its PR near the end of its life, so the sweep that first
+     * sees it usually lands *after* the session is over. Skipping ended rows
+     * would miss precisely the case this exists for.
+     */
+    it('remembers for a session that has already ended', async () => {
+      const id = withSession();
+      useHiveStore.getState().finishSession(id, true);
+      readPullRequests.mockResolvedValue(ok());
+
+      await useHiveStore.getState().refreshPrs();
+
+      expect(useHiveStore.getState().entities[id]).toMatchObject({
+        lastPr: { number: 482 },
+      });
+    });
+
+    /**
+     * Only ever *adds* knowledge. A PR that drops out of the sweep — merged
+     * more than a day ago — leaves the memory alone rather than clearing it,
+     * which is the whole point: the memory outliving the live record is the
+     * feature.
+     */
+    it('keeps the memory when the PR falls out of a later sweep', async () => {
+      const id = withSession();
+      readPullRequests.mockResolvedValue(ok());
+      await useHiveStore.getState().refreshPrs();
+
+      readPullRequests.mockResolvedValue(ok({ prs: [] }));
+      await useHiveStore.getState().refreshPrs();
+
+      expect(useHiveStore.getState().entities[id]).toMatchObject({
+        lastPr: { number: 482 },
+      });
+    });
+
+    it('leaves a session on another branch alone', async () => {
+      const id = withSession({ branch: 'main' });
+      readPullRequests.mockResolvedValue(ok());
+
+      await useHiveStore.getState().refreshPrs();
+
+      expect(useHiveStore.getState().entities[id]).not.toHaveProperty('lastPr');
+      expect(noteSessionPr).not.toHaveBeenCalled();
+    });
   });
 
   /** An empty sweep is an answer, and it stays an answer across refreshes. */

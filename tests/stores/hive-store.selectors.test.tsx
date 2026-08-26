@@ -15,12 +15,14 @@ import {
 
 import {
   useActiveEntity,
+  useActiveSessions,
   useAgentOrder,
   useCounts,
   useEntity,
   useHasResumable,
   useHiveStore,
   useMarkRead,
+  useEndedSessions,
   useNavOrder,
   useNotifs,
   useProjects,
@@ -130,6 +132,46 @@ describe('hive-store selectors', () => {
       expect(result.current).not.toContain('slack-agent');
     });
 
+    /**
+     * The caret walks the table, so this has to flatten in exactly the order
+     * the table paints — active before ended, and each group newest-first.
+     *
+     * A partition that flattened differently from the one on screen makes the
+     * down arrow skip a row and come back to it, which is the failure this
+     * selector exists to prevent.
+     */
+    it('walks each group newest-first, matching what the table paints', () => {
+      act(() => {
+        useHiveStore.getState().hydrateSessions([
+          {
+            id: 'old-oldest',
+            project: 'nova-web',
+            task: '',
+            status: 'terminated',
+            createdAt: 1,
+            endedAt: 1_000,
+          },
+          {
+            id: 'old-newest',
+            project: 'nova-web',
+            task: '',
+            status: 'terminated',
+            createdAt: 1,
+            endedAt: 9_000,
+          },
+        ]);
+      });
+
+      const { result } = renderHook(() =>
+        ({ nav: useNavOrder(), active: useActiveSessions(), ended: useEndedSessions() }),
+      );
+      const { nav, active, ended } = result.current;
+
+      expect(nav).toEqual([...active, ...ended]);
+      // Restored in oldest-first ledger order, walked newest-first.
+      expect(nav.indexOf('old-newest')).toBeLessThan(nav.indexOf('old-oldest'));
+    });
+
     it('sinks a terminated session to the bottom, like a done one', () => {
       /**
        * The four selectors that partition the fleet used to spell
@@ -143,8 +185,14 @@ describe('hive-store selectors', () => {
         useHiveStore.getState().setSessionStatus('hero-refresh', 'terminated'),
       );
 
-      // Seven still running, then the three that have ended — hero-refresh
-      // keeps its place *within* that group, which is fixture order.
+      /*
+        Seven still running, then the three that have ended. `hero-refresh` is
+        first among them because it is the only one with a time on it —
+        `stampLifecycle` stamped `endedAt` as it crossed into `terminated`,
+        while the two fixture rows carry none and hold their fixture order
+        below it. An absent time sorts last rather than first, so an unknown
+        never claims to be the newest thing on the table.
+      */
       expect(result.current.slice(7)).toEqual([
         'hero-refresh',
         'tz-fix',
@@ -1263,6 +1311,113 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useSessionPr('hero-refresh'));
 
       expect(result.current?.n).toBe(482);
+    });
+
+    /**
+     * The fallback the column was empty without.
+     *
+     * The sweep holds open PRs plus 24 hours of merges, so a session that
+     * raised and landed one last Tuesday matches nothing — and `—` is
+     * indistinguishable from a branch that never had a PR, which is why it
+     * never looked like a bug. `Session.lastPr` is what the app wrote down when
+     * it *could* see the PR.
+     */
+    describe('the remembered PR', () => {
+      const remember = (id: string) => {
+        act(() => {
+          useHiveStore.setState((state) => ({
+            entities: {
+              ...state.entities,
+              [id]: {
+                ...(state.entities[id] as Session),
+                lastPr: {
+                  number: 118,
+                  repo: 'nova-web',
+                  url: 'https://github.com/demo/nova-web/pull/118',
+                },
+              },
+            },
+          }));
+        });
+      };
+
+      it('fills the cell when the live sweep has nothing on the branch', () => {
+        remember('lead-form');
+
+        const { result } = renderHook(() => useSessionPr('lead-form'));
+
+        expect(result.current).toEqual({
+          n: 118,
+          url: 'https://github.com/demo/nova-web/pull/118',
+        });
+      });
+
+      /**
+       * **No state**, and that is the honest half. A state carried across the
+       * gap would be a claim about GitHub that nothing keeps current — and
+       * because state is rendered as a colour, it would be the most confident
+       * thing in the cell. Both surfaces render a stateless PR neutral and say
+       * "last seen" in the words a screen reader gets.
+       */
+      it('carries no state, so nothing can colour it as if it were live', () => {
+        remember('lead-form');
+
+        const { result } = renderHook(() => useSessionPr('lead-form'));
+
+        expect(result.current).not.toHaveProperty('state');
+      });
+
+      it('never outranks a live match on the same branch', () => {
+        remember('hero-refresh');
+
+        const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+        // The sweep can see #482 on this branch right now; #118 is a memory.
+        expect(result.current).toMatchObject({ n: 482, state: 'open' });
+      });
+
+      /**
+       * The case that motivates it, end to end: a worktree torn down by
+       * `merge-pr` leaves the session observed back on the default branch, so
+       * even a live PR has nothing to match against.
+       */
+      it('survives the branch going home to main after a worktree teardown', () => {
+        remember('hero-refresh');
+        act(() => {
+          useHiveStore.setState((state) => ({
+            entities: {
+              ...state.entities,
+              'hero-refresh': {
+                ...(state.entities['hero-refresh'] as Session),
+                branch: 'main',
+              },
+            },
+          }));
+        });
+
+        const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+        expect(result.current).toMatchObject({ n: 118 });
+      });
+
+      it('answers a row whose branch nobody ever observed', () => {
+        remember('hero-refresh');
+        act(() => {
+          useHiveStore.setState((state) => ({
+            entities: {
+              ...state.entities,
+              'hero-refresh': {
+                ...(state.entities['hero-refresh'] as Session),
+                branch: undefined,
+              },
+            },
+          }));
+        });
+
+        const { result } = renderHook(() => useSessionPr('hero-refresh'));
+
+        expect(result.current).toMatchObject({ n: 118 });
+      });
     });
   });
 

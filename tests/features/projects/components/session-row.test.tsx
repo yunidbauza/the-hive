@@ -117,9 +117,9 @@ describe('SessionRow', () => {
 
     render(<SessionRow id="rails-upgrade" />);
 
-    expect(screen.getByText('idle (agents)')).toBeInTheDocument();
+    expect(screen.getByText('working (agents)')).toBeInTheDocument();
     const dot = row().querySelector('span[aria-hidden]');
-    expect(dot?.className).toContain('border-subtle');
+    expect(dot?.className).toContain('border-green');
     expect(dot?.className).not.toContain('bg-subtle');
   });
 

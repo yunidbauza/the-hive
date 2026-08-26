@@ -13,6 +13,7 @@ import {
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
+  parseSessionPrRequest,
   parseSetProjectKeyRequest,
   parseSpawnRequest,
   parseWriteRequest,
@@ -785,6 +786,85 @@ describe('parseSetProjectKeyRequest', () => {
     expect(() =>
       parseSetProjectKeyRequest(
         JSON.parse('{"id":"a","key":"ab","__proto__":{"x":1}}'),
+      ),
+    ).toThrow(IpcValidationError);
+  });
+});
+
+/**
+ * `session:pr` — the renderer telling main which pull request a session
+ * produced.
+ *
+ * The interesting field is `url`, and it is the only one on this bridge that
+ * later becomes an `href`: the renderer reads it back out of its own ledger and
+ * puts it on a link, which is the shape of a stored-XSS carrier. `assertText`
+ * would let `javascript:` straight through, so the scheme is checked here — and
+ * *only* the scheme, because the host is GitHub's business and pinning it would
+ * break the moment somebody points the app at an enterprise instance.
+ */
+describe('parseSessionPrRequest', () => {
+  const pr = {
+    number: 118,
+    repo: 'nova-web',
+    url: 'https://github.com/demo/nova-web/pull/118',
+  };
+
+  it('accepts a well-formed note', () => {
+    expect(parseSessionPrRequest({ entityId: 'sess-1', pr })).toEqual({
+      entityId: 'sess-1',
+      pr,
+    });
+  });
+
+  it.each([
+    ['a javascript: url', 'javascript:alert(1)'],
+    ['a data: url', 'data:text/html,<script>alert(1)</script>'],
+    ['plain http', 'http://github.com/demo/nova-web/pull/118'],
+    ['a relative path', '/demo/nova-web/pull/118'],
+    ['not a url at all', 'nova-web#118'],
+    ['not a string', 118],
+  ])('refuses %s', (_label, url) => {
+    expect(() => parseSessionPrRequest({ entityId: 'sess-1', pr: { ...pr, url } })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['absurd', 1e12],
+    ['not a number', '118'],
+  ])('refuses a PR number that is %s', (_label, number) => {
+    expect(() =>
+      parseSessionPrRequest({ entityId: 'sess-1', pr: { ...pr, number } }),
+    ).toThrow(IpcValidationError);
+  });
+
+  it('refuses a missing field, an extra field, and a malformed id', () => {
+    expect(() => parseSessionPrRequest({ entityId: 'sess-1' })).toThrow(
+      IpcValidationError,
+    );
+    expect(() =>
+      parseSessionPrRequest({ entityId: 'sess-1', pr: { number: 1, repo: 'p' } }),
+    ).toThrow(IpcValidationError);
+    expect(() =>
+      parseSessionPrRequest({ entityId: 'sess-1', pr, extra: 1 }),
+    ).toThrow(IpcValidationError);
+    expect(() =>
+      parseSessionPrRequest({ entityId: 'sess-1', pr: { ...pr, state: 'open' } }),
+    ).toThrow(IpcValidationError);
+    expect(() => parseSessionPrRequest({ entityId: '../x', pr })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('refuses a prototype-polluting key', () => {
+    expect(() =>
+      parseSessionPrRequest(
+        JSON.parse(
+          '{"entityId":"sess-1","pr":{"number":1,"repo":"p","url":"https://x/1","__proto__":{"x":1}}}',
+        ),
       ),
     ).toThrow(IpcValidationError);
   });

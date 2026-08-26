@@ -584,12 +584,19 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * the session ran. The cwd is the widest thing in there, and the page could
    * already reach it through `onBranch`.
    *
-   * `note({ entityId, ticket })` is the only verb here that *writes*, and it
-   * writes one string into one field of one record. Both arguments are guarded
-   * at the boundary — `assertId` and `assertText` — and main refuses a note for
-   * an entity it never spawned, so the verb cannot create rows, only annotate
-   * ones main already knows about. It reaches no filesystem path, no process
-   * and no network.
+   * `note({ entityId, ticket })` and `pr({ entityId, pr })` are the two verbs
+   * here that *write*, and each writes into one field of one record. Every
+   * argument is guarded at the boundary, and main refuses either for an entity
+   * it never spawned — so neither can create rows, only annotate ones main
+   * already knows about. Neither reaches a filesystem path, a process or the
+   * network.
+   *
+   * `pr` carries the one field on this namespace that later becomes an `href`:
+   * the renderer reads it back out of the ledger and puts it on a link, which
+   * is the shape of a stored-XSS carrier. `parseSessionPrRequest` therefore
+   * checks it is an absolute **https** URL rather than merely text — and checks
+   * only the scheme, because the host is GitHub's business and pinning it would
+   * break an enterprise instance.
    *
    * The property worth pinning is no longer "listeners only" but "nothing here
    * carries a prompt, and nothing here names a path the renderer chose". That
@@ -606,6 +613,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'onReady',
     'onStatus',
     'onTicketIntent',
+    'pr',
   ]);
 });
 
