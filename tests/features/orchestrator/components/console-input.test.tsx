@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -58,13 +58,15 @@ describe('ConsoleInput', () => {
   describe('selection', () => {
     it('moves down and up with the arrow keys', async () => {
       const user = userEvent.setup();
+      const { result } = renderNavOrder();
       render(<ConsoleInput />);
 
+      // From the implicit first row: two down is index 2, one back up is 1.
       await user.keyboard('{ArrowDown}{ArrowDown}');
-      expect(useUiStore.getState().selIdx).toBe(2);
+      expect(useUiStore.getState().selId).toBe(result[2]);
 
       await user.keyboard('{ArrowUp}');
-      expect(useUiStore.getState().selIdx).toBe(1);
+      expect(useUiStore.getState().selId).toBe(result[1]);
     });
 
     it('clamps at both ends instead of wrapping', async () => {
@@ -72,15 +74,61 @@ describe('ConsoleInput', () => {
       const { result } = renderNavOrder();
       render(<ConsoleInput />);
 
-      await user.keyboard('{ArrowUp}');
+      await user.keyboard('{ArrowUp}{ArrowUp}');
       // Running off the top and reappearing at the bottom loses the user's
       // place; clamping keeps it.
-      expect(useUiStore.getState().selIdx).toBe(0);
+      expect(useUiStore.getState().selId).toBe(result[0]);
 
       for (let i = 0; i < result.length + 3; i += 1) {
         await user.keyboard('{ArrowDown}');
       }
-      expect(useUiStore.getState().selIdx).toBe(result.length - 1);
+      expect(useUiStore.getState().selId).toBe(result[result.length - 1]);
+    });
+
+    /**
+     * The whole point of keying the caret on an id (`ui-store.selId`).
+     *
+     * `useNavOrder` is sorted by recency, so a session spawning in the
+     * background lands at the top and renumbers every row beneath it. While the
+     * selection was a position, that silently moved the caret onto a different
+     * session — and Enter then opened one the user had never selected.
+     */
+    it('stays on the same session when a spawn renumbers the rows', async () => {
+      const user = userEvent.setup();
+      render(<ConsoleInput />);
+
+      await user.keyboard('{ArrowDown}{ArrowDown}');
+      const chosen = useUiStore.getState().selId;
+      expect(chosen).not.toBeNull();
+
+      act(() => {
+        useHiveStore.getState().spawnSession('nova-web', 'something else');
+      });
+
+      expect(useUiStore.getState().selId).toBe(chosen);
+    });
+
+    /**
+     * A caret on a row that has since aged out of the fleet is not a caret on
+     * row zero. `↓` heads for the top, `↑` for the bottom — which is where each
+     * key was going anyway.
+     */
+    it('starts from the right end when the selected row is gone', async () => {
+      const user = userEvent.setup();
+      const { result } = renderNavOrder();
+      render(<ConsoleInput />);
+
+      act(() => {
+        useUiStore.getState().setSelId('a-session-that-never-existed');
+      });
+      await user.keyboard('{ArrowDown}');
+      expect(useUiStore.getState().selId).toBe(result[0]);
+
+      act(() => {
+        useUiStore.getState().setSelId('a-session-that-never-existed');
+      });
+      await user.keyboard('{ArrowUp}');
+      expect(useUiStore.getState().selId).toBe(result[result.length - 1]);
     });
   });
 
@@ -224,13 +272,13 @@ describe('ConsoleInput', () => {
       render(<ConsoleInput />);
 
       await user.keyboard('{ArrowDown}');
-      const selected = useUiStore.getState().selIdx;
+      const selected = useUiStore.getState().selId;
 
       await user.type(input(), 'one{Shift>}{Enter}{/Shift}two');
       await user.keyboard('{ArrowUp}{ArrowUp}');
 
       // The selection did not move: the textarea kept the key.
-      expect(useUiStore.getState().selIdx).toBe(selected);
+      expect(useUiStore.getState().selId).toBe(selected);
       expect(input()).toHaveValue('one\ntwo');
     });
   });

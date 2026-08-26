@@ -149,16 +149,28 @@ describe('ui-store — view state', () => {
     expect(useUiStore.getState().showActivityRail).toBe(false);
   });
 
-  it('tracks the orchestrator table selection', () => {
-    useUiStore.getState().setSelIdx(4);
-    expect(useUiStore.getState().selIdx).toBe(4);
+  it('tracks the orchestrator table selection by id', () => {
+    useUiStore.getState().setSelId('webhooks');
+    expect(useUiStore.getState().selId).toBe('webhooks');
+  });
+
+  /**
+   * An id, not a position. The nav order is sorted by recency, so an index is a
+   * fact about the current fleet rather than about the caret — a session
+   * spawning in the background renumbers every row and would move a selection
+   * the user had not touched.
+   */
+  it('clears the selection with null', () => {
+    useUiStore.getState().setSelId('webhooks');
+    useUiStore.getState().setSelId(null);
+    expect(useUiStore.getState().selId).toBeNull();
   });
 
   it('reset returns every field to its initial value', () => {
     const state = useUiStore.getState();
     state.openTab('webhooks');
     state.setLeftTab('agents');
-    state.setSelIdx(7);
+    state.setSelId('webhooks');
     state.toggleProject('nova-web');
 
     useUiStore.getState().reset();
@@ -166,7 +178,7 @@ describe('ui-store — view state', () => {
     expect(useUiStore.getState()).toMatchObject({
       activeTab: 'orch',
       leftTab: 'projects',
-      selIdx: 0,
+      selId: null,
       collapsed: {},
     });
   });

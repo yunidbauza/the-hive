@@ -30,7 +30,7 @@ import { isHiveTheme } from '@lib/theme/validate';
  * config path would need this fallback anyway rather than replacing it.
  *
  * It is not `ui-store` either. That store is view state — `activeTab`, `picker`,
- * `selIdx` — and persisting it would restore a picker that was open at quit.
+ * `selId` — and persisting it would restore a picker that was open at quit.
  * `partialize` could whitelist fields, but then every future `ui-store` field
  * becomes a question somebody has to remember to answer, and answering it wrong
  * is silent. A separate store makes the boundary structural: everything here is

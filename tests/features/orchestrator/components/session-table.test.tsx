@@ -298,7 +298,7 @@ describe('SessionTable', () => {
     // Both, not one: the caret has to follow the user's last action or the
     // keyboard and the mouse disagree about where "here" is.
     expect(useUiStore.getState().activeTab).toBe('webhooks');
-    expect(useUiStore.getState().selIdx).toBe(2);
+    expect(useUiStore.getState().selId).toBe('webhooks');
   });
 
   describe('a terminated session (story 108)', () => {

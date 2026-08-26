@@ -3,13 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import { CONSOLE_VERBS } from '@/types/command';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
+import { effectiveSelId } from '@features/orchestrator/utils/selection';
 import { useAutoGrow } from '@hooks/use-auto-grow';
 import {
   useNavOrder,
   openOrResume,
   useRunOrchCommand,
 } from '@stores/hive-store';
-import { useSelIdx, useSetSelIdx } from '@stores/ui-store';
+import { useSelId, useSetSelId } from '@stores/ui-store';
 
 const PLACEHOLDER = 'help · status · send <session> <message> · spawn <project> <task>';
 const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
@@ -40,8 +41,8 @@ export function ConsoleInput() {
 
   const runOrchCommand = useRunOrchCommand();
   const navOrder = useNavOrder();
-  const selIdx = useSelIdx();
-  const setSelIdx = useSetSelIdx();
+  const selId = useSelId();
+  const setSelId = useSetSelId();
 
   /**
    * Focus on mount so the arrow keys work without a click first. Story 060
@@ -55,10 +56,30 @@ export function ConsoleInput() {
 
   const move = (delta: number) => {
     if (navOrder.length === 0) return;
+    /**
+     * The position is looked up **now**, from the id, rather than being carried
+     * between keystrokes.
+     *
+     * That is the whole of the id-keyed selection: `navOrder` is sorted by
+     * recency, so a row's index is a fact about the current fleet and not about
+     * the caret. Resolving it per keystroke means a session that spawned or
+     * ended since the last one moves the *rows* without moving the selection.
+     *
+     * The two "no caret" states differ, and `effectiveSelId` is what separates
+     * them. Nothing chosen yet is the first row — the state a fresh launch is
+     * in, and the one the old index-based selection expressed as `0`. A chosen
+     * row that has since aged out of the fleet is genuinely nowhere: `indexOf`
+     * answers `-1`, and the key heads for the end it was already going to —
+     * the top on `↓` without a special case, the bottom on `↑`, which needs
+     * the guard or `-1 - 1` clamps back to the top and the key does nothing.
+     */
+    const at =
+      selId === null ? 0 : navOrder.indexOf(effectiveSelId(selId, navOrder) ?? '');
+    const from = at === -1 && delta < 0 ? navOrder.length : at;
     // Clamped, not wrapped: running off the end of a list and reappearing at
     // the other end loses the user's place.
-    const next = Math.min(Math.max(selIdx + delta, 0), navOrder.length - 1);
-    setSelIdx(next);
+    const next = Math.min(Math.max(from + delta, 0), navOrder.length - 1);
+    setSelId(navOrder[next] ?? null);
   };
 
   /**
@@ -72,8 +93,8 @@ export function ConsoleInput() {
    * resume button reachable only by mouse.
    */
   const openSelected = () => {
-    const id = navOrder[selIdx];
-    if (id) openOrResume(id);
+    const id = effectiveSelId(selId, navOrder);
+    if (id !== null && navOrder.includes(id)) openOrResume(id);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

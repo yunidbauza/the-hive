@@ -86,10 +86,18 @@ describe('StatusCounts', () => {
 
   /**
    * `rails-upgrade` and `e2e-quote` are the demo fleet's two idle sessions
-   * (see the `2 idle · 2 ended` assertions above). The visible tally is
-   * unchanged by design (HIVE-83) — only the tooltip grows.
+   * (see the `2 idle · 2 ended` assertions above).
+   *
+   * They move to the **working** tally once something is running behind them,
+   * because that is what their rows now say: every surface labels such a
+   * session `working (agents)` in green, and a header reading
+   * `0 working · 2 idle` beside two green `working` rows is the header and the
+   * table contradicting each other about the same two sessions.
+   *
+   * The distinction survives in the tooltip, which is where there is room to
+   * spell it out — that half is unchanged from HIVE-83.
    */
-  it('breaks the idle count down in the tooltip only', () => {
+  it('counts a quiet session with something running as working', () => {
     render(<StatusCounts />);
 
     act(() => {
@@ -101,10 +109,24 @@ describe('StatusCounts', () => {
 
     const el = screen.getByTestId('status-counts');
 
-    expect(el).toHaveTextContent('2 idle');
+    // 4 + these 2, and no idle session left.
+    expect(el).toHaveTextContent('6 working');
+    expect(el).toHaveTextContent('0 idle');
     expect(el.getAttribute('title')).toContain(
-      '2 idle (1 with agents, 1 with a script)',
+      '0 idle (1 with agents, 1 with a script)',
     );
+  });
+
+  /** A genuinely free session — nothing running at all — is still idle. */
+  it('leaves a plain idle session in the idle tally', () => {
+    render(<StatusCounts />);
+
+    act(() => {
+      useHiveStore.getState().setSessionStatus('rails-upgrade', 'idle');
+    });
+
+    const el = screen.getByTestId('status-counts');
+    expect(el).toHaveTextContent('2 idle');
   });
 
   it('counts sessions only — agents are never in the fleet totals', () => {

@@ -10,6 +10,7 @@ import {
 
 import { statusLabel, statusText } from '@components/ui/status-dot';
 import { SwarmCreature } from '@components/ui/swarm-creature';
+import { effectiveSelId } from '@features/orchestrator/utils/selection';
 import { prStateText } from '@features/shared/pr-presentation';
 import {
   useActiveSessions,
@@ -21,7 +22,7 @@ import {
   useResumeSession,
   useSessionPr,
 } from '@stores/hive-store';
-import { useActiveTab, useSelIdx, useSetSelIdx } from '@stores/ui-store';
+import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
 
 /**
  * One definition per column, shared by the header row and every data row.
@@ -130,14 +131,24 @@ const COL = {
   caret: 'w-3 shrink-0',
   session: 'min-w-[88px] flex-[2] truncate',
   /*
-    Wide enough for `working (scripts)`, and **not** `truncate`. The class is
-    what let the old width look survivable: it clipped the parenthetical to an
-    ellipsis, which reads as "idle" with something after it rather than as a
-    value the column could not hold. Without it a value that does not fit
-    overflows visibly, which is the honest failure and the one a Playwright
-    assertion can see.
+    Wide enough for `working (scripts)`, and `whitespace-nowrap` rather than
+    `truncate` — which is three declarations, and only two of them are wanted.
+
+    `truncate` is what let the old width look survivable: `overflow-hidden` plus
+    `text-overflow: ellipsis` clipped the parenthetical, so `idle (agen…` read
+    as a status with something after it rather than as a value the column could
+    not hold. Dropping the whole class also drops its `white-space: nowrap`,
+    and the failure mode that leaves is worse than either: the cell wraps at the
+    space, `working (scripts)` becomes two lines, and the row doubles in height
+    and falls out of alignment with every other row and with the header.
+
+    `whitespace-nowrap` keeps the one declaration that matters. A value too wide
+    for the column overflows it — visibly, on one line, without disturbing the
+    row — which is the honest failure and the one an e2e can measure. That
+    matters because the 132px is measured against *one* machine's font stack and
+    the fallback chain ends in a generic `monospace`.
   */
-  status: 'w-[132px] shrink-0',
+  status: 'w-[132px] shrink-0 whitespace-nowrap',
   project: 'min-w-[64px] flex-[1] truncate',
   branch: 'min-w-[76px] flex-[2] truncate',
   pr: 'w-[34px] shrink-0',
@@ -315,8 +326,8 @@ function SessionTableRow({
 }) {
   const entity = useEntity(id);
   const navOrder = useNavOrder();
-  const selIdx = useSelIdx();
-  const setSelIdx = useSetSelIdx();
+  const selId = useSelId();
+  const setSelId = useSetSelId();
   const openEntity = useOpenEntity();
   const resumeSession = useResumeSession();
   const activeTab = useActiveTab();
@@ -331,8 +342,18 @@ function SessionTableRow({
 
   if (!entity || !isSession(entity)) return null;
 
-  const index = navOrder.indexOf(id);
-  const selected = index === selIdx;
+  /*
+    Compared by id, not by position. `useNavOrder` is sorted by recency, so a
+    row's index changes whenever any session spawns or ends — the caret used to
+    stay on the *slot* while the rows moved underneath it, which meant a
+    background spawn could leave Enter pointed at a session the user had never
+    selected.
+
+    `navOrder` is still read, for one case only: `effectiveSelId` resolves an
+    unset caret to the first row, which is what the index-based selection did by
+    defaulting to `0` and what makes `→` work on a fresh launch.
+  */
+  const selected = id === effectiveSelId(selId, navOrder);
   /**
    * An ended row still reads, still selects, and does not open (story 108).
    *
@@ -403,7 +424,7 @@ function SessionTableRow({
         // Click both selects and opens: the caret should follow the user's
         // last action, or the keyboard and the mouse end up disagreeing about
         // where "here" is.
-        setSelIdx(index);
+        setSelId(id);
         openEntity(id);
       }}
       aria-current={activeTab === id ? 'true' : undefined}
@@ -534,7 +555,7 @@ function SessionTableRow({
             aria-label={`resume ${entityLabel(entity)}`}
             title={`resume ${entityLabel(entity)} — continues the conversation`}
             onClick={() => {
-              setSelIdx(index);
+              setSelId(id);
               resumeSession(id);
             }}
             className={cn(

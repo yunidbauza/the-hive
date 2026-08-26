@@ -367,6 +367,23 @@ describe('refreshPrs', () => {
       });
     });
 
+    /**
+     * `SessionPrRecord.repo` is GitHub's repository name, not the project id,
+     * and the two are allowed to differ — `resolveSessionPr` *disambiguates* on
+     * repo rather than filtering on it, precisely so a checkout named
+     * differently from its repository still resolves.
+     */
+    it('records GitHub\u2019s repository name, not the project id', async () => {
+      const id = withSession({ project: 'checkout-named-otherwise' });
+      readPullRequests.mockResolvedValue(ok());
+
+      await useHiveStore.getState().refreshPrs();
+
+      expect(useHiveStore.getState().entities[id]).toMatchObject({
+        lastPr: { repo: 'nova-web' },
+      });
+    });
+
     it('leaves a session on another branch alone', async () => {
       const id = withSession({ branch: 'main' });
       readPullRequests.mockResolvedValue(ok());

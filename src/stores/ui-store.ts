@@ -20,7 +20,27 @@ export type RailTab = 'inbox' | 'prs' | 'explorer';
  */
 interface UiState {
   activeTab: 'orch' | string; // entity id, or the orchestrator
-  selIdx: number; // orchestrator table selection
+  /**
+   * Which fleet row the caret is on — **an entity id, not a position**.
+   *
+   * This was `selIdx: number`, an index into `useNavOrder()`, and the index was
+   * only ever stable because that list was in insertion order. It is sorted by
+   * recency now, so a session spawning in the background lands at the top and
+   * renumbers every row beneath it: a user who had arrowed down three rows and
+   * paused would find the caret on a different session, and Enter would open
+   * the wrong one. Ending a session did the same thing even before the sort,
+   * by moving a row from the live group to the ended one.
+   *
+   * An id has no such failure. The caret stays on the session the user put it
+   * on however the fleet rearranges around it, which is what "selection" means
+   * everywhere else in the app — `activeTab` above is an id for the same
+   * reason.
+   *
+   * `null` is "nothing selected", the state a fresh launch is in: there is no
+   * sensible zeroth row to be on before a fleet exists, and defaulting to one
+   * would put the caret on whichever session happened to arrive first.
+   */
+  selId: string | null;
   leftTab: LeftTab;
   railTab: RailTab;
   /**
@@ -88,7 +108,8 @@ interface UiState {
 
   openTab: (id: 'orch' | string) => void;
   backToOrch: () => void;
-  setSelIdx: (index: number) => void;
+  /** Put the caret on a row, or clear it with `null`. */
+  setSelId: (id: string | null) => void;
   setLeftTab: (tab: LeftTab) => void;
   setRailTab: (tab: RailTab) => void;
   setPrSearchTerm: (term: string) => void;
@@ -126,7 +147,7 @@ interface UiState {
 
 const initialUiState = {
   activeTab: 'orch' as 'orch' | string,
-  selIdx: 0,
+  selId: null as string | null,
   leftTab: 'projects' as LeftTab,
   railTab: 'inbox' as RailTab,
   prSearchTerm: '',
@@ -161,7 +182,7 @@ export const useUiStore = create<UiState>()((set) => ({
    */
   backToOrch: () => set({ activeTab: 'orch', picker: false, settings: false }),
 
-  setSelIdx: (index) => set({ selIdx: index }),
+  setSelId: (id) => set({ selId: id }),
   setLeftTab: (tab) => set({ leftTab: tab }),
   setRailTab: (tab) => set({ railTab: tab }),
 
@@ -393,8 +414,8 @@ export const usePickerActions = () =>
   useUiStore(useShallow(pickerActionsSelector));
 
 /** Orchestrator table selection. */
-export const useSelIdx = () => useUiStore((state) => state.selIdx);
-export const useSetSelIdx = () => useUiStore((state) => state.setSelIdx);
+export const useSelId = () => useUiStore((state) => state.selId);
+export const useSetSelId = () => useUiStore((state) => state.setSelId);
 
 /**
  * Whether one explorer directory is expanded.

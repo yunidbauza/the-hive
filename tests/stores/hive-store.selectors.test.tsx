@@ -21,6 +21,7 @@ import {
   useEntity,
   useHasResumable,
   useHiveStore,
+  useIdleDetailCounts,
   useMarkRead,
   useEndedSessions,
   useNavOrder,
@@ -81,6 +82,54 @@ describe('hive-store selectors', () => {
         // HIVE-87. No fixture is `closed` either: only a record read back from
         // the ledger at boot produces one, and nothing seeds the ledger here.
       });
+    });
+
+    /**
+     * A quiet main agent with something still running counts as **working**.
+     *
+     * The status field stays `idle` — that is what a hook observed — but this
+     * tally is read directly beside the rows it describes, and those rows say
+     * `working (agents)` in green. Bucketing on the raw status put three green
+     * `working` rows under a header reading `0 working · 3 idle`.
+     */
+    it('buckets a quiet session with something running as working', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .setSessionStatus('rails-upgrade', 'idle', 'agents');
+        useHiveStore.getState().setSessionStatus('e2e-quote', 'idle', 'script');
+      });
+
+      const { result } = renderHook(() => useCounts());
+
+      expect(result.current).toMatchObject({ working: 6, idle: 0 });
+    });
+
+    /** A genuinely free session — nothing running at all — is still idle. */
+    it('leaves a plain idle session in the idle bucket', () => {
+      act(() => {
+        useHiveStore.getState().setSessionStatus('rails-upgrade', 'idle');
+      });
+
+      const { result } = renderHook(() => useCounts());
+
+      expect(result.current).toMatchObject({ working: 4, idle: 2 });
+    });
+
+    /**
+     * The breakdown still keys on the status field, which is what lets the
+     * tooltip say *why* those sessions are counted as working.
+     */
+    it('still reports the detail breakdown against the raw status', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .setSessionStatus('rails-upgrade', 'idle', 'agents');
+      });
+
+      const { result } = renderHook(() => useIdleDetailCounts());
+
+      expect(result.current).toEqual({ agents: 1, script: 0 });
     });
 
     it('counts sessions only, never agents', () => {

@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PHRASES } from '@lib/swarm/phrases';
 import { isSession } from '@/types/entity';
+import type { SessionStatus } from '@/types/entity';
+import { statusLabel } from '@components/ui/status-dot';
+import type { IdleDetail } from '@shared/hook-contract';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
 import {
@@ -553,7 +556,7 @@ describe('hive-store', () => {
         const rows = useHiveStore.getState().orchLines.slice(4);
 
         const heroRefresh = rows.find((l) => l.text.includes('hero-refresh'));
-        expect(heroRefresh?.text).toContain('idle (agents)');
+        expect(heroRefresh?.text).toContain('working (agents)');
       });
     });
 
@@ -1683,8 +1686,8 @@ describe('hive-store', () => {
 
   describe('statusWord', () => {
     it('names what is still running, mirroring the dot label', () => {
-      expect(statusWord('idle', 'agents')).toBe('idle (agents)');
-      expect(statusWord('idle', 'script')).toBe('idle (script)');
+      expect(statusWord('idle', 'agents')).toBe('working (agents)');
+      expect(statusWord('idle', 'script')).toBe('working (scripts)');
       expect(statusWord('idle')).toBe('idle');
       expect(statusWord('waiting')).toBe('needs input');
     });
@@ -2714,5 +2717,35 @@ describe('lifecycle timestamps', () => {
         lastPr: { number: 118, url: 'https://github.com/demo/nova-web/pull/118' },
       });
     });
+  });
+});
+
+/**
+ * The console's word and the panels' word are two mappings, and they must not
+ * disagree.
+ *
+ * `stores/` may not import `components/`, so `statusWord` and `statusLabel` are
+ * genuinely separate functions with a comment between them asking them to
+ * match. The comment failed: `statusLabel` was renamed to `working (agents)`
+ * and `statusWord` was not, so the fleet table, the rails and the meta bar read
+ * one thing while `status` typed into the maestro console printed another for
+ * the same row. A test is the only thing that can hold two copies in step.
+ */
+describe('statusWord agrees with statusLabel', () => {
+  const STATUSES: SessionStatus[] = [
+    'working',
+    'waiting',
+    'idle',
+    'done',
+    'terminated',
+  ];
+  const DETAILS: (IdleDetail | undefined)[] = [undefined, 'agents', 'script'];
+
+  it.each(
+    STATUSES.flatMap((status) =>
+      DETAILS.map((detail) => [status, detail] as const),
+    ),
+  )('says the same thing for %s / %s', (status, detail) => {
+    expect(statusWord(status, detail)).toBe(statusLabel(status, detail));
   });
 });

@@ -9,9 +9,9 @@ import {
   usePickerState,
   useProjectCollapsed,
   useRailState,
-  useSelIdx,
+  useSelId,
   useSetLeftTab,
-  useSetSelIdx,
+  useSetSelId,
   useShowActivityRail,
   useToggleProject,
   useUiStore,
@@ -139,18 +139,20 @@ describe('ui-store selectors', () => {
     expect(result.current.state.picker).toBe(false);
   });
 
-  it('useSelIdx and useSetSelIdx track the orchestrator table selection', () => {
+  it('useSelId and useSetSelId track the orchestrator table selection', () => {
     const { result } = renderHook(() => ({
-      selIdx: useSelIdx(),
-      setSelIdx: useSetSelIdx(),
+      selId: useSelId(),
+      setSelId: useSetSelId(),
     }));
 
-    expect(result.current.selIdx).toBe(0);
+    // Nothing is selected on a fresh launch: there is no sensible zeroth row to
+    // be on before a fleet exists.
+    expect(result.current.selId).toBeNull();
 
     act(() => {
-      result.current.setSelIdx(3);
+      result.current.setSelId('webhooks');
     });
 
-    expect(result.current.selIdx).toBe(3);
+    expect(result.current.selId).toBe('webhooks');
   });
 });

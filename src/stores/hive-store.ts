@@ -608,10 +608,25 @@ const STATUS_WORD: Record<SessionStatus, string> = {
  * The terminal-side word, including what is still running (HIVE-83).
  *
  * Deliberately a second mapping rather than a reuse of `statusLabel`:
- * `stores/` may not import `components/`.
+ * `stores/` may not import `components/`. **The words must match**, and the
+ * duplication is the whole risk — `statusLabel` was renamed to say
+ * `working (agents)` and this was not, so for one commit the fleet table, the
+ * rails and the meta bar all read `working (agents)` while typing `status` into
+ * the maestro console printed `idle (agents)` for the same row.
+ *
+ * `tests/stores/hive-store.test.ts` now asserts the two functions agree across
+ * every status and detail, which is the only thing that can keep two mappings
+ * in step once a comment has already failed to.
  */
+const DETAIL_WORD: Record<IdleDetail, string> = {
+  agents: 'agents',
+  script: 'scripts',
+};
+
 export function statusWord(status: SessionStatus, detail?: IdleDetail): string {
-  if (status === 'idle' && detail !== undefined) return `idle (${detail})`;
+  if (status === 'idle' && detail !== undefined) {
+    return `working (${DETAIL_WORD[detail]})`;
+  }
   return STATUS_WORD[status];
 }
 
@@ -1509,7 +1524,15 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
              * one of the two was accepted. Now the column and the argument are
              * the same string.
              */
-            `  ${entityLabel(entity).padEnd(16)}${statusWord(entity.status, entity.idleDetail).padEnd(13)}${entity.project} · ${branchLabel(entity)}`,
+            /*
+              18, not 13. The status column here is padded to the widest word it
+              can hold, and `working (scripts)` is 17 characters — the same
+              rename that widened the fleet table's `STATUS` column overruns this
+              one, and a `padEnd` that is short does not truncate, it simply
+              stops aligning: one row's project would start three columns right
+              of its neighbours'.
+            */
+            `  ${entityLabel(entity).padEnd(16)}${statusWord(entity.status, entity.idleDetail).padEnd(18)}${entity.project} · ${branchLabel(entity)}`,
             STATUS_COLOR[entity.status],
           );
         }
@@ -3223,7 +3246,35 @@ export const useCounts = () =>
       };
       for (const id of state.order) {
         const entity = state.entities[id];
-        if (entity && isSession(entity)) counts[entity.status] += 1;
+        if (!entity || !isSession(entity)) continue;
+        /**
+         * A quiet main agent with something still running counts as
+         * **working**, not idle.
+         *
+         * The status field is still `idle` and still correct — it is what a
+         * hook observed about the main agent — but this tally is read beside
+         * the rows it describes, and every one of those rows now says
+         * `working (agents)` in green. Bucketing on the raw status put three
+         * green `working (agents)` rows under a header reading
+         * `0 working · 0 waiting · 3 idle`, which is the header and the table
+         * contradicting each other about the same three sessions.
+         *
+         * So the number answers the question the label answers — *is this task
+         * progressing* — rather than the one the status field answers. The
+         * distinction is not lost: {@link useIdleDetailCounts} still keys on
+         * `status === 'idle'` and feeds the tooltip's `N with agents`
+         * breakdown, which is where it has room to be spelled out.
+         *
+         * The cost, stated plainly: `counts` is no longer a partition of
+         * `SessionStatus` by that field. It is still keyed by it, and the
+         * `Record<SessionStatus, number>` above still makes a sixth status a
+         * compile error — which is the property that entry exists for.
+         */
+        const bucket =
+          entity.status === 'idle' && entity.idleDetail !== undefined
+            ? 'working'
+            : entity.status;
+        counts[bucket] += 1;
       }
       return counts;
     }),
@@ -4023,14 +4074,25 @@ function learnSessionPrs(
     if (known?.number === live.n && known.url === live.url) continue;
 
     /*
-      `project`, not the PR's own repository. The two are allowed to differ —
-      `resolveSessionPr` disambiguates on repo rather than filtering on it, so a
-      checkout named differently from its GitHub repository still resolves — and
-      what is recorded here is only ever compared and rendered.
+      **GitHub's repository name, not the project id**, which is what
+      `SessionPrRecord.repo` says it holds. The two are allowed to differ —
+      `resolveSessionPr` *disambiguates* on repo rather than filtering on it, so
+      a checkout named differently from its GitHub repository still resolves —
+      and recording `entity.project` here would quietly file the wrong one under
+      a field documented as the other.
+
+      Found by identity rather than re-resolved: `live` came out of `prs`, so
+      the record behind it is in there, and matching it back is exact where a
+      second pass through the resolution rules would be a second copy of them.
+      The lookup cannot miss; `continue` states that rather than reaching for a
+      fallback that would reintroduce exactly the wrong value.
     */
+    const record = prs.find((pr) => pr.number === live.n && pr.url === live.url);
+    if (record === undefined) continue;
+
     learned.push({
       entityId: id,
-      pr: { number: live.n, repo: entity.project, url: live.url },
+      pr: { number: live.n, repo: record.repo, url: live.url },
     });
   }
 
