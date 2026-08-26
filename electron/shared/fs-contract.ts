@@ -91,16 +91,40 @@ export interface FsFailure {
  */
 export type FsResult<T> = { ok: true; value: T } | { ok: false; error: FsFailure };
 
-/** `fs:read-dir`. `relPath` is `''` for the project root. */
+/** `fs:read-dir`. `relPath` is `''` for the root — see {@link ReadDirRequest.sessionId}. */
 export interface ReadDirRequest {
   projectId: string;
   relPath: string;
+  /**
+   * Which session's working directory to root at, when it is not the project's.
+   *
+   * ## Why a session id and not a path
+   *
+   * Property 1 at the top of this file — *no verb takes a path* — is the reason
+   * this is an opaque id rather than the directory itself. Main holds the cwd it
+   * observed from that session's own hook payloads and looks it up here; a
+   * renderer that wants to read somewhere else has nothing to put in the request.
+   * Handing a path across would have inverted the whole design.
+   *
+   * ## What main does with it
+   *
+   * It widens the root **only** for a session whose cwd is a linked git worktree
+   * of the mapped project — the case the explorer exists to show honestly, where
+   * an agent has moved into a worktree kept outside the repository. Anything
+   * else, including a session that wandered into `/tmp`, falls back to the
+   * project root. See `electron/main/fs/session-roots.ts`.
+   *
+   * Optional everywhere: without it, every verb behaves exactly as it did.
+   */
+  sessionId?: string;
 }
 
 /** `fs:read-file`. */
 export interface ReadFileRequest {
   projectId: string;
   relPath: string;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
 }
 
 /** `fs:write-file`. */
@@ -116,6 +140,8 @@ export interface WriteFileRequest {
    * check exists for is an agent rewriting the file underneath the editor.
    */
   baseMtimeMs: number;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
 }
 
 /** What `fs:write-file` answers with. */
@@ -129,9 +155,17 @@ export type WriteFileResult =
   | { ok: false; conflict: true; mtimeMs: number }
   | { ok: false; conflict?: false; error: FsFailure };
 
-/** `fs:watch`. One watcher exists at a time; this replaces it. */
+/**
+ * `fs:watch`. One watcher exists at a time; this replaces it.
+ *
+ * Carries the session for the same reason the reads do: a watcher rooted at the
+ * project while the tree shows a worktree outside it would report changes to
+ * files nobody is looking at, and stay silent about the ones they are.
+ */
 export interface WatchRequest {
   projectId: string;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
 }
 
 /**

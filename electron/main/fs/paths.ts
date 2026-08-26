@@ -1,10 +1,15 @@
 import type { Stats } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import type { FsFailure } from '@shared/fs-contract';
 
 import { getConfig } from '../config';
+
+import { contains } from './contains';
+import { sessionRoot } from './session-roots';
+
+export { contains };
 
 /**
  * Turning `{ projectId, relPath }` into an absolute path — or refusing to.
@@ -52,20 +57,6 @@ export interface ResolvedTarget {
   absolute: string;
 }
 
-/**
- * Whether `candidate` is `root` or lives underneath it.
- *
- * The `sep` suffix is load-bearing: without it, a project at `/w/app` would
- * consider `/w/app-secrets` contained, because the string starts with the root.
- * That is the classic prefix bug, and it is exactly the sort of thing that
- * looks fine until someone has two sibling repositories.
- */
-export function contains(root: string, candidate: string): boolean {
-  if (candidate === root) return true;
-  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
-  return candidate.startsWith(prefix);
-}
-
 /** The project's real root, or a refusal naming why there is not one. */
 export async function projectRoot(projectId: string): Promise<string> {
   const project = getConfig().projects.find((entry) => entry.id === projectId);
@@ -93,6 +84,28 @@ export async function projectRoot(projectId: string): Promise<string> {
 }
 
 /**
+ * The root every other function in this module tests against.
+ *
+ * The project's, unless the named session proved it is working in a linked git
+ * worktree of that project — the one widening of this boundary, argued in
+ * `session-roots.ts`. Nothing else about the guard changes: whichever root
+ * comes back is `realpath`'d, and every target is still resolved and contained
+ * against it.
+ *
+ * The project lookup runs **first and unconditionally**, so an unknown or
+ * unusable project is refused before a session is even considered. A session id
+ * can widen the root within a project the config maps; it can never stand in
+ * for one.
+ */
+export async function rootFor(
+  projectId: string,
+  sessionId?: string,
+): Promise<string> {
+  const root = await projectRoot(projectId);
+  return (await sessionRoot(root, sessionId)) ?? root;
+}
+
+/**
  * Resolve a path that must already exist — every read.
  *
  * `realpath` on the target itself, so a symlink is followed *before* the
@@ -101,8 +114,9 @@ export async function projectRoot(projectId: string): Promise<string> {
 export async function resolveExisting(
   projectId: string,
   relPath: string,
+  sessionId?: string,
 ): Promise<ResolvedTarget> {
-  const root = await projectRoot(projectId);
+  const root = await rootFor(projectId, sessionId);
   const joined = resolve(root, relPath);
 
   let absolute: string;
@@ -151,8 +165,9 @@ export async function resolveExisting(
 export async function resolveForWrite(
   projectId: string,
   relPath: string,
+  sessionId?: string,
 ): Promise<ResolvedTarget> {
-  const root = await projectRoot(projectId);
+  const root = await rootFor(projectId, sessionId);
   const joined = resolve(root, relPath);
 
   if (joined === root) {

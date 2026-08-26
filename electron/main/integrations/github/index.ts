@@ -1,5 +1,9 @@
 import type { ConfigSnapshot } from '../../../shared/config-contract';
-import type { GhResult, PrsSnapshot } from '../../../shared/github-contract';
+import type {
+  GhResult,
+  PrRecord,
+  PrsSnapshot,
+} from '../../../shared/github-contract';
 import { probeCommand } from '../../config/probe';
 
 import { createGithubClient, type GithubClient } from './client';
@@ -30,6 +34,21 @@ import type { RunAsync } from './run';
 export interface Github {
   /** Every PR worth showing, across the configured project repositories. */
   prs(): Promise<GhResult<PrsSnapshot>>;
+  /**
+   * Every PR matching `term`, whoever wrote it (the PRs panel's search row).
+   *
+   * `projectId` narrows the sweep to one mapped project — the session the user
+   * is watching — and its absence means every mapped project. That is the
+   * checkbox in the panel, and it is the *only* axis the user can widen: with
+   * or without it, the search reaches the repositories the config maps and no
+   * others. There is no "all of GitHub" here, deliberately; see
+   * `buildSearchVariables`.
+   *
+   * A `projectId` naming no mapped project resolves to an empty repository list
+   * and is refused by the client's scope check, which is the honest answer —
+   * better than silently widening to everything the user did not ask for.
+   */
+  searchPrs(term: string, projectId?: string): Promise<GhResult<PrRecord[]>>;
 }
 
 export interface GithubDeps {
@@ -106,6 +125,50 @@ export function createGithub(deps: GithubDeps): Github {
       if (!result.ok) return result;
 
       return { ok: true, value: { prs: result.value, repos: repos.length } };
+    },
+
+    async searchPrs(term, projectId) {
+      const path = deps.env().PATH ?? '';
+      const { resolved } = probeCommand('gh', path);
+
+      if (resolved === null) {
+        return {
+          ok: false,
+          error: {
+            kind: 'not-installed',
+            message: 'GitHub CLI (`gh`) was not found on this machine.',
+          },
+        };
+      }
+
+      if (cachedFor !== resolved || resolver === null || client === null) {
+        cachedFor = resolved;
+        resolver = createRepoResolver(resolved, deps.run);
+        client = createGithubClient(resolved, deps.run);
+      }
+
+      /*
+        Narrowed before resolution, not after. Resolving every project to ask
+        about one of them would spawn a `gh repo view` per project on the first
+        keystroke of a search — and the resolver's cache is per directory, so
+        the ones thrown away would not even be reused unless the user later
+        widened.
+      */
+      const projects = deps.config().projects;
+      const scoped =
+        projectId === undefined
+          ? projects
+          : projects.filter((project) => project.id === projectId);
+
+      const { repos, failure } = await resolver.resolve(scoped);
+
+      // Same precedence as `prs()`: a resolution failure outranks the empty
+      // list it produced, so `gh auth login` is not reported as `no-repos`.
+      if (repos.length === 0 && failure !== null) {
+        return { ok: false, error: failure };
+      }
+
+      return client.search(term, repos);
     },
   };
 }

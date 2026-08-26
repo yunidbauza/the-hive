@@ -45,7 +45,7 @@ export function useProjectWatcher(): void {
    * Widening what is watched costs nothing here — `reconcile` already filters
    * by path, and the tree re-reads only its expanded directories.
    */
-  const { project } = useExplorerProject();
+  const { project, sessionId } = useExplorerProject();
   const access = useProjectAccess(project?.id ?? '');
   const bumpFsRevision = useBumpFsRevision();
   const reconcile = useReconcileFiles();
@@ -57,7 +57,13 @@ export function useProjectWatcher(): void {
     if (!watchable || projectId === null) return;
 
     let live = true;
-    void watchProject(projectId);
+    /*
+      The session goes with it, so a worktree kept outside the project is
+      watched where it actually is. Without it the panel would show one tree and
+      listen to another — refreshes for files nobody has open, silence for the
+      ones they do.
+    */
+    void watchProject(projectId, sessionId);
 
     const stop = onFsChanged((event) => {
       if (!live || event.projectId !== projectId) return;
@@ -70,5 +76,5 @@ export function useProjectWatcher(): void {
       stop();
       void unwatchProject();
     };
-  }, [watchable, projectId, bumpFsRevision, reconcile]);
+  }, [watchable, projectId, sessionId, bumpFsRevision, reconcile]);
 }

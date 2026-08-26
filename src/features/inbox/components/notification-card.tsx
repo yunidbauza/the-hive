@@ -172,6 +172,14 @@ export function NotificationCard({ notif }: NotificationCardProps) {
     <button
       ref={ref}
       type="button"
+      /*
+        The card's identity in the DOM, the way `data-panel` and
+        `data-terminal-id` are elsewhere. It exists because the list is a column
+        of buttons and the panel now has a *header* button too: "every button in
+        the inbox" stopped meaning "every card" the moment Clear all landed, and
+        a test that counts rows should say which rows it means.
+      */
+      data-notification={notif.id}
       onClick={onClick}
       className={cn(
         'flex items-start gap-2.5 rounded-xl border px-3 py-[var(--cc-card-py)] text-left hover:bg-hover',

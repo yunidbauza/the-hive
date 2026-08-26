@@ -138,7 +138,22 @@ describe('EditorPane', () => {
 });
 
 describe('EditorPane — read-only and editing', () => {
-  it('is read-only by default', async () => {
+  it('is editable by default', async () => {
+    await openFile();
+    const { container } = render(<EditorPane />);
+
+    // The default flipped: the agent can absorb a file that moved under it, and
+    // a read-only editor stopped the *user* taking part rather than preventing
+    // the conflict. See `appearance-store`'s `editorEditable`.
+    expect(
+      container.querySelector('.cm-content')?.getAttribute('contenteditable'),
+    ).toBe('true');
+  });
+
+  it('goes read-only when the setting is off', async () => {
+    act(() => {
+      useAppearanceStore.getState().setEditorEditable(false);
+    });
     await openFile();
     const { container } = render(<EditorPane />);
 
@@ -238,7 +253,13 @@ describe('EditorPane — the disk disagreeing', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Overwrite' }));
 
     await vi.waitFor(() => {
-      expect(writeFile).toHaveBeenLastCalledWith('demo', 'src/app.ts', 'mine\n', 500);
+      expect(writeFile).toHaveBeenLastCalledWith(
+        'demo',
+        'src/app.ts',
+        'mine\n',
+        500,
+        undefined,
+      );
     });
   });
 });

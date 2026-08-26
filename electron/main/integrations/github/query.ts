@@ -181,3 +181,59 @@ export function buildPrVariables(
     merged: `is:pr author:@me is:merged ${scope} sort:updated-desc`,
   };
 }
+
+/**
+ * What survives from a user's search box into a search expression.
+ *
+ * GitHub search is a small language, and a bare term is only *data* in it by
+ * convention: `repo:someone/else` typed into the box is a qualifier, and it
+ * would widen the search past the scope this app just carefully chose. The
+ * panel promises results from the repositories the config maps, and a term that
+ * can add its own `repo:` breaks that promise from inside.
+ *
+ * So the colon goes. Not escaped — **removed** — for the same reason
+ * {@link repoQualifiers} drops an unsafe name rather than quoting it: there is
+ * no escape sequence in this language, only quoting, and quoting has its own
+ * parser to get wrong. Nothing else needs removing, because a qualifier is the
+ * only construct that changes *which* pull requests are searched, and every
+ * qualifier needs a colon.
+ *
+ * Whitespace is collapsed and the result trimmed so that a term of nothing but
+ * spaces is empty rather than a search expression with a hole in it. Multiple
+ * words stay multiple words: GitHub ANDs them, which is what a user typing two
+ * words means.
+ */
+export function safeSearchTerm(term: string): string {
+  return term.replace(/:/gu, ' ').replace(/\s+/gu, ' ').trim();
+}
+
+/**
+ * The two search expressions for a **user's** search, keyed to match
+ * {@link buildPrQuery}'s parameters.
+ *
+ * Two differences from {@link buildPrVariables}, and both are the point of the
+ * feature:
+ *
+ * - **No `author:@me`.** A search that could only find the user's own pull
+ *   requests would answer a question they can already answer by looking at the
+ *   list. "Anything matching, whoever wrote it" is the whole request.
+ * - **The term is ANDed with the scope**, so a search still only ever reaches
+ *   repositories the config maps. Widening *which repositories* is the
+ *   checkbox's job, and the widest it goes is all of them — never all of
+ *   GitHub.
+ *
+ * The document is unchanged, which is what keeps `mapping.ts` reusable: the same
+ * two connections come back, and only the filter that produced them differs.
+ */
+export function buildSearchVariables(
+  term: string,
+  qualifiers: readonly string[],
+): Record<string, string> {
+  const scope = qualifiers.join(' ');
+  const safe = safeSearchTerm(term);
+
+  return {
+    open: `is:pr is:open ${safe} ${scope} sort:updated-desc`,
+    merged: `is:pr is:merged ${safe} ${scope} sort:updated-desc`,
+  };
+}

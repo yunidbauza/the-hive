@@ -286,7 +286,7 @@ describe('appearance-store — persistence', () => {
       editorSplitAxis: 'vertical',
       editorSplitRatio: 0.5,
       editorNav: 'tabs',
-      editorEditable: false,
+      editorEditable: true,
       editorFont: 'system',
       editorFontSize: 13,
       editorWordWrap: true,
@@ -389,7 +389,7 @@ describe('appearance-store — the editor', () => {
     expect(state.editorSplitAxis).toBe('vertical');
     expect(state.editorSplitRatio).toBe(0.5);
     expect(state.editorNav).toBe('tabs');
-    expect(state.editorEditable).toBe(false);
+    expect(state.editorEditable).toBe(true);
     expect(state.editorFontSize).toBe(13);
     expect(state.editorWordWrap).toBe(true);
     expect(state.editorLineNumbers).toBe(true);
@@ -447,14 +447,14 @@ describe('appearance-store — the editor', () => {
   it('puts every editor preference back on reset', () => {
     const store = useAppearanceStore.getState();
     store.setEditorPlacement('split');
-    store.setEditorEditable(true);
+    store.setEditorEditable(false);
     store.setEditorTabWidth(8);
 
     useAppearanceStore.getState().reset();
 
     expect(useAppearanceStore.getState()).toMatchObject({
       editorPlacement: 'full',
-      editorEditable: false,
+      editorEditable: true,
       editorTabWidth: 2,
     });
   });
@@ -606,11 +606,49 @@ describe('the v1 → v2 migration', () => {
   it('re-checks the library even when there is no version to migrate', () => {
     const migrated = migrateAppearance(
       { themes: { nord: { hiveThemeVersion: 1, name: 'Nord' } }, activeThemeId: 'nord' },
-      2,
+      3,
     );
 
     expect(migrated.themes).toEqual({});
     expect(migrated.activeThemeId).toBe('hive');
+  });
+});
+
+/**
+ * The editor becomes editable by default, and the point of the migration is
+ * that a default change alone reaches nobody who already has the app: the
+ * persist middleware writes the whole partialized state on the first save of
+ * anything, so `editorEditable: false` is on disk for almost every install.
+ */
+describe('the v2 → v3 migration', () => {
+  it('drops a stored editorEditable so the new default applies', () => {
+    const migrated = migrateAppearance(
+      { theme: 'light', editorEditable: false, editorTabWidth: 4 },
+      2,
+    );
+
+    // Absent, not `true` — the default lives in `initialAppearanceState` and
+    // this must not become a second copy of it.
+    expect(migrated).not.toHaveProperty('editorEditable');
+    expect(migrated.theme).toBe('light');
+    expect(migrated.editorTabWidth).toBe(4);
+  });
+
+  it('drops it from a v1 payload too, on the way through', () => {
+    const migrated = migrateAppearance(
+      { theme: 'dark', editorEditable: false },
+      1,
+    );
+
+    expect(migrated).not.toHaveProperty('editorEditable');
+    expect(migrated.themes).toEqual({});
+  });
+
+  it('leaves a v3 payload alone, editorEditable included', () => {
+    // Past the migration, the toggle is the user's again — including off.
+    const migrated = migrateAppearance({ editorEditable: false }, 3);
+
+    expect(migrated.editorEditable).toBe(false);
   });
 });
 

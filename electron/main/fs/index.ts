@@ -16,4 +16,11 @@ export {
   projectRoot,
   resolveExisting,
   resolveForWrite,
+  rootFor,
 } from './paths';
+export {
+  forgetProbedRoots,
+  sessionRoot,
+  setSessionCwdLookup,
+  type SessionCwdLookup,
+} from './session-roots';

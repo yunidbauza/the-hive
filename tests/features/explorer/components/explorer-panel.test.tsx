@@ -214,7 +214,9 @@ describe('ExplorerPanel — the tree', () => {
 
     expect(await screen.findByText('README.md')).toBeInTheDocument();
     expect(screen.getByText('src')).toBeInTheDocument();
-    expect(readDir).toHaveBeenCalledWith('nova-web', '');
+    // The session id goes with every read, so main can root at a worktree that
+    // session moved into — including one outside the project.
+    expect(readDir).toHaveBeenCalledWith('nova-web', '', 'hero-refresh');
   });
 
   /**
@@ -231,7 +233,7 @@ describe('ExplorerPanel — the tree', () => {
     await userEvent.click(row('src'));
 
     expect(await screen.findByText('app.ts')).toBeInTheDocument();
-    expect(readDir).toHaveBeenCalledWith('nova-web', 'src');
+    expect(readDir).toHaveBeenCalledWith('nova-web', 'src', 'hero-refresh');
   });
 
   it('collapses again, and collapse-all closes everything', async () => {

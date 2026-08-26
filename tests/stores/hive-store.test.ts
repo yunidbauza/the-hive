@@ -1408,6 +1408,65 @@ describe('hive-store', () => {
           useHiveStore.getState().notifs.map((n) => n.id),
         ).toEqual(['a']);
       });
+
+      /**
+       * `null` means the whole buffer went — the echo of a Clear all, which the
+       * renderer that issued it has already applied locally. This is what makes
+       * a *second* window agree with the first.
+       */
+      it('empties the list for a null id', () => {
+        useHiveStore
+          .getState()
+          .hydrateNotifs([notif2({ id: 'a' }), notif2({ id: 'b' })]);
+
+        useHiveStore.getState().applyDismiss(null);
+
+        expect(useHiveStore.getState().notifs).toEqual([]);
+      });
+    });
+
+    /**
+     * The bulk gesture. Unlike `applyDismiss` it **does** write to main, for the
+     * same reason `dismissNotif` does: `list()` is the hydration source, so a
+     * locally-emptied inbox comes straight back on the next reload.
+     */
+    describe('clearNotifs', () => {
+      afterEach(() => {
+        delete window.hive;
+      });
+
+      it('empties the list and tells the hub once', () => {
+        const clear = vi.fn();
+        const dismiss = vi.fn();
+        window.hive = {
+          notifications: { clear, dismiss },
+        } as unknown as Window['hive'];
+
+        useHiveStore
+          .getState()
+          .hydrateNotifs([
+            notif2({ id: 'a' }),
+            notif2({ id: 'b' }),
+            notif2({ id: 'c' }),
+          ]);
+
+        useHiveStore.getState().clearNotifs();
+
+        expect(useHiveStore.getState().notifs).toEqual([]);
+        expect(clear).toHaveBeenCalledTimes(1);
+        // Not a loop of dismissals: one gesture, one invoke, one broadcast.
+        expect(dismiss).not.toHaveBeenCalled();
+      });
+
+      it('survives a browser build with no bridge', () => {
+        delete window.hive;
+        useHiveStore.getState().hydrateNotifs([notif2({ id: 'a' })]);
+
+        expect(() => {
+          useHiveStore.getState().clearNotifs();
+        }).not.toThrow();
+        expect(useHiveStore.getState().notifs).toEqual([]);
+      });
     });
   });
 

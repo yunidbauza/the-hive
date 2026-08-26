@@ -1,4 +1,5 @@
 import { EmptyState } from '@components/ui/empty-state';
+import { InboxHeader } from '@features/inbox/components/inbox-header';
 import { NotificationCard } from '@features/inbox/components/notification-card';
 import { useNotifs } from '@stores/hive-store';
 
@@ -46,8 +47,19 @@ export function InboxPanel() {
     that snapped shut only when React unmounted the row. Owning the spacing per
     card is what lets the last few pixels animate with everything else.
   */
+  /*
+    Derived here rather than through `useUnreadCount()`, which exists for the
+    tab badge and subscribes the *shell* to this number. The panel already holds
+    the list; counting it costs one pass over an array bounded by
+    `NOTIFICATION_CAP`, and reaching for the selector would add a second
+    subscription to a component that re-renders on every change to `notifs`
+    anyway.
+  */
+  const unread = notifs.filter((notif) => notif.unread).length;
+
   return (
     <div data-panel="inbox" className="flex flex-col">
+      <InboxHeader total={notifs.length} unread={unread} />
       {notifs.map((notif) => (
         <NotificationCard key={notif.id} notif={notif} />
       ))}

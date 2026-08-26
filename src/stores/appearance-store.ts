@@ -111,13 +111,27 @@ interface AppearanceState {
   editorSplitRatio: number;
   editorNav: EditorNav;
   /**
-   * Whether the editor accepts keystrokes and offers a save.
+   * Whether the editor accepts keystrokes and offers a save. **On by default.**
    *
    * **Not a security control.** It lives in `localStorage`, so it gates the UI
-   * and nothing else; the filesystem is gated by containment in main. It is
-   * here because most of the time this app is used, the thing editing the file
-   * is the agent in the terminal, and a second editable buffer over the same
-   * file is a way to lose work rather than a convenience.
+   * and nothing else; the filesystem is gated by containment in main.
+   *
+   * ## Why the default flipped
+   *
+   * It shipped off, arguing that the thing editing the file is the agent in the
+   * terminal and a second editable buffer over the same file is a way to lose
+   * work. The premise was right and the conclusion was not: a read-only editor
+   * does not prevent the conflict, it prevents the *user* from taking part in
+   * it. The agent is already equipped to deal with a file that changed under
+   * it — that is the ordinary condition of working in a repository — and a
+   * one-character fix mid-session should not require leaving the app.
+   *
+   * The staleness machinery this store's sibling (`editor-store.ts`) already
+   * carries is what makes that safe to say out loud: a buffer whose file moved
+   * underneath is marked stale, and a dirty one that moved is a conflict. Those
+   * states exist precisely so both parties can edit.
+   *
+   * The toggle stays, for anyone who wants the old guard back.
    */
   editorEditable: boolean;
   editorFont: TerminalFontId;
@@ -340,7 +354,7 @@ const initialAppearanceState = {
   editorSplitAxis: 'vertical' as EditorSplitAxis,
   editorSplitRatio: 0.5,
   editorNav: 'tabs' as EditorNav,
-  editorEditable: false,
+  editorEditable: true,
   editorFont: DEFAULT_TERMINAL_FONT,
   editorFontSize: 13,
   editorWordWrap: true,
@@ -415,12 +429,30 @@ export function sanitizeThemeState(state: Record<string, unknown>): {
 }
 
 /**
- * v1 → v2 (HIVE-80): the store gains a theme library.
+ * Migrations. Exported for the test.
  *
- * Exported for the test. Nobody's saved theme, font, size, scrollback,
- * density, team name or editor settings resets — the two new fields are simply
- * added, which is the whole job. From v2 on there is nothing to add, only the
- * library to re-check ({@link sanitizeThemeState}) — a v2 payload has been
+ * **v1 → v2 (HIVE-80): the store gains a theme library.** Nobody's saved theme,
+ * font, size, scrollback, density, team name or editor settings resets — the
+ * two new fields are simply added, which is the whole job.
+ *
+ * **v2 → v3: the editor becomes editable by default.** A default change alone
+ * would reach nobody who already has this app installed. The persist middleware
+ * writes the whole partialized state on the first save of *anything* — one
+ * theme flip is enough — so almost every existing install has
+ * `editorEditable: false` on disk, not because the user chose it but because it
+ * was the default when the value was written.
+ *
+ * Dropping the stored key is what lets the new default apply. It cannot
+ * distinguish "never touched it" from "deliberately turned it off", and it does
+ * not try to: the second group loses one toggle they can set again in Settings,
+ * and the first group — everyone else — gets the change the release is for.
+ * Turning it back off is one click; discovering the editor is still read-only
+ * for reasons invisible in the UI is a bug report.
+ *
+ * Every other key is carried across untouched, as in v1 → v2.
+ *
+ * From v3 on there is nothing to add, only the library to re-check
+ * ({@link sanitizeThemeState}) — a payload at the current version has been
  * writable by anything with a `localStorage` handle since the day it existed.
  */
 export function migrateAppearance(
@@ -428,8 +460,20 @@ export function migrateAppearance(
   version: number,
 ): Record<string, unknown> {
   const state = (persisted ?? {}) as Record<string, unknown>;
-  if (version >= 2) return { ...state, ...sanitizeThemeState(state) };
-  return { ...state, themes: {}, activeThemeId: BUILT_IN_THEME_ID };
+
+  if (version >= 3) return { ...state, ...sanitizeThemeState(state) };
+
+  // v1 has no theme library at all; v2 has one that still needs re-checking.
+  const withThemes: Record<string, unknown> =
+    version >= 2
+      ? { ...state, ...sanitizeThemeState(state) }
+      : { ...state, themes: {}, activeThemeId: BUILT_IN_THEME_ID };
+
+  // Deleted rather than set to `true`, so the default is stated in exactly one
+  // place — `initialAppearanceState` — and this stays a migration rather than a
+  // second definition of it.
+  const { editorEditable: _dropped, ...rest } = withThemes;
+  return rest;
 }
 
 export const APPEARANCE_STORAGE_KEY = 'hive.appearance';
@@ -544,7 +588,7 @@ export const useAppearanceStore = create<AppearanceState>()(
     }),
     {
       name: APPEARANCE_STORAGE_KEY,
-      version: 2,
+      version: 3,
       /**
        * `migrateAppearance` is typed loosely (`Record<string, unknown>`) so the
        * test can hand it a bare v1 payload; the persist option needs the exact

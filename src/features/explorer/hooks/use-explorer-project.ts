@@ -1,4 +1,4 @@
-import { relativeRoot } from '@/lib/explorer/session-root';
+import { relativeRoot, rootDisplay } from '@/lib/explorer/session-root';
 import { isSession, type ProjectRow } from '@/types/entity';
 
 import { useProjectPath } from '@hooks/use-project-config';
@@ -52,6 +52,31 @@ export interface ExplorerTarget {
   project: ProjectRow | null;
   /** Project-relative directory to root the tree at. `''` is the project root. */
   root: string;
+  /**
+   * The session every filesystem call is made *on behalf of*, or `undefined`.
+   *
+   * Sent with each read, write and watch so main can root at a worktree the
+   * session moved into — including one kept **outside** the mapped project,
+   * which the `root` prefix above cannot express and which used to leave the
+   * tree quietly showing the wrong files.
+   *
+   * It is an id, never a path. Main answers from the cwd it observed itself,
+   * and admits the wider root only after proving the directory is a linked git
+   * worktree of this very project (`electron/main/fs/session-roots.ts`). The
+   * renderer is asking a question here, not granting itself an answer.
+   */
+  sessionId?: string;
+  /**
+   * What the header should call the directory the tree is rooted at.
+   *
+   * Derived rather than inferred from `root`, because `root === ''` covers both
+   * "the project root" and "somewhere a prefix cannot reach" — see
+   * {@link rootDisplay}. The second of those is exactly the case the header was
+   * getting wrong.
+   */
+  display: { suffix: string; full: string | null };
+  /** The branch that session is on, if one has been observed. */
+  branch?: string;
 }
 
 export function useExplorerProject(): ExplorerTarget {
@@ -76,8 +101,14 @@ export function useExplorerProject(): ExplorerTarget {
   const path = useProjectPath(fromSession?.id ?? '');
 
   if (fromSession) {
-    return { project: fromSession, root: relativeRoot(path, session?.cwd) };
+    return {
+      project: fromSession,
+      root: relativeRoot(path, session?.cwd),
+      display: rootDisplay(path, session?.cwd),
+      ...(session ? { sessionId: session.id } : {}),
+      ...(session?.branch ? { branch: session.branch } : {}),
+    };
   }
 
-  return { project: null, root: '' };
+  return { project: null, root: '', display: { suffix: '', full: null } };
 }

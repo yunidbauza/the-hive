@@ -40,6 +40,11 @@ export function useDirectory(
   relPath: string,
   enabled: boolean,
   refreshToken: number,
+  /**
+   * Whose working directory `relPath` is relative to. See
+   * `useExplorerProject`'s `sessionId` — an id, never a path.
+   */
+  sessionId?: string,
 ): DirectoryState {
   const [state, setState] = useState<DirectoryState>(IDLE);
 
@@ -59,7 +64,7 @@ export function useDirectory(
      */
     setState((previous) => ({ ...previous, loading: true }));
 
-    void readDir(projectId, relPath).then((result) => {
+    void readDir(projectId, relPath, sessionId).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
         setState({ entries: null, loading: false, error: result.error.message });
@@ -71,7 +76,7 @@ export function useDirectory(
     return () => {
       cancelled = true;
     };
-  }, [projectId, relPath, enabled, refreshToken]);
+  }, [projectId, relPath, enabled, refreshToken, sessionId]);
 
   return state;
 }

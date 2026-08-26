@@ -6,7 +6,7 @@ import { TreeNode } from '@features/explorer/components/tree-node';
 import { useDirectory } from '@features/explorer/hooks/use-directory';
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
 import { useProjectAccess } from '@hooks/use-project-config';
-import { baseName, hasFsBridge } from '@lib/explorer/fs-client';
+import { hasFsBridge } from '@lib/explorer/fs-client';
 import { useEditorLayout } from '@stores/appearance-store';
 import { useEditorActions } from '@stores/editor-store';
 import { useProjects } from '@stores/hive-store';
@@ -36,7 +36,7 @@ import {
  * instead, and this panel reads the revision counter it bumps.
  */
 export function ExplorerPanel() {
-  const { project, root: subRoot } = useExplorerProject();
+  const { project, root: subRoot, sessionId, display, branch } = useExplorerProject();
   // Only to tell the two empty states apart — see the branch below.
   const projects = useProjects();
   const access = useProjectAccess(project?.id ?? '');
@@ -69,7 +69,13 @@ export function ExplorerPanel() {
    * Rooted at the session's own directory, which is the project root for every
    * session that has not moved (HIVE-78).
    */
-  const root = useDirectory(projectId ?? '', subRoot, usable, refreshToken);
+  const root = useDirectory(
+    projectId ?? '',
+    subRoot,
+    usable,
+    refreshToken,
+    sessionId,
+  );
   const revealStage = useRevealStage();
 
   const onOpenFile = useCallback(
@@ -84,7 +90,7 @@ export function ExplorerPanel() {
        * caller closes what was open before opening the next.
        */
       if (nav === 'single') closeAll();
-      openFile(projectId, relPath);
+      openFile(projectId, relPath, sessionId);
       /**
        * The rail is clickable behind a full-stage overlay now, so a file opened
        * from here would otherwise land *behind* settings or the picker: the row
@@ -94,7 +100,7 @@ export function ExplorerPanel() {
        */
       revealStage();
     },
-    [projectId, nav, closeAll, openFile, revealStage],
+    [projectId, sessionId, nav, closeAll, openFile, revealStage],
   );
 
   /**
@@ -166,20 +172,45 @@ export function ExplorerPanel() {
           The header says when the tree is *not* at the project root (HIVE-78).
           Silently showing a worktree's contents under the project's name is the
           same class of untruth this story removed from the branch label: the
-          files would be right and the label would be wrong. The full relative
-          path stays in the tooltip; the visible suffix is the last segment,
-          because a 130px rail cannot carry `.claude/worktrees/…` and the
-          worktree's own name is the part that identifies it.
+          files would be right and the label would be wrong. The full path stays
+          in the tooltip; the visible suffix is the last segment, because a
+          268px rail cannot carry `.claude/worktrees/…` and the worktree's own
+          name is the part that identifies it.
+
+          `display`, not `subRoot`. The prefix is `''` for two situations that
+          must not read the same — a session at the project root, and one
+          working in a worktree kept *outside* the project, which is now a root
+          main resolves rather than a prefix this panel prepends. Reading the
+          suffix off the prefix meant the second case rendered as the first: the
+          bare project name over a tree that was not the project's.
         */}
         <span
           className="flex-1 truncate font-mono text-[11.5px] tracking-wide text-subtle uppercase"
-          title={subRoot === '' ? project.name : `${project.name}/${subRoot}`}
+          title={display.full ?? project.name}
         >
           {project.name}
-          {subRoot === '' ? null : (
-            <span className="text-muted"> · {baseName(subRoot)}</span>
+          {display.suffix === '' ? null : (
+            <span className="text-muted"> · {display.suffix}</span>
           )}
         </span>
+
+        {/*
+          The branch, when one has been observed.
+
+          Not decoration: the two questions a user asks of a file tree
+          mid-session are *which directory* and *which branch*, and the panel
+          could answer neither. `branchLabel`'s em dash is deliberately not used
+          here — the rail already prints it in the session meta bar, and a
+          second em dash in a 268px column is noise rather than an answer.
+        */}
+        {branch === undefined ? null : (
+          <span
+            className="max-w-[110px] shrink-0 truncate rounded-full border border-border bg-chip px-1.5 py-px font-mono text-[9.5px] text-brand"
+            title={`On branch ${branch}`}
+          >
+            {branch}
+          </span>
+        )}
 
         <button
           type="button"
@@ -240,6 +271,7 @@ export function ExplorerPanel() {
               parentPath={subRoot}
               depth={0}
               refreshToken={refreshToken}
+              sessionId={sessionId}
               onOpenFile={onOpenFile}
             />
           ))

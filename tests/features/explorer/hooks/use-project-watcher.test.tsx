@@ -76,7 +76,9 @@ describe('useProjectWatcher', () => {
   it('watches the visible project and stops on unmount', () => {
     const { unmount } = render(<Watcher />);
 
-    expect(watchProject).toHaveBeenCalledWith('nova-web');
+    // The session rides along so main can root the watcher where that session
+    // is actually working — see `fs/session-roots.ts`.
+    expect(watchProject).toHaveBeenCalledWith('nova-web', 'hero-refresh');
 
     unmount();
     expect(unwatchProject).toHaveBeenCalled();
@@ -84,13 +86,13 @@ describe('useProjectWatcher', () => {
 
   it('follows the active session to another project', async () => {
     render(<Watcher />);
-    expect(watchProject).toHaveBeenLastCalledWith('nova-web');
+    expect(watchProject).toHaveBeenLastCalledWith('nova-web', 'hero-refresh');
 
     await act(async () => {
       useUiStore.getState().openTab('webhooks');
     });
 
-    expect(watchProject).toHaveBeenLastCalledWith('referral-api');
+    expect(watchProject).toHaveBeenLastCalledWith('referral-api', 'webhooks');
   });
 
   it('bumps the tree revision on a change', async () => {

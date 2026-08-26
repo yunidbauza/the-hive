@@ -224,6 +224,19 @@ export interface Sessions {
   restart(request: OpenRequest): Promise<void>;
   /** Live entity ids, for diagnostics and the session cap. */
   entities(): string[];
+  /**
+   * The working directory this session was last observed in, or `undefined`.
+   *
+   * **Main's own observation**, taken from that session's hook payloads — never
+   * anything the renderer said. That provenance is the reason the explorer's
+   * root may follow it: `fs/session-roots.ts` widens the read boundary on the
+   * strength of this value, and a renderer-supplied path would have made that
+   * a hole rather than a feature.
+   *
+   * `undefined` until the first hook carrying a cwd arrives, which is the
+   * ordinary state for a session that has just spawned.
+   */
+  observedCwd(entityId: string): string | undefined;
   diagnostics(): PtyDiagnostics[];
   dispose(): void;
 }
@@ -1641,6 +1654,13 @@ export function createSessions(options: SessionsOptions): Sessions {
     },
 
     entities: () => registry.entities(),
+    /*
+      Read off `lastBranch`, which `publishBranch` already maintains for the
+      rail's branch chip. Not a second map: the cwd and the branch are observed
+      from the same hook payload at the same instant, and keeping two records of
+      one observation is how they come to disagree about where a session is.
+    */
+    observedCwd: (entityId) => lastBranch.get(entityId)?.cwd,
     diagnostics: () => ptyIpc.diagnostics(),
 
     dispose() {

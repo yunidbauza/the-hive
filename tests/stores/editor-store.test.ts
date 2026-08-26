@@ -220,7 +220,15 @@ describe('save', () => {
   it('writes with the buffer’s base mtime and clears dirty', async () => {
     await store().save(KEY);
 
-    expect(writeFile).toHaveBeenCalledWith('demo', 'src/app.ts', 'mine\n', 100);
+    // The trailing `undefined` is the session this buffer was opened under —
+    // absent here, which is the ordinary case and means "the project's root".
+    expect(writeFile).toHaveBeenCalledWith(
+      'demo',
+      'src/app.ts',
+      'mine\n',
+      100,
+      undefined,
+    );
     expect(fileAt(KEY)).toMatchObject({
       dirty: false,
       mtimeMs: 200,
@@ -253,7 +261,13 @@ describe('save', () => {
 
     await store().save(KEY, { overwrite: true });
 
-    expect(writeFile).toHaveBeenLastCalledWith('demo', 'src/app.ts', 'mine\n', 500);
+    expect(writeFile).toHaveBeenLastCalledWith(
+      'demo',
+      'src/app.ts',
+      'mine\n',
+      500,
+      undefined,
+    );
     expect(fileAt(KEY)).toMatchObject({ dirty: false, conflict: false, mtimeMs: 600 });
   });
 
@@ -426,7 +440,13 @@ describe('save — races', () => {
     finishWrite({ ok: true, mtimeMs: 400 });
     await saving;
 
-    expect(writeFile).toHaveBeenCalledWith('demo', 'src/app.ts', 'first\n', 100);
+    expect(writeFile).toHaveBeenCalledWith(
+      'demo',
+      'src/app.ts',
+      'first\n',
+      100,
+      undefined,
+    );
     expect(fileAt(KEY)).toMatchObject({
       dirty: true,
       text: 'first and second\n',

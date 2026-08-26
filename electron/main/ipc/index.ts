@@ -28,7 +28,7 @@ import type {
   FsResult,
   WriteFileResult,
 } from '@shared/fs-contract';
-import type { GhResult, PrsSnapshot } from '@shared/github-contract';
+import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import {
   parseAckRequest,
   parseAddProjectRequest,
@@ -61,6 +61,7 @@ import {
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
+  parseSearchPrsRequest,
   parseSessionNoteRequest,
   parseSkillNameRequest,
   parseSkillRenameRequest,
@@ -117,6 +118,7 @@ import {
   createFsWatchLayer,
   readDirectory,
   readFileContent,
+  setSessionCwdLookup,
   writeFileContent,
   type FsWatchLayer,
 } from '../fs';
@@ -673,6 +675,12 @@ export function registerIpcHandlers(): void {
   handle(CH.notificationsDismiss, (_event, payload) =>
     hub.dismiss(parseDismissRequest(payload)),
   );
+  // No payload, so there is nothing to validate and nothing to lose on the way
+  // in — which is the whole argument for this being its own verb rather than
+  // `dismiss(null)`. See `CH.notificationsClear`.
+  handle(CH.notificationsClear, () => {
+    hub.clearInbox();
+  });
 
   /**
    * Now the hub exists, the updater has somewhere to raise into.
@@ -761,6 +769,17 @@ export function registerIpcHandlers(): void {
     hooks,
     ledger,
   });
+
+  /**
+   * The explorer may follow a session into a worktree kept outside the mapped
+   * project — but only on main's own observation of where that session is.
+   *
+   * Injected rather than imported, because `fs/` must not depend on
+   * `sessions/`: the session layer already reaches the filesystem, so the
+   * import would close a cycle. `fs/session-roots.ts` holds the rules that make
+   * the widened root safe; this only supplies the fact.
+   */
+  setSessionCwdLookup((entityId) => sessions?.observedCwd(entityId));
 
   cloneFlow = createCloneFlow({
     sessions,
@@ -1222,6 +1241,16 @@ export function registerIpcHandlers(): void {
     return github.prs();
   });
 
+  handle(
+    CH.githubSearchPrs,
+    async (_event, payload): Promise<GhResult<PrRecord[]>> => {
+      const request = parseSearchPrsRequest(payload);
+      // Same race as `github:prs` — see the note there.
+      await loginEnvStatus();
+      return github.searchPrs(request.term, request.projectId);
+    },
+  );
+
   handle(CH.jiraStatus, (): JiraStatus => jira.status());
   handle(CH.jiraSetToken, (_event, payload): JiraStatus =>
     jira.setToken(parseSetJiraTokenRequest(payload)),
@@ -1329,7 +1358,8 @@ export function registerIpcHandlers(): void {
    * updates" and keeps its manual refresh, which is the honest degradation.
    */
   handle(CH.fsWatch, async (_event, payload): Promise<void> => {
-    await fsWatch?.watchProject(parseWatchRequest(payload).projectId);
+    const request = parseWatchRequest(payload);
+    await fsWatch?.watchProject(request.projectId, request.sessionId);
   });
 
   handle(CH.fsUnwatch, (): void => {

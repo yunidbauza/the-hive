@@ -20,7 +20,7 @@ let broadcast: Mock<(notification: HiveNotification) => void>;
 let activate: Mock<(action: NotificationAction) => void>;
 let announceRead: Mock<(id: string | null, unread: boolean) => void>;
 let announceUnread: Mock<(count: number) => void>;
-let announceDismissed: Mock<(id: string) => void>;
+let announceDismissed: Mock<(id: string | null) => void>;
 
 let now: number;
 let hub: NotificationHub;
@@ -214,6 +214,63 @@ describe('the buffer', () => {
 
       expect(hub.list().map((n) => n.id)).toEqual(['a']);
       // No spurious badge announcement for a buffer that did not change.
+      expect(announceUnread).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The Inbox's Clear all, and a separate verb from `dismiss` on purpose: the
+   * id guard on that one exists so a caller who loses an argument cannot empty
+   * the inbox, and widening it to accept `null` would have traded that
+   * guarantee away. See `CH.notificationsClear`.
+   */
+  describe('clear', () => {
+    it('empties list() and zeroes the badge', () => {
+      raise({ id: 'a' });
+      raise({ id: 'b' });
+      raise({ id: 'c' });
+      expect(lastUnread()).toBe(3);
+
+      hub.clearInbox();
+
+      expect(hub.list()).toEqual([]);
+      expect(lastUnread()).toBe(0);
+    });
+
+    it('announces once, with a null id, rather than once per row', () => {
+      raise({ id: 'a' });
+      raise({ id: 'b' });
+      announceDismissed.mockClear();
+
+      hub.clearInbox();
+
+      // N events would be N re-renders of a list that is about to be empty.
+      expect(announceDismissed).toHaveBeenCalledTimes(1);
+      expect(announceDismissed).toHaveBeenCalledWith(null);
+    });
+
+    it('keeps every id in the dedup set', () => {
+      raise({ id: 'a' });
+      raise({ id: 'b' });
+
+      hub.clearInbox();
+
+      // Clearing the inbox must not re-arm every notification in it to be
+      // raised again by the next duplicate event — the same rule as `dismiss`.
+      expect(raise({ id: 'a' })).toBeNull();
+      expect(raise({ id: 'b' })).toBeNull();
+      expect(hub.list()).toEqual([]);
+    });
+
+    it('says nothing when the buffer is already empty', () => {
+      announceDismissed.mockClear();
+      announceUnread.mockClear();
+
+      hub.clearInbox();
+
+      // A double-click on Clear all must not push a second event at every
+      // window.
+      expect(announceDismissed).not.toHaveBeenCalled();
       expect(announceUnread).not.toHaveBeenCalled();
     });
   });

@@ -52,6 +52,20 @@ export interface OpenFile {
   key: string;
   projectId: string;
   relPath: string;
+  /**
+   * The session this buffer was opened under, or `undefined`.
+   *
+   * Carried on the record rather than read from the active session at save
+   * time, because the two can differ: a user opens a file from a session
+   * working in a worktree, switches to another tab, and saves. The bytes must
+   * go back to the file they came from, so the root main resolves has to be the
+   * one the read used.
+   *
+   * Deliberately **not** part of {@link fileKey}. A file is identified by where
+   * it is, and two sessions in the same worktree looking at the same file are
+   * looking at one buffer.
+   */
+  sessionId?: string;
   /** The last segment, for the tab strip. Derived once rather than on every render. */
   name: string;
 
@@ -95,7 +109,7 @@ interface EditorState {
   /** The file on screen, or `null` when the terminal is. */
   activeKey: string | null;
 
-  openFile: (projectId: string, relPath: string) => void;
+  openFile: (projectId: string, relPath: string, sessionId?: string) => void;
   closeFile: (key: string) => void;
   closeAll: () => void;
   /** Show the terminal without closing anything. */
@@ -113,10 +127,15 @@ interface EditorState {
 export const fileKey = (projectId: string, relPath: string): string =>
   `${projectId}:${relPath}`;
 
-const blank = (projectId: string, relPath: string): OpenFile => ({
+const blank = (
+  projectId: string,
+  relPath: string,
+  sessionId?: string,
+): OpenFile => ({
   key: fileKey(projectId, relPath),
   projectId,
   relPath,
+  sessionId,
   name: baseName(relPath),
   text: null,
   mtimeMs: 0,
@@ -154,9 +173,13 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     }));
   };
 
-  const load = async (projectId: string, relPath: string): Promise<void> => {
+  const load = async (
+    projectId: string,
+    relPath: string,
+    sessionId?: string,
+  ): Promise<void> => {
     const key = fileKey(projectId, relPath);
-    const result = await readFile(projectId, relPath);
+    const result = await readFile(projectId, relPath, sessionId);
 
     if (!get().openFiles.some((file) => file.key === key)) return;
 
@@ -206,7 +229,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
      * scroll position to fetch bytes it already has — and, if the buffer were
      * dirty, their edits.
      */
-    openFile: (projectId, relPath) => {
+    openFile: (projectId, relPath, sessionId) => {
       const key = fileKey(projectId, relPath);
       const existing = get().openFiles.find((file) => file.key === key);
 
@@ -225,11 +248,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
          * the setting says so, which keeps the policy where the setting is read
          * and this store a plain list.
          */
-        openFiles: [...state.openFiles, blank(projectId, relPath)],
+        openFiles: [...state.openFiles, blank(projectId, relPath, sessionId)],
         activeKey: key,
       }));
 
-      void load(projectId, relPath);
+      void load(projectId, relPath, sessionId);
     },
 
     closeFile: (key) => {
@@ -279,7 +302,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const file = get().openFiles.find((entry) => entry.key === key);
       if (!file) return;
       patch(key, { loading: true, conflict: false, staleOnDisk: false });
-      await load(file.projectId, file.relPath);
+      await load(file.projectId, file.relPath, file.sessionId);
     },
 
     /**
@@ -298,7 +321,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
 
       let base = file.mtimeMs;
       if (options?.overwrite) {
-        const current = await readFile(file.projectId, file.relPath);
+        const current = await readFile(
+          file.projectId,
+          file.relPath,
+          file.sessionId,
+        );
         if (current.ok && !('refused' in current.value)) {
           base = current.value.mtimeMs;
         }
@@ -320,6 +347,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         file.relPath,
         sentText,
         base,
+        file.sessionId,
       );
 
       const settled = get().openFiles.find((entry) => entry.key === key);

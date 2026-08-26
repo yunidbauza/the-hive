@@ -1,4 +1,4 @@
-import type { GhResult, PrsSnapshot } from '@shared/github-contract';
+import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 
 /**
  * The renderer's half of the GitHub bridge.
@@ -20,6 +20,29 @@ export const readPullRequests = async (): Promise<GhResult<PrsSnapshot> | null> 
     return await bridge.github.prs();
   } catch (cause) {
     console.error('[hive] github.prs failed:', cause);
+    return null;
+  }
+};
+
+/**
+ * Search pull requests, whoever wrote them.
+ *
+ * `projectId` narrows to one mapped project; omitting it means every mapped
+ * project. Same two `null` cases as {@link readPullRequests} and for the same
+ * reasons — no bridge is the browser demo, and a rejected channel is a hiccup
+ * the panel reports as "could not search" rather than throwing over.
+ */
+export const searchPullRequests = async (
+  term: string,
+  projectId?: string,
+): Promise<GhResult<PrRecord[]> | null> => {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.github.searchPrs(term, projectId);
+  } catch (cause) {
+    console.error('[hive] github.searchPrs failed:', cause);
     return null;
   }
 };

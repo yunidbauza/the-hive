@@ -239,6 +239,64 @@ describe('TerminalSurface', () => {
     expect(fitAddon.fit).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * The two link paths, and why both are asserted here rather than in
+   * `lib/terminal/open-link.test.ts` alone.
+   *
+   * That file proves the handler opens the URL. These two prove the handler is
+   * *reached* — which is the half that was broken. xterm found every link and
+   * then called a default that opens a blank window, so the addon was loaded,
+   * the URL was underlined, and the click did nothing. "An addon is loaded" was
+   * already asserted above and stayed green throughout.
+   */
+  describe('links', () => {
+    it('gives the web-links addon a handler rather than its broken default', () => {
+      const open = vi
+        .spyOn(window, 'open')
+        .mockReturnValue(null as unknown as Window);
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} palette={TERM} />);
+
+      const [addon] = webLinksAddonInstances;
+      expect(addon?.handler).toBeTypeOf('function');
+
+      addon?.handler?.(new MouseEvent('click'), 'https://example.com/a');
+
+      // The URL, as the first argument. The default passes nothing at all,
+      // which is exactly what `setWindowOpenHandler` refuses.
+      expect(open).toHaveBeenCalledWith(
+        'https://example.com/a',
+        '_blank',
+        'noopener,noreferrer',
+      );
+      open.mockRestore();
+    });
+
+    it('routes OSC 8 hyperlinks through the same handler', () => {
+      const open = vi
+        .spyOn(window, 'open')
+        .mockReturnValue(null as unknown as Window);
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} palette={TERM} />);
+
+      // Set at all: xterm's own default puts a `confirm()` in front of the
+      // same broken open, so leaving this unset is not a neutral choice.
+      const handler = terminal().options.linkHandler as {
+        activate: (event: MouseEvent, text: string) => void;
+      };
+      expect(handler).toBeDefined();
+
+      handler.activate(new MouseEvent('click'), 'https://claude.ai/code/artifact/x');
+
+      expect(open).toHaveBeenCalledWith(
+        'https://claude.ai/code/artifact/x',
+        '_blank',
+        'noopener,noreferrer',
+      );
+      open.mockRestore();
+    });
+  });
+
   describe('read-only', () => {
     it('disables stdin and the cursor when read-only', () => {
       const { transport } = fakeTransport();

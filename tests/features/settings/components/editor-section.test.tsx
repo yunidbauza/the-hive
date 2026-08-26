@@ -34,7 +34,9 @@ describe('EditorSection', () => {
 
     expect(screen.getByRole('radio', { name: 'Full stage' })).toBeChecked();
     expect(screen.getByRole('radio', { name: 'Tabs' })).toBeChecked();
-    expect(screen.getByRole('switch', { name: /Allow editing/ })).not.toBeChecked();
+    // On by default since the editor became editable. The toggle stays for
+    // anyone who wants the old read-only guard back.
+    expect(screen.getByRole('switch', { name: /Allow editing/ })).toBeChecked();
     expect(screen.getByRole('switch', { name: /Wrap long lines/ })).toBeChecked();
     expect(screen.getByRole('switch', { name: /Show line numbers/ })).toBeChecked();
   });
@@ -81,11 +83,13 @@ describe('EditorSection', () => {
     expect(settings().editorNav).toBe('single');
   });
 
-  it('turns editing on', async () => {
+  it('turns editing off, and back on', async () => {
     render(<EditorSection />);
 
     await userEvent.click(screen.getByRole('switch', { name: /Allow editing/ }));
+    expect(settings().editorEditable).toBe(false);
 
+    await userEvent.click(screen.getByRole('switch', { name: /Allow editing/ }));
     expect(settings().editorEditable).toBe(true);
   });
 

@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPrQuery,
   buildPrVariables,
+  buildSearchVariables,
   repoQualifiers,
+  safeSearchTerm,
   type RepoRef,
 } from '../../../../../electron/main/integrations/github/query';
 
@@ -182,5 +184,71 @@ describe('buildPrVariables', () => {
     ]);
 
     expect(open).toContain('repo:a/one repo:b/two repo:c/three');
+  });
+});
+
+/**
+ * The search half, added with the PRs panel's search row.
+ *
+ * Two claims, and both are about what a *user's words* can do to an expression
+ * this app composed: they cannot become a qualifier, and they cannot leave the
+ * configured repositories.
+ */
+describe('safeSearchTerm', () => {
+  it('keeps ordinary words exactly as typed', () => {
+    expect(safeSearchTerm('carapace plates')).toBe('carapace plates');
+  });
+
+  it('removes the colon, so a term cannot become a qualifier', () => {
+    // The whole point. `repo:someone/else` in the box would otherwise widen the
+    // search past the scope this app just chose.
+    expect(safeSearchTerm('repo:someone/else')).toBe('repo someone/else');
+    expect(safeSearchTerm('author:nobody carapace')).toBe('author nobody carapace');
+  });
+
+  it('collapses the whitespace a removal leaves behind', () => {
+    expect(safeSearchTerm('  a::b   c  ')).toBe('a b c');
+  });
+
+  it('answers empty for a term of nothing but spaces', () => {
+    expect(safeSearchTerm('   ')).toBe('');
+  });
+});
+
+describe('buildSearchVariables', () => {
+  const scope = repoQualifiers([
+    { owner: 'behiques', name: 'the-hive' },
+  ] as RepoRef[]);
+
+  it('drops author:@me — a search is not about the user', () => {
+    const variables = buildSearchVariables('carapace', scope);
+
+    expect(variables.open).not.toContain('author:@me');
+    expect(variables.merged).not.toContain('author:@me');
+  });
+
+  it('keeps the repo scope on both expressions', () => {
+    const variables = buildSearchVariables('carapace', scope);
+
+    // The invariant the panel promises: a search reaches the repositories the
+    // config maps and no others, however wide the checkbox goes.
+    expect(variables.open).toContain('repo:behiques/the-hive');
+    expect(variables.merged).toContain('repo:behiques/the-hive');
+  });
+
+  it('asks for open and merged separately, newest first', () => {
+    const variables = buildSearchVariables('carapace', scope);
+
+    expect(variables.open).toContain('is:open');
+    expect(variables.merged).toContain('is:merged');
+    expect(variables.open).toContain('sort:updated-desc');
+  });
+
+  it('sanitises the term on the way in', () => {
+    const variables = buildSearchVariables('repo:elsewhere/x', scope);
+
+    // One `repo:` qualifier in the expression, and it is the one main composed.
+    expect(variables.open.match(/repo:/gu)).toHaveLength(1);
+    expect(variables.open).toContain('repo:behiques/the-hive');
   });
 });

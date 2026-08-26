@@ -68,6 +68,7 @@ export async function readDirectory(
     const { absolute } = await resolveExisting(
       request.projectId,
       request.relPath,
+      request.sessionId,
     );
 
     const names = await readdir(absolute);
@@ -125,6 +126,7 @@ export async function readFileContent(
     const { absolute } = await resolveExisting(
       request.projectId,
       request.relPath,
+      request.sessionId,
     );
 
     const stats = await stat(absolute);
