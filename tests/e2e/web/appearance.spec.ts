@@ -129,7 +129,7 @@ test('changing the terminal font resizes the terminal without destroying it', as
 });
 
 /**
- * The shipped theme set (HIVE-84).
+ * The shipped theme set.
  *
  * A unit test can prove the store resolves an id and that the gallery renders
  * seven cards. It cannot prove the app actually *repaints* — that lives in a

@@ -13,7 +13,7 @@ import {
 import { contrastRatio, importTheme, isHiveTheme } from '@lib/theme/validate';
 import { TOKENS_CSS } from '@tests/support/css-tokens';
 
-/** The six added by HIVE-84, in gallery order. */
+/** The six that ship beside the Hive, in gallery order. */
 const SHIPPED = [
   'honeycomb',
   'graphite',
@@ -41,6 +41,16 @@ describe('the shipped set', () => {
     }
     expect(isBuiltInThemeId('nord')).toBe(false);
     expect(isBuiltInThemeId('')).toBe(false);
+  });
+
+  /**
+   * `'toString' in {}` is `true`, and the matching lookup returns a *function*
+   * rather than `undefined` — so a `?? fallback` guarding it never fires.
+   */
+  it('does not mistake an Object.prototype key for a shipped theme', () => {
+    for (const key of ['toString', 'constructor', 'valueOf', 'hasOwnProperty']) {
+      expect(isBuiltInThemeId(key), key).toBe(false);
+    }
   });
 
   /**

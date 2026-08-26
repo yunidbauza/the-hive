@@ -492,7 +492,7 @@ describe('the theme library', () => {
 });
 
 /**
- * The six that ship beside the Hive (HIVE-84).
+ * The six that ship beside the Hive.
  *
  * The distinction that matters here is which of them `activeThemeOf` answers
  * `null` for. `null` means *the stylesheet already is this palette* — true of
@@ -718,5 +718,59 @@ describe('sanitizeThemeState', () => {
       themes: {},
       activeThemeId: 'hive',
     });
+  });
+
+  /**
+   * `localStorage` is reachable by another tab, devtools and an older build,
+   * and `'toString' in BUILT_IN_THEMES` is `true` for any object literal — the
+   * lookup then yields `Object.prototype.toString`, a function, so a `??`
+   * guard never fires. That used to survive sanitising, reach
+   * `applyThemeColors` and the terminal-palette selector, and throw on
+   * `.modes` on every render, with the bad value still in storage.
+   */
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    'refuses %s as an active id',
+    (key) => {
+      expect(sanitizeThemeState({ themes: {}, activeThemeId: key })).toEqual({
+        themes: {},
+        activeThemeId: 'hive',
+      });
+      expect(
+        activeThemeOf({ themes: {}, activeThemeId: key }),
+      ).toBeNull();
+    },
+  );
+
+  /**
+   * Before the shipped set landed, only `hive` was reserved — so a theme
+   * imported as "Graphite" legitimately took the key `graphite`. A built-in
+   * owns that key now, and built-ins resolve first, so without this repair the
+   * person's own theme is unreachable and the gallery rings two cards active.
+   */
+  it('moves a library theme aside when a shipped id took its key', () => {
+    const result = sanitizeThemeState({
+      themes: { graphite: nordFixture },
+      activeThemeId: 'graphite',
+    });
+
+    expect(result.themes).toEqual({ 'graphite-2': nordFixture });
+    // The active pointer follows: that theme is what was on screen, and the
+    // shipped Graphite is not a substitute for it.
+    expect(result.activeThemeId).toBe('graphite-2');
+  });
+
+  it('leaves a non-colliding library theme exactly where it is', () => {
+    const result = sanitizeThemeState({
+      themes: { nord: nordFixture },
+      activeThemeId: 'nord',
+    });
+
+    expect(result.themes).toEqual({ nord: nordFixture });
+    expect(result.activeThemeId).toBe('nord');
+  });
+
+  it('keeps a shipped id active when nothing in the library claims it', () => {
+    const result = sanitizeThemeState({ themes: {}, activeThemeId: 'graphite' });
+    expect(result).toEqual({ themes: {}, activeThemeId: 'graphite' });
   });
 });

@@ -6,7 +6,7 @@ import {
 } from '@lib/theme/contract';
 
 /**
- * The themes the app ships with, beyond the Hive itself (HIVE-84).
+ * The themes the app ships with, beyond the Hive itself.
  *
  * ## Why these are not in `tokens.css`
  *
@@ -435,7 +435,14 @@ export const BUILT_IN_THEMES: Readonly<Record<string, HiveTheme>> = {
   cinder: CINDER_THEME,
 };
 
-/** Is this id one the library may not remove or overwrite? */
+/**
+ * Is this id one the library may not remove or overwrite?
+ *
+ * `Object.hasOwn`, never `in`: `'toString' in BUILT_IN_THEMES` is `true` on any
+ * object literal, and the matching lookup returns
+ * `Object.prototype.toString` — a function, so a `?? fallback` guarding it
+ * never fires and the caller ends up reading `.modes` off it.
+ */
 export function isBuiltInThemeId(id: string): boolean {
-  return id in BUILT_IN_THEMES;
+  return Object.hasOwn(BUILT_IN_THEMES, id);
 }
