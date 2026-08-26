@@ -1,4 +1,5 @@
 import { ArrowClockwise } from '@phosphor-icons/react';
+import type { ReactNode } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
 import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
@@ -113,6 +114,53 @@ function RetryButton({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/**
+ * The panel's own scroll boundary.
+ *
+ * The rail's `role="tabpanel"` wrapper scrolls whatever panel it holds, which
+ * for this one meant the search row and its repo scope travelling upward with
+ * the results — controls that describe the list scrolling out of reach of the
+ * list they describe.
+ *
+ * Filling the rail's height exactly is what fixes it: the outer scroller then
+ * has nothing to scroll and never engages, and the region below the pinned
+ * header becomes the only thing that moves. That is preferable to `sticky`,
+ * which keeps the row in view but leaves it inside the scrolling flow — so it
+ * still needs an opaque fill to hide the cards passing under it, and the
+ * scrollbar still spans the whole panel including the part that never moves.
+ *
+ * The WORK panel is deliberately left alone: it has no header to pin, so its
+ * cards scrolling in the rail's own container is already the right behaviour.
+ */
+function PrsLayout({
+  header,
+  listRef,
+  children,
+}: {
+  header: ReactNode;
+  /** Goes *inside* the scroller, so `usePullToRefresh` finds it walking up. */
+  listRef?: (node: HTMLElement | null) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      data-panel="prs"
+      className="flex h-full min-h-0 flex-col gap-[var(--cc-list-gap-sm)]"
+    >
+      <div className="shrink-0">{header}</div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          ref={listRef}
+          className="flex flex-col gap-[var(--cc-list-gap-sm)]"
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PrsPanel() {
   const prs = usePrs();
   const source = usePrSource();
@@ -169,10 +217,9 @@ export function PrsPanel() {
   */
   if (source.kind === 'loading' && !searching) {
     return (
-      <div data-panel="prs" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
-        <PrSearchRow projectId={projectId} />
+      <PrsLayout header={<PrSearchRow projectId={projectId} />}>
         <PrListSkeleton />
-      </div>
+      </PrsLayout>
     );
   }
 
@@ -184,9 +231,7 @@ export function PrsPanel() {
   */
   if (searching) {
     return (
-      <div data-panel="prs" className="flex flex-col gap-[var(--cc-list-gap-sm)]">
-        <PrSearchRow projectId={projectId} />
-
+      <PrsLayout header={<PrSearchRow projectId={projectId} />}>
         {search.error !== null ? (
           <p className="px-1 pb-1 text-[11.5px] leading-[1.45] text-amber">
             {search.error}
@@ -213,19 +258,14 @@ export function PrsPanel() {
             Nothing matches “{term}”.
           </EmptyState>
         ) : null}
-      </div>
+      </PrsLayout>
     );
   }
 
   return (
-    <div
-      ref={pull.ref}
-      data-panel="prs"
-      className="flex flex-col gap-[var(--cc-list-gap-sm)]"
-    >
+    <PrsLayout header={<PrSearchRow projectId={projectId} />} listRef={pull.ref}>
       <PullIndicator distance={pull.distance} phase={pull.phase} />
 
-      <PrSearchRow projectId={projectId} />
       <SourceNotice source={source} onRetry={retry} />
 
       {/*
@@ -255,6 +295,6 @@ export function PrsPanel() {
           .
         </EmptyState>
       ) : null}
-    </div>
+    </PrsLayout>
   );
 }
