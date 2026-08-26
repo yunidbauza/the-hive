@@ -1,6 +1,7 @@
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
 import { useEffect, useRef } from 'react';
 
+import { GH_MERGED_PAGE, GH_OPEN_PAGE } from '@shared/github-contract';
 import {
   usePrSearch,
   useSearchPrs,
@@ -123,6 +124,17 @@ export function PrSearchRow({ projectId }: PrSearchRowProps) {
 
   const count = search.results?.length ?? 0;
 
+  /**
+   * Whether GitHub had more to say than it was asked for.
+   *
+   * The two search connections take a page each, so a result set that fills
+   * both is the one case where the count is not the answer — it is the *cap*.
+   * Printing a confident "200 results" over a truncated set is the same class
+   * of untruth as a tree that shows the wrong files without saying so, which is
+   * what most of this change is about.
+   */
+  const capped = count >= GH_OPEN_PAGE + GH_MERGED_PAGE;
+
   return (
     <div className="flex shrink-0 flex-col gap-1.5 pb-1">
       <div className="flex items-center gap-2 rounded-lg border border-border bg-panel-2 px-2 py-1.5 focus-within:border-brand">
@@ -188,7 +200,7 @@ export function PrSearchRow({ projectId }: PrSearchRowProps) {
               ? 'Searching…'
               : search.error !== null
                 ? ''
-                : `${String(count)} ${count === 1 ? 'result' : 'results'} · all authors`}
+                : `${String(count)}${capped ? '+' : ''} ${count === 1 ? 'result' : 'results'} · all authors`}
           </span>
         </div>
       )}

@@ -131,6 +131,26 @@ describe('PrSearchRow', () => {
     expect(screen.getByText('0 results · all authors')).toBeInTheDocument();
   });
 
+  it('marks a full page of results as a floor, not a total', async () => {
+    render(<PrSearchRow projectId="nova-web" />);
+    await type('carapace');
+
+    await act(async () => {
+      useHiveStore.setState({
+        prSearch: {
+          term: 'carapace',
+          // Both search connections filled, which is the one case where the
+          // count is the cap rather than the answer.
+          results: Array.from({ length: 200 }, () => ({}) as never),
+          searching: false,
+          error: null,
+        },
+      });
+    });
+
+    expect(screen.getByText('200+ results · all authors')).toBeInTheDocument();
+  });
+
   /**
    * The row unmounts on a rail-tab switch while the term lives on in
    * `ui-store`. An unguarded reset effect would uncheck "All repos" and

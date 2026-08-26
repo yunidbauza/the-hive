@@ -48,6 +48,30 @@
  * (`electron/main/external-links.ts`), it is the only side that can be trusted
  * to be one, and a second copy of the allowlist in the renderer would be a
  * second definition of "safe" — which is how the two come to disagree.
+ *
+ * ## What replacing the confirm dialog costs, stated plainly
+ *
+ * xterm's OSC 8 default put a `confirm()` in front of every hyperlink, and that
+ * dialog was the only place the **actual target** appeared. OSC 8 lets a program
+ * render arbitrary display text over an arbitrary URL, and terminal output is
+ * untrusted input, so removing the dialog removes the user's one chance to see
+ * that `⧉ the docs` points somewhere else.
+ *
+ * Kept anyway, deliberately. The dialog did not work — `window.open()` failed
+ * immediately after it, so its whole contribution was a scary warning followed
+ * by nothing — and a security control that never completes teaches users to
+ * click through warnings. What bounds the residual risk is main's allowlist:
+ * only `http:` and `https:` ever reach `shell.openExternal`, so the worst case
+ * is a link to an unexpected web page, not a custom scheme handing a string to
+ * some other installed application. That is phishing-shaped rather than
+ * RCE-shaped, and it is the same exposure every `<a target="_blank">` in this
+ * app already carries.
+ *
+ * The thing that would genuinely recover it is a hover affordance showing the
+ * real URL before the click. That is a rendering concern rather than a handler
+ * one — xterm's `linkHandler` takes `hover`/`leave` callbacks and the surface
+ * would have to own a tooltip — and it is recorded here as the next step rather
+ * than half-built.
  */
 
 /** Open `uri` in the user's browser. Main decides whether it may be opened. */
