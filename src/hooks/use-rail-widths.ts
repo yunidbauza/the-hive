@@ -1,29 +1,55 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 
-import {
-  RAIL_MIN,
-  railMaxWidth,
-  type RailMinimums,
-  type RailWidths,
-} from '@lib/rail-width';
-import { syncRailWidths, useRailWidthState } from '@stores/appearance-store';
+import { clampRailWidths, RAIL_MIN, railMaxWidth } from '@lib/rail-width';
+import { applyRailWidths, useRailWidthState } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
+
+/**
+ * What one handle needs to drive and announce itself.
+ *
+ * `min` and `max` are the **effective** bounds, not the constants — see
+ * {@link useRailWidths} on why the difference matters.
+ */
+export interface RailHandleBounds {
+  value: number;
+  min: number;
+  max: number;
+}
+
+export interface RailWidths {
+  left: RailHandleBounds;
+  right: RailHandleBounds;
+}
 
 /**
  * Keep the painted rail widths correct (HIVE-105).
  *
- * ## Why a hook, and why at the composition root
+ * ## Why a hook, and why not in `app-shell`
  *
  * The answer depends on three facts that live in three different places: the
  * stored widths and the density (`appearance-store`), whether the activity rail
  * is mounted (`ui-store`), and how wide the window is (the DOM). No store may
  * read another, and the DOM is nobody's state — so the assembly has to happen
- * in a component, and the only component entitled to know about all three is
- * the shell.
+ * in a component.
  *
- * Mounted once, in `app-shell.tsx`, alongside the other single-subscription
- * hooks there and for the same reason: this writes to `<body>`, and a second
- * copy would mean two writers racing over one property.
+ * It happens in `rail-handles.tsx`, a leaf, rather than in the shell that
+ * mounts it. That is deliberate and it is the difference between a drag costing
+ * two renders and costing every mounted surface in the app: `app-shell` renders
+ * `LeftRail`, `CenterStage` and `ActivityRail`, none of them memoized, and
+ * `center-stage.tsx` notes that a render of it "costs a render of every mounted
+ * surface". Subscribing the shell to a value that changes on every `pointermove`
+ * would have made a drag the most expensive gesture in the app.
+ *
+ * ## Why there is no `setState` here
+ *
+ * The widths are derived, not held. `clampRailWidths` is pure, so it runs in
+ * render through `useMemo`; the layout effect only *writes* the result to
+ * `<body>`. Keeping them in state instead would mean a second render for every
+ * one of the first — the store update renders, the effect sets state, that
+ * renders again — for a value that was already knowable during the first.
+ *
+ * The one thing that genuinely is state is the window's width, because
+ * `window.innerWidth` is not reactive and nothing else will tell us it changed.
  *
  * ## Why `useLayoutEffect`
  *
@@ -31,7 +57,7 @@ import { useShowActivityRail } from '@stores/ui-store';
  * width would apply one frame after the rails had already drawn at their
  * default — a visible jump on every launch for anyone who has resized a rail.
  */
-export function useRailWidths(): RailWidths & { max: number; min: RailMinimums } {
+export function useRailWidths(): RailWidths {
   const { railWidthLeft, railWidthRight, density } = useRailWidthState();
   const showActivityRail = useShowActivityRail();
 
@@ -62,36 +88,47 @@ export function useRailWidths(): RailWidths & { max: number; min: RailMinimums }
 
   const min = RAIL_MIN[density];
 
-  /*
-    The clamp runs during layout rather than in render, because it writes to
-    `<body>`. Rendering is supposed to be free of side effects, and a render
-    that is thrown away (StrictMode, a suspended sibling) must not leave a
-    property behind on the document.
-  */
-  const [widths, setWidths] = useState<RailWidths>(() => ({
-    left: min.left,
-    right: showActivityRail ? min.right : 0,
-  }));
-
-  useLayoutEffect(() => {
-    setWidths(
-      syncRailWidths({
+  const widths = useMemo(
+    () =>
+      clampRailWidths({
         storedLeft: railWidthLeft,
         storedRight: railWidthRight,
         min,
         windowWidth,
         showActivityRail,
       }),
-    );
-  }, [railWidthLeft, railWidthRight, min, windowWidth, showActivityRail]);
+    [railWidthLeft, railWidthRight, min, windowWidth, showActivityRail],
+  );
 
-  /*
-    The ceiling a *single* rail may reach, which is what the handles need for
-    `aria-valuemax` and for stopping the gesture. Deliberately the per-rail
-    bound and not the cross-rail one: two rails fighting over a shared budget
-    would make each handle's maximum depend on the other's live position, and a
-    handle that moves its own limit while you drag it is worse than one that
-    stops slightly early.
-  */
-  return { ...widths, max: railMaxWidth(windowWidth), min };
+  useLayoutEffect(() => {
+    applyRailWidths(widths, min);
+  }, [widths, min]);
+
+  /**
+   * The bounds handed to each handle, which are **not** simply the constants.
+   *
+   * Below `railFloorWindowWidth` the stage floor wins and a rail is painted
+   * *narrower than its own minimum*. Handing the handle the unreduced minimum
+   * there produces a slider whose `min` exceeds its `value` — invalid to
+   * announce, and actively wrong to drive: the shrink key would evaluate
+   * `Math.max(268, …)` on a rail painted at 256 and *grow* it, writing a stored
+   * width the user never chose.
+   *
+   * So the floor follows the paint down, and the ceiling is never allowed below
+   * the floor. At a window that narrow the range collapses to a single value,
+   * which is the honest answer — there is no room to move.
+   */
+  const bounds = (value: number, floor: number): RailHandleBounds => {
+    const effectiveMin = Math.min(floor, value);
+    return {
+      value,
+      min: effectiveMin,
+      max: Math.max(effectiveMin, railMaxWidth(windowWidth)),
+    };
+  };
+
+  return {
+    left: bounds(widths.left, min.left),
+    right: bounds(widths.right, min.right),
+  };
 }

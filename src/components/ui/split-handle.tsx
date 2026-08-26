@@ -172,12 +172,31 @@ export function SplitHandle({
       */
       const sign = scale === 'px-from-end' ? -1 : 1;
 
+      const move = (to: number) => {
+        event.preventDefault();
+
+        const next = clamp(to);
+        /*
+          A key that cannot move the value must not report one. Where the bounds
+          have collapsed — a rail already at the stop, or squeezed to a single
+          legal width by a narrow window — the clamp returns exactly `value`,
+          and passing that on would still be a *write*: enough to turn a rail
+          that was following the stylesheet into one carrying an explicit width
+          nobody chose.
+
+          Only the keyboard is guarded. `value` is fresh from render here, while
+          the drag's `pointermove` closure captures it at `pointerdown` and would
+          be comparing against a stale number by its second event. A drag is also
+          an unambiguous intent to set a width, where an arrow key that visibly
+          does nothing is not.
+        */
+        if (next !== value) onValue(next);
+      };
+
       if (event.key === back) {
-        event.preventDefault();
-        onValue(clamp(value - step * sign));
+        move(value - step * sign);
       } else if (event.key === forward) {
-        event.preventDefault();
-        onValue(clamp(value + step * sign));
+        move(value + step * sign);
       }
     },
     [clamp, onValue, scale, step, value, vertical],

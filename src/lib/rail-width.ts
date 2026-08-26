@@ -77,9 +77,9 @@ export const STAGE_MIN_FRACTION = 0.2;
  * 1100px, so the desktop app cannot reach the reducing branch of
  * {@link clampRailWidths} at all. That headroom is not a coincidence to be
  * relied on quietly: `tests/lib/rail-width.test.ts` asserts
- * `MIN_WINDOW_SIZE.width >= railFloorWindowWidth('comfortable')`, so narrowing
- * the window minimum or widening a rail minimum fails the build rather than
- * silently breaching the stage floor.
+ * `MIN_WINDOW_SIZE.width >= railFloorWindowWidth(RAIL_MIN.comfortable)`, so
+ * narrowing the window minimum or widening a rail minimum fails the build
+ * rather than silently breaching the stage floor.
  */
 export function railFloorWindowWidth(min: RailMinimums, showActivityRail = true): number {
   return (min.left + (showActivityRail ? min.right : 0)) / (1 - STAGE_MIN_FRACTION);
@@ -103,7 +103,14 @@ export interface RailWidthInput {
   windowWidth: number;
   /**
    * Whether the activity rail is mounted. When it is not it claims no width and
-   * contributes nothing to the budget, so the left rail's ceiling grows.
+   * drops out of the budget below.
+   *
+   * Note what this does *not* do: {@link railMaxWidth} is a per-rail ceiling and
+   * never consults this, so hiding the activity rail does not let the left rail
+   * grow any wider. What it frees is budget, which only matters in the reducing
+   * branch — at a window too narrow for both defaults, the left rail keeps its
+   * full width once the right one is gone. Two rails cannot exhaust the budget
+   * on their own, so there is nothing else for the freed room to do.
    */
   showActivityRail: boolean;
 }

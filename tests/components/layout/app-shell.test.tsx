@@ -1,10 +1,7 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RAIL_MIN } from '@lib/rail-width';
 import { AppShell } from '@components/layout/app-shell';
-import { useAppearanceStore } from '@stores/appearance-store';
 import { useUiStore } from '@stores/ui-store';
 
 vi.mock('@xterm/xterm');
@@ -89,92 +86,35 @@ describe('AppShell', () => {
   /**
    * The rail drag handles (HIVE-105).
    *
-   * Mounted here rather than inside either rail, because a rail's width is a
-   * distance from an edge of this row and the row is the only thing that can
-   * measure it. The clamp itself is proved in `tests/lib/rail-width.test.ts`;
-   * what these cover is that the wiring reaches the store at all.
+   * Only that they are mounted, and mounted as overlays. Their wiring belongs
+   * to `rail-handles.test.tsx` — they are a leaf specifically so this shell
+   * does not re-render with them, and re-testing them here would assert the
+   * same behaviour through thirteen extra surfaces.
    */
-  describe('rail resize handles', () => {
-    beforeEach(() => {
-      document.body.style.removeProperty('--cc-rail-w-left');
-      document.body.style.removeProperty('--cc-rail-w-right');
-      useAppearanceStore.getState().reset();
-      /*
-        happy-dom reports 1024px, where 30% of the window is *below* the right
-        rail's own minimum and neither rail can grow at all. A width the app
-        would never open at is the wrong stage for testing the wiring.
-      */
-      window.innerWidth = 1920;
-    });
+  it('mounts a resize handle for each rail', () => {
+    render(<AppShell />);
 
-    const handles = () => ({
-      left: screen.getByRole('slider', { name: 'Resize the navigation rail' }),
-      right: screen.queryByRole('slider', { name: 'Resize the activity rail' }),
-    });
+    expect(
+      screen.getByRole('slider', { name: 'Resize the navigation rail' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('slider', { name: 'Resize the activity rail' }),
+    ).toBeInTheDocument();
+  });
 
-    it('gives each rail a handle', () => {
-      render(<AppShell />);
+  /**
+   * The handles take no layout space, so the three regions measure exactly as
+   * they did before they existed. Asserted here rather than in the leaf's own
+   * suite because it is a fact about the row, not about the buttons.
+   */
+  it('keeps the rail row a three-item flex layout', () => {
+    render(<AppShell />);
 
-      expect(handles().left).toBeInTheDocument();
-      expect(handles().right).toBeInTheDocument();
-    });
+    const row = screen.getByRole('main').parentElement;
+    expect(row).toHaveClass('relative', 'flex');
 
-    /** No rail, nothing to resize. */
-    it('drops the activity rail handle along with the rail', () => {
-      useUiStore.setState({ showActivityRail: false });
-
-      render(<AppShell />);
-
-      expect(handles().left).toBeInTheDocument();
-      expect(handles().right).not.toBeInTheDocument();
-    });
-
-    it('announces each rail current width in pixels', () => {
-      render(<AppShell />);
-
-      expect(handles().left).toHaveAttribute('aria-valuenow', String(RAIL_MIN.comfortable.left));
-      expect(handles().left).toHaveAttribute('aria-valuemin', String(RAIL_MIN.comfortable.left));
-    });
-
-    it('stores a width dragged with the keyboard', async () => {
-      render(<AppShell />);
-
-      handles().left.focus();
-      await userEvent.keyboard('{ArrowRight}');
-
-      expect(useAppearanceStore.getState().railWidthLeft).toBe(
-        RAIL_MIN.comfortable.left + 8,
-      );
-    });
-
-    /**
-     * The activity rail grows leftwards, so its handle's arrows are inverted.
-     * `ArrowLeft` widening it is the point — the seam moves left, the rail gets
-     * bigger.
-     */
-    it('inverts the arrows for the activity rail', async () => {
-      render(<AppShell />);
-
-      const right = handles().right;
-      right?.focus();
-      await userEvent.keyboard('{ArrowLeft}');
-
-      expect(useAppearanceStore.getState().railWidthRight).toBe(
-        RAIL_MIN.comfortable.right + 8,
-      );
-    });
-
-    it('returns a rail to the stylesheet on a double-click', async () => {
-      render(<AppShell />);
-
-      handles().left.focus();
-      await userEvent.keyboard('{ArrowRight}');
-      expect(useAppearanceStore.getState().railWidthLeft).not.toBeNull();
-
-      await userEvent.dblClick(handles().left);
-
-      expect(useAppearanceStore.getState().railWidthLeft).toBeNull();
-      expect(document.body.style.getPropertyValue('--cc-rail-w-left')).toBe('');
-    });
+    for (const handle of screen.getAllByRole('slider')) {
+      expect(handle).toHaveClass('absolute');
+    }
   });
 });

@@ -4,19 +4,14 @@ import { ActivityRail } from '@components/layout/activity-rail';
 import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
+import { RailHandles } from '@components/layout/rail-handles';
 import { TitleBar } from '@components/layout/title-bar';
-import { SplitHandle } from '@components/ui/split-handle';
 import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
 import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
-import { useRailWidths } from '@hooks/use-rail-widths';
-import {
-  useResetRailWidth,
-  useSetRailWidth,
-  watchSystemTheme,
-} from '@stores/appearance-store';
+import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
 
 /**
@@ -48,14 +43,14 @@ export function AppShell() {
   const showActivityRail = useShowActivityRail();
 
   /*
-    Rail widths (HIVE-105). Here rather than in either rail for the reason every
-    other subscription in this file is here: it depends on facts from two stores
-    and the window, it writes to `<body>`, and one writer is the whole point.
+    The ruler the rail handles measure against (HIVE-105).
+
+    Only the ref lives here. The widths themselves are subscribed to inside
+    `RailHandles`, deliberately: they change on every pointermove of a drag, and
+    this component renders three unmemoized regions — one of which, by its own
+    note, costs a render of every mounted surface.
   */
   const railRef = useRef<HTMLDivElement>(null);
-  const rails = useRailWidths();
-  const setRailWidth = useSetRailWidth();
-  const resetRailWidth = useResetRailWidth();
 
   /**
    * One subscription for every real session's status (story 096).
@@ -132,49 +127,7 @@ export function AppShell() {
         <CenterStage />
         {showActivityRail ? <ActivityRail /> : null}
 
-        {/*
-          The rail handles (HIVE-105).
-
-          **Overlays, not flex siblings**, and that is the whole point of them
-          being here rather than in the row above. A 1px handle in the flow
-          would take a pixel from the stage and shift every measurement in the
-          shell by two — small, but this app has browser tests that assert
-          alignment to within a pixel, and one of them caught exactly that. As
-          overlays they consume no layout at all: the geometry with them is
-          identical to the geometry before this feature existed.
-
-          Each sits on the rail's own border, addressed by the same custom
-          property the rail is sized with, so a handle can never drift from the
-          edge it drags. `bg-transparent` because that border already draws the
-          hairline — what these contribute is the hit area and the hover
-          colour, not the line.
-        */}
-        <SplitHandle
-          axis="vertical"
-          containerRef={railRef}
-          label="Resize the navigation rail"
-          value={rails.left}
-          onValue={(width) => setRailWidth('left', width)}
-          onReset={() => resetRailWidth('left')}
-          scale="px-from-start"
-          min={rails.min.left}
-          max={rails.max}
-          className="absolute inset-y-0 left-[var(--cc-rail-w-left)] bg-transparent"
-        />
-        {showActivityRail ? (
-          <SplitHandle
-            axis="vertical"
-            containerRef={railRef}
-            label="Resize the activity rail"
-            value={rails.right}
-            onValue={(width) => setRailWidth('right', width)}
-            onReset={() => resetRailWidth('right')}
-            scale="px-from-end"
-            min={rails.min.right}
-            max={rails.max}
-            className="absolute inset-y-0 right-[var(--cc-rail-w-right)] bg-transparent"
-          />
-        ) : null}
+        <RailHandles containerRef={railRef} />
       </div>
     </div>
   );

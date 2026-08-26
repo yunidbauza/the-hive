@@ -398,7 +398,7 @@ export function activeThemeOf(
  * default has its property *removed*, and the stylesheet — density rules
  * included — takes back over.
  */
-function applyRailWidths(widths: RailWidths, min: { left: number; right: number }) {
+export function applyRailWidths(widths: RailWidths, min: { left: number; right: number }) {
   if (typeof document === 'undefined') return;
 
   const { style } = document.body;
@@ -422,19 +422,17 @@ function applyRailWidths(widths: RailWidths, min: { left: number; right: number 
 }
 
 /**
- * Clamp, paint, and report — the one entry point anything outside this module
- * uses to resize a rail.
+ * Clamp and paint in one call, for the callers that have no separate render
+ * pass to hang the two halves off — {@link applyStoredRailWidths} below, and
+ * the store's own tests.
  *
- * Returns the painted widths because the drag handles need them: a handle's
- * `aria-valuenow` and the position its gesture stops at must be what is on
- * screen, not what is in the store, and the two differ whenever the window is
- * squeezing a stored width.
+ * `use-rail-widths` deliberately does *not* use this. A React component can
+ * clamp during render (it is pure) and write during layout, and splitting the
+ * two is what keeps a drag from costing a second render per pointer event.
  *
  * Takes its whole input rather than reading the store, because half of that
  * input is not store state — the window's width belongs to the DOM and
  * `showActivityRail` belongs to `ui-store`, which this store may not read.
- * `use-rail-widths` assembles the three sources at the composition root, which
- * is the one place allowed to know about all of them.
  */
 export function syncRailWidths(input: RailWidthInput): RailWidths {
   const widths = clampRailWidths(input);
@@ -446,11 +444,18 @@ export function syncRailWidths(input: RailWidthInput): RailWidths {
  * The rail widths implied by the store alone, for the paths that have no
  * `showActivityRail` to hand — rehydration and reset.
  *
- * Assumes the activity rail is showing, which is its default and the
- * overwhelmingly common case. `use-rail-widths` corrects it on mount if it is
- * not, and the correction is invisible: a hidden rail paints no width, so the
- * only difference for that one frame is a marginally tighter ceiling on the
- * left rail.
+ * Passes `showActivityRail: true`, which is **exact rather than optimistic on
+ * the path that matters**. `ui-store` has no persist middleware — nothing there
+ * is persisted, by a structural rule that store states outright — so
+ * `showActivityRail` is its initial `true` on every launch. At rehydration,
+ * which runs during module evaluation before React mounts, there is therefore
+ * no other answer it could have.
+ *
+ * `setDensity` is the one caller that can run later, with the rail genuinely
+ * hidden. What it writes then is a `--cc-rail-w-right` for a rail nobody is
+ * painting: unread, because the only other consumer of that property is the
+ * header cluster, which drops its `calc()` column when the rail is hidden — and
+ * corrected by `use-rail-widths` in the same commit phase regardless.
  */
 function applyStoredRailWidths(
   state: Pick<AppearanceState, 'railWidthLeft' | 'railWidthRight' | 'density'>,
