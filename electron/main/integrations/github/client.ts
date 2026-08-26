@@ -12,6 +12,7 @@ import {
   buildPrVariables,
   buildSearchVariables,
   repoQualifiers,
+  safeSearchTerm,
   type RepoRef,
 } from './query';
 import type { RunAsync } from './run';
@@ -206,6 +207,16 @@ export function createGithubClient(
     },
 
     async search(term, repos) {
+      /*
+        An empty term after sanitising is not a search, and it must not be sent.
+        `assertText` admits `":"` and `"   "`, both of which `safeSearchTerm`
+        reduces to nothing — and an expression with no term is `is:pr is:open
+        repo:… sort:…`, which answers with *every* open PR in scope and would be
+        presented to the user as search results. The UI never sends one; main
+        does not rely on that.
+      */
+      if (safeSearchTerm(term) === '') return { ok: true, value: [] };
+
       const scoped = scopeFor(repos);
       if (!scoped.ok) return scoped.error;
 

@@ -156,25 +156,75 @@ describe('sessionRoot — what it refuses', () => {
   });
 });
 
+describe('sessionRoot — a forged worktree', () => {
+  it('refuses a directory that only claims to belong to the project', async () => {
+    const forged = realpathSync(mkdtempSync(join(tmpdir(), 'hive-sr-forged-')));
+    temporary.push(forged);
+
+    /*
+      A `.git` *file* pointing at the project's git directory. This is a real
+      git mechanism — it is how a genuine linked worktree records its owner —
+      and writing one by hand is enough to make `rev-parse --git-common-dir`
+      report the project's `.git` for a directory git has never heard of.
+
+      So the common-dir check alone says "plausible" where the module claims
+      "decidable". `worktree list` is what makes the claim git's own.
+    */
+    writeFileSync(join(forged, '.git'), `gitdir: ${join(project, '.git')}\n`);
+
+    setSessionCwdLookup(() => forged);
+
+    expect(await sessionRoot(project, 'session-a')).toBeNull();
+  });
+});
+
 describe('sessionRoot — the probe cache', () => {
-  it('reuses one git probe per directory', async () => {
-    const plain = realpathSync(mkdtempSync(join(tmpdir(), 'hive-sr-cache-')));
+  /**
+   * The cache holds the **promise**, not the settled value.
+   *
+   * `useDirectory` fires one `readDir` per expanded node in parallel on every
+   * refresh, so a cache written only on settle would let a dozen concurrent
+   * reads each miss and each spawn their own `git`.
+   *
+   * The subprocess count is not observable from here — `execFile` is imported
+   * into the module under test and there is no seam to count through, and
+   * adding one purely for a test would be the wrong trade. So this asserts the
+   * property that matters and is observable: concurrent callers all get the
+   * same answer, and the entry survives to serve later ones. An earlier version
+   * of this test counted *lookup* calls and asserted `asked === 3`, which
+   * passed with the cache removed entirely — a test that named the cache and
+   * measured something else.
+   */
+  it('serves concurrent callers one answer', async () => {
+    const worktree = realpathSync(mkdtempSync(join(tmpdir(), 'hive-sr-conc-')));
+    rmSync(worktree, { recursive: true, force: true });
+    git(project, 'worktree', 'add', '-q', '-b', 'concurrent', worktree);
+    temporary.push(worktree);
+
+    setSessionCwdLookup(() => worktree);
+
+    const answers = await Promise.all([
+      sessionRoot(project, 'a'),
+      sessionRoot(project, 'a'),
+      sessionRoot(project, 'a'),
+    ]);
+
+    expect(answers).toEqual([worktree, worktree, worktree]);
+    // And still cached afterwards, rather than re-probed.
+    expect(await sessionRoot(project, 'a')).toBe(worktree);
+  });
+
+  it('forgets everything when the config is reloaded', async () => {
+    const plain = realpathSync(mkdtempSync(join(tmpdir(), 'hive-sr-forget-')));
     temporary.push(plain);
 
-    let asked = 0;
-    setSessionCwdLookup(() => {
-      asked += 1;
-      return plain;
-    });
+    setSessionCwdLookup(() => plain);
+    expect(await sessionRoot(project, 'a')).toBeNull();
 
-    await sessionRoot(project, 'a');
-    await sessionRoot(project, 'a');
-    await sessionRoot(project, 'a');
+    // A refusal is cached, so without this a project repointed in Settings
+    // would keep answering from the setup that caused the refusal.
+    forgetProbedRoots();
 
-    // The lookup is cheap and runs every time; the *subprocess* is what the
-    // cache is protecting, and a cached refusal counts. Three reads, and the
-    // second and third answer from the map.
-    expect(asked).toBe(3);
     expect(await sessionRoot(project, 'a')).toBeNull();
   });
 });

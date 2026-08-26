@@ -80,8 +80,18 @@ export function PrSearchRow({ projectId }: PrSearchRowProps) {
     The session changing resets the scope, for the same reason clearing the box
     does: the scope belonged to a question about the session the user was
     watching, and they are now watching another.
+
+    Guarded on the *previous* project rather than run on every mount. The term
+    lives in `ui-store` and survives this component, but the component itself
+    unmounts on a rail-tab switch — so an unguarded effect would silently
+    uncheck "All repos" and re-query narrowed every time the user left the PRs
+    tab and came back, which is a scope change they did not make.
   */
+  const lastProject = useRef<string | null>(projectId);
+
   useEffect(() => {
+    if (lastProject.current === projectId) return;
+    lastProject.current = projectId;
     setAllRepos(false);
   }, [projectId, setAllRepos]);
 

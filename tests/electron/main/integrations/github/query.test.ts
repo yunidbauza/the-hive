@@ -206,6 +206,21 @@ describe('safeSearchTerm', () => {
     expect(safeSearchTerm('author:nobody carapace')).toBe('author nobody carapace');
   });
 
+  /**
+   * The sharp one. GitHub search has quoted phrases and **no escape
+   * mechanism**, so a single unbalanced quote runs to the end of the expression
+   * and swallows every `repo:` qualifier after it into literal text — a valid,
+   * unscoped search across all of GitHub, reached from inside the search box.
+   */
+  it('removes the double quote, which would swallow the scope', () => {
+    expect(safeSearchTerm('carapace "')).toBe('carapace');
+    expect(safeSearchTerm('"a b')).toBe('a b');
+  });
+
+  it('removes parentheses, which group around a boolean', () => {
+    expect(safeSearchTerm('(a OR b)')).toBe('a OR b');
+  });
+
   it('collapses the whitespace a removal leaves behind', () => {
     expect(safeSearchTerm('  a::b   c  ')).toBe('a b c');
   });
@@ -250,5 +265,31 @@ describe('buildSearchVariables', () => {
     // One `repo:` qualifier in the expression, and it is the one main composed.
     expect(variables.open.match(/repo:/gu)).toHaveLength(1);
     expect(variables.open).toContain('repo:behiques/the-hive');
+  });
+
+  /**
+   * Two independent defences, asserted separately because either alone would
+   * leave a hole.
+   */
+  it('cannot be escaped by an unbalanced quote', () => {
+    const variables = buildSearchVariables('carapace "', scope);
+
+    // Nothing the user typed can open a phrase, so nothing after it can be
+    // swallowed into one.
+    expect(variables.open).not.toContain('"');
+    expect(variables.open).toContain('repo:behiques/the-hive');
+  });
+
+  it('emits the scope before anything the user typed', () => {
+    const variables = buildSearchVariables('a OR b', scope);
+
+    /*
+      Ordering, not cosmetics. GitHub honours `OR` between terms, so with the
+      term first `x OR y` splits into two disjuncts and only the second carries
+      the qualifiers — the left one would search all of GitHub.
+    */
+    expect(variables.open.indexOf('repo:behiques/the-hive')).toBeLessThan(
+      variables.open.indexOf('a OR b'),
+    );
   });
 });

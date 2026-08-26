@@ -186,7 +186,7 @@ describe('EditorPane — the disk disagreeing', () => {
     await openFile();
     await act(async () => {
       store().edit(KEY, 'mine\n');
-      store().reconcile('demo', ['src/app.ts']);
+      store().reconcile('demo', ['src/app.ts'], '');
     });
 
     render(<EditorPane />);
@@ -219,7 +219,7 @@ describe('EditorPane — the disk disagreeing', () => {
     await openFile();
     await act(async () => {
       store().edit(KEY, 'mine\n');
-      store().reconcile('demo', ['src/app.ts']);
+      store().reconcile('demo', ['src/app.ts'], '');
     });
 
     readFile.mockResolvedValue(content('theirs\n', 900));

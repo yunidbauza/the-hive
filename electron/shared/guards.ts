@@ -29,6 +29,7 @@ import {
 import type {
   ReadDirRequest,
   ReadFileRequest,
+  RootRequest,
   WatchRequest,
   WriteFileRequest,
 } from './fs-contract';
@@ -1339,6 +1340,21 @@ export function parseWriteFileRequest(input: unknown): WriteFileRequest {
     baseMtimeMs,
     ...(raw.sessionId !== undefined
       ? { sessionId: assertId(raw.sessionId, 'writeFile.sessionId') }
+      : {}),
+  };
+}
+
+/**
+ * `fs:root` — a project and, optionally, a session. Same two values the reads
+ * already carry, validated the same way: an id is an id, and there is no path
+ * in this payload either.
+ */
+export function parseRootRequest(input: unknown): RootRequest {
+  const raw = assertShape(input, ['projectId'], 'root', ['sessionId']);
+  return {
+    projectId: assertId(raw.projectId, 'root.projectId'),
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'root.sessionId') }
       : {}),
   };
 }

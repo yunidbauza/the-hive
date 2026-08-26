@@ -18,6 +18,8 @@ interface TreeNodeProps {
   refreshToken: number;
   /** Whose working directory the tree is rooted at. See `useExplorerProject`. */
   sessionId?: string;
+  /** Which tree these paths are relative to. `''` is the project root. */
+  rootKey: string;
   onOpenFile: (relPath: string) => void;
 }
 
@@ -49,6 +51,7 @@ export function TreeNode({
   depth,
   refreshToken,
   sessionId,
+  rootKey,
   onOpenFile,
 }: TreeNodeProps) {
   const relPath = childPath(parentPath, entry.name);
@@ -57,7 +60,9 @@ export function TreeNode({
   const activeKey = useActiveFileKey();
 
   const isDir = entry.kind === 'dir';
-  const isActive = !isDir && activeKey === fileKey(projectId, relPath);
+  // Keyed with the root, or a file open from a worktree would highlight the
+  // same-named row in the project's tree and vice versa.
+  const isActive = !isDir && activeKey === fileKey(projectId, relPath, rootKey);
 
   const children = useDirectory(
     projectId,
@@ -128,6 +133,7 @@ export function TreeNode({
               depth={depth + 1}
               refreshToken={refreshToken}
               sessionId={sessionId}
+              rootKey={rootKey}
               onOpenFile={onOpenFile}
             />
           ))}

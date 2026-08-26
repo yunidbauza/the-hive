@@ -26,6 +26,7 @@ import type {
   FsChangedEvent,
   FsRefusal,
   FsResult,
+  RootInfo,
   WriteFileResult,
 } from '@shared/fs-contract';
 import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
@@ -36,6 +37,7 @@ import {
   parseDiagnoseCommandRequest,
   parseReadDirRequest,
   parseReadFileRequest,
+  parseRootRequest,
   parseWatchRequest,
   parseWriteFileRequest,
   parseDiagnoseEnvRequest,
@@ -116,8 +118,10 @@ import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
 import { isSafeExternalUrl } from '../external-links';
 import {
   createFsWatchLayer,
+  forgetProbedRoots,
   readDirectory,
   readFileContent,
+  readRoot,
   setSessionCwdLookup,
   writeFileContent,
   type FsWatchLayer,
@@ -920,7 +924,20 @@ export function registerIpcHandlers(): void {
    * because it was never trusted with the input.
    */
   handle(CH.configGet, (): ConfigSnapshot => getConfig());
-  handle(CH.configReload, (): ConfigSnapshot => reloadConfig());
+  handle(CH.configReload, (): ConfigSnapshot => {
+    /*
+      A reload can repoint, add or remove a project, which changes which
+      repository a directory should be measured against. `session-roots` caches
+      git's answer per directory *including refusals*, so without this a project
+      fixed in Settings would keep answering from the setup that caused the
+      refusal for the rest of the app's life.
+
+      Here rather than inside `reloadConfig`, so the config layer does not have
+      to know that a filesystem cache exists. This handler already owns both.
+    */
+    forgetProbedRoots();
+    return reloadConfig();
+  });
 
   /**
    * Config mutation (story 101).
@@ -1337,6 +1354,12 @@ export function registerIpcHandlers(): void {
     CH.fsReadDir,
     (_event, payload): Promise<FsResult<DirEntry[]>> =>
       readDirectory(parseReadDirRequest(payload)),
+  );
+
+  handle(
+    CH.fsRoot,
+    (_event, payload): Promise<FsResult<RootInfo>> =>
+      readRoot(parseRootRequest(payload)),
   );
 
   handle(

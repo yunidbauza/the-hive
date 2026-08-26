@@ -261,7 +261,9 @@ describe('ExplorerPanel — the tree', () => {
     expect(useEditorStore.getState().openFiles.map((f) => f.relPath)).toEqual([
       'README.md',
     ]);
-    expect(useEditorStore.getState().activeKey).toBe('nova-web:README.md');
+    // `project:root:path` — the empty middle segment is the project root, which
+    // is what every buffer carried implicitly before worktrees became roots.
+    expect(useEditorStore.getState().activeKey).toBe('nova-web::README.md');
   });
 
   /**
@@ -276,7 +278,9 @@ describe('ExplorerPanel — the tree', () => {
 
     await userEvent.click(row('README.md'));
 
-    expect(useEditorStore.getState().activeKey).toBe('nova-web:README.md');
+    // `project:root:path` — the empty middle segment is the project root, which
+    // is what every buffer carried implicitly before worktrees became roots.
+    expect(useEditorStore.getState().activeKey).toBe('nova-web::README.md');
     expect(useUiStore.getState()).toMatchObject({ settings: false, picker: false });
   });
 

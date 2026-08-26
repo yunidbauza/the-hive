@@ -186,45 +186,44 @@ export function buildPrVariables(
  * What survives from a user's search box into a search expression.
  *
  * GitHub search is a small language, and a bare term is only *data* in it by
- * convention: `repo:someone/else` typed into the box is a qualifier, and it
- * would widen the search past the scope this app just carefully chose. The
- * panel promises results from the repositories the config maps, and a term that
- * can add its own `repo:` breaks that promise from inside.
+ * convention. Three constructs in it can change **which** pull requests are
+ * searched, and all three have to go — a term that could reach past the
+ * `repo:` scope this app just chose would break the panel's promise from the
+ * inside.
  *
- * So the colon goes. Not escaped — **removed** — for the same reason
- * {@link repoQualifiers} drops an unsafe name rather than quoting it: there is
- * no escape sequence in this language, only quoting, and quoting has its own
- * parser to get wrong. Nothing else needs removing, because a qualifier is the
- * only construct that changes *which* pull requests are searched, and every
- * qualifier needs a colon.
+ * - **The colon**, which is what makes a qualifier. `repo:someone/else` typed
+ *   into the box is not a word, it is a scope.
+ * - **The double quote**, which opens a phrase. This one is the sharp edge: the
+ *   language has quoting and **no escape mechanism**, so a single unbalanced
+ *   `"` runs to the end of the expression and swallows every `repo:` qualifier
+ *   after it into literal text. The result is a valid, unscoped search across
+ *   all of GitHub — exactly the outcome `repoQualifiers` exists to make
+ *   impossible, reached from the other end.
+ * - **Parentheses**, which group. Combined with the boolean operators GitHub
+ *   honours (`AND`/`OR`/`NOT`), a group is the other way to get a disjunct that
+ *   the scope does not apply to.
+ *
+ * Removed, not escaped — the same choice {@link repoQualifiers} makes about an
+ * unsafe repository name, and for the same reason: there is no escape sequence
+ * in this language, only quoting, and quoting is the thing being defended
+ * against. Dropping is the safe direction; the cost is that a user cannot
+ * search for a literal quote, which is a fair trade for one that cannot
+ * silently search the whole of GitHub.
+ *
+ * The bare words `AND`, `OR` and `NOT` are deliberately **left alone**. They
+ * cannot escape the scope on their own once the scope is emitted first (see
+ * {@link buildSearchVariables}), and stripping them would mangle every search
+ * for a PR with "or" in its title.
  *
  * Whitespace is collapsed and the result trimmed so that a term of nothing but
- * spaces is empty rather than a search expression with a hole in it. Multiple
- * words stay multiple words: GitHub ANDs them, which is what a user typing two
- * words means.
+ * removed characters is empty rather than a search expression with a hole in
+ * it. Multiple words stay multiple words: GitHub ANDs them, which is what a
+ * user typing two words means.
  */
 export function safeSearchTerm(term: string): string {
-  return term.replace(/:/gu, ' ').replace(/\s+/gu, ' ').trim();
+  return term.replace(/["():]/gu, ' ').replace(/\s+/gu, ' ').trim();
 }
 
-/**
- * The two search expressions for a **user's** search, keyed to match
- * {@link buildPrQuery}'s parameters.
- *
- * Two differences from {@link buildPrVariables}, and both are the point of the
- * feature:
- *
- * - **No `author:@me`.** A search that could only find the user's own pull
- *   requests would answer a question they can already answer by looking at the
- *   list. "Anything matching, whoever wrote it" is the whole request.
- * - **The term is ANDed with the scope**, so a search still only ever reaches
- *   repositories the config maps. Widening *which repositories* is the
- *   checkbox's job, and the widest it goes is all of them — never all of
- *   GitHub.
- *
- * The document is unchanged, which is what keeps `mapping.ts` reusable: the same
- * two connections come back, and only the filter that produced them differs.
- */
 export function buildSearchVariables(
   term: string,
   qualifiers: readonly string[],
@@ -232,8 +231,19 @@ export function buildSearchVariables(
   const scope = qualifiers.join(' ');
   const safe = safeSearchTerm(term);
 
+  /*
+    The scope goes **before** the term, and that ordering is load-bearing rather
+    than cosmetic. GitHub honours `OR` between terms, so with the term first,
+    `x OR y` splits the expression into two disjuncts and only the second
+    carries the `repo:` qualifiers — the first would search all of GitHub.
+    Emitting the scope ahead of anything the user typed keeps every qualifier on
+    the left of any operator they can write.
+
+    `safeSearchTerm` removes the characters that could defeat that anyway; this
+    is the second of two independent defences, not a substitute for the first.
+  */
   return {
-    open: `is:pr is:open ${safe} ${scope} sort:updated-desc`,
-    merged: `is:pr is:merged ${safe} ${scope} sort:updated-desc`,
+    open: `is:pr is:open ${scope} ${safe} sort:updated-desc`,
+    merged: `is:pr is:merged ${scope} ${safe} sort:updated-desc`,
   };
 }

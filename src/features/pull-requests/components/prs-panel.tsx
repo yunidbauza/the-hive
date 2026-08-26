@@ -177,6 +177,19 @@ export function PrsPanel() {
           </p>
         ) : null}
 
+        {/*
+          The skeleton stands in only for the **first** answer, while `results`
+          is still `null`. A re-search — narrowing, widening, another keystroke —
+          keeps the rows it has, which is the same rule the sweep's skeleton
+          follows: replacing a live list with grey boxes makes the panel blink
+          for something the user can already see.
+
+          Without this the first keystroke left the panel blank for the whole
+          debounce plus the round trip, because the search branch is entered on
+          the term rather than on a request being out.
+        */}
+        {results === null && search.error === null ? <PrListSkeleton /> : null}
+
         {results?.map((pr) => <PrCard key={pr.url} pr={pr} />)}
 
         {search.error === null && !search.searching && results?.length === 0 ? (

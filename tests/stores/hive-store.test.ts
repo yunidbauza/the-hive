@@ -2414,3 +2414,117 @@ describe('hive-store', () => {
     });
   });
 });
+
+/**
+ * PR search ordering (review of PR 124).
+ *
+ * The guard used to compare the *term*, which is not enough: the debounce
+ * re-runs on a scope change too, so two requests can be in flight for one term
+ * and the narrow one landing last would leave narrow results sitting under a
+ * checked "All repos".
+ */
+describe('searchPrs — which answer wins', () => {
+  beforeEach(() => {
+    // The file's global setup pins this to `false` (the browser preview), where
+    // a search short-circuits before it ever reaches the bridge.
+    vi.mocked(isDesktop).mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    delete window.hive;
+  });
+
+  const record = (number: number) => ({
+    number,
+    repo: 'the-hive',
+    owner: 'behiques',
+    title: `pr ${String(number)}`,
+    state: 'open' as const,
+    findings: 0,
+    checks: { state: 'none' as const },
+    url: `https://github.com/behiques/the-hive/pull/${String(number)}`,
+    branch: `b${String(number)}`,
+    author: 'someone',
+    updatedAt: '2026-08-10T10:00:00Z',
+    mergedAt: null,
+  });
+
+  it('drops a slow answer for the same term at a different scope', async () => {
+    let releaseNarrow: (() => void) | undefined;
+    const searchPrs = vi
+      .fn()
+      // The narrow request, held open.
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseNarrow = () => {
+              resolve({ ok: true, value: [record(1)] });
+            };
+          }),
+      )
+      // The wide one, asked second and answering first.
+      .mockResolvedValueOnce({ ok: true, value: [record(2)] });
+
+    window.hive = { github: { searchPrs } } as unknown as Window['hive'];
+
+    const narrow = useHiveStore.getState().searchPrs('carapace', 'the-hive');
+    const wide = useHiveStore.getState().searchPrs('carapace');
+
+    await wide;
+    expect(
+      useHiveStore.getState().prSearch.results?.map((pr) => pr.number),
+    ).toEqual([2]);
+
+    releaseNarrow?.();
+    await narrow;
+
+    // Same term, so a term comparison would have let this through and left the
+    // narrow list under a checked "All repos".
+    expect(
+      useHiveStore.getState().prSearch.results?.map((pr) => pr.number),
+    ).toEqual([2]);
+  });
+
+  it('retires an answer still in flight when the search is cleared', async () => {
+    let release: (() => void) | undefined;
+    const searchPrs = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => {
+            resolve({ ok: true, value: [record(1)] });
+          };
+        }),
+    );
+    window.hive = { github: { searchPrs } } as unknown as Window['hive'];
+
+    const pending = useHiveStore.getState().searchPrs('carapace', 'the-hive');
+    useHiveStore.getState().clearPrSearch();
+
+    release?.();
+    await pending;
+
+    // Results landing into an empty box would be a list with nothing to
+    // explain it.
+    expect(useHiveStore.getState().prSearch).toEqual({
+      term: '',
+      results: null,
+      searching: false,
+      error: null,
+    });
+  });
+
+  it('is emptied by reset', () => {
+    useHiveStore.setState({
+      prSearch: { term: 'carapace', results: [], searching: false, error: null },
+    });
+
+    useHiveStore.getState().reset();
+
+    expect(useHiveStore.getState().prSearch).toEqual({
+      term: '',
+      results: null,
+      searching: false,
+      error: null,
+    });
+  });
+});

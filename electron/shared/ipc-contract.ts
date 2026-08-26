@@ -53,6 +53,8 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  RootInfo,
+  RootRequest,
   WatchRequest,
   WriteFileRequest,
   WriteFileResult,
@@ -535,6 +537,16 @@ export const CH = {
    * makes `fsUnwatch` take no payload: there is only ever one thing to stop.
    */
   fsReadDir: 'fs:read-dir',
+  /**
+   * Which root a read for this project and session resolves under.
+   *
+   * The one `fs:` verb that **answers** with a path. It takes none — the rule
+   * above is intact — and it discloses nothing the renderer does not already
+   * hold; what it adds is main's verdict on whether the session's working
+   * directory was accepted as a second root. See `fs-contract.ts` → `RootInfo`
+   * for the three things that were guessing without it.
+   */
+  fsRoot: 'fs:root',
   fsReadFile: 'fs:read-file',
   fsWriteFile: 'fs:write-file',
   fsWatch: 'fs:watch',
@@ -1111,6 +1123,8 @@ export interface HiveBridge {
    */
   fs: {
     readDir(request: ReadDirRequest): Promise<FsResult<DirEntry[]>>;
+    /** Which root this pairing resolves under. See {@link RootInfo}. */
+    root(request: RootRequest): Promise<FsResult<RootInfo>>;
     /**
      * Read a file, or say why not.
      *
@@ -1616,6 +1630,13 @@ export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
  */
 export const BRIDGE_FS_KEYS = [
   'readDir',
+  /*
+    A read, and the only verb here that answers with a path. It grants nothing
+    — the renderer already holds the project's path and the session's cwd — and
+    what it adds is main's *verdict* on which root a read resolves under, which
+    the renderer was previously inferring and getting wrong.
+  */
+  'root',
   'readFile',
   'writeFile',
   'watch',

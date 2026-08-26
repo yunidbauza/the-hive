@@ -4,6 +4,7 @@ import type {
   FsChangedEvent,
   FsRefusal,
   FsResult,
+  RootInfo,
   WriteFileResult,
 } from '@shared/fs-contract';
 
@@ -50,6 +51,23 @@ export function hasFsBridge(): boolean {
  * The renderer never sends a path for this. It sends an id, and main answers
  * from the cwd it observed itself; see `electron/main/fs/session-roots.ts`.
  */
+/**
+ * Which root a read for this project and session resolves under.
+ *
+ * The one verb here that answers with a path, and the reason it exists is that
+ * three renderer decisions — the buffer key, the watcher's reconciliation, and
+ * the explorer header — were *inferring* main's verdict and getting it wrong
+ * whenever main refused a session's working directory. See `RootInfo`.
+ */
+export async function readRoot(
+  projectId: string,
+  sessionId?: string,
+): Promise<FsResult<RootInfo>> {
+  const bridge = window.hive?.fs;
+  if (!bridge) return NO_BRIDGE;
+  return bridge.root({ projectId, sessionId });
+}
+
 export async function readDir(
   projectId: string,
   relPath: string,

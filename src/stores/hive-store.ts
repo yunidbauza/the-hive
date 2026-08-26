@@ -142,7 +142,14 @@ export type TicketSource =
 export interface PrSearchState {
   /** What produced `results`. `''` when nothing has been searched. */
   term: string;
-  /** `null` before the first answer, and while a search is in flight. */
+  /**
+   * `null` until the first answer lands, and again once the search is cleared.
+   *
+   * **Kept across a re-search**, deliberately: a user narrowing or widening an
+   * existing search keeps the previous rows on screen while the new ones are in
+   * flight, rather than watching the panel blink to empty and back. `searching`
+   * is the flag that says an answer is on its way.
+   */
   results: PrRecord[] | null;
   searching: boolean;
   error: string | null;
@@ -512,6 +519,16 @@ const staleTitles = new Map<string, string>();
  * to say "a request started" and "a request finished".
  */
 let inFlightPrSweep: Promise<void> | null = null;
+
+/**
+ * A monotonic ticket for PR searches, so a slow answer cannot overwrite a fast
+ * one that came after it.
+ *
+ * Module scope for the same reason `inFlightPrSweep` is: nothing renders it, and
+ * putting a counter in the store would re-render every subscriber to say a
+ * request had been numbered.
+ */
+let prSearchTicket = 0;
 
 /**
  * The Jira sweep in flight, or `null`.
@@ -2932,11 +2949,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   searchPrs: async (term, projectId) => {
     /*
-      The term is recorded *before* the await, so the answer can be checked
-      against it when it lands. Two debounced searches can still overlap — the
-      user types, pauses, types again — and without this the slower one would
-      paint its results over the newer ones.
+      A monotonic ticket, not the term.
+
+      Comparing terms is not enough: the debounce re-runs on a *scope* change
+      too — ticking "All repos" re-queries the same words — so two requests can
+      be in flight for one term, and the narrow one landing last would leave
+      narrow results sitting under a checked "All repos". A counter is the only
+      thing that distinguishes them, because the only difference between the two
+      requests is which one was asked for second.
     */
+    prSearchTicket += 1;
+    const ticket = prSearchTicket;
+
     set((state) => ({
       prSearch: { ...state.prSearch, term, searching: true, error: null },
     }));
@@ -2956,8 +2980,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const result = await searchPullRequests(term, projectId);
 
     // Superseded while it was out. Whatever this found is about a question the
-    // user has already moved on from.
-    if (get().prSearch.term !== term) return;
+    // user has already moved on from — a different term, or the same term at a
+    // different scope.
+    if (ticket !== prSearchTicket) return;
 
     if (result === null) {
       set({
@@ -2988,8 +3013,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     });
   },
 
-  clearPrSearch: () =>
-    set({ prSearch: { term: '', results: null, searching: false, error: null } }),
+  clearPrSearch: () => {
+    // Retires anything in flight, so a search cancelled mid-request cannot
+    // land its results into an empty box.
+    prSearchTicket += 1;
+    set({ prSearch: { term: '', results: null, searching: false, error: null } });
+  },
 
   reset: () => {
     spawnCounter = 0;
@@ -2998,6 +3027,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // one — dropping the handle makes the next caller start fresh.
     inFlightPrSweep = null;
     inFlightTicketSweep = null;
+    // Same rule for a search in flight: bumping the ticket retires it, so its
+    // answer cannot install itself into the fresh state.
+    prSearchTicket += 1;
     /**
      * Nothing in this store stamps through the clock any more — the activity
      * feed was its only caller and the project explorer replaced it. The rewind
@@ -3012,6 +3044,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       metrics: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
+      prSearch: { term: '', results: null, searching: false, error: null },
     });
   },
 }));

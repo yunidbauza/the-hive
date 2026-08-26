@@ -5,6 +5,7 @@ import { Icon } from '@components/ui/icon';
 import { TreeNode } from '@features/explorer/components/tree-node';
 import { useDirectory } from '@features/explorer/hooks/use-directory';
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
+import { useExplorerRoot } from '@features/explorer/hooks/use-explorer-root';
 import { useProjectAccess } from '@hooks/use-project-config';
 import { hasFsBridge } from '@lib/explorer/fs-client';
 import { useEditorLayout } from '@stores/appearance-store';
@@ -37,6 +38,13 @@ import {
  */
 export function ExplorerPanel() {
   const { project, root: subRoot, sessionId, display, branch } = useExplorerProject();
+  /**
+   * Main's verdict on which tree the reads below actually resolve under.
+   *
+   * `null` until it answers. The header and the buffer key both depend on it,
+   * and both were wrong while the renderer inferred it — see `useExplorerRoot`.
+   */
+  const explorerRoot = useExplorerRoot(project?.id ?? null, sessionId);
   // Only to tell the two empty states apart — see the branch below.
   const projects = useProjects();
   const access = useProjectAccess(project?.id ?? '');
@@ -63,7 +71,13 @@ export function ExplorerPanel() {
   const bridge = hasFsBridge();
 
   const projectId = project?.id ?? null;
-  const usable = bridge && projectId !== null && access.spawnable;
+  /*
+    `explorerRoot === null` is "main has not said yet", and reading before then
+    would open buffers keyed against a root we are guessing at. One round trip,
+    once per session change.
+  */
+  const usable =
+    bridge && projectId !== null && access.spawnable && explorerRoot !== null;
 
   /**
    * Rooted at the session's own directory, which is the project root for every
@@ -78,6 +92,22 @@ export function ExplorerPanel() {
   );
   const revealStage = useRevealStage();
 
+  /**
+   * The worktree name the header speaks, or `''` for the project root.
+   *
+   * Two sources, because there are two mechanisms and only one of them needs
+   * main's permission. An **in-project** worktree is reached by a prefix this
+   * panel prepends, so `display.suffix` is authoritative — main resolves the
+   * same path by construction. An **out-of-project** one is a second root main
+   * had to grant, so nothing may be said about it until main says `widened`.
+   */
+  const rootSuffix =
+    explorerRoot?.widened === true
+      ? (explorerRoot.path.split('/').pop() ?? '')
+      : subRoot === ''
+        ? ''
+        : display.suffix;
+
   const onOpenFile = useCallback(
     (relPath: string) => {
       if (projectId === null) return;
@@ -90,7 +120,7 @@ export function ExplorerPanel() {
        * caller closes what was open before opening the next.
        */
       if (nav === 'single') closeAll();
-      openFile(projectId, relPath, sessionId);
+      openFile(projectId, relPath, sessionId, explorerRoot?.key ?? '');
       /**
        * The rail is clickable behind a full-stage overlay now, so a file opened
        * from here would otherwise land *behind* settings or the picker: the row
@@ -100,7 +130,7 @@ export function ExplorerPanel() {
        */
       revealStage();
     },
-    [projectId, sessionId, nav, closeAll, openFile, revealStage],
+    [projectId, sessionId, explorerRoot, nav, closeAll, openFile, revealStage],
   );
 
   /**
@@ -184,13 +214,31 @@ export function ExplorerPanel() {
           suffix off the prefix meant the second case rendered as the first: the
           bare project name over a tree that was not the project's.
         */}
+        {/*
+          `explorerRoot`, not `display`, decides whether a worktree is named.
+
+          `display` is derived from the session's cwd, which is what the
+          *renderer* knows — and main widens the root only for a cwd it has
+          proved is a registered worktree of this project. When that proof
+          fails, main serves the project root while `display` still had a
+          worktree's name for it: the right label over the wrong files, which is
+          the untruth this header exists to prevent, inverted.
+
+          So the suffix is spoken only when main says the tree really is
+          somewhere else. The in-project case keeps `display`, because there the
+          prefix is the renderer's own and main honours it by construction.
+        */}
         <span
           className="flex-1 truncate font-mono text-[11.5px] tracking-wide text-subtle uppercase"
-          title={display.full ?? project.name}
+          title={
+            explorerRoot?.widened === true
+              ? explorerRoot.path
+              : (display.full ?? project.name)
+          }
         >
           {project.name}
-          {display.suffix === '' ? null : (
-            <span className="text-muted"> · {display.suffix}</span>
+          {rootSuffix === '' ? null : (
+            <span className="text-muted"> · {rootSuffix}</span>
           )}
         </span>
 
@@ -272,6 +320,7 @@ export function ExplorerPanel() {
               depth={0}
               refreshToken={refreshToken}
               sessionId={sessionId}
+              rootKey={explorerRoot?.key ?? ''}
               onOpenFile={onOpenFile}
             />
           ))

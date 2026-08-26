@@ -59,13 +59,23 @@ export interface OpenFile {
    * time, because the two can differ: a user opens a file from a session
    * working in a worktree, switches to another tab, and saves. The bytes must
    * go back to the file they came from, so the root main resolves has to be the
-   * one the read used.
+   * one the read used — and `observedCwd` in main keeps answering for a session
+   * that has since exited, precisely so this stays true after its terminal
+   * closes.
    *
-   * Deliberately **not** part of {@link fileKey}. A file is identified by where
-   * it is, and two sessions in the same worktree looking at the same file are
-   * looking at one buffer.
+   * Deliberately **not** what identifies the buffer; {@link OpenFile.rootKey}
+   * is. Two sessions in the same worktree looking at the same file are looking
+   * at one buffer, which is right — what must never share a buffer is two files
+   * in two different trees.
    */
   sessionId?: string;
+  /**
+   * Which tree `relPath` is relative to. `''` is the project root.
+   *
+   * Main's answer, carried so that the watcher can tell this buffer apart from
+   * one at the same path in another root — see {@link fileKey} and `reconcile`.
+   */
+  rootKey: string;
   /** The last segment, for the tab strip. Derived once rather than on every render. */
   name: string;
 
@@ -109,7 +119,13 @@ interface EditorState {
   /** The file on screen, or `null` when the terminal is. */
   activeKey: string | null;
 
-  openFile: (projectId: string, relPath: string, sessionId?: string) => void;
+  openFile: (
+    projectId: string,
+    relPath: string,
+    sessionId?: string,
+    /** Which tree `relPath` is relative to. `''` is the project root. */
+    rootKey?: string,
+  ) => void;
   closeFile: (key: string) => void;
   closeAll: () => void;
   /** Show the terminal without closing anything. */
@@ -119,23 +135,59 @@ interface EditorState {
   /** Re-read from disk, discarding local edits. */
   reload: (key: string) => Promise<void>;
   save: (key: string, options?: { overwrite?: boolean }) => Promise<void>;
-  /** A watcher event named these paths in this project. */
-  reconcile: (projectId: string, paths: readonly string[]) => void;
+  /**
+   * A watcher event named these paths, in this project, **under this root**.
+   *
+   * The root is not optional decoration. One watcher exists at a time and it is
+   * rooted wherever main resolved for the active session, so its paths are
+   * relative to *that* tree — a change at `<worktree>/src/a.ts` and a change at
+   * `<project>/src/a.ts` arrive as the same string. Without the root, one put a
+   * "changed on disk" banner over the other's buffer, or silently reloaded it
+   * with the wrong bytes.
+   */
+  reconcile: (
+    projectId: string,
+    paths: readonly string[],
+    rootKey: string,
+  ) => void;
   reset: () => void;
 }
 
-export const fileKey = (projectId: string, relPath: string): string =>
-  `${projectId}:${relPath}`;
+/**
+ * A buffer's identity: the project, **the root**, and the path.
+ *
+ * `rootKey` is `''` for the project root, which is what every buffer carried
+ * implicitly before external worktrees became roots — so the ordinary case is
+ * unchanged and nothing that existed is re-keyed.
+ *
+ * It is not decoration. `projectId + relPath` identified a file only while
+ * every root for a project *was* the project root or a prefix under it. An
+ * external worktree is a root of its own and `relativeRoot()` returns `''` for
+ * it, so paths come back bare and collide: `src/app.ts` in the worktree and
+ * `src/app.ts` in the project produced one key, `openFile` found the existing
+ * buffer and focused it, and the user edited and saved into a tree they were
+ * not looking at. The root is the dimension that was missing.
+ *
+ * Comes from main (`fs:root`), never inferred here — see `useExplorerRoot` for
+ * why the renderer's own guess was wrong in exactly the case that matters.
+ */
+export const fileKey = (
+  projectId: string,
+  relPath: string,
+  rootKey = '',
+): string => `${projectId}:${rootKey}:${relPath}`;
 
 const blank = (
   projectId: string,
   relPath: string,
-  sessionId?: string,
+  sessionId: string | undefined,
+  rootKey: string,
 ): OpenFile => ({
-  key: fileKey(projectId, relPath),
+  key: fileKey(projectId, relPath, rootKey),
   projectId,
   relPath,
   sessionId,
+  rootKey,
   name: baseName(relPath),
   text: null,
   mtimeMs: 0,
@@ -176,9 +228,10 @@ export const useEditorStore = create<EditorState>()((set, get) => {
   const load = async (
     projectId: string,
     relPath: string,
-    sessionId?: string,
+    sessionId: string | undefined,
+    rootKey: string,
   ): Promise<void> => {
-    const key = fileKey(projectId, relPath);
+    const key = fileKey(projectId, relPath, rootKey);
     const result = await readFile(projectId, relPath, sessionId);
 
     if (!get().openFiles.some((file) => file.key === key)) return;
@@ -229,8 +282,8 @@ export const useEditorStore = create<EditorState>()((set, get) => {
      * scroll position to fetch bytes it already has — and, if the buffer were
      * dirty, their edits.
      */
-    openFile: (projectId, relPath, sessionId) => {
-      const key = fileKey(projectId, relPath);
+    openFile: (projectId, relPath, sessionId, rootKey = '') => {
+      const key = fileKey(projectId, relPath, rootKey);
       const existing = get().openFiles.find((file) => file.key === key);
 
       if (existing) {
@@ -248,11 +301,14 @@ export const useEditorStore = create<EditorState>()((set, get) => {
          * the setting says so, which keeps the policy where the setting is read
          * and this store a plain list.
          */
-        openFiles: [...state.openFiles, blank(projectId, relPath, sessionId)],
+        openFiles: [
+          ...state.openFiles,
+          blank(projectId, relPath, sessionId, rootKey),
+        ],
         activeKey: key,
       }));
 
-      void load(projectId, relPath, sessionId);
+      void load(projectId, relPath, sessionId, rootKey);
     },
 
     closeFile: (key) => {
@@ -302,7 +358,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const file = get().openFiles.find((entry) => entry.key === key);
       if (!file) return;
       patch(key, { loading: true, conflict: false, staleOnDisk: false });
-      await load(file.projectId, file.relPath, file.sessionId);
+      await load(file.projectId, file.relPath, file.sessionId, file.rootKey);
     },
 
     /**
@@ -414,11 +470,15 @@ export const useEditorStore = create<EditorState>()((set, get) => {
      * suppression instead would put a "changed on disk" banner in front of the
      * user after every single save they make, which is wrong far more often.
      */
-    reconcile: (projectId, paths) => {
+    reconcile: (projectId, paths, rootKey) => {
       const touched = new Set(paths);
 
       for (const file of get().openFiles) {
         if (file.projectId !== projectId) continue;
+        // The paths are relative to the watched root, so a buffer under a
+        // different one is not what this event is about, however well the
+        // string matches.
+        if (file.rootKey !== rootKey) continue;
         if (!touched.has(file.relPath)) continue;
         if (file.loading || file.saving) continue;
 

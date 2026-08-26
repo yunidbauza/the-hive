@@ -131,6 +131,29 @@ describe('PrSearchRow', () => {
     expect(screen.getByText('0 results · all authors')).toBeInTheDocument();
   });
 
+  /**
+   * The row unmounts on a rail-tab switch while the term lives on in
+   * `ui-store`. An unguarded reset effect would uncheck "All repos" and
+   * re-query narrowed every time the user left the PRs tab and came back — a
+   * scope change they did not make.
+   */
+  it('keeps the scope across an unmount and remount', async () => {
+    const { unmount } = render(<PrSearchRow projectId="nova-web" />);
+    await type('carapace');
+
+    await act(async () => {
+      useUiStore.getState().setPrSearchAllRepos(true);
+    });
+
+    unmount();
+    render(<PrSearchRow projectId="nova-web" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useUiStore.getState().prSearchAllRepos).toBe(true);
+  });
+
   it('resets the scope when the session changes', async () => {
     const { rerender } = render(<PrSearchRow projectId="nova-web" />);
     await type('carapace');

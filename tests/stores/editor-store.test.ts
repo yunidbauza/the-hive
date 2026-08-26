@@ -332,7 +332,7 @@ describe('reconcile', () => {
   it('silently reloads a clean buffer', async () => {
     readFile.mockResolvedValue(content('agent wrote this\n', 700));
 
-    store().reconcile('demo', ['src/app.ts']);
+    store().reconcile('demo', ['src/app.ts'], '');
     await vi.waitFor(() => expect(fileAt(KEY)?.text).toBe('agent wrote this\n'));
 
     expect(fileAt(KEY)).toMatchObject({ staleOnDisk: false, dirty: false });
@@ -342,7 +342,7 @@ describe('reconcile', () => {
     store().edit(KEY, 'mine\n');
     readFile.mockResolvedValue(content('theirs\n', 700));
 
-    store().reconcile('demo', ['src/app.ts']);
+    store().reconcile('demo', ['src/app.ts'], '');
     await Promise.resolve();
 
     expect(fileAt(KEY)).toMatchObject({ staleOnDisk: true, text: 'mine\n' });
@@ -350,13 +350,13 @@ describe('reconcile', () => {
   });
 
   it('ignores paths that name no open file', async () => {
-    store().reconcile('demo', ['other.ts']);
+    store().reconcile('demo', ['other.ts'], '');
     await Promise.resolve();
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
   it('ignores another project’s events', async () => {
-    store().reconcile('elsewhere', ['src/app.ts']);
+    store().reconcile('elsewhere', ['src/app.ts'], '');
     await Promise.resolve();
     expect(readFile).toHaveBeenCalledTimes(1);
   });
@@ -377,7 +377,7 @@ describe('reconcile', () => {
     store().edit(KEY, 'mine\n');
     const saving = store().save(KEY);
 
-    store().reconcile('demo', ['src/app.ts']);
+    store().reconcile('demo', ['src/app.ts'], '');
     await Promise.resolve();
     expect(readFile).toHaveBeenCalledTimes(1);
 
@@ -472,7 +472,7 @@ describe('save — races', () => {
 
     // Still typing, so the buffer is dirty when the echo lands.
     store().edit(KEY, 'mine, extended\n');
-    store().reconcile('demo', ['src/app.ts']);
+    store().reconcile('demo', ['src/app.ts'], '');
     await Promise.resolve();
 
     expect(fileAt(KEY)?.staleOnDisk).toBe(false);
@@ -482,11 +482,11 @@ describe('save — races', () => {
     store().edit(KEY, 'mine\n');
     await store().save(KEY);
 
-    store().reconcile('demo', ['src/app.ts']); // the echo
+    store().reconcile('demo', ['src/app.ts'], ''); // the echo
     await Promise.resolve();
 
     store().edit(KEY, 'mine again\n');
-    store().reconcile('demo', ['src/app.ts']); // an agent, genuinely
+    store().reconcile('demo', ['src/app.ts'], ''); // an agent, genuinely
     await Promise.resolve();
 
     expect(fileAt(KEY)?.staleOnDisk).toBe(true);
@@ -500,7 +500,7 @@ describe('save — races', () => {
     await store().reload(KEY);
 
     store().edit(KEY, 'mine again\n');
-    store().reconcile('demo', ['src/app.ts']);
+    store().reconcile('demo', ['src/app.ts'], '');
     await Promise.resolve();
 
     expect(fileAt(KEY)?.staleOnDisk).toBe(true);
@@ -510,5 +510,89 @@ describe('save — races', () => {
 describe('fileKey', () => {
   it('is unique across projects', () => {
     expect(fileKey('a', 'src/x.ts')).not.toBe(fileKey('b', 'src/x.ts'));
+  });
+});
+
+/**
+ * The root dimension (review of PR 124).
+ *
+ * `projectId + relPath` identified a file only while every root for a project
+ * was the project root or a prefix under it. An external worktree is a root of
+ * its own and its paths come back bare, so the same two strings named two
+ * different files — and the second `openFile` silently focused the first.
+ */
+describe('the root dimension', () => {
+  beforeEach(() => {
+    readFile.mockResolvedValue({
+      ok: true,
+      value: { text: 'from wherever\n', mtimeMs: 1, size: 14 },
+    });
+  });
+
+  it('keys the project root as it always did', () => {
+    expect(fileKey('demo', 'src/app.ts')).toBe('demo::src/app.ts');
+  });
+
+  it('gives the same path in two roots two buffers', async () => {
+    store().openFile('demo', 'src/app.ts', 'sess-a', '');
+    store().openFile('demo', 'src/app.ts', 'sess-b', '/w/trees/side');
+    await vi.waitFor(() => {
+      expect(store().openFiles).toHaveLength(2);
+    });
+
+    // Before this, the second call found the first buffer by key and focused
+    // it — so the user edited the project's file believing it was the
+    // worktree's, and saved it there.
+    expect(store().openFiles.map((file) => file.key)).toEqual([
+      'demo::src/app.ts',
+      'demo:/w/trees/side:src/app.ts',
+    ]);
+  });
+
+  it('still shares one buffer for one file opened twice', async () => {
+    store().openFile('demo', 'src/app.ts', 'sess-a', '/w/trees/side');
+    store().openFile('demo', 'src/app.ts', 'sess-b', '/w/trees/side');
+
+    await vi.waitFor(() => {
+      expect(store().openFiles).toHaveLength(1);
+    });
+    // Two sessions in the same worktree are looking at one file, and re-opening
+    // must not throw away scroll position or unsaved edits.
+    expect(store().activeKey).toBe('demo:/w/trees/side:src/app.ts');
+  });
+
+  it('reconciles only buffers under the root the event came from', async () => {
+    store().openFile('demo', 'src/app.ts', 'sess-a', '');
+    store().openFile('demo', 'src/app.ts', 'sess-b', '/w/trees/side');
+    await vi.waitFor(() => {
+      expect(store().openFiles).toHaveLength(2);
+    });
+
+    store().edit('demo::src/app.ts', 'typed into the project\n');
+    store().edit('demo:/w/trees/side:src/app.ts', 'typed into the worktree\n');
+
+    // The watcher is rooted at the worktree, so its paths are relative to that.
+    store().reconcile('demo', ['src/app.ts'], '/w/trees/side');
+
+    const project = store().openFiles.find((f) => f.rootKey === '');
+    const worktree = store().openFiles.find((f) => f.rootKey === '/w/trees/side');
+
+    expect(worktree?.staleOnDisk).toBe(true);
+    // The project's buffer is not what changed, and marking it stale would put
+    // a "changed on disk" banner over a file nothing touched.
+    expect(project?.staleOnDisk).toBe(false);
+  });
+
+  it('carries the root through a reload', async () => {
+    store().openFile('demo', 'src/app.ts', 'sess-b', '/w/trees/side');
+    await vi.waitFor(() => {
+      expect(store().openFiles).toHaveLength(1);
+    });
+
+    readFile.mockClear();
+    await store().reload('demo:/w/trees/side:src/app.ts');
+
+    // The session, so main resolves the same root the first read used.
+    expect(readFile).toHaveBeenCalledWith('demo', 'src/app.ts', 'sess-b');
   });
 });

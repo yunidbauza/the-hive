@@ -226,10 +226,20 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * make impossible to add quietly.
    */
   expect(surface.github).toEqual(['prs', 'searchPrs']);
+  /**
+   * `root` is the only verb on this bridge that **answers** with a path.
+   *
+   * It takes none — the rule that no fs verb accepts a path is intact — and it
+   * discloses nothing the renderer does not already hold from the config and
+   * the session stream. What it adds is main's *verdict* on which root a read
+   * resolves under, which the renderer was previously inferring and getting
+   * wrong for any working directory main had refused.
+   */
   expect(surface.fs).toEqual([
     'onChanged',
     'readDir',
     'readFile',
+    'root',
     'unwatch',
     'watch',
     'writeFile',

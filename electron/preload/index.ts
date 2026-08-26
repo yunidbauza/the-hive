@@ -36,6 +36,8 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  RootInfo,
+  RootRequest,
   WatchRequest,
   WriteFileRequest,
   WriteFileResult,
@@ -252,6 +254,8 @@ const bridge: HiveBridge = {
     into the contract first, and that is where a reviewer would see it.
   */
   fs: {
+    root: (request: RootRequest): Promise<FsResult<RootInfo>> =>
+      ipcRenderer.invoke(CH.fsRoot, request) as Promise<FsResult<RootInfo>>,
     readDir: (request: ReadDirRequest): Promise<FsResult<DirEntry[]>> =>
       ipcRenderer.invoke(CH.fsReadDir, request),
     readFile: (

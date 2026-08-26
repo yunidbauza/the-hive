@@ -31,14 +31,24 @@ import { contains } from './contains';
  * 2. `git -C <cwd> rev-parse --git-common-dir --show-toplevel` succeeds.
  * 3. The common dir — the *shared* `.git` that every linked worktree of a
  *    repository points back to — resolves to `<projectRoot>/.git`.
- * 4. The toplevel is the directory that becomes the root, `realpath`'d.
+ * 4. `git -C <cwd> worktree list --porcelain` actually lists that toplevel.
+ * 5. The toplevel is the directory that becomes the root, `realpath`'d.
  *
- * Check 3 is the load-bearing one. It is what makes "a worktree **of this
- * project**" a decidable question rather than a guess from the path, and it is
- * why a session that wandered into `/tmp`, into an unrelated repository, or
- * into the user's home directory is refused: their common dir is not this
- * project's. A bare `git rev-parse --show-toplevel` would have accepted every
- * repository on the machine.
+ * Checks 3 and 4 are the load-bearing pair, and neither is sufficient alone.
+ *
+ * Check 3 is what makes "a worktree **of this project**" a question about
+ * identity rather than a guess from the path: a session that wandered into
+ * `/tmp`, into an unrelated repository, or into the user's home directory is
+ * refused because its common dir is not this project's. A bare
+ * `git rev-parse --show-toplevel` would have accepted every repository on the
+ * machine.
+ *
+ * Check 4 exists because check 3 is **forgeable**. A directory containing a
+ * hand-written `.git` *file* reading `gitdir: <project>/.git` makes
+ * `--git-common-dir` report the project's `.git` while never having been
+ * registered as a worktree of it — so on its own, check 3 says "plausible"
+ * where this module claims "decidable". Requiring the toplevel to appear in the
+ * repository's own worktree list makes the claim git's rather than ours.
  *
  * Everything downstream is unchanged. `resolveExisting` and `resolveForWrite`
  * still `realpath` the target and still test containment; all that moves is
@@ -71,17 +81,21 @@ export function setSessionCwdLookup(next: SessionCwdLookup | null): void {
 }
 
 /**
- * What `git rev-parse` said about one directory, keyed by the directory.
+ * What git said about one directory, keyed by the directory.
  *
- * Cached because the alternative is a subprocess on **every** directory
- * expansion and every keystroke-triggered save. A given absolute path does not
- * change which repository it belongs to over the life of a session; if the
- * agent moves, the cwd string moves with it and misses this cache.
+ * **The promise is cached, not the value**, and that is the load-bearing part.
+ * `useDirectory` fires one `readDir` per expanded node in parallel on every
+ * refresh, so caching only the settled answer would let a dozen concurrent
+ * reads each miss and each spawn their own `git` — the exact cost the cache
+ * exists to prevent, at precisely the moment it is most expensive. Storing the
+ * in-flight promise makes the second caller await the first.
  *
- * `null` is a cached refusal — a directory that is not a worktree of anything
- * must not be re-probed on every read either.
+ * A given absolute path does not change which repository it belongs to over the
+ * life of a session; if the agent moves, the cwd string moves with it and
+ * misses this cache. `null` is a cached refusal — a directory that is not a
+ * worktree of anything must not be re-probed on every read either.
  */
-const probed = new Map<string, WorktreeFacts | null>();
+const probed = new Map<string, Promise<WorktreeFacts | null>>();
 
 interface WorktreeFacts {
   /** The shared `.git` every linked worktree of one repository points at. */
@@ -90,44 +104,104 @@ interface WorktreeFacts {
   toplevel: string;
 }
 
-/** Drop the probe cache. For tests, and for a config reload. */
+/**
+ * Drop the probe cache.
+ *
+ * Called on a config reload, because a project being repointed or re-added
+ * changes which repository a directory should be measured against — and a
+ * cached refusal would otherwise outlive the setup that caused it for the life
+ * of the app.
+ */
 export function forgetProbedRoots(): void {
   probed.clear();
 }
 
+/** Run a git command in `cwd`, or answer `null` — and say whether it timed out. */
+function runGit(
+  cwd: string,
+  args: string[],
+): Promise<{ stdout: string } | { timedOut: boolean }> {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', cwd, ...args], { timeout: PROBE_TIMEOUT_MS }, (error, stdout) => {
+      if (error) {
+        // `killed` is how `execFile` reports its own timeout, as opposed to git
+        // answering "no". The difference decides whether the answer is cacheable.
+        resolve({ timedOut: (error as { killed?: boolean }).killed === true });
+        return;
+      }
+      resolve({ stdout });
+    });
+  });
+}
+
+/** How long either git call may take before it is abandoned. */
+const PROBE_TIMEOUT_MS = 2_000;
+
 /**
- * `git rev-parse`, once per directory.
+ * Two git calls, once per directory.
+ *
+ * The first asks what repository this is. The second — `worktree list` — is
+ * what makes the answer trustworthy rather than merely plausible: a directory
+ * containing a hand-written `.git` file reading `gitdir: <project>/.git` makes
+ * `--git-common-dir` report the project's `.git` without ever having been
+ * registered as a worktree of it. Requiring the toplevel to appear in the
+ * repository's own list of worktrees closes that, and turns "a worktree of this
+ * project" from a plausible inference into something git itself asserts.
  *
  * `--path-format=absolute` so both answers are absolute whatever the cwd, and
  * `-C` rather than the `cwd` option so a directory that has since been deleted
  * fails as a git error rather than as a spawn error.
  */
-async function probe(cwd: string): Promise<WorktreeFacts | null> {
+function probe(cwd: string): Promise<WorktreeFacts | null> {
   const cached = probed.get(cwd);
   if (cached !== undefined) return cached;
 
-  const facts = await new Promise<WorktreeFacts | null>((resolve) => {
-    execFile(
-      'git',
-      ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'],
-      { timeout: 2_000 },
-      (error, stdout) => {
-        if (error) {
-          resolve(null);
-          return;
-        }
-        const [commonDir, toplevel] = stdout.trim().split('\n');
-        if (!commonDir || !toplevel) {
-          resolve(null);
-          return;
-        }
-        resolve({ commonDir, toplevel });
-      },
-    );
-  });
+  const pending = (async (): Promise<WorktreeFacts | null> => {
+    const parsed = await runGit(cwd, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+      '--show-toplevel',
+    ]);
 
-  probed.set(cwd, facts);
-  return facts;
+    if (!('stdout' in parsed)) {
+      /*
+        A timeout is not an answer. Caching one would let a single slow `git` —
+        a cold filesystem, a network mount — disable the worktree root for that
+        directory for the rest of the app's life, with nothing on screen to
+        explain why. Dropping the entry means the next read tries again.
+      */
+      if (parsed.timedOut) probed.delete(cwd);
+      return null;
+    }
+
+    const [commonDir, toplevel] = parsed.stdout.trim().split('\n');
+    if (!commonDir || !toplevel) return null;
+
+    const listed = await runGit(cwd, ['worktree', 'list', '--porcelain']);
+    if (!('stdout' in listed)) {
+      if (listed.timedOut) probed.delete(cwd);
+      return null;
+    }
+
+    /*
+      `worktree list --porcelain` emits one `worktree <absolute path>` line per
+      registered tree, the main one first. An exact line match, not a substring:
+      `/w/app-secrets` contains `/w/app`, which is the same prefix bug
+      `contains()` exists to avoid.
+    */
+    const registered = listed.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length).trim());
+
+    if (!registered.includes(toplevel)) return null;
+
+    return { commonDir, toplevel };
+  })();
+
+  probed.set(cwd, pending);
+  return pending;
 }
 
 /**
