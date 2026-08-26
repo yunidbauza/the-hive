@@ -37,15 +37,22 @@ export function ProjectsPanel() {
           "mapped", not "yet" — and deliberately not the same sentence the
           Settings screen uses for its own empty list. Two surfaces saying "No
           projects yet." in one app reads as one message rendered twice; this
-          one names what is missing (a mapping) and where to make it, which is
-          the thing the rail can say that Settings cannot.
+          one names what is missing, which is a mapping.
+
+          The action names the control directly above it. It used to send a
+          fresh install to Settings, which was the only way to map a project
+          and is now a detour past the button in the same panel — the sentence
+          outlived the constraint that made it true. Settings stays in it for
+          the one thing the rail cannot do: fetch a repository that is not on
+          this machine yet.
         */}
         <EmptyState
           phrase="empty.projects"
           creature="overlord"
           action={
             <>
-              Add one in <EmptyStatePath>Settings → Projects</EmptyStatePath>.
+              Use <EmptyStatePath>+ new project</EmptyStatePath> above, or clone
+              one in <EmptyStatePath>Settings → Projects</EmptyStatePath>.
             </>
           }
         >

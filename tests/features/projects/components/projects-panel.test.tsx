@@ -52,6 +52,14 @@ describe('ProjectsPanel', () => {
     render(<ProjectsPanel />);
 
     expect(screen.getByText(/No projects mapped/i)).toBeInTheDocument();
+    /*
+      The copy points at the control in this panel first. It named Settings
+      alone while that was the only way to map a project; the button above
+      made that sentence a detour past itself. Settings survives in it for
+      the one thing the rail cannot do — fetch a repository that is not on
+      this machine yet — so both halves are asserted.
+    */
+    expect(screen.getByText('+ new project')).toBeInTheDocument();
     expect(screen.getByText('Settings → Projects')).toBeInTheDocument();
     /*
       One control, and only one: the way to fix the emptiness the panel is
