@@ -11,6 +11,7 @@ import {
 } from '@lib/terminal/fonts';
 import { applyThemeColors } from '@lib/theme/apply';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
 import { BUILT_IN_THEME_ID, type HiveTheme } from '@lib/theme/contract';
 import { isHiveTheme } from '@lib/theme/validate';
 
@@ -282,16 +283,27 @@ function applyDensity(density: Density) {
 }
 
 /**
- * The theme actually active, resolved from the library.
+ * The theme actually active, resolved from the built-ins and then the library.
+ *
+ * `null` does **not** mean "no theme" — it means *the Hive*, and specifically
+ * that nothing needs to be written: `tokens.css` is already that palette, so
+ * `applyThemeColors(null)` removes the style element and lets the stylesheet
+ * paint. Every other built-in (HIVE-84) resolves to a real theme object and
+ * paints through the same generated `<style>` an imported theme does.
  *
  * A dangling `activeThemeId` — a theme removed elsewhere, a store that only
- * half-restored — resolves to `null` (the built-in) rather than throwing: a
- * store in that state still has to paint something.
+ * half-restored — resolves to `null` rather than throwing: a store in that
+ * state still has to paint something.
+ *
+ * Built-ins are looked up **before** the library so a shipped id can never be
+ * shadowed by a stored one, whatever found its way into `localStorage`.
  */
 export function activeThemeOf(
   state: Pick<AppearanceState, 'themes' | 'activeThemeId'>,
 ): HiveTheme | null {
-  return state.themes[state.activeThemeId] ?? null;
+  const { activeThemeId } = state;
+  if (activeThemeId === BUILT_IN_THEME_ID) return null;
+  return BUILT_IN_THEMES[activeThemeId] ?? state.themes[activeThemeId] ?? null;
 }
 
 /** Push everything that lives on `<body>` (and the theme style element) at once — rehydration and reset. */
@@ -407,7 +419,8 @@ export function sanitizeThemeState(state: Record<string, unknown>): {
 
   const requested = state.activeThemeId;
   const activeThemeId =
-    typeof requested === 'string' && (requested === BUILT_IN_THEME_ID || requested in themes)
+    typeof requested === 'string' &&
+    (requested in BUILT_IN_THEMES || requested in themes)
       ? requested
       : BUILT_IN_THEME_ID;
 
@@ -518,12 +531,15 @@ export const useAppearanceStore = create<AppearanceState>()(
         set((state) => ({ themes: { ...state.themes, [id]: theme } })),
 
       activateTheme: (id) => {
-        applyThemeColors(get().themes[id] ?? null);
+        applyThemeColors(activeThemeOf({ themes: get().themes, activeThemeId: id }));
         set({ activeThemeId: id });
       },
 
       removeTheme: (id) => {
         const { themes, activeThemeId } = get();
+        // A built-in is not a key of `themes`, so this is also what makes a
+        // shipped theme unremovable — the gallery hides the control, and this
+        // is the guard behind it.
         if (!(id in themes)) return;
 
         const { [id]: _removed, ...rest } = themes;

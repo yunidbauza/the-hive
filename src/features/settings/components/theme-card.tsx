@@ -59,6 +59,11 @@ interface ThemeCardProps {
  * - the **activate button** wraps the swatch and the name/author text — the
  *   accessible name and `aria-pressed` live here, so `getByRole('button',
  *   { name: /Hive/ })` still resolves to it;
+ * The `⋯` trigger names its theme (`Cinder actions`) rather than carrying a
+ * generic "Theme actions". With one built-in that was unambiguous; a gallery
+ * of seven shipped themes plus imports turns a shared label into a list of
+ * identical buttons with no way to tell which card a screen reader is on.
+ *
  * - the **check-or-chip and the `⋯` trigger** are a second, absolutely
  *   positioned cluster pinned to the card's bottom-right corner, sitting
  *   *above* the activate button in stacking order. Because neither is a
@@ -136,7 +141,7 @@ export function ThemeCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger
-            aria-label="Theme actions"
+            aria-label={`${theme.name} actions`}
             className="shrink-0 rounded p-1 text-subtle hover:bg-hover hover:text-ink"
           >
             <DotsThreeVertical size={13} weight="bold" />

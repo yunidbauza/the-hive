@@ -15,7 +15,9 @@ const base = {
 describe('ThemeCard', () => {
   it('marks the active card pressed', () => {
     render(<ThemeCard {...base} id="hive" isActive isBuiltIn />);
-    expect(screen.getByRole('button', { name: /Hive/ })).toHaveAttribute(
+    // Exact: the card holds two buttons naming this theme — the activate
+    // button ("Hive Built in") and the ⋯ trigger ("Hive actions").
+    expect(screen.getByRole('button', { name: 'Hive Built in' })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
@@ -33,19 +35,19 @@ describe('ThemeCard', () => {
 
   it('offers Remove on an imported theme', async () => {
     render(<ThemeCard {...base} id="nord" isActive={false} isBuiltIn={false} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Theme actions' }));
+    await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
     expect(screen.getByRole('menuitem', { name: 'Remove' })).toBeInTheDocument();
   });
 
   it('offers the built-in no Remove at all, rather than a disabled one', async () => {
     render(<ThemeCard {...base} id="hive" isActive isBuiltIn />);
-    await userEvent.click(screen.getByRole('button', { name: 'Theme actions' }));
+    await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
     expect(screen.queryByRole('menuitem', { name: 'Remove' })).toBeNull();
   });
 
   it('disables Activate on the theme already active', async () => {
     render(<ThemeCard {...base} id="hive" isActive isBuiltIn />);
-    await userEvent.click(screen.getByRole('button', { name: 'Theme actions' }));
+    await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
     expect(screen.getByRole('menuitem', { name: 'Activate' })).toHaveAttribute(
       'aria-disabled',
       'true',
@@ -74,7 +76,7 @@ describe('ThemeCard', () => {
         onActivate={onActivate}
       />,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Theme actions' }));
+    await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
     expect(onActivate).not.toHaveBeenCalled();
   });
 });

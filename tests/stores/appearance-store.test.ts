@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
 import { type HiveTheme } from '@lib/theme/contract';
 import {
   APPEARANCE_STORAGE_KEY,
@@ -491,6 +492,76 @@ describe('the theme library', () => {
 });
 
 /**
+ * The six that ship beside the Hive (HIVE-84).
+ *
+ * The distinction that matters here is which of them `activeThemeOf` answers
+ * `null` for. `null` means *the stylesheet already is this palette* — true of
+ * the Hive and of nothing else — so a shipped theme that resolved to `null`
+ * would activate by removing the style element and leave the Hive on screen
+ * under another theme's name.
+ */
+describe('the shipped themes beside the Hive', () => {
+  const SHIPPED = ['honeycomb', 'graphite', 'tidewater', 'terracotta', 'porcelain', 'cinder'];
+
+  it('resolves the Hive to null — the stylesheet is already that palette', () => {
+    useAppearanceStore.getState().activateTheme('hive');
+    expect(activeThemeOf(useAppearanceStore.getState())).toBeNull();
+    expect(document.getElementById('hive-theme')).toBeNull();
+  });
+
+  it.each(SHIPPED)('resolves %s to its own theme, not to null', (id) => {
+    useAppearanceStore.setState({ activeThemeId: id, themes: {} });
+    expect(activeThemeOf(useAppearanceStore.getState())).toBe(BUILT_IN_THEMES[id]);
+  });
+
+  it.each(SHIPPED)('activating %s writes the style element', (id) => {
+    useAppearanceStore.getState().activateTheme(id);
+
+    expect(useAppearanceStore.getState().activeThemeId).toBe(id);
+    const style = document.getElementById('hive-theme');
+    expect(style).not.toBeNull();
+    expect(style?.textContent).toContain(BUILT_IN_THEMES[id].modes.dark.ui.brand);
+  });
+
+  it('switching from a shipped theme back to the Hive removes the element again', () => {
+    useAppearanceStore.getState().activateTheme('cinder');
+    expect(document.getElementById('hive-theme')).not.toBeNull();
+
+    useAppearanceStore.getState().activateTheme('hive');
+    expect(document.getElementById('hive-theme')).toBeNull();
+  });
+
+  it.each(SHIPPED)('will not let removeTheme drop %s', (id) => {
+    useAppearanceStore.getState().activateTheme(id);
+    useAppearanceStore.getState().removeTheme(id);
+
+    expect(useAppearanceStore.getState().activeThemeId).toBe(id);
+    expect(activeThemeOf(useAppearanceStore.getState())).toBe(BUILT_IN_THEMES[id]);
+  });
+
+  /**
+   * A stored theme must never shadow a shipped id. `localStorage` is reachable
+   * by another tab and an older build, and the library is looked up *second*
+   * for exactly this reason.
+   */
+  it('prefers the shipped theme when a stored one squats on its id', () => {
+    useAppearanceStore.setState({
+      activeThemeId: 'cinder',
+      themes: { cinder: nordFixture },
+    });
+    expect(activeThemeOf(useAppearanceStore.getState())).toBe(BUILT_IN_THEMES.cinder);
+  });
+
+  it('hands the terminal the shipped palette when one is active', () => {
+    useAppearanceStore.getState().activateTheme('honeycomb');
+    useAppearanceStore.setState({ theme: 'dark' });
+
+    const { result } = renderHook(() => useTerminalAppearance());
+    expect(result.current.palette).toBe(BUILT_IN_THEMES.honeycomb.modes.dark.terminal);
+  });
+});
+
+/**
  * The Critical fix from the whole-branch review.
  *
  * `localStorage` is reachable by another tab, a devtools session, an older
@@ -630,5 +701,22 @@ describe('sanitizeThemeState', () => {
 
   it('returns the built-in for a state with no theme fields at all', () => {
     expect(sanitizeThemeState({})).toEqual({ themes: {}, activeThemeId: 'hive' });
+  });
+
+  it.each(['honeycomb', 'graphite', 'tidewater', 'terracotta', 'porcelain', 'cinder'])(
+    'keeps %s, which is shipped rather than imported',
+    (id) => {
+      expect(sanitizeThemeState({ themes: {}, activeThemeId: id })).toEqual({
+        themes: {},
+        activeThemeId: id,
+      });
+    },
+  );
+
+  it('still rejects an id that is neither shipped nor in the library', () => {
+    expect(sanitizeThemeState({ themes: {}, activeThemeId: 'nord' })).toEqual({
+      themes: {},
+      activeThemeId: 'hive',
+    });
   });
 });

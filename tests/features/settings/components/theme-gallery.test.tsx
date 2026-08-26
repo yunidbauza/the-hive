@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ThemeGallery } from '@features/settings/components/theme-gallery';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
+import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
 import { PickThemeFailure, pickThemeFile, saveThemeFile } from '@lib/theme/files';
 import { themeToJson } from '@lib/theme/template';
 import { useAppearanceStore } from '@stores/appearance-store';
@@ -32,9 +33,64 @@ describe('ThemeGallery', () => {
     vi.mocked(saveThemeFile).mockReset();
   });
 
-  it('always shows the built-in, three across', () => {
+  it('shows every theme that ships in the bundle', () => {
     render(<ThemeGallery />);
-    expect(screen.getByRole('button', { name: /Hive/ })).toBeInTheDocument();
+
+    for (const theme of Object.values(BUILT_IN_THEMES)) {
+      expect(
+        screen.getByRole('button', { name: `${theme.name} Built in` }),
+        theme.name,
+      ).toBeInTheDocument();
+    }
+    expect(
+      screen.getAllByRole('button', { name: /actions$/ }),
+    ).toHaveLength(Object.keys(BUILT_IN_THEMES).length);
+  });
+
+  it('activates a shipped theme from its card', async () => {
+    render(<ThemeGallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Cinder Built in' }));
+
+    expect(useAppearanceStore.getState().activeThemeId).toBe('cinder');
+    expect(
+      screen.getByRole('button', { name: 'Cinder Built in' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  /**
+   * A shipped theme has no Remove: it lives in the bundle, not the library,
+   * so there is nothing a Remove could take away.
+   */
+  it.each(Object.keys(BUILT_IN_THEMES))('offers no Remove on %s', async (id) => {
+    render(<ThemeGallery />);
+    await userEvent.click(
+      screen.getByRole('button', { name: `${BUILT_IN_THEMES[id].name} actions` }),
+    );
+
+    expect(screen.getByRole('menuitem', { name: 'Export…' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('menuitem', { name: 'Remove' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * Every shipped id is reserved, not just the Hive's. An import named after
+   * one used to be able to take its key in `themes` — where the store's
+   * built-in-first lookup would then ignore it, leaving a card in the gallery
+   * that could never be activated.
+   */
+  it('pushes an import named after a shipped theme to a free id', async () => {
+    vi.mocked(pickThemeFile).mockResolvedValue({
+      name: 'cinder.json',
+      contents: themeToJson({ ...BUILT_IN_THEME, name: 'Cinder', version: '1.0.0' }),
+    });
+
+    render(<ThemeGallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Import theme…' }));
+    await screen.findByText('Cinder imported and activated');
+
+    expect(Object.keys(useAppearanceStore.getState().themes)).toEqual(['cinder-2']);
+    expect(useAppearanceStore.getState().activeThemeId).toBe('cinder-2');
   });
 
   it('imports a picked file and activates it', async () => {
@@ -141,9 +197,11 @@ describe('ThemeGallery', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Import theme…' }));
     await screen.findByText('Nord imported and activated');
 
-    const menus = screen.getAllByRole('button', { name: 'Theme actions' });
-    // Built-in first, the freshly imported Nord card second.
-    await userEvent.click(menus[1]);
+    // By name, not by index: the gallery ships seven built-ins and an
+    // index would silently follow whichever one sorts into that slot.
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Nord actions' }),
+    );
     await userEvent.click(screen.getByRole('menuitem', { name: 'Export…' }));
 
     expect(vi.mocked(saveThemeFile)).toHaveBeenCalledWith(
@@ -154,7 +212,7 @@ describe('ThemeGallery', () => {
 
   it('exports the built-in theme too, under its own id', async () => {
     render(<ThemeGallery />);
-    await userEvent.click(screen.getByRole('button', { name: 'Theme actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Hive actions' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Export…' }));
 
     expect(vi.mocked(saveThemeFile)).toHaveBeenCalledWith(

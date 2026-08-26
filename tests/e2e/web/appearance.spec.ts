@@ -127,3 +127,78 @@ test('changing the terminal font resizes the terminal without destroying it', as
   await expect(terminal).toBeVisible();
   await expect(page.locator('[data-testid="terminal-surface"]')).toHaveCount(1);
 });
+
+/**
+ * The shipped theme set (HIVE-84).
+ *
+ * A unit test can prove the store resolves an id and that the gallery renders
+ * seven cards. It cannot prove the app actually *repaints* — that lives in a
+ * `<style>` element written at runtime, resolved by the real cascade against
+ * `tokens.css`, and read back off a computed style. happy-dom has no cascade
+ * to lose the fight in, which is exactly the bug `apply.ts` documents.
+ */
+const SHIPPED = ['Honeycomb', 'Graphite', 'Tidewater', 'Terracotta', 'Porcelain', 'Cinder'];
+
+test('every shipped theme has a card, and only the Hive has no style element', async ({
+  page,
+}) => {
+  await openSettings(page);
+
+  for (const name of ['Hive', ...SHIPPED]) {
+    await expect(
+      page.getByRole('button', { name: `${name} Built in` }),
+      name,
+    ).toBeVisible();
+  }
+
+  // The Hive is active on boot, and `tokens.css` already is that palette — so
+  // there is deliberately nothing written to the document.
+  await expect(page.locator('#hive-theme')).toHaveCount(0);
+});
+
+test('activating a shipped theme repaints the app and survives a reload', async ({
+  page,
+}) => {
+  await openSettings(page);
+
+  const bodyBg = () =>
+    page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  const before = await bodyBg();
+
+  await page.getByRole('button', { name: 'Cinder Built in' }).click();
+
+  // The style element appears, and the cascade actually resolves in its favour.
+  await expect(page.locator('#hive-theme')).toHaveCount(1);
+  await expect.poll(bodyBg).not.toBe(before);
+  const cinder = await bodyBg();
+
+  await page.reload();
+
+  // Asserted before the overlay is reopened: the restored palette has to be on
+  // the first frame, the same promise the theme preference makes above.
+  expect(await bodyBg()).toBe(cinder);
+
+  await openSettings(page);
+  await expect(page.getByRole('button', { name: 'Cinder Built in' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('going back to the Hive removes the style element again', async ({ page }) => {
+  await openSettings(page);
+
+  await page.getByRole('button', { name: 'Porcelain Built in' }).click();
+  await expect(page.locator('#hive-theme')).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Hive Built in' }).click();
+  await expect(page.locator('#hive-theme')).toHaveCount(0);
+});
+
+test('a shipped theme offers no Remove', async ({ page }) => {
+  await openSettings(page);
+
+  await page.getByRole('button', { name: 'Tidewater actions' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Export…' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Remove' })).toHaveCount(0);
+});

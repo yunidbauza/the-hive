@@ -2,8 +2,8 @@ import { useState } from 'react';
 
 import { ThemeCard } from '@features/settings/components/theme-card';
 import { ThemeImportResult } from '@features/settings/components/theme-import-result';
-import { BUILT_IN_THEME } from '@lib/theme/built-in';
-import { BUILT_IN_THEME_ID, type HiveTheme } from '@lib/theme/contract';
+import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
+import type { HiveTheme } from '@lib/theme/contract';
 import { PickThemeFailure, pickThemeFile, saveThemeFile } from '@lib/theme/files';
 import { themeTemplateJson, themeToJson, TEMPLATE_FILE_NAME } from '@lib/theme/template';
 import { importTheme, type ImportResult } from '@lib/theme/validate';
@@ -65,10 +65,10 @@ function slugify(name: string): string {
 
 /**
  * `slugify`'d and de-duplicated against every id already in use — the
- * built-in's and every imported theme's. Never resolves to
- * {@link BUILT_IN_THEME_ID} itself: that id is checked into `existingIds`
- * below, so a theme literally named "Hive" collides with it on the first try
- * and is pushed to `hive-2` the same as any other duplicate.
+ * every built-in's and every imported theme's. Never resolves to a shipped id:
+ * all of them are checked into `existingIds` below, so a theme literally named
+ * "Hive" — or "Cinder" — collides on the first try and is pushed to `hive-2`
+ * the same as any other duplicate.
  */
 function uniqueThemeId(name: string, existingIds: ReadonlySet<string>): string {
   const base = slugify(name);
@@ -116,7 +116,10 @@ export function ThemeGallery() {
 
       const imported = importTheme(picked.contents, picked.name);
       if (imported.ok) {
-        const existingIds = new Set([BUILT_IN_THEME_ID, ...Object.keys(themes)]);
+        const existingIds = new Set([
+          ...Object.keys(BUILT_IN_THEMES),
+          ...Object.keys(themes),
+        ]);
         const id = uniqueThemeId(imported.theme.name, existingIds);
         /**
          * `zustand/persist` writes to `localStorage` **synchronously, inside
@@ -201,16 +204,19 @@ export function ThemeGallery() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 max-[860px]:grid-cols-2">
-        <ThemeCard
-          theme={BUILT_IN_THEME}
-          id={BUILT_IN_THEME_ID}
-          isActive={activeThemeId === BUILT_IN_THEME_ID}
-          isBuiltIn
-          onActivate={activateTheme}
-          onExport={(id) => onExport(id, BUILT_IN_THEME)}
-          onRemove={() => {}}
-        />
+      <div className="grid max-w-[880px] grid-cols-4 gap-2.5 max-[1200px]:grid-cols-3 max-[860px]:grid-cols-2">
+        {Object.entries(BUILT_IN_THEMES).map(([id, theme]) => (
+          <ThemeCard
+            key={id}
+            theme={theme}
+            id={id}
+            isActive={activeThemeId === id}
+            isBuiltIn
+            onActivate={activateTheme}
+            onExport={(exportId) => onExport(exportId, theme)}
+            onRemove={() => {}}
+          />
+        ))}
         {Object.entries(themes).map(([id, theme]) => (
           <ThemeCard
             key={id}
