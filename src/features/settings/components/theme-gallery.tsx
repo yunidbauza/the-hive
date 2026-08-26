@@ -204,7 +204,21 @@ export function ThemeGallery() {
         </div>
       </div>
 
-      <div className="grid max-w-[880px] grid-cols-4 gap-2.5 max-[1200px]:grid-cols-3 max-[860px]:grid-cols-2">
+      {/*
+        A fixed tile that flows, rather than a fixed count that stretches.
+
+        Four columns capped at 880px meant a wide settings pane left a gap at
+        the right while the rows stayed short — and any narrower pane divided
+        the same 880px into four *smaller* tiles. `auto-fill` at a fixed track
+        width inverts both: the tile is the constant and the column count is
+        what the width buys, so widening the window adds themes to a row
+        instead of inflating the ones already there.
+
+        `minmax(min(212px,100%),212px)` is the one-column escape hatch: below
+        212px of content box the track collapses to the container instead of
+        overflowing it, which a bare `212px` track would do.
+      */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(212px,100%),212px))] gap-2.5">
         {Object.entries(BUILT_IN_THEMES).map(([id, theme]) => (
           <ThemeCard
             key={id}
