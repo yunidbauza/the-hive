@@ -3,6 +3,14 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 
 import {
+  clampRailWidths,
+  isRailDefault,
+  RAIL_MAX_PX,
+  RAIL_MIN,
+  type RailWidthInput,
+  type RailWidths,
+} from '@lib/rail-width';
+import {
   DEFAULT_TERMINAL_FONT,
   DEFAULT_TERMINAL_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK,
@@ -47,6 +55,9 @@ export type ResolvedTheme = 'dark' | 'light';
 
 export type Density = 'comfortable' | 'compact';
 
+/** Which rail a width belongs to. */
+export type RailSide = 'left' | 'right';
+
 /**
  * Where an opened file renders.
  *
@@ -77,6 +88,32 @@ interface AppearanceState {
   terminalFontSize: number;
   terminalScrollback: number;
   density: Density;
+
+  /**
+   * How wide the user dragged each rail, or `null` for "follow density"
+   * (HIVE-105).
+   *
+   * Appearance on this store's own test — a durable choice about how the screen
+   * looks, needed before the first paint, and meaningless to the browser
+   * target's absent config file. It is also the arrangement `editorSplitRatio`
+   * already established: persisted like everything here, but written by
+   * dragging rather than by a control in Settings, because a width has no
+   * sensible discrete choices and a number field would be a worse interface
+   * than the handle itself.
+   *
+   * **`null` is a real state, not a missing one.** It means the rail is
+   * following `--cc-rail-w-*` from the stylesheet, so a later density change
+   * still moves it; a width that happened to equal today's default would not.
+   * That is what double-click-to-reset restores.
+   *
+   * Stored *intent*, not painted pixels — bounded only by the per-rail minimum
+   * and the absolute cap, never by the current window. The window-dependent
+   * bounds live in `clampRailWidths` and are applied on the way to the screen,
+   * so shrinking the window and growing it back returns the rail to the width
+   * that was actually chosen. See `@lib/rail-width`.
+   */
+  railWidthLeft: number | null;
+  railWidthRight: number | null;
 
   /**
    * The line under the wordmark, top-left — whose hive this is.
@@ -170,6 +207,13 @@ interface AppearanceState {
   setTerminalFontSize: (size: number) => void;
   setTerminalScrollback: (lines: number) => void;
   setDensity: (density: Density) => void;
+  /**
+   * Record a dragged rail width. Bounded by the per-rail minimum and the
+   * absolute cap only — see {@link AppearanceState.railWidthLeft}.
+   */
+  setRailWidth: (side: RailSide, width: number) => void;
+  /** Hand the rail back to the stylesheet: `null`, not today's default number. */
+  resetRailWidth: (side: RailSide) => void;
   setTeamName: (name: string) => void;
   setSystemDark: (dark: boolean) => void;
 
@@ -331,15 +375,121 @@ export function activeThemeOf(
   return null;
 }
 
+/**
+ * Write the rail widths to the same two custom properties the stylesheet
+ * declares (HIVE-105) — the mechanism `applyDensity` uses, for the same reason:
+ * one write re-sizes a rail and no component re-renders to do it.
+ *
+ * ## Why the properties, and not a width prop on each rail
+ *
+ * `--cc-rail-w-left` / `--cc-rail-w-right` are not only read by the rails.
+ * `header.tsx` sizes its right-hand button cluster with
+ * `calc(var(--cc-rail-w-right) - 1rem)` so the buttons sit over the activity
+ * rail rather than straddling its border. Deliver the width by any other route
+ * and the rails move while the header stays where it was — a bug that looks
+ * like a header bug and is not.
+ *
+ * ## Why it removes the property instead of writing the default
+ *
+ * An inline property on `<body>` beats `body[data-density='compact']`, which is
+ * exactly the precedence a user override should have. But that same precedence
+ * would freeze a rail the user never touched: write `268px` inline and
+ * switching to compact leaves it at 268px forever. So a rail sitting at its
+ * default has its property *removed*, and the stylesheet — density rules
+ * included — takes back over.
+ */
+export function applyRailWidths(widths: RailWidths, min: { left: number; right: number }) {
+  if (typeof document === 'undefined') return;
+
+  const { style } = document.body;
+
+  if (isRailDefault(widths.left, min.left)) {
+    style.removeProperty('--cc-rail-w-left');
+  } else {
+    style.setProperty('--cc-rail-w-left', `${widths.left}px`);
+  }
+
+  /*
+    The right rail is skipped entirely when it is unmounted: `clampRailWidths`
+    reports 0 for it, which is not a width anybody should paint, and the header
+    already drops its `calc()` column in that case.
+  */
+  if (widths.right === 0 || isRailDefault(widths.right, min.right)) {
+    style.removeProperty('--cc-rail-w-right');
+  } else {
+    style.setProperty('--cc-rail-w-right', `${widths.right}px`);
+  }
+}
+
+/**
+ * Clamp and paint in one call, for the callers that have no separate render
+ * pass to hang the two halves off — {@link applyStoredRailWidths} below, and
+ * the store's own tests.
+ *
+ * `use-rail-widths` deliberately does *not* use this. A React component can
+ * clamp during render (it is pure) and write during layout, and splitting the
+ * two is what keeps a drag from costing a second render per pointer event.
+ *
+ * Takes its whole input rather than reading the store, because half of that
+ * input is not store state — the window's width belongs to the DOM and
+ * `showActivityRail` belongs to `ui-store`, which this store may not read.
+ */
+export function syncRailWidths(input: RailWidthInput): RailWidths {
+  const widths = clampRailWidths(input);
+  applyRailWidths(widths, input.min);
+  return widths;
+}
+
+/**
+ * The rail widths implied by the store alone, for the paths that have no
+ * `showActivityRail` to hand — rehydration and reset.
+ *
+ * Passes `showActivityRail: true`, which is **exact rather than optimistic on
+ * the path that matters**. `ui-store` has no persist middleware — nothing there
+ * is persisted, by a structural rule that store states outright — so
+ * `showActivityRail` is its initial `true` on every launch. At rehydration,
+ * which runs during module evaluation before React mounts, there is therefore
+ * no other answer it could have.
+ *
+ * `setDensity` is the one caller that can run later, with the rail genuinely
+ * hidden. What it writes then is a `--cc-rail-w-right` for a rail nobody is
+ * painting: unread, because the only other consumer of that property is the
+ * header cluster, which drops its `calc()` column when the rail is hidden — and
+ * corrected by `use-rail-widths` in the same commit phase regardless.
+ */
+function applyStoredRailWidths(
+  state: Pick<AppearanceState, 'railWidthLeft' | 'railWidthRight' | 'density'>,
+) {
+  syncRailWidths({
+    storedLeft: state.railWidthLeft,
+    storedRight: state.railWidthRight,
+    min: RAIL_MIN[state.density],
+    windowWidth: typeof window === 'undefined' ? 0 : window.innerWidth,
+    showActivityRail: true,
+  });
+}
+
 /** Push everything that lives on `<body>` (and the theme style element) at once — rehydration and reset. */
 function applyAll(
   state: Pick<
     AppearanceState,
-    'theme' | 'systemDark' | 'density' | 'themes' | 'activeThemeId'
+    | 'theme'
+    | 'systemDark'
+    | 'density'
+    | 'themes'
+    | 'activeThemeId'
+    | 'railWidthLeft'
+    | 'railWidthRight'
   >,
 ) {
   applyTheme(resolveTheme(state.theme, state.systemDark));
   applyDensity(state.density);
+  /*
+    After `applyDensity`, and it has to stay that way: the density attribute
+    decides which `--cc-rail-w-*` the stylesheet offers, and this decides
+    whether an inline override sits on top of it.
+  */
+  applyStoredRailWidths(state);
   applyThemeColors(activeThemeOf(state));
 }
 
@@ -360,6 +510,9 @@ const initialAppearanceState = {
   terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
   terminalScrollback: DEFAULT_TERMINAL_SCROLLBACK,
   density: 'comfortable' as Density,
+  /** `null` — follow the stylesheet — until somebody drags a rail. */
+  railWidthLeft: null as number | null,
+  railWidthRight: null as number | null,
   teamName: DEFAULT_TEAM_NAME,
 
   /** Full stage: the editor is a place you go, not a permanent tax on the terminal. */
@@ -395,6 +548,8 @@ interface PersistedAppearanceState {
   terminalFontSize: number;
   terminalScrollback: number;
   density: Density;
+  railWidthLeft: number | null;
+  railWidthRight: number | null;
   teamName: string;
   editorPlacement: EditorPlacement;
   editorSplitAxis: EditorSplitAxis;
@@ -565,7 +720,36 @@ export const useAppearanceStore = create<AppearanceState>()(
       setDensity: (density) => {
         applyDensity(density);
         set({ density });
+        /*
+          Re-run the override after the attribute changes. A rail the user never
+          touched has no inline property, so this is what re-spaces it; a rail
+          they did set keeps its width, but its *minimum* just moved and the
+          override may now need clamping up to it.
+        */
+        applyStoredRailWidths({ ...get(), density });
       },
+
+      /**
+       * Clamped to `[min, RAIL_MAX_PX]` and no further.
+       *
+       * Deliberately not clamped against the window here. The window-dependent
+       * bounds — the 30% share and the stage floor — belong to
+       * `clampRailWidths` on the way to the screen, because a width stored
+       * after being squeezed by a small window is a width the user never chose
+       * and would never get back. What is stored is intent; what is painted is
+       * intent within today's window.
+       */
+      setRailWidth: (side, width) => {
+        if (!Number.isFinite(width)) return;
+
+        const min = RAIL_MIN[get().density][side];
+        const next = Math.round(Math.min(RAIL_MAX_PX, Math.max(min, width)));
+
+        set(side === 'left' ? { railWidthLeft: next } : { railWidthRight: next });
+      },
+
+      resetRailWidth: (side) =>
+        set(side === 'left' ? { railWidthLeft: null } : { railWidthRight: null }),
 
       /**
        * Stored exactly as typed.
@@ -683,6 +867,8 @@ export const useAppearanceStore = create<AppearanceState>()(
         terminalFontSize: state.terminalFontSize,
         terminalScrollback: state.terminalScrollback,
         density: state.density,
+        railWidthLeft: state.railWidthLeft,
+        railWidthRight: state.railWidthRight,
         teamName: state.teamName,
         editorPlacement: state.editorPlacement,
         editorSplitAxis: state.editorSplitAxis,
@@ -949,6 +1135,28 @@ export const useEditorEditable = () =>
 /** Written by dragging the divider, not by a settings control. */
 export const useSetEditorSplitRatio = () =>
   useAppearanceStore((state) => state.setEditorSplitRatio);
+
+/**
+ * The stored rail widths and the density they are bounded by (HIVE-105).
+ *
+ * Deliberately three fields and no more. `use-rail-widths` is the only
+ * consumer, it runs at the composition root, and widening this selector would
+ * re-run the clamp — and touch `<body>` — every time an unrelated appearance
+ * field changed.
+ */
+const railWidthSelector = (state: AppearanceState) => ({
+  railWidthLeft: state.railWidthLeft,
+  railWidthRight: state.railWidthRight,
+  density: state.density,
+});
+
+export const useRailWidthState = () => useAppearanceStore(useShallow(railWidthSelector));
+
+/** Written by dragging a rail's handle, for the same reason as the divider above. */
+export const useSetRailWidth = () => useAppearanceStore((state) => state.setRailWidth);
+
+/** Double-click on a handle — back to following the stylesheet. */
+export const useResetRailWidth = () => useAppearanceStore((state) => state.resetRailWidth);
 
 /** The editor section's current values and its setters. */
 export const useEditorSettings = () =>

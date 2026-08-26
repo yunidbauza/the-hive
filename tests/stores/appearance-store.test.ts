@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
 import { type HiveTheme } from '@lib/theme/contract';
+import { RAIL_MIN, railMaxWidth } from '@lib/rail-width';
 import {
   APPEARANCE_STORAGE_KEY,
   DEFAULT_TEAM_NAME,
@@ -12,6 +13,7 @@ import {
   resolveTheme,
   sanitizeThemeState,
   useAppearanceStore,
+  syncRailWidths,
   useTerminalAppearance,
   watchSystemTheme,
 } from '@stores/appearance-store';
@@ -82,6 +84,8 @@ beforeEach(() => {
   localStorage.clear();
   document.body.removeAttribute('data-theme');
   document.body.removeAttribute('data-density');
+  document.body.style.removeProperty('--cc-rail-w-left');
+  document.body.style.removeProperty('--cc-rail-w-right');
   useAppearanceStore.setState({ systemDark: true });
   useAppearanceStore.getState().reset();
 });
@@ -266,6 +270,179 @@ describe('appearance-store — the terminal palette', () => {
   });
 });
 
+/**
+ * Rail widths (HIVE-105).
+ *
+ * The arithmetic is proved in `tests/lib/rail-width.test.ts`. What is left for
+ * the store is everything that arithmetic cannot answer: what is stored versus
+ * what is painted, which custom property ends up on `<body>`, and what survives
+ * a reload.
+ */
+describe('appearance-store — rail widths', () => {
+  const COMFORTABLE = RAIL_MIN.comfortable;
+
+  /** What `use-rail-widths` does, minus React. */
+  const paint = (windowWidth = 1440, showActivityRail = true) =>
+    syncRailWidths({
+      storedLeft: useAppearanceStore.getState().railWidthLeft,
+      storedRight: useAppearanceStore.getState().railWidthRight,
+      min: RAIL_MIN[useAppearanceStore.getState().density],
+      windowWidth,
+      showActivityRail,
+    });
+
+  const inlineLeft = () => document.body.style.getPropertyValue('--cc-rail-w-left');
+  const inlineRight = () => document.body.style.getPropertyValue('--cc-rail-w-right');
+
+  it('starts following the stylesheet rather than at a number', () => {
+    expect(useAppearanceStore.getState().railWidthLeft).toBeNull();
+    expect(useAppearanceStore.getState().railWidthRight).toBeNull();
+  });
+
+  /**
+   * The distinction the whole feature turns on. A rail nobody has dragged gets
+   * *no* inline property, so `tokens.css` — density rules included — keeps
+   * control of it. Writing today's number inline would freeze it there.
+   */
+  it('leaves an untouched rail to the stylesheet', () => {
+    paint();
+
+    expect(inlineLeft()).toBe('');
+    expect(inlineRight()).toBe('');
+  });
+
+  it('writes an override once a rail is dragged', () => {
+    useAppearanceStore.getState().setRailWidth('left', 400);
+    paint();
+
+    expect(inlineLeft()).toBe('400px');
+    expect(inlineRight()).toBe('');
+  });
+
+  it('hands the rail back to the stylesheet on reset', () => {
+    useAppearanceStore.getState().setRailWidth('left', 400);
+    paint();
+    expect(inlineLeft()).toBe('400px');
+
+    useAppearanceStore.getState().resetRailWidth('left');
+    paint();
+
+    expect(useAppearanceStore.getState().railWidthLeft).toBeNull();
+    expect(inlineLeft()).toBe('');
+  });
+
+  it('never writes a width for a rail that is not mounted', () => {
+    useAppearanceStore.getState().setRailWidth('right', 400);
+    paint(1440, false);
+
+    expect(inlineRight()).toBe('');
+  });
+
+  describe('what gets stored', () => {
+    it('refuses to store a width below the density minimum', () => {
+      useAppearanceStore.getState().setRailWidth('left', 100);
+      expect(useAppearanceStore.getState().railWidthLeft).toBe(COMFORTABLE.left);
+    });
+
+    it('refuses to store a width above the absolute cap', () => {
+      useAppearanceStore.getState().setRailWidth('left', 9999);
+      expect(useAppearanceStore.getState().railWidthLeft).toBe(520);
+    });
+
+    it('ignores a width that is not a number', () => {
+      useAppearanceStore.getState().setRailWidth('left', Number.NaN);
+      expect(useAppearanceStore.getState().railWidthLeft).toBeNull();
+    });
+
+    it('stores whole pixels', () => {
+      useAppearanceStore.getState().setRailWidth('left', 400.6);
+      expect(useAppearanceStore.getState().railWidthLeft).toBe(401);
+    });
+
+    /**
+     * **Stored intent, not painted pixels.** The window is what squeezes a
+     * width; the store must not learn from the squeeze, or a narrow moment
+     * would permanently cost the user the width they chose.
+     */
+    it('survives a window that is too narrow to honour it', () => {
+      useAppearanceStore.getState().setRailWidth('left', 500);
+
+      const squeezed = paint(1100);
+      expect(squeezed.left).toBe(Math.floor(railMaxWidth(1100)));
+      expect(squeezed.left).toBeLessThan(500);
+      expect(useAppearanceStore.getState().railWidthLeft).toBe(500);
+
+      const restored = paint(1920);
+      expect(restored.left).toBe(500);
+    });
+  });
+
+  describe('density', () => {
+    /** A rail nobody dragged still re-spaces when density changes. */
+    it('leaves an untouched rail free to follow a density change', () => {
+      useAppearanceStore.getState().setDensity('compact');
+      expect(inlineLeft()).toBe('');
+
+      expect(paint().left).toBe(RAIL_MIN.compact.left);
+    });
+
+    it('keeps a hand-set width across a density change', () => {
+      useAppearanceStore.getState().setRailWidth('left', 400);
+      useAppearanceStore.getState().setDensity('compact');
+
+      expect(useAppearanceStore.getState().railWidthLeft).toBe(400);
+      /*
+        Asserted through a paint at a stated width rather than by reading the
+        property `setDensity` just wrote. That write measured happy-dom's own
+        narrow window, so it is legitimately a squeezed number — which is the
+        behaviour under test two cases up, not this one.
+      */
+      expect(paint(1920).left).toBe(400);
+    });
+
+    /**
+     * A width that was legal at compact is below the comfortable minimum.
+     * Painting must lift it; the stored intent stays where the user put it.
+     */
+    it('lifts a width stored under a narrower density', () => {
+      useAppearanceStore.getState().setDensity('compact');
+      useAppearanceStore.getState().setRailWidth('left', RAIL_MIN.compact.left);
+      useAppearanceStore.getState().setDensity('comfortable');
+
+      expect(paint().left).toBe(COMFORTABLE.left);
+    });
+  });
+
+  describe('persistence', () => {
+    it('writes both widths to localStorage', () => {
+      useAppearanceStore.getState().setRailWidth('left', 400);
+      useAppearanceStore.getState().setRailWidth('right', 380);
+
+      const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+      expect(JSON.parse(raw ?? '{}').state).toMatchObject({
+        railWidthLeft: 400,
+        railWidthRight: 380,
+      });
+    });
+
+    it('persists the null that means "follow the stylesheet"', () => {
+      useAppearanceStore.getState().setRailWidth('left', 400);
+      useAppearanceStore.getState().resetRailWidth('left');
+
+      const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+      expect(JSON.parse(raw ?? '{}').state.railWidthLeft).toBeNull();
+    });
+
+    it('returns to following the stylesheet on reset()', () => {
+      useAppearanceStore.getState().setRailWidth('left', 400);
+      useAppearanceStore.getState().reset();
+
+      expect(useAppearanceStore.getState().railWidthLeft).toBeNull();
+      expect(inlineLeft()).toBe('');
+    });
+  });
+});
+
 describe('appearance-store — persistence', () => {
   it('writes only the whitelisted preferences to localStorage', () => {
     useAppearanceStore.getState().setTheme('light');
@@ -282,6 +459,8 @@ describe('appearance-store — persistence', () => {
       terminalFontSize: 12.5,
       terminalScrollback: 5000,
       density: 'compact',
+      railWidthLeft: null,
+      railWidthRight: null,
       teamName: 'Swarm Command',
       editorPlacement: 'full',
       editorSplitAxis: 'vertical',

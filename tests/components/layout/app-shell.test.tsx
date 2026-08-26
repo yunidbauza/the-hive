@@ -82,4 +82,39 @@ describe('AppShell', () => {
       expect(panel).toHaveClass('overflow-y-auto');
     }
   });
+
+  /**
+   * The rail drag handles (HIVE-105).
+   *
+   * Only that they are mounted, and mounted as overlays. Their wiring belongs
+   * to `rail-handles.test.tsx` — they are a leaf specifically so this shell
+   * does not re-render with them, and re-testing them here would assert the
+   * same behaviour through thirteen extra surfaces.
+   */
+  it('mounts a resize handle for each rail', () => {
+    render(<AppShell />);
+
+    expect(
+      screen.getByRole('slider', { name: 'Resize the navigation rail' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('slider', { name: 'Resize the activity rail' }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The handles take no layout space, so the three regions measure exactly as
+   * they did before they existed. Asserted here rather than in the leaf's own
+   * suite because it is a fact about the row, not about the buttons.
+   */
+  it('keeps the rail row a three-item flex layout', () => {
+    render(<AppShell />);
+
+    const row = screen.getByRole('main').parentElement;
+    expect(row).toHaveClass('relative', 'flex');
+
+    for (const handle of screen.getAllByRole('slider')) {
+      expect(handle).toHaveClass('absolute');
+    }
+  });
 });

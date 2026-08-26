@@ -142,13 +142,37 @@ test('the work tab opens on a skeleton, not on data', async ({ page }) => {
       .screenshot({ path: 'test-results/evidence/work-skeleton.png' })
       .catch(() => undefined);
 
-    await expect(page.getByText(/GRAC-\d+/)).toHaveCount(0);
     /**
-     * The placeholders must not be counted as tickets. They were `<article
-     * aria-hidden>` at first, which passed every role-based check and still
-     * made this locator report three cards on an empty panel.
+     * Read once, not with a retrying matcher — and this is the second half of
+     * the flake the note above starts describing.
+     *
+     * `toHaveCount(0)` polls for five seconds. The claim being tested is about
+     * the frame the skeleton is up, but the matcher keeps looking long after it
+     * has come down, so on a machine whose Jira answer lands inside that window
+     * it sits and waits for exactly the data this test exists to prove is
+     * absent *while loading*, finds it, and fails. The faster the connection,
+     * the more reliably it fails, which is the wrong way round for a test about
+     * a loading state.
+     *
+     * So the counts are taken as a snapshot, and only asserted if the skeleton
+     * was still up when they were taken. Losing that race now costs the case
+     * nothing, the same way losing the screenshot race above does.
+     *
+     * The second locator matters for a reason worth keeping: the placeholders
+     * must not be counted as tickets. They were `<article aria-hidden>` at
+     * first, which passed every role-based check and still made this locator
+     * report three cards on an empty panel.
      */
-    await expect(page.locator('[data-panel="work"] article')).toHaveCount(0);
+    const [seededKeys, cards, stillLoading] = await Promise.all([
+      page.getByText(/GRAC-\d+/).count(),
+      page.locator('[data-panel="work"] article').count(),
+      skeleton.isVisible(),
+    ]);
+
+    if (stillLoading) {
+      expect(seededKeys).toBe(0);
+      expect(cards).toBe(0);
+    }
   }
 });
 

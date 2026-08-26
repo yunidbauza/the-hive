@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { ActivityRail } from '@components/layout/activity-rail';
 import { CenterStage } from '@components/layout/center-stage';
 import { Header } from '@components/layout/header';
 import { LeftRail } from '@components/layout/left-rail';
+import { RailHandles } from '@components/layout/rail-handles';
 import { TitleBar } from '@components/layout/title-bar';
 import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
@@ -31,11 +32,25 @@ import { useShowActivityRail } from '@stores/ui-store';
  *   addon then measures and grows into — the classic flexbox overflow trap the
  *   story calls out.
  *
- * The rails are fixed-width, so the center column absorbs every width change
- * and the document never gains a horizontal scrollbar.
+ * The rails size themselves and never flex, so the center column absorbs every
+ * width change and the document never gains a horizontal scrollbar. Since
+ * HIVE-105 their width is also draggable — but only between bounds that
+ * guarantee the stage a fifth of the window, so the sentence above still holds:
+ * whatever the rails do, the stage takes the remainder and there is always a
+ * remainder. See `@lib/rail-width`.
  */
 export function AppShell() {
   const showActivityRail = useShowActivityRail();
+
+  /*
+    The ruler the rail handles measure against (HIVE-105).
+
+    Only the ref lives here. The widths themselves are subscribed to inside
+    `RailHandles`, deliberately: they change on every pointermove of a drag, and
+    this component renders three unmemoized regions — one of which, by its own
+    note, costs a render of every mounted surface.
+  */
+  const railRef = useRef<HTMLDivElement>(null);
 
   /**
    * One subscription for every real session's status (story 096).
@@ -101,10 +116,18 @@ export function AppShell() {
       <TitleBar />
       <Header />
 
-      <div className="flex min-h-0 flex-1">
+      {/*
+        `railRef` is what the two drag handles measure against: a rail's width
+        is a distance from one edge of this row, so the row is the ruler
+        (HIVE-105). `relative` for the same reason — it is what the handles
+        below position themselves against.
+      */}
+      <div ref={railRef} className="relative flex min-h-0 flex-1">
         <LeftRail />
         <CenterStage />
         {showActivityRail ? <ActivityRail /> : null}
+
+        <RailHandles containerRef={railRef} />
       </div>
     </div>
   );
