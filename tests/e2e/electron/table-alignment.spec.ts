@@ -1,6 +1,11 @@
 import { join } from 'node:path';
 
-import { test as base, expect, type Page } from '@playwright/test';
+import {
+  test as base,
+  expect,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 
 import {
   launchHive,
@@ -50,6 +55,32 @@ async function prColumnXs(page: Page): Promise<number[]> {
   return page.locator('[data-col="pr"]').evaluateAll((cells) =>
     cells.map((cell) => cell.getBoundingClientRect().x),
   );
+}
+
+/**
+ * Resize, and **wait for the renderer to agree**.
+ *
+ * `setBounds` is a main-process call: the promise resolves when main returns,
+ * not when the renderer has relaid out. The very next round trip is usually the
+ * measurement itself, so without this a test can measure the *previous* window
+ * — and at 1440px every claim these tests make is trivially true, because there
+ * is slack for a seventh column. That is the worst kind of failure for a
+ * regression test: it goes green at the width the regression does not happen
+ * at, while claiming to have checked the width it does.
+ */
+async function resizeTo(
+  app: ElectronApplication,
+  page: Page,
+  width: number,
+): Promise<void> {
+  await app.evaluate(
+    ({ BrowserWindow }, w: number) =>
+      BrowserWindow.getAllWindows()[0]!.setBounds({ x: 0, y: 0, width: w, height: 800 }),
+    width,
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.innerWidth))
+    .toBeLessThanOrEqual(width);
 }
 
 /**
@@ -194,14 +225,7 @@ test('the status column fits its widest label at the minimum window size', async
 
   try {
     // The window the arithmetic in `COL` is written against.
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0]!.setBounds({
-        x: 0,
-        y: 0,
-        width: 1100,
-        height: 800,
-      }),
-    );
+    await resizeTo(app, page, 1100);
 
     await startSession(page, PROJECT);
     await page.getByRole('button', { name: 'Back to overmind' }).click();
@@ -294,14 +318,20 @@ test('the columns hold together at the minimum window with a resumable row', asy
   await page.waitForSelector('header');
 
   try {
-    await second.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0]!.setBounds({
-        x: 0,
-        y: 0,
-        width: 1100,
-        height: 800,
-      }),
-    );
+    await resizeTo(second, page, 1100);
+
+    /*
+      Wait for the restored fleet to paint **before** counting.
+
+      `count()` does not auto-wait, and the ledger arrives over IPC after
+      `waitForSelector('header')` has already resolved. Counting straight away
+      can therefore find zero Resume controls simply because no row has
+      rendered yet — and the `test.skip` below is this test's only guard, so a
+      premature count skips it green while never exercising the regression at
+      all. `session-history.spec.ts` waits on the same divider for the same
+      reason.
+    */
+    await expect(page.getByText('ENDED', { exact: true })).toBeVisible();
 
     /*
       Same skip as the test above, and the same reason: whether the quit

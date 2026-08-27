@@ -75,24 +75,38 @@ import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
  * **54px** right of the row's, and the `#124` link was painted over the middle
  * of the branch name — both unreadable, with nothing on screen to say so.
  *
- * A basis removes the whole class rather than buying headroom against it.
- * `truncate` already sets `overflow: hidden`, which makes a flex item's
- * automatic minimum size `0`, so with no explicit floor the three columns
- * shrink proportionally to their bases and **truncate** — which is what they
- * are built to do, and what every one of their `title` attributes exists for.
- * Header and row shrink identically, because they are dividing the same
- * leftover, so the columns cannot come apart at any width at all.
+ * A basis attacks the cause rather than buying headroom against it. `truncate`
+ * already sets `overflow: hidden`, which makes a flex item's automatic minimum
+ * size `0`, so with no explicit floor the three columns shrink proportionally
+ * to their bases and **truncate** — which is what they are built to do, and
+ * what every one of their `title` attributes exists for. Header and row shrink
+ * identically, because they are dividing the same leftover.
  *
- * That last clause is the point. The previous rule was a budget — "the three
- * floors must sum to 236 or less" — and a budget only holds while every term in
- * it does. It had already failed twice: once when `BRANCH` was split into its
- * own column (300 against 278, undetected because no test looked below the
- * default 1440px window), and again for any table reserving the Resume column,
- * which spends another 62px no floor could find. `HIVE-105` then made the rails
- * draggable, so the stage width is a user's decision — `STAGE_MIN_FRACTION`
- * promises it only 20% of the window — and no set of fixed floors could have
- * survived that either. Nothing needs to fit a budget now; the columns give way
- * before anything can overlap.
+ * That is the point, because the previous rule was a budget — "the three floors
+ * must sum to 236 or less" — and a budget only holds while every term in it
+ * does. It had already failed twice: once when `BRANCH` was split into its own
+ * column (300 against 278, undetected because no test looked below the default
+ * 1440px window), and again for any table reserving the Resume column, which
+ * spends another 62px no floor could find.
+ *
+ * ## Where it still breaks, because there is such a width
+ *
+ * Not "at no width at all" — that would be the same over-claim the budget made,
+ * one threshold lower. Once the flexible three are at zero, what is left is the
+ * `shrink-0` cells, and **they** overflow: 12 caret + 132 `STATUS` + 34 `PR` +
+ * 52 Resume + 60 gaps + 16 `px-2` = **306px**. Below a 306px flex line the
+ * header's fixed cells overflow the line while a row's overflow the button, and
+ * `PR` and Resume diverge again by the difference.
+ *
+ * The basis moves that threshold from ~518px to 306px, which is what puts every
+ * default layout — including the 1100px window with a Resume column, the case
+ * this file was rewritten for — comfortably inside it. What remains outside is
+ * a user's own doing: HIVE-105 made the rails draggable, and
+ * `STAGE_MIN_FRACTION` (`lib/rail-width.ts`) promises the stage only 20% of the
+ * window, so 1100px can be squeezed to a 220px stage and a ~168px line. No
+ * arrangement of these columns survives that; the honest claim is that the
+ * table holds together at every width the app *chooses*, and gives way
+ * gracefully — truncating, in order — for a long way past it.
  *
  * ## What `STATUS` still costs, and why it is fixed
  *
