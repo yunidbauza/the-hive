@@ -1848,6 +1848,41 @@ describe('hive-store', () => {
       ).toBeUndefined();
     });
 
+    /**
+     * The pin comes back with the name it defends (HIVE-107).
+     *
+     * `namePinned` was left out of the record on the grounds that an ended row
+     * has no title stream to defend against. Resume made that false: reopening
+     * a restored row starts a real `claude`, which repaints the only name it
+     * knows — the id — several times a second, and an unpinned row takes it. So
+     * the mid-session `HIVE-104` survived the quit and was lost to the recovery.
+     */
+    it('restores a pinned name, and the pin that defends it', () => {
+      useHiveStore
+        .getState()
+        .hydrateSessions([record({ id: 'p', name: 'HIVE-104', namePinned: true })]);
+
+      expect(useHiveStore.getState().entities['p']).toMatchObject({
+        name: 'HIVE-104',
+        namePinned: true,
+      });
+
+      // And it holds against the resumed agent's own idea of the name.
+      useHiveStore.getState().renameSession('p', 'sess-0i');
+
+      expect(useHiveStore.getState().entities['p']).toMatchObject({
+        name: 'HIVE-104',
+      });
+    });
+
+    it('leaves a row nobody pinned open to its agent', () => {
+      useHiveStore
+        .getState()
+        .hydrateSessions([record({ id: 'q', name: 'troubleshooting-crawling' })]);
+
+      expect(useHiveStore.getState().entities['q']).not.toHaveProperty('namePinned');
+    });
+
     it('drops a model or effort the closed lists do not contain', () => {
       // `ledger.ts` casts these on the way in and points here for validation.
       // A hand-edited file must not put an arbitrary string into a union.

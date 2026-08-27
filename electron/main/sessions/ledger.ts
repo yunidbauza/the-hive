@@ -212,6 +212,14 @@ function reviveRecord(raw: unknown): SessionRecord | undefined {
 
   const optional = {
     name: cleanName(raw.name),
+    /*
+      `true` or nothing, never `false` (HIVE-107). The flag is only ever read as
+      "is this name the app's own", so a stored `false` would be a second
+      spelling of absent — and the record's own optionals are spread on
+      presence, which would make the two objects differ for no reason a reader
+      could see.
+    */
+    namePinned: raw.namePinned === true ? (true as const) : undefined,
     ticket: text(raw.ticket),
     branch: text(raw.branch),
     cwd: text(raw.cwd),
@@ -483,9 +491,29 @@ export function createSessionLedger(
          * stamp back off and restored the "exempt forever" growth the stamp
          * exists to prevent. One verb decides liveness, and it is not this one.
          */
+        /**
+         * A pinned name outranks the agent's, here as in the store (HIVE-107).
+         *
+         * `readTitle` records every title it reads, and a session renamed
+         * mid-conversation goes on painting the name Claude knows it by — so
+         * without this the row on screen stayed `HIVE-104` while the file
+         * underneath it went back to `sess-0i` on the next repaint, and the
+         * file is what the next launch reads. `renameSession` has refused
+         * exactly this since HIVE-78; the ledger was the half nobody defended.
+         *
+         * A patch that carries `namePinned` is the app repinning and is
+         * obeyed — that is the note, and it is the only writer allowed to
+         * replace one.
+         */
+        const refuseName =
+          existing.namePinned === true &&
+          patch.name !== undefined &&
+          patch.namePinned === undefined;
+
         const merged: SessionRecord = {
           ...existing,
           ...patch,
+          ...(refuseName ? { name: existing.name } : {}),
           // `createdAt` is deliberately not overwritable: it is the first thing
           // anyone knew about this session, and retention sorts on it.
           createdAt: existing.createdAt,

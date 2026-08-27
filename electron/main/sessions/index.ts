@@ -1503,8 +1503,35 @@ export function createSessions(options: SessionsOptions): Sessions {
          * it is the entities-map key and appears in every console line — so
          * this is the display name and nothing more. Falling back to the id
          * keeps every other spawn byte-identical to what HIVE-61 shipped.
+         *
+         * **And only on a spawn** (HIVE-107). `--name` on a `--resume` is not a label on a
+         * new session, it is a *rename of the old one*, written through into
+         * the transcript — measured against Claude Code 2.1.247: a resume
+         * carrying `--name probe-beta` reopened a conversation stored as
+         * `probe-alpha` and painted `✳ probe-beta`, and the next resume, with
+         * no flag at all, still said `probe-beta`.
+         *
+         * So the id fallback was destroying exactly the thing a resume exists
+         * to preserve. A session the user had called `troubleshooting-crawling`
+         * came back as `sess-0n`, and not only on screen: the new title is
+         * indistinguishable from one the agent chose, so `readTitle` recorded
+         * it in the ledger and the old name was gone for good — lost by the
+         * recovery rather than by the crash.
+         *
+         * A resume needs no name because the conversation already has one and
+         * Claude repaints it unprompted, which is also why this is a *dropped
+         * flag* rather than a name looked up and re-sent: sending the ledger's
+         * copy would re-assert something already true, and would still be
+         * wrong for the names the pattern cannot carry — `/rename` accepts
+         * "fix the login bug", and `isSendableSessionName` does not.
+         *
+         * An explicit `request.name` survives, because that is a caller saying
+         * something the transcript cannot: *call it this from now on*. Nothing
+         * asks for it on a resume today.
          */
-        name: request.name ?? request.entityId,
+        ...(resume && request.name === undefined
+          ? {}
+          : { name: request.name ?? request.entityId }),
         sessionUuid,
         resume,
         /*

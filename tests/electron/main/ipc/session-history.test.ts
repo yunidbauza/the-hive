@@ -230,3 +230,53 @@ describe('session:pr', () => {
     expect(ledgerRecord).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The ticket note, and the name that rides with it (HIVE-107).
+ *
+ * A ticket named *mid-session* renames its row, and that name is the app's own
+ * — Claude never hears about it, so it never comes back on the title stream and
+ * main had no other way to learn it. The ledger therefore kept `sess-0i` for a
+ * row the user had been reading as `HIVE-104` all afternoon, and the next
+ * launch restored the id.
+ *
+ * A name on this note is by construction a pinned one: the only sender is the
+ * moment the store pins it.
+ */
+describe('session:note', () => {
+  const send = (payload: unknown) =>
+    handlers.get(CH.sessionNote)!(trustedEvent, payload);
+
+  it('records the ticket alone when the name was never the app’s to choose', () => {
+    // A session spawned *from* a ticket card carries the key as `--name`, so
+    // the agent reports it back and the ledger already has it.
+    send({ entityId: 'old-01', ticket: 'HIVE-104' });
+
+    expect(ledgerRecord).toHaveBeenCalledWith('old-01', { ticket: 'HIVE-104' });
+  });
+
+  it('records a name that came with it, and pins it', () => {
+    send({ entityId: 'old-01', ticket: 'HIVE-104', name: 'HIVE-104-2' });
+
+    expect(ledgerRecord).toHaveBeenCalledWith('old-01', {
+      ticket: 'HIVE-104',
+      name: 'HIVE-104-2',
+      namePinned: true,
+    });
+  });
+
+  it('refuses a note for an entity it has no record of', () => {
+    send({ entityId: 'never-ran', ticket: 'HIVE-104', name: 'HIVE-104' });
+
+    expect(ledgerRecord).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed name rather than storing one', () => {
+    expect(() => send({ entityId: 'old-01', ticket: 'HIVE-104', name: '' })).toThrow();
+    expect(() => send({ entityId: 'old-01', ticket: 'HIVE-104', name: 7 })).toThrow();
+    expect(() =>
+      send({ entityId: 'old-01', ticket: 'HIVE-104', name: 'x'.repeat(200) }),
+    ).toThrow();
+    expect(ledgerRecord).not.toHaveBeenCalled();
+  });
+});

@@ -1,9 +1,24 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isSession } from '@/types/entity';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useHiveStore } from '@stores/hive-store';
+
+/**
+ * What main is told, so the pin survives a quit (HIVE-107).
+ *
+ * Mocked rather than driven through the bridge for the reason
+ * `hive-store.refresh-prs.test.ts` gives about its own note: what is under test
+ * is *when* the store speaks and *what it says*, not the IPC underneath.
+ */
+const noteSessionTicket = vi.fn();
+
+vi.mock('@lib/session-history', () => ({
+  noteSessionTicket: (request: unknown) => noteSessionTicket(request),
+  noteSessionPr: vi.fn(),
+  readSessionHistory: vi.fn(),
+}));
 
 /**
  * What a session is *called*, and what branch it is *on* (HIVE-78).
@@ -27,6 +42,7 @@ function sessionAt(id: string) {
 
 beforeEach(() => {
   useHiveStore.getState().reset();
+  noteSessionTicket.mockReset();
 });
 
 describe('setSessionBranch', () => {
@@ -166,6 +182,71 @@ describe('setSessionTicket', () => {
 
     expect(sessionAt(first).name).toBe('HIVE-73');
     expect(sessionAt(second).name).toBe('HIVE-73-2');
+  });
+
+  /**
+   * The name goes with the ticket, because main cannot work it out (HIVE-107).
+   *
+   * A mid-session rename is the app's own: Claude is never told, so it never
+   * comes back on the title stream, so `readTitle` — main's only other source
+   * of names — never sees it. Left unsent, the ledger kept `sess-01` for a row
+   * the user had been reading as `HIVE-73`, and the next launch restored the
+   * id. And `ticketSessionName` de-duplicates against the whole fleet, so the
+   * name is not something main could derive from the key either.
+   */
+  it('tells main the name it pinned, not just the ticket', () => {
+    const id = spawn();
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    expect(noteSessionTicket).toHaveBeenCalledWith({
+      entityId: id,
+      ticket: 'HIVE-73',
+      name: 'HIVE-73',
+    });
+  });
+
+  it('sends the de-duplicated name, which is the one on screen', () => {
+    const first = spawn();
+    const second = spawn();
+    useHiveStore.getState().setSessionTicket(first, 'HIVE-73');
+    noteSessionTicket.mockReset();
+
+    useHiveStore.getState().setSessionTicket(second, 'HIVE-73');
+
+    expect(noteSessionTicket).toHaveBeenCalledWith({
+      entityId: second,
+      ticket: 'HIVE-73',
+      name: 'HIVE-73-2',
+    });
+  });
+
+  /**
+   * Sent from the action rather than beside it, so the two cannot disagree.
+   *
+   * The note used to be a second call in `use-session-status.ts`, made whether
+   * or not this action accepted the association — so a refusal still wrote the
+   * ticket into the ledger, and next launch restored a row carrying a key the
+   * store had declined to give it.
+   */
+  it('says nothing to main when it refuses the association', () => {
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+    noteSessionTicket.mockReset();
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-99');
+
+    expect(noteSessionTicket).not.toHaveBeenCalled();
+  });
+
+  it('says nothing to main about a session that has ended', () => {
+    const id = spawn();
+    useHiveStore.getState().setSessionStatus(id, 'terminated');
+    noteSessionTicket.mockReset();
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    expect(noteSessionTicket).not.toHaveBeenCalled();
   });
 
   it('refuses a session that already has a ticket', () => {

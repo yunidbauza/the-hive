@@ -317,12 +317,19 @@ describe('useSessionStatus', () => {
     expect(entity.name).toBe('HIVE-73');
     expect(issueCalls).toEqual(['HIVE-73']);
     /*
-      And main was told, so the link survives a quit (HIVE-87). This is the only
-      moment it can be: main matched the shape but does not decide whether the
-      key is real, and the confirmation exists only on this side.
+      And main was told, so the link survives a quit (HIVE-87) — **and the name
+      the association pinned** (HIVE-107), which is the half main cannot work
+      out: this rename never reaches Claude, so it never comes back on the title
+      stream, and `ticketSessionName` de-duplicates against the fleet so the key
+      does not imply it either.
+
+      Sent by the action now rather than beside it here, which is why this is
+      still the only moment it can be sent: main matched the shape but does not
+      decide whether the key is real, and the confirmation exists only on this
+      side, one line before the action is called.
     */
     expect(notedTickets).toEqual([
-      { entityId: 'rails-upgrade', ticket: 'HIVE-73' },
+      { entityId: 'rails-upgrade', ticket: 'HIVE-73', name: 'HIVE-73' },
     ]);
   });
 

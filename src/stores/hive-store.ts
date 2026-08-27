@@ -1937,6 +1937,15 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           */
           ...(live ? {} : { restored: true }),
           ...(item.name === undefined ? {} : { name: item.name }),
+          /*
+            And whether that name is the app's own (HIVE-107). Restored because
+            a restored row can be *reopened*: resume starts a real `claude`,
+            which repaints the only name it knows — the id — several times a
+            second, so an unpinned row loses the mid-session `HIVE-104` it was
+            carrying. `renameSession` reads this flag; without it the pin
+            survived the quit and was lost to the recovery.
+          */
+          ...(item.namePinned === true ? { namePinned: true } : {}),
           ...(item.ticket === undefined ? {} : { ticket: item.ticket }),
           ...(item.branch === undefined ? {} : { branch: item.branch }),
           ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
@@ -2287,31 +2296,59 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * describe most of its own transcript. A user who genuinely wants that has a
    * better tool: `/clear`, which retires the row and opens a fresh one.
    */
-  setSessionTicket: (id, ticket) =>
-    set((state) => {
-      const target = currentSessionIn(state, id);
-      const entity = state.entities[target];
-      if (!entity || !isSession(entity)) return state;
-      if (entity.ticket !== undefined) return state;
-      // An ended row is history; naming it now would rewrite the record.
-      if (isEnded(entity.status)) return state;
+  setSessionTicket: (id, ticket) => {
+    /**
+     * Read, decide, write, *then* tell main (HIVE-107) — rather than the bare
+     * `set(updater)` this was, with the note made separately by its caller.
+     *
+     * Two things follow from the note being made here, and both were bugs
+     * while it was made there:
+     *
+     * - **It carries the name.** The name is settled in this function and
+     *   nowhere else — `ticketSessionName` de-duplicates against the whole
+     *   fleet — so a caller can only send the key, and main had no other way
+     *   to learn what the row is now called: this rename never reaches Claude,
+     *   so it never comes back on the title stream. The ledger kept the id, and
+     *   the next launch restored it over a name the user had been reading all
+     *   afternoon.
+     * - **It only speaks when it acted.** The three refusals below are silent
+     *   from outside, so an unconditional note beside the call wrote a ticket
+     *   into the ledger that the store had just declined — and keyed it on the
+     *   raw id rather than `currentSessionIn`, which after a `/clear` is a
+     *   different row.
+     *
+     * `get()` before `set()` is the shape `resumeSession` uses a few actions
+     * down, and for the same reason: the decision needs the state, and the
+     * effect must not run inside an updater.
+     */
+    const state = get();
+    const target = currentSessionIn(state, id);
+    const entity = state.entities[target];
+    if (!entity || !isSession(entity)) return;
+    if (entity.ticket !== undefined) return;
+    // An ended row is history; naming it now would rewrite the record.
+    if (isEnded(entity.status)) return;
 
-      const name = ticketSessionName(ticket, state.entities);
+    const name = ticketSessionName(ticket, state.entities);
 
-      return {
-        entities: {
-          ...state.entities,
-          [target]: { ...entity, ticket, name, namePinned: true },
-        },
-        orchLines: capLines([
-          ...state.orchLines,
-          // The new name, never the id (HIVE-91) — and only the name: it always
-          // carries the ticket key (`HIVE-73`, `HIVE-73-2`), so spelling the
-          // ticket again would read `HIVE-73 is working HIVE-73`.
-          line(`  renamed → ${name}`, 'dim'),
-        ]),
-      };
-    }),
+    set((current) => ({
+      entities: {
+        ...current.entities,
+        [target]: { ...entity, ticket, name, namePinned: true },
+      },
+      orchLines: capLines([
+        ...current.orchLines,
+        // The new name, never the id (HIVE-91) — and only the name: it always
+        // carries the ticket key (`HIVE-73`, `HIVE-73-2`), so spelling the
+        // ticket again would read `HIVE-73 is working HIVE-73`.
+        line(`  renamed → ${name}`, 'dim'),
+      ]),
+    }));
+
+    // So the association *and the name it produced* survive a quit (HIVE-87,
+    // HIVE-107). Fire and forget: `lib/session-history` swallows the failure.
+    noteSessionTicket({ entityId: target, ticket, name });
+  },
 
   /**
    * `/clear` — the conversation ended, the terminal did not.

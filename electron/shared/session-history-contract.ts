@@ -59,8 +59,13 @@ export interface SessionPrRecord {
  * - `terminalId` — the pty it names is gone. Worse, a restored successor
  *   pointing at a predecessor that retention has pruned would break
  *   `terminalIdFor` silently, so restored rows stand alone.
- * - `namePinned` — it exists to defend an app-chosen name against Claude's
- *   title stream. An ended row has no title stream to defend against.
+ *
+ * `namePinned` was a fourth, on the grounds that it exists to defend a name
+ * against Claude's title stream and an ended row has no title stream to defend
+ * against. Resume (HIVE-88) made that false and HIVE-107 acted on it: reopening
+ * a restored row starts a real `claude`, which repaints the only name it knows
+ * — the id — several times a second, so an unpinned row takes it. The pin is a
+ * fact about the row, not about the process, and it is on the record now.
  */
 export interface SessionRecord {
   /**
@@ -74,6 +79,21 @@ export interface SessionRecord {
    */
   id: string;
   name?: string;
+  /**
+   * Whether {@link SessionRecord.name} is the app's own rather than the agent's
+   * (HIVE-107).
+   *
+   * Set only by a `session:note` that carried a name, which is the one moment
+   * the store pins one. While it is set the ledger refuses names off the title
+   * stream, exactly as `renameSession` does in the store and against the same
+   * writer — `readTitle` records every title it reads, so without this the row
+   * on screen stayed `HIVE-104` while the file underneath it went back to
+   * `sess-0i` on the next repaint, and the file is what the next launch reads.
+   *
+   * Dropped by `begin` for a genuinely new session, because a pin describes the
+   * conversation it was set on.
+   */
+  namePinned?: boolean;
   /** The project id, as `SpawnRequest.projectId` gave it. */
   project: string;
   ticket?: string;
@@ -221,6 +241,24 @@ export interface SessionHistoryEntry extends SessionRecord {
 export interface SessionNoteRequest {
   entityId: string;
   ticket: string;
+  /**
+   * The name the store pinned when it made the association (HIVE-107).
+   *
+   * The *second* field of a record main cannot author, and it rides on this
+   * request rather than earning its own because it is not a separate fact: it
+   * is what naming the ticket did to the row, settled in the same instant by
+   * the same decision.
+   *
+   * Present only for the **mid-session** association. A session spawned from a
+   * ticket card carries the key as `--name`, so the agent reports it back and
+   * `readTitle` has already written it down; a mid-session rename is the app's
+   * own and Claude is never told, which is precisely why nothing else could
+   * ever tell main about it.
+   *
+   * Not derivable from `ticket` either: `ticketSessionName` de-duplicates
+   * across the whole fleet, so the row on screen may say `HIVE-73-2`.
+   */
+  name?: string;
 }
 
 /**

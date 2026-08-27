@@ -895,11 +895,23 @@ export function registerIpcHandlers(): void {
    * an entity main never spawned would create a row for a session that never
    * existed. Hence the `all()` check: main writes only what it already knows
    * about.
+   *
+   * A name on the note is **pinned by arriving** (HIVE-107). The store sends
+   * one only where it renamed the row itself — the mid-session association,
+   * which Claude is never told about and which therefore never comes back on
+   * the title stream `readTitle` reads. So this is main's only chance to learn
+   * that name, and the flag is what stops `readTitle` overwriting it a moment
+   * later with the id the agent still thinks the session is called.
    */
   handle(CH.sessionNote, (_event, raw: unknown): void => {
     const request = parseSessionNoteRequest(raw);
     if (!ledger?.all().some((record) => record.id === request.entityId)) return;
-    ledger.record(request.entityId, { ticket: request.ticket });
+    ledger.record(request.entityId, {
+      ticket: request.ticket,
+      ...(request.name === undefined
+        ? {}
+        : { name: request.name, namePinned: true }),
+    });
   });
 
   /**

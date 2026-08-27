@@ -1,4 +1,8 @@
 // @vitest-environment node
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -17,6 +21,7 @@ import {
   type Sessions,
 } from '../../../../electron/main/sessions';
 import { MIN_INTERVAL_MS } from '../../../../electron/main/sessions/git';
+import { createSessionLedger } from '../../../../electron/main/sessions/ledger';
 
 /**
  * The sessions layer (story 096).
@@ -1419,6 +1424,60 @@ describe('the ledger', () => {
     expect(typeof ending?.endedAt).toBe('number');
   });
 
+  /**
+   * The title stream against a pinned name, over a **real** ledger (HIVE-107).
+   *
+   * Both halves are pinned on their own — `ledger.test.ts` owns the refusal,
+   * and the tests above own the fact that `readTitle` records what it reads —
+   * but the bug lived in the seam, so this is the one place they are composed.
+   * A session renamed mid-conversation goes on painting the name Claude knows
+   * it by, several times a second, and every one of those repaints reached
+   * `record`. The row on screen stayed `HIVE-104`; the file underneath it went
+   * back to `sess-01` before the user had finished reading the rename, and the
+   * file is what the next launch restores from.
+   */
+  it('keeps a pinned name against the agent’s own repaints', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hive-pin-'));
+    const file = join(dir, 'sessions.json');
+    try {
+      const ledger = createSessionLedger(file, () => 1000);
+      const withIt = createSessions({
+        supervisor,
+        send: (channel, payload) =>
+          sent.push({ channel, payload: payload as Record<string, unknown> }),
+        config: () => CONFIG,
+        newSessionUuid: () => TEST_UUID,
+        ledger,
+      });
+      withIt.open(OPEN);
+      const sessionId = mintedFor('hero-refresh');
+      // Past the bootstrap, which is the window `readTitle` refuses to read in.
+      emitData({ sessionId, chunk: '$ ' });
+      vi.advanceTimersByTime(158 + SUBMIT);
+
+      // The user names a ticket mid-session; the renderer's note arrives.
+      ledger.record('hero-refresh', { ticket: 'HIVE-104', name: 'HIVE-104', namePinned: true });
+
+      // And Claude, which was never told, goes on painting what it knows.
+      emitData({ sessionId, chunk: '\u001b]0;✳ hero-refresh\u0007' });
+      vi.advanceTimersByTime(8);
+      ledger.flush();
+
+      expect(ledger.all()[0]).toMatchObject({
+        name: 'HIVE-104',
+        namePinned: true,
+        ticket: 'HIVE-104',
+      });
+      // The renderer is still told, and refuses it for itself — main's job here
+      // is the file, not the row.
+      expect(on(CH.sessionName).at(-1)?.payload).toMatchObject({
+        name: 'hero-refresh',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('says nothing about a command session, which has no history to keep', () => {
     // Same reason the activity tracker is not told: a clone's ending is not a
     // session's, and a `clone-1` row in the fleet list would be a fiction.
@@ -1465,7 +1524,7 @@ describe('the ledger', () => {
 
       expect(supervisor.write).toHaveBeenCalledWith(
         mintedFor('hero-refresh'),
-        `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --resume ${PRIOR} && exit`,
+        `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --resume ${PRIOR} && exit`,
       );
       expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
         sessionUuid: PRIOR,
@@ -1474,6 +1533,59 @@ describe('the ledger', () => {
       expect(patchesFor(written, 'hero-refresh')[0]).not.toHaveProperty('task');
     });
 
+    /**
+     * The name the conversation already has is the one it keeps (HIVE-107).
+     *
+     * `--name` on a `--resume` is not a label on a new session, it is a
+     * **rename of the old one**: measured against Claude Code 2.1.247, a resume
+     * carrying `--name probe-beta` reopened a conversation stored as
+     * `probe-alpha` and painted `✳ probe-beta` — and the next resume, with no
+     * flag at all, still said `probe-beta`. The override is written into the
+     * transcript.
+     *
+     * So the entity-id fallback, which is right for a spawn, was the whole bug:
+     * every resumed session was renamed to `sess-0n` on its way back, the title
+     * stream reported that as the agent's own choice, and `readTitle` wrote it
+     * through to the ledger — so `troubleshooting-crawling` became `sess-0n`
+     * permanently, having survived the quit that was supposed to be the risky
+     * part.
+     */
+    it('leaves the resumed conversation the name it already has', () => {
+      const written: Written[] = [];
+      withLedger(written, { 'hero-refresh': PRIOR }).open({ ...OPEN, resume: true });
+      settle(mintedFor('hero-refresh'));
+
+      const line = vi.mocked(supervisor.write).mock.calls.at(0)?.[1] ?? '';
+      expect(line).not.toContain('--name');
+    });
+
+    /**
+     * A caller that *does* name a resume is obeyed, because it is saying
+     * something the ledger cannot: this conversation should now be called this.
+     * Nothing asks for that today — `resumeSession` and `resolveTransport` both
+     * send `resume` and no name — and the flag is dropped only where the
+     * alternative was inventing one.
+     */
+    it('still renames a resume the caller named on purpose', () => {
+      const written: Written[] = [];
+      withLedger(written, { 'hero-refresh': PRIOR }).open({
+        ...OPEN,
+        resume: true,
+        name: 'HIVE-73',
+      });
+      settle(mintedFor('hero-refresh'));
+
+      expect(supervisor.write).toHaveBeenCalledWith(
+        mintedFor('hero-refresh'),
+        `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name HIVE-73 --resume ${PRIOR} && exit`,
+      );
+    });
+
+    /**
+     * The fallback is dropped for a *resume*, not for a request that merely
+     * asked for one. A spawn that degrades to fresh is a beginning, and a
+     * beginning still gets named after its row (HIVE-61).
+     */
     it('falls back to a fresh session when there is nothing to resume', () => {
       // A record older than uuids, or an id this run already began: the
       // renderer's request is honest but unanswerable, and the spawn is the

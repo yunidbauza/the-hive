@@ -336,6 +336,13 @@ user later says they are working — "work on ABC-123", read out of a
 Claude repaints its terminal title several times a second, so without the pin a
 store-side rename survives about one frame. `renameSession` checks it first.
 
+It is **persisted**, and it is the one field on `Session` that had to become one
+later: the ledger left it out on the grounds that an ended row has no title
+stream to defend against, which resume made false. Reopening a restored row
+starts a real `claude`, which repaints the only name it knows — the id — so an
+unpinned row lost the `ABC-123` it came back with. `hydrateSessions` restores
+it, and the ledger enforces the same precedence on its own copy.
+
 Two rules follow, and both are load-bearing:
 
 - **The id never changes.** It is the entities-map key, it is what `order`

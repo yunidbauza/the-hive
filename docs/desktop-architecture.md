@@ -133,9 +133,19 @@ the spawn (which is also the only moment the `--session-id` uuid can be
 captured — it cannot be assigned to a session retroactively), the branch read,
 a title the agent reports, and `settleExit`. The renderer reads it once at boot
 over `session:history` and merges it with `hydrateSessions`; it writes back
-through exactly one verb, `session:note`, carrying the Jira key — the single
-field main cannot establish for itself, because confirming a key names a real
-issue takes a Jira read the renderer does and main deliberately does not.
+through exactly one verb, `session:note`, carrying the Jira key — the field main
+cannot establish for itself, because confirming a key names a real issue takes a
+Jira read the renderer does and main deliberately does not.
+
+The note carries **the name that key pinned** as well, for the same reason one
+step on: a mid-session association renames the row, that rename never reaches
+Claude, so it never comes back on the title stream main reads names from — and
+`ticketSessionName` de-duplicates across the fleet, so the key does not imply
+the name either. A name on the note is a pinned one by construction, and the
+ledger refuses title-stream names over it exactly as `renameSession` does in the
+store. Without both halves the row read `HIVE-104` while the file underneath it
+went back to the session id on Claude's next repaint, and the next launch
+restored the id.
 
 Three properties are worth knowing before changing it:
 
@@ -161,7 +171,12 @@ Three properties are worth knowing before changing it:
   history, with no `restored` flag. And a restored row
   opened again is spawned with `resume`, which puts the ledger's uuid behind
   `--resume` instead of `--session-id` and keeps the record rather than
-  starting it over (`SessionLedger.resumable`, `begin(…, { resume })`).
+  starting it over (`SessionLedger.resumable`, `begin(…, { resume })`). It also
+  carries **no `--name`** (HIVE-107): on a resume that flag is a rename of the existing
+  conversation rather than a label on a new one, so the entity-id fallback that
+  is right for a spawn (HIVE-61) came back through the title stream as the
+  agent's own choice and overwrote the row's — and the ledger's — real name.
+  A resumed conversation repaints the name it already has.
 - **It seeds from the file at construction, and that is load-bearing.** An
   unseeded ledger answers `session:history` with nothing *and* writes that
   nothing back at the next debounce, so the second launch after any session

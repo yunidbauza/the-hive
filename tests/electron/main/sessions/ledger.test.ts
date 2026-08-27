@@ -133,6 +133,87 @@ describe('session ledger', () => {
     });
 
     /**
+     * A name the *app* chose, and the defence that keeps it (HIVE-107).
+     *
+     * `namePinned` used to be excluded from the record on the grounds that "an
+     * ended row has no title stream to defend against". Resume made that false:
+     * a restored row reopens a real `claude`, which repaints the name it knows
+     * — the id — several times a second, and an unpinned row takes it.
+     */
+    it('round-trips a pinned name', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      ledger.flush();
+
+      expect(createSessionLedger(file, () => 2000).all()[0]).toMatchObject({
+        name: 'HIVE-104',
+        namePinned: true,
+      });
+    });
+
+    /**
+     * The same rule `renameSession` enforces in the store, enforced here for
+     * the same reason and against the same writer.
+     *
+     * `readTitle` records every title it reads. While a name is pinned the
+     * store *refuses* those titles, so the row on screen stayed `HIVE-104`
+     * while the file underneath it went back to `sess-01` on the very next
+     * repaint — and the file is what the next launch reads.
+     */
+    it('refuses a title-stream name while one is pinned', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      ledger.record('sess-01', { name: 'sess-01' });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.name).toBe('HIVE-104');
+    });
+
+    it('lets the app repin over its own name', () => {
+      // The pin outranks the agent, not the app: a note that carries a name is
+      // the store saying so, and it is the only thing that may replace one.
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      ledger.record('sess-01', { name: 'HIVE-104-2', namePinned: true });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.name).toBe('HIVE-104-2');
+    });
+
+    it('still takes a title-stream name on a row nobody pinned', () => {
+      // HIVE-61's behaviour, unchanged for every session the app has not named.
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { name: 'troubleshooting-crawling' });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.name).toBe('troubleshooting-crawling');
+    });
+
+    /**
+     * A pin describes the conversation it was set on. `begin` already discards
+     * a previous run's record when a spawn merely reuses its id — this is the
+     * same fact one field further in, and it is the flag that would otherwise
+     * make a brand-new session refuse its own name.
+     */
+    it('drops the pin when a fresh session takes the id', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      ledger.flush();
+
+      const reopened = createSessionLedger(file, () => 2000);
+      reopened.begin('sess-01', { project: 'p', status: 'working' });
+      reopened.record('sess-01', { name: 'sess-01' });
+
+      expect(reopened.all()[0]).toMatchObject({ name: 'sess-01' });
+      expect(reopened.all()[0]).not.toHaveProperty('namePinned');
+    });
+
+    /**
      * A later sweep resolving a different PR — a branch reused, or a second one
      * raised — replaces rather than merging into. Only one PR is remembered,
      * which is what the 34px column can show.

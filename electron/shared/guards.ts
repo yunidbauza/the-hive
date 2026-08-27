@@ -50,6 +50,7 @@ import {
 import {
   SESSION_EFFORTS,
   SESSION_MODELS,
+  SESSION_NAME_DISPLAY_MAX,
   SESSION_NAME_MAX,
   isSendableSessionName,
 } from './session-contract';
@@ -360,12 +361,25 @@ export function assertSessionName(value: unknown, label: string): string {
  * pattern here: the renderer has already asked Jira whether the key names a
  * real issue, which is a far stronger check than any regex, and a second weaker
  * one in this file would only invite someone to trust it instead.
+ *
+ * `name` is optional and takes `assertText` too, bounded by the display cap
+ * rather than by {@link SESSION_NAME_PATTERN} (HIVE-107). The pattern governs
+ * what may go on a **command line**; this value is stored and rendered and
+ * never sent, so applying it here would reject the de-duplicated `HIVE-73-2`'s
+ * more exotic cousins for a risk this path does not carry. The cap is the one
+ * `readTitle` already applies to the other source of names, for the same
+ * reason: a rail 130px wide, not memory.
  */
 export function parseSessionNoteRequest(input: unknown): SessionNoteRequest {
-  const raw = assertShape(input, ['entityId', 'ticket'], 'sessionNote');
+  const raw = assertShape(input, ['entityId', 'ticket'], 'sessionNote', ['name']);
+  const name = raw.name === undefined ? undefined : assertText(raw.name, 'sessionNote.name');
+  if (name !== undefined && name.length > SESSION_NAME_DISPLAY_MAX) {
+    return fail(`sessionNote.name: too long`);
+  }
   return {
     entityId: assertId(raw.entityId, 'sessionNote.entityId'),
     ticket: assertText(raw.ticket, 'sessionNote.ticket'),
+    ...(name === undefined ? {} : { name }),
   };
 }
 

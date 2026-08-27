@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 
 import { readJiraIssue } from '@/lib/jira';
-import { noteSessionTicket } from '@/lib/session-history';
 
 import { READY_SETTLE_MS } from '@features/sessions/hooks/use-session-boot';
 import {
@@ -192,14 +191,15 @@ export function useSessionStatus(): void {
            */
           const result = await readJiraIssue({ key });
           if (!live || result === null || !result.ok) return;
-          setSessionTicket(entityId, result.value.key);
           /*
-            And tell main, so the link survives a quit (HIVE-87). This is the
-            only moment it can be told: main matched the shape but deliberately
-            does not decide whether the key is real, and the confirmation that
-            it is exists only here, one line above.
+            And that tells main, so the link survives a quit (HIVE-87) — the
+            action makes the note itself now (HIVE-107), because the name it
+            pins has to go with the key and this side never sees it. This is
+            still the only moment main *can* be told: it matched the shape but
+            deliberately does not decide whether the key is real, and the
+            confirmation that it is exists only here, one line above.
           */
-          noteSessionTicket({ entityId, ticket: result.value.key });
+          setSessionTicket(entityId, result.value.key);
         })();
       },
     );
