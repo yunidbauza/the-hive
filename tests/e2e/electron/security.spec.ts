@@ -234,12 +234,24 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * the session stream. What it adds is main's *verdict* on which root a read
    * resolves under, which the renderer was previously inferring and getting
    * wrong for any working directory main had refused.
+   *
+   * `search` is the newest, and the only verb here that **recurses** (HIVE-110).
+   * It takes no path either — a `projectId`, a query and a mode — so the rule
+   * above still holds for every entry on this list. What it adds is reach: it
+   * reads directories nobody pointed it at, which is why it prunes on
+   * `HIDDEN_ENTRIES` before `stat`, reuses the editor's size and binary
+   * refusals rather than softer ones, and obeys five bounds declared in
+   * `fs-contract.ts` rather than chosen at its call site.
+   *
+   * A verb that took a path, or that walked without a bound, is what this list
+   * exists to make impossible to add quietly.
    */
   expect(surface.fs).toEqual([
     'onChanged',
     'readDir',
     'readFile',
     'root',
+    'search',
     'unwatch',
     'watch',
     'writeFile',
