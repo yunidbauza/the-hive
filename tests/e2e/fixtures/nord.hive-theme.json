@@ -32,7 +32,8 @@
         "brandFillHover": "#81a1c1",
         "brandFillStrong": "#4c6a92",
         "onBrand": "#eceff4",
-        "dangerSolid": "#bf616a"
+        "dangerSolid": "#bf616a",
+        "onDanger": "#000000"
       },
       "syntax": {
         "keyword": "#b48ead",
@@ -89,7 +90,8 @@
         "brandFillHover": "#81a1c1",
         "brandFillStrong": "#4c6a92",
         "onBrand": "#ffffff",
-        "dangerSolid": "#bf616a"
+        "dangerSolid": "#bf616a",
+        "onDanger": "#000000"
       },
       "syntax": {
         "keyword": "#b48ead",
