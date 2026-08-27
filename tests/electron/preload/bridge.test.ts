@@ -274,6 +274,14 @@ describe('exposed surface', () => {
     await integrations().status();
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.integrationsStatus);
 
+    /*
+      The cheap sibling. It exists precisely so a pane that wants the
+      environment does not reach for the verb that executes `gh`, and it takes
+      no argument for the same reason `status` does not.
+    */
+    await integrations().loginEnv();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.integrationsLoginEnv);
+
     await config().setNotifications({ sessionDone: false });
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.configSetNotifications, {
       sessionDone: false,

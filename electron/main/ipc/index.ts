@@ -77,6 +77,7 @@ import {
   CH,
   type AppInfo,
   type IntegrationsStatus,
+  type LoginEnvStatus,
   type NotificationActivateEvent,
   type NotificationDeliveryStatus,
   type NotificationDismissedEvent,
@@ -1217,6 +1218,19 @@ export function registerIpcHandlers(): void {
       loginEnv,
       notificationsSupported: Notification.isSupported(),
     };
+  });
+
+  /**
+   * The environment half, without the binary.
+   *
+   * `integrations:status` above waits on the same memoised promise and then
+   * spends two `spawnSync` calls looking for `gh`. Settings → Runtime wants the
+   * `PATH` this app searched and has no interest in `gh`, so it gets the wait
+   * and none of the subprocesses — which, since the promise was started at
+   * boot, makes this handler a variable read that cannot block main.
+   */
+  handle(CH.integrationsLoginEnv, async (): Promise<LoginEnvStatus> => {
+    return await loginEnvStatus();
   });
 
   /**

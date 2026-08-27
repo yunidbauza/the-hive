@@ -1,3 +1,5 @@
+import { SettingsNestingContext } from '@features/settings/components/settings-nesting';
+
 /**
  * A band of settings groups that all belong to one outside service.
  *
@@ -43,6 +45,16 @@
  * `aria-label` on the `<section>` rather than `aria-labelledby`: the eyebrow's
  * text is the label, and naming the region directly saves an id that would have
  * to be unique across a pane that renders this twice.
+ *
+ * ## Why the band tells its groups, rather than each group being told
+ *
+ * Everything above is only true if the groups inside actually behave as
+ * contained — no rules of their own, and a heading level below this one. That
+ * started as a `nested` prop on each `SettingsGroup`, which made a structural
+ * fact into something every call site had to remember, and something three
+ * components hard-coded on the assumption they would never be rendered
+ * anywhere else. The band publishes it instead, so a group is nested exactly
+ * when it is inside one — see `settings-nesting.ts`.
  */
 export function SettingsProviderGroup({
   name,
@@ -53,12 +65,14 @@ export function SettingsProviderGroup({
   children: React.ReactNode;
 }) {
   return (
-    <section aria-label={name} className="flex flex-col gap-5">
-      <h3 className="flex items-center gap-3 font-mono text-[11px] font-semibold tracking-[0.1em] text-brand uppercase">
-        {name}
-        <span aria-hidden="true" className="h-px flex-1 bg-brand/25" />
-      </h3>
-      {children}
-    </section>
+    <SettingsNestingContext value={true}>
+      <section aria-label={name} className="flex flex-col gap-5">
+        <h3 className="flex items-center gap-3 font-mono text-[11px] font-semibold tracking-[0.1em] text-brand uppercase">
+          {name}
+          <span aria-hidden="true" className="h-px flex-1 bg-brand/25" />
+        </h3>
+        {children}
+      </section>
+    </SettingsNestingContext>
   );
 }

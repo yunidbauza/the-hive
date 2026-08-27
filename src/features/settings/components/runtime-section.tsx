@@ -13,7 +13,7 @@ import { useProjectConfig } from '@hooks/use-project-config';
 import {
   diagnoseAgentCommand,
   diagnoseSessionEnv,
-  readIntegrationsStatus,
+  readLoginEnvStatus,
   setProjectRuntimeConfig,
   setRuntimeConfig,
 } from '@lib/project-config';
@@ -59,7 +59,17 @@ export function RuntimeSection() {
    * than working.
    */
   const [envDiagnosticPending, setEnvDiagnosticPending] = useState(false);
-  const [loginEnv, setLoginEnv] = useState<LoginEnvStatus | null>(null);
+  /**
+   * `null` while the read is out, `'unavailable'` once it has failed.
+   *
+   * Three states rather than two, because `readLoginEnvStatus` answers `null`
+   * for both "no bridge" and "the channel threw" — and a component that stores
+   * that verbatim can never leave its loading state. The pane would go on
+   * saying it was checking, forever, with no error and no retry.
+   */
+  const [loginEnv, setLoginEnv] = useState<LoginEnvStatus | 'unavailable' | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!snapshot) return;
@@ -70,17 +80,17 @@ export function RuntimeSection() {
   /**
    * The environment this app actually searched, for `PathSourceGroup` below.
    *
-   * Read from `integrations.status()` — the same one IPC the Integrations pane
-   * calls, rather than a second channel carrying half of its payload. A
-   * `loginEnv`-only verb would mean a main-process handler, a preload binding
-   * and a contract entry for a field this one already returns; the cost of
-   * reusing it is the `gh` probe that comes along, once, when this pane opens.
+   * `integrations.loginEnv()`, not `integrations.status()`. The status verb
+   * carries this same field, and reaching for it would have spent two
+   * `spawnSync` calls looking for `gh` — blocking main for as long as they take
+   * — to hand back a value resolved at boot. This pane wants the environment
+   * and not the binary, so it asks for exactly that.
    *
    * Keyed on *whether* there is a snapshot, never on the snapshot itself: every
    * write in this pane installs a fresh object, and depending on it would
-   * re-probe on each committed keystroke. The one control here that can change
-   * the answer — the login-shell switch — says so itself: it takes effect on
-   * the next launch.
+   * re-read on each committed keystroke. Nothing here can change the answer
+   * before the next launch anyway — which is what the switch above says about
+   * itself, and what `PathSourceGroup`'s copy is careful to repeat.
    */
   const hasSnapshot = snapshot !== null;
 
@@ -88,8 +98,9 @@ export function RuntimeSection() {
     if (!hasSnapshot) return;
 
     let cancelled = false;
-    void readIntegrationsStatus().then((next) => {
-      if (!cancelled && next !== null) setLoginEnv(next.loginEnv);
+    void readLoginEnvStatus().then((next) => {
+      // `null` is a failure, not a slow answer — see the state's own note.
+      if (!cancelled) setLoginEnv(next ?? 'unavailable');
     });
 
     return () => {

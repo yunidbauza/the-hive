@@ -42,13 +42,14 @@ describe('SettingsProviderGroup', () => {
    *
    * A pane is `h2` and a group is `h3`. Rendering the provider as `h3` too
    * would tell a screen reader that the band and the groups inside it are
-   * peers — the exact confusion the band exists to remove — so a nested group
-   * drops to `h4`.
+   * peers — the exact confusion the band exists to remove — so a group inside
+   * a band drops to `h4`. It is told so by the band, not by a prop: nothing
+   * below passes one.
    */
   it('outranks the groups inside it', () => {
     render(
       <SettingsProviderGroup name="Jira">
-        <SettingsGroup nested title="Site" description="Which instance.">
+        <SettingsGroup title="Site" description="Which instance.">
           <p>body</p>
         </SettingsGroup>
       </SettingsProviderGroup>,

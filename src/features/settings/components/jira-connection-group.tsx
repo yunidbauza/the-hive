@@ -78,7 +78,6 @@ export function JiraConnectionGroup({
 
   return (
     <SettingsGroup
-      nested
       title="Site"
       description="Which Atlassian instance, and as whom."
     >

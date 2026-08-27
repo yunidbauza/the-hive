@@ -54,6 +54,7 @@ import {
   type ForegroundReport,
   type HiveBridge,
   type IntegrationsStatus,
+  type LoginEnvStatus,
   type NotificationActivateEvent,
   type NotificationDeliveryStatus,
   type NotificationDismissedEvent,
@@ -299,6 +300,10 @@ const bridge: HiveBridge = {
   integrations: {
     status: (): Promise<IntegrationsStatus> =>
       ipcRenderer.invoke(CH.integrationsStatus),
+    // The environment half on its own, for the pane that needs it without
+    // needing `gh`. See the contract for why it is a verb rather than a field.
+    loginEnv: (): Promise<LoginEnvStatus> =>
+      ipcRenderer.invoke(CH.integrationsLoginEnv),
   },
   // One verb, no argument. Like `integrations.status`, the absent parameter
   // list is what makes a handler that executes a binary safe to expose.

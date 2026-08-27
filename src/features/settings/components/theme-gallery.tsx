@@ -175,7 +175,15 @@ export function ThemeGallery() {
   };
 
   return (
-    <section className="flex flex-col gap-3 border-b border-border-soft pb-4 last:border-b-0 last:pb-0">
+    /*
+      `SettingsGroup`'s markup, by hand, because this heading carries two
+      buttons beside it and the primitive's does not. That makes it the one
+      place the rhythm has to be repeated rather than imported — so it moves
+      with it: `pb-5`, against each pane's `gap-6`. It was left at `pb-4` when
+      the primitive changed, which put this single section half a step out of
+      time with every other group in Appearance.
+    */
+    <section className="flex flex-col gap-3 border-b border-border-soft pb-5 last:border-b-0 last:pb-0">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-0.5">
           <h3 className="text-[13px] font-semibold text-ink">Themes</h3>

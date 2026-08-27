@@ -20,6 +20,7 @@ import type {
 import type {
   AppInfo,
   IntegrationsStatus,
+  LoginEnvStatus,
   NotificationDeliveryStatus,
 } from '@shared/ipc-contract';
 
@@ -197,6 +198,28 @@ export async function readIntegrationsStatus(): Promise<IntegrationsStatus | nul
     return await bridge.integrations.status();
   } catch (cause) {
     console.error('[hive] reading integrations status failed:', cause);
+    return null;
+  }
+}
+
+/**
+ * The environment this app searched, without asking about `gh`.
+ *
+ * A separate verb rather than `readIntegrationsStatus().loginEnv`, because that
+ * one executes `gh` twice through `spawnSync` and blocks main while it does —
+ * a price the Runtime pane has no reason to pay for a value resolved at boot.
+ *
+ * Returns `null` on the two cases the caller must tell apart from a slow
+ * answer: no bridge (the browser demo) and a failed channel.
+ */
+export async function readLoginEnvStatus(): Promise<LoginEnvStatus | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.integrations.loginEnv();
+  } catch (cause) {
+    console.error('[hive] reading login-shell environment failed:', cause);
     return null;
   }
 }

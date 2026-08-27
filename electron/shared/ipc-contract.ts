@@ -178,6 +178,21 @@ export const CH = {
   configReset: 'config:reset',
   integrationsStatus: 'integrations:status',
   /**
+   * What the login-shell import did — and nothing about `gh`.
+   *
+   * Its own verb for the same reason {@link CH.notificationsSupported} is one:
+   * {@link CH.integrationsStatus} already carries this field, and that handler
+   * **executes `gh`** through `spawnSync`. Settings → Runtime needs the
+   * environment and not the binary, so reading it off the integrations verb
+   * would spend two synchronous subprocesses — and block main for as long as
+   * they take — to hand back a value that was already resolved at boot.
+   *
+   * `loginEnvStatus()` is a memoised promise started during startup, so this
+   * handler is effectively a variable read. No payload, like its neighbours,
+   * which is what makes the surface safe rather than merely small.
+   */
+  integrationsLoginEnv: 'integrations:login-env',
+  /**
    * The Jira connection settings (HIVE-67).
    *
    * A `config:` channel rather than a `jira:` one because it writes the config
@@ -1217,6 +1232,11 @@ export interface HiveBridge {
    */
   integrations: {
     status(): Promise<IntegrationsStatus>;
+    /**
+     * The environment half alone — see {@link CH.integrationsLoginEnv}. Cheap
+     * where `status()` is not, because it never reaches for `gh`.
+     */
+    loginEnv(): Promise<LoginEnvStatus>;
   };
   /**
    * GitHub, read-only.
@@ -1670,7 +1690,7 @@ export const BRIDGE_SESSION_KEYS = [
 ] as const;
 
 /** The exact key set of `window.hive.integrations`. */
-export const BRIDGE_INTEGRATIONS_KEYS = ['status'] as const;
+export const BRIDGE_INTEGRATIONS_KEYS = ['loginEnv', 'status'] as const;
 
 /**
  * The exact key set of `window.hive.fs`.

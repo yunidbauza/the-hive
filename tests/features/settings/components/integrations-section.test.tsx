@@ -184,6 +184,37 @@ describe('IntegrationsSection — why gh was not found', () => {
     });
 
   /**
+   * The cross-pane pointer, which is the only thing keeping this copy honest.
+   *
+   * PATH source lives in Runtime now, so these branches send the reader there
+   * by name. That sentence is the one part of the move a rename or another
+   * shuffle can silently break — the pane it names is not this one, so nothing
+   * else in this file would notice. It was left with no assertion at all when
+   * the PATH-source tests moved out; this is that assertion.
+   */
+  it('points a failed import at the pane that explains it', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      status({
+        gh: notInstalled(),
+        loginEnv: loginEnv({
+          imported: false,
+          varsImported: [],
+          effectiveEntries: 4,
+          error: 'the shell did not finish within 5s and was killed (SIGKILL)',
+        }),
+      }),
+    );
+
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByText(/Settings → Runtime → PATH source/),
+    ).toBeInTheDocument();
+    // And it does not claim to show the PATH itself — that group left.
+    expect(screen.queryByText(/the PATH below/)).not.toBeInTheDocument();
+  });
+
+  /**
    * The copy that HIVE-84 made conditional.
    *
    * The old fixed sentence — "installing gh where that PATH can see it is the

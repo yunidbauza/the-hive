@@ -317,7 +317,13 @@ test('the diagnostic reports the PATH it actually searched', async ({}, testInfo
    */
   const verdict = page.getByText(/claude/).first();
   await expect(verdict).toBeVisible();
-  await expect(page.getByText('Searched')).toBeVisible();
+  /*
+    `exact`, because `getByText` with a plain string is a case-insensitive
+    substring match — and this pane now also carries PATH source, whose
+    description contains the word "searched". The claim is about the
+    diagnostic's own label, so it says so.
+  */
+  await expect(page.getByText('Searched', { exact: true })).toBeVisible();
 
   await app.close();
 });

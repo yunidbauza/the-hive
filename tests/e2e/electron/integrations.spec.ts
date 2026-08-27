@@ -111,13 +111,24 @@ test('groups the pane into two provider bands, and draws one line each', async (
     timeout: 15_000,
   });
 
+  // The pane is the scrolling column the section header opens; every band and
+  // group in this test lives inside it.
+  const pane = page
+    .getByRole('heading', { name: 'Integrations', level: 2 })
+    .locator('xpath=ancestor::div[contains(@class,"overflow-y-auto")][1]');
+
   const github = page.getByRole('region', { name: 'GitHub' });
   const jira = page.getByRole('region', { name: 'Jira' });
 
   await expect(github).toBeVisible();
   await expect(jira).toBeVisible();
-  // Two, and only two: a third band would mean a group escaped its provider.
-  await expect(page.getByRole('region')).toHaveCount(2);
+  /*
+    Two bands, and only two — scoped to the pane rather than counted page-wide.
+    A page-global `getByRole('region')` would also fail for any landmark added
+    anywhere else in the shell, reporting "the pane grew a third provider" for a
+    change that had nothing to do with this pane.
+  */
+  await expect(pane.getByRole('region')).toHaveCount(2);
 
   // Each group sits under the provider that owns it, and says it once.
   await expect(github.getByRole('heading', { name: 'Token source' })).toBeVisible();
@@ -140,10 +151,19 @@ test('groups the pane into two provider bands, and draws one line each', async (
   const rules = github.locator('section.border-b');
   await expect(rules).toHaveCount(0);
 
-  await page
-    .getByRole('heading', { name: 'Integrations', level: 2 })
-    .locator('xpath=ancestor::div[1]')
-    .screenshot({ path: 'test-results/evidence/integrations-provider-bands.png' });
+  /*
+    The pane's own scroll container, reached from the band rather than from the
+    title.
+
+    This used to be `ancestor::div[1]` on the `h2`. `ancestor::` is a reverse
+    axis, so position 1 is the *nearest* div — which is the section header's own
+    two-line wrapper holding the title and its description, and nothing else.
+    The evidence file was a screenshot of a heading, under a name promising the
+    bands, and every assertion above it still passed.
+  */
+  await pane.screenshot({
+    path: 'test-results/evidence/integrations-provider-bands.png',
+  });
 
   await app.close();
 });

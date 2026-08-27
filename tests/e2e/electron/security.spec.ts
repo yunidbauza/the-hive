@@ -211,7 +211,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
   ]);
   expect(surface.theme).toEqual(['pick', 'save']);
   expect(surface.ui).toEqual(['reportForeground']);
-  expect(surface.integrations).toEqual(['status']);
+  /**
+   * Two, and the second is deliberately the *narrower* of the pair.
+   *
+   * `status` executes `gh`; `loginEnv` reads a promise resolved at boot and
+   * runs nothing. Both take no argument, which is what bounds them — the
+   * renderer contributes nothing to either call, so there is no argv to inject
+   * into. The widening to look at here would be a verb that accepted one.
+   */
+  expect(surface.integrations).toEqual(['loginEnv', 'status']);
   /**
    * Two now, and `searchPrs` is the widening to look at.
    *

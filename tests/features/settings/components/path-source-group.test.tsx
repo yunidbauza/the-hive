@@ -90,10 +90,16 @@ describe('PathSourceGroup', () => {
    *
    * In Integrations this sentence had to name its destination — "turned off in
    * Settings → Runtime". Here the switch is the previous group in the same
-   * pane, and a path to somewhere the reader is already standing reads as a
+   * pane, so a path to somewhere the reader is already standing reads as a
    * redirect rather than an instruction.
+   *
+   * Past tense, though, and that is the load-bearing half. This group reports
+   * what happened at *startup*; the switch above reports the config as it
+   * stands and takes effect next launch. Written in the present, the two
+   * disagree the instant someone flips it on — a switch reading ON directly
+   * above a sentence saying it is off.
    */
-  it('says the import is off, and points at the switch one group above', () => {
+  it('reports the launch, so it cannot contradict the switch above it', () => {
     render(
       <PathSourceGroup
         loginEnv={loginEnv({
@@ -109,7 +115,11 @@ describe('PathSourceGroup', () => {
     expect(
       screen.getByText(/Inherited from whatever launched this app/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/turned off in the group above/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/was off when this app started/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/takes effect on the next launch/)).toBeInTheDocument();
+    // And it does not send the reader to a pane they are already standing in.
     expect(screen.queryByText(/Settings → Runtime/)).not.toBeInTheDocument();
   });
 
@@ -125,5 +135,30 @@ describe('PathSourceGroup', () => {
     );
 
     expect(busy.length).toBeGreaterThan(0);
+  });
+});
+
+describe('PathSourceGroup — when the read failed', () => {
+  /**
+   * The state that could not be reached before.
+   *
+   * `readLoginEnvStatus` answers `null` both for "no bridge" and for "the
+   * channel threw", so a group treating `null` as "still waiting" would sit on
+   * its checking line for the lifetime of the window — no error, no retry, and
+   * nothing distinguishing a broken channel from a slow one.
+   */
+  it('says so, instead of claiming to still be checking', () => {
+    render(<PathSourceGroup loginEnv="unavailable" />);
+
+    expect(
+      screen.getByText(/could not be asked what environment it is using/),
+    ).toBeInTheDocument();
+    expect(document.querySelector('[data-probing]')).toBeNull();
+  });
+
+  it('still shows the probing line while the read is genuinely out', () => {
+    render(<PathSourceGroup loginEnv={null} />);
+
+    expect(document.querySelector('[data-probing]')).not.toBeNull();
   });
 });

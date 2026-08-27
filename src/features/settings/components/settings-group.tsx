@@ -1,5 +1,7 @@
 import { cn } from '@/lib/utils';
 
+import { useIsNestedGroup } from '@features/settings/components/settings-nesting';
+
 /**
  * A titled group with an explanation — the layout unit every section uses.
  *
@@ -23,27 +25,25 @@ import { cn } from '@/lib/utils';
 export function SettingsGroup({
   title,
   description,
-  nested = false,
   children,
 }: {
   title: string;
   description: string;
-  /**
-   * This group sits inside a {@link SettingsProviderGroup} band.
-   *
-   * One prop rather than two, because the two consequences are one fact. A
-   * nested group draws **no rule** — the band already carries the provider's
-   * own hairline, and a rule under every group inside it would put four lines
-   * where the eye needs one — and its heading drops to `h4`, because a
-   * document that says `h2 → h3 → h3` is telling a screen reader the provider
-   * and the groups it contains are peers.
-   *
-   * Separation inside a band comes from the band's own `gap`, which is why the
-   * bottom padding goes with the rule rather than surviving it.
-   */
-  nested?: boolean;
   children: React.ReactNode;
 }) {
+  /**
+   * Three consequences of one fact, taken from where the group is rendered
+   * rather than from a prop every caller has to remember (see
+   * `settings-nesting.ts`).
+   *
+   * A nested group draws **no rule** — the band already carries the provider's
+   * own hairline, and a rule under every group inside it would put four lines
+   * where the eye needs one — loses the bottom padding that only existed to
+   * stand off that rule, and drops its heading to `h4`, because a document that
+   * says `h2 → h3 → h3` tells a screen reader the provider and the groups it
+   * contains are peers.
+   */
+  const nested = useIsNestedGroup();
   const Heading = nested ? 'h4' : 'h3';
 
   return (

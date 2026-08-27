@@ -443,6 +443,19 @@ export function importTheme(raw: string, fileName: string): ImportResult {
      */
     checkContrast(notes, mode, 'brand', ui.brand, 'panel', ui.panel, 4.5);
     /**
+     * And on `panel-2`, because brand text has two grounds, not one.
+     *
+     * The rail is `bg-panel`; the settings dialog is `bg-panel-2`, and the
+     * provider eyebrow is painted there. Checking only `panel` would certify a
+     * theme whose brand is legible in the rail and not in Settings — which is
+     * exactly the shape of the miss this whole rule exists to close, one
+     * surface further along. `ink` is already checked against two grounds for
+     * the same reason.
+     *
+     * Every built-in clears it; the worst is 4.80:1 (Graphite light).
+     */
+    checkContrast(notes, mode, 'brand', ui.brand, 'panel2', ui.panel2, 4.5);
+    /**
      * Text on a *fill*, which nothing checked until a theme got it wrong.
      *
      * Every other rule here checks text against a **surface**. A fill and the

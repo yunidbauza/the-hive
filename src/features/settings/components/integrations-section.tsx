@@ -86,8 +86,9 @@ function TokenSourceLine({ gh }: { gh: GhStatus }) {
   }
 
   // Advising `gh auth login` to someone who does not have `gh` would send them
-  // to a command that does not exist. The group above already says it is
-  // missing; this says what the remaining option is.
+  // to a command that does not exist. The Command line group says it is
+  // missing — below this one, since the token is what the pane is opened to
+  // check — so this only has to say what the remaining option is.
   if (!gh.installed) {
     return (
       <p className="text-[12.5px] text-amber">
@@ -291,7 +292,6 @@ export function IntegrationsSection() {
 
       <SettingsProviderGroup name="GitHub">
         <SettingsGroup
-          nested
           title="Token source"
           description="Which credential a GitHub request would use."
         >
@@ -311,7 +311,6 @@ export function IntegrationsSection() {
         </SettingsGroup>
 
         <SettingsGroup
-          nested
           title="Command line"
           description="Where gh is, and whether it is signed in."
         >
@@ -328,7 +327,6 @@ export function IntegrationsSection() {
       <SettingsProviderGroup name="Jira">
         {jira === null ? (
           <SettingsGroup
-            nested
             title="Connection"
             description="Real tickets in the WORK tab."
           >

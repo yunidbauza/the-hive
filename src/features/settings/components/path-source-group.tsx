@@ -28,20 +28,37 @@ import type { LoginEnvStatus } from '@shared/ipc-contract';
 export function PathSourceGroup({
   loginEnv,
 }: {
-  /** `null` while the probe is still out. */
-  loginEnv: LoginEnvStatus | null;
+  /**
+   * The environment, `null` while the read is still out, or `'unavailable'`
+   * once it has failed.
+   *
+   * Three states, not two. The reader answers `null` both for "no bridge" and
+   * for "the channel threw", so a group that treated `null` as "still waiting"
+   * would sit on its checking line for the lifetime of the window — no error,
+   * no retry, and nothing on screen distinguishing a broken channel from a slow
+   * one. The caller collapses the failure into `'unavailable'` and this says so.
+   */
+  loginEnv: LoginEnvStatus | 'unavailable' | null;
 }) {
   const probing = useSwarmPhrase('loading.diagnostics');
 
   return (
     <SettingsGroup
       title="PATH source"
-      description="Which environment this app is searching, and where it came from."
+      description="Which environment this app searched when it started, and where it came from."
     >
       <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
         {loginEnv === null ? (
           <p data-probing className="text-[12.5px] text-subtle">
             {probing}
+          </p>
+        ) : loginEnv === 'unavailable' ? (
+          <p className="flex items-start gap-2 text-[12.5px]">
+            <WarningCircle size={14} className="mt-px shrink-0 text-amber" />
+            <span className="text-amber">
+              This app could not be asked what environment it is using. Nothing
+              is broken by that beyond this box — reopening Settings asks again.
+            </span>
           </p>
         ) : (
           <PathSourceLine loginEnv={loginEnv} />
@@ -89,13 +106,20 @@ function PathSourceLine({ loginEnv }: { loginEnv: LoginEnvStatus }) {
           Inherited from whatever launched this app. {counts}
         </p>
         {/*
-          "The group above", not "Settings → Runtime". The switch is now the
-          previous group in this same pane, and a path to a place the reader is
-          already standing in reads as a redirect rather than an instruction.
+          Past tense, and deliberately.
+
+          This whole group reports what happened *at startup*, while the switch
+          one group above reports the config as it stands now — and that switch
+          says of itself that it takes effect on the next launch. Written in the
+          present ("is turned off in the group above") the two disagree the
+          instant someone flips it on: a switch reading ON, directly above a
+          sentence claiming it is off. Naming the launch instead makes both
+          true, and says the thing the reader actually needs — that what they
+          just changed has not happened yet.
         */}
         <p className="text-[11.5px] text-subtle">
-          Importing your login shell&rsquo;s environment is turned off in the
-          group above.
+          The login-shell import was off when this app started. The switch above
+          controls it, and takes effect on the next launch.
         </p>
       </>
     );

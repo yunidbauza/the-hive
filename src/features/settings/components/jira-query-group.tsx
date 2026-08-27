@@ -82,7 +82,6 @@ export function JiraQueryGroup({ jql, canTest }: JiraQueryGroupProps) {
 
   return (
     <SettingsGroup
-      nested
       title="Query"
       description="Which issues the WORK tab shows."
     >

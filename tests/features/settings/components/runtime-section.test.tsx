@@ -10,10 +10,7 @@ import {
   type ProjectConfig,
 } from '@shared/config-contract';
 
-import type {
-  IntegrationsStatus,
-  LoginEnvStatus,
-} from '@shared/ipc-contract';
+import type { LoginEnvStatus } from '@shared/ipc-contract';
 
 import { RuntimeSection } from '@features/settings/components/runtime-section';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
@@ -24,9 +21,7 @@ const setRuntimeConfig = vi.fn();
 const setProjectRuntimeConfig = vi.fn();
 const diagnoseAgentCommand = vi.fn();
 const diagnoseSessionEnv = vi.fn();
-const readIntegrationsStatus = vi.fn<
-  () => Promise<IntegrationsStatus | null>
->();
+const readLoginEnvStatus = vi.fn<() => Promise<LoginEnvStatus | null>>();
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -36,37 +31,26 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
     setProjectRuntimeConfig: (request: unknown) => setProjectRuntimeConfig(request),
     diagnoseAgentCommand: (request: unknown) => diagnoseAgentCommand(request),
     diagnoseSessionEnv: (request: unknown) => diagnoseSessionEnv(request),
-    readIntegrationsStatus: () => readIntegrationsStatus(),
+    readLoginEnvStatus: () => readLoginEnvStatus(),
   };
 });
 
-/** The `loginEnv` half of `integrations.status()`, which is all this pane reads. */
-const integrationsStatus = (
-  over: Partial<LoginEnvStatus> = {},
-): IntegrationsStatus => ({
-  gh: {
-    installed: true,
-    resolved: '/opt/homebrew/bin/gh',
-    path: '/usr/bin:/opt/homebrew/bin',
-    probes: [],
-    version: '2.62.0',
-    authenticated: true,
-    account: 'octocat',
-    tokenSource: 'keyring',
-    envVar: null,
-    error: null,
-  },
-  loginEnv: {
-    enabled: true,
-    imported: true,
-    shell: '/bin/zsh',
-    inheritedEntries: 4,
-    effectiveEntries: 12,
-    varsImported: ['PATH'],
-    error: null,
-    ...over,
-  },
-  notificationsSupported: true,
+/**
+ * What `integrations.loginEnv()` answers.
+ *
+ * The pane reads this verb and not `integrations.status()`: the status verb
+ * carries the same field behind two `spawnSync` calls looking for `gh`, and
+ * this pane wants the environment, not the binary.
+ */
+const loginEnvStatus = (over: Partial<LoginEnvStatus> = {}): LoginEnvStatus => ({
+  enabled: true,
+  imported: true,
+  shell: '/bin/zsh',
+  inheritedEntries: 4,
+  effectiveEntries: 12,
+  varsImported: ['PATH'],
+  error: null,
+  ...over,
 });
 
 const entry = (over: Partial<ProjectConfig> & { id: string }): ProjectConfig => ({
@@ -95,7 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   diagnoseAgentCommand.mockResolvedValue(null);
   diagnoseSessionEnv.mockResolvedValue(null);
-  readIntegrationsStatus.mockResolvedValue(integrationsStatus());
+  readLoginEnvStatus.mockResolvedValue(loginEnvStatus());
   resetProjectConfig();
 });
 
@@ -624,9 +608,9 @@ describe('RuntimeSection — PATH source', () => {
     expect(screen.getByText('/bin/zsh')).toBeInTheDocument();
   });
 
-  it('points at the switch above rather than at another pane', async () => {
-    readIntegrationsStatus.mockResolvedValue(
-      integrationsStatus({
+  it('reports the launch, so it cannot contradict the switch above it', async () => {
+    readLoginEnvStatus.mockResolvedValue(
+      loginEnvStatus({
         enabled: false,
         imported: false,
         shell: null,
@@ -639,15 +623,17 @@ describe('RuntimeSection — PATH source', () => {
     render(<RuntimeSection />);
 
     expect(
-      await screen.findByText(/turned off in the group above/),
+      await screen.findByText(/was off when this app started/),
     ).toBeInTheDocument();
+    // Never a pointer to the pane the reader is already standing in.
+    expect(screen.queryByText(/Settings → Runtime/)).not.toBeInTheDocument();
   });
 
   /**
    * One read per open, not one per save.
    *
    * Every write in this pane installs a fresh `ConfigSnapshot`, and an effect
-   * depending on it would re-probe `gh` on each committed keystroke.
+   * depending on it would re-read on each committed keystroke.
    */
   it('asks main once, however many times the snapshot changes', async () => {
     setProjectConfigForTest(snapshot());
@@ -658,12 +644,32 @@ describe('RuntimeSection — PATH source', () => {
     setProjectConfigForTest(snapshot({ shell: '/bin/bash' }));
     rerender(<RuntimeSection />);
 
-    expect(readIntegrationsStatus).toHaveBeenCalledTimes(1);
+    expect(readLoginEnvStatus).toHaveBeenCalledTimes(1);
   });
 
   it('asks main for nothing when there is no snapshot to ask about', () => {
     render(<RuntimeSection />);
 
-    expect(readIntegrationsStatus).not.toHaveBeenCalled();
+    expect(readLoginEnvStatus).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The failure the pane could not previously show.
+ *
+ * `readLoginEnvStatus` answers `null` for a failed channel as well as for a
+ * missing bridge, so a pane storing that verbatim would say it was checking
+ * forever. The reader collapses it to an explicit unavailable state.
+ */
+describe('RuntimeSection — PATH source, unavailable', () => {
+  it('reports a failed read instead of checking forever', async () => {
+    readLoginEnvStatus.mockResolvedValue(null);
+    setProjectConfigForTest(snapshot());
+
+    render(<RuntimeSection />);
+
+    expect(
+      await screen.findByText(/could not be asked what environment it is using/),
+    ).toBeInTheDocument();
   });
 });
