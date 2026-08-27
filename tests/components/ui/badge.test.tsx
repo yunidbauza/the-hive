@@ -64,7 +64,7 @@ describe('Badge', () => {
   });
 
   /**
-   * The text colour, which nothing asserted until it was wrong (HIVE-109).
+   * The text colour, which nothing asserted until it was wrong.
    *
    * `danger` painted `text-on-brand` — "legible on the *brand* fill" — so a
    * theme whose brand is light enough to need dark text on it, as Graphite's

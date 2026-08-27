@@ -6,7 +6,7 @@ import { ExplorerSearchRow } from '@features/explorer/components/explorer-search
 import { useUiStore } from '@stores/ui-store';
 
 /**
- * The Explorer's search box (HIVE-110).
+ * The Explorer's search box.
  *
  * Mirrors `pr-search-row.test.tsx`: the box and its store, never the walk. What
  * main does with the query is `tests/electron/main/fs/search.test.ts`.

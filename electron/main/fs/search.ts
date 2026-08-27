@@ -22,7 +22,7 @@ import {
 import { asFailure, resolveExisting } from './paths';
 
 /**
- * The first thing in this layer that recurses (HIVE-110).
+ * The first thing in this layer that recurses.
  *
  * ## Why it is here and not in the renderer
  *

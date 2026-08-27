@@ -16,7 +16,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { Icon } from '@components/ui/icon';
 
 /**
- * ⌘F, rebuilt (HIVE-108).
+ * ⌘F, rebuilt.
  *
  * ## Why the stock panel had to go rather than be restyled
  *

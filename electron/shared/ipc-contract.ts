@@ -563,7 +563,7 @@ export const CH = {
   fsReadFile: 'fs:read-file',
   fsWriteFile: 'fs:write-file',
   /**
-   * Find a file by name, or a string inside one (HIVE-110).
+   * Find a file by name, or a string inside one.
    *
    * The one verb here that *recurses*, and the reason it has to exist in main
    * at all is in `fs-contract.ts`: the tree is lazy, so a renderer-side filter
@@ -1692,7 +1692,7 @@ export const BRIDGE_FS_KEYS = [
   'readFile',
   'writeFile',
   /*
-    The recursing one (HIVE-110), and the only verb here that reads more than
+    The recursing one, and the only verb here that reads more than
     it was pointed at. It still takes no path — a `projectId`, a query and a
     mode — so the sentence above holds; what it adds is a *walk*, which is why
     every bound it obeys is declared in `fs-contract.ts` rather than chosen at

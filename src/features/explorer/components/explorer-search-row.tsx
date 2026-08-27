@@ -10,7 +10,7 @@ import {
 } from '@stores/ui-store';
 
 /**
- * The Explorer's search box (HIVE-110).
+ * The Explorer's search box.
  *
  * ## Why one box with a mode, and not two fields
  *

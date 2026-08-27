@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createSearchPanel } from '@components/editor/search-panel';
 
 /**
- * ⌘F's panel (HIVE-108).
+ * ⌘F's panel.
  *
  * Driven through a **real `EditorView`** for the same reason
  * `editor-surface.test.tsx` is: CodeMirror renders without measuring, so the

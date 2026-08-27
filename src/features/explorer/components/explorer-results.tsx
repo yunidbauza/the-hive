@@ -6,7 +6,7 @@ import { parentPath } from '@lib/explorer/fs-client';
 import type { SearchHit, SearchLine } from '@shared/fs-contract';
 
 /**
- * What a search answers with (HIVE-110).
+ * What a search answers with.
  *
  * ## Grouped by file, because a flat list is unreadable here
  *

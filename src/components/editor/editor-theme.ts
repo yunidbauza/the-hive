@@ -86,7 +86,7 @@ export const editorTheme: Extension = EditorView.theme({
     border: 'none',
   },
   /**
-   * The panel host stops being a bar and becomes an overlay (HIVE-108).
+   * The panel host stops being a bar and becomes an overlay.
    *
    * CodeMirror's own rule is `position: sticky; left: 0; right: 0`, which makes
    * the panel a **row in the editor's flex column** — so opening ⌘F pushed the

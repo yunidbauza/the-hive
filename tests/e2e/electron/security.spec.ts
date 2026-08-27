@@ -235,7 +235,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * resolves under, which the renderer was previously inferring and getting
    * wrong for any working directory main had refused.
    *
-   * `search` is the newest, and the only verb here that **recurses** (HIVE-110).
+   * `search` is the newest, and the only verb here that **recurses**.
    * It takes no path either — a `projectId`, a query and a mode — so the rule
    * above still holds for every entry on this list. What it adds is reach: it
    * reads directories nobody pointed it at, which is why it prunes on

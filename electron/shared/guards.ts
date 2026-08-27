@@ -1362,7 +1362,7 @@ export function parseReadFileRequest(input: unknown): ReadFileRequest {
  * file it had just opened.
  */
 /**
- * `fs:search` — the one fs verb whose payload is prose (HIVE-110).
+ * `fs:search` — the one fs verb whose payload is prose.
  *
  * `assertText` rather than anything narrower, for the reason
  * `parseSearchPrsRequest` already gives: a search term is prose, and a guard

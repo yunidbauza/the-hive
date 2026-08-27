@@ -230,7 +230,7 @@ function mintId(kind: NotificationKind, at: number): string {
 }
 
 /**
- * What a new notification **replaces**, rather than what it repeats (HIVE-107).
+ * What a new notification **replaces**, rather than what it repeats.
  *
  * ## Why `seen` was never going to cover this
  *
@@ -561,8 +561,8 @@ export function createNotificationHub(
         };
 
         /**
-         * The newer row replaces the older one about the same session
-         * (HIVE-107). See {@link supersedeKey} for why this is not dedup.
+         * The newer row replaces the older one about the same session.
+         * See {@link supersedeKey} for why this is not dedup.
          *
          * Position matters twice over. It is **after** the `off` and `seen`
          * gates, so a kind the user switched off and an event already seen both

@@ -19,7 +19,7 @@ vi.mock('../../../../electron/main/fs/paths', async (importOriginal) => ({
 const { searchProject } = await import('../../../../electron/main/fs/search');
 
 /**
- * The first thing in the fs layer that recurses (HIVE-110).
+ * The first thing in the fs layer that recurses.
  *
  * Against a **real temporary tree**, not a mocked one. The whole point of this
  * module is what it does to a directory — prune it, descend it, stop at a

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ExplorerResults } from '@features/explorer/components/explorer-results';
 
 /**
- * What a search answers with (HIVE-110).
+ * What a search answers with.
  *
  * The interesting assertions here are the ones about *not lying*: a group that
  * shows twenty of a hundred hits has to say so, and a highlight has to land on

@@ -1394,7 +1394,7 @@ export function registerIpcHandlers(): void {
   );
 
   /**
-   * The recursing verb (HIVE-110). Answers `FsResult` like every read here —
+   * The recursing verb. Answers `FsResult` like every read here —
    * a search that failed must render as a failed search, not as a broken app.
    * Every bound it obeys lives in `fs-contract.ts`, not at this call site.
    */

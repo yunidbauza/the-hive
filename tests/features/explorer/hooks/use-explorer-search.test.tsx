@@ -14,7 +14,7 @@ const { useExplorerSearch } = await import(
 );
 
 /**
- * The Explorer's debounce and its stale-answer guard (HIVE-110).
+ * The Explorer's debounce and its stale-answer guard.
  *
  * Fake timers throughout — the repo's rule, and here it is the only way to
  * assert that a walk was *not* started, which is most of what this hook is for.

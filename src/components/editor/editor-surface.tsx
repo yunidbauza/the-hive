@@ -210,7 +210,7 @@ export function EditorSurface({
       highlightActiveLine(),
       highlightSelectionMatches(),
       /*
-        Called explicitly, which it never was before (HIVE-108). `searchKeymap`
+        Called explicitly, which it never was before. `searchKeymap`
         alone appends the extension on first ⌘F, so the panel used to arrive
         with stock DOM at the bottom of the editor and no way to configure it.
         Naming it here is what makes `createPanel` reachable at all.

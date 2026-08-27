@@ -426,8 +426,7 @@ export function importTheme(raw: string, fileName: string): ImportResult {
     checkContrast(notes, mode, 'ink', ui.ink, 'bg', ui.bg, 4.5);
     checkContrast(notes, mode, 'muted', ui.muted, 'panel', ui.panel, 3);
     /**
-     * Text on a *fill*, which nothing checked until a theme got it wrong
-     * (HIVE-109).
+     * Text on a *fill*, which nothing checked until a theme got it wrong.
      *
      * Every other rule here checks text against a **surface**. A fill and the
      * text on it are a pair too, and the gap is what let Graphite ship: its

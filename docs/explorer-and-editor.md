@@ -70,7 +70,7 @@ repositories.
 already holds, and a path in the reply is a second answer that can disagree with
 the first.
 
-### Why search is a channel and not a filter (HIVE-110)
+### Why search is a channel and not a filter
 
 `fs:search` is the only verb here that **recurses**, and it exists because the
 tree is lazy. `use-directory.ts` reads a directory only when it is expanded, so

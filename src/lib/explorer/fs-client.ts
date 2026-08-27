@@ -112,7 +112,7 @@ export async function writeFile(
  * effect.
  */
 /**
- * Walk the project for a name or a string (HIVE-110).
+ * Walk the project for a name or a string.
  *
  * The one read here that is not about a place the caller already knows. It
  * still names no path — a project, a query and a mode — and every bound it

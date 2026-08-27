@@ -111,8 +111,7 @@
   --cc-danger-solid: #d3372f;
 
   /**
-   * Text on `--cc-danger-solid`, and the reason it is a token of its own
-   * (HIVE-109).
+   * Text on `--cc-danger-solid`, and the reason it is a token of its own.
    *
    * The badge used to paint `--cc-on-brand` here, which is a different
    * promise: "legible on the *brand* fill". A theme whose brand is light —

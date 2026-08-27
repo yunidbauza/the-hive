@@ -289,7 +289,7 @@ export const HIDDEN_ENTRIES: readonly string[] = [
 ];
 
 /**
- * `fs:search` — finding a file, or something inside one (HIVE-110).
+ * `fs:search` — finding a file, or something inside one.
  *
  * ## Why this is a verb at all, rather than a filter in the renderer
  *

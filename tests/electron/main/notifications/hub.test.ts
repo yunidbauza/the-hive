@@ -140,7 +140,7 @@ describe('identity', () => {
 });
 
 /**
- * One row per fact per session (HIVE-107).
+ * One row per fact per session.
  *
  * Distinct from `identity` above, and the distinction is the whole feature: a
  * duplicate is refused, a **supersede** is accepted and evicts what it made

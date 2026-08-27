@@ -8,7 +8,7 @@ import {
 } from '@shared/fs-contract';
 
 /**
- * Run the Explorer's search, debounced (HIVE-110).
+ * Run the Explorer's search, debounced.
  *
  * ## Why 300ms, and why debounced at all
  *
