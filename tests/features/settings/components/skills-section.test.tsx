@@ -87,7 +87,9 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
 
-    expect(screen.getByText('No skills yet.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Write one and every session you start will have it.'),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: '+ New skill' }),
     ).toBeInTheDocument();

@@ -370,14 +370,13 @@ export function SkillsSection() {
         {/*
           The dashed card from `projects-section.tsx`, not the shared
           `EmptyState`: that component is documented as rail-only at 44px and
-          explicitly not a centred block. A bordered box saying "No skills yet"
-          reads as a furnished, empty place; a bare heading above a button reads
-          as a broken render.
+          explicitly not a centred block. A bordered box around the creature and
+          an invitation reads as a furnished, empty place; a bare heading above a
+          button reads as a broken render.
         */}
         <div className="flex flex-col items-center gap-1 rounded-[7px] border border-dashed border-border px-4 py-6 text-center">
           <SwarmCreature creature="hive" size={72} />
           <span className="text-[11.5px] text-muted">{phrase}</span>
-          <span className="text-[13px] text-muted">No skills yet.</span>
           <span className="text-[11.5px] text-subtle">
             Write one and every session you start will have it.
           </span>

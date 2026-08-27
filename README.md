@@ -168,4 +168,4 @@ The deep dives live in [`docs/`](docs/), and the visual source of truth is
 
 ## License
 
-[MIT](LICENSE) © Yunid Bauza
+[Apache 2.0](LICENSE) © Yunid Bauza
