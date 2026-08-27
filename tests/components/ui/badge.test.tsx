@@ -63,6 +63,25 @@ describe('Badge', () => {
     expect(container.firstChild).toHaveClass('bg-chip', 'text-muted');
   });
 
+  /**
+   * The text colour, which nothing asserted until it was wrong (HIVE-109).
+   *
+   * `danger` painted `text-on-brand` — "legible on the *brand* fill" — so a
+   * theme whose brand is light enough to need dark text on it, as Graphite's
+   * lime does, rendered a near-black count on crimson at 3.22:1. Each fill
+   * takes the token named for it, and this is the assertion that says so.
+   */
+  it('takes its text colour from the fill it sits on, not from the brand', () => {
+    const { container, rerender } = render(
+      <Badge count={1} label="unread notifications" />,
+    );
+    expect(container.firstChild).toHaveClass('text-on-danger');
+    expect(container.firstChild).not.toHaveClass('text-on-brand');
+
+    rerender(<Badge count={1} tone="brand" label="open pull requests" />);
+    expect(container.firstChild).toHaveClass('text-on-brand');
+  });
+
   it('keeps a three-digit count from clipping', () => {
     const { container } = render(
       <Badge count={128} label="unread notifications" />,

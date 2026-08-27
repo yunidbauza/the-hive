@@ -52,6 +52,7 @@ export const HONEYCOMB_THEME: HiveTheme = {
         termHead: '#60564c', termTrack: '#52473b',
         brandFill: '#b36019', brandFillHover: '#a45300',
         brandFillStrong: '#854200', onBrand: '#ffffff', dangerSolid: '#c12e27',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#b99af0', string: '#8abc84', number: '#e7b84c',
@@ -79,6 +80,7 @@ export const HONEYCOMB_THEME: HiveTheme = {
         termHead: '#737069', termTrack: '#d6d1c9',
         brandFill: '#b36019', brandFillHover: '#a45300',
         brandFillStrong: '#854200', onBrand: '#ffffff', dangerSolid: '#c12e27',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#663b9e', string: '#295e24', number: '#856300',
@@ -116,6 +118,7 @@ export const GRAPHITE_THEME: HiveTheme = {
         termHead: '#545557', termTrack: '#454648',
         brandFill: '#77b960', brandFillHover: '#6aaa52',
         brandFillStrong: '#509436', onBrand: '#141414', dangerSolid: '#c5252c',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#ac9df9', string: '#7dbe8b', number: '#efb444',
@@ -143,6 +146,7 @@ export const GRAPHITE_THEME: HiveTheme = {
         termHead: '#6f7072', termTrack: '#d3d4d6',
         brandFill: '#77b960', brandFillHover: '#6aaa52',
         brandFillStrong: '#509436', onBrand: '#141414', dangerSolid: '#c5252c',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#593ea9', string: '#10602d', number: '#896100',
@@ -180,6 +184,7 @@ export const TIDEWATER_THEME: HiveTheme = {
         termHead: '#47595d', termTrack: '#374a4f',
         brandFill: '#00828d', brandFillHover: '#00747e',
         brandFillStrong: '#005d65', onBrand: '#ffffff', dangerSolid: '#c12c39',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#a4a0f8', string: '#6bc0a1', number: '#f5b053',
@@ -207,6 +212,7 @@ export const TIDEWATER_THEME: HiveTheme = {
         termHead: '#697274', termTrack: '#cad6d8',
         brandFill: '#00828d', brandFillHover: '#00747e',
         brandFillStrong: '#005d65', onBrand: '#ffffff', dangerSolid: '#c12c39',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#5143a7', string: '#005f46', number: '#905c00',
@@ -244,6 +250,7 @@ export const TERRACOTTA_THEME: HiveTheme = {
         termHead: '#635451', termTrack: '#554441',
         brandFill: '#008481', brandFillHover: '#007673',
         brandFillStrong: '#005e5c', onBrand: '#ffffff', dangerSolid: '#be3334',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#c397e5', string: '#85bc8c', number: '#ffa86b',
@@ -271,6 +278,7 @@ export const TERRACOTTA_THEME: HiveTheme = {
         termHead: '#776e6b', termTrack: '#dacecb',
         brandFill: '#008481', brandFillHover: '#007673',
         brandFillStrong: '#005e5c', onBrand: '#ffffff', dangerSolid: '#be3334',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#6f3992', string: '#215e2e', number: '#985621',
@@ -308,6 +316,7 @@ export const PORCELAIN_THEME: HiveTheme = {
         termHead: '#575f65', termTrack: '#475057',
         brandFill: '#4a79ac', brandFillHover: '#3d6c9e',
         brandFillStrong: '#255689', onBrand: '#ffffff', dangerSolid: '#ad4849',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#ada2e1', string: '#8eb996', number: '#e2b876',
@@ -335,6 +344,7 @@ export const PORCELAIN_THEME: HiveTheme = {
         termHead: '#6d7174', termTrack: '#cfd5d9',
         brandFill: '#4a79ac', brandFillHover: '#3d6c9e',
         brandFillStrong: '#255689', onBrand: '#ffffff', dangerSolid: '#ad4849',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#59498f', string: '#2e5b39', number: '#83632c',
@@ -372,6 +382,7 @@ export const CINDER_THEME: HiveTheme = {
         termHead: '#5f5e59', termTrack: '#504e4a',
         brandFill: '#b349a0', brandFillHover: '#a43b92',
         brandFillStrong: '#8e1b7d', onBrand: '#ffffff', dangerSolid: '#cc0034',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#bc94ff', string: '#96bb63', number: '#ebb700',
@@ -399,6 +410,7 @@ export const CINDER_THEME: HiveTheme = {
         termHead: '#71706c', termTrack: '#d5d3cf',
         brandFill: '#b349a0', brandFillHover: '#a43b92',
         brandFillStrong: '#8e1b7d', onBrand: '#ffffff', dangerSolid: '#cc0034',
+        onDanger: '#ffffff',
       },
       syntax: {
         keyword: '#6b29b3', string: '#3d5b00', number: '#826400',

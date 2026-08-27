@@ -28,11 +28,11 @@ export interface ThemeBanner {
 }
 
 /**
- * Every colour value a theme *file* holds: 49 keys, in each of the two modes.
+ * Every colour value a theme *file* holds: 50 keys, in each of the two modes.
  *
  * The unit matters, because both of the banner's sentences count in it. The
  * other one is `inherited`, which `validate.ts` accumulates across both modes
- * — so counting the complete case per-mode ("49 of 49") while counting the
+ * — so counting the complete case per-mode ("50 of 50") while counting the
  * partial case per-file ("2 colours inherited") described one colour omitted
  * from both modes in two different currencies. Per-file wins the tie: it is the
  * unit `inherited` can be counted in without losing which mode a colour was
@@ -57,7 +57,7 @@ export function themeBannerOf(result: ImportResult): ThemeBanner {
   /**
    * Both conditions, not just `notes.length === 0`. `validate.ts` always
    * notes an inheritance (its own first note, story HIVE-80 review), so the
-   * two should never disagree — but the "N of 98" sentence below is only
+   * two should never disagree — but the "N of 100" sentence below is only
    * ever *true* when nothing was inherited, and checking that directly here
    * means this component can't be fooled into claiming a complete import
    * that wasn't, even if that invariant were ever broken upstream. There is

@@ -25,7 +25,7 @@ export const UI_KEYS = [
   'ink', 'muted', 'subtle', 'brand', 'green', 'amber', 'red',
   'chip', 'chipHover', 'termBg', 'termInput', 'termRowHover', 'termRowActive',
   'termHead', 'termTrack', 'brandFill', 'brandFillHover', 'brandFillStrong',
-  'onBrand', 'dangerSolid',
+  'onBrand', 'dangerSolid', 'onDanger',
 ] as const;
 
 export const SYNTAX_KEYS = [

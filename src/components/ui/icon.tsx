@@ -1,4 +1,6 @@
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowsClockwise,
   ArrowsInSimple,
   CalendarCheck,
@@ -37,6 +39,8 @@ import {
   ArrowCircleUp,
   ArrowClockwise,
   Question,
+  Repeat,
+  RepeatOnce,
   Robot,
   SlackLogo,
   Stack,
@@ -146,6 +150,10 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-arrows-in-simple': ArrowsInSimple,
   'ph-warning': Warning,
   'ph-x': X,
+  'ph-arrow-up': ArrowUp,
+  'ph-arrow-down': ArrowDown,
+  'ph-repeat': Repeat,
+  'ph-repeat-once': RepeatOnce,
 };
 
 interface IconProps {

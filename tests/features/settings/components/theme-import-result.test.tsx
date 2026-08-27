@@ -21,11 +21,11 @@ describe('ThemeImportResult', () => {
       />,
     );
     expect(screen.getByText('Nord imported and activated')).toBeInTheDocument();
-    // 98, not 49: a theme *file* holds 49 colours in each of its two modes,
+    // 100, not 50: a theme *file* holds 50 colours in each of its two modes,
     // and `inherited` — the number the other sentence reports — counts in that
     // same per-file unit. See `theme-import-result.tsx`.
     expect(
-      screen.getByText('98 of 98 colours set. Light and dark both complete.'),
+      screen.getByText('100 of 100 colours set. Light and dark both complete.'),
     ).toBeInTheDocument();
   });
 
@@ -91,7 +91,7 @@ describe('ThemeImportResult', () => {
 
   /**
    * The Critical fix from review: `inherited` sums across both modes (up to
-   * 98), so `TOTAL_COLOUR_KEYS - inherited` alone could go negative. The
+   * 100), so `TOTAL_COLOUR_KEYS - inherited` alone could go negative. The
    * component no longer trusts `notes.length === 0` to imply nothing was
    * inherited — it checks `inherited === 0` directly — so even a
    * hand-constructed `ImportOk` that skips notes entirely (a shape
@@ -103,14 +103,14 @@ describe('ThemeImportResult', () => {
     const minimal: HiveTheme = { ...BUILT_IN_THEME, name: 'Minimal' };
     render(
       <ThemeImportResult
-        result={{ ok: true, theme: minimal, inherited: 98, notes: [] }}
+        result={{ ok: true, theme: minimal, inherited: 100, notes: [] }}
         onDismiss={vi.fn()}
       />,
     );
 
-    expect(screen.queryByText(/-\d+ of 98/)).toBeNull();
+    expect(screen.queryByText(/-\d+ of 100/)).toBeNull();
     expect(
-      screen.queryByText('98 of 98 colours set. Light and dark both complete.'),
+      screen.queryByText('100 of 100 colours set. Light and dark both complete.'),
     ).toBeNull();
   });
 
@@ -125,10 +125,10 @@ describe('ThemeImportResult', () => {
     render(<ThemeImportResult result={result} onDismiss={vi.fn()} />);
 
     expect(result.ok && result.notes[0]).toBe(
-      '98 colours inherited from the built-in theme',
+      '100 colours inherited from the built-in theme',
     );
     expect(
-      screen.getByText(/^98 colours inherited from the built-in theme/),
+      screen.getByText(/^100 colours inherited from the built-in theme/),
     ).toBeInTheDocument();
   });
 });

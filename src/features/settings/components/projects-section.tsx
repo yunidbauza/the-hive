@@ -72,7 +72,6 @@ export function ProjectsSection() {
         <div className="flex flex-col items-center gap-1 rounded-[7px] border border-dashed border-border px-4 py-6 text-center">
           <SwarmCreature creature="hive" size={72} />
           <span className="text-[11.5px] text-muted">{phrase}</span>
-          <span className="text-[13px] text-muted">No projects yet.</span>
           <span className="text-[11.5px] text-subtle">
             Add a folder to start a session in it.
           </span>

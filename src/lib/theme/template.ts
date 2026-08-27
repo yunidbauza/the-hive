@@ -11,7 +11,7 @@ export function themeToJson(theme: HiveTheme): string {
 /**
  * A fully populated copy of the built-in theme.
  *
- * Not an empty skeleton: editing 49 real colours is a task anyone can start,
+ * Not an empty skeleton: editing 50 real colours is a task anyone can start,
  * inventing them against a blank file is not. Generated from the same data the
  * app runs on, so it cannot go stale.
  */

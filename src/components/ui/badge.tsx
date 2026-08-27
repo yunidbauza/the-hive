@@ -3,7 +3,8 @@ import { cn } from '@/lib/utils';
 export type BadgeTone = 'danger' | 'brand' | 'muted';
 
 const TONE_FILL: Record<BadgeTone, string> = {
-  danger: 'bg-danger-solid text-on-brand',
+  // `on-danger`, not `on-brand`: one token cannot be legible on both fills.
+  danger: 'bg-danger-solid text-on-danger',
   brand: 'bg-brand-fill text-on-brand',
   // The tab-bar count (story 030): a quiet chip, not an alert.
   muted: 'bg-chip text-muted',

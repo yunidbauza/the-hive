@@ -425,6 +425,34 @@ export function importTheme(raw: string, fileName: string): ImportResult {
     checkContrast(notes, mode, 'ink', ui.ink, 'panel', ui.panel, 4.5);
     checkContrast(notes, mode, 'ink', ui.ink, 'bg', ui.bg, 4.5);
     checkContrast(notes, mode, 'muted', ui.muted, 'panel', ui.panel, 3);
+    /**
+     * Text on a *fill*, which nothing checked until a theme got it wrong
+     * (HIVE-109).
+     *
+     * Every other rule here checks text against a **surface**. A fill and the
+     * text on it are a pair too, and the gap is what let Graphite ship: its
+     * brand is a light lime, so its `onBrand` is correctly a near-black — and
+     * the badge, which reused `onBrand` over `dangerSolid`, rendered black on
+     * crimson at 3.22:1.
+     *
+     * **`onBrand` on `brandFill` is deliberately not checked yet.** It should
+     * be, and the check is one line; it is left out because the *built-in*
+     * theme fails it at 4.2:1, so turning it on would make the app's own
+     * default theme emit a warning on every import. Fixing that means moving
+     * `--cc-brand-fill`, which repaints every primary button in the app — a
+     * design decision rather than a bug fix, and not this change's to make.
+     * Adding the check with a loosened threshold would be worse than leaving
+     * it out, because it would record 4.2:1 as acceptable.
+     */
+    checkContrast(
+      notes,
+      mode,
+      'onDanger',
+      ui.onDanger,
+      'dangerSolid',
+      ui.dangerSolid,
+      4.5,
+    );
   }
 
   const theme: HiveTheme = {

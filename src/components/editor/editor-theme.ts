@@ -85,9 +85,40 @@ export const editorTheme: Extension = EditorView.theme({
     color: 'var(--cc-muted)',
     border: 'none',
   },
+  /**
+   * The panel host stops being a bar and becomes an overlay (HIVE-108).
+   *
+   * CodeMirror's own rule is `position: sticky; left: 0; right: 0`, which makes
+   * the panel a **row in the editor's flex column** — so opening ⌘F pushed the
+   * document down and closing it pushed it back, and the line you were reading
+   * moved twice for a search you had not run yet. Going absolute takes it out
+   * of flow entirely; `.cm-editor` already carries `position: relative
+   * !important`, so there is nothing to add on the host to anchor it.
+   *
+   * Everything visible — the card, its border, its shadow — belongs to
+   * `search-panel.tsx`. This host is deliberately left transparent and
+   * borderless so it contributes nothing but a coordinate space, and
+   * `width: auto` is what stops a full-width strip from swallowing clicks
+   * across the whole top of the document.
+   */
   '.cm-panels': {
-    backgroundColor: 'var(--cc-panel)',
+    position: 'absolute',
+    left: 'auto',
+    width: 'auto',
+    maxWidth: '100%',
+    backgroundColor: 'transparent',
     color: 'var(--cc-ink)',
+    border: 'none',
+  },
+  '.cm-panels.cm-panels-top': {
+    top: 0,
+    right: 0,
+    borderBottom: 'none',
+  },
+  '.cm-panels.cm-panels-bottom': {
+    bottom: 0,
+    right: 0,
+    borderTop: 'none',
   },
   '.cm-searchMatch': {
     backgroundColor: 'var(--cc-active)',
@@ -96,6 +127,22 @@ export const editorTheme: Extension = EditorView.theme({
   '.cm-searchMatch.cm-searchMatch-selected': {
     backgroundColor: 'var(--cc-brand-fill)',
     color: 'var(--cc-on-brand)',
+  },
+  /**
+   * `highlightSelectionMatches()` ships `#99ff7780` — a bright green — and it
+   * is **not** behind a `&light`/`&dark` variant, so no amount of telling
+   * CodeMirror which mode it is in would have reached it. It is the one search
+   * colour that had to be named here explicitly.
+   *
+   * Quieter than `.cm-searchMatch` on purpose: these are matches of whatever
+   * the caret happens to be sitting on, which the user did not ask for, and
+   * they must not compete with the matches of a query the user typed.
+   */
+  '.cm-selectionMatch': {
+    backgroundColor: 'var(--cc-code-selection)',
+  },
+  '.cm-selectionMatch.cm-selectionMatch-main': {
+    backgroundColor: 'transparent',
   },
 });
 

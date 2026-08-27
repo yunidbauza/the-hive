@@ -43,6 +43,7 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-brand-fill-strong` | `#334fa9` | *(unchanged)* | hive-mark tile (Serenity) |
 | `--cc-on-brand` | `#ffffff` | *(unchanged)* | text/icons on a brand fill |
 | `--cc-danger-solid` | `#d3372f` | *(unchanged)* | notification badge fill |
+| `--cc-on-danger` | `#ffffff` | *(unchanged)* | text/icons on a danger fill |
 | `--cc-code-keyword` | `#b39ff0` | `#6f42c1` | editor: keywords |
 | `--cc-code-string` | `#74b79c` | `#2e6b52` | editor: strings, regexps |
 | `--cc-code-number` | `#ffac47` | `#a1541a` | editor: numbers, booleans, null |
@@ -97,9 +98,18 @@ the concept does (`--blue-600/700/800` and `--color-error`, none of which its
 light theme overrides). Painting the logo tile with `bg-brand` would turn it
 pale blue in dark mode and read as a different logo.
 
-`--cc-danger-solid` is darker than `--cc-red` on purpose: white badge text on
+`--cc-danger-solid` is darker than `--cc-red` on purpose: `--cc-on-danger` on
 `#d3372f` clears WCAG AA at 4.87:1, where `--cc-red`'s dark-mode `#ff8d85` would
 not.
+
+**`--cc-on-danger` is a token of its own, and the reason is worth keeping.** The
+badge used to paint `--cc-on-brand`, which is a different promise — "legible on
+the *brand* fill". Graphite's brand is a light lime, so it correctly answers
+that with a near-black `#141414`, and the badge then rendered black on crimson
+at 3.22:1. No single token can be legible on two fills whose luminance differs
+fourfold, and before this the theme had no way to say so. `validate.ts` now
+checks both fill/on-fill pairs at import time, which is what makes the next one
+fail loudly rather than quietly.
 
 ### Tailwind mapping
 
@@ -119,6 +129,7 @@ working through the same variables:
 --cc-brand-fill → bg-brand-fill    --cc-brand-fill-hover → bg-brand-fill-hover
 --cc-brand-fill-strong → bg-brand-fill-strong
 --cc-on-brand → text-on-brand      --cc-danger-solid → bg-danger-solid
+--cc-on-danger → text-on-danger
 --cc-code-* → text-code-* / bg-code-*   (keyword, string, number, comment,
                                          name, type, operator, constant,
                                          invalid, active-line, selection)

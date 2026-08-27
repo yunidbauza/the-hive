@@ -166,8 +166,11 @@ describe('ProjectsSection', () => {
 
       render(<ProjectsSection />);
 
-      expect(screen.getByText(/no projects yet/i)).toBeInTheDocument();
+      // Anchored on the invitation, not on a bare "No projects yet." — the
+      // creature, the phrase and this line already report the emptiness, so
+      // the label was the one of the four that said nothing the others did.
       expect(screen.getByText(/add a folder to start a session/i)).toBeInTheDocument();
+      expect(screen.queryByText(/no projects yet/i)).not.toBeInTheDocument();
     });
 
     it('still offers Add project when empty', () => {

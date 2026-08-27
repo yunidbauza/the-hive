@@ -16,8 +16,8 @@ import {
 } from '@tests/support/css-tokens';
 
 describe('the format', () => {
-  it('counts 49 colours per mode', () => {
-    expect(UI_KEYS).toHaveLength(27);
+  it('counts 50 colours per mode', () => {
+    expect(UI_KEYS).toHaveLength(28);
     expect(SYNTAX_KEYS).toHaveLength(11);
     expect(TERMINAL_KEYS).toHaveLength(11);
   });

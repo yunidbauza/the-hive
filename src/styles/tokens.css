@@ -104,9 +104,24 @@
    */
   --cc-bloom: color-mix(in srgb, var(--cc-brand-fill-strong) 72%, transparent);
 
-  /* Notification badge fill. Theme-invariant for the same reason, and darker
-     than `--cc-red` so white badge text clears AA (4.87:1). */
+  /* Notification badge fill, and darker than `--cc-red` so that the badge text
+     above it clears AA. What that text *is* is `--cc-on-danger`, below — this
+     comment used to say "white", which was true of every theme until one
+     shipped a dark `--cc-on-brand` and the badge quietly inherited it. */
   --cc-danger-solid: #d3372f;
+
+  /**
+   * Text on `--cc-danger-solid`, and the reason it is a token of its own
+   * (HIVE-109).
+   *
+   * The badge used to paint `--cc-on-brand` here, which is a different
+   * promise: "legible on the *brand* fill". A theme whose brand is light —
+   * Graphite's lime — correctly answers that with a near-black, and the badge
+   * then rendered black on crimson at 3.22:1. One token cannot be legible on
+   * two fills whose luminance differs fourfold, and the theme had no way to
+   * say so.
+   */
+  --cc-on-danger: #ffffff;
 
   /**
    * Rail density (story 105) — the comfortable values, which are the numbers
@@ -302,6 +317,7 @@ body[data-theme='light'] {
   --color-brand-fill-strong: var(--cc-brand-fill-strong);
   --color-on-brand: var(--cc-on-brand);
   --color-danger-solid: var(--cc-danger-solid);
+  --color-on-danger: var(--cc-on-danger);
   /**
    * The code roles are bound here too, even though CodeMirror reaches them as
    * `var(--cc-code-*)` directly rather than through a utility. The editor's

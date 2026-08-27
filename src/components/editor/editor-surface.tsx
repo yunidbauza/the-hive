@@ -10,7 +10,11 @@ import {
   indentUnit,
   type LanguageSupport,
 } from '@codemirror/language';
-import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+import {
+  highlightSelectionMatches,
+  search,
+  searchKeymap,
+} from '@codemirror/search';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
@@ -24,6 +28,7 @@ import {
 import { useEffect, useRef } from 'react';
 
 import { editorHighlight, editorTheme } from '@components/editor/editor-theme';
+import { createSearchPanel } from '@components/editor/search-panel';
 
 /**
  * The CodeMirror surface — **the editor seam**.
@@ -204,6 +209,13 @@ export function EditorSurface({
       rectangularSelection(),
       highlightActiveLine(),
       highlightSelectionMatches(),
+      /*
+        Called explicitly, which it never was before (HIVE-108). `searchKeymap`
+        alone appends the extension on first ⌘F, so the panel used to arrive
+        with stock DOM at the bottom of the editor and no way to configure it.
+        Naming it here is what makes `createPanel` reachable at all.
+      */
+      search({ createPanel: createSearchPanel }),
       bracketMatching(),
       editorTheme,
       editorHighlight,
