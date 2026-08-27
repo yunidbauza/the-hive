@@ -39,48 +39,62 @@ import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
  * they are sentences like `completion-task-cleanup` — and 130px truncated them
  * to an ellipsis while a third of the table sat empty to their right.
  *
- * The variable-width columns share the leftover space, 2:1:2. `BRANCH` takes as
- * much as `SESSION` because it is the value that grows with deep branch names;
- * `PROJECT` is a short slug and takes half of that. The floors matter as much as
- * the ratio: below them the columns truncate rather than collapsing to nothing,
- * which is what keeps the table readable in a narrow window.
+ * Each states a **preferred** width — the `88px`/`64px`/`76px` in
+ * `flex-[2_1_88px]` and its siblings — chosen from what the value actually is:
+ * a session name is a sentence, a project is a short slug, a branch is longer
+ * than any column will ever hold. Surplus beyond those is shared 2:1:2, and a
+ * shortfall is taken from them proportionally.
  *
- * **The floors have a hard ceiling, and it is not a matter of taste.** At
- * `MIN_WINDOW_SIZE` (1100px, `electron/shared/window.ts`) in comfortable
- * density, **with the rails at their default widths**, the two rails leave the
- * centre stage 516px and `px-[18px]` leaves the flex line 480 of that. The
- * caret, `STATUS`, `PR`, the five `gap-2.5`s and the row's own `px-2` take
- * 12 + 132 + 34 + 50 + 16 = **244**, so **the three floors must sum to 236 or
- * less**.
+ * The ratio governs the **surplus**, not the whole width, and the distinction is
+ * worth stating because the sentence here used to claim the latter. `BRANCH`
+ * takes as much of the extra as `SESSION` because it is the value that keeps
+ * growing; `PROJECT` takes half, because past its slug there is nothing more to
+ * show.
  *
- * The rails are draggable since HIVE-105, so "the stage is 516px" is a fact
- * about the default and not a guarantee: `STAGE_MIN_FRACTION` in
- * `lib/rail-width.ts` promises the stage only 20% of the window, which at 1100px
- * is 220. A user who drags both rails wide can starve this table below any
- * floor it could sensibly have, and it scrolls sideways when they do. That is
- * out of these numbers' reach and always was — the point of the budget is that
- * the table fits the layout the app *opens* in, on the smallest window it
- * allows.
+ * ## Why those are a flex basis and not a `min-width`
  *
- * ## What happens when they do not, and why nothing caught it
+ * They were `min-w-[Npx]`, and that is a different claim: not "prefer this
+ * width" but **"never go below it"**. A flex item that may not shrink does not
+ * politely stop shrinking — it overflows its container, and the two containers
+ * here are not the same box.
  *
- * They overflow, and — this is the part worth writing down — they overflow
- * *differently* in the header and in a row, so the columns come apart. The
- * header's cells are direct children of the 480px line. A row's five leftmost
- * cells are inside the row button, which is `flex-1` and therefore 480 minus
- * `PR`, its gap and the padding: the same leftover, which is exactly why the
- * two agree at any width where the floors fit. Past that point the header's
- * cells overflow the line and the row's overflow the *button*, and `PR` — the
- * one cell outside it — stays put. Measured at 1100px, that put the header's
- * `PR` 22px right of every row's.
+ * The header's cells are direct children of the flex line. A row's five
+ * leftmost cells live inside the row button, which is `flex-1` and therefore
+ * the line minus `PR`, minus Resume, minus their gaps. Those two leftovers are
+ * *equal* — which is exactly why the columns line up at every width where the
+ * cells fit. Once the floors bind, the header's cells overflow the **line** and
+ * the row's overflow the **button**, and `PR` and Resume — the cells outside
+ * the button — stay where they are. The column comes apart by precisely the
+ * amount of the overflow.
  *
- * Which is where these numbers come from. The map before this story read
- * 120/80/100 and this comment claimed it "fits exactly at that width, measured
- * rather than reasoned"; it summed to 300 against a budget of 278, and no test
- * had ever looked at the table below the default 1440px window. The claim was
- * reasoned after all.
+ * And it comes apart *silently*. There is no scrollbar: the scroll container is
+ * `overflow-y-auto`, but nothing here is wider than its own scroll box, so
+ * `overflow-x` never triggers. The cells simply draw on top of one another.
+ * Measured in the built app at `MIN_WINDOW_SIZE` (1100px,
+ * `electron/shared/window.ts`) with one resumable row, the header's `PR` sat
+ * **54px** right of the row's, and the `#124` link was painted over the middle
+ * of the branch name — both unreadable, with nothing on screen to say so.
  *
- * ## What `STATUS` cost, and who paid
+ * A basis removes the whole class rather than buying headroom against it.
+ * `truncate` already sets `overflow: hidden`, which makes a flex item's
+ * automatic minimum size `0`, so with no explicit floor the three columns
+ * shrink proportionally to their bases and **truncate** — which is what they
+ * are built to do, and what every one of their `title` attributes exists for.
+ * Header and row shrink identically, because they are dividing the same
+ * leftover, so the columns cannot come apart at any width at all.
+ *
+ * That last clause is the point. The previous rule was a budget — "the three
+ * floors must sum to 236 or less" — and a budget only holds while every term in
+ * it does. It had already failed twice: once when `BRANCH` was split into its
+ * own column (300 against 278, undetected because no test looked below the
+ * default 1440px window), and again for any table reserving the Resume column,
+ * which spends another 62px no floor could find. `HIVE-105` then made the rails
+ * draggable, so the stage width is a user's decision — `STAGE_MIN_FRACTION`
+ * promises it only 20% of the window — and no set of fixed floors could have
+ * survived that either. Nothing needs to fit a budget now; the columns give way
+ * before anything can overlap.
+ *
+ * ## What `STATUS` still costs, and why it is fixed
  *
  * `STATUS` was 90px, sized for `terminated` — the longest word the column could
  * hold while a quiet session with subagents running was called `idle (agents)`
@@ -88,24 +102,16 @@ import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
  * `working (scripts)` made the longest value 17 characters, which the browser
  * measures at 127.9px in this face at 12.5px. A clipped status is worse than a
  * clipped branch: a branch truncates to a prefix that is still recognisably
- * itself, while `working (scr…` is a word the table has stopped saying.
+ * itself, while `working (scr…` is a word the table has stopped saying. So it
+ * is `w-[132px] shrink-0` and stays that width — four pixels of margin over a
+ * measurement taken on one machine's font stack, because the fallback chain
+ * ends in a generic `monospace` whose metrics are the operating system's
+ * business.
  *
- * 132px, not 128 — four pixels of margin over a measurement taken on one
- * machine's font stack, because the fallback chain here ends in a generic
- * `monospace` whose metrics are the operating system's business.
- *
- * So the budget for the three variable floors drops from 278 to 236, and they
- * are set to 88/64/76 — 228, with 8px of slack rather than the 22px of debt
- * they carried before. It comes out of their **floors** and not their ratio:
- * the 2:1:2 split governs how *slack* is shared, and at any window wide enough
- * to have slack it is untouched. `table-alignment.spec.ts` asserts all of this
- * at 1100px, because this paragraph is arithmetic and that is a measurement.
- *
- * **One case is still over budget**, and it was before this story too: a table
- * that reserves the Resume column spends another 62px, which no floor here can
- * find at 1100px. It is left rather than paid for, because paying would mean a
- * `PROJECT` column of five characters on every window; a fleet with a resumable
- * row on a 1100px window scrolls its table sideways.
+ * It and the two other fixed columns are what the flexible three shrink
+ * *against*. `table-alignment.spec.ts` measures the result at 1100px, both with
+ * and without a resumable row, because every claim in this block is arithmetic
+ * and only a browser can settle it.
  *
  * ## Why `BRANCH` is its own column
  *
@@ -131,16 +137,21 @@ import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
  * Per-row would be worse than nothing: rows with a resumable neighbour would
  * disagree with rows without one, and the header could not match either.
  *
- * It is reserved only when some row will use it, because the floors above have
- * no room to give: `PR` is 34px at a window where the two rails leave the stage
- * 516px, and a 52px slot held open on a fleet that never resumes anything is
- * exactly the overflow the paragraph above measures. A fleet that *does* have a
- * resumable row spends it, and the variable columns give the width back by
- * truncating — which is why every one of them carries a `title`.
+ * It is reserved only when some row will use it, and that is now an economy
+ * rather than a necessity: a 52px slot held open on a fleet that never resumes
+ * anything is 52px the three text columns could have had. A fleet that *does*
+ * have a resumable row spends it, and they give the width back by truncating —
+ * which is why every one of them carries a `title`.
+ *
+ * It used to be more than an economy. While the columns had hard floors, this
+ * 62px (the slot and its gap) was width nothing could find, so a restored fleet
+ * at 1100px drew `PR` on top of `BRANCH`. That is what the basis above fixes,
+ * and it is why reserving a seventh column is no longer a decision with a
+ * layout budget behind it.
  */
 const COL = {
   caret: 'w-3 shrink-0',
-  session: 'min-w-[88px] flex-[2] truncate',
+  session: 'flex-[2_1_88px] truncate',
   /*
     Wide enough for `working (scripts)`, and `whitespace-nowrap` rather than
     `truncate` — which is three declarations, and only two of them are wanted.
@@ -160,8 +171,8 @@ const COL = {
     the fallback chain ends in a generic `monospace`.
   */
   status: 'w-[132px] shrink-0 whitespace-nowrap',
-  project: 'min-w-[64px] flex-[1] truncate',
-  branch: 'min-w-[76px] flex-[2] truncate',
+  project: 'flex-[1_1_64px] truncate',
+  branch: 'flex-[2_1_76px] truncate',
   pr: 'w-[34px] shrink-0',
   action: 'w-[52px] shrink-0',
 } as const;
@@ -222,7 +233,15 @@ export function SessionTable() {
     >
       <div className="flex items-center gap-2.5 px-2 pb-1.5 text-[11px] tracking-[0.06em] text-term-head">
         <span className={COL.caret} />
-        <span className={COL.session}>SESSION</span>
+        {/*
+          `title` on the truncating header cells, for the reason every row cell
+          carries one: these labels are the map, and a narrow window now
+          shortens them rather than letting them overflow. `PROJE…` is still
+          recognisable, but only the tooltip makes it certain.
+        */}
+        <span className={COL.session} title="SESSION">
+          SESSION
+        </span>
         {/*
           A second measurement handle, for `COL`'s width note. The status column
           is the only one that must never truncate — a branch cut to a prefix is
@@ -234,8 +253,12 @@ export function SessionTable() {
         <span className={COL.status} data-col="status">
           STATUS
         </span>
-        <span className={COL.project}>PROJECT</span>
-        <span className={COL.branch}>BRANCH</span>
+        <span className={COL.project} title="PROJECT">
+          PROJECT
+        </span>
+        <span className={COL.branch} title="BRANCH">
+          BRANCH
+        </span>
         {/*
           `data-col` is a measurement handle, not a style hook (HIVE-100). The
           header cell and every row's PR cell carry it, so one selector collects
