@@ -62,12 +62,41 @@ repositories.
 | `fs:read-dir` | invoke | `{projectId, relPath}` → `DirEntry[]` |
 | `fs:read-file` | invoke | → `FileContent` \| `FsRefusal` |
 | `fs:write-file` | invoke | `{…, text, baseMtimeMs}` → written, conflict, or error |
+| `fs:search` | invoke | `{projectId, query, mode}` → `SearchResults` |
 | `fs:watch` / `fs:unwatch` | invoke | one watcher, for the visible project |
 | `fs:changed` | main → renderer | `{projectId, paths[]}` |
 
 `DirEntry` carries **no path** — the renderer composes paths from the tree it
 already holds, and a path in the reply is a second answer that can disagree with
 the first.
+
+### Why search is a channel and not a filter (HIVE-110)
+
+`fs:search` is the only verb here that **recurses**, and it exists because the
+tree is lazy. `use-directory.ts` reads a directory only when it is expanded, so
+a renderer-side filter can see nothing but the folders someone already opened —
+it would answer "no matches" for a file one collapsed directory away, which is
+worse than not offering search at all.
+
+It takes no path, like everything else here: a `projectId`, a query, and a mode
+(`name` or `text`). The query is matched case-insensitively as a **literal**,
+never a regular expression — a pathological pattern here runs against every file
+in the project rather than one open document.
+
+Nothing in this layer recursed before it, so it had no depth limit, result cap
+or timeout to inherit. All of them are declared in `fs-contract.ts` and all are
+enforced in `search.ts`: depth 12, 200 files, 500 matches, 20 lines per file,
+and a 4-second wall-clock budget. The walk stops at the **first** bound it
+reaches and sets `capped`, which is what the panel renders as `500+` — a
+truncated set printed as a total is the same class of untruth as a tree that
+shows the wrong files without saying so.
+
+It prunes on `HIDDEN_ENTRIES` before `stat`, exactly as `readDirectory` does,
+and reuses the editor's own refusals: a file past `MAX_FILE_BYTES` or failing
+the NUL sniff is skipped rather than read. It does **not** consult
+`.gitignore`, for the reason `HIDDEN_ENTRIES` gives — the parser is a
+dependency, nested ignore files have to compose to be worth having, and it hides
+`.env.local`.
 
 A read **refuses** rather than errors in two cases, and the distinction is
 user-visible: over 1 MB, and a NUL byte in the first 8 KB. Neither is a failure

@@ -4,7 +4,9 @@ import type {
   FsChangedEvent,
   FsRefusal,
   FsResult,
+  FsSearchMode,
   RootInfo,
+  SearchResults,
   WriteFileResult,
 } from '@shared/fs-contract';
 
@@ -109,6 +111,24 @@ export async function writeFile(
  * this reject would turn a degraded feature into an unhandled rejection in an
  * effect.
  */
+/**
+ * Walk the project for a name or a string (HIVE-110).
+ *
+ * The one read here that is not about a place the caller already knows. It
+ * still names no path — a project, a query and a mode — and every bound it
+ * obeys is main's, declared in `fs-contract.ts`.
+ */
+export async function searchProject(
+  projectId: string,
+  query: string,
+  mode: FsSearchMode,
+  sessionId?: string,
+): Promise<FsResult<SearchResults>> {
+  const bridge = window.hive?.fs;
+  if (!bridge) return NO_BRIDGE;
+  return bridge.search({ projectId, query, mode, sessionId });
+}
+
 export async function watchProject(
   projectId: string,
   sessionId?: string,

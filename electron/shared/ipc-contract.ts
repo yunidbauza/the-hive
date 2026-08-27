@@ -55,6 +55,8 @@ import type {
   ReadFileRequest,
   RootInfo,
   RootRequest,
+  SearchRequest,
+  SearchResults,
   WatchRequest,
   WriteFileRequest,
   WriteFileResult,
@@ -539,7 +541,7 @@ export const CH = {
   /**
    * The project filesystem — the explorer and the editor.
    *
-   * Five verbs and one event. None of them takes a path: each names a
+   * Six verbs and one event. None of them takes a path: each names a
    * `projectId` and a project-relative path, and main resolves it against the
    * directory *it* validated when it loaded the config. See `fs-contract.ts`
    * for why that is the whole security design rather than one layer of it.
@@ -560,6 +562,15 @@ export const CH = {
   fsRoot: 'fs:root',
   fsReadFile: 'fs:read-file',
   fsWriteFile: 'fs:write-file',
+  /**
+   * Find a file by name, or a string inside one (HIVE-110).
+   *
+   * The one verb here that *recurses*, and the reason it has to exist in main
+   * at all is in `fs-contract.ts`: the tree is lazy, so a renderer-side filter
+   * can only see folders someone already opened and would answer "no matches"
+   * for a file one collapsed directory away.
+   */
+  fsSearch: 'fs:search',
   fsWatch: 'fs:watch',
   fsUnwatch: 'fs:unwatch',
   fsChanged: 'fs:changed', // main → renderer
@@ -1150,6 +1161,12 @@ export interface HiveBridge {
     /** Write, unless the file moved on. See {@link WriteFileResult}. */
     writeFile(request: WriteFileRequest): Promise<WriteFileResult>;
     /**
+     * Walk the project for a name or a string. Bounded in five directions —
+     * depth, files, matches, lines per file and wall clock — and it says so:
+     * {@link SearchResults.capped} is what the panel renders as "500+".
+     */
+    search(request: SearchRequest): Promise<FsResult<SearchResults>>;
+    /**
      * Watch one project. Replaces the previous watcher rather than adding one.
      *
      * Singular by design: the explorer shows one project at a time, and a
@@ -1674,6 +1691,14 @@ export const BRIDGE_FS_KEYS = [
   'root',
   'readFile',
   'writeFile',
+  /*
+    The recursing one (HIVE-110), and the only verb here that reads more than
+    it was pointed at. It still takes no path — a `projectId`, a query and a
+    mode — so the sentence above holds; what it adds is a *walk*, which is why
+    every bound it obeys is declared in `fs-contract.ts` rather than chosen at
+    the call site.
+  */
+  'search',
   'watch',
   'unwatch',
   'onChanged',

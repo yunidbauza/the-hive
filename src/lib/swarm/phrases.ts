@@ -47,6 +47,7 @@ export type PhraseKey =
   | 'empty.settingsSkills'
   | 'empty.editor'
   // A search that found nothing. Distinct from empty: something *is* there.
+  | 'noMatch.explorer'
   | 'noMatch.picker'
   // Loading — in flight.
   | 'loading.directory'
@@ -127,6 +128,18 @@ export const PHRASES = {
     'No strand under the microscope.',
     'No genome selected.',
     'Select a strand to splice.',
+  ],
+  /*
+    Its own pool, not `empty.explorer`'s, for the reason the picker's own split
+    records: "nothing here yet" and "plenty is here and none of it matched" are
+    different facts about the world, and sharing a pool would let a line about
+    an empty repository answer a search that found nothing.
+  */
+  'noMatch.explorer': [
+    'The scan finds no such strain.',
+    'Nothing in the hive answers to that.',
+    'No trace of it in the creep.',
+    'The swarm has not seen this one.',
   ],
   'noMatch.picker': [
     'Nothing detected in this sector.',

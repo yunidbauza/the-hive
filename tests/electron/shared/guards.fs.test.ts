@@ -4,6 +4,7 @@ import {
   assertRelPath,
   parseReadDirRequest,
   parseReadFileRequest,
+  parseSearchRequest,
   parseWatchRequest,
   parseWriteFileRequest,
 } from '../../../electron/shared/guards';
@@ -206,5 +207,49 @@ describe('parseWatchRequest', () => {
 
   it('rejects a malformed id', () => {
     expect(() => parseWatchRequest({ projectId: 'a/b' })).toThrow(/malformed id/);
+  });
+});
+
+
+describe('parseSearchRequest', () => {
+  const good = { projectId: 'nova-web', query: 'badge', mode: 'name' };
+
+  it('accepts a name search and a text search', () => {
+    expect(parseSearchRequest(good).mode).toBe('name');
+    expect(parseSearchRequest({ ...good, mode: 'text' }).mode).toBe('text');
+  });
+
+  /**
+   * An unknown mode would otherwise fall through to the content branch and
+   * read every file in the project to answer a question nobody asked.
+   */
+  it('refuses a mode it does not know', () => {
+    expect(() => parseSearchRequest({ ...good, mode: 'regex' })).toThrow();
+    expect(() => parseSearchRequest({ ...good, mode: 1 })).toThrow();
+  });
+
+  /**
+   * A search term is prose, so the guard bounds it rather than describing it —
+   * the argument `parseSearchPrsRequest` already makes. Quotes and backslashes
+   * are things people type; control characters are not.
+   */
+  it('takes an ordinary query, and refuses an empty or controlled one', () => {
+    expect(parseSearchRequest({ ...good, query: 'a b "c" \\d' }).query).toBe(
+      'a b "c" \\d',
+    );
+    expect(() => parseSearchRequest({ ...good, query: '' })).toThrow();
+    expect(() =>
+      parseSearchRequest({ ...good, query: `a${String.fromCharCode(7)}b` }),
+    ).toThrow();
+    expect(() =>
+      parseSearchRequest({ ...good, query: 'x'.repeat(5000) }),
+    ).toThrow();
+  });
+
+  it('carries an optional sessionId and refuses an unknown key', () => {
+    expect(parseSearchRequest({ ...good, sessionId: 'sess-0z' }).sessionId).toBe(
+      'sess-0z',
+    );
+    expect(() => parseSearchRequest({ ...good, relPath: '../etc' })).toThrow();
   });
 });

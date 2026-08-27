@@ -1,19 +1,27 @@
 import { useCallback } from 'react';
 
+import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+
 import { EmptyState, EmptyStatePath } from '@components/ui/empty-state';
 import { Icon } from '@components/ui/icon';
+import { ExplorerResults } from '@features/explorer/components/explorer-results';
+import { ExplorerSearchRow } from '@features/explorer/components/explorer-search-row';
 import { TreeNode } from '@features/explorer/components/tree-node';
 import { useDirectory } from '@features/explorer/hooks/use-directory';
 import { useExplorerProject } from '@features/explorer/hooks/use-explorer-project';
 import { useExplorerRoot } from '@features/explorer/hooks/use-explorer-root';
+import { useExplorerSearch } from '@features/explorer/hooks/use-explorer-search';
 import { useProjectAccess } from '@hooks/use-project-config';
 import { hasFsBridge } from '@lib/explorer/fs-client';
+import { MIN_QUERY_CHARS } from '@shared/fs-contract';
 import { useEditorLayout } from '@stores/appearance-store';
 import { useEditorActions } from '@stores/editor-store';
 import { useProjects } from '@stores/hive-store';
 import {
   useBumpFsRevision,
   useCollapseExplorer,
+  useExplorerSearchMode,
+  useExplorerSearchTerm,
   useFsRevision,
   useRevealStage,
 } from '@stores/ui-store';
@@ -107,6 +115,42 @@ export function ExplorerPanel() {
       : subRoot === ''
         ? ''
         : display.suffix;
+
+  const searchTerm = useExplorerSearchTerm();
+  const searchMode = useExplorerSearchMode();
+  const noMatchPhrase = useSwarmPhrase('noMatch.explorer');
+  const search = useExplorerSearch(
+    projectId,
+    searchTerm,
+    searchMode,
+    usable,
+    sessionId,
+  );
+  /*
+    A search *replaces* the tree rather than filtering it — the same call the
+    PRs panel makes, and for a stronger reason here: these results are paths
+    from all over the project, and threading them back into a lazily-expanded
+    tree would mean opening every ancestor of every hit.
+  */
+  const searching = searchTerm.trim() !== '';
+
+  /**
+   * The count line, and the one place the caps become visible.
+   *
+   * `capped` earns the `+` on both numbers rather than one: the walk stops at
+   * the first bound it reaches, so a capped search knows neither its true match
+   * count nor its true file count. Printing an exact figure for either would be
+   * the untruth `SearchResults.capped` exists to prevent.
+   */
+  const status = ((): string => {
+    if (search.results === null) return '';
+    const { matches, files, capped } = search.results;
+    if (matches === 0) return 'No results';
+    const mark = capped ? '+' : '';
+    return searchMode === 'name'
+      ? `${files}${mark} ${files === 1 && !capped ? 'file' : 'files'}`
+      : `${matches}${mark} in ${files}${mark} ${files === 1 && !capped ? 'file' : 'files'}`;
+  })();
 
   const onOpenFile = useCallback(
     (relPath: string) => {
@@ -282,6 +326,13 @@ export function ExplorerPanel() {
       </div>
 
       {/*
+        Below the header, above everything it filters. Only when the panel can
+        actually search: with no bridge or no usable project there is nothing
+        to walk, and a box that answers nothing is worse than no box.
+      */}
+      {usable ? <ExplorerSearchRow status={status} /> : null}
+
+      {/*
         The project resolves but its directory does not. `access.reason` is the
         config's own verdict, which names the file to edit — a better message
         than anything this panel could compose, and the same one the projects
@@ -291,15 +342,15 @@ export function ExplorerPanel() {
         <EmptyState>{access.reason ?? 'This project has no folder.'}</EmptyState>
       ) : null}
 
-      {usable && root.error ? (
+      {usable && !searching && root.error ? (
         <EmptyState>{root.error}</EmptyState>
       ) : null}
 
-      {usable && !root.error && root.entries?.length === 0 ? (
+      {usable && !searching && !root.error && root.entries?.length === 0 ? (
         <EmptyState phrase="empty.explorer" creature="hive">This repository is empty.</EmptyState>
       ) : null}
 
-      {usable
+      {usable && !searching
         ? root.entries?.map((entry) => (
             <TreeNode
               key={entry.name}
@@ -325,6 +376,67 @@ export function ExplorerPanel() {
             />
           ))
         : null}
+
+      {usable && searching ? (
+        <SearchView
+          state={search}
+          query={searchTerm.trim()}
+          phrase={noMatchPhrase}
+          onOpenFile={onOpenFile}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The four states a search can be in, in the order they are reached.
+ *
+ * Its own component so the panel above stays a composition of surfaces rather
+ * than a nest of ternaries, and so "searching" can render *nothing* rather than
+ * a spinner: a walk answers in well under a second on any tree the caps allow,
+ * and a spinner that flashes for 200ms reads as jank rather than as progress.
+ */
+function SearchView({
+  state,
+  query,
+  phrase,
+  onOpenFile,
+}: {
+  state: ReturnType<typeof useExplorerSearch>;
+  query: string;
+  phrase: string;
+  onOpenFile: (relPath: string) => void;
+}) {
+  if (state.error !== null) return <EmptyState>{state.error}</EmptyState>;
+
+  // Below the floor main enforces, so nothing was walked and nothing is owed.
+  if (query.length < MIN_QUERY_CHARS) {
+    return (
+      <p className="px-2 py-3 text-[10.5px] text-subtle">
+        Keep typing — {MIN_QUERY_CHARS} characters at least.
+      </p>
+    );
+  }
+
+  if (state.results === null) return null;
+
+  if (state.results.hits.length === 0) {
+    return (
+      <div className="flex flex-col gap-[3px] px-2 py-3">
+        <p className="text-[11.5px] text-muted">{phrase}</p>
+        <p className="truncate text-[11.5px] text-subtle" title={query}>
+          nothing matches “{query}”
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <ExplorerResults
+      hits={state.results.hits}
+      query={query}
+      onOpenFile={onOpenFile}
+    />
   );
 }

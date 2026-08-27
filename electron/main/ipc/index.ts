@@ -27,6 +27,7 @@ import type {
   FsRefusal,
   FsResult,
   RootInfo,
+  SearchResults,
   WriteFileResult,
 } from '@shared/fs-contract';
 import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
@@ -38,6 +39,7 @@ import {
   parseReadDirRequest,
   parseReadFileRequest,
   parseRootRequest,
+  parseSearchRequest,
   parseWatchRequest,
   parseWriteFileRequest,
   parseDiagnoseEnvRequest,
@@ -124,6 +126,7 @@ import {
   readFileContent,
   readRoot,
   setSessionCwdLookup,
+  searchProject,
   writeFileContent,
   type FsWatchLayer,
 } from '../fs';
@@ -1388,6 +1391,17 @@ export function registerIpcHandlers(): void {
     CH.fsWriteFile,
     (_event, payload): Promise<WriteFileResult> =>
       writeFileContent(parseWriteFileRequest(payload)),
+  );
+
+  /**
+   * The recursing verb (HIVE-110). Answers `FsResult` like every read here —
+   * a search that failed must render as a failed search, not as a broken app.
+   * Every bound it obeys lives in `fs-contract.ts`, not at this call site.
+   */
+  handle(
+    CH.fsSearch,
+    (_event, payload): Promise<FsResult<SearchResults>> =>
+      searchProject(parseSearchRequest(payload)),
   );
 
   /**

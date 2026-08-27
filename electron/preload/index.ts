@@ -38,6 +38,8 @@ import type {
   ReadFileRequest,
   RootInfo,
   RootRequest,
+  SearchRequest,
+  SearchResults,
   WatchRequest,
   WriteFileRequest,
   WriteFileResult,
@@ -265,6 +267,8 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.fsReadFile, request),
     writeFile: (request: WriteFileRequest): Promise<WriteFileResult> =>
       ipcRenderer.invoke(CH.fsWriteFile, request),
+    search: (request: SearchRequest): Promise<FsResult<SearchResults>> =>
+      ipcRenderer.invoke(CH.fsSearch, request),
     watch: (request: WatchRequest): Promise<void> =>
       ipcRenderer.invoke(CH.fsWatch, request),
     unwatch: (): Promise<void> => ipcRenderer.invoke(CH.fsUnwatch),

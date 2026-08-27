@@ -287,3 +287,97 @@ export const HIDDEN_ENTRIES: readonly string[] = [
   ALWAYS_HIDDEN,
   ...NOISE_ENTRIES,
 ];
+
+/**
+ * `fs:search` — finding a file, or something inside one (HIVE-110).
+ *
+ * ## Why this is a verb at all, rather than a filter in the renderer
+ *
+ * The obvious implementation is a filter over the entries already on screen,
+ * and it cannot work: `use-directory.ts` reads a directory only when it is
+ * *expanded*, so a collapsed node's children are simply not in the renderer.
+ * A filter would answer "no matches" for a file sitting one unopened folder
+ * away — confidently, and wrongly. Even a filename-only search therefore needs
+ * a walk, and a walk belongs on the side that already owns containment.
+ *
+ * ## What it does not do
+ *
+ * It does not read `.gitignore`, for the reason {@link HIDDEN_ENTRIES} gives:
+ * the parser is a dependency, nested ignore files have to compose correctly to
+ * be worth having, and it hides `.env.local`. {@link HIDDEN_ENTRIES} already
+ * prunes the directories that actually cost — `node_modules`, `dist`,
+ * `coverage` and the rest — before anything is read.
+ */
+export type FsSearchMode = 'name' | 'text';
+
+export interface SearchRequest {
+  projectId: string;
+  /** What to look for. Matched case-insensitively as a literal, never a regex. */
+  query: string;
+  mode: FsSearchMode;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
+}
+
+/** One matching line inside a file. Absent entirely in `name` mode. */
+export interface SearchLine {
+  /** 1-based, as an editor counts. */
+  line: number;
+  /** The line, trimmed of leading whitespace and clipped to {@link MAX_LINE_CHARS}. */
+  text: string;
+  /** Where the match starts in {@link SearchLine.text}, after trimming and clipping. */
+  column: number;
+}
+
+/**
+ * One file that matched, with its hits.
+ *
+ * `relPath` is project-relative and composed the same way the tree composes
+ * one, so the editor's buffer key is the key it would have had if the file had
+ * been reached by clicking through — see `docs/explorer-and-editor.md`.
+ */
+export interface SearchHit {
+  relPath: string;
+  name: string;
+  /** Empty in `name` mode: the file's *name* matched, nothing inside it did. */
+  lines: SearchLine[];
+  /** Total hits in this file, which may exceed `lines.length` once capped. */
+  total: number;
+}
+
+/**
+ * What a search answers.
+ *
+ * `capped` is the field that keeps this honest. Every bound below stops the
+ * walk early, and a truncated set rendered as a total is the same class of
+ * untruth as a tree that shows the wrong files without saying so — the rule the
+ * PR search already states for its own `200+`.
+ */
+export interface SearchResults {
+  hits: SearchHit[];
+  /** Files that matched, which may exceed `hits.length` once capped. */
+  files: number;
+  /** Matches across every file, capped at {@link MAX_SEARCH_MATCHES}. */
+  matches: number;
+  capped: boolean;
+}
+
+/**
+ * The bounds, none of which existed before this verb.
+ *
+ * Nothing in the fs layer recursed until now, so there was never a depth to
+ * limit or a result set to cap. Each of these is a floor on how bad the worst
+ * case can get, not a target: a search that hits one has already found more
+ * than a 316px rail can show.
+ */
+export const MAX_SEARCH_DEPTH = 12;
+export const MAX_SEARCH_FILES = 200;
+export const MAX_SEARCH_MATCHES = 500;
+/** Per file, so one generated line cannot fill the whole result set. */
+export const MAX_SEARCH_LINES_PER_FILE = 20;
+/** A whole-search budget, so a huge tree degrades to partial rather than hangs. */
+export const SEARCH_BUDGET_MS = 4_000;
+/** Longest line returned. A minified bundle has one line and it is megabytes. */
+export const MAX_LINE_CHARS = 200;
+/** Shortest query worth walking a tree for. */
+export const MIN_QUERY_CHARS = 2;

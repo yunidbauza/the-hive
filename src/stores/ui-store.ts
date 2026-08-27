@@ -3,6 +3,9 @@ import { useShallow } from 'zustand/react/shallow';
 
 import type { Effort, Model } from '@/types/entity';
 
+import type { FsSearchMode } from '@shared/fs-contract';
+
+
 export type LeftTab = 'projects' | 'work' | 'agents';
 export type RailTab = 'inbox' | 'prs' | 'explorer';
 
@@ -66,6 +69,24 @@ interface UiState {
    * checked and disabled rather than pretending a narrower scope exists.
    */
   prSearchAllRepos: boolean;
+  /**
+   * What the Explorer's search box holds. `''` means the panel shows the tree.
+   *
+   * Here rather than in `hive-store` for the same reason `prSearchTerm` is:
+   * the term is what the user is looking at, and the files that come back are
+   * data. A keystroke in the box must not re-render the fleet.
+   */
+  explorerSearchTerm: string;
+  /**
+   * Whether the Explorer searches file *names* or their *contents*.
+   *
+   * `name` is the default because it is the cheaper walk and the commoner
+   * question — "where does this file live" is asked far more often than "who
+   * calls this". **Not persisted**, and reset with the term, for the reason
+   * `prSearchAllRepos` gives: a mode set for one question must not silently
+   * govern the next.
+   */
+  explorerSearchMode: FsSearchMode;
   collapsed: Record<string, boolean>; // project id -> collapsed
   picker: boolean; // new-session overlay open
   pickerQuery: string;
@@ -116,6 +137,10 @@ interface UiState {
   setPrSearchAllRepos: (all: boolean) => void;
   /** Empty the box and put the scope back to the session's project. */
   clearPrSearch: () => void;
+  setExplorerSearchTerm: (term: string) => void;
+  setExplorerSearchMode: (mode: FsSearchMode) => void;
+  /** Empty the box and put the mode back to names. */
+  clearExplorerSearch: () => void;
   /**
    * Show a rail tab, revealing the rail if it was hidden (HIVE-93).
    *
@@ -152,6 +177,8 @@ const initialUiState = {
   railTab: 'inbox' as RailTab,
   prSearchTerm: '',
   prSearchAllRepos: false,
+  explorerSearchTerm: '',
+  explorerSearchMode: 'name' as FsSearchMode,
   collapsed: {} as Record<string, boolean>,
   picker: false,
   pickerQuery: '',
@@ -195,6 +222,15 @@ export const useUiStore = create<UiState>()((set) => ({
     set(term === '' ? { prSearchTerm: '', prSearchAllRepos: false } : { prSearchTerm: term }),
   setPrSearchAllRepos: (all) => set({ prSearchAllRepos: all }),
   clearPrSearch: () => set({ prSearchTerm: '', prSearchAllRepos: false }),
+  setExplorerSearchTerm: (term) =>
+    set(
+      term === ''
+        ? { explorerSearchTerm: '', explorerSearchMode: 'name' }
+        : { explorerSearchTerm: term },
+    ),
+  setExplorerSearchMode: (mode) => set({ explorerSearchMode: mode }),
+  clearExplorerSearch: () =>
+    set({ explorerSearchTerm: '', explorerSearchMode: 'name' }),
 
   // `showActivityRail: true` unconditionally rather than a toggle — see the
   // interface note for why the bell must not flip it.
@@ -370,6 +406,18 @@ export const useSetPrSearchTerm = () =>
 export const useSetPrSearchAllRepos = () =>
   useUiStore((state) => state.setPrSearchAllRepos);
 export const useClearPrSearch = () => useUiStore((state) => state.clearPrSearch);
+
+/** The Explorer's search box: what is typed, and whether it reads contents. */
+export const useExplorerSearchTerm = () =>
+  useUiStore((state) => state.explorerSearchTerm);
+export const useExplorerSearchMode = () =>
+  useUiStore((state) => state.explorerSearchMode);
+export const useSetExplorerSearchTerm = () =>
+  useUiStore((state) => state.setExplorerSearchTerm);
+export const useSetExplorerSearchMode = () =>
+  useUiStore((state) => state.setExplorerSearchMode);
+export const useClearExplorerSearch = () =>
+  useUiStore((state) => state.clearExplorerSearch);
 
 /**
  * Whether the activity rail is mounted (story 020).

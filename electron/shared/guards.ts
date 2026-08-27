@@ -30,6 +30,7 @@ import type {
   ReadDirRequest,
   ReadFileRequest,
   RootRequest,
+  SearchRequest,
   WatchRequest,
   WriteFileRequest,
 } from './fs-contract';
@@ -1360,6 +1361,38 @@ export function parseReadFileRequest(input: unknown): ReadFileRequest {
  * moved. Rejecting a newline here would leave the editor unable to save the
  * file it had just opened.
  */
+/**
+ * `fs:search` — the one fs verb whose payload is prose (HIVE-110).
+ *
+ * `assertText` rather than anything narrower, for the reason
+ * `parseSearchPrsRequest` already gives: a search term is prose, and a guard
+ * that admitted only "safe-looking" words would refuse the ones people
+ * actually type. It is still bounded and still free of control characters,
+ * which is what the guard is for — the query never reaches a shell, a regex
+ * engine or a path, so there is nothing here for it to escape into.
+ *
+ * `mode` is checked against the two literals rather than cast: an unknown mode
+ * would otherwise fall through to the content branch and read every file in
+ * the project to answer a question nobody asked.
+ */
+export function parseSearchRequest(input: unknown): SearchRequest {
+  const raw = assertShape(input, ['projectId', 'query', 'mode'], 'fsSearch', [
+    'sessionId',
+  ]);
+  const mode = assertString(raw.mode, 'fsSearch.mode');
+  if (mode !== 'name' && mode !== 'text') {
+    return fail('fsSearch.mode: must be "name" or "text"');
+  }
+  return {
+    projectId: assertId(raw.projectId, 'fsSearch.projectId'),
+    query: assertText(raw.query, 'fsSearch.query'),
+    mode,
+    ...(raw.sessionId !== undefined
+      ? { sessionId: assertId(raw.sessionId, 'fsSearch.sessionId') }
+      : {}),
+  };
+}
+
 export function parseWriteFileRequest(input: unknown): WriteFileRequest {
   const raw = assertShape(
     input,
