@@ -229,6 +229,48 @@ function mintId(kind: NotificationKind, at: number): string {
   return `${kind}:${at}:${counter}`;
 }
 
+/**
+ * What a new notification **replaces**, rather than what it repeats (HIVE-107).
+ *
+ * ## Why `seen` was never going to cover this
+ *
+ * The dedup set answers "have I said this exact thing before", and it is right
+ * to: a PR poller that observes one transition twice must say it once. But a
+ * session going idle at 14:02 and again at 14:38 is genuinely *two events*, so
+ * `NotificationInput.id` documents itself as optional for exactly that case and
+ * the producer mints nothing. Both rows are therefore new, both are kept, and
+ * the inbox grows a column of "sess-0z is yours again" that says the same thing
+ * three times with three different ages.
+ *
+ * The second and third rows are not wrong — they are *stale*. Only the newest
+ * is true, because "your turn again" describes a state the next one overwrote.
+ * So this is not dedup at all: it is a **supersede**, and it has to remove the
+ * older row rather than refuse the newer one. Refusing the newer would freeze
+ * the inbox at the first time the session went idle and let the timestamp rot.
+ *
+ * ## Why the key comes off the action
+ *
+ * The same reason `isForeground` takes one: the hub then needs no idea which
+ * kinds are about a session, and no list to keep in step with the registry. A
+ * `session` action names a terminal and can be compared; every other action
+ * type has no session to collapse against and answers `null` by construction,
+ * which is what keeps `pr.*`, `clone.done` and `app.update_*` out of this
+ * without a special case. Those kinds all key their own ids off the event
+ * anyway, so `seen` is already the right instrument for them.
+ *
+ * Kind is part of the key, never dropped. "Blocked on you" and "yours again"
+ * are different facts about one session and both may be true to a reader; only
+ * a repeat of the *same* fact is stale.
+ */
+function supersedeKey(
+  kind: NotificationKind,
+  action: NotificationAction,
+): string | null {
+  // NUL rather than ':' — a kind contains dots and an entity id is arbitrary,
+  // so a printable separator is one collision away from merging two sessions.
+  return action.type === 'session' ? `${kind}\u0000${action.entityId}` : null;
+}
+
 export function createNotificationHub(
   options: NotificationHubOptions,
 ): NotificationHub {
@@ -518,8 +560,57 @@ export function createNotificationHub(
           action: input.action ?? { type: 'none' },
         };
 
-        buffer = [notification, ...buffer].slice(0, NOTIFICATION_CAP);
+        /**
+         * The newer row replaces the older one about the same session
+         * (HIVE-107). See {@link supersedeKey} for why this is not dedup.
+         *
+         * Position matters twice over. It is **after** the `off` and `seen`
+         * gates, so a kind the user switched off and an event already seen both
+         * leave the inbox exactly as they found it — a notification that was
+         * never raised must not silently delete the one already sitting there.
+         * And it is **after** the foreground gate, because a gated row is still
+         * a row: the user watching a session does not make the older "yours
+         * again" any less stale.
+         *
+         * Read-state is deliberately not inherited. The superseded row may have
+         * been read; this is a *new* event about the same session, and carrying
+         * the old `unread: false` across would let a fact the user has never
+         * seen arrive pre-dismissed.
+         */
+        const key = supersedeKey(notification.kind, notification.action);
+        const superseded =
+          key === null
+            ? []
+            : buffer.filter(
+                (entry) => supersedeKey(entry.kind, entry.action) === key,
+              );
+
+        buffer = [
+          notification,
+          ...buffer.filter((entry) => !superseded.includes(entry)),
+        ].slice(0, NOTIFICATION_CAP);
+
+        /**
+         * Counted once, from the settled buffer. A supersede is a removal and
+         * an insert, and announcing between them would publish a count that was
+         * true at neither moment.
+         */
         announce();
+
+        /**
+         * Dismissals before the new row, so the renderer never holds both.
+         *
+         * `announceDismissed` is the only way the renderer learns a row left
+         * the buffer — its list is its own, hydrated once and then driven by
+         * these events. Without this the inbox would keep showing all three
+         * rows until the next reload, which is the exact bug being fixed.
+         *
+         * `seen` keeps every superseded id, exactly as `dismiss` does: the row
+         * is gone because something newer replaced it, not because it never
+         * happened, and a re-delivery of it is still a duplicate.
+         */
+        for (const stale of superseded) announceDismissed(stale.id);
+
         broadcast(notification);
 
         if (delivery === 'both' && !foreground) {

@@ -216,8 +216,13 @@ test('creates a skill from Settings, beside the config', async ({}, testInfo) =>
     await openSettings(page);
     await page.getByRole('button', { name: 'Skills' }).click();
 
-    // The screen a fresh install actually sees.
-    await expect(page.getByText(/no skills yet/i)).toBeVisible();
+    // The screen a fresh install actually sees. Anchored on the invitation
+    // rather than a bare "No skills yet." — the creature, the phrase and this
+    // line already report the emptiness, so the label was the one of the four
+    // that said nothing the others did not.
+    await expect(
+      page.getByText(/write one and every session you start will have it/i),
+    ).toBeVisible();
 
     await page.getByRole('button', { name: '+ New skill' }).click();
 

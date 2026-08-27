@@ -139,6 +139,140 @@ describe('identity', () => {
   });
 });
 
+/**
+ * One row per fact per session (HIVE-107).
+ *
+ * Distinct from `identity` above, and the distinction is the whole feature: a
+ * duplicate is refused, a **supersede** is accepted and evicts what it made
+ * stale. Three "sess-0z is yours again" rows at 22m, 37m and 56m were three
+ * genuine events, so `seen` was never going to catch them; only the newest is
+ * still true.
+ */
+describe('supersede', () => {
+  const inSession = (
+    entityId: string,
+    over: Partial<Parameters<NotificationHub['raise']>[0]> = {},
+  ) =>
+    hub.raise({
+      kind: 'session.idle',
+      title: `${entityId} is yours again`,
+      action: { type: 'session', entityId },
+      ...over,
+    });
+
+  it('keeps only the newest row about one session', () => {
+    inSession('sess-0z', { createdAt: 1 });
+    inSession('sess-0z', { createdAt: 2 });
+    const newest = inSession('sess-0z', { createdAt: 3 });
+
+    expect(hub.list()).toHaveLength(1);
+    expect(hub.list()[0]?.id).toBe(newest?.id);
+    expect(hub.list()[0]?.createdAt).toBe(3);
+  });
+
+  /**
+   * The renderer's list is its own, hydrated once and then driven by events.
+   * Without this it would show all three rows until the next reload.
+   */
+  it('announces the superseded row so the renderer drops it too', () => {
+    const first = inSession('sess-0z');
+    announceDismissed.mockClear();
+
+    inSession('sess-0z');
+
+    expect(announceDismissed).toHaveBeenCalledWith(first?.id);
+  });
+
+  it('counts the replacement once rather than both', () => {
+    inSession('sess-0z');
+    inSession('sess-0z');
+    inSession('sess-0z');
+
+    expect(lastUnread()).toBe(1);
+  });
+
+  it('keeps two sessions apart', () => {
+    inSession('sess-0z');
+    inSession('sess-1a');
+
+    expect(hub.list()).toHaveLength(2);
+  });
+
+  /**
+   * "Blocked on you" and "yours again" are different facts about one session.
+   * Only a repeat of the *same* fact is stale.
+   */
+  it('keeps two kinds about one session apart', () => {
+    inSession('sess-0z', { kind: 'session.idle' });
+    inSession('sess-0z', { kind: 'session.blocked' });
+
+    expect(hub.list()).toHaveLength(2);
+  });
+
+  /**
+   * A `url` action names no session to collapse against. Those kinds key their
+   * own ids off the event, so `seen` is already the right instrument.
+   */
+  it('leaves a kind with no session action alone', () => {
+    raise({ id: 'a', action: { type: 'url', url: 'https://example.test/1' } });
+    raise({ id: 'b', action: { type: 'url', url: 'https://example.test/2' } });
+
+    expect(hub.list()).toHaveLength(2);
+  });
+
+  /**
+   * The row is gone because something newer replaced it, not because it never
+   * happened — so a re-delivery of it is still a duplicate.
+   */
+  it('keeps the superseded id in the dedup set', () => {
+    inSession('sess-0z', { id: 'idle-1' });
+    inSession('sess-0z', { id: 'idle-2' });
+
+    expect(inSession('sess-0z', { id: 'idle-1' })).toBeNull();
+  });
+
+  /**
+   * A notification that was never raised must not delete the one already
+   * sitting in the inbox.
+   */
+  it('supersedes nothing when the kind is switched off', () => {
+    const kept = inSession('sess-0z');
+    prefs = { 'session.idle': 'off' };
+
+    expect(inSession('sess-0z')).toBeNull();
+    expect(hub.list().map((n) => n.id)).toEqual([kept?.id]);
+  });
+
+  /**
+   * A new event about a session whose last row the user read must not arrive
+   * pre-dismissed: read-state belongs to the row, not to the session.
+   */
+  it('does not inherit read-state from the row it replaced', () => {
+    const first = inSession('sess-0z');
+    hub.markRead(first?.id ?? '');
+
+    expect(inSession('sess-0z')?.unread).toBe(true);
+  });
+
+  /** A gated row is still a row, and the older one is still stale. */
+  it('supersedes a row that was raised behind the foreground gate', () => {
+    hub = makeHub({ isForeground: (action) => action.type === 'session' });
+
+    hub.raise({
+      kind: 'session.idle',
+      title: 'first',
+      action: { type: 'session', entityId: 'sess-0z' },
+    });
+    hub.raise({
+      kind: 'session.idle',
+      title: 'second',
+      action: { type: 'session', entityId: 'sess-0z' },
+    });
+
+    expect(hub.list().map((n) => n.title)).toEqual(['second']);
+  });
+});
+
 describe('the buffer', () => {
   it('holds the newest first', () => {
     raise({ id: 'a', title: 'first' });
