@@ -65,7 +65,7 @@ export function AppearanceSection() {
   } = useAppearanceActions();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
       <SettingsSectionHeader
         title="Appearance"
         description="Stored on this machine, applied immediately."

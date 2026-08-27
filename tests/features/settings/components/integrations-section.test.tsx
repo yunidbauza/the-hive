@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -171,7 +171,7 @@ describe('IntegrationsSection — the GitHub CLI', () => {
  * who cannot tell an imported `PATH` from an inherited one cannot tell a
  * broken import from a genuinely missing binary.
  */
-describe('IntegrationsSection — the PATH source', () => {
+describe('IntegrationsSection — why gh was not found', () => {
   const notInstalled = () =>
     gh({
       installed: false,
@@ -182,97 +182,6 @@ describe('IntegrationsSection — the PATH source', () => {
       tokenSource: 'none',
       probes: [{ directory: '/usr/bin', found: false }],
     });
-
-  it('names the shell it imported from, and both entry counts', async () => {
-    render(<IntegrationsSection />);
-
-    expect(await screen.findByText(/Imported from your login shell/)).toBeInTheDocument();
-    expect(screen.getByText('/bin/zsh')).toBeInTheDocument();
-    expect(
-      screen.getByText(/12 entries · the inherited PATH had 4/),
-    ).toBeInTheDocument();
-  });
-
-  it('names an imported token variable but never a value', async () => {
-    readIntegrationsStatus.mockResolvedValue(
-      status({ loginEnv: loginEnv({ varsImported: ['PATH', 'GH_TOKEN'] }) }),
-    );
-
-    render(<IntegrationsSection />);
-
-    expect(await screen.findByText(/Also taken from it/)).toBeInTheDocument();
-    expect(screen.getByText('GH_TOKEN')).toBeInTheDocument();
-    expect(screen.getByText(/never what they contain/)).toBeInTheDocument();
-  });
-
-  it('reports a clean run that changed nothing as success, not a warning', async () => {
-    // Launched from a terminal. The users with nothing wrong must not be shown
-    // a warning.
-    readIntegrationsStatus.mockResolvedValue(
-      status({
-        loginEnv: loginEnv({
-          imported: false,
-          varsImported: [],
-          inheritedEntries: 12,
-          effectiveEntries: 12,
-        }),
-      }),
-    );
-
-    render(<IntegrationsSection />);
-
-    expect(
-      await screen.findByText(/Already your login shell/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/could not be read/)).not.toBeInTheDocument();
-  });
-
-  it('surfaces a failed import, and says the app kept what it had', async () => {
-    readIntegrationsStatus.mockResolvedValue(
-      status({
-        gh: notInstalled(),
-        loginEnv: loginEnv({
-          imported: false,
-          varsImported: [],
-          effectiveEntries: 4,
-          error: 'the shell did not finish within 5s and was killed (SIGKILL)',
-        }),
-      }),
-    );
-
-    render(<IntegrationsSection />);
-
-    expect(
-      await screen.findByText(/Your login shell could not be read/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/was killed \(SIGKILL\)/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/kept the environment it was launched with/),
-    ).toBeInTheDocument();
-    // The gh group states the consequence; it does not restate the cause.
-    expect(screen.getByText(/PATH source says why/)).toBeInTheDocument();
-  });
-
-  it('says the import is off, and where to turn it on', async () => {
-    readIntegrationsStatus.mockResolvedValue(
-      status({
-        loginEnv: loginEnv({
-          enabled: false,
-          imported: false,
-          shell: null,
-          varsImported: [],
-          effectiveEntries: 4,
-        }),
-      }),
-    );
-
-    render(<IntegrationsSection />);
-
-    expect(
-      await screen.findByText(/Inherited from whatever launched this app/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/turned off in Settings/)).toBeInTheDocument();
-  });
 
   /**
    * The copy that HIVE-84 made conditional.
@@ -412,15 +321,21 @@ describe('IntegrationsSection — Jira', () => {
   it('reads the Jira status when the pane opens', async () => {
     render(<IntegrationsSection />);
 
-    await screen.findByText('Jira site');
+    await screen.findByRole('heading', { name: 'Site' });
     expect(readJiraStatus).toHaveBeenCalledTimes(1);
   });
 
   it('renders both groups', async () => {
     render(<IntegrationsSection />);
 
-    expect(await screen.findByText('Jira site')).toBeInTheDocument();
-    // By role: "API token" is both the group heading and the field's label.
+    /*
+      By role for both, now that the provider band above says "Jira" and the
+      group titles have shed the prefix: "Site" and "API token" are each both a
+      group heading and a field label, so plain text would match two nodes.
+    */
+    expect(
+      await screen.findByRole('heading', { name: 'Site' }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: 'API token' }),
     ).toBeInTheDocument();
@@ -449,5 +364,72 @@ describe('IntegrationsSection — Jira', () => {
 
     expect(busy.length).toBeGreaterThan(0);
     resolve(null);
+  });
+});
+
+/**
+ * HIVE — the hierarchy pass.
+ *
+ * The pane was six equal groups with nothing saying three were GitHub's and
+ * three were Jira's. These assert the two things that fixed it: that the bands
+ * exist and are named, and that a group inside one draws no rule of its own.
+ */
+describe('IntegrationsSection — the provider bands', () => {
+  it('names each provider once, above its groups', async () => {
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByRole('region', { name: 'GitHub' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Jira' })).toBeInTheDocument();
+  });
+
+  it('puts the GitHub groups inside the GitHub band, and Jira’s inside Jira’s', async () => {
+    render(<IntegrationsSection />);
+
+    const github = await screen.findByRole('region', { name: 'GitHub' });
+    const jira = screen.getByRole('region', { name: 'Jira' });
+
+    expect(
+      within(github).getByRole('heading', { name: 'Token source' }),
+    ).toBeInTheDocument();
+    expect(
+      within(github).getByRole('heading', { name: 'Command line' }),
+    ).toBeInTheDocument();
+    expect(
+      within(jira).getByRole('heading', { name: 'Site' }),
+    ).toBeInTheDocument();
+    expect(
+      within(github).queryByRole('heading', { name: 'Site' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The band's own hairline is the only line. A rule under every group inside
+   * it would put four where the eye needs one — which is the whole complaint
+   * the bands answer.
+   */
+  it('draws no divider under a group inside a band', async () => {
+    render(<IntegrationsSection />);
+
+    const heading = await screen.findByRole('heading', { name: 'Token source' });
+    const group = heading.closest('section');
+
+    expect(group).not.toBeNull();
+    expect(group?.className).not.toContain('border-b');
+  });
+
+  /**
+   * PATH source is Runtime's now — it describes the environment every session
+   * spawns into, not GitHub. What stays is the probe list, which is about `gh`
+   * and nothing else.
+   */
+  it('no longer carries the PATH source group', async () => {
+    render(<IntegrationsSection />);
+
+    await screen.findByRole('heading', { name: 'Command line' });
+    expect(
+      screen.queryByRole('heading', { name: 'PATH source' }),
+    ).not.toBeInTheDocument();
   });
 });

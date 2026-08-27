@@ -59,6 +59,23 @@ describe('ProjectRow', () => {
     expect(screen.getByText('/repos/the-hive')).toBeInTheDocument();
   });
 
+  /**
+   * The hierarchy pass, in its quieter form.
+   *
+   * The icon and not the name: every row in this list *is* a project, so a
+   * coloured name would be twelve lines of brand with nothing to separate them
+   * from. The icon is enough to tie the list to the rail and to the picker,
+   * which already drew its project icons this way.
+   */
+  it('paints the project icon brand, and leaves the name alone', () => {
+    setup();
+
+    const row = screen.getByText('The Hive').closest('li');
+
+    expect(row?.querySelector('.text-brand')).not.toBeNull();
+    expect(screen.getByText('The Hive').className).not.toContain('text-brand');
+  });
+
   it('says so when the path could not be resolved', () => {
     setup({ project: entry({ id: 'gone', path: null, status: 'missing' }) });
 

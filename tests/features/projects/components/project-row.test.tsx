@@ -108,6 +108,23 @@ describe('ProjectRow', () => {
       expect(screen.queryByText('nova-web')).not.toBeInTheDocument();
     });
 
+    /**
+     * The hierarchy pass.
+     *
+     * A project row and a session row were the same size, the same weight and
+     * the same colour, so the only thing marking a project was its indent —
+     * and the icon beside it was painted *quieter* than the sessions it
+     * contained. `brand` is what separates them, and it costs no token: every
+     * theme ships one in both modes because the format requires it.
+     */
+    it('is painted brand, so a project cannot be mistaken for a session', () => {
+      setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
+
+      render(<ProjectRow project={PROJECT} />);
+
+      expect(screen.getByText('NOVA Web').className).toContain('text-brand');
+    });
+
     it('carries no key chip — the rail is the quiet surface', () => {
       setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'ok' }]));
 

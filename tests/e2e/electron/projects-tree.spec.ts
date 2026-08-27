@@ -175,3 +175,74 @@ test('a project whose path does not resolve offers a refusal, not a start', asyn
     await app.close();
   }
 });
+
+/**
+ * The hierarchy pass, in the shipped renderer (the rail half).
+ *
+ * The claim is about *painted colour*, which no unit test can make: jsdom
+ * resolves no custom properties, so `text-brand` there is a class name and
+ * nothing more. What has to hold is that a project and the sessions under it
+ * end up different colours, and that this survives a theme change — because
+ * the whole reason the rule uses `brand` rather than a literal is that every
+ * theme already carries one.
+ *
+ * Two themes, through the real controls, rather than by writing `data-theme`
+ * from the page: a theme the user cannot actually select proves nothing.
+ */
+test('paints a project apart from its sessions, in every theme', async ({}, testInfo) => {
+  writeProjectConfig(testInfo.outputPath('hive-config.json'), {
+    id: 'nova-web',
+    name: 'NOVA Web',
+    path: REAL_DIRECTORY,
+  });
+
+  const { app, page } = await launch((name) => testInfo.outputPath(name));
+
+  try {
+    const tree = page.locator('[data-panel="projects"]');
+    const rail = page.getByRole('navigation', {
+      name: 'Projects, work, and agents',
+    });
+
+    // A session to be different *from*. The link spawns one straight away.
+    await page.getByRole('button', { name: 'New session in NOVA Web' }).click();
+    await expect(page.locator('[data-terminal-id^="sess-"]').last()).toBeVisible();
+
+    const projectName = tree.getByText('NOVA Web');
+    const sessionName = tree.locator('[aria-current="true"] span').first();
+
+    const colourOf = (locator: typeof projectName): Promise<string> =>
+      locator.evaluate((node) => getComputedStyle(node).color);
+
+    const darkProject = await colourOf(projectName);
+    const darkSession = await colourOf(sessionName);
+
+    expect(darkProject).not.toBe(darkSession);
+    await rail.screenshot({
+      path: 'test-results/evidence/projects-hierarchy-hive-dark.png',
+    });
+
+    // A different theme, with a brand in a different hue entirely.
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await page
+      .getByRole('navigation', { name: 'Settings sections' })
+      .getByRole('button', { name: 'Appearance' })
+      .click();
+    await page.getByRole('button', { name: 'Cinder Built in' }).click();
+    await page.getByRole('button', { name: 'Close settings' }).click();
+
+    const cinderProject = await colourOf(projectName);
+
+    // The project moved with the theme — so it is reading a token, not a hex.
+    expect(cinderProject).not.toBe(darkProject);
+    // And it is still not the colour of the session beneath it.
+    expect(cinderProject).not.toBe(await colourOf(sessionName));
+
+    await rail.screenshot({
+      path: 'test-results/evidence/projects-hierarchy-cinder.png',
+    });
+  } finally {
+    await app.close();
+  }
+});

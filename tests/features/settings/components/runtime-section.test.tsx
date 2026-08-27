@@ -10,6 +10,11 @@ import {
   type ProjectConfig,
 } from '@shared/config-contract';
 
+import type {
+  IntegrationsStatus,
+  LoginEnvStatus,
+} from '@shared/ipc-contract';
+
 import { RuntimeSection } from '@features/settings/components/runtime-section';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
@@ -19,6 +24,9 @@ const setRuntimeConfig = vi.fn();
 const setProjectRuntimeConfig = vi.fn();
 const diagnoseAgentCommand = vi.fn();
 const diagnoseSessionEnv = vi.fn();
+const readIntegrationsStatus = vi.fn<
+  () => Promise<IntegrationsStatus | null>
+>();
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -28,7 +36,37 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
     setProjectRuntimeConfig: (request: unknown) => setProjectRuntimeConfig(request),
     diagnoseAgentCommand: (request: unknown) => diagnoseAgentCommand(request),
     diagnoseSessionEnv: (request: unknown) => diagnoseSessionEnv(request),
+    readIntegrationsStatus: () => readIntegrationsStatus(),
   };
+});
+
+/** The `loginEnv` half of `integrations.status()`, which is all this pane reads. */
+const integrationsStatus = (
+  over: Partial<LoginEnvStatus> = {},
+): IntegrationsStatus => ({
+  gh: {
+    installed: true,
+    resolved: '/opt/homebrew/bin/gh',
+    path: '/usr/bin:/opt/homebrew/bin',
+    probes: [],
+    version: '2.62.0',
+    authenticated: true,
+    account: 'octocat',
+    tokenSource: 'keyring',
+    envVar: null,
+    error: null,
+  },
+  loginEnv: {
+    enabled: true,
+    imported: true,
+    shell: '/bin/zsh',
+    inheritedEntries: 4,
+    effectiveEntries: 12,
+    varsImported: ['PATH'],
+    error: null,
+    ...over,
+  },
+  notificationsSupported: true,
 });
 
 const entry = (over: Partial<ProjectConfig> & { id: string }): ProjectConfig => ({
@@ -57,6 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   diagnoseAgentCommand.mockResolvedValue(null);
   diagnoseSessionEnv.mockResolvedValue(null);
+  readIntegrationsStatus.mockResolvedValue(integrationsStatus());
   resetProjectConfig();
 });
 
@@ -551,5 +590,80 @@ describe('RuntimeSection — no bridge', () => {
     expect(
       screen.getByText(/only available in the desktop app/),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * The group that arrived from Integrations.
+ *
+ * It reports the environment every session spawns into, and the switch that
+ * decides it — "Login shell environment" — has always been in this pane. So the
+ * pane that owned the answer could not own the control, and had to send the
+ * reader here by name. These assert the two facts that fixed that: it is
+ * mounted here, and it reads the environment rather than inventing it.
+ */
+describe('RuntimeSection — PATH source', () => {
+  it('renders the group, under the switch that decides it', async () => {
+    setProjectConfigForTest(snapshot());
+
+    render(<RuntimeSection />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'PATH source' }),
+    ).toBeInTheDocument();
+  });
+
+  it('reports the shell the environment came from', async () => {
+    setProjectConfigForTest(snapshot());
+
+    render(<RuntimeSection />);
+
+    expect(
+      await screen.findByText(/Imported from your login shell/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('/bin/zsh')).toBeInTheDocument();
+  });
+
+  it('points at the switch above rather than at another pane', async () => {
+    readIntegrationsStatus.mockResolvedValue(
+      integrationsStatus({
+        enabled: false,
+        imported: false,
+        shell: null,
+        varsImported: [],
+        effectiveEntries: 4,
+      }),
+    );
+    setProjectConfigForTest(snapshot());
+
+    render(<RuntimeSection />);
+
+    expect(
+      await screen.findByText(/turned off in the group above/),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * One read per open, not one per save.
+   *
+   * Every write in this pane installs a fresh `ConfigSnapshot`, and an effect
+   * depending on it would re-probe `gh` on each committed keystroke.
+   */
+  it('asks main once, however many times the snapshot changes', async () => {
+    setProjectConfigForTest(snapshot());
+
+    const { rerender } = render(<RuntimeSection />);
+    await screen.findByRole('heading', { name: 'PATH source' });
+
+    setProjectConfigForTest(snapshot({ shell: '/bin/bash' }));
+    rerender(<RuntimeSection />);
+
+    expect(readIntegrationsStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks main for nothing when there is no snapshot to ask about', () => {
+    render(<RuntimeSection />);
+
+    expect(readIntegrationsStatus).not.toHaveBeenCalled();
   });
 });

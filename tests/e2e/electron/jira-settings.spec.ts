@@ -88,7 +88,7 @@ test('renders both groups, and says no token is stored', async ({}, testInfo) =>
 
   await openIntegrations(page);
 
-  await expect(page.getByRole('heading', { name: 'Jira site' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Site' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'API token' })).toBeVisible();
 
   // Nothing configured: empty fields, and a sentence rather than a blank card.

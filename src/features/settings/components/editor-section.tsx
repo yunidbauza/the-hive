@@ -77,7 +77,7 @@ export function EditorSection() {
   const split = settings.editorPlacement === 'split';
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
       <SettingsSectionHeader
         title="Editor"
         description="Opened from the Explorer tab in the right rail."

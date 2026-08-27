@@ -8,6 +8,7 @@ import { JiraCredentialGroup } from '@features/settings/components/jira-credenti
 import { JiraQueryGroup } from '@features/settings/components/jira-query-group';
 import { PathProbes } from '@features/settings/components/path-probes';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsProviderGroup } from '@features/settings/components/settings-provider-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { readJiraStatus } from '@lib/jira';
@@ -20,10 +21,9 @@ import type {
 import type { JiraStatus } from '@shared/jira-contract';
 
 /**
- * Integrations & notifications (story 106).
+ * Integrations (story 106).
  *
- * Two things the app can see but does not own: the `gh` CLI, and the OS's
- * notification centre.
+ * The outside services this app can see but does not own — `gh`, and Jira.
  *
  * ## Why this reports a token source and offers nowhere to type one
  *
@@ -43,6 +43,27 @@ import type { JiraStatus } from '@shared/jira-contract';
  * three sources, generated from a registry, are a section of their own — and
  * leaving them here would have made the longest list in Settings a footnote
  * under somebody else's heading.
+ *
+ * ## The pane is two bands now, not six groups
+ *
+ * It used to be a flat run of six equal `SettingsGroup`s — three about GitHub,
+ * three about Jira — with nothing but the reading order saying which was which,
+ * and the word "Jira" spelled out in three separate titles because the layout
+ * could not say it once. `SettingsProviderGroup` says it once, in `brand`, and
+ * the titles beneath it shed the prefix: "Jira site" is "Site" under a heading
+ * that already said Jira.
+ *
+ * Two other things moved with that:
+ *
+ * - **Token source rose above the `gh` probe's siblings**, because the token is
+ *   what a reader opens this pane to check; where `gh` lives is the supporting
+ *   fact, not the headline.
+ * - **PATH source left the pane entirely**, for Runtime — see
+ *   `path-source-group.tsx`. It answered a question this pane raises, but it
+ *   describes the environment every session spawns into, and the switch that
+ *   decides it was always in Runtime. What stays here is `PathProbes`: the list
+ *   of directories `gh` was actually looked for in, which is about `gh` and
+ *   nothing else.
  */
 
 function TokenSourceLine({ gh }: { gh: GhStatus }) {
@@ -86,35 +107,23 @@ function TokenSourceLine({ gh }: { gh: GhStatus }) {
 }
 
 /**
- * Why `gh` was not found — which depends on *which* `PATH` was searched.
+ * Why `gh` was not found, in terms of the environment that was searched.
  *
- * Before HIVE-84 this was one fixed sentence explaining that a desktop app
- * inherits launchd's environment. That sentence was true, and it is now the
- * wrong advice in the ordinary case: the app imports the login shell's `PATH`
- * at startup, so a failed search usually means `gh` really is not installed —
- * and telling that user to "install it where the PATH can see it" sends them
- * looking for a problem they do not have.
- *
- * Three genuinely different situations, three answers.
- *
- * **Branch on why the PATH is what it is, never on `imported`.** A first pass
- * led with `imported`, which quietly misfiled the most ordinary state of all:
- * launched from a terminal, the login shell is asked, and it has nothing to
- * add — so `imported` is `false` with no error, and the PATH is nonetheless
- * exactly the shell's. That fell through to the failure copy, so this pane
- * said "the import did not run" directly above PATH source saying "already
- * your login shell's", and sent a user who had simply not installed `gh` off
- * hunting an environment problem. The two states that mean *the PATH is the
- * login shell's* — imported, and identical-so-nothing-to-import — must give
- * the same answer, so `error` and `enabled` are what the branches test.
+ * Each branch used to end by pointing *down* the pane at the PATH source group.
+ * That group is in Runtime now, so every one of them points there instead —
+ * which is also where the switch is, so a reader following the sentence lands
+ * somewhere they can act rather than somewhere they can only read.
  */
 function NotFoundReason({ loginEnv }: { loginEnv: LoginEnvStatus }) {
   if (loginEnv.error !== null) {
     return (
       <p className="text-[11.5px] text-subtle">
-        The <code className="font-mono">PATH</code> below is the one this app was
-        launched with, not your shell&rsquo;s — the import did not run, and PATH
-        source says why.
+        This app searched the <code className="font-mono">PATH</code> it was
+        launched with, not your shell&rsquo;s — the import did not run.{' '}
+        <strong className="font-normal text-muted">
+          Settings → Runtime → PATH source
+        </strong>{' '}
+        says why.
       </p>
     );
   }
@@ -122,11 +131,13 @@ function NotFoundReason({ loginEnv }: { loginEnv: LoginEnvStatus }) {
   if (!loginEnv.enabled) {
     return (
       <p className="text-[11.5px] text-subtle">
-        The <code className="font-mono">PATH</code> below is the one this app was
+        This app searched the <code className="font-mono">PATH</code> it was
         launched with — for a desktop app opened from Finder, launchd&rsquo;s
         four entries rather than your shell&rsquo;s. Switch the login-shell
-        import on in Settings → Runtime, or install{' '}
-        <code className="font-mono">gh</code> where this PATH can see it.
+        import on in{' '}
+        <strong className="font-normal text-muted">Settings → Runtime</strong>,
+        or install <code className="font-mono">gh</code> where this PATH can see
+        it.
       </p>
     );
   }
@@ -134,113 +145,13 @@ function NotFoundReason({ loginEnv }: { loginEnv: LoginEnvStatus }) {
   // Enabled, and the probe succeeded — whether or not it had anything to add.
   return (
     <p className="text-[11.5px] text-subtle">
-      This is your login shell&rsquo;s own <code className="font-mono">PATH</code>
-      {loginEnv.imported ? ', imported at startup' : ''} — the same one a terminal
-      would search. So <code className="font-mono">gh</code> is not installed
-      anywhere this app can reach:{' '}
+      This app searched your login shell&rsquo;s own{' '}
+      <code className="font-mono">PATH</code>
+      {loginEnv.imported ? ', imported at startup' : ''} — the same one a
+      terminal would search. So <code className="font-mono">gh</code> is not
+      installed anywhere this app can reach:{' '}
       <code className="font-mono">brew install gh</code> is the fix.
     </p>
-  );
-}
-
-/**
- * Where the `PATH` came from (HIVE-84).
- *
- * The pane's job here is to make an invisible difference visible: launchd's
- * environment and a login shell's differ by everything a developer installed,
- * and a user who cannot tell which is in force cannot distinguish a broken
- * import from a genuinely missing binary. The entry counts are shown as a
- * *pair* for the same reason — "38 entries" alone means nothing; "38, and the
- * inherited one had 4" is the whole story in one line.
- *
- * Never renders a value. `varsImported` is names only, by contract.
- */
-function PathSourceLine({ loginEnv }: { loginEnv: LoginEnvStatus }) {
-  const counts = (
-    <span className="text-subtle">
-      {loginEnv.effectiveEntries}{' '}
-      {loginEnv.effectiveEntries === 1 ? 'entry' : 'entries'}
-      {loginEnv.imported
-        ? ` · the inherited PATH had ${loginEnv.inheritedEntries}`
-        : null}
-      .
-    </span>
-  );
-
-  // The failure case first: it is the only one that changes what the user
-  // should do next.
-  if (loginEnv.error !== null) {
-    return (
-      <>
-        <p className="flex items-start gap-2 text-[12.5px]">
-          <WarningCircle size={14} className="mt-px shrink-0 text-amber" />
-          <span className="text-amber">
-            Your login shell could not be read: {loginEnv.error}.
-          </span>
-        </p>
-        <p className="text-[11.5px] text-subtle">
-          The app kept the environment it was launched with — {counts} Nothing is
-          broken by this beyond what it could not find.
-        </p>
-      </>
-    );
-  }
-
-  if (!loginEnv.enabled) {
-    return (
-      <>
-        <p className="text-[12.5px] text-ink">
-          Inherited from whatever launched this app. {counts}
-        </p>
-        <p className="text-[11.5px] text-subtle">
-          Importing your login shell&rsquo;s environment is turned off in Settings →
-          Runtime.
-        </p>
-      </>
-    );
-  }
-
-  if (!loginEnv.imported) {
-    return (
-      <>
-        <p className="flex items-start gap-2 text-[12.5px]">
-          <CheckCircle size={14} className="mt-px shrink-0 text-green" />
-          <span className="text-ink">
-            Already your login shell&rsquo;s. {counts}
-          </span>
-        </p>
-        <p className="text-[11.5px] text-subtle">
-          <code className="font-mono">{loginEnv.shell ?? 'Your shell'}</code> was
-          asked and had nothing to add — which is the normal answer when the app
-          was started from a terminal.
-        </p>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <p className="flex items-start gap-2 text-[12.5px]">
-        <CheckCircle size={14} className="mt-px shrink-0 text-green" />
-        <span className="text-ink">
-          Imported from your login shell (
-          <code className="font-mono text-muted">{loginEnv.shell}</code>). {counts}
-        </span>
-      </p>
-      {loginEnv.varsImported.some((name) => name !== 'PATH') ? (
-        <p className="text-[11.5px] text-subtle">
-          Also taken from it:{' '}
-          {loginEnv.varsImported
-            .filter((name) => name !== 'PATH')
-            .map((name) => (
-              <code key={name} className="font-mono">
-                {name}{' '}
-              </code>
-            ))}
-          — the app records that these are set, never what they contain.
-        </p>
-      ) : null}
-    </>
   );
 }
 
@@ -353,7 +264,7 @@ export function IntegrationsSection() {
 
   if (!snapshot) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
         <SettingsSectionHeader
           title="Integrations"
           description="Integrations are only available in the desktop app."
@@ -363,10 +274,10 @@ export function IntegrationsSection() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
       <SettingsSectionHeader
         title="Integrations"
-        description="What this app can see outside itself, and when it should interrupt you."
+        description="The services this app can see outside itself, and how it reaches them."
       />
 
       {snapshot.errors.map((error) => (
@@ -378,76 +289,72 @@ export function IntegrationsSection() {
         </p>
       ))}
 
-      <SettingsGroup
-        title="GitHub CLI"
-        description="Where gh is, and whether it is signed in."
-      >
-        <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
-          {status === null ? (
-            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
-          ) : (
-            <GhSummary gh={status.gh} loginEnv={status.loginEnv} />
-          )}
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup
-        title="PATH source"
-        description="Which environment this app is searching, and where it came from."
-      >
-        <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
-          {status === null ? (
-            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
-          ) : (
-            <PathSourceLine loginEnv={status.loginEnv} />
-          )}
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup
-        title="Token source"
-        description="Which credential a GitHub request would use."
-      >
-        <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
-          {status === null ? (
-            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
-          ) : (
-            <TokenSourceLine gh={status.gh} />
-          )}
-          <p className="text-[11.5px] text-subtle">
-            The pull-request list is still sample data — nothing in the app calls
-            GitHub yet. This reports which source would be used when it does. The
-            Hive <strong className="font-normal text-muted">does not store a token</strong>;
-            it never reads the value of these variables, only whether they are set.
-          </p>
-        </div>
-      </SettingsGroup>
-
-      {jira === null ? (
-        <SettingsGroup title="Jira" description="Real tickets in the WORK tab.">
-          <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
+      <SettingsProviderGroup name="GitHub">
+        <SettingsGroup
+          nested
+          title="Token source"
+          description="Which credential a GitHub request would use."
+        >
+          <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
+            {status === null ? (
+              <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
+            ) : (
+              <TokenSourceLine gh={status.gh} />
+            )}
+            <p className="text-[11.5px] text-subtle">
+              The pull-request list is still sample data — nothing in the app calls
+              GitHub yet. This reports which source would be used when it does. The
+              Hive <strong className="font-normal text-muted">does not store a token</strong>;
+              it never reads the value of these variables, only whether they are set.
+            </p>
+          </div>
         </SettingsGroup>
-      ) : (
-        <>
-          <JiraConnectionGroup status={jira} onChanged={refreshJira} />
-          <JiraCredentialGroup status={jira} onChanged={refreshJira} />
-          <JiraQueryGroup
-            jql={snapshot.jira.jql}
-            /*
-              A test is only meaningful once a request could actually be made.
-              Offering the button before then would report "no site configured"
-              as though it were a problem with the query.
-            */
-            canTest={
-              jira.site !== null &&
-              jira.email !== null &&
-              (jira.credential.kind === 'stored' ||
-                jira.credential.kind === 'env')
-            }
-          />
-        </>
-      )}
 
+        <SettingsGroup
+          nested
+          title="Command line"
+          description="Where gh is, and whether it is signed in."
+        >
+          <div className="flex flex-col gap-2 rounded-[7px] border border-border-soft p-3">
+            {status === null ? (
+              <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
+            ) : (
+              <GhSummary gh={status.gh} loginEnv={status.loginEnv} />
+            )}
+          </div>
+        </SettingsGroup>
+      </SettingsProviderGroup>
+
+      <SettingsProviderGroup name="Jira">
+        {jira === null ? (
+          <SettingsGroup
+            nested
+            title="Connection"
+            description="Real tickets in the WORK tab."
+          >
+            <p data-probing className="text-[12.5px] text-subtle">{probing}</p>
+          </SettingsGroup>
+        ) : (
+          <>
+            <JiraConnectionGroup status={jira} onChanged={refreshJira} />
+            <JiraCredentialGroup status={jira} onChanged={refreshJira} />
+            <JiraQueryGroup
+              jql={snapshot.jira.jql}
+              /*
+                A test is only meaningful once a request could actually be made.
+                Offering the button before then would report "no site configured"
+                as though it were a problem with the query.
+              */
+              canTest={
+                jira.site !== null &&
+                jira.email !== null &&
+                (jira.credential.kind === 'stored' ||
+                  jira.credential.kind === 'env')
+              }
+            />
+          </>
+        )}
+      </SettingsProviderGroup>
     </div>
   );
 }

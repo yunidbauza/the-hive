@@ -87,7 +87,17 @@ export function ProjectRow({
         <DotsSixVertical size={13} weight="bold" />
       </span>
 
-      <Icon name={project.icon} className="shrink-0 text-muted" />
+      {/*
+        `brand`, matching the rail and the new-session picker: the icon is what
+        says "project" in all three places at once.
+
+        The icon and not the name, which is where this stops. Every row in this
+        list *is* a project, so a coloured name would be twelve lines of brand
+        with nothing to separate them from — brand marks a container among
+        things that are not containers, and here there is nothing else. The name
+        and its key chip keep the row.
+      */}
+      <Icon name={project.icon} className="shrink-0 text-brand" />
 
       {/*
         Between the icon and the name, and never hidden behind a hover: the key

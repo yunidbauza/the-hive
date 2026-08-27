@@ -113,6 +113,12 @@ describe.each(SHIPPED)('%s', (id) => {
       expect(contrastRatio(ui.ink, ui.panel)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(ui.ink, ui.bg)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(ui.muted, ui.panel)).toBeGreaterThanOrEqual(3);
+      /*
+        `brand` joined the floor with the hierarchy pass: it names every project
+        in the rail and every provider in Integrations, both on `panel`, which
+        is body text rather than an accent. The worst built-in is 5.15:1.
+      */
+      expect(contrastRatio(ui.brand, ui.panel)).toBeGreaterThanOrEqual(4.5);
     });
 
     /** A primary button whose label fails on its own fill is not a button. */

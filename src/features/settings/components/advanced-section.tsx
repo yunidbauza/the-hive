@@ -272,7 +272,7 @@ export function AdvancedSection() {
 
   if (!snapshot) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
         <SettingsSectionHeader
           title="Advanced"
           description="Diagnostics are only available in the desktop app."
@@ -287,7 +287,7 @@ export function AdvancedSection() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
       <SettingsSectionHeader
         title="Advanced"
         description="The config file itself, and what this build is made of."

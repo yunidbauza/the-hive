@@ -88,6 +88,67 @@ test('reports a gh state without throwing, installed or not', async ({}, testInf
 });
 
 /**
+ * The hierarchy pass, in the shipped renderer (the settings half).
+ *
+ * The pane was six equal groups with nothing saying three were GitHub's and
+ * three were Jira's. Three claims here that the unit suite cannot make: the two
+ * bands are real landmarks a screen reader can jump between, their eyebrows are
+ * painted in the theme's brand rather than in body ink, and the groups inside
+ * them draw no rules — the complaint the bands answer was too many lines, so a
+ * band that kept them would have fixed nothing.
+ */
+test('groups the pane into two provider bands, and draws one line each', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openIntegrations(page);
+  await expect(page.locator('[data-probing]').first()).toBeHidden({
+    timeout: 15_000,
+  });
+
+  const github = page.getByRole('region', { name: 'GitHub' });
+  const jira = page.getByRole('region', { name: 'Jira' });
+
+  await expect(github).toBeVisible();
+  await expect(jira).toBeVisible();
+  // Two, and only two: a third band would mean a group escaped its provider.
+  await expect(page.getByRole('region')).toHaveCount(2);
+
+  // Each group sits under the provider that owns it, and says it once.
+  await expect(github.getByRole('heading', { name: 'Token source' })).toBeVisible();
+  await expect(github.getByRole('heading', { name: 'Command line' })).toBeVisible();
+  await expect(jira.getByRole('heading', { name: 'Site' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'PATH source' })).toHaveCount(0);
+
+  /**
+   * The eyebrow is brand, and the body text is not — asserted as painted
+   * colour, which is the only form of the claim jsdom cannot resolve.
+   */
+  const eyebrow = github.getByRole('heading', { name: 'GitHub' });
+  const groupTitle = github.getByRole('heading', { name: 'Token source' });
+  const colourOf = (locator: typeof eyebrow): Promise<string> =>
+    locator.evaluate((node) => getComputedStyle(node).color);
+
+  expect(await colourOf(eyebrow)).not.toBe(await colourOf(groupTitle));
+
+  // The band's own hairline is the only line in it.
+  const rules = github.locator('section.border-b');
+  await expect(rules).toHaveCount(0);
+
+  await page
+    .getByRole('heading', { name: 'Integrations', level: 2 })
+    .locator('xpath=ancestor::div[1]')
+    .screenshot({ path: 'test-results/evidence/integrations-provider-bands.png' });
+
+  await app.close();
+});
+
+/**
  * The notification preferences moved out of this pane in HIVE-75 and the specs
  * below did not follow them.
  *

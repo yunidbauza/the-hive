@@ -159,6 +159,7 @@ export function JiraCredentialGroup({
 
   return (
     <SettingsGroup
+      nested
       title="API token"
       description="The one secret this app stores."
     >

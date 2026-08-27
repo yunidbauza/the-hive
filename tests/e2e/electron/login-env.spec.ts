@@ -60,15 +60,23 @@ const IMPORTED_DIR = '/opt/hive-fixture/bin';
 const NOISY_ENTRY =
   '/opt/hive-noisy/bin\nUnknown command - bin\n\nTo see a list of supported npm commands, run\n  npm help';
 
-const openIntegrations = async (page: Page): Promise<void> => {
+/**
+ * Runtime, not Integrations.
+ *
+ * The PATH source group moved here with the hierarchy pass: it reports the
+ * environment every session spawns into, and the switch that decides it —
+ * "Login shell environment" — has always been in this pane. Integrations only
+ * ever borrowed it to explain a missing `gh`, and now links here instead.
+ */
+const openRuntime = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   await page
     .getByRole('navigation', { name: 'Settings sections' })
-    .getByRole('button', { name: 'Integrations' })
+    .getByRole('button', { name: 'Runtime' })
     .click();
   await expect(
-    page.getByRole('heading', { name: 'Integrations', level: 2 }),
+    page.getByRole('heading', { name: 'Runtime', level: 2 }),
   ).toBeVisible();
 };
 
@@ -143,7 +151,7 @@ test('adopts the login shell PATH when launched with launchd’s', async ({}, te
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openRuntime(page);
   await expect(page.locator('[data-probing]').first()).toBeHidden({
     timeout: 15_000,
   });
@@ -182,7 +190,7 @@ test('names an imported token but never renders its value', async ({}, testInfo)
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openRuntime(page);
   await expect(page.locator('[data-probing]').first()).toBeHidden({
     timeout: 15_000,
   });
@@ -209,7 +217,7 @@ test('honours importLoginEnv: false, and says the PATH is the inherited one', as
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openRuntime(page);
   await expect(page.locator('[data-probing]').first()).toBeHidden({
     timeout: 15_000,
   });
@@ -240,7 +248,7 @@ test('reports a broken login shell without breaking the pane', async ({}, testIn
   const page = await app.firstWindow();
   await page.waitForSelector('header');
 
-  await openIntegrations(page);
+  await openRuntime(page);
   await expect(page.locator('[data-probing]').first()).toBeHidden({
     timeout: 15_000,
   });

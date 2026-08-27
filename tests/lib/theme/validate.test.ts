@@ -474,4 +474,35 @@ describe('contrast', () => {
     if (!result.ok) return;
     expect(result.notes.join(' ')).toMatch(/\d\.\d:1/);
   });
+
+  /**
+   * `brand` became body text with the hierarchy pass — it names every project
+   * in the rail and every provider in Integrations, on `panel` in both cases —
+   * so it is held to the body-text threshold like `ink`.
+   *
+   * The case this exists for is an imported theme: nothing stops one shipping a
+   * brand that vanishes into its own panel, and before this the format had no
+   * way to say so. All seven built-ins clear it, 5.15:1 at worst.
+   */
+  it('notes a brand that disappears into its own panel', () => {
+    const modes = structuredClone(BUILT_IN_THEME.modes) as Record<string, any>;
+    // A brand one shade off the dark panel it is painted on.
+    modes.dark.ui.brand = '#1a2038';
+
+    const result = importTheme(fullTheme({ modes }), 'invisible.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.notes.some((note) => note.includes('brand on panel')),
+    ).toBe(true);
+  });
+
+  it('says nothing about a brand that clears the floor', () => {
+    const result = importTheme(fullTheme(), 'built-in.json');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.notes.some((note) => note.includes('brand on panel')),
+    ).toBe(false);
+  });
 });

@@ -78,7 +78,8 @@ export function JiraConnectionGroup({
 
   return (
     <SettingsGroup
-      title="Jira site"
+      nested
+      title="Site"
       description="Which Atlassian instance, and as whom."
     >
       <div className="flex flex-col gap-3 rounded-[7px] border border-border-soft p-3">

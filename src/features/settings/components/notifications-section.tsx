@@ -196,7 +196,7 @@ export function NotificationsSection() {
       its own, so a section that omits this runs its rows edge to edge and
       scrolls the wrong box — which is exactly what this one did.
     */
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
       <SettingsSectionHeader
         title="Notifications"
         description="Which events reach you, and which are allowed to interrupt."

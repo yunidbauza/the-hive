@@ -57,19 +57,41 @@ export function ProjectRow({ project }: ProjectRowProps) {
         aria-expanded={expanded}
         className="mt-2.5 flex items-center gap-2 rounded-lg px-2.5 pt-[var(--cc-row-py)] pb-0.5 hover:bg-hover"
       >
+        {/*
+          The caret stays `subtle`: it is chrome, not identity. It says which
+          way the tree is pointing and nothing about what the row *is*.
+        */}
         <Icon
           name={expanded ? 'ph-caret-down' : 'ph-caret-right'}
           size={11}
           className="shrink-0 text-subtle"
         />
-        <Icon name={project.icon} size={15} className="shrink-0 text-subtle" />
+        <Icon name={project.icon} size={15} className="shrink-0 text-brand" />
 
         {/*
           The name, and only the name (HIVE-104). Settings and the picker each
           carry a `ProjectKey` chip; the rail deliberately carries none — it is
           the quietest of the three surfaces, which is what it is for.
+
+          ## Why the name is `brand` and the sessions below it are not
+
+          A project row and a session row were the same size, the same weight
+          and the same colour, so the only thing marking a project was its
+          indent — and the icon beside it was painted *quieter* than the
+          sessions it contained. The tree read as one flat column of names.
+
+          `brand` is what separates them, under the app's one hierarchy rule:
+          brand names a container, ink names a thing inside it, subtle names
+          that thing's metadata. It costs no token — every theme ships `brand`
+          in both modes because the format requires it — so Honeycomb's orange,
+          Graphite's lime and Cinder's magenta all arrive for free, and an
+          imported theme cannot opt out of having one. The picker already drew
+          its project icons this way; this is the rail catching up.
+
+          Status colour is untouched and stays the loudest thing here: a
+          session that needs the user still wins the row it is in.
         */}
-        <span className="flex-1 truncate text-left font-mono text-[12.5px]">
+        <span className="flex-1 truncate text-left font-mono text-[12.5px] text-brand">
           {project.name}
         </span>
 
