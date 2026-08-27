@@ -49,9 +49,9 @@ export function StatusCounts() {
    *
    * The visible tally stays five numbers — widening it was the thing this
    * story deliberately did not do — and the detail costs no width here. Unlike
-   * `endedText`, `idleText` is *not* reused for the span: it is the one number
-   * deliberately different in each place, carrying the breakdown only where
-   * there is room for it.
+   * `endedText`, the working figure is *not* reused verbatim for the span: it
+   * is the one number deliberately different in each place, carrying the
+   * breakdown only where there is room for it.
    */
   const idleDetailText =
     agents + script === 0
@@ -63,14 +63,26 @@ export function StatusCounts() {
           .filter((part) => part !== null)
           .join(', ')})`;
 
-  const idleText = `${idle} idle${idleDetailText}`;
+  /**
+   * The breakdown hangs off **working**, because that is the tally those
+   * sessions are now in.
+   *
+   * It used to hang off `idle`, and that was right while a quiet session with
+   * subagents running was both labelled and counted as idle. `useCounts` now
+   * buckets those rows as working — so that the header stops contradicting the
+   * green `working (agents)` rows beneath it — and leaving the breakdown here
+   * moved the contradiction into the tooltip instead of removing it: a header
+   * reading `3 working … 0 idle` with a title explaining `0 idle (3 with
+   * agents)`, which is a breakdown of a number those rows are not part of.
+   */
+  const idleText = `${idle} idle`;
 
   return (
     <p
       /* Named so `chip-alignment.spec.ts` can measure this element's right edge
          against the activity rail's border directly. */
       data-testid="status-counts"
-      title={`${workingText} · ${waitingText} · ${idleText} · ${endedText}`}
+      title={`${workingText}${idleDetailText} · ${waitingText} · ${idleText} · ${endedText}`}
       className="min-w-0 truncate font-mono text-xs text-muted"
     >
       <span className="text-green">{workingText}</span>

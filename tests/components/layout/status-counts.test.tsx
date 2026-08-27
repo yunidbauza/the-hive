@@ -112,9 +112,16 @@ describe('StatusCounts', () => {
     // 4 + these 2, and no idle session left.
     expect(el).toHaveTextContent('6 working');
     expect(el).toHaveTextContent('0 idle');
+    /*
+      The breakdown hangs off **working**, which is the tally those two are now
+      in. Left on `idle` it read `0 idle (1 with agents, 1 with a script)` — a
+      breakdown of a number those rows are not part of, which is the same
+      header/table contradiction this change removes, moved into the tooltip.
+    */
     expect(el.getAttribute('title')).toContain(
-      '0 idle (1 with agents, 1 with a script)',
+      '6 working (1 with agents, 1 with a script)',
     );
+    expect(el.getAttribute('title')).not.toContain('0 idle (');
   });
 
   /** A genuinely free session — nothing running at all — is still idle. */

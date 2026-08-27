@@ -173,17 +173,26 @@ export interface Session {
    * started (HIVE-87).
    *
    * **Provenance, not lifecycle**, and it has to be both because they are
-   * genuinely different facts. `closed` says *how* a session ended — the app
-   * was closed while it ran — and it earns its place by being cappable where
-   * `terminated` is not. This says *where the row came from*, and it is what
-   * the PREVIOUS RUN group partitions on.
+   * genuinely different facts. `endedBy` says *how* a session ended. This says
+   * *where the row came from*.
    *
-   * Grouping on `closed` alone was wrong, and wrong in the direction that
-   * defeats the group: `settleExit` is the only writer of an ended status, so a
-   * session that quits normally is recorded `terminated` and restores as
-   * `terminated`. Every such row landed in ENDED — the group whose whole job is
-   * answering "what did I just finish?" about *this* run — so the first launch
-   * after a busy day buried today's two endings under yesterday's twenty.
+   * **It no longer decides which group a row is drawn in.** It used to: the
+   * fleet table had a PREVIOUS RUN divider and this is what partitioned on it.
+   * That divider existed to stop today's endings being buried under last
+   * week's, which was a problem insertion order created — the ended list is
+   * sorted by recency now, so last run's rows interleave with this run's by
+   * when they actually ended and the group went with the problem.
+   *
+   * What still reads it, and why it survives:
+   *
+   * - **`endedReason`** — a row the app outlived gets a different sentence from
+   *   one whose process quit while the app watched, and no status can tell the
+   *   two apart. Main's `settleExit` is the only writer of an ended status, so
+   *   a session that quit normally last run comes back as `terminated`,
+   *   indistinguishable from one that quit ten seconds ago in this one.
+   * - **Resume**, indirectly — `reviveIfLive` clears this on the first live
+   *   status, which is what stops a reopened row from still being described as
+   *   something the app outlived.
    */
   restored?: boolean;
   /**
@@ -211,6 +220,27 @@ export interface Session {
    */
   createdAt?: number;
   endedAt?: number;
+  /**
+   * When this row was picked back up (HIVE-93's Resume), if it was.
+   *
+   * A third timestamp rather than a rewrite of `createdAt`, because they are
+   * different facts and `createdAt` is one somebody may still want: it is when
+   * the session began, it is what the ledger's retention sorts on, and `begin`
+   * deliberately keeps it across a restart. Overwriting it to fix an ordering
+   * problem would destroy the answer to a different question.
+   *
+   * It exists because `recencyOf` had nothing else to go on. A resumed row's
+   * `endedAt` is cleared — it is not over any more — so it fell back to
+   * `createdAt` and sorted by when it *first* started: resume a session from
+   * this morning and it lands below every session spawned since, which is the
+   * row furthest from the header and the exact failure the newest-first sort
+   * exists to remove.
+   *
+   * **Renderer-only, and not on the ledger.** It describes this run's ordering,
+   * and a resumed row that is still running at the next quit comes back as a
+   * live record whose `createdAt` is the honest thing to sort it by.
+   */
+  resumedAt?: number;
   /**
    * The last pull request seen on this session's branch (HIVE-100 follow-up).
    *

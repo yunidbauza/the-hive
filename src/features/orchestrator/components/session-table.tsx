@@ -49,8 +49,9 @@ import { useActiveTab, useSelId, useSetSelId } from '@stores/ui-store';
  * `MIN_WINDOW_SIZE` (1100px, `electron/shared/window.ts`) in comfortable
  * density, **with the rails at their default widths**, the two rails leave the
  * centre stage 516px and `px-[18px]` leaves the flex line 480 of that. The
- * fixed columns and the five `gap-2.5`s take 240, so **the three floors must
- * sum to 240 or less**.
+ * caret, `STATUS`, `PR`, the five `gap-2.5`s and the row's own `px-2` take
+ * 12 + 132 + 34 + 50 + 16 = **244**, so **the three floors must sum to 236 or
+ * less**.
  *
  * The rails are draggable since HIVE-105, so "the stage is 516px" is a fact
  * about the default and not a guarantee: `STAGE_MIN_FRACTION` in

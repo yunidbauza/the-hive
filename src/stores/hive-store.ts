@@ -644,6 +644,28 @@ const STATUS_COLOR: Record<SessionStatus, TermLine['color']> = {
   terminated: 'dim',
 };
 
+/**
+ * The colour that goes with {@link statusWord}, including the detail.
+ *
+ * The fourth surface, and the one that was left behind. `statusText()` in
+ * `status-dot.tsx` closes exactly this gap for the fleet table, the projects
+ * rail and the meta bar: a row that now *says* `working` must not be painted in
+ * idle's grey. The console prints the same word, from a different mapping,
+ * and got the word without the colour — so `status` listed
+ * `working (agents)` dimmed while every React surface showed it in green.
+ *
+ * A second mapping for the same reason `statusWord` is one: `stores/` may not
+ * import `components/`, and these are terminal-line colours rather than
+ * Tailwind classes anyway.
+ */
+function statusColor(
+  status: SessionStatus,
+  detail?: IdleDetail,
+): TermLine['color'] {
+  if (status === 'idle' && detail !== undefined) return STATUS_COLOR.working;
+  return STATUS_COLOR[status];
+}
+
 let spawnCounter = 0;
 
 /**
@@ -800,14 +822,22 @@ function stampLifecycle(session: Session): Session {
 /**
  * When a row last mattered — what every fleet list sorts on, descending.
  *
- * `endedAt` for a row that is over, `createdAt` for one that is not, and `0`
- * for a row nobody timestamped. Zero rather than `Infinity` is the whole point
- * of the fallback: a fixture or a record from an older build has no claim to
- * being the newest thing on the table, and sorting unknowns to the *top* would
- * put exactly the least-known rows in the position the eye reads first.
+ * `endedAt` for a row that is over, and for one that is not, the later of when
+ * it was resumed and when it was created — `0` for a row nobody timestamped.
+ *
+ * `resumedAt` sits between them rather than being folded into `createdAt`,
+ * because a resume is the row mattering *again* and `createdAt` is when it
+ * first started; both are true and the sort wants the more recent one. Without
+ * it, resuming a session from this morning put it below everything spawned
+ * since — the row the user had just acted on, furthest from the header.
+ *
+ * Zero rather than `Infinity` is the whole point of the last fallback: a
+ * fixture or a record from an older build has no claim to being the newest
+ * thing on the table, and sorting unknowns to the *top* would put exactly the
+ * least-known rows in the position the eye reads first.
  */
 const recencyOf = (session: Session): number =>
-  session.endedAt ?? session.createdAt ?? 0;
+  session.endedAt ?? session.resumedAt ?? session.createdAt ?? 0;
 
 /**
  * Newest first, and **stable** for everything that ties.
@@ -1533,7 +1563,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
               of its neighbours'.
             */
             `  ${entityLabel(entity).padEnd(16)}${statusWord(entity.status, entity.idleDetail).padEnd(18)}${entity.project} · ${branchLabel(entity)}`,
-            STATUS_COLOR[entity.status],
+            statusColor(entity.status, entity.idleDetail),
           );
         }
         return;
@@ -1852,7 +1882,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
           This is also the whole of restore's deduplication (HIVE-88), and the
           id is the right key for it. It is the one identity that survives a
-          restart: a PREVIOUS RUN row reopened spawns under its own id, the
+          restart: a restored row reopened spawns under its own id, the
           ledger is keyed by it, and `rememberSpawnId` above keeps this run's
           counter from minting it a second time. Claude's own `sessionUuid`
           never reaches the renderer, and `cwd` or `ticket` would collapse two
@@ -1865,7 +1895,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           (HIVE-88). Such a row is this run's fleet, whatever the file says
           about when it started: it keeps the status it was last seen in
           rather than being written down to an ending, and it is not `restored`
-          — PREVIOUS RUN is for rows the app outlived, and this one it did not.
+          — that flag is for rows the app outlived, and this one it did not.
           Only a record in a live status is promoted: main never writes an
           ended status for a pty it still holds, so a live record claiming
           one is a file this build did not write, and the status it claims
@@ -1914,10 +1944,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           lines: [],
               cost: '$0.00',
           /*
-            Where this row came from, which is what PREVIOUS RUN groups on. It
-            cannot be derived from the status: a session that quit normally last
-            run is restored as `terminated`, which is indistinguishable from one
-            that quit ten seconds ago in this one.
+            Where this row came from — provenance, which `endedReason` needs and
+            which nothing else can supply. It cannot be derived from the status:
+            a session that quit normally last run is restored as `terminated`,
+            which is indistinguishable from one that quit ten seconds ago in
+            this one.
 
             Cleared again by `reviveIfLive` the moment the row is reopened and
             its new process reports a live status (HIVE-88) — and never set on
@@ -2390,7 +2421,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         And it stopped being over, so the moment it stopped is not a fact about
         it any more (see `stampLifecycle`). Left in place, a resumed row would
         go on sorting among the ended ones by the time it used to have.
+
+        `resumedAt` is what it sorts by instead. Clearing `endedAt` alone sent
+        it back to `createdAt` — when the conversation *first* started — so a
+        session resumed at 11:00 sorted below one spawned at 10:00, putting the
+        row the user had just acted on furthest from the header.
       */
+      revived.resumedAt = Date.now();
       stampLifecycle(revived);
       return { entities: { ...state.entities, [id]: revived } };
     });

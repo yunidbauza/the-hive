@@ -2653,6 +2653,48 @@ describe('lifecycle timestamps', () => {
     });
 
     /**
+     * A resume is the row mattering *again*, and the sort has to see that.
+     *
+     * Clearing `endedAt` alone sent a resumed row back to `createdAt` — when
+     * the conversation first started — so resuming a session from this morning
+     * put it below everything spawned since: the row the user had just acted
+     * on, furthest from the header, which is the exact failure newest-first
+     * exists to remove.
+     */
+    it('sorts a resumed row by when it was resumed, not when it began', () => {
+      useHiveStore.getState().hydrateSessions([
+        {
+          id: 'old-05',
+          project: 'nova-web',
+          task: '',
+          status: 'terminated',
+          createdAt: Date.parse('2026-08-26T06:00:00Z'),
+          endedAt: Date.parse('2026-08-26T07:00:00Z'),
+          resumable: true,
+        },
+      ]);
+      // Spawned after the resumed session first began, but before the resume.
+      const newer = useHiveStore.getState().spawnSession('the-hive');
+
+      vi.setSystemTime(new Date('2026-08-26T11:00:00Z'));
+      useHiveStore.getState().resumeSession('old-05');
+
+      expect(sessionAt('old-05').resumedAt).toBe(
+        Date.parse('2026-08-26T11:00:00Z'),
+      );
+      // `createdAt` is untouched: it is when the session began, and the ledger's
+      // retention sorts on it.
+      expect(sessionAt('old-05').createdAt).toBe(
+        Date.parse('2026-08-26T06:00:00Z'),
+      );
+
+      const { result } = renderHook(() => useActiveSessions());
+      expect(result.current.indexOf('old-05')).toBeLessThan(
+        result.current.indexOf(newer),
+      );
+    });
+
+    /**
      * The times the row really had, not the moment it was restored — otherwise
      * every launch would file last week's endings as though they had all just
      * happened, in whatever order the ledger listed them.
@@ -2747,5 +2789,26 @@ describe('statusWord agrees with statusLabel', () => {
     ),
   )('says the same thing for %s / %s', (status, detail) => {
     expect(statusWord(status, detail)).toBe(statusLabel(status, detail));
+  });
+
+  /**
+   * And paints it the same way. The console is the fourth surface printing this
+   * word, and it got the rename without the colour — so `status` listed
+   * `working (agents)` in idle's grey while the fleet table, the projects rail
+   * and the meta bar all showed it green.
+   */
+  it('paints a quiet session with something running as working, not idle', () => {
+    const rows = () => {
+      useHiveStore.getState().runOrchCommand(parseCommand('status'));
+      return useHiveStore.getState().orchLines;
+    };
+
+    const id = useHiveStore.getState().spawnSession('the-hive');
+    useHiveStore.getState().setSessionStatus(id, 'idle', 'agents');
+
+    const row = rows().find((l) => l.text.includes('working (agents)'));
+    expect(row).toBeDefined();
+    // `dim` is what `STATUS_COLOR.idle` gives, and what this used to print.
+    expect(row?.color).toBe('green');
   });
 });

@@ -157,7 +157,8 @@ Three properties are worth knowing before changing it:
 - **`session:history` says which records are still running.** The reader may
   not be the first renderer of this run (a window reopened from the dock, a
   reload), so the handler marks records whose id the registry holds as `live`
-  (HIVE-88); the renderer keeps those out of PREVIOUS RUN. And a restored row
+  (HIVE-88); the renderer hydrates those as this run's fleet rather than as
+  history, with no `restored` flag. And a restored row
   opened again is spawned with `resume`, which puts the ledger's uuid behind
   `--resume` instead of `--session-id` and keeps the record rather than
   starting it over (`SessionLedger.resumable`, `begin(…, { resume })`).

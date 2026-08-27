@@ -13,7 +13,7 @@ the picker from re-rendering thirteen live terminals.
 - `src/stores/hive-store.ts` — domain state and the actions that mimic the future
   orchestrator daemon: `spawnSession`, `sendToEntity`, `runOrchCommand`,
   `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`.
-- `src/stores/ui-store.ts` — view state: `activeTab`, `selIdx`, `leftTab`,
+- `src/stores/ui-store.ts` — view state: `activeTab`, `selId`, `leftTab`,
   `railTab`, `collapsed`, picker fields, `showActivityRail`,
   `explorerExpanded`, `explorerProjectId`.
 - `src/stores/appearance-store.ts` — durable preferences: `theme`, the terminal
@@ -102,19 +102,29 @@ empty" is now a statement about *seeds* rather than about the first second of a
 launch. `emptySeeds()` still returns nothing, and the rows arrive by action.
 
 Restored rows are ended rows: `hydrateSessions` turns any record that was still
-running into `closed`, because the process it describes died with the app that
-owned it. They render under their own PREVIOUS RUN divider.
+running into an ending, because the process it describes died with the app that
+owned it. They render under **ENDED**, alongside this run's own endings.
+
+They used to have a divider of their own, PREVIOUS RUN. It existed so that
+today's two endings were not buried under last week's twenty — a problem
+*insertion order* created, since the top of a list in `order` is always its
+oldest row. The fleet lists sort by recency now (`byRecency`, on
+`Session.endedAt`), so today's endings are at the top because they are the most
+recent, and the divider was retired with the problem it was answering.
 
 Two refinements since HIVE-88. First, the renderer is not always the first of
 its run — on macOS the window closes and the app lives on, and a reload or a
 crash gives a fresh store in front of the same running ptys — so
 `session:history` marks records whose id main still runs as `live`, and those
 hydrate as this run's fleet (their last status, no `restored` flag) rather than
-as PREVIOUS RUN. Second, `closed` is the one ending that **opens**: the surface
-mounting asks main to `--resume` the conversation the ledger kept, and the first
-live status the new process reports clears `restored` (`reviveIfLive`), which is
-what moves the row up to ACTIVE. The flag records provenance; the section
-depends on liveness, so a row is never in both.
+as history. Second, a restored row **opens**: Resume asks main to `--resume` the
+conversation the ledger kept, and the first live status the new process reports
+clears `restored` (`reviveIfLive`), which is what moves the row up to ACTIVE.
+
+`restored` therefore no longer partitions anything — it records provenance, and
+its readers are `endedReason` (a row the app outlived gets a different sentence
+from one whose process quit while the app watched) and, through `reviveIfLive`,
+Resume.
 
 Terminal settings reach the terminal **by prop, not by store**:
 `components/terminal/**` may not import `stores/**`, so `center-stage.tsx` (the
