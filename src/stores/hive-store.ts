@@ -192,14 +192,20 @@ export type PrSource =
  */
 export interface SetSessionTicketOptions {
   /**
-   * Pin the session's name to the ticket key. Defaults to `true`, which is the
-   * spoken-intent behaviour HIVE-78 shipped.
+   * How the key was learned. Defaults to `'prompt'`, the spoken-intent
+   * behaviour HIVE-78 shipped.
    *
-   * `false` associates and nothing else: the name, pinned or not, is left
-   * exactly as it was, and an agent-chosen title (HIVE-108) goes on being the
-   * agent's to change.
+   * One field rather than two, because everything that differs between the two
+   * callers follows from it and must not be settable independently:
+   *
+   * - `'prompt'` pins the session's name to the key, and may **replace** a
+   *   ticket that was merely inferred.
+   * - `'branch'` associates and nothing else — the name, pinned or not, is left
+   *   exactly as it was, an agent-chosen title (HIVE-108) goes on being the
+   *   agent's to change, and it never displaces an existing ticket of either
+   *   kind.
    */
-  rename?: boolean;
+  source?: 'prompt' | 'branch';
 }
 
 interface HiveState {
@@ -2448,7 +2454,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * describe most of its own transcript. A user who genuinely wants that has a
    * better tool: `/clear`, which retires the row and opens a fresh one.
    */
-  setSessionTicket: (id, ticket, { rename = true } = {}) => {
+  setSessionTicket: (id, ticket, { source = 'prompt' } = {}) => {
     /**
      * Read, decide, write, *then* tell main (HIVE-107) — rather than the bare
      * `set(updater)` this was, with the note made separately by its caller.
@@ -2477,7 +2483,25 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const target = currentSessionIn(state, id);
     const entity = state.entities[target];
     if (!entity || !isSession(entity)) return;
-    if (entity.ticket !== undefined) return;
+    /**
+     * An existing ticket refuses a second one — **unless** the first was only
+     * inferred and the second was spoken.
+     *
+     * The plain "already has a ticket" refusal was right while the prompt was
+     * the only signal, and became a bug the moment a branch could associate:
+     * main reads the branch at spawn, so the inference reliably arrives *first*
+     * and the refusal handed every contest to the weaker evidence. See
+     * {@link Session.ticketInferred}.
+     *
+     * Two spoken keys still refuse the second. That is a user changing their
+     * mind mid-conversation, and the row would end up carrying a name that
+     * describes almost none of its own transcript — `/clear` is the honest tool
+     * for it, and it already retires the row and opens a successor.
+     */
+    if (entity.ticket !== undefined) {
+      const displaces = source === 'prompt' && entity.ticketInferred === true;
+      if (!displaces) return;
+    }
     // An ended row is history; naming it now would rewrite the record.
     if (isEnded(entity.status)) return;
 
@@ -2497,15 +2521,32 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * on the name, so the row appears either way. The only difference is what
      * it is called when it gets there.
      */
-    const name = rename ? ticketSessionName(ticket, state.entities) : undefined;
+    const name =
+      source === 'prompt' ? ticketSessionName(ticket, state.entities) : undefined;
+
+    /**
+     * `ticketInferred` is set by the branch path and *removed* by the prompt
+     * one.
+     *
+     * A promoted row must stop being displaceable: leaving the flag on after a
+     * spoken key would let the next branch-shaped guess overwrite it again, one
+     * checkout later. Deleted from a fresh object rather than assigned
+     * `undefined`, because this store's snapshots are compared key-for-key and
+     * an explicit `undefined` is a different shape from an absent key — the
+     * same rule `clearSession` follows a few actions down.
+     */
+    let next: Session;
+    if (name === undefined) {
+      next = { ...entity, ticket, ticketInferred: true };
+    } else {
+      next = { ...entity, ticket, name, namePinned: true };
+      delete next.ticketInferred;
+    }
 
     set((current) => ({
       entities: {
         ...current.entities,
-        [target]:
-          name === undefined
-            ? { ...entity, ticket }
-            : { ...entity, ticket, name, namePinned: true },
+        [target]: next,
       },
       orchLines: capLines([
         ...current.orchLines,
@@ -2521,7 +2562,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           only evidence it happened.
         */
         name === undefined
-          ? line(`  linked → ${ticket}`, 'dim')
+          ? // Names the row, unlike the rename case: there the new name *is* the
+            // key and identifies itself, whereas `linked → HIVE-111` alone
+            // leaves the reader to guess which of thirteen sessions moved.
+            line(`  ${entityLabel(entity)} linked → ${ticket}`, 'dim')
           : line(`  renamed → ${name}`, 'dim'),
       ]),
     }));
@@ -2800,6 +2844,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ...(current.branch === undefined ? {} : { branch: current.branch }),
       ...(current.cwd === undefined ? {} : { cwd: current.cwd }),
       ...(current.ticket === undefined ? {} : { ticket: current.ticket }),
+      /*
+        And how it was learned, with it. A successor that inherited the ticket
+        but not the flag would be a row the user never spoke for that could no
+        longer be corrected by speaking — the displacement rule reads this.
+      */
+      ...(current.ticketInferred === true ? { ticketInferred: true } : {}),
       /**
        * A pinned name **does** carry over, unlike a name the agent chose.
        *

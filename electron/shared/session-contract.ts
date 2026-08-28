@@ -434,8 +434,18 @@ export interface SessionBranchEvent {
  */
 export interface SessionTicketIntentEvent {
   entityId: string;
-  /** A key-shaped candidate. Unconfirmed — the renderer checks it against Jira. */
-  key: string;
+  /**
+   * Key-shaped candidates, best-first. All unconfirmed — the renderer checks
+   * them against Jira and takes the first that is a real issue.
+   *
+   * A list rather than one key because a branch has no grammar to disambiguate
+   * with: `chore/bump-node-22-hive-118` offers `NODE-22` before `HIVE-118`, and
+   * sending only the leftmost let a version number permanently shadow the real
+   * ticket. A prompt sends exactly one — its verb phrase already decided.
+   *
+   * Never empty; main does not publish an event with nothing to confirm.
+   */
+  keys: readonly string[];
   /**
    * How the candidate was found, which is what decides whether confirming it
    * also renames the row — see {@link TicketIntentSource}.

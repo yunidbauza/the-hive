@@ -72,7 +72,7 @@ describe('TicketCard', () => {
     */
     useHiveStore
       .getState()
-      .setSessionTicket('rails-upgrade', 'GRAC-3018', { rename: false });
+      .setSessionTicket('rails-upgrade', 'GRAC-3018', { source: 'branch' });
 
     render(<TicketCard ticket={ticket()} />);
 

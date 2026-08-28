@@ -919,6 +919,7 @@ describe('status', () => {
    */
   const branchHarness = (stdout: string) => {
     let onEvent: ((event: HookStatusEvent) => void) | undefined;
+    let onCleared: ((entityId: string) => void) | undefined;
     const clock = { t: 0 };
     const run = vi.fn<RunAsync>().mockResolvedValue({
       code: 0,
@@ -937,8 +938,12 @@ describe('status', () => {
       hooks: {
         settingsPathFor: () => undefined,
         envFor: () => ({}),
-        start: (opts: { onEvent: (event: HookStatusEvent) => void }) => {
+        start: (opts: {
+          onEvent: (event: HookStatusEvent) => void;
+          onCleared: (entityId: string) => void;
+        }) => {
           onEvent = opts.onEvent;
+          onCleared = opts.onCleared;
           return Promise.resolve();
         },
         stop: () => Promise.resolve(),
@@ -965,6 +970,8 @@ describe('status', () => {
         cwd: '/home/dev/repos/hero-refresh',
       } as HookStatusEvent);
 
+    const cleared = () => onCleared!('hero-refresh');
+
     const all = () =>
       sent
         .filter((entry) => entry.channel === CH.sessionTicketIntent)
@@ -983,7 +990,7 @@ describe('status', () => {
     };
     const intents = () => all().slice(baseline);
 
-    return { hooked, flush, turnEnded, intents, mark, clock };
+    return { hooked, flush, turnEnded, cleared, intents, mark, clock };
   };
 
   it('publishes a ticket candidate read from the branch', async () => {
@@ -996,7 +1003,31 @@ describe('status', () => {
     await h.flush();
 
     expect(h.intents()).toEqual([
-      { entityId: 'hero-refresh', key: 'HIVE-111', source: 'branch' },
+      { entityId: 'hero-refresh', keys: ['HIVE-111'], source: 'branch' },
+    ]);
+
+    h.hooked.dispose();
+  });
+
+  it('offers every candidate a branch carries, best-first', async () => {
+    /*
+      The leftmost key-shaped token is routinely not the issue. Sending only it
+      let a node major permanently shadow the real ticket — Jira rejected the
+      shadow, and the branch signal associated nothing.
+    */
+    const h = branchHarness('chore/bump-node-22-hive-118\n');
+    await h.flush();
+    h.mark();
+
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toEqual([
+      {
+        entityId: 'hero-refresh',
+        keys: ['NODE-22', 'HIVE-118'],
+        source: 'branch',
+      },
     ]);
 
     h.hooked.dispose();
@@ -1017,6 +1048,37 @@ describe('status', () => {
     await h.flush();
 
     expect(h.intents()).toEqual([]);
+
+    h.hooked.dispose();
+  });
+
+  it('offers the successor its branch again after /clear', async () => {
+    /**
+     * `/clear` retires the conversation and keeps the pty, so `settleExit` —
+     * the only place that forgot a branch — never runs. The dedupe entry stayed
+     * primed for a row that no longer exists, the successor's branch never
+     * republished, and no candidate was ever offered for it.
+     *
+     * That landed exactly on the case this signal is justified by: a session
+     * cleared and continued on `feat/hive-111-ledger` would never reach the
+     * HIVE-111 card unless the user said the key out loud again.
+     */
+    const h = branchHarness('feat/hive-111-ledger\n');
+    await h.flush();
+
+    h.turnEnded();
+    await h.flush();
+    h.mark();
+
+    h.cleared();
+    // Past the reader's floor, so this is a real re-read rather than the cache.
+    h.clock.t = MIN_INTERVAL_MS;
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toEqual([
+      { entityId: 'hero-refresh', keys: ['HIVE-111'], source: 'branch' },
+    ]);
 
     h.hooked.dispose();
   });

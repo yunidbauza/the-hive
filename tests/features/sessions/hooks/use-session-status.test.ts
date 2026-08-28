@@ -49,6 +49,7 @@ let notedTickets: SessionNoteRequest[];
  * key-shaped string is only acted on when Jira confirms it exists.
  */
 let issueReply: unknown = null;
+let issueReplies: Record<string, unknown>;
 let issueCalls: string[];
 
 function withBridge() {
@@ -56,7 +57,14 @@ function withBridge() {
     jira: {
       issue: ({ key }: { key: string }) => {
         issueCalls.push(key);
-        return Promise.resolve(issueReply);
+        /*
+          Per-key answers, falling back to the single one. A branch can offer
+          several candidates now, and the interesting case is Jira knowing the
+          second but not the first — which a single reply cannot express.
+        */
+        return Promise.resolve(
+          key in issueReplies ? issueReplies[key] : issueReply,
+        );
       },
     },
     session: {
@@ -173,6 +181,7 @@ beforeEach(() => {
   intentListeners = [];
   notedTickets = [];
   issueCalls = [];
+  issueReplies = {};
   issueReply = null;
   disposals = 0;
   useHiveStore.getState().reset();
@@ -315,7 +324,7 @@ describe('useSessionStatus', () => {
 
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HIVE-73',
+      keys: ['HIVE-73'],
       source: 'prompt',
     });
 
@@ -360,7 +369,7 @@ describe('useSessionStatus', () => {
 
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HIVE-73',
+      keys: ['HIVE-73'],
       source: 'branch',
     });
 
@@ -394,7 +403,7 @@ describe('useSessionStatus', () => {
     // No `emitBranch` anywhere in this test: nothing ever reported a branch.
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HIVE-73',
+      keys: ['HIVE-73'],
       source: 'prompt',
     });
 
@@ -403,38 +412,142 @@ describe('useSessionStatus', () => {
     expect(entity.ticket).toBe('HIVE-73');
     expect(entity.name).toBe('HIVE-73');
     /*
-      The proof that the prompt carried this on its own: the key is nowhere in
-      the branch, so no amount of reading the branch could have produced it.
-      Asserting the branch is *absent* would be the wrong test — this fixture
-      has one, and so does any real session; the point is that it says nothing
-      about HIVE-73.
+      The proof that the prompt carried this on its own: `HIVE-73` was the only
+      key ever offered, and it arrived on the prompt channel. Asserting the
+      branch does not contain it would be no test at all — the fixture's branch
+      is frozen and nothing here can move it.
     */
-    expect(entity.branch).not.toContain('HIVE-73');
+    expect(issueCalls).toEqual(['HIVE-73']);
+    expect(entity.ticketInferred).toBeUndefined();
   });
 
-  it('leaves a session with no ticket in it alone', async () => {
+  it('tries branch candidates in order and takes the first Jira knows', async () => {
     /**
-     * The generic session, and the case that must stay boring.
+     * The shadowing case, at the surface it actually breaks.
      *
-     * A terminal opened to look around names no ticket and stands on no ticket
-     * branch. Nothing is inferred, nothing is renamed, and it appears on no
-     * card — an empty answer is the right one far more often than any key is,
-     * so neither signal is allowed to guess in order to produce something.
+     * `chore/bump-node-22-hive-118` offers `NODE-22` before `HIVE-118`. While
+     * only the leftmost candidate crossed IPC, Jira rejected it and the branch
+     * signal associated nothing — the exact bug this feature exists to fix,
+     * reappearing for an ordinary branch name.
      */
+    withBridge();
+    issueReplies = {
+      'NODE-22': { ok: false, error: 'not found' },
+      'HIVE-118': { ok: true, value: { key: 'HIVE-118' } },
+    };
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({
+      entityId: 'rails-upgrade',
+      keys: ['NODE-22', 'HIVE-118'],
+      source: 'branch',
+    });
+
+    const entity = useHiveStore.getState().entities['rails-upgrade'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.ticket).toBe('HIVE-118');
+    // Both were asked, in order — the rejection did not end the search.
+    expect(issueCalls).toEqual(['NODE-22', 'HIVE-118']);
+  });
+
+  it('stops asking once a candidate confirms', async () => {
+    // Each candidate costs a network read, so a hit must not go on to ask
+    // about the ones behind it.
+    withBridge();
+    issueReplies = { 'HIVE-118': { ok: true, value: { key: 'HIVE-118' } } };
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({
+      entityId: 'rails-upgrade',
+      keys: ['HIVE-118', 'ABC-1', 'ABC-2'],
+      source: 'branch',
+    });
+
+    expect(issueCalls).toEqual(['HIVE-118']);
+  });
+
+  it('associates nothing when Jira knows none of the candidates', async () => {
+    /*
+      The generic session, at the renderer: main offered key-shaped tokens off
+      a branch that names no issue. Every one is refused, and the row is left
+      exactly as it was rather than being filed under a guess.
+    */
+    withBridge();
+    issueReply = { ok: false, error: 'not found' };
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({
+      entityId: 'rails-upgrade',
+      keys: ['RELEASE-2024', 'RAILS-7'],
+      source: 'branch',
+    });
+
+    const entity = useHiveStore.getState().entities['rails-upgrade'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.ticket).toBeUndefined();
+    expect(issueCalls).toEqual(['RELEASE-2024', 'RAILS-7']);
+    expect(notedTickets).toEqual([]);
+  });
+
+  it('lets a spoken key correct a branch that got there first', async () => {
+    /**
+     * The real ordering, end to end.
+     *
+     * Main reads the branch at spawn, so the inference genuinely arrives before
+     * the user has typed anything. A session opened in a worktree left on
+     * HIVE-108, then pointed at HIVE-111, must end up on HIVE-111 — under the
+     * old "already has a ticket" refusal it stayed on HIVE-108 silently.
+     */
+    withBridge();
+    issueReplies = {
+      'HIVE-108': { ok: true, value: { key: 'HIVE-108' } },
+      'HIVE-111': { ok: true, value: { key: 'HIVE-111' } },
+    };
+    renderHook(() => useSessionStatus());
+
+    await emitIntent({
+      entityId: 'rails-upgrade',
+      keys: ['HIVE-108'],
+      source: 'branch',
+    });
+    await emitIntent({
+      entityId: 'rails-upgrade',
+      keys: ['HIVE-111'],
+      source: 'prompt',
+    });
+
+    const entity = useHiveStore.getState().entities['rails-upgrade'];
+    if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.ticket).toBe('HIVE-111');
+    expect(entity.name).toBe('HIVE-111');
+    expect(entity.ticketInferred).toBeUndefined();
+  });
+
+  it('does not infer anything from a branch event by itself', async () => {
+    /*
+      A branch arriving on its own channel is a display fact and nothing more.
+      Inference lives in main, which decides whether the branch names a ticket
+      and publishes candidates separately — so this listener must not start
+      asking Jira about branches it happens to see.
+
+      Deliberately a branch that *does* carry a key: asserting on `main` would
+      pass for any implementation, since the renderer never inspects the string
+      either way. This one fails the moment somebody moves the extraction here.
+    */
     withBridge();
     issueReply = { ok: true, value: { key: 'HIVE-73' } };
     renderHook(() => useSessionStatus());
 
     emitBranch({
       entityId: 'rails-upgrade',
-      branch: 'main',
+      branch: 'feat/hive-73-inference',
       cwd: '/repo',
     });
 
     const entity = useHiveStore.getState().entities['rails-upgrade'];
     if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
+    expect(entity.branch).toBe('feat/hive-73-inference');
     expect(entity.ticket).toBeUndefined();
-    // Jira was never asked, because main found no candidate to ask about.
     expect(issueCalls).toEqual([]);
     expect(notedTickets).toEqual([]);
   });
@@ -453,14 +566,14 @@ describe('useSessionStatus', () => {
 
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HIVE-73',
+      keys: ['HIVE-73'],
       source: 'prompt',
     });
 
     issueReply = { ok: true, value: { key: 'HIVE-99' } };
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HIVE-99',
+      keys: ['HIVE-99'],
       source: 'branch',
     });
 
@@ -483,7 +596,7 @@ describe('useSessionStatus', () => {
 
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HTTP-404',
+      keys: ['HTTP-404'],
       source: 'prompt',
     });
 
@@ -502,7 +615,7 @@ describe('useSessionStatus', () => {
 
     await emitIntent({
       entityId: 'rails-upgrade',
-      key: 'HIVE-73',
+      keys: ['HIVE-73'],
       source: 'prompt',
     });
 

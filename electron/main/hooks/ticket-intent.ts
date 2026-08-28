@@ -227,8 +227,32 @@ export function ticketKeyFromPrompt(prompt: string): string | null {
      * is exactly what the interrogative pattern anchors against. A lead-in that
      * matched at position 0 has nothing in front of it and cannot be a
      * question.
+     *
+     * ## Why the trailing delimiters are stripped
+     *
+     * {@link INTERROGATIVE_LEAD} anchors on `\s+(?:\w+\s+)?$` — it expects to
+     * end on whitespace. That held while every lead-in delimiter *was*
+     * whitespace, and stopped holding the moment {@link VERB_GAP} made
+     * `/work-on` matchable: the slice then ends in `/`, the anchor cannot
+     * match, and the guard silently never fires. Measured before this strip
+     * existed:
+     *
+     * ```
+     * "did you work on ABC-123"   -> null      (guarded)
+     * "did you /work-on ABC-123"  -> ABC-123   (not guarded)
+     * ```
+     *
+     * Stripping the trailing non-letters puts the slash form back on the same
+     * footing as the prose one rather than widening the guard itself.
+     *
+     * It remains a one-pronoun guard: "have you **run** /work-on ABC-123" has
+     * two words between the wh-word and the verb and still slips through. That
+     * limit predates this change and applies identically to the whitespace
+     * spelling, so it is left alone rather than widened here — `(?:\w+\s+)*`
+     * would start refusing real intent like "what I want is to work on ABC-123".
      */
-    if (INTERROGATIVE_LEAD.test(before.slice(0, lead.index + 1))) continue;
+    const lookback = before.slice(0, lead.index + 1).replace(/[^a-z\s]+$/i, '');
+    if (INTERROGATIVE_LEAD.test(lookback)) continue;
 
     return key;
   }
@@ -237,7 +261,27 @@ export function ticketKeyFromPrompt(prompt: string): string | null {
 }
 
 /**
- * A key inside a **branch name**, or `null`.
+ * Every key-shaped token in a branch, hoisted like every other pattern here.
+ *
+ * `g` is safe on a module constant *because* it is only ever used with
+ * `matchAll`, which iterates a clone and never advances this one's `lastIndex`.
+ * A bare `.exec` loop on a shared global regex would carry state between calls
+ * and skip the first candidate of every second branch.
+ */
+const BRANCH_KEY = new RegExp(`(^|[^A-Za-z0-9])(${ISSUE_KEY_SOURCE})`, 'gi');
+
+/**
+ * How many candidates one branch may offer.
+ *
+ * Each one costs a Jira read on the renderer's side, so this is the ceiling on
+ * what a pathological branch name can spend. Four covers every real shape —
+ * `chore/bump-node-22-hive-118` needs two — while a branch stuffed with
+ * version numbers cannot turn a checkout into a dozen network calls.
+ */
+const MAX_BRANCH_CANDIDATES = 4;
+
+/**
+ * The keys a **branch name** offers, best-first, or an empty list.
  *
  * ## Why a second signal at all
  *
@@ -283,17 +327,41 @@ export function ticketKeyFromPrompt(prompt: string): string | null {
  * alphanumeric — and the right side needs no guard, because `\d+` is greedy and
  * so reads `hive-1112` as one issue rather than `HIVE-111` with a digit spare.
  *
- * The **first** candidate wins, for the reason it does in a prompt: a branch
- * naming two issues is ambiguous, and position at least decides predictably.
+ * ## Why every candidate is returned, not just the first
+ *
+ * A prompt scanner can stop at the first match because a sentence's leading
+ * verb phrase says which key is meant. A branch has no grammar, and the
+ * leftmost key-shaped token is routinely **not** the issue:
+ *
+ * ```
+ * chore/bump-node-22-hive-118  ->  NODE-22, HIVE-118
+ * release-2024-11-hive-111     ->  RELEASE-2024, HIVE-111
+ * feat/sprint-42-hive-111      ->  SPRINT-42, HIVE-111
+ * ```
+ *
+ * Returning only the leftmost meant a version number permanently shadowed the
+ * real key: the shadow went to Jira, Jira rejected it, and the branch signal
+ * associated nothing — the very failure this signal exists to fix, reappearing
+ * for an ordinary branch shape.
+ *
+ * So the caller gets the list and confirms it **in order, stopping at the first
+ * issue Jira actually recognises**. Order still carries meaning — leftmost is
+ * tried first — but it no longer gets to be the only answer. Capped at
+ * {@link MAX_BRANCH_CANDIDATES}, and de-duplicated, because each entry costs a
+ * network read.
  *
  * Never throws — its caller is a status listener that must not be taken down by
  * an unusual branch name.
  */
-export function ticketKeyFromBranch(branch: string | null): string | null {
-  if (branch === null || branch === '') return null;
+export function ticketKeysFromBranch(branch: string | null): string[] {
+  if (branch === null || branch === '') return [];
 
-  const pattern = new RegExp(`(^|[^A-Za-z0-9])(${ISSUE_KEY_SOURCE})`, 'i');
-  const match = pattern.exec(branch.slice(0, MAX_PROMPT_SCAN));
+  const seen = new Set<string>();
 
-  return match === null ? null : match[2].toUpperCase();
+  for (const match of branch.slice(0, MAX_PROMPT_SCAN).matchAll(BRANCH_KEY)) {
+    seen.add(match[2].toUpperCase());
+    if (seen.size === MAX_BRANCH_CANDIDATES) break;
+  }
+
+  return [...seen];
 }

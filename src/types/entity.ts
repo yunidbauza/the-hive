@@ -144,6 +144,23 @@ export interface Session {
    */
   ticket?: string; // 'HIVE-73'
   /**
+   * The ticket was **inferred** from the branch, not spoken by the user.
+   *
+   * Present only on a branch-sourced association, and it exists to keep that
+   * association from outranking the real thing. A session opens on whatever
+   * branch its worktree was left on, and main reads that branch *at spawn* —
+   * before the user has typed a word. So the inference reliably gets there
+   * first, and without this flag the "a session already has a ticket" refusal
+   * would hand every race to the weaker signal: open a session in a worktree
+   * still on `feat/hive-108-titles`, type `/work-on HIVE-111`, and the row
+   * would sit on the HIVE-108 card all day with nothing on screen saying why.
+   *
+   * So a spoken key is allowed to replace an inferred one — and only an
+   * inferred one. Two spoken keys still refuse the second, because that is a
+   * user changing their mind mid-conversation, which `/clear` handles properly.
+   */
+  ticketInferred?: true;
+  /**
    * The branch checked out where this session's agent is working (HIVE-78).
    *
    * **Optional, and that is the fix.** This field used to be assigned
