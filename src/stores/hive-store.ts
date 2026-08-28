@@ -44,6 +44,13 @@ import type { PrRecord } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionNameReport } from '@shared/ipc-contract';
 import type { JiraIssue } from '@shared/jira-contract';
+import {
+  LEDGER_MEMORY_CAP,
+  type LedgerEntry,
+  type LedgerReadQuery,
+  type OpenAsk,
+} from '@shared/ledger-contract';
+import { matches, openAsks, thread } from '@shared/ledger-derive';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import {
@@ -206,6 +213,14 @@ interface HiveState {
   /** Where {@link HiveState.prs} came from. */
   prSource: PrSource;
   notifs: HiveNotification[];
+  /**
+   * The ledger's tail (HIVE-111).
+   *
+   * A mirror, not the source — main owns the log and this holds the newest
+   * {@link LEDGER_MEMORY_CAP} entries so the console and the inbox can render
+   * without a round trip. Older entries are still there; they are asked for.
+   */
+  ledger: LedgerEntry[];
   orchLines: TermLine[];
 
   /**
@@ -331,6 +346,10 @@ interface HiveState {
    * what main answered with, and replacing would drop it.
    */
   hydrateNotifs: (notifs: HiveNotification[]) => void;
+  /** Replace the ledger's tail with a fresh snapshot (HIVE-111). */
+  hydrateLedger: (entries: LedgerEntry[]) => void;
+  /** One entry landed — append it to the tail. */
+  ledgerAppend: (entry: LedgerEntry) => void;
   /**
    * Put last run's fleet back on the table (HIVE-87).
    *
@@ -1046,6 +1065,7 @@ function sameTickets(
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
   notifs: [],
+  ledger: [],
   metrics: {},
   /**
    * Loading until the first read answers.
@@ -1861,6 +1881,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
       return { notifs: merged.slice(0, NOTIF_CAP) };
     }),
+
+  hydrateLedger: (entries) =>
+    set({ ledger: entries.slice(-LEDGER_MEMORY_CAP) }),
+
+  ledgerAppend: (entry) =>
+    set((state) => ({ ledger: [...state.ledger, entry].slice(-LEDGER_MEMORY_CAP) })),
 
   hydrateSessions: (records) =>
     set((state) => {
@@ -3378,6 +3404,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     set({
       ...emptySeeds(),
       notifs: [],
+      ledger: [],
       metrics: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
@@ -4576,6 +4603,52 @@ export const useMarkAllRead = () => useHiveStore((state) => state.markAllRead);
 
 /** The inbox, newest first (story 051). */
 export const useNotifs = () => useHiveStore((state) => state.notifs);
+
+/** Hydration and the push subscription — see `use-ledger-sync.ts`. */
+export const useHydrateLedger = () => useHiveStore((state) => state.hydrateLedger);
+export const useLedgerAppend = () => useHiveStore((state) => state.ledgerAppend);
+
+/**
+ * The ledger tail, optionally filtered.
+ *
+ * Memoised over the raw slice rather than wrapped in `useShallow`, for the
+ * reason spelled out on {@link usePrs}: this builds a new array, and shallow-
+ * comparing a freshly-built one never matches. Callers passing a `filter` must
+ * hand over a stable object — an inline literal defeats the memo.
+ */
+export const useLedgerEntries = (filter?: LedgerReadQuery): LedgerEntry[] => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(
+    () => (filter === undefined ? entries : entries.filter((entry) => matches(entry, filter))),
+    [entries, filter],
+  );
+};
+
+/**
+ * Asks nobody has answered.
+ *
+ * `Date.now()` is read inside the memo, so `ageMs` is as fresh as the last
+ * entry rather than as fresh as the last render. That is the right trade here:
+ * the TTL is a day, and re-deriving on every tick to keep a minutes-old age
+ * exact would re-render the inbox for nothing.
+ */
+export const useOpenAsks = (): OpenAsk[] => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => openAsks(entries, Date.now()), [entries]);
+};
+
+/** The badge. A number, so it needs no memo and no shallow compare. */
+export const useOpenAskCount = (): number =>
+  useHiveStore((state) => openAsks(state.ledger, Date.now()).length);
+
+/** One conversation: the ask, and everything that named it. */
+export const useThread = (id: string): LedgerEntry[] => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => thread(entries, id), [entries, id]);
+};
 
 /**
  * Every PR the panel shows, with its owning session resolved (story 052).

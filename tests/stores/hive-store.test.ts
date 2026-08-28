@@ -6,6 +6,7 @@ import { isSession } from '@/types/entity';
 import type { SessionStatus } from '@/types/entity';
 import { statusLabel } from '@components/ui/status-dot';
 import type { IdleDetail } from '@shared/hook-contract';
+import { LEDGER_MEMORY_CAP, type LedgerEntry } from '@shared/ledger-contract';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
 import {
@@ -27,8 +28,11 @@ import {
   useEndedSessions,
   currentRowFor,
   useHiveStore,
+  useLedgerEntries,
   useNavOrder,
+  useOpenAskCount,
   useSessionNameReports,
+  useThread,
 } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
@@ -2992,5 +2996,90 @@ describe('session names for the world outside the rail', () => {
 
       expect(result.current).toBe(before);
     });
+  });
+});
+
+describe('the ledger slice', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+  });
+
+  const entry = (over: Partial<LedgerEntry> & Pick<LedgerEntry, 'id'>): LedgerEntry => ({
+    ts: 1,
+    from: 'sess-a',
+    kind: 'post',
+    body: '',
+    ...over,
+  });
+
+  it('hydrates from a snapshot', () => {
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' }), entry({ id: '2' })]);
+
+    expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2']);
+  });
+
+  it('appends one entry to the tail', () => {
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' })]);
+    useHiveStore.getState().ledgerAppend(entry({ id: '2' }));
+
+    expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2']);
+  });
+
+  it('keeps the newest when the cap is passed', () => {
+    const many = Array.from({ length: LEDGER_MEMORY_CAP + 10 }, (_, index) =>
+      entry({ id: String(index).padStart(5, '0') }),
+    );
+    useHiveStore.getState().hydrateLedger(many);
+
+    const kept = useHiveStore.getState().ledger;
+    expect(kept).toHaveLength(LEDGER_MEMORY_CAP);
+    expect(kept[kept.length - 1].id).toBe(many[many.length - 1].id);
+    expect(kept[0].id).toBe(many[10].id);
+  });
+
+  it('drops the oldest when an append passes the cap', () => {
+    useHiveStore.getState().hydrateLedger(
+      Array.from({ length: LEDGER_MEMORY_CAP }, (_, index) =>
+        entry({ id: String(index).padStart(5, '0') }),
+      ),
+    );
+    useHiveStore.getState().ledgerAppend(entry({ id: 'zzzzz' }));
+
+    const kept = useHiveStore.getState().ledger;
+    expect(kept).toHaveLength(LEDGER_MEMORY_CAP);
+    expect(kept[kept.length - 1].id).toBe('zzzzz');
+    expect(kept[0].id).toBe('00001');
+  });
+
+  it('counts open asks', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', kind: 'ask', ts: Date.now() }),
+      entry({ id: '2', kind: 'ask', ts: Date.now() }),
+      entry({ id: '3', kind: 'answer', thread: '1', ts: Date.now() }),
+    ]);
+
+    const { result } = renderHook(() => useOpenAskCount());
+    expect(result.current).toBe(1);
+  });
+
+  it('filters entries through the shared query rules', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', from: 'sess-a' }),
+      entry({ id: '2', from: 'sess-b' }),
+    ]);
+
+    const { result } = renderHook(() => useLedgerEntries({ from: 'sess-b' }));
+    expect(result.current.map((found) => found.id)).toEqual(['2']);
+  });
+
+  it('returns a thread in order', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', kind: 'ask' }),
+      entry({ id: '2', kind: 'post' }),
+      entry({ id: '3', kind: 'answer', thread: '1' }),
+    ]);
+
+    const { result } = renderHook(() => useThread('1'));
+    expect(result.current.map((found) => found.id)).toEqual(['1', '3']);
   });
 });
