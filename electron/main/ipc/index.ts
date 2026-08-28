@@ -137,7 +137,11 @@ import { createGithub } from '../integrations/github';
 import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
-import { createNotificationHub, createNotifier } from '../notifications';
+import {
+  createNotificationHub,
+  createNotifier,
+  createSessionNames,
+} from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import { createSessions, type Sessions } from '../sessions';
 import {
@@ -473,6 +477,12 @@ export function registerIpcHandlers(): void {
    * call time and nothing broadcasts during registration, so the ordering here
    * is a declaration detail rather than a cycle.
    */
+  /**
+   * What the rail calls each session (HIVE-110). Read by the hub when it
+   * presents a toast; the inbox row needs none of it. See `notifications/names.ts`.
+   */
+  const sessionNames = createSessionNames();
+
   const hub = createNotificationHub({
     prefs: () => getConfig().notifications,
     present: ({ title, body, onClick }) => {
@@ -637,6 +647,7 @@ export function registerIpcHandlers(): void {
     now: () => Date.now(),
     isForeground: (action) =>
       action.type === 'session' && isForeground(action.entityId),
+    subjectName: (terminalId) => sessionNames.get(terminalId),
   });
 
   const notifier = createNotifier({ hub, isForeground });
@@ -1512,6 +1523,29 @@ export function registerIpcHandlers(): void {
     if (foregroundTerminalId === terminalId) return;
     foregroundTerminalId = terminalId;
     notifyForegroundChange();
+  });
+
+  /**
+   * What a session is called (HIVE-110). Guarded the same way and for the same
+   * reason as `ui:foreground` above: rejected rather than sanitised, so a
+   * malformed payload is dropped and logged instead of being coerced into a
+   * name that would then appear in a toast.
+   *
+   * Recorded and nothing more — no notification is raised, nothing is
+   * re-rendered. The only reader is the hub, at the moment it presents a toast.
+   */
+  on(CH.uiSessionName, (_event, payload) => {
+    if (!isRecord(payload)) throw new Error('ui:session-name expects an object');
+    const keys = Object.keys(payload);
+    if (keys.length !== 2 || !keys.includes('terminalId') || !keys.includes('name')) {
+      throw new Error('ui:session-name expects exactly { terminalId, name }');
+    }
+    const { terminalId, name } = payload;
+    if (typeof terminalId !== 'string' || typeof name !== 'string') {
+      throw new Error('ui:session-name expects string terminalId and name');
+    }
+
+    sessionNames.set(terminalId, name);
   });
 
   /**

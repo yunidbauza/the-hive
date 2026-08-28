@@ -293,3 +293,104 @@ describe('NotificationCard', () => {
     });
   });
 });
+
+/**
+ * What the row calls the session it is about (HIVE-110).
+ *
+ * The bug these close: main used to compose `` `${name} ${predicate}` `` when it
+ * raised the row, from its own map of *raw terminal titles*. Since HIVE-108 a
+ * session opens unnamed and titles itself several turns in, so a row raised in
+ * between said `sess-11` for ever — the rail showed a name, the inbox did not,
+ * about the same session.
+ *
+ * The row carries the terminal id now and resolves the name on every render, so
+ * these assert the two things a frozen string could never do: follow a rename
+ * that lands *after* the row, and follow a `/clear` to the successor the click
+ * already went to.
+ */
+describe('naming the session a row is about', () => {
+  beforeEach(() => {
+    seedDemoFleet();
+  });
+
+  const idle = (subject: string) =>
+    notif({
+      kind: 'session.idle',
+      title: 'is yours again',
+      subject,
+      body: '',
+      action: { type: 'session', entityId: subject },
+    });
+
+  it('renders the session’s current name in front of the predicate', () => {
+    act(() => {
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation');
+    });
+
+    render(<NotificationCard notif={idle('lead-form')} />);
+
+    expect(
+      screen.getByText('mutex-explanation is yours again'),
+    ).toBeInTheDocument();
+  });
+
+  /** The case the whole change exists for. */
+  it('follows a rename that lands after the row did', () => {
+    render(<NotificationCard notif={idle('lead-form')} />);
+
+    expect(screen.getByText('lead-form is yours again')).toBeInTheDocument();
+
+    act(() => {
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation');
+    });
+
+    expect(
+      screen.getByText('mutex-explanation is yours again'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('lead-form is yours again')).not.toBeInTheDocument();
+  });
+
+  /*
+    HIVE-108: a session opens unnamed, and the rail shows its id until Claude
+    titles it. The row shows the same thing rather than inventing a word for it.
+  */
+  it('falls back to the id, exactly as the rail does', () => {
+    render(<NotificationCard notif={idle('lead-form')} />);
+
+    expect(screen.getByText('lead-form is yours again')).toBeInTheDocument();
+  });
+
+  /*
+    A terminal whose row was retired by a `/clear` belongs to the successor now.
+    The click already goes there (see the test above); the words have to agree,
+    or the row names one session and opens another.
+  */
+  it('names the successor after a /clear, as the click already does', () => {
+    const successor = useHiveStore.getState().clearSession('lead-form')!;
+    act(() => {
+      useHiveStore.getState().renameSession(successor, 'Mutex explanation');
+    });
+
+    render(<NotificationCard notif={idle('lead-form')} />);
+
+    expect(
+      screen.getByText('mutex-explanation is yours again'),
+    ).toBeInTheDocument();
+  });
+
+  /* A row about no session at all keeps its title verbatim. */
+  it('leaves a row with no subject exactly as it was raised', () => {
+    render(
+      <NotificationCard
+        notif={notif({
+          kind: 'clone.done',
+          title: 'Clone finished',
+          body: '',
+          action: { type: 'none' },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Clone finished')).toBeInTheDocument();
+  });
+});

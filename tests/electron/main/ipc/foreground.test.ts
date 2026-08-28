@@ -107,6 +107,9 @@ let capturedIsForeground:
   | ((action: import('../../../../electron/shared/notification-contract').NotificationAction) => boolean)
   | undefined;
 
+/** The hub's `subjectName` resolver, captured the same way (HIVE-110). */
+let capturedSubjectName: ((terminalId: string) => string) | undefined;
+
 const fakeHub = {
   list: () => [],
   markRead: () => {},
@@ -116,17 +119,32 @@ const fakeHub = {
   clear: () => {},
 };
 
-vi.mock('../../../../electron/main/notifications', () => ({
-  createNotificationHub: (options: {
-    isForeground?: (
-      action: import('../../../../electron/shared/notification-contract').NotificationAction,
-    ) => boolean;
-  }) => {
-    capturedIsForeground = options.isForeground;
-    return fakeHub;
-  },
-  createNotifier: () => ({ observe: vi.fn(), reevaluateForeground: vi.fn() }),
-}));
+/*
+  The hub and the notifier are faked; `createSessionNames` is the **real** one
+  (HIVE-110). The point of these tests is the wiring — that a name reported over
+  `ui:session-name` is the name the hub would put in a toast — and a fake
+  registry would let that wiring be broken and still pass.
+*/
+vi.mock('../../../../electron/main/notifications', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../../electron/main/notifications')
+  >('../../../../electron/main/notifications');
+
+  return {
+    createNotificationHub: (options: {
+      isForeground?: (
+        action: import('../../../../electron/shared/notification-contract').NotificationAction,
+      ) => boolean;
+      subjectName?: (terminalId: string) => string;
+    }) => {
+      capturedIsForeground = options.isForeground;
+      capturedSubjectName = options.subjectName;
+      return fakeHub;
+    },
+    createNotifier: () => ({ observe: vi.fn(), reevaluateForeground: vi.fn() }),
+    createSessionNames: actual.createSessionNames,
+  };
+});
 
 const snapshot = {
   configPath: '/tmp/config.json',
@@ -169,6 +187,10 @@ const fakeWindow = (focused: boolean) => ({
 
 const report = (payload: unknown) => {
   onHandlers.get(CH.uiForeground)!(trustedEvent, payload);
+};
+
+const reportName = (payload: unknown) => {
+  onHandlers.get(CH.uiSessionName)!(trustedEvent, payload);
 };
 
 beforeEach(() => {
@@ -437,5 +459,69 @@ describe('the isForeground predicate composed for the notification hub (HIVE-81)
 
     expect(capturedIsForeground?.({ type: 'url', url: 'https://example.test' })).toBe(false);
     expect(capturedIsForeground?.({ type: 'none' })).toBe(false);
+  });
+});
+
+/**
+ * `ui:session-name` (HIVE-110) — the renderer telling main what the rail calls
+ * a session, so a desktop toast can say the same thing.
+ *
+ * The inbox row needs none of this; it carries the terminal id and resolves the
+ * name from the store. This channel exists for the one consumer that cannot —
+ * an OS notification, which is presented once and must say something then.
+ */
+describe('ui:session-name', () => {
+  it('registers as a send (`on`) channel, not invoke', () => {
+    expect(onHandlers.has(CH.uiSessionName)).toBe(true);
+  });
+
+  it('feeds the resolver the hub composes toast titles from', () => {
+    reportName({ terminalId: 'sess-11', name: 'mutex-explanation' });
+
+    expect(capturedSubjectName?.('sess-11')).toBe('mutex-explanation');
+  });
+
+  it('answers with the terminal id until a name is reported', () => {
+    expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
+  });
+
+  it('follows a rename', () => {
+    reportName({ terminalId: 'sess-11', name: 'mutex-explanation' });
+    reportName({ terminalId: 'sess-11', name: 'HIVE-110-inbox-names' });
+
+    expect(capturedSubjectName?.('sess-11')).toBe('HIVE-110-inbox-names');
+  });
+
+  /*
+    Rejected rather than sanitised, exactly as `ui:foreground` is: a malformed
+    payload must not be coerced into a name that then appears in a toast. The
+    guard throws inside `on()`'s wrapper, which logs and drops rather than
+    surfacing — so every assertion here is on the state the rejected payload
+    failed to change, not on a thrown error.
+  */
+  it('rejects a payload with an extra key', () => {
+    reportName({ terminalId: 'sess-11', name: 'mutex-explanation', extra: 1 });
+
+    expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
+  });
+
+  it('rejects a payload missing a key', () => {
+    reportName({ terminalId: 'sess-11' });
+    reportName({ name: 'mutex-explanation' });
+
+    expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
+  });
+
+  it('rejects a non-string name', () => {
+    reportName({ terminalId: 'sess-11', name: 42 });
+
+    expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
+  });
+
+  it('rejects a non-object payload', () => {
+    reportName('sess-11');
+    reportName(null);
+
+    expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
   });
 });

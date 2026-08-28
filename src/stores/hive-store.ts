@@ -42,6 +42,7 @@ import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import type { PrRecord } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
+import type { SessionNameReport } from '@shared/ipc-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
@@ -3395,6 +3396,100 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 /** One entity, or undefined. */
 export const useEntity = (id: string) =>
   useHiveStore((state) => state.entities[id]);
+
+/**
+ * Every live session, as `{ terminal, name }` (HIVE-110).
+ *
+ * Encoded as strings and parsed back, for the reason `editor-store`'s
+ * `tabFieldsSelector` spells out: `useShallow` compares one level deep, so a
+ * selector returning freshly-built objects compares unequal on every render and
+ * tears the subscriber down with "Maximum update depth exceeded". Strings it
+ * can compare, so this re-renders when a session is opened, renamed or ended —
+ * and not on a keystroke, a status change or a transcript line.
+ *
+ * NUL as the separator, because it is the one byte neither an entity id nor a
+ * `hiveNameFromTitle` output can contain.
+ *
+ * **Live rows only.** An ended row keeps its own name and shares its terminal
+ * with the successor a `/clear` minted, so including both would report two
+ * names for one terminal and let the retired one win by list order.
+ */
+const SESSION_NAME_SEPARATOR = '\u0000';
+
+const sessionNameFieldsSelector = (state: HiveState): string[] =>
+  state.order.flatMap((id) => {
+    const entity = state.entities[id];
+    if (entity === undefined || !isSession(entity) || isEnded(entity.status)) {
+      return [];
+    }
+    /*
+      `name ?? id` — the string the rail is actually showing, so main's toast and
+      the rail agree even before Claude has titled the session (HIVE-108).
+    */
+    return [
+      `${terminalOf(entity)}${SESSION_NAME_SEPARATOR}${entity.name ?? id}`,
+    ];
+  });
+
+export const useSessionNameReports = (): SessionNameReport[] => {
+  const encoded = useHiveStore(useShallow(sessionNameFieldsSelector));
+
+  return useMemo(
+    () =>
+      encoded.map((entry) => {
+        const at = entry.indexOf(SESSION_NAME_SEPARATOR);
+        return {
+          terminalId: entry.slice(0, at),
+          name: entry.slice(at + SESSION_NAME_SEPARATOR.length),
+        };
+      }),
+    [encoded],
+  );
+};
+
+/**
+ * What to call the session a **terminal** id names, right now (HIVE-110).
+ *
+ * The inbox's answer to a notification that outlives the name it was raised
+ * under. Main raises a row carrying the terminal and the predicate alone
+ * (`HiveNotification.subject`), and this resolves the words in front of it on
+ * every render — so a session that titles itself an hour after the row landed
+ * renames the row too, and a `sess-11` the user has never seen anywhere else
+ * never appears.
+ *
+ * Resolved through `currentSessionIn`, the same mapping `currentRowFor` applies
+ * to the click. A `/clear`ed terminal belongs to its successor now, and the row
+ * naming one session while its click opens another is the confusion this hook
+ * exists to end.
+ *
+ * The terminal id is the fallback, because it is what the rail itself shows for
+ * a session Claude has not titled yet (HIVE-108) — the row and the rail agree
+ * even while neither has a name to show.
+ *
+ * Returns a **string**, so a subscriber re-renders when the name changes and
+ * not when anything else about the entity does.
+ */
+export const useDisplayName = (terminalId: string): string =>
+  useHiveStore((state) => {
+    /*
+      Narrowed to a session rather than reading `name` off `Entity`, because an
+      `Agent` has no name — and because `currentSessionIn` answers with the id it
+      was given when nothing live matches, which is the unnamed-session fallback
+      this hook wants anyway.
+    */
+    const id = currentSessionIn(state, terminalId);
+    const entity = state.entities[id];
+    /*
+      `name ?? id` is what every other surface renders for a session Claude has
+      not titled yet (HIVE-108), and the **row** id rather than the terminal is
+      what those surfaces show — after a `/clear` the two differ and the rail is
+      naming the successor. A terminal with no live session at all keeps the id
+      it was asked about.
+    */
+    return entity !== undefined && isSession(entity)
+      ? (entity.name ?? id)
+      : terminalId;
+  });
 
 /** Session counts by status — drives the header (story 021). */
 export const useCounts = () =>

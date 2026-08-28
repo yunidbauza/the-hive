@@ -916,3 +916,101 @@ describe('promote', () => {
     expect(announceDismissed).toHaveBeenCalledWith(raised.id);
   });
 });
+
+/**
+ * What a **toast** calls the session (HIVE-110).
+ *
+ * The row carries `subject` and nothing else — the renderer resolves the name
+ * from its own store on every render. An OS notification cannot: it is
+ * presented once and must say something at that instant, so the hub composes it
+ * there, from `subjectName`, at the moment of presentation rather than at the
+ * moment of raising. These assert that the composition happens late, which is
+ * the entire behavioural difference.
+ */
+describe('the toast’s name for a subject', () => {
+  it('prefixes the presented title with the subject’s name', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present, subjectName: () => 'mutex-explanation' });
+
+    hub.raise({ kind: 'session.idle', title: 'is yours again', subject: 'sess-11' });
+
+    expect(present.mock.calls[0][0].title).toBe(
+      'mutex-explanation is yours again',
+    );
+  });
+
+  it('leaves the stored row unprefixed — the renderer names it', () => {
+    const hub = makeHub({ subjectName: () => 'mutex-explanation' });
+
+    const raised = hub.raise({
+      kind: 'session.idle',
+      title: 'is yours again',
+      subject: 'sess-11',
+    })!;
+
+    expect(raised.title).toBe('is yours again');
+    expect(raised.subject).toBe('sess-11');
+    expect(hub.list()[0].title).toBe('is yours again');
+  });
+
+  /**
+   * The case the whole change exists for. A row raised while the session was
+   * still unnamed, promoted once the user looks away, toasts under the name the
+   * session has *by then* — not the `sess-11` it had when it was raised.
+   */
+  it('reads the name again when a gated row is promoted', () => {
+    const present = vi.fn();
+    let name = 'sess-11';
+    let foreground = true;
+    const hub = makeHub({
+      present,
+      subjectName: () => name,
+      isForeground: () => foreground,
+    });
+
+    const raised = hub.raise({
+      kind: 'session.idle',
+      title: 'is yours again',
+      subject: 'sess-11',
+      action: { type: 'session', entityId: 'sess-11' },
+    })!;
+    expect(present).not.toHaveBeenCalled();
+
+    name = 'mutex-explanation';
+    foreground = false;
+    hub.promote(raised.id);
+
+    expect(present.mock.calls[0][0].title).toBe(
+      'mutex-explanation is yours again',
+    );
+  });
+
+  it('falls back to the terminal id when nothing has named it', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present, subjectName: (id) => id });
+
+    hub.raise({ kind: 'session.idle', title: 'is yours again', subject: 'sess-11' });
+
+    expect(present.mock.calls[0][0].title).toBe('sess-11 is yours again');
+  });
+
+  /** A hub built without the option at all — the browser target, and most tests. */
+  it('falls back to the terminal id when no resolver was given', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present });
+
+    hub.raise({ kind: 'session.idle', title: 'is yours again', subject: 'sess-11' });
+
+    expect(present.mock.calls[0][0].title).toBe('sess-11 is yours again');
+  });
+
+  it('leaves a row about no session exactly as it was raised', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present, subjectName: () => 'mutex-explanation' });
+
+    const raised = hub.raise({ kind: 'clone.done', title: 'Clone finished' })!;
+
+    expect(raised.subject).toBeUndefined();
+    expect(present.mock.calls[0][0].title).toBe('Clone finished');
+  });
+});

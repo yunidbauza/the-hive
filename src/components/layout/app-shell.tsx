@@ -11,6 +11,7 @@ import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
 import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
+import { useSessionNames } from '@hooks/use-session-names';
 import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
 
@@ -83,6 +84,15 @@ export function AppShell() {
     have nothing to do with which tab is open, and this should not.
   */
   useForegroundSession();
+
+  /*
+    What each session is called (HIVE-110). The mirror of the report above, for
+    the same reason: main presents the desktop toasts and the name it used to
+    read — the raw terminal title — was never the one on the rail. Mounted
+    beside it because both are facts about the fleet rather than about any
+    component.
+  */
+  useSessionNames();
 
   /**
    * Watch the visible project's files.

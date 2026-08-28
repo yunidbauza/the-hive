@@ -210,7 +210,19 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'write',
   ]);
   expect(surface.theme).toEqual(['pick', 'save']);
-  expect(surface.ui).toEqual(['reportForeground']);
+  /**
+   * HIVE-110 adds `reportSessionName`, and it is the first verb here that takes
+   * renderer-supplied *content* rather than an identifier.
+   *
+   * What keeps it inside story 082's posture: both arguments are stored in a
+   * `Map` in main and read for exactly one thing — the title of an OS
+   * notification about a session the renderer already names on screen. No path
+   * is resolved, no process is spawned, no argv is built, nothing is written to
+   * disk, and nothing is read back. The renderer could already put any string
+   * it liked in front of the user through the rail; this lets the same string
+   * reach a toast about the same session, which is the point.
+   */
+  expect(surface.ui).toEqual(['reportForeground', 'reportSessionName']);
   /**
    * Two, and the second is deliberately the *narrower* of the pair.
    *

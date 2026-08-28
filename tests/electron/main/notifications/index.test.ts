@@ -104,7 +104,7 @@ describe('session status', () => {
       event: 'PermissionRequest',
     });
     expect(raised().kind).toBe('session.blocked');
-    expect(raised().title).toBe('lead-form needs approval');
+    expect(raised().title).toBe('needs approval');
 
     raise.mockClear();
 
@@ -114,7 +114,7 @@ describe('session status', () => {
       event: 'Elicitation',
     });
     expect(raised().kind).toBe('session.blocked');
-    expect(raised().title).toBe('call-notes needs an answer');
+    expect(raised().title).toBe('needs an answer');
   });
 
   /** The real question case: `AskUserQuestion` arrives as a `PermissionRequest`. */
@@ -129,7 +129,7 @@ describe('session status', () => {
     });
 
     expect(raised().kind).toBe('session.blocked');
-    expect(raised().title).toBe('lead-form asked a question');
+    expect(raised().title).toBe('asked a question');
   });
 
   /** Guessing would describe a different question than the one being asked. */
@@ -167,7 +167,7 @@ describe('the Notification hook', () => {
     notifier().observe(CH.sessionStatus, waiting('lead-form', 'idle_prompt'));
 
     expect(raised().kind).toBe('session.input_needed');
-    expect(raised().title).toBe('lead-form is waiting on you');
+    expect(raised().title).toBe('is waiting on you');
     expect(raised().action).toEqual({ type: 'session', entityId: 'lead-form' });
   });
 
@@ -265,7 +265,7 @@ describe('the Notification hook', () => {
     n.observe(CH.sessionStatus, waiting('call-notes', 'idle_prompt'));
 
     expect(raise).toHaveBeenCalledTimes(2);
-    expect(raise.mock.calls[1][0].title).toBe('call-notes is waiting on you');
+    expect(raise.mock.calls[1][0].title).toBe('is waiting on you');
   });
 });
 
@@ -355,22 +355,15 @@ describe('idle_prompt', () => {
  * nothing was actually waiting on the user.
  */
 describe('naming', () => {
-  it('uses the session display name once one is known', () => {
-    const n = notifier();
-
-    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
-    n.observe(CH.sessionStatus, {
-      entityId: 'sess-01',
-      status: 'waiting',
-      event: 'PermissionRequest',
-    });
-
-    expect(raise).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'INCORP-478 needs approval' }),
-    );
-  });
-
-  it('falls back to the entity id before any rename arrives', () => {
+  /*
+    HIVE-110. The notifier used to keep its own map of names and paste one in
+    front of every title. It no longer holds a name at all: it raises the
+    predicate and the terminal, and whoever renders the row decides what to call
+    the session at the moment they render it. These assert that seam, because it
+    is the thing that stops a row saying `sess-11` about a session the rail has
+    since titled.
+  */
+  it('raises the predicate alone, with the terminal as the subject', () => {
     const n = notifier();
 
     n.observe(CH.sessionStatus, {
@@ -380,36 +373,49 @@ describe('naming', () => {
     });
 
     expect(raise).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'sess-01 needs approval' }),
+      expect.objectContaining({ title: 'needs approval', subject: 'sess-01' }),
     );
   });
 
-  it('follows a later rename', () => {
+  it('never pastes a name in, whatever the terminal reported', () => {
     const n = notifier();
 
-    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
+    // The raw OSC title, which is what this channel carries and what the
+    // notifier used to mistake for the name the rail shows.
+    n.observe(CH.sessionName, { entityId: 'sess-01', name: '\u2733 Claude Code' });
     n.observe(CH.sessionStatus, {
       entityId: 'sess-01',
       status: 'waiting',
       event: 'PermissionRequest',
     });
-    expect(raised().title).toBe('INCORP-478 needs approval');
 
-    raise.mockClear();
+    expect(raised().title).toBe('needs approval');
+    expect(raised().subject).toBe('sess-01');
+  });
 
-    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-999' });
+  it('subjects every session kind, and only session kinds', () => {
+    const n = notifier();
+
     n.observe(CH.sessionStatus, {
       entityId: 'sess-01',
       status: 'waiting',
       event: 'Elicitation',
     });
-    expect(raised().title).toBe('INCORP-999 needs an answer');
+    expect(raised()).toMatchObject({
+      title: 'needs an answer',
+      subject: 'sess-01',
+    });
+
+    raise.mockClear();
+
+    n.observe(CH.configCloneDone, { ok: true });
+    expect(raised().title).toBe('Clone finished');
+    expect(raised().subject).toBeUndefined();
   });
 
-  it('keeps the raw entityId in the action even once a name is known', () => {
+  it('keeps the raw entityId in the action as well as the subject', () => {
     const n = notifier();
 
-    n.observe(CH.sessionName, { entityId: 'sess-01', name: 'INCORP-478' });
     n.observe(CH.sessionStatus, {
       entityId: 'sess-01',
       status: 'waiting',
@@ -417,22 +423,7 @@ describe('naming', () => {
     });
 
     expect(raised().action).toEqual({ type: 'session', entityId: 'sess-01' });
-  });
-
-  it('ignores a malformed rename payload', () => {
-    const n = notifier();
-
-    n.observe(CH.sessionName, { entityId: 'sess-01' });
-    n.observe(CH.sessionName, { name: 'INCORP-478' });
-    n.observe(CH.sessionName, { entityId: 'sess-01', name: 42 });
-
-    n.observe(CH.sessionStatus, {
-      entityId: 'sess-01',
-      status: 'waiting',
-      event: 'PermissionRequest',
-    });
-
-    expect(raised().title).toBe('sess-01 needs approval');
+    expect(raised().subject).toBe('sess-01');
   });
 });
 
@@ -903,7 +894,7 @@ describe('session.idle', () => {
     n.observe(CH.sessionStatus, stop('sess-05'));
 
     expect(raised().kind).toBe('session.idle');
-    expect(raised().title).toBe('sess-05 is yours again');
+    expect(raised().title).toBe('is yours again');
     expect(raised().action).toEqual({ type: 'session', entityId: 'sess-05' });
   });
 

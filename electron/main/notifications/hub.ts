@@ -50,7 +50,13 @@ export type NotificationPresenter = (options: {
 /** What a producer hands in. Everything else the hub decides. */
 export interface NotificationInput {
   kind: NotificationKind;
+  /**
+   * The predicate alone when {@link subject} is set — see
+   * `HiveNotification.title`. Producers no longer paste a name in front of it.
+   */
   title: string;
+  /** The terminal this row is about, for producers that are about a session. */
+  subject?: string;
   body?: string;
   /**
    * The dedup key, minted from what the event identifies.
@@ -135,6 +141,23 @@ export interface NotificationHubOptions {
    * target's absence of one — behaves exactly as it did before.
    */
   isForeground?: (action: NotificationAction) => boolean;
+  /**
+   * What to call a notification's `subject` in a **desktop toast** (HIVE-110).
+   *
+   * Read at the moment of presentation, never captured, for the same reason
+   * `prefs` and `isForeground` are: a session renames itself while its rows sit
+   * in the buffer, and a promoted row is presented long after it was raised.
+   *
+   * Only the toast needs it. The inbox row carries `subject` and the renderer
+   * resolves the name from its own store, which is the authority — see
+   * `HiveNotification.subject`. This exists because an OS notification is a
+   * moment rather than a record and has to say something at that instant.
+   *
+   * Optional: a hub built without it — every existing test, and the browser
+   * target's absence of one — falls back to the terminal id, which is what the
+   * rail itself shows for a session nothing has named.
+   */
+  subjectName?: (terminalId: string) => string;
 }
 
 export interface NotificationHub {
@@ -284,10 +307,28 @@ export function createNotificationHub(
     announceUnread,
     now,
     isForeground,
+    subjectName,
   } = options;
 
   let buffer: HiveNotification[] = [];
   const seen = new Set<string>();
+
+  /**
+   * What a **toast** calls this notification (HIVE-110).
+   *
+   * The one place a name is pasted onto a title, and it happens at the moment
+   * of presentation rather than at the moment of raising — which is the whole
+   * point. A row raised while a session was still unnamed, promoted twenty
+   * minutes later when it has titled itself, toasts under the name the user can
+   * actually see on the rail.
+   *
+   * A row with no `subject` is about no session and keeps its title verbatim,
+   * which is every `pr.*`, `clone.done` and `app.update_*`.
+   */
+  const toastTitle = (notification: HiveNotification): string =>
+    notification.subject === undefined
+      ? notification.title
+      : `${subjectName?.(notification.subject) ?? notification.subject} ${notification.title}`;
 
   /**
    * Counted from the buffer rather than kept as a tally.
@@ -412,7 +453,7 @@ export function createNotificationHub(
 
       if (delivery === 'both') {
         present({
-          title: entry.title,
+          title: toastTitle(entry),
           body: entry.body,
           onClick: () => {
             /**
@@ -554,6 +595,13 @@ export function createNotificationHub(
           id,
           kind: input.kind,
           title: input.title,
+          /*
+            Spread rather than assigned, so a producer that is about no session
+            leaves the key off entirely instead of carrying an explicit
+            `undefined` across IPC. `exactOptionalPropertyTypes` is what makes
+            that a compile error rather than a style note.
+          */
+          ...(input.subject === undefined ? {} : { subject: input.subject }),
           body: input.body ?? '',
           createdAt,
           unread: !foreground,
@@ -615,7 +663,7 @@ export function createNotificationHub(
 
         if (delivery === 'both' && !foreground) {
           present({
-            title: notification.title,
+            title: toastTitle(notification),
             body: notification.body,
             /**
              * Dismissed, not merely marked read (HIVE-81).

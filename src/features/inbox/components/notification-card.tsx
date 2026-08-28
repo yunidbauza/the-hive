@@ -10,7 +10,12 @@ import {
 import { Icon } from '@components/ui/icon';
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { useRelativeTime } from '@hooks/use-relative-time';
-import { currentRowFor, useDismissNotif, useOpenEntity } from '@stores/hive-store';
+import {
+  currentRowFor,
+  useDismissNotif,
+  useDisplayName,
+  useOpenEntity,
+} from '@stores/hive-store';
 
 /**
  * How long the exit animation runs, in ms (HIVE-93).
@@ -75,6 +80,24 @@ export function NotificationCard({ notif }: NotificationCardProps) {
   const reduced = useReducedMotion();
   const spec = NOTIFICATION_KIND_SPECS[notif.kind];
   const time = useRelativeTime(notif.createdAt);
+
+  /**
+   * The name in front of the title, resolved **now** (HIVE-110).
+   *
+   * Main used to paste it in at raise time, which froze two things that both
+   * move: since HIVE-108 a session opens unnamed and titles itself some turns
+   * in, so a row raised in between said `sess-11` for ever; and main's copy of
+   * the name was the raw terminal title, not the name the rail derives from it.
+   * A row carries the terminal id instead and asks the store, which is the one
+   * thing that knows.
+   *
+   * Called unconditionally with `''` for a row about no session — `pr.*`,
+   * `clone.done`, `app.update_*` — because a hook cannot be conditional and the
+   * empty id resolves to `''`, which the line below never reads.
+   */
+  const subjectName = useDisplayName(notif.subject ?? '');
+  const title =
+    notif.subject === undefined ? notif.title : `${subjectName} ${notif.title}`;
 
   const [leaving, setLeaving] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
@@ -202,9 +225,7 @@ export function NotificationCard({ notif }: NotificationCardProps) {
       />
 
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-[12.5px] font-semibold text-ink">
-          {notif.title}
-        </span>
+        <span className="text-[12.5px] font-semibold text-ink">{title}</span>
         {notif.body === '' ? null : (
           <span className="text-[11.5px] leading-[1.4] text-muted">
             {notif.body}

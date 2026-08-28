@@ -637,6 +637,31 @@ export const CH = {
    * no-op and passes a naive test.
    */
   uiForeground: 'ui:foreground',
+  /**
+   * What a session is *called*, renderer → main (HIVE-110).
+   *
+   * The mirror of {@link CH.uiForeground}, and it travels for the same reason:
+   * main owns the notification hub and cannot derive the fact the hub needs.
+   * `CH.sessionName` goes the other way and carries the **raw OSC title**;
+   * the name the rail shows is that title through `hiveNameFromTitle` plus
+   * rules that only the store has — the pinned-ticket prefix, HIVE-109's `-2`
+   * collision numbering, the stale-title guard, and `/clear` successor
+   * targeting. Main reading the raw title was a second source of truth that
+   * disagreed with the first.
+   *
+   * Main's only consumer is the **desktop toast**, which needs a string at the
+   * moment it is presented. The inbox row derives the name itself and needs
+   * nothing from this channel; see `HiveNotification.subject`.
+   *
+   * `send`, not `invoke`: it fires when a session renames itself and has no
+   * answer worth waiting for. Ordering on a single channel is guaranteed, which
+   * is the only property that matters here.
+   *
+   * Carries a **terminal** id, exactly as `CH.uiForeground` does and for the
+   * identical reason — that is the id every notification action already
+   * carries, so main compares like with like and needs no domain knowledge.
+   */
+  uiSessionName: 'ui:session-name',
 } as const;
 
 export type Channel = (typeof CH)[keyof typeof CH];
@@ -1486,6 +1511,11 @@ export interface HiveBridge {
   ui: {
     /** Report the terminal on the centre stage, or `null` for none. */
     reportForeground(terminalId: string | null): void;
+    /**
+     * Report what a session is called, so a desktop toast can say it
+     * (HIVE-110). A terminal id, and the name the rail shows for it.
+     */
+    reportSessionName(terminalId: string, name: string): void;
   };
 }
 
@@ -1819,6 +1849,22 @@ export interface ForegroundReport {
 }
 
 /**
+ * What {@link CH.uiSessionName} carries — one session, named the way the rail
+ * names it (HIVE-110).
+ *
+ * One session per message rather than the whole fleet in a map, so a rename is
+ * a message about the thing that changed. The renderer sends what it has on
+ * mount and a delta thereafter; main merges and never forgets, because a name
+ * is worth keeping for as long as a notification about that session might be.
+ */
+export interface SessionNameReport {
+  /** The terminal, never the row — see {@link CH.uiSessionName}. */
+  terminalId: string;
+  /** Non-empty. The rail's own name for it. */
+  name: string;
+}
+
+/**
  * Answer to {@link CH.notificationsDelivery} — can the OS be reached, and if
  * not, what did it say.
  *
@@ -1871,7 +1917,7 @@ export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
 export const BRIDGE_THEME_KEYS = ['pick', 'save'] as const;
 
 /** The exact key set of `window.hive.ui` (HIVE-81). */
-export const BRIDGE_UI_KEYS = ['reportForeground'] as const;
+export const BRIDGE_UI_KEYS = ['reportForeground', 'reportSessionName'] as const;
 
 /** The exact key set of `window.hive.config`. */
 export const BRIDGE_CONFIG_KEYS = [

@@ -285,7 +285,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
    *
    * Both per-session maps below (`announcedInputNeeded`, `pendingForeground`)
    * are keyed by **terminal** id and survive a `/clear`, because `observe`
-   * reads `sessionStatus`, `sessionName` and `configCloneDone` and never
+   * reads `sessionStatus`, `sessionFinished` and `configCloneDone` and never
    * `CH.sessionCleared`. That is deliberate rather than overlooked, and it is
    * stated here because everything else in this file is.
    *
@@ -388,34 +388,25 @@ export function createNotifier(options: NotifierOptions): Notifier {
    */
   const armedIdle = new Set<string>();
 
-  /**
-   * What each session calls itself, as the rail shows it (HIVE-81).
+  /*
+   * A note on names, which this module used to keep and no longer does
+   * (HIVE-81, corrected by HIVE-110).
    *
-   * A notification that says `sess-01` names something the user has never seen.
-   * The rail, the tab and the meta bar all read `INCORP-478`, because the
-   * session renamed itself from its own terminal title — and an interruption
-   * that cannot be matched to the thing it interrupted about is most of the way
-   * to useless.
+   * It held a `Map` fed from `CH.sessionName` and pasted the result in front of
+   * every title. Both halves were wrong. The channel carries the **raw OSC
+   * title**, while the rail's name is that title through `hiveNameFromTitle`
+   * plus rules that live in the store, so the map disagreed with the rail; and
+   * composing at raise time froze a name that, since HIVE-108, arrives several
+   * turns *after* the session opens — so a row raised in between said `sess-11`
+   * for ever, which is precisely the interruption-that-cannot-be-matched this
+   * module was trying to avoid.
    *
-   * Populated from `CH.sessionName`, which already passes through this
-   * observer on its way to the renderer; this simply stops ignoring it. The
-   * entity id remains the fallback, because a session that has not renamed
-   * itself yet genuinely has no better name.
-   *
-   * Never pruned. An entry is two short strings, and the map is bounded by the
-   * number of sessions this process has ever spawned — cheap enough that
-   * pruning it would buy nothing.
+   * A row now carries `subject` — the terminal id — and the renderer resolves
+   * the name from the store that owns it, at render time, every time. What
+   * still needs a string in main is the **desktop toast**; that lives in
+   * `names.ts`, is fed by the renderer over `CH.uiSessionName`, and is read by
+   * the hub at the moment it presents.
    */
-  const names = new Map<string, string>();
-
-  /** What to call this session in a title or a body. */
-  const nameFor = (entityId: string): string => names.get(entityId) ?? entityId;
-
-  const nameEvent = (payload: Record<string, unknown>): void => {
-    const { entityId, name } = payload;
-    if (typeof entityId !== 'string' || typeof name !== 'string') return;
-    names.set(entityId, name);
-  };
 
   /**
    * Rows raised silently because the user was watching, and the session they
@@ -581,7 +572,14 @@ export function createNotifier(options: NotifierOptions): Notifier {
         );
       const raised = hub.raise({
         kind,
-        title: `${nameFor(entityId)} ${copy.title}`,
+        /*
+          The predicate alone, and the terminal beside it (HIVE-110). Whoever
+          renders this row decides what to call the session at the moment they
+          render it — the inbox from the store, a toast from `names.ts`. See
+          `HiveNotification.subject` for why a name written here goes stale.
+        */
+        title: copy.title,
+        subject: entityId,
         body: copy.body,
         action,
       });
@@ -657,7 +655,6 @@ export function createNotifier(options: NotifierOptions): Notifier {
       try {
         if (channel === CH.sessionStatus) sessionEvent(payload);
         else if (channel === CH.sessionFinished) finishedEvent(payload);
-        else if (channel === CH.sessionName) nameEvent(payload);
         else if (channel === CH.configCloneDone) cloneEvent(payload);
       } catch (cause) {
         console.error('[hive] notification failed:', cause);
@@ -683,3 +680,5 @@ export type {
   NotificationInput,
   NotificationPresenter,
 } from './hub';
+export { createSessionNames } from './names';
+export type { SessionNames } from './names';

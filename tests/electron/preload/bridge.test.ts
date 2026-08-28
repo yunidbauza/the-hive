@@ -509,6 +509,15 @@ describe('ui verb routes to its channel (HIVE-81)', () => {
       terminalId: null,
     });
   });
+
+  it('reportSessionName sends ui:session-name with the terminal and the name (HIVE-110)', () => {
+    ui().reportSessionName('sess-11', 'mutex-explanation');
+
+    expect(ipcRendererMock.send).toHaveBeenCalledWith(CH.uiSessionName, {
+      terminalId: 'sess-11',
+      name: 'mutex-explanation',
+    });
+  });
 });
 
 describe('subscriptions', () => {

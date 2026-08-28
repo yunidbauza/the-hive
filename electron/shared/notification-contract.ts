@@ -170,7 +170,47 @@ export interface HiveNotification {
    */
   id: string;
   kind: NotificationKind;
+  /**
+   * The row's words, **without the name of whatever it is about**.
+   *
+   * When {@link subject} is set this is the predicate alone — `is yours again`,
+   * `asked a question` — and the reader prefixes the subject's current name.
+   * When it is absent this is the whole title, as it always was.
+   */
   title: string;
+  /**
+   * The session this row is about, as a **terminal** id, or absent when the row
+   * is about no session at all (`pr.*`, `clone.done`, `app.update_*`).
+   *
+   * ## Why the name is not simply written into the title
+   *
+   * Because a notification outlives the name it was raised under. Main used to
+   * compose `` `${name} ${predicate}` `` at raise time, which froze two things
+   * that both move:
+   *
+   * - **The name arrives later.** Since HIVE-108 a session opens *unnamed* and
+   *   Claude titles it from the conversation some turns in. Every row raised
+   *   before that said `sess-11` and could never catch up, which is the bug
+   *   this field closes.
+   * - **Main's copy of the name was never the rail's.** Main sees the raw OSC
+   *   title; the rail's name is that title through `hiveNameFromTitle` plus
+   *   rules that live in the store — the pinned-ticket prefix, HIVE-109's `-2`
+   *   collision numbering, the stale-title guard, `/clear` successor targeting.
+   *   A row and the rail naming one session two different things is the same
+   *   confusion in a subtler form.
+   *
+   * So the name is **derived, never carried** — the rule this file already
+   * states for `icon`, `tone` and the relative time, applied to the last field
+   * that broke it. The inbox row resolves it from the store at render time; the
+   * desktop toast, which is a moment rather than a record, resolves it once
+   * from main's own map when it is presented.
+   *
+   * A **terminal** id, not a row id, for the reason `NotificationAction`'s own
+   * `session` member gives: main speaks terminal ids, and the renderer maps one
+   * to the row it names *now* with `currentRowFor`. That is what keeps the words
+   * on the row and the destination of its click describing one session.
+   */
+  subject?: string;
   /** The second line. May be empty; the card simply renders nothing. */
   body: string;
   /** Epoch ms. The relative time on the card is derived from this, and ticks. */

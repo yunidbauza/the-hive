@@ -61,6 +61,7 @@ import {
   type NotificationReadEvent,
   type ResizeRequest,
   type SessionLostEvent,
+  type SessionNameReport,
   type SpawnRequest,
   type WriteRequest,
 } from '@shared/ipc-contract';
@@ -442,6 +443,13 @@ const bridge: HiveBridge = {
       ipcRenderer.send(CH.uiForeground, {
         terminalId,
       } satisfies ForegroundReport),
+    // HIVE-110. The name the rail shows, so a desktop toast can say it too.
+    // `send` for the same reason: a rename has no answer worth waiting for.
+    reportSessionName: (terminalId: string, name: string): void =>
+      ipcRenderer.send(CH.uiSessionName, {
+        terminalId,
+        name,
+      } satisfies SessionNameReport),
   },
 };
 
