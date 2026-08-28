@@ -1959,14 +1959,22 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   'act',
 ] as const;
 
-/**
- * The exact key set of `window.hive.ledger` (HIVE-111).
- *
- * Four, and `post` / `answer` are the two worth watching: neither takes a
- * `from`, so widening either signature to accept one would be the change this
- * list exists to catch — it would let a compromised page speak as any party.
- */
-export const BRIDGE_LEDGER_KEYS = ['list', 'post', 'answer', 'onChanged'] as const;
+/** The exact key set of `window.hive.ledger` (HIVE-111). */
+export const BRIDGE_LEDGER_KEYS = [
+  // Hydration on mount, and any filtered view. `to` is added by main, never
+  // by this call — see the contract.
+  'list',
+  /**
+   * The overmind writes; the two verbs worth watching here. Neither takes a
+   * `from` — widening either signature to accept one would be the change this
+   * list exists to catch, because it would let a compromised page speak as
+   * any party rather than only as the overmind.
+   */
+  'post',
+  'answer',
+  // One entry landed, from any party — see `CH.ledgerChanged`.
+  'onChanged',
+] as const;
 
 /** The exact key set of `window.hive.updates`. */
 export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
