@@ -60,7 +60,12 @@ sorting last throws inside the store's constructor — which runs inside
 `registerIpcHandlers()`, unguarded, at startup — and the app would boot with no
 IPC handlers at all. So a line must also *be* an object with a string `id`, a
 numeric `ts`, a string `from`, a known `kind` and a string `body` before it is
-accepted; anything else joins the same skipped-and-warned list.
+accepted, and its `to`, `ref` and `thread` must each be absent or a string:
+`nextRef` calls `ref.startsWith(...)` over every loaded entry on each `ask`, so
+a hand-edited `"ref": 3` would make *every* ask come back `500` — a worse
+symptom to diagnose than a crash, now that a failed write is a refusal. `meta`
+is left unchecked on purpose; it is free-form, and every consumer already reads
+it defensively. Anything that fails joins the same skipped-and-warned list.
 
 A read that fails for any reason other than the file not existing (EACCES, EIO)
 is warned about rather than treated as an empty day, because "empty" would also

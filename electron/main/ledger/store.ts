@@ -41,20 +41,35 @@ const pad = (value: number, width = 2): string => String(value).padStart(width, 
  * boot the app with no IPC handlers at all; a `null` line survives
  * construction and throws later, in `openAsks`, on `entry.kind`.
  *
- * Only the fields the app actually reasons about are required. `to`, `ref`,
- * `thread` and `meta` are optional in the contract, and rejecting a line for
- * an odd rider would throw away correspondence this loader exists to keep.
+ * The five required fields are checked, and so are the three optional string
+ * riders — absent or a string, never anything else. `ref` is the one that
+ * bites: `nextRef` calls `entry.ref.startsWith(...)` on every loaded entry
+ * each time an `ask` is appended, so a hand-edited `"ref": 3` reaches it and
+ * throws. Since a write failure is now a refusal rather than a crash, the
+ * symptom would be *every* ask coming back `500` until the user found and
+ * fixed the line by hand — the same failure as a bad `id`, one field over, in
+ * the same file the loader's own comment invites them to edit.
+ *
+ * `meta` is deliberately left unchecked. It is a free-form rider that every
+ * consumer reads defensively (`taskOf` type-checks what it pulls out), so
+ * rejecting a line for an odd `meta` would throw away correspondence this
+ * loader exists to keep, and buy nothing.
  */
 const isEntry = (value: unknown): value is LedgerEntry => {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Record<string, unknown>;
+  const optionalString = (field: unknown): boolean =>
+    field === undefined || typeof field === 'string';
   return (
     typeof candidate.id === 'string' &&
     typeof candidate.ts === 'number' &&
     typeof candidate.from === 'string' &&
     typeof candidate.body === 'string' &&
     typeof candidate.kind === 'string' &&
-    (LEDGER_KINDS as readonly string[]).includes(candidate.kind)
+    (LEDGER_KINDS as readonly string[]).includes(candidate.kind) &&
+    optionalString(candidate.to) &&
+    optionalString(candidate.ref) &&
+    optionalString(candidate.thread)
   );
 };
 

@@ -202,6 +202,50 @@ describe('ledger store', () => {
   });
 
   /**
+   * The rider that bites is `ref` (HIVE-111 re-review).
+   *
+   * `nextRef` calls `entry.ref.startsWith(...)` over every loaded entry each
+   * time an `ask` is appended, so a hand-edited `"ref": 3` reaches it and
+   * throws a `TypeError`. That throw is now caught and turned into a refusal,
+   * which makes the symptom *worse* to diagnose rather than better: every ask
+   * would come back `500 could not write the ledger` until the user found the
+   * line themselves. The subsequent successful ask is the real assertion here
+   * — it proves the poisoned line never reached `nextRef`.
+   */
+  it.each([
+    ['ref', '{"id":"20260828-100000-0002","ts":2,"from":"sess-a","kind":"ask","body":"q","ref":3}'],
+    [
+      'to',
+      '{"id":"20260828-100000-0002","ts":2,"from":"sess-a","kind":"post","body":"q","to":null}',
+    ],
+    [
+      'thread',
+      '{"id":"20260828-100000-0002","ts":2,"from":"sess-a","kind":"post","body":"q","thread":7}',
+    ],
+  ])('skips a line whose `%s` is not a string, and keeps appending', (_field, line) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, '2026-08-28.jsonl'),
+      `{"id":"20260828-100000-0001","ts":1,"from":"sess-a","kind":"ask","body":"good","ref":"a1"}\n${line}\n`,
+      'utf8',
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reopened = createLedgerStore({ dir, now: () => clock });
+
+    expect(reopened.all().map((entry) => entry.body)).toEqual(['good']);
+    // Counted and warned about through the same path every other shape
+    // failure takes, so a hand-edit never vanishes silently.
+    expect(reopened.malformed()).toEqual([line]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('skipped 1'));
+
+    // The ask that used to throw: `nextRef` still sees only the good entry,
+    // so it allocates the next ref rather than blowing up on the bad one.
+    expect(reopened.append({ from: 'sess-a', kind: 'ask', body: 'next?' }).ref).toBe('a2');
+    warn.mockRestore();
+  });
+
+  /**
    * A read that fails for a reason other than "no such file" is not an empty
    * day. Booting empty would also leave the sequence at 0 while the file on
    * disk already holds ids for this second — the exact duplicate-id failure
