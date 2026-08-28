@@ -144,7 +144,8 @@ Four stores: what the system *knows*, what the user is *looking at*, what they
 have *chosen*, and what they have *open*. Not cosmetic — it keeps a picker
 keystroke from re-rendering thirteen live terminals.
 
-- `hive-store.ts` — domain: entities, tickets, PRs, notifications, transcript.
+- `hive-store.ts` — domain: entities, tickets, PRs, notifications, transcript,
+  and the ledger tail (a capped mirror of main's log; it merges, never replaces).
 - `ui-store.ts` — view state: tabs, selection, picker, rails, tree expansion.
 - `appearance-store.ts` — theme, terminal and editor typography, density.
 - `editor-store.ts` — open file buffers: text, dirty, stale, conflict.
@@ -158,9 +159,8 @@ Every consumer goes through a named selector hook exported next to the store
 (`useCounts()`, `useEntity(id)`, `useUnreadCount()`, …). This is what keeps a
 status change from re-rendering the whole shell.
 
-Derived values are computed **in selectors, never stored** — one source of truth
-per number on screen. Cross-store effects call the other store's action
-explicitly; no store subscribes to another.
+Derived values are computed **in selectors, never stored** — one truth per number
+on screen. Cross-store effects call the other store's action; none subscribes.
 
 Fixtures (`src/data/`) are **store-only**, seed only `notifs`, and never gain a
 slice back; boot data is last run's ended sessions. Tests: `tests/support/`.

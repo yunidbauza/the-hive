@@ -77,13 +77,15 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
   const fileFor = (ms: number): string => join(dir, `${dayOf(ms)}.jsonl`);
 
   const load = (day: string): void => {
+    const path = join(dir, `${day}.jsonl`);
     let raw: string;
     try {
-      raw = readFileSync(join(dir, `${day}.jsonl`), 'utf8');
+      raw = readFileSync(path, 'utf8');
     } catch {
       // No file for that day is the normal case, not an error.
       return;
     }
+    let skipped = 0;
     for (const line of raw.split('\n')) {
       if (line.trim() === '') continue;
       try {
@@ -94,7 +96,22 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
           mid-append — must not cost the user every entry before it.
         */
         bad.push(line);
+        skipped += 1;
       }
+    }
+    /*
+      Said out loud, once per file. `malformed()` is the programmatic record,
+      but nothing in the app reads it: a log the user can open and `grep` is
+      also one they can corrupt by hand, and silently dropping their line
+      would leave them with a ledger that disagrees with the file and no clue
+      why. The line itself is deliberately not logged — a ledger body is
+      correspondence.
+    */
+    if (skipped > 0) {
+      console.warn(
+        `[hive] ledger: skipped ${skipped} unparseable line(s) in ${path};` +
+          ' the entries around them loaded normally',
+      );
     }
   };
 

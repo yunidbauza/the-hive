@@ -1591,6 +1591,17 @@ export function parseDiagnoseEnvRequest(input: unknown): DiagnoseEnvRequest {
  * caller-supplied map, not a fixed shape, and it is written to disk verbatim
  * by `ledger/index.ts` — a `__proto__` own key surviving this check would
  * survive to persistence, not just to one process's `Object.prototype`.
+ *
+ * **Top level only**, and deliberately: `Object.keys` does not recurse, so a
+ * forbidden key nested inside a `meta` *value* is stored as written. That is
+ * safe for every consumer the ledger has, because all of them only ever read
+ * values *out* of `meta` (`claims` reads `meta.task`; the renderer renders
+ * it) — a plain own property named `__proto__` on a nested object poisons
+ * nothing that is merely read. The day a consumer **deep-merges** `meta` into
+ * another object, or spreads it into one whose prototype matters, this needs
+ * to become a recursive sanitiser; until then a recursive walk over an
+ * unbounded caller-supplied map on every write would be cost without a threat
+ * behind it.
  */
 const asRecord = (input: unknown, label: string): Record<string, unknown> => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {

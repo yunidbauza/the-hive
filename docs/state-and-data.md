@@ -12,7 +12,8 @@ the picker from re-rendering thirteen live terminals.
 
 - `src/stores/hive-store.ts` — domain state and the actions that mimic the future
   orchestrator daemon: `spawnSession`, `sendToEntity`, `runOrchCommand`,
-  `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`.
+  `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`. It also holds the
+  **ledger** slice — see below.
 - `src/stores/ui-store.ts` — view state: `activeTab`, `selId`, `leftTab`,
   `railTab`, `collapsed`, picker fields, `showActivityRail`,
   `explorerExpanded`, `explorerProjectId`.
@@ -40,6 +41,30 @@ recording because folding it into `hive-store` is the obvious first answer:
 What *is* split off it, on purpose: **where** a file renders is
 `appearance-store`'s `editorPlacement`, and which folders the tree has open is
 `ui-store`'s `explorerExpanded` — a fact about a panel, not about a file.
+
+### The ledger slice is a mirror, not a source (HIVE-111)
+
+`hive-store.state.ledger` is a `LedgerEntry[]` — the tail of the append-only log
+that main owns on disk under `~/.hive/ledger/`. It is the one slice in this store
+whose authority lives in the other process, and that shapes both of its actions:
+
+- **`hydrateLedger(entries)` merges by `id`; it does not replace.**
+  `useLedgerSync` arms the `ledger:changed` push channel while `list()` is still
+  in flight, so an entry appended after main took its snapshot reaches the mirror
+  first and is missing from the snapshot that follows. A replace would drop it
+  permanently — the hook mounts once at the composition root and never remounts,
+  so there is no second hydrate to recover it. Entries are kept sorted by `id`,
+  which is fixed-width and sorts as a string in write order.
+- **`ledgerAppend(entry)`** is the push channel's only entry point. Nothing in
+  the renderer writes to this slice directly; a write goes out over IPC and comes
+  back on the channel, so the mirror can only ever hold what the log holds.
+
+Its selectors — `useLedgerEntries(filter?)`, `useOpenAsks()`, `useOpenAskCount()`
+and `useThread(id)` — are the freshness rule below applied to a slice the store
+does not own: *nothing* about openness or claims is stored. They call the same
+pure functions in `electron/shared/ledger-derive.ts` that main calls against the
+authoritative log, which is what stops "what counts as an open ask" from having
+two definitions. The deep-dive is [`docs/agents-and-ledger.md`](agents-and-ledger.md).
 
 ### The freshness rule
 
@@ -156,6 +181,9 @@ Components never read a store object directly and never call `getState()`.
 | `useMarkRead()` | mark one notification read, by index |
 | `usePushNotif()` | push a notification — the simulation's entry point |
 | `useActiveEntity()` | the entity behind `activeTab`, or `null` |
+| `useLedgerEntries(filter?)` | the ledger tail, by the shared query rules (HIVE-111) |
+| `useOpenAsks()` / `useOpenAskCount()` | asks unanswered and not yet TTL-retired |
+| `useThread(id)` | one conversation: the ask, and everything that named it |
 
 Derived values are computed in selectors and **never stored** — one source of
 truth for every number on screen.
@@ -168,6 +196,11 @@ end:
 - **`notifs` at 8** (`NOTIF_CAP`) — `pushNotif` does the same. Eight is what fits
   the rail without scrolling on a laptop, and an inbox that grows forever stops
   being an inbox.
+- **`ledger` at 500** (`LEDGER_MEMORY_CAP`, in `electron/shared/ledger-contract.ts`)
+  — the newest are kept, by both `hydrateLedger` and `ledgerAppend`. Unlike the
+  inbox this cap loses nothing: the log on disk is complete, and an older entry is
+  asked for rather than remembered. 500 is what a day of a busy fleet fits in, so
+  the console and the inbox render without a round trip.
 
 Panels render whatever they are handed; neither adds a second cap, because a
 second place to get the number right is a second place to get it wrong.

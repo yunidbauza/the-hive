@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLedgerStore, type LedgerStore } from '../../../../electron/main/ledger/store';
 
@@ -122,11 +122,32 @@ describe('ledger store', () => {
       `{"id":"20260828-100000-0001","ts":1,"from":"sess-a","kind":"post","body":"good"}\nnot json\n`,
       'utf8',
     );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const reopened = createLedgerStore({ dir, now: () => clock });
 
     expect(reopened.all().map((entry) => entry.body)).toEqual(['good']);
     expect(reopened.malformed()).toEqual(['not json']);
+    /*
+      "Reported" has to mean something a person can see: `malformed()` is read
+      by nothing in the app, so without this the user's hand-edit — this is a
+      file they are invited to open — vanishes silently.
+    */
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('2026-08-28.jsonl'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('skipped 1'));
+    // The body itself is correspondence and stays out of the log.
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not json'));
+    warn.mockRestore();
+  });
+
+  it('says nothing when every line parses', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    store.append({ from: 'sess-a', kind: 'post', body: 'one' });
+
+    createLedgerStore({ dir, now: () => clock });
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('notifies listeners with the stored entry', () => {

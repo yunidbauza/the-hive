@@ -47,9 +47,11 @@ actually on disk. A ledger whose reader and writer can disagree about what
 happened has stopped being a ledger.
 
 A malformed line — most likely the tail of a file the app was killed
-mid-write — is **skipped, not fatal**. It's collected in `malformed()` and
-reported rather than thrown, because a half-written last line must not cost
-the user every entry that came before it.
+mid-write, or a hand-edit of a file the user is invited to open — is
+**skipped, not fatal**. It's collected in `malformed()` and reported on the
+console (the file and the count, never the line: a ledger body is
+correspondence) rather than thrown, because a half-written last line must not
+cost the user every entry that came before it.
 
 ## The two ids
 
@@ -138,7 +140,7 @@ ledger paths:
 
 | Route | Purpose | Success | Refusals |
 | --- | --- | --- | --- |
-| `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token · `400` missing session header, unknown `kind`, or unknown `thread` · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap |
+| `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token · `400` missing session header, unknown `kind`, unknown `thread`, or an `answer` whose thread is not an open ask · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap |
 | `POST /ledger/read` | Read a filtered snapshot | `200 LedgerSnapshot` | `403` bad token · `400` missing session header or malformed query · `404` unknown session · `413` over the transport cap |
 
 **Both are POST, including the read.** This server has never parsed a query
@@ -177,10 +179,22 @@ Two callers, one `append`:
 Both land on the same `Ledger.append` / `Ledger.read` in
 `electron/main/ledger/index.ts`, which is deliberate: there is exactly one
 place a rule about what may be written can be stated, and exactly one place
-it can be broken. `ledger.onChange` then pushes every entry, from either
-path, straight to every window as `CH.ledgerChanged` — the renderer's
-`useLedgerSync` hook hydrates once from `ledger.list()` on mount and then
-just appends whatever arrives on that channel (`src/features/shared/hooks/use-ledger-sync.ts`).
+it can be broken. **Every** write rule therefore lives on `append` — including
+the ask-openness rule, which `Ledger.answer` also states for the ref-naming
+error message it can give but does not own: `answer` is reachable from IPC
+alone, and the out-of-process party this log exists to serve arrives through
+`append`. Since `openAsks` closes an ask on *any* answer naming it, a rule
+enforced only on the IPC path would let a bogus or duplicate answer silently
+retire a question.
+
+`ledger.onChange` then pushes every entry, from either path, straight to every
+window as `CH.ledgerChanged`. The renderer's `useLedgerSync` hook
+(`src/features/shared/hooks/use-ledger-sync.ts`) subscribes to that channel and
+hydrates from `ledger.list()` at the same time, letting the two overlap:
+`hydrateLedger` **merges by `id`** rather than replacing, so an entry appended
+after main took its snapshot is neither dropped nor duplicated. That matters
+more than it looks — the hook mounts once at the composition root and never
+remounts, so an entry a replace discarded would never be re-fetched.
 
 ### Read visibility is asymmetric, on purpose
 
@@ -202,6 +216,13 @@ Two very different things wrap it:
   An out-of-process party gets to read the correspondence it's part of; it
   does not get to read everyone else's.
 
+  Which is why the query reaches `ledger.read` **unmodified** — `hooks/index.ts`
+  passes it straight through rather than defaulting `to: caller`. That default
+  is strictly narrower than `visibleTo` and drops the `from === caller` half of
+  it, so with it in place no query at all let a session read back its own ask.
+  Narrowing belongs to the caller's own query; the security filter is the one
+  the receiver applies afterwards.
+
 `claims`, however, is **never** filtered — every caller, on both paths, sees
 the whole map. A claims map only prevents double-claiming if every party can
 see every claim; filtering it down to "claims I can see" would let two
@@ -210,9 +231,10 @@ already has.
 
 ## Related reading
 
-- [`docs/state-and-data.md`](state-and-data.md) — the store shape backing
-  `useLedgerEntries` / `useOpenAsks` / `useThread`, and why derived values
-  live in selectors rather than in the store.
+- [`docs/state-and-data.md`](state-and-data.md) — *The ledger slice is a mirror,
+  not a source*: the shape backing `useLedgerEntries` / `useOpenAsks` /
+  `useThread`, the 500-entry cap, why `hydrateLedger` merges rather than
+  replaces, and why derived values live in selectors rather than in the store.
 - [`docs/desktop-architecture.md`](desktop-architecture.md) — the `~/.hive/`
   vs. `userData` split the ledger's location follows, and the receiver's
   broader security posture (loopback-only, per-launch token, closed route
