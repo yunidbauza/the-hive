@@ -49,6 +49,31 @@ import { ISSUE_KEY_SOURCE } from '@shared/jira-contract';
 export const MAX_PROMPT_SCAN = 4_096;
 
 /**
+ * What may sit between the two words of a verb phrase.
+ *
+ * Whitespace **or a hyphen**, because the most common way to claim a ticket in
+ * this app is not a sentence at all — it is a slash command, and a command name
+ * cannot contain a space:
+ *
+ * ```
+ * /work-on ABC-123
+ * /workstream:work-on ABC-123
+ * ```
+ *
+ * Both returned `null` while this was `\s+`, which is the whole reason a
+ * session could sit on a ticket all afternoon and never appear on its card. The
+ * verb is the same verb; only the separator its spelling forced on it differs.
+ *
+ * The leading `/` and the plugin-qualifying `:` need no help — {@link
+ * INTENT_LEAD_IN} already opens on `[^a-z]`, which both satisfy.
+ *
+ * This widens the *separator* and nothing else. No verb is added, and
+ * {@link INTERROGATIVE_LEAD} still runs, so "did you work-on ABC-123" is still
+ * a question rather than a claim.
+ */
+const VERB_GAP = '[\\s-]+';
+
+/**
  * Verbs that claim the work, rather than merely referring to it.
  *
  * Every entry is a verb of *starting or continuing*, which is the distinction
@@ -58,20 +83,20 @@ export const MAX_PROMPT_SCAN = 4_096;
  * does to somebody else's work.
  */
 const INTENT_VERBS = [
-  'work(?:ing)?\\s+on',
-  'works\\s+on',
+  `work(?:ing)?${VERB_GAP}on`,
+  `works${VERB_GAP}on`,
   'start(?:ing|s)?',
-  'pick(?:ing|s)?\\s+up',
+  `pick(?:ing|s)?${VERB_GAP}up`,
   'implement(?:ing|s)?',
   'fix(?:ing|es)?',
-  'continue\\s+(?:with|on)',
-  'continuing\\s+(?:with|on)',
+  `continue${VERB_GAP}(?:with|on)`,
+  `continuing${VERB_GAP}(?:with|on)`,
   'resume',
-  'switch(?:ing|es)?\\s+to',
+  `switch(?:ing|es)?${VERB_GAP}to`,
   'tackle',
   'tackling',
-  'take\\s+on',
-  'taking\\s+on',
+  `take${VERB_GAP}on`,
+  `taking${VERB_GAP}on`,
   'begin',
 ];
 
@@ -209,4 +234,66 @@ export function ticketKeyFromPrompt(prompt: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * A key inside a **branch name**, or `null`.
+ *
+ * ## Why a second signal at all
+ *
+ * The prompt is the better evidence and stays the primary one, but it is only
+ * ever spoken once. A session resumed the next morning, or one whose "let's do
+ * ABC-123" scrolled past before this app was listening, has nothing left to
+ * read — while the branch it is standing on still says exactly what it is for,
+ * and goes on saying it for as long as the work lasts.
+ *
+ * The two are independent by design. A brainstorming session on a ticket has no
+ * branch yet and is carried entirely by {@link ticketKeyFromPrompt}; a session
+ * resumed onto an existing branch may be carried entirely by this. Neither is a
+ * precondition for the other, and a session that satisfies neither correctly
+ * associates with nothing — an empty answer is the common case, not a failure.
+ *
+ * ## Why it may be this loose
+ *
+ * Three rules only: something key-shaped, not glued to a preceding word, and
+ * case-folded up. `release-2024-11` passes it and yields `RELEASE-2024`.
+ *
+ * That is survivable *here* and would not be in a prompt, because of what the
+ * renderer does next: every candidate is put to Jira, and only a confirmed
+ * issue associates anything. Jira has no `RELEASE` project, so the candidate
+ * dies one call later having renamed nothing. A tighter matcher would duplicate
+ * that check in the place with strictly less information — a branch name
+ * carries no grammar to read, so there is nothing here to be cleverer with.
+ *
+ * ## Why the case rule is inverted
+ *
+ * {@link ticketKeyFromPrompt} matches the key case-**sensitively**, because in
+ * English a lowercase `hive-111` is likelier to be a pasted branch name than an
+ * issue someone is claiming. A branch is the mirror image: it is lowercase
+ * precisely *because* it is a branch, by `git` convention rather than Jira's.
+ * Applying the prompt's rule here would refuse nearly every real branch —
+ * including this app's own `worktree-feat+hive-111-ledger`.
+ *
+ * ## Delimiting
+ *
+ * A branch separates its words with the same `-` a key uses, so the prompt
+ * scanner's "delimited on both sides" rule cannot apply: it would reject
+ * `hive-111-ledger`, which is the ordinary case rather than an edge one. The
+ * left side is still guarded — a key may not be glued to a preceding
+ * alphanumeric — and the right side needs no guard, because `\d+` is greedy and
+ * so reads `hive-1112` as one issue rather than `HIVE-111` with a digit spare.
+ *
+ * The **first** candidate wins, for the reason it does in a prompt: a branch
+ * naming two issues is ambiguous, and position at least decides predictably.
+ *
+ * Never throws — its caller is a status listener that must not be taken down by
+ * an unusual branch name.
+ */
+export function ticketKeyFromBranch(branch: string | null): string | null {
+  if (branch === null || branch === '') return null;
+
+  const pattern = new RegExp(`(^|[^A-Za-z0-9])(${ISSUE_KEY_SOURCE})`, 'i');
+  const match = pattern.exec(branch.slice(0, MAX_PROMPT_SCAN));
+
+  return match === null ? null : match[2].toUpperCase();
 }

@@ -173,7 +173,7 @@ export function useSessionStatus(): void {
     let live = true;
 
     const disposeTicketIntent = bridge.session.onTicketIntent(
-      ({ entityId, key }) => {
+      ({ entityId, key, source }) => {
         void (async () => {
           /**
            * **Confirmed before it is acted on.**
@@ -199,7 +199,21 @@ export function useSessionStatus(): void {
             deliberately does not decide whether the key is real, and the
             confirmation that it is exists only here, one line above.
           */
-          setSessionTicket(entityId, result.value.key);
+          /**
+           * A branch-inferred key associates the session and stops there.
+           *
+           * The rename is the app answering something the user *said*, and a
+           * branch is not something they said — it is something main read off a
+           * checkout they may have made days ago. Renaming on it would take a
+           * row the user has been reading all afternoon, under a title Claude
+           * chose for the conversation actually in it (HIVE-108), and
+           * overwrite it because of a `git checkout`. The card does not need
+           * that: `facetsForTicket` matches on `ticket` alone, so the session
+           * appears under its ticket either way.
+           */
+          setSessionTicket(entityId, result.value.key, {
+            rename: source === 'prompt',
+          });
         })();
       },
     );

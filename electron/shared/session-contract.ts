@@ -3,6 +3,7 @@ import type {
   IdleDetail,
   ObservedStatus,
   StatusHookEvent,
+  TicketIntentSource,
 } from './hook-contract';
 
 /**
@@ -435,6 +436,17 @@ export interface SessionTicketIntentEvent {
   entityId: string;
   /** A key-shaped candidate. Unconfirmed — the renderer checks it against Jira. */
   key: string;
+  /**
+   * How the candidate was found, which is what decides whether confirming it
+   * also renames the row — see {@link TicketIntentSource}.
+   *
+   * A `branch` candidate is deliberately the looser of the two: main scans the
+   * branch name case-insensitively and with no grammar to read, so `release-2024`
+   * reaches here as a candidate. That is safe only because this is still a
+   * candidate — Jira is what throws it away, one call later, having renamed and
+   * associated nothing.
+   */
+  source: TicketIntentSource;
 }
 
 /**

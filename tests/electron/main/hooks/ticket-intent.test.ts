@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_PROMPT_SCAN,
+  ticketKeyFromBranch,
   ticketKeyFromPrompt,
 } from '../../../../electron/main/hooks/ticket-intent';
 
@@ -41,6 +42,19 @@ describe('ticketKeyFromPrompt', () => {
       'would you fix ABC-123',
       'Work On ABC-123',
       'WORK ON ABC-123',
+      /*
+        The slash-command spellings, which are how the work actually starts
+        here and which matched nothing at all before this. The verb is the same
+        verb; only the separator differs, because a command name cannot carry a
+        space. `/workstream:work-on` is the plugin-qualified form of the same
+        command, so the `:` has to be as transparent as the `/`.
+      */
+      '/work-on ABC-123',
+      '/workstream:work-on ABC-123',
+      '/pick-up ABC-123',
+      '/switch-to ABC-123',
+      'lets work-on ABC-123',
+      '/work-on ABC-123 and open a PR',
     ])('%s', (prompt) => {
       expect(ticketKeyFromPrompt(prompt)).toBe('ABC-123');
     });
@@ -171,5 +185,86 @@ describe('ticketKeyFromPrompt', () => {
     // unbounded — `assertJiraIssueKey` admits both, so this must too.
     expect(ticketKeyFromPrompt('work on H2-1')).toBe('H2-1');
     expect(ticketKeyFromPrompt('work on HIVE-104729')).toBe('HIVE-104729');
+  });
+});
+
+/**
+ * The second, weaker signal (goal/ticket-session-inference).
+ *
+ * A branch is evidence the user never spoke: they said it once to `git`, and
+ * the name persists long after the sentence that created it has scrolled away.
+ * That makes it the answer for a session resumed days later, or one whose
+ * intent was expressed before this app was watching.
+ *
+ * It is deliberately **looser** than the prompt scanner, and safe only because
+ * of what happens next: every candidate is put to Jira before it associates
+ * anything. `release-2024-11` yields `RELEASE-2024` here, and Jira is what
+ * throws it away. Tightening this into a classifier would buy nothing the
+ * confirmation step does not already provide.
+ */
+describe('ticketKeyFromBranch', () => {
+  describe('finds the key', () => {
+    it.each([
+      // The shape this app's own worktrees produce.
+      ['worktree-feat+hive-111-ledger', 'HIVE-111'],
+      ['feat/hive-111-ledger', 'HIVE-111'],
+      ['feat/HIVE-111-ledger', 'HIVE-111'],
+      ['fix/abc-42', 'ABC-42'],
+      ['abc-42', 'ABC-42'],
+      ['bugfix/ABC-42', 'ABC-42'],
+      ['feature/abc-42_retry', 'ABC-42'],
+      // A trailing word after the number is the common case, not the edge one.
+      ['hive-111-the-ledger', 'HIVE-111'],
+    ])('%s -> %s', (branch, key) => {
+      expect(ticketKeyFromBranch(branch)).toBe(key);
+    });
+
+    it('uppercases, because a branch is lowercase by convention', () => {
+      /*
+        The prompt scanner is case-*sensitive* on the key and must stay so — it
+        reads English, where a lowercase `hive-111` is far more likely to be a
+        branch name someone pasted than an issue they are claiming. A branch is
+        the opposite: it is lowercase precisely because git branches are, and
+        refusing it there would refuse nearly every real branch.
+      */
+      expect(ticketKeyFromBranch('feat/hive-111')).toBe('HIVE-111');
+      expect(ticketKeyFromPrompt('feat/hive-111')).toBeNull();
+    });
+  });
+
+  describe('finds nothing', () => {
+    it.each([
+      'main',
+      'develop',
+      // The branch this very change is being written on: words, no number.
+      'goal/ticket-session-inference',
+      'worktree-goal+ticket-session-inference',
+      'feat/add-the-explorer',
+      // A number with no project prefix in front of it.
+      'release/2024',
+      '',
+    ])('%s', (branch) => {
+      expect(ticketKeyFromBranch(branch)).toBeNull();
+    });
+
+    it('refuses a null branch, which is what a detached HEAD reports', () => {
+      expect(ticketKeyFromBranch(null)).toBeNull();
+    });
+  });
+
+  it('takes the first candidate, as the prompt scanner does', () => {
+    /*
+      A branch naming two issues is genuinely ambiguous about which one the
+      session is for, and letting position decide silently is no worse than the
+      alternatives — it is at least predictable, and the user can say the key
+      out loud to override nothing (the prompt path wins by arriving first, and
+      an association is refused once one exists).
+    */
+    expect(ticketKeyFromBranch('feat/abc-1-then-abc-2')).toBe('ABC-1');
+  });
+
+  it('does not split a longer number', () => {
+    // `hive-1112` is one issue, not `HIVE-111` with a stray digit.
+    expect(ticketKeyFromBranch('feat/hive-1112')).toBe('HIVE-1112');
   });
 });

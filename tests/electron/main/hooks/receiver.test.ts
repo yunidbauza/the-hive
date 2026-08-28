@@ -904,7 +904,9 @@ describe('hook receiver', () => {
       });
 
       expect(response.status).toBe(204);
-      expect(intents).toEqual([{ entityId: 'sess-01', key: 'ABC-123' }]);
+      expect(intents).toEqual([
+        { entityId: 'sess-01', key: 'ABC-123', source: 'prompt' },
+      ]);
     });
 
     it('says nothing when the prompt only mentions a ticket', async () => {

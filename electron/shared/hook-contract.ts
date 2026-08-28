@@ -511,4 +511,20 @@ export interface HookStatusEvent {
 export interface HookTicketIntentEvent {
   entityId: string;
   key: string;
+  source: TicketIntentSource;
 }
+
+/**
+ * Where a ticket candidate came from, and therefore how much it may change.
+ *
+ * `prompt` is the user saying it in their own words; `branch` is main reading it
+ * off the branch the session is standing on. Both associate the session — the
+ * WORK card matches on the ticket and never on the name — but only the spoken
+ * one renames the row, because only it is a decision the user made just now and
+ * would recognise in a new name. See `SetSessionTicketOptions` in the store.
+ *
+ * Carried explicitly rather than inferred from which listener fired, because
+ * both arrive on the one channel and the renderer's rename decision must not
+ * depend on remembering that.
+ */
+export type TicketIntentSource = 'prompt' | 'branch';

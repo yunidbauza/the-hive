@@ -564,7 +564,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      */
     if (event === 'UserPromptSubmit' && typeof prompt === 'string') {
       const key = ticketKeyFromPrompt(prompt);
-      if (key !== null) onTicketIntent({ entityId, key });
+      if (key !== null) onTicketIntent({ entityId, key, source: 'prompt' });
     }
 
     /**

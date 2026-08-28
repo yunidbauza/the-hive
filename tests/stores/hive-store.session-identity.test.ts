@@ -172,6 +172,77 @@ describe('setSessionTicket', () => {
     expect(sessionAt(id).namePinned).toBe(true);
   });
 
+  it('associates without renaming when the key was inferred, not spoken', () => {
+    /**
+     * `{ rename: false }` is the branch signal's whole difference from the
+     * spoken one, and the reason it is safe to infer at all.
+     *
+     * Reading `HIVE-73` off a branch is right often enough to file the session
+     * on the right WORK card — `facetsForTicket` matches on `ticket` and never
+     * on the name, so the row appears — and not right enough to rewrite a name
+     * the user has been reading, which a `git checkout` would otherwise be able
+     * to do.
+     */
+    const id = spawn();
+    const nameBefore = sessionAt(id).name;
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { rename: false });
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe(nameBefore);
+    expect(sessionAt(id).namePinned).toBeUndefined();
+  });
+
+  it('leaves an agent-chosen name pinned by nobody', () => {
+    /**
+     * The case the option exists for (HIVE-108): Claude titled the session
+     * after the conversation actually running in it. A branch-inferred link
+     * must not take that name away, and must not pin it either — an unpinned
+     * name stays the agent's to change on its next repaint.
+     */
+    const id = spawn();
+    useHiveStore.getState().renameSession(id, 'ledger-spike');
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { rename: false });
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe('ledger-spike');
+    expect(sessionAt(id).namePinned).toBeUndefined();
+
+    // And the agent can still rename it afterwards.
+    useHiveStore.getState().renameSession(id, 'ledger-spike-2');
+    expect(sessionAt(id).name).toBe('ledger-spike-2');
+  });
+
+  it('tells main the association but no name when it chose none', () => {
+    /**
+     * Sending `name: undefined` would be main being told to forget the name it
+     * has — the record survives a quit (HIVE-87, HIVE-107), and a silent link
+     * changed no name, so it has nothing to say about one.
+     */
+    const id = spawn();
+    noteSessionTicket.mockReset();
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { rename: false });
+
+    expect(noteSessionTicket).toHaveBeenCalledWith({
+      entityId: id,
+      ticket: 'HIVE-73',
+    });
+  });
+
+  it('still refuses a session that already has a ticket', () => {
+    // The branch signal fires on every branch change, so this refusal is what
+    // stops a checkout re-filing work that is already spoken for.
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-99', { rename: false });
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe('HIVE-73');
+  });
+
   it('de-duplicates against a session already named for the ticket', () => {
     const first = useHiveStore
       .getState()

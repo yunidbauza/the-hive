@@ -32,6 +32,7 @@ import {
 
 import { effectiveRuntime } from '../config/runtime';
 import type { HookRuntime } from '../hooks';
+import { ticketKeyFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
@@ -659,6 +660,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       send(CH.sessionTicketIntent, {
         entityId: event.entityId,
         key: event.key,
+        source: event.source,
       } satisfies SessionTicketIntentEvent),
     onCleared: (entityId) => {
       /**
@@ -1038,6 +1040,40 @@ export function createSessions(options: SessionsOptions): Sessions {
     */
     ledger?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
     send(CH.sessionBranch, { entityId, branch, cwd } satisfies SessionBranchEvent);
+
+    /**
+     * The branch is also a ticket candidate — the second signal.
+     *
+     * A prompt says which ticket a session is for exactly once, and only if the
+     * user phrased it in a way the scanner recognises. A branch says it for as
+     * long as the work lasts, which is what covers the session resumed the next
+     * morning onto `feat/hive-111-ledger` having never spoken the key here.
+     *
+     * ## Why it costs no extra Jira calls to speak of
+     *
+     * This sits after the dedupe above, not before it. `publishBranch` returns
+     * early unless the branch or cwd actually *changed*, so a candidate is
+     * emitted once per distinct branch per session — not once per hook event,
+     * which on a busy turn would be dozens. The renderer confirms each one with
+     * Jira, so that dedupe is the thing standing between this feature and a
+     * network call on every tool call the agent makes.
+     *
+     * ## Why it is still only a candidate
+     *
+     * Same reason the prompt's is: main does not know what is real. The branch
+     * scanner is looser than the prompt's by design — it has no grammar to read
+     * — so `release-2024-11` arrives here as `RELEASE-2024`, and the renderer's
+     * Jira check is what discards it. Nothing is associated or renamed on
+     * main's say-so.
+     */
+    const candidate = ticketKeyFromBranch(branch);
+    if (candidate !== null) {
+      send(CH.sessionTicketIntent, {
+        entityId,
+        key: candidate,
+        source: 'branch',
+      } satisfies SessionTicketIntentEvent);
+    }
   }
 
   /**
