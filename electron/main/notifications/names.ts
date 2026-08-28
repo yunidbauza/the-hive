@@ -23,6 +23,27 @@
  * exactly one reporter: `CH.uiSessionName`, the renderer telling main what the
  * rail shows.
  *
+ * ## The reporter is a window, and on macOS the app outlives its windows
+ *
+ * `lifecycle.ts` keeps the app running with every window closed on macOS, while
+ * the ptys, the hooks, the notifier and the hub all keep going — and keep
+ * presenting toasts. `useSessionNames` is a renderer hook mounted in the app
+ * shell, so with no window nothing reports, and a session that retitles itself
+ * in that stretch toasts under the name it had when the window closed. **This
+ * map goes stale rather than wrong, and only while nothing is on screen.**
+ *
+ * That is the deliberate half of the trade, and it is worth stating what the
+ * alternative was. The predecessor here was fed by `CH.sessionName`, which main
+ * derives from the pty byte stream itself and which therefore needs no window —
+ * so the old arrangement was never stale. It was instead *reliably wrong*: the
+ * raw OSC title is `✳ Claude Code` far more often than it is anything the rail
+ * would show, and the rail's rules for turning one into the other live in the
+ * store. Reinstating it as a fallback would buy nothing: it cannot fix
+ * staleness (a stale entry is present, so a fallback never fires), and for the
+ * one case it could cover — a terminal the renderer has never reported at all —
+ * `claude-code` is not a better answer than `sess-11`. A session exists because
+ * a window spawned it, so that case is close to unreachable anyway.
+ *
  * ## Never pruned
  *
  * An entry is two short strings and the map is bounded by the number of

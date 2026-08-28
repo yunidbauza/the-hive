@@ -1004,6 +1004,20 @@ describe('the toast’s name for a subject', () => {
     expect(present.mock.calls[0][0].title).toBe('sess-11 is yours again');
   });
 
+  /*
+    `subjectName` is an option and takes any function, so an empty answer must
+    not present as `" is yours again"` — a toast with a leading space and no
+    subject at all.
+  */
+  it('falls back to the terminal id when the resolver answers empty', () => {
+    const present = vi.fn();
+    const hub = makeHub({ present, subjectName: () => '' });
+
+    hub.raise({ kind: 'session.idle', title: 'is yours again', subject: 'sess-11' });
+
+    expect(present.mock.calls[0][0].title).toBe('sess-11 is yours again');
+  });
+
   it('leaves a row about no session exactly as it was raised', () => {
     const present = vi.fn();
     const hub = makeHub({ present, subjectName: () => 'mutex-explanation' });

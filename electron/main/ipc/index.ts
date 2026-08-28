@@ -93,6 +93,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
   SESSION_HISTORY_FILE,
   type SessionHistoryEntry,
@@ -1543,6 +1544,21 @@ export function registerIpcHandlers(): void {
     const { terminalId, name } = payload;
     if (typeof terminalId !== 'string' || typeof name !== 'string') {
       throw new Error('ui:session-name expects string terminalId and name');
+    }
+    /*
+      Capped at the same length `readTitle` caps the other name producer at
+      (`sessions/index.ts`), and for a sharper reason here: `names.ts` claims its
+      map is bounded by the number of sessions this process has spawned, and
+      without a bound on either half of the pair that claim would rest on the
+      renderer behaving — which this handler's own guard exists not to assume.
+      The id is bounded by the same number: `sess-nn` and a `/clear` successor
+      are both short, and nothing legitimate reaches this length.
+    */
+    if (
+      terminalId.length > SESSION_NAME_DISPLAY_MAX ||
+      name.length > SESSION_NAME_DISPLAY_MAX
+    ) {
+      throw new Error('ui:session-name expects a terminalId and name within bounds');
     }
 
     sessionNames.set(terminalId, name);

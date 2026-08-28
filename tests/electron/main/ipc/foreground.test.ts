@@ -524,4 +524,29 @@ describe('ui:session-name', () => {
 
     expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
   });
+
+  /*
+    Capped at the same length the other name producer caps at, because `names.ts`
+    claims its map is bounded by the sessions this process has spawned and
+    neither half of an unbounded pair would honour that.
+  */
+  it('rejects a name past the display cap', () => {
+    reportName({ terminalId: 'sess-11', name: 'x'.repeat(121) });
+
+    expect(capturedSubjectName?.('sess-11')).toBe('sess-11');
+  });
+
+  it('rejects a terminal id past the display cap', () => {
+    const long = 'x'.repeat(121);
+    reportName({ terminalId: long, name: 'mutex-explanation' });
+
+    expect(capturedSubjectName?.(long)).toBe(long);
+  });
+
+  it('accepts a name exactly at the cap', () => {
+    const name = 'x'.repeat(120);
+    reportName({ terminalId: 'sess-11', name });
+
+    expect(capturedSubjectName?.('sess-11')).toBe(name);
+  });
 });

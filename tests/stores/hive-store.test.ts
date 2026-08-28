@@ -25,6 +25,7 @@ import {
   useActiveSessions,
   useDisplayName,
   useEndedSessions,
+  currentRowFor,
   useHiveStore,
   useNavOrder,
   useSessionNameReports,
@@ -2904,6 +2905,37 @@ describe('session names for the world outside the rail', () => {
       const { result } = renderHook(() => useDisplayName('sess-nowhere'));
 
       expect(result.current).toBe('sess-nowhere');
+    });
+
+    /*
+      A row about no session at all calls this with `''`, because a hook cannot
+      be conditional. It must answer without walking the fleet, and the card
+      discards the answer either way.
+    */
+    it('answers an empty id with itself, taking no other reading', () => {
+      const { result } = renderHook(() => useDisplayName(''));
+
+      expect(result.current).toBe('');
+    });
+
+    /*
+      Once every session on a terminal has ended, `currentSessionIn` falls back to
+      the id it was given — the original row — so this names the predecessor. The
+      click resolves through the identical function, so words and destination
+      still agree, which is the property that actually matters.
+    */
+    it('names the row the click would open once the lineage has ended', () => {
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation');
+      const successor = useHiveStore.getState().clearSession('lead-form')!;
+      useHiveStore.getState().finishSession(successor, false);
+
+      const { result } = renderHook(() => useDisplayName('lead-form'));
+
+      // The words describe the row the click resolves to — the same row, not
+      // merely a plausible name.
+      const row = useHiveStore.getState().entities[currentRowFor('lead-form')];
+      expect(row && isSession(row) ? row.name : undefined).toBe(result.current);
+      expect(result.current).toBe('mutex-explanation');
     });
   });
 

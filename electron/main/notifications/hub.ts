@@ -325,10 +325,19 @@ export function createNotificationHub(
    * A row with no `subject` is about no session and keeps its title verbatim,
    * which is every `pr.*`, `clone.done` and `app.update_*`.
    */
-  const toastTitle = (notification: HiveNotification): string =>
-    notification.subject === undefined
-      ? notification.title
-      : `${subjectName?.(notification.subject) ?? notification.subject} ${notification.title}`;
+  const toastTitle = (notification: HiveNotification): string => {
+    const { subject, title } = notification;
+    if (subject === undefined) return title;
+    /*
+      `||`, not `??`. `createSessionNames.get` never answers `''` — it refuses to
+      store one — but `subjectName` is an option and takes any function, and an
+      empty answer would present as `" is yours again"`, a toast with a leading
+      space and no subject at all. The terminal id is the same fallback the
+      registry itself uses, so the invariant is local to this line rather than
+      borrowed from another module.
+    */
+    return `${subjectName?.(subject) || subject} ${title}`;
+  };
 
   /**
    * Counted from the buffer rather than kept as a tally.
