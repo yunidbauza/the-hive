@@ -47,7 +47,6 @@ import type {
  */
 export type DerivedStatus = 'working' | 'idle' | 'terminated';
 
-
 /**
  * Main telling the renderer what a real session is doing.
  *
@@ -157,21 +156,27 @@ export const isSendableSessionName = (name: string): boolean =>
   name.length > 0 && name.length <= SESSION_NAME_MAX && SESSION_NAME_PATTERN.test(name);
 
 /**
- * A ticket key as it appears *inside prose* — `HIVE-53`, `hive-3`, `abc-1234`.
+ * A ticket key, matched against a **whole word** — `HIVE-53`, `hive-3`, `abc-1234`.
  *
- * Deliberately case-insensitive by character class rather than by flag, because
- * the two capture groups are reassembled in different cases: the project part is
- * upper-cased and the number is not touched. Claude writes the key in whatever
- * case its title happened to use (`back key interception hive-53`), and the rail
- * spells keys the way Jira does.
+ * Anchored, and that is the correction that matters. An unanchored `\b…\b` also
+ * matches *inside* a hyphenated name, and this function's own output is
+ * hyphenated — so `Fix bug 123` normalised to `fix-bug-123`, which on the next
+ * pass contained the "key" `bug-123` and came back as `BUG-123-fix`. The same
+ * went for `React 18 upgrade` → `react-18-upgrade` → `REACT-18-upgrade`. The
+ * separator this function inserts was being read back as a key boundary, which
+ * broke the one property everything here depends on.
  *
- * The digit bound is what keeps a date out: `2026-08-27` cannot match, because
- * the first character must be a letter.
+ * Case-insensitive by character class rather than by flag, because the two
+ * groups are reassembled in different cases: the project part is upper-cased
+ * and the number is left alone.
+ *
+ * A leading letter is required, which is what keeps a date out — `2026-08-27`
+ * cannot match.
  */
-const TITLE_TICKET_KEY = /\b([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,6})\b/;
+const TITLE_TICKET_KEY = /^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,6})$/;
 
-/** Every key in the string, for removal rather than capture. */
-const TITLE_TICKET_KEY_ALL = /\b[A-Za-z][A-Za-z0-9]{1,9}-\d{1,6}\b/g;
+/** Punctuation around a word, so `(hive-53)` and `[HIVE-53]` still read as keys. */
+const TOKEN_EDGES = /^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g;
 
 /**
  * How many words of an agent's title survive into a session name.
@@ -225,83 +230,109 @@ const NAME_WORD_MAX = 4;
  * these sortable and scannable: the key is the first thing the eye needs, and
  * Claude puts it wherever the sentence happened to end.
  *
- * ## Why it must be idempotent
+ * ## Why it must be idempotent, and how it gets there
  *
  * Claude repaints its title several times a second, and every repaint runs
- * through here. Feeding this function its own output has to be a fixed point, or
- * a session would rename itself on every frame — `HIVE-53-back-key-interception`
- * would grow a second `HIVE-53`. That is what the `prefix` strip below and the
- * global key removal are jointly for, and it is the property the tests lean on
- * hardest.
+ * through here. A restart re-asserts the stored name as `--name`
+ * (`session-control.ts`), Claude paints *that* as its title, and it returns
+ * through `renameSession` — so this function is routinely fed its own output and
+ * has to be a fixed point on it, or a session renames itself for free.
+ *
+ * Two things make it one, and both are load-bearing:
+ *
+ * 1. **A name already in the register passes straight through.** A title with no
+ *    whitespace that already carries a hyphen and would survive a command line
+ *    is one of ours (or a slug a user typed), and re-deriving it is what went
+ *    wrong: re-splitting `fix-bug-123` cannot tell the hyphens it inserted from
+ *    the ones that were always there.
+ * 2. **A key is matched as a whole word**, never inside one — see
+ *    {@link TITLE_TICKET_KEY}.
+ *
+ * The bare-word case is deliberately *not* a passthrough: `Mutex` still
+ * case-folds to `mutex`, and folding is idempotent on its own.
  *
  * ## `prefix`
  *
- * The name a pinned session must keep in front (HIVE-78's `namePinned`). Passed
- * **whole** rather than as a key, because `ticketSessionName` disambiguates a
- * second session on one ticket as `HIVE-73-2`, and parsing that back to a key
- * would drop the `-2` and re-collide the two rows it exists to separate.
+ * The name a pinned session must keep in front (HIVE-78's `namePinned`). Used
+ * verbatim, whatever it is — this function does not parse it, so a caller may
+ * pin `HIVE-73` or `HIVE-73-2` and get back exactly that in front.
  *
- * ## The known edge
- *
- * A title containing `sess-07` yields `SESS-07-…`, because nothing structural
- * separates a Hive id from a Jira key. It is accepted rather than special-cased:
- * the app no longer sends `sess-07` as a name, so Claude has no reason to write
- * one, and a deny-list of the app's own id shapes would be a rule that has to be
- * remembered rather than one that holds.
+ * The store passes `ticket`, never the current name: passing the name would
+ * compound it, a word per repaint. `ticketSessionName`'s `-2` disambiguation is
+ * therefore spent once a topic arrives — two sessions on one ticket become
+ * `HIVE-73-<their own topics>`, which are already distinct, and `renameSession`
+ * refuses a name a live session holds if they ever are not.
  *
  * Answers `undefined` for a title with nothing nameable in it, which callers
  * treat the way they already treat an empty title — as no rename at all.
  */
 export function hiveNameFromTitle(title: string, prefix?: string): string | undefined {
+  const trimmed = title.trim();
+
+  /*
+    Already in the register: hand it back untouched. See "Why it must be
+    idempotent" — this is the branch that stops a second pass from re-reading
+    the separators the first pass inserted.
+
+    A pinned call never takes it, because the pin still has to be applied.
+  */
+  if (
+    prefix === undefined &&
+    !/\s/.test(trimmed) &&
+    trimmed.includes('-') &&
+    isSendableSessionName(trimmed)
+  ) {
+    return trimmed;
+  }
+
   /*
     A pinned name already in front is removed before anything else, so that
     re-reading a name this function produced cannot prepend the prefix twice.
   */
   const rest =
-    prefix !== undefined && title.toLowerCase().startsWith(prefix.toLowerCase())
-      ? title.slice(prefix.length)
-      : title;
+    prefix !== undefined && trimmed.toLowerCase().startsWith(prefix.toLowerCase())
+      ? trimmed.slice(prefix.length)
+      : trimmed;
 
-  const found = TITLE_TICKET_KEY.exec(rest);
+  let found: string | undefined;
+  const words: string[] = [];
+
+  for (const raw of rest.split(/\s+/)) {
+    const token = raw.replace(TOKEN_EDGES, '');
+    if (token === '') continue;
+
+    const key = TITLE_TICKET_KEY.exec(token);
+    if (key !== null) {
+      // First key wins; later ones are dropped rather than folded into words.
+      found ??= `${key[1].toUpperCase()}-${key[2]}`;
+      continue;
+    }
+
+    for (const word of token.split(/[^A-Za-z0-9]+/)) {
+      if (word !== '') words.push(word.toLowerCase());
+    }
+  }
+
   /*
     A pinned prefix outranks any key the agent's title mentions. The pin is the
     user's own statement about which issue this session is for; the title is a
     guess made from the conversation, and it is routinely about a *different*
     ticket the session merely discussed.
   */
-  const lead =
-    prefix ?? (found === null ? undefined : `${found[1].toUpperCase()}-${found[2]}`);
-
-  const words = rest
-    .replace(TITLE_TICKET_KEY_ALL, ' ')
-    .split(/[^A-Za-z0-9]+/)
-    .filter((word) => word !== '')
-    .map((word) => word.toLowerCase())
-    .slice(0, NAME_WORD_MAX);
+  const lead = prefix ?? found;
+  const capped = words.slice(0, NAME_WORD_MAX);
 
   /**
-   * A title that is *only* a key is left exactly as it was found.
+   * A title that is *only* a key answers with the key, and nothing else.
    *
    * The key is hoisted so that it stands in front of a description; with no
-   * description there is nothing to hoist it in front of, and rewriting it would
-   * be pure vandalism — `sess-01` came back from the ledger as `SESS-01`, a row
-   * shouting its own id. Nothing structural separates a Hive id from a Jira key,
-   * so the rule cannot be "recognise ids"; it is "do not restyle a name that
-   * carries no words", which needs nothing remembered about either.
-   *
-   * A pinned session answers with its pin for the same reason: the pin is the
-   * whole of what is known.
+   * description there is nothing to hoist it in front of. Returning the raw
+   * title here instead — an earlier draft — let punctuation through, so
+   * `(hive-53)` became a name no command line would accept and every later
+   * restart silently dropped.
    */
-  if (words.length === 0) {
-    /*
-      `lead === undefined` is the difference between "a name made only of a key"
-      and "no name at all". Without that test a title of pure punctuation was
-      handed back verbatim, because it has no words either.
-    */
-    const bare = prefix ?? (lead === undefined ? undefined : title.trim());
-    return bare === undefined || bare === '' || bare.length > SESSION_NAME_MAX
-      ? undefined
-      : bare;
+  if (capped.length === 0) {
+    return lead === undefined || lead.length > SESSION_NAME_MAX ? undefined : lead;
   }
 
   /*
@@ -309,7 +340,7 @@ export function hiveNameFromTitle(title: string, prefix?: string): string | unde
     reason SESSION_NAME_DISPLAY_MAX gives: a name cut through the middle of a
     word is a worse label than a shorter one that still reads.
   */
-  const parts = lead === undefined ? words : [lead, ...words];
+  const parts = lead === undefined ? capped : [lead, ...capped];
   while (parts.length > 1 && parts.join('-').length > SESSION_NAME_MAX) parts.pop();
 
   const name = parts.join('-');

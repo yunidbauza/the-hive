@@ -380,6 +380,26 @@ describe('a pinned name outranks the agent', () => {
     expect(sessionAt(id).name).toBe('HIVE-73-fixing-regression');
   });
 
+  /**
+   * The ticket-card spawn, which is the path the feature is *for* (HIVE-108).
+   *
+   * It used to send the key as `--name`, which is exactly what suppresses
+   * Claude's titling — so the one kind of session most worth describing was the
+   * one guaranteed never to describe itself. The key is kept by pinning it
+   * instead, and the pin has to be set here: `setSessionTicket` is the
+   * mid-session path and never runs for a session opened from a card.
+   */
+  it('pins a ticket-card spawn, so its key survives the agent’s first title', () => {
+    const id = useHiveStore
+      .getState()
+      .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
+    expect(sessionAt(id).namePinned).toBe(true);
+
+    useHiveStore.getState().renameSession(id, 'back key interception');
+
+    expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
+  });
+
   it('refuses a name a live session already holds', () => {
     /**
      * Inferred names collide in a way ids never did — two sessions asked the

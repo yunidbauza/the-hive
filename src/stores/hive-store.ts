@@ -1079,10 +1079,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * A session started from a ticket card is called after its issue (HIVE-78).
      *
      * Resolved here rather than in the picker because collision-avoidance needs
-     * to see the whole fleet, and the store is what holds it. The name goes two
-     * places from here — onto the entity, and onto the command line as
-     * `--name` — so the row and the agent agree from the first frame instead of
-     * the row saying `HIVE-73` while the agent's prompt box says `sess-07`.
+     * to see the whole fleet, and the store is what holds it.
+     *
+     * **It no longer goes onto the command line** (HIVE-108). Sending it as
+     * `--name` made the row and the agent agree from the first frame, at the
+     * cost of every name after it: the flag suppresses Claude's own titling, so
+     * a ticket session stayed `HIVE-73` for its whole life and never said what
+     * it was *for*. The key is kept in front by pinning it instead, which is
+     * what turns `HIVE-73` into `HIVE-73-back-key-interception` once the agent
+     * has a topic — and pinning is now the *only* thing defending it, which is
+     * why it is set here rather than only by `setSessionTicket`.
      */
     const name = ticket
       ? ticketSessionName(ticket, get().entities)
@@ -1100,11 +1106,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        */
       ...(ticket ? { ticket } : {}),
       /**
-       * Named up front only when a ticket said what to call it. Spread for the
-       * same reason `ticket` is: an explicit `name: undefined` is a different
-       * object shape from an absent key, and these snapshots are compared.
+       * Named up front only when a ticket said what to call it, and **pinned**
+       * with it (HIVE-108). Spread for the same reason `ticket` is: an explicit
+       * `name: undefined` is a different object shape from an absent key, and
+       * these snapshots are compared.
+       *
+       * The pin used to be the mid-session path's alone, on the reasoning that a
+       * ticket-card spawn had a command line to put the name on and did not need
+       * one. It no longer has a command line, so without the pin the agent's
+       * first title would simply replace `HIVE-73` and the ticket would fall off
+       * the row that was opened from its card.
        */
-      ...(name === undefined ? {} : { name }),
+      ...(name === undefined ? {} : { name, namePinned: true as const }),
       /**
        * **No `branch` here, and that is the fix** (HIVE-78).
        *
@@ -1200,12 +1213,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ...(task === undefined ? {} : { task }),
         model: resolvedModel,
         effort: resolvedEffort,
-        /**
-         * Sent only when a ticket named it (HIVE-78). Omitted otherwise, so
-         * main falls back to the entity id and the command line is exactly the
-         * one HIVE-61 shipped.
-         */
-        ...(name === undefined ? {} : { name }),
+        /*
+          No `name` (HIVE-108). It used to be sent here whenever a ticket named
+          the row, which is precisely the case that most wants an inferred name
+          — and `--name` is what stops Claude producing one. The row keeps its
+          key by being pinned, not by telling the agent about it.
+        */
         /**
          * The app's own theme, so `claude` dresses its UI to match the terminal
          * it is drawing into.
@@ -1237,8 +1250,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           happens long after any spawn; one verb for both keeps a single answer
           to "how does main learn a session's ticket".
         */
+        /*
+          The name rides along with it (HIVE-108), which it did not have to
+          before: main used to learn this row's name from the `--name` on its
+          own command line, and there is no longer one. A note carrying a name
+          is what sets `namePinned` in the ledger, so without it the file would
+          take the agent's first title unpinned — and the next launch would
+          restore `back-key-interception` for a row the app is showing as
+          `HIVE-73-back-key-interception`.
+        */
         if (outcome.ok && ticket !== undefined) {
-          noteSessionTicket({ entityId: id, ticket });
+          noteSessionTicket({ entityId: id, ticket, ...(name === undefined ? {} : { name }) });
         }
         if (outcome.ok) return;
         set((state) => ({
@@ -2155,6 +2177,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * compound: `HIVE-73-back-key-interception` would become the prefix of the
        * next frame's name, and the row would grow a word a second. The ticket key
        * is the one part of the name that is fixed.
+       *
+       * That spends `ticketSessionName`'s `-2`, and deliberately. A second
+       * session on one ticket opens as `HIVE-73-2`, and once each has a topic
+       * they are `HIVE-73-<their own topics>` — already distinct, and more
+       * legible than a counter. The `taken` check below is the backstop for the
+       * case where they are not.
        *
        * A pin with no ticket behind it cannot name a prefix, so it keeps the
        * pre-HIVE-108 behaviour and refuses. Nothing produces that state today —

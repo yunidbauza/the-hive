@@ -512,6 +512,28 @@ export function createSessionLedger(
          * A patch that carries `namePinned` is the app repinning and is obeyed
          * verbatim — that is the note, and it is the only writer allowed to
          * replace one.
+         *
+         * ## What is deliberately *not* mirrored
+         *
+         * `renameSession` applies two further refusals that have no meaning
+         * here, and copying them would be worse than the divergence:
+         *
+         * - the **stale-title guard**, which exists to stop a `/clear`
+         *   successor inheriting the retired conversation's name. It is keyed on
+         *   a terminal and on which row is current, neither of which this file
+         *   models — records are per entity id, and a retired row keeps its own.
+         * - the **live-name uniqueness** check. "Live" is a property of this
+         *   run; the ledger is mostly history, where duplicate names are normal
+         *   and correct — two finished sessions may well have done the same
+         *   kind of work. Enforcing uniqueness across history would refuse names
+         *   that are not in conflict with anything.
+         *
+         * So two live sessions that converge on one title leave the store with a
+         * single named row and this file with two identically named records, and
+         * `hydrateSessions` restores both. That is a cosmetic duplicate in the
+         * ENDED list rather than a broken invariant: the "one name, one session"
+         * rule is a rule about *renaming a live row*, which is where it is
+         * enforced, and ids — not names — identify a session everywhere.
          */
         /*
           Narrowed to a `string | undefined` rather than tested with a boolean

@@ -64,10 +64,32 @@ describe('hiveNameFromTitle', () => {
       'back key interception hive-53',
       'fix the login bug',
       'one two three four five six seven',
+      /*
+        The four below are regressions, not hypotheticals. With the key matched
+        by `\b…\b` rather than against a whole word, the hyphen this function
+        *inserts* was read back as a key boundary on the second pass:
+
+          'Fix bug 123'      -> 'fix-bug-123'      -> 'BUG-123-fix'
+          'React 18 upgrade' -> 'react-18-upgrade' -> 'REACT-18-upgrade'
+
+        The path is real: a restart re-asserts the stored name as `--name`,
+        Claude paints it as its title, and it returns through `renameSession` —
+        so a restarted session silently renamed and reordered itself.
+      */
+      'Fix bug 123',
+      'React 18 upgrade',
+      'chapter 3 review',
+      'typescript-5 upgrade',
     ])('is a fixed point on its own output: %s', (title) => {
       const once = hiveNameFromTitle(title);
       expect(once).toBeDefined();
       expect(hiveNameFromTitle(once as string)).toBe(once);
+    });
+
+    it('does not read its own separator as a ticket key', () => {
+      // The specific shape of the regression: a bare number after a word.
+      expect(hiveNameFromTitle('Fix bug 123')).toBe('fix-bug-123');
+      expect(hiveNameFromTitle('fix-bug-123')).toBe('fix-bug-123');
     });
 
     it('is a fixed point under a pin too', () => {
@@ -95,11 +117,13 @@ describe('hiveNameFromTitle', () => {
       );
     });
 
-    it('keeps a disambiguating suffix, because the pin is a whole prefix', () => {
+    it('uses the prefix verbatim, whatever shape it is', () => {
       /*
-        `ticketSessionName` spells a second session on one ticket `HIVE-73-2`.
-        Parsing that back to a key would drop the `-2` and re-collide the two
-        rows it exists to separate.
+        The function does not parse the pin, so a caller may pin `HIVE-73-2` and
+        get exactly that in front. The store does not pass that shape — it passes
+        `ticket`, and `renameSession` says why — but the contract here is
+        "verbatim", and pinning that on a test is what stops a future caller
+        being surprised.
       */
       expect(hiveNameFromTitle('Mutex explanation', 'HIVE-73-2')).toBe(
         'HIVE-73-2-mutex-explanation',
@@ -112,15 +136,36 @@ describe('hiveNameFromTitle', () => {
   });
 
   describe('what it refuses to restyle', () => {
-    it('leaves a title that is only a key exactly as it found it', () => {
+    it('leaves a name already in the register exactly as it found it', () => {
       /**
-       * The key is hoisted so it can stand in front of a description; with no
-       * description there is nothing to hoist it in front of. Without this a
-       * ledger entry for `sess-01` came back as `SESS-01` — a row shouting its
-       * own id.
+       * A hyphenated single token that a command line would accept is one of
+       * ours, or a slug a user typed. Re-deriving it is what broke idempotence:
+       * a second pass cannot tell the hyphens this function inserted from the
+       * ones that were always there. Without it a ledger entry for `sess-01`
+       * also came back as `SESS-01` — a row shouting its own id.
        */
       expect(hiveNameFromTitle('sess-01')).toBe('sess-01');
       expect(hiveNameFromTitle('HIVE-73')).toBe('HIVE-73');
+      expect(hiveNameFromTitle('troubleshooting-crawling')).toBe(
+        'troubleshooting-crawling',
+      );
+    });
+
+    it('still case-folds a bare word, which is idempotent on its own', () => {
+      // Not a passthrough: the passthrough needs a hyphen, so a one-word title
+      // is not left shouting a capital among a column of lower-case names.
+      expect(hiveNameFromTitle('Debugging')).toBe('debugging');
+      expect(hiveNameFromTitle('debugging')).toBe('debugging');
+    });
+
+    it('reads a key through surrounding punctuation, and answers a real name', () => {
+      /*
+        The earlier draft returned the raw title whenever no words survived, so
+        `(hive-53)` became a name with parentheses in it — not in the rail's
+        register, and not sendable, so a later restart silently dropped it.
+      */
+      expect(hiveNameFromTitle('(hive-53)')).toBe('HIVE-53');
+      expect(hiveNameFromTitle('[HIVE-53]')).toBe('HIVE-53');
     });
 
     it('answers undefined for a title with nothing nameable in it', () => {

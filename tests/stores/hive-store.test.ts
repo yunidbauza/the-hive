@@ -217,10 +217,17 @@ describe('hive-store', () => {
       // Nothing yet: the spawn has been asked for but has not answered.
       expect(noteSessionTicket).not.toHaveBeenCalled();
 
+      /*
+        The name rides along since HIVE-108. Main used to learn it from the
+        `--name` on this session's own command line, and there is no longer one —
+        a note carrying a name is what pins it in the ledger, so without it the
+        next launch would restore the agent's title with the key stripped off.
+      */
       await vi.waitFor(() => {
         expect(noteSessionTicket).toHaveBeenCalledWith({
           entityId: id,
           ticket: 'HIVE-73',
+          name: 'HIVE-73',
         });
       });
     });

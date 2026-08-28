@@ -64,10 +64,16 @@ export interface RestartRequest {
    * `ipc/index.ts` forwards `name` on restart on the stated grounds that "a
    * restarted `HIVE-73` that came back as `sess-07` would rename a row the user
    * has been watching" — but nothing was *sending* one, so `spawn()` fell back
-   * to the entity id and did precisely that. A ticket-spawned session is not
-   * `namePinned` (the pin exists for the mid-session rename, where there is no
-   * command line left to put a name on), so the agent's title stream would then
-   * push `sess-07` back into the store and the row really would lose its key.
+   * to the entity id and did precisely that.
+   *
+   * Since HIVE-108 a spawn sends no name at all and every ticket-spawned session
+   * *is* `namePinned`, so the key no longer depends on this. A restart is still
+   * the one place a name is worth re-asserting: it discards the conversation, so
+   * the agent would otherwise title the fresh one from scratch and a row the
+   * user has been watching would change its name for reasons they did nothing to
+   * cause. The name being re-asserted is now an inferred one — which is exactly
+   * why `hiveNameFromTitle` has to be a fixed point, since Claude paints this
+   * value straight back out as its title.
    *
    * Optional, because most sessions have no name of their own and omitting it
    * reproduces the pre-HIVE-78 command line exactly.
