@@ -10,6 +10,7 @@ import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
   FRAME_SCAN,
   isBareBack,
+  LINE_KILL_SEQUENCE,
   LINE_MOTION_SEQUENCE,
   NEWLINE_SEQUENCE,
   TERMINAL_CHORD_EVENT,
@@ -476,6 +477,16 @@ export function TerminalSurface({
           case 'line-start':
           case 'line-end':
             transportRef.current.write(LINE_MOTION_SEQUENCE[action]);
+            event.preventDefault();
+            return false;
+          /**
+           * Written for the same reason as the newline, from the same failure:
+           * xterm encodes *something* for `Cmd+Delete` — a bare `DEL` — and the
+           * something is wrong. Declining would rub out one character where the
+           * user asked for the line. See {@link LINE_KILL_SEQUENCE}.
+           */
+          case 'line-kill':
+            transportRef.current.write(LINE_KILL_SEQUENCE);
             event.preventDefault();
             return false;
           /**

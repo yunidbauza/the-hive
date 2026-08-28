@@ -1160,6 +1160,38 @@ describe('TerminalSurface', () => {
       }
     });
 
+    it('writes Ctrl+U to the pty for Cmd+Delete on macOS', () => {
+      /**
+       * The half a keymap test cannot cover, and the sharper version of the
+       * `Cmd`+arrow defect above. xterm's `case 8` *does* encode `Cmd+Delete` —
+       * as a bare `DEL`, because it never reads `metaKey` — so declining the
+       * key would rub out one character where the user asked for the line.
+       * Both halves are therefore asserted: the kill reaches the transport,
+       * **and** the surface returns `false` so the `DEL` is never also sent.
+       *
+       * A bare `Delete` is the control: it is the one that *should* rub out one
+       * character, and it must still reach xterm to do it.
+       */
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        userAgentData: { platform: 'macOS' },
+      });
+
+      try {
+        const { transport } = renderInteractive();
+
+        expect(press({ key: 'Backspace', metaKey: true })).toBe(false);
+        expect(transport.write).toHaveBeenCalledWith('\x15');
+
+        vi.mocked(transport.write).mockClear();
+
+        expect(press({ key: 'Backspace' })).toBe(true);
+        expect(transport.write).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('writes ESC+CR to the pty for Shift+Enter, and lets a bare Enter through', () => {
       /**
        * The half a keymap test cannot cover, and the reason the defect existed.

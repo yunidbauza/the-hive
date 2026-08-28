@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  LINE_KILL_SEQUENCE,
   LINE_MOTION_SEQUENCE,
   NEWLINE_SEQUENCE,
   backChordLabel,
@@ -11,6 +12,7 @@ import {
   isEmptyClaudePrompt,
   isNewlineChord,
   lineMotion,
+  isLineKillChord,
   type CursorContext,
   type KeyEventLike,
 } from '@lib/terminal/keymap';
@@ -352,6 +354,71 @@ describe('decideTerminalKey — Cmd+arrow line motions on macOS', () => {
         cursor: CLAUDE_EMPTY,
       }),
     ).toBe('line-start');
+  });
+});
+
+/**
+ * `Cmd+Delete` on macOS: delete to the start of the line.
+ *
+ * The same defect as `Cmd+→` and a different failure. xterm's `case 8` reads
+ * `ctrlKey` and `altKey` and never `metaKey`, so `Cmd+Delete` arrived at the
+ * child as a bare `DEL` — one character rubbed out where the user asked for a
+ * line. Silently doing nothing is at least visible; this one did the wrong
+ * thing quietly.
+ */
+describe('decideTerminalKey — Cmd+Delete kills the line on macOS', () => {
+  it('translates Cmd+Delete to a line kill', () => {
+    expect(decideTerminalKey(key({ key: 'Backspace', metaKey: true }), MAC)).toBe(
+      'line-kill',
+    );
+  });
+
+  it('carries the byte the child actually parses as kill-to-line-start', () => {
+    /**
+     * `Ctrl+U`, verified against a real `claude`: sending `\x15` at a typed
+     * prompt clears it and offers *"Ctrl+Y to paste deleted text"*, so the
+     * child treats it as a kill rather than a control character it ignores.
+     * It is also `unix-line-discard` in readline and `kill-whole-line` in ZLE,
+     * so a shell surviving `/exit` answers the chord too.
+     *
+     * Asserted so a tidy-up to `\x0b` (`Ctrl+K`, which kills *forward*) or to
+     * a run of `DEL`s fails loudly.
+     */
+    expect(LINE_KILL_SEQUENCE).toBe('\x15');
+  });
+
+  it('leaves Alt+Delete to the pty as the word kill it already was', () => {
+    // The key that worked, and the reason the bug read as arbitrary: deleting a
+    // word was fine while deleting a line was not.
+    expect(decideTerminalKey(key({ key: 'Backspace', altKey: true }), MAC)).toBe(
+      'to-pty',
+    );
+    expect(
+      decideTerminalKey(key({ key: 'Backspace', metaKey: true, altKey: true }), MAC),
+    ).toBe('to-pty');
+  });
+
+  it('leaves a bare Delete and the modified forms alone', () => {
+    expect(decideTerminalKey(key({ key: 'Backspace' }), MAC)).toBe('to-pty');
+    expect(
+      decideTerminalKey(key({ key: 'Backspace', metaKey: true, shiftKey: true }), MAC),
+    ).toBe('to-pty');
+    expect(
+      decideTerminalKey(key({ key: 'Backspace', metaKey: true, ctrlKey: true }), MAC),
+    ).toBe('to-pty');
+    // Forward delete (fn+Delete) is a different key with a different meaning.
+    expect(decideTerminalKey(key({ key: 'Delete', metaKey: true }), MAC)).toBe(
+      'to-pty',
+    );
+  });
+
+  it('does not fire off macOS, where Cmd is not the editing modifier', () => {
+    expect(isLineKillChord(key({ key: 'Backspace', metaKey: true }), false)).toBe(
+      false,
+    );
+    expect(decideTerminalKey(key({ key: 'Backspace', metaKey: true }), PC)).toBe(
+      'to-pty',
+    );
   });
 });
 

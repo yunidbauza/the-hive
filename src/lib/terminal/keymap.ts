@@ -25,6 +25,8 @@ export type TerminalKeyAction =
   | 'line-start'
   /** Send `End` to the pty. See {@link LINE_MOTION_SEQUENCE}. */
   | 'line-end'
+  /** Kill back to the start of the line. See {@link LINE_KILL_SEQUENCE}. */
+  | 'line-kill'
   /** Insert a line break without submitting. See {@link NEWLINE_SEQUENCE}. */
   | 'newline'
   /** An app navigation chord: not xterm's, not the pty's. Let it bubble. */
@@ -82,6 +84,27 @@ export const LINE_MOTION_SEQUENCE: Record<'line-start' | 'line-end', string> = {
  * as {@link LINE_MOTION_SEQUENCE}: stdin is the transport's job.
  */
 export const NEWLINE_SEQUENCE = '\x1b\r';
+
+/**
+ * The byte that means "delete back to the start of the line" on a pty's stdin.
+ *
+ * `Ctrl+U`. Not an invention either: it is `unix-line-discard` in readline and
+ * `kill-whole-line` in zsh's ZLE, and Claude Code's own input answers it —
+ * sending it at a typed prompt clears the prompt and offers *"Ctrl+Y to paste
+ * deleted text"*, so the child treats it as a kill with an undo rather than a
+ * control character it drops. The chord is renamed, not reinterpreted.
+ *
+ * Why a translation is needed is the defect. xterm's `case 8` reads `ctrlKey`
+ * and `altKey` and never `metaKey`, so `Cmd+Delete` reached the child as a bare
+ * `DEL` — one character rubbed out where the user asked for the line. That is
+ * worse than the `Cmd+→` failure {@link LINE_MOTION_SEQUENCE} exists for: a
+ * swallowed key is at least visibly nothing, while this one quietly did
+ * something else.
+ *
+ * Sent through the transport rather than `terminal.input()` for the same reason
+ * as the other two: stdin is the transport's job.
+ */
+export const LINE_KILL_SEQUENCE = '\x15';
 
 /** The fields of a `KeyboardEvent` this decision reads. */
 export interface KeyEventLike {
@@ -161,6 +184,35 @@ export function lineMotion(
   if (event.key === 'ArrowLeft') return 'line-start';
   if (event.key === 'ArrowRight') return 'line-end';
   return null;
+}
+
+/**
+ * `Cmd+Delete` on macOS: delete to the beginning of the line.
+ *
+ * The sibling of {@link lineMotion}, and it exists for the same reason with a
+ * nastier symptom — see {@link LINE_KILL_SEQUENCE}. Deleting a *word* already
+ * worked, because `Alt+Delete` is a sequence xterm does encode, which is what
+ * made the missing line delete read as arbitrary rather than as a gap.
+ *
+ * `Backspace` only. Forward delete (`fn`+`Delete`, `key: 'Delete'`) means
+ * delete to the *end* of the line on macOS; claiming it here would send a
+ * backward kill for a forward chord, which is the bug this fixes, mirrored.
+ *
+ * Every other modifier is excluded. `Cmd+Alt+Delete` never reaches this — the
+ * AltGr guard in {@link decideTerminalKey} returns first — and the explicit
+ * `altKey` test keeps that true if the predicate is ever called directly.
+ *
+ * macOS only. Elsewhere `Ctrl+U` is already on the keyboard and `Cmd` is not.
+ */
+export function isLineKillChord(event: KeyEventLike, isMac: boolean): boolean {
+  return (
+    isMac &&
+    event.key === 'Backspace' &&
+    event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
 }
 
 /**
@@ -674,6 +726,13 @@ export function decideTerminalKey(
      */
     const motion = lineMotion(event, isMac);
     if (motion) return motion;
+
+    /**
+     * The line *kill*, next to the line motions it belongs with. Cannot collide
+     * with either the motions or the clipboard chords — no other rule here
+     * looks at `Backspace`. See {@link isLineKillChord}.
+     */
+    if (isLineKillChord(event, isMac)) return 'line-kill';
 
     /**
      * Copy is `Cmd+C` here, which leaves `Ctrl+C` unambiguously the terminal's.
