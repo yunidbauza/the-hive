@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
+  HOOK_MAX_BODY_BYTES,
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '../../../../electron/shared/hook-contract';
@@ -333,13 +334,24 @@ describe('hook receiver', () => {
       expect(response.status).toBe(200);
 
       const read = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      // Every ledger reply carries a body, unlike the four routes that predate
+      // HIVE-111 — a caller reading it as JSON is relying on this header.
+      expect(read.headers.get('content-type')).toBe('application/json');
       const snapshot = (await read.json()) as LedgerSnapshot;
 
       expect(snapshot.entries).toHaveLength(1);
       expect(snapshot.entries[0].from).toBe('sess-a');
     });
 
-    it('answers 413 with a reason for a body over the ledger cap', async () => {
+    /**
+     * This is the ledger's own body cap (`LEDGER_BODY_MAX`, 16 KB), enforced by
+     * the write layer `onLedgerPost` calls into — not the transport cap the
+     * route table buffers against. The body posted here (16385 bytes) is well
+     * under `HOOK_MAX_BODY_BYTES`, so `truncated` is false and this exercises
+     * the pass-through of `LedgerResult`'s refusal, not `handleLedgerPost`'s
+     * own `truncated` branch. See the next test for that.
+     */
+    it('passes a 413 from the write layer through, reason and all', async () => {
       const response = await post(
         LEDGER_POST_PATH,
         { kind: 'post', body: 'x'.repeat(LEDGER_BODY_MAX + 1) },
@@ -349,6 +361,25 @@ describe('hook receiver', () => {
       expect(response.status).toBe(413);
       expect((await response.json()) as { reason: string }).toMatchObject({
         reason: expect.stringContaining(String(LEDGER_BODY_MAX)),
+      });
+    });
+
+    /**
+     * `handleLedgerPost`'s own branch: a body past the *transport* cap
+     * (`HOOK_MAX_BODY_BYTES`) is refused rather than drained, unlike every
+     * other route on this receiver — see the comment at its `truncated` check.
+     * This never reaches `JSON.parse` or the write layer at all.
+     */
+    it('refuses, rather than drains, a body over the transport cap', async () => {
+      const response = await post(
+        LEDGER_POST_PATH,
+        { kind: 'post', body: 'x'.repeat(HOOK_MAX_BODY_BYTES + 1) },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+
+      expect(response.status).toBe(413);
+      expect((await response.json()) as { reason: string }).toMatchObject({
+        reason: expect.stringContaining(String(HOOK_MAX_BODY_BYTES)),
       });
     });
 
@@ -392,6 +423,57 @@ describe('hook receiver', () => {
       const snapshot = (await read.json()) as LedgerSnapshot;
 
       expect(snapshot.entries.map((entry) => entry.body)).toEqual(['everyone']);
+    });
+
+    /**
+     * The write path is header-locked — `from` is always the caller, never the
+     * body. The read path must be too: naming another party in the query's
+     * `to` field must never widen what a caller is shown beyond what it is
+     * already entitled to see. `handleLedgerRead` enforces this itself, after
+     * `onLedgerRead` returns, precisely so it holds no matter how the next
+     * task wires the ledger in.
+     */
+    it('does not let a caller widen what it sees by naming another party in `to`', async () => {
+      await post(
+        LEDGER_POST_PATH,
+        { to: 'sess-b', kind: 'post', body: 'for b only' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+
+      const asA = await post(
+        LEDGER_READ_PATH,
+        { to: 'sess-a' },
+        { [HOOK_HEADER_SESSION]: 'sess-c' },
+      );
+      const asB = await post(
+        LEDGER_READ_PATH,
+        { to: 'sess-b' },
+        { [HOOK_HEADER_SESSION]: 'sess-c' },
+      );
+
+      expect(((await asA.json()) as LedgerSnapshot).entries).toEqual([]);
+      expect(((await asB.json()) as LedgerSnapshot).entries).toEqual([]);
+
+      // The addressee itself still sees it — the filter narrows, not blocks.
+      const asBItself = await post(
+        LEDGER_READ_PATH,
+        {},
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(((await asBItself.json()) as LedgerSnapshot).entries).toHaveLength(1);
+    });
+
+    it('answers 413, naming the transport cap, for an oversized read query', async () => {
+      const response = await post(
+        LEDGER_READ_PATH,
+        { since: 'x'.repeat(HOOK_MAX_BODY_BYTES + 1) },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+
+      expect(response.status).toBe(413);
+      expect((await response.json()) as { reason: string }).toMatchObject({
+        reason: expect.stringContaining(String(HOOK_MAX_BODY_BYTES)),
+      });
     });
   });
 

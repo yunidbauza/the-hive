@@ -295,6 +295,25 @@ interface Route {
 const describeCause = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
+/**
+ * Whether `caller` may see this ledger entry (HIVE-111 review finding 3).
+ *
+ * Applied to the *result* of `onLedgerRead`, independent of whatever the query
+ * asked for — `to` stays usable as an ordinary filter a caller can narrow its
+ * own view with, but naming another party in it must never widen what comes
+ * back. `entry.to === undefined` is a broadcast; `entry.from === caller`
+ * covers the asker reading its own thread, whose entries are addressed
+ * `to: overmind` rather than to itself, so forcing `to === caller` upstream
+ * would hide a party's own questions from it.
+ *
+ * Lives here, in the receiver, rather than in whatever implements
+ * `onLedgerRead` — the caller's identity is known at this layer regardless of
+ * how the ledger is wired in, so the guarantee holds no matter what the next
+ * task does on the other side of that callback.
+ */
+const visibleTo = (caller: string, entry: { from: string; to?: string }): boolean =>
+  entry.to === caller || entry.to === undefined || entry.from === caller;
+
 export function createReceiver(options: ReceiverOptions): Receiver {
   const {
     onEvent,
@@ -472,9 +491,17 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function handleLedgerRead(
     headers: Record<string, string | string[] | undefined>,
     body: string,
+    truncated: boolean,
   ): Reply {
     const refusal = reject(headers);
     if (refusal !== null) return refusal;
+
+    // Same discipline as the write route's own check, and the same reason:
+    // the caller reading this is a model, and "413, over the transport cap"
+    // is something it can act on. "400, unexpected end of JSON input" is not.
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${HOOK_MAX_BODY_BYTES} bytes` } };
+    }
 
     const caller = headers[HOOK_HEADER_SESSION] as string;
     let query: LedgerReadQuery;
@@ -484,7 +511,16 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return { status: 400, json: { reason: describeCause(cause) } };
     }
 
-    return { status: 200, json: onLedgerRead(caller, query) };
+    const snapshot = onLedgerRead(caller, query);
+    const visible: LedgerSnapshot = {
+      // Identity-locked here rather than trusted from `onLedgerRead`, so a
+      // query's own `to` can never widen what a caller is shown — see
+      // `visibleTo`.
+      entries: snapshot.entries.filter((entry) => visibleTo(caller, entry)),
+      openAsks: snapshot.openAsks.filter((entry) => visibleTo(caller, entry)),
+      claims: snapshot.claims,
+    };
+    return { status: 200, json: visible };
   }
 
   /**

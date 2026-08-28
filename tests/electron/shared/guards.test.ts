@@ -913,6 +913,20 @@ describe('parseLedgerPostBody', () => {
     expect(() => parseLedgerPostBody({ kind: 'post' })).toThrow();
     expect(() => parseLedgerPostBody({ kind: 'nonsense', body: 'hi' })).toThrow();
   });
+
+  /**
+   * `meta` is written to disk verbatim by `ledger/index.ts` — a `__proto__`
+   * own key surviving this guard would survive to persistence, not just to
+   * one process's `Object.prototype`. `JSON.parse` is what produces the own
+   * property, the same trick `parseSessionPrRequest`'s equivalent test uses.
+   */
+  it('refuses a forbidden key in meta rather than persisting it', () => {
+    expect(() =>
+      parseLedgerPostBody(
+        JSON.parse('{"kind":"post","body":"hi","meta":{"__proto__":{"x":1}}}'),
+      ),
+    ).toThrow();
+  });
 });
 
 describe('parseLedgerAnswerRequest', () => {

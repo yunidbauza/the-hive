@@ -1585,9 +1585,21 @@ export function parseDiagnoseEnvRequest(input: unknown): DiagnoseEnvRequest {
  * would be a party impersonating another with a one-word edit.
  */
 
+/**
+ * Same {@link FORBIDDEN_KEYS} discipline `assertShape` applies, for the ledger
+ * parsers that cannot use `assertShape` itself: `meta` is an arbitrary
+ * caller-supplied map, not a fixed shape, and it is written to disk verbatim
+ * by `ledger/index.ts` — a `__proto__` own key surviving this check would
+ * survive to persistence, not just to one process's `Object.prototype`.
+ */
 const asRecord = (input: unknown, label: string): Record<string, unknown> => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new TypeError(`${label} must be an object`);
+  }
+  for (const key of Object.keys(input)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      throw new TypeError(`${label}: forbidden key "${key}"`);
+    }
   }
   return input as Record<string, unknown>;
 };
