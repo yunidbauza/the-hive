@@ -40,7 +40,7 @@ import type { SkillsRuntime } from '../skills';
 import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createBranchReader, resolveGit, type BranchReaderOptions } from './git';
-import type { SessionLedger } from './ledger';
+import type { SessionHistory } from './history';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
 
@@ -107,15 +107,15 @@ export interface SessionsOptions {
    * Optional in the same spirit as `hooks`: absent is a supported state rather
    * than a degraded one. The browser build has no main process at all, and a
    * unit test that does not care about history passes nothing — every call site
-   * below is `ledger?.record(…)`, so "no ledger" costs exactly the history and
-   * nothing else.
+   * below is `history?.record(…)`, so passing nothing costs exactly that
+   * tracking and nothing else.
    *
    * Injected rather than constructed in here for the reason `newSessionUuid`
    * and `branchReader` are: the real one writes a file in the user's
    * `userData`, and a unit test that did so would leave state behind and answer
    * differently on the second run.
    */
-  ledger?: SessionLedger;
+  history?: SessionHistory;
 }
 
 export interface OpenRequest {
@@ -158,9 +158,9 @@ export interface OpenRequest {
   /**
    * Continue the conversation a previous run left under this id (HIVE-88).
    *
-   * Honoured only when the ledger can name that conversation —
-   * `SessionLedger.resumable` — and ignored otherwise, so a restored row whose
-   * record predates uuids, or a build with no ledger at all, gets the ordinary
+   * Honoured only when the history can name that conversation —
+   * `SessionHistory.resumable` — and ignored otherwise, so a restored row whose
+   * record predates uuids, or a build with no history at all, gets the ordinary
    * spawn. Never set on `restart`: a restart is a new process for a session
    * this run already owns, and its record is kept by `begin` regardless.
    */
@@ -274,7 +274,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     skills,
     newSessionUuid = randomUUID,
     branchReader,
-    ledger,
+    history,
   } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
@@ -474,7 +474,7 @@ export function createSessions(options: SessionsOptions): Sessions {
    * wrong file.
    *
    * Bounded by the number of sessions opened in one run, which is the same
-   * bound the ledger already carries, and each entry is one short string.
+   * bound the history already carries, and each entry is one short string.
    */
   const lastCwd = new Map<string, string>();
 
@@ -682,12 +682,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        *
        * `/clear` starts a new one under a new id, and the only hook that
        * carries that id — `SessionStart` — never reaches the receiver (see
-       * `hook-contract.ts`). So the ledger cannot learn it, and keeping the
+       * `hook-contract.ts`). So the history cannot learn it, and keeping the
        * old one would let a later `--resume` reopen the conversation the user
        * deliberately ended. Dropped, so a restored row for this terminal opens
        * as a fresh session instead.
        */
-      ledger?.record(entityId, { sessionUuid: undefined });
+      history?.record(entityId, { sessionUuid: undefined });
       publishCleared(entityId);
     },
     /**
@@ -772,7 +772,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     toolName?: string,
   ): void {
     /**
-     * The ledger's `status` is documented as the *last known* one, and until
+     * The history's `status` is documented as the *last known* one, and until
      * HIVE-88 it was the first: `begin` wrote `working` and nothing touched it
      * again before `settleExit`. That was enough for a fresh launch, which
      * rewrites every live status to `closed` anyway. It is not enough for a
@@ -783,7 +783,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      * makes it sortable, and retention sorts on `endedAt`. `done` never reaches
      * this function at all — a declared finish leaves on its own channel.
      */
-    if (status !== 'terminated') ledger?.record(entityId, { status });
+    if (status !== 'terminated') history?.record(entityId, { status });
 
     send(CH.sessionStatus, {
       entityId,
@@ -837,14 +837,14 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   function publishFinished(entityId: string): void {
     /*
-      Asked rather than assumed. `ledger.resumable` is the only thing that knows
+      Asked rather than assumed. `history.resumable` is the only thing that knows
       whether a uuid still names this terminal's conversation — a `/clear`
       withdraws it, and nothing can recover the successor's — so a finish after
       a clear is honestly not resumable even though every other finish is.
     */
     send(CH.sessionFinished, {
       entityId,
-      resumable: ledger?.resumable(entityId) !== undefined,
+      resumable: history?.resumable(entityId) !== undefined,
     } satisfies SessionFinishedEvent);
   }
 
@@ -1033,10 +1033,10 @@ export function createSessions(options: SessionsOptions): Sessions {
       HIVE-87. The same fact the renderer is about to be told, kept where it
       survives a quit. `branch` is nullable here and the record's is optional,
       so a `null` omits the key rather than storing "known to be nothing" — the
-      store renders an em dash for both, and the ledger should not invent a
+      store renders an em dash for both, and the history should not invent a
       distinction the app does not draw.
     */
-    ledger?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
+    history?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
     send(CH.sessionBranch, { entityId, branch, cwd } satisfies SessionBranchEvent);
   }
 
@@ -1096,7 +1096,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (name.length > SESSION_NAME_DISPLAY_MAX) continue;
       // HIVE-87. A restored row should read as whatever the agent last called
       // itself, not as the `sess-07` it was born as.
-      ledger?.record(entityId, { name });
+      history?.record(entityId, { name });
       send(CH.sessionName, { entityId, name } satisfies SessionNameEvent);
     }
   }
@@ -1152,12 +1152,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        *
        * **Before `activity.exited`, and that ordering is load-bearing**
        * (HIVE-93). `exited()` publishes synchronously, so for a declared finish
-       * it reaches `publishFinished` — which asks the ledger whether this
+       * it reaches `publishFinished` — which asks the history whether this
        * conversation can be resumed — inside this very statement. Recorded
        * second, that question arrived at a record still claiming to be live and
        * carrying no `endedAt`, so `resumable` answered "no" for **every** `/done`
        * and the Resume control never appeared on the rows the feature exists
-       * for. The ledger has to know the session is over before anything asks it
+       * for. The history has to know the session is over before anything asks it
        * what that means.
        */
       /**
@@ -1170,7 +1170,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        * after `/done`, and a kill are indistinguishable by the time they get
        * here, so the only honest input is whether a declaration was on file.
        */
-      ledger?.record(
+      history?.record(
         entityId,
         declaredDone(entityId)
           ? { status: 'done', endedBy: 'finished', endedAt: Date.now() }
@@ -1427,22 +1427,22 @@ export function createSessions(options: SessionsOptions): Sessions {
     /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
      *
-     * It has to reach two places now — the command line, and the ledger — and
+     * It has to reach two places now — the command line, and the history — and
      * calling `newSessionUuid()` twice would put a different uuid in each. The
-     * ledger's copy would then name a transcript that does not exist, which is
+     * history's copy would then name a transcript that does not exist, which is
      * precisely the thing recording it is meant to make possible.
      */
     /**
      * A resumed conversation keeps the uuid it already has (HIVE-88): that is
      * the transcript `--resume` opens, and minting a new one here would name
-     * a session that was never started. `undefined` from the ledger means
-     * there is nothing to pick up — no ledger, no record, no uuid, or an id
+     * a session that was never started. `undefined` from the history means
+     * there is nothing to pick up — no history, no record, no uuid, or an id
      * this run began — and the request degrades to the plain spawn it would
      * otherwise have been. The renderer asked to resume; main decides whether
      * it can.
      */
     const resumeUuid =
-      request.resume === true ? ledger?.resumable(request.entityId) : undefined;
+      request.resume === true ? history?.resumable(request.entityId) : undefined;
     const resume = resumeUuid !== undefined;
     const sessionUuid = resumeUuid ?? newSessionUuid();
 
@@ -1455,7 +1455,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      * retroactively to a session that has already started, so the only moment
      * it can be captured is this one.
      */
-    ledger?.begin(
+    history?.begin(
       request.entityId,
       {
         project: request.projectId,
@@ -1578,7 +1578,7 @@ export function createSessions(options: SessionsOptions): Sessions {
          */
         /*
           Not on a resume (HIVE-88): the conversation being picked up has
-          already heard its opening instruction, and a ledger record carries
+          already heard its opening instruction, and a history record carries
           the task precisely so the row can display it — not so it can be
           said twice.
         */

@@ -217,9 +217,9 @@ const COL = {
     generic `monospace`.
 
     That a longest value *exists* is the formatter's doing, not this column's.
-    Plain day-counting has no ceiling — a ledger row from last spring reads
-    `412 days ago` — so the vocabulary stops at weeks and then months precisely
-    so that a width can be chosen at all.
+    Plain day-counting has no ceiling — a session-history row from last spring
+    reads `412 days ago` — so the vocabulary stops at weeks and then months
+    precisely so that a width can be chosen at all.
   */
   lastUsed: 'w-[80px] shrink-0 whitespace-nowrap',
   pr: 'w-[34px] shrink-0',

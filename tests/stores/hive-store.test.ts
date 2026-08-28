@@ -223,8 +223,9 @@ describe('hive-store', () => {
       /*
         The name rides along since HIVE-108. Main used to learn it from the
         `--name` on this session's own command line, and there is no longer one —
-        a note carrying a name is what pins it in the ledger, so without it the
-        next launch would restore the agent's title with the key stripped off.
+        a note carrying a name is what pins it in the session history, so
+        without it the next launch would restore the agent's title with the
+        key stripped off.
       */
       await vi.waitFor(() => {
         expect(noteSessionTicket).toHaveBeenCalledWith({
@@ -1704,7 +1705,7 @@ describe('hive-store', () => {
   });
 
   /**
-   * Restoring the fleet from the ledger (HIVE-87).
+   * Restoring the fleet from the session history (HIVE-87).
    *
    * The first time this store receives data at boot, which `emptySeeds()`
    * argues against at length — so most of these are about the restored rows
@@ -1790,8 +1791,8 @@ describe('hive-store', () => {
 
     it('never clobbers a live row', () => {
       // A restart reuses entity ids, so this collision is the ordinary case
-      // rather than a corner: the ledger holds `sess-01` from last time and
-      // this run has just spawned one.
+      // rather than a corner: the session history holds `sess-01` from last
+      // time and this run has just spawned one.
       useHiveStore.getState().spawnSession('the-hive');
       const live = useHiveStore.getState().order.at(-1)!;
 
@@ -1894,7 +1895,7 @@ describe('hive-store', () => {
     });
 
     it('drops a model or effort the closed lists do not contain', () => {
-      // `ledger.ts` casts these on the way in and points here for validation.
+      // `history.ts` casts these on the way in and points here for validation.
       // A hand-edited file must not put an arbitrary string into a union.
       useHiveStore.getState().hydrateSessions([
         record({
@@ -1924,8 +1925,8 @@ describe('hive-store', () => {
     it('seeds the counter from an id it skipped as a collision', () => {
       /**
        * The narrow race the counter has to survive: a spawn lands between boot
-       * and the unawaited hydrate, taking `sess-01`. The ledger's own `sess-01`
-       * is then skipped — and if the counter never heard of it, the next spawn
+       * and the unawaited hydrate, taking `sess-01`. The session history's
+       * own `sess-01` is then skipped — and if the counter never heard of it, the next spawn
        * takes `sess-02`, the id of another record still waiting to be restored.
        */
       useHiveStore.getState().reset();
@@ -1946,8 +1947,8 @@ describe('hive-store', () => {
       /**
        * The renderer is not always the first of its run (HIVE-88). Close the
        * window on macOS and reopen it from the dock, reload it, crash it: a
-       * fresh store hydrates in front of the same running ptys, and the ledger
-       * lists them. Main marks those `live`, and a live row is this run's fleet
+       * fresh store hydrates in front of the same running ptys, and the
+       * session history lists them. Main marks those `live`, and a live row is this run's fleet
        * — not restored, not closed, and reading whatever it was last doing.
        */
       useHiveStore.getState().hydrateSessions([
@@ -1974,7 +1975,7 @@ describe('hive-store', () => {
       expect(statusOf('x')).toBe('done');
     });
 
-    it('is a no-op for an empty ledger', () => {
+    it('is a no-op for an empty history', () => {
       const before = [...useHiveStore.getState().order];
 
       useHiveStore.getState().hydrateSessions([]);
@@ -2432,8 +2433,8 @@ describe('hive-store', () => {
 
     it('never restores a second row for an id this run already runs', () => {
       // The identity that survives a restart is the entity id: a reopened row
-      // spawns under its own id, and the ledger is keyed by it. The collision
-      // guard is therefore the dedup, and it has to hold with the live row
+      // spawns under its own id, and the session history is keyed by it. The
+      // collision guard is therefore the dedup, and it has to hold with the live row
       // under any status.
       useHiveStore.getState().spawnSession('the-hive');
       const live = useHiveStore.getState().order.at(-1)!;
@@ -2727,8 +2728,8 @@ describe('lifecycle timestamps', () => {
       expect(sessionAt('old-05').resumedAt).toBe(
         Date.parse('2026-08-26T11:00:00Z'),
       );
-      // `createdAt` is untouched: it is when the session began, and the ledger's
-      // retention sorts on it.
+      // `createdAt` is untouched: it is when the session began, and the
+      // session history's retention sorts on it.
       expect(sessionAt('old-05').createdAt).toBe(
         Date.parse('2026-08-26T06:00:00Z'),
       );
@@ -2742,7 +2743,7 @@ describe('lifecycle timestamps', () => {
     /**
      * The times the row really had, not the moment it was restored — otherwise
      * every launch would file last week's endings as though they had all just
-     * happened, in whatever order the ledger listed them.
+     * happened, in whatever order the session history listed them.
      */
     it('restores the times a record carried rather than stamping at hydrate', () => {
       useHiveStore.getState().hydrateSessions([

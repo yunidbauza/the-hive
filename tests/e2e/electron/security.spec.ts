@@ -624,8 +624,8 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * network.
    *
    * `pr` carries the one field on this namespace that later becomes an `href`:
-   * the renderer reads it back out of the ledger and puts it on a link, which
-   * is the shape of a stored-XSS carrier. `parseSessionPrRequest` therefore
+   * the renderer reads it back out of the session history and puts it on a
+   * link, which is the shape of a stored-XSS carrier. `parseSessionPrRequest` therefore
    * checks it is an absolute **https** URL rather than merely text — and checks
    * only the scheme, because the host is GitHub's business and pinning it would
    * break an enterprise instance.

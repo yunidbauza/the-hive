@@ -79,8 +79,9 @@ describe('hive-store selectors', () => {
         idle: 2,
         done: 2,
         terminated: 0,
-        // HIVE-87. No fixture is `closed` either: only a record read back from
-        // the ledger at boot produces one, and nothing seeds the ledger here.
+        // HIVE-87. No fixture is `closed` either: only a record read back
+        // from the session history at boot produces one, and nothing seeds
+        // the session history here.
       });
     });
 
@@ -217,7 +218,7 @@ describe('hive-store selectors', () => {
       const { nav, active, ended } = result.current;
 
       expect(nav).toEqual([...active, ...ended]);
-      // Restored in oldest-first ledger order, walked newest-first.
+      // Restored in oldest-first session-history order, walked newest-first.
       expect(nav.indexOf('old-newest')).toBeLessThan(nav.indexOf('old-oldest'));
     });
 

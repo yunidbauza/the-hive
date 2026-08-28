@@ -118,7 +118,7 @@ crash gives a fresh store in front of the same running ptys — so
 `session:history` marks records whose id main still runs as `live`, and those
 hydrate as this run's fleet (their last status, no `restored` flag) rather than
 as history. Second, a restored row **opens**: Resume asks main to `--resume` the
-conversation the ledger kept, and the first live status the new process reports
+conversation the session history kept, and the first live status the new process reports
 clears `restored` (`reviveIfLive`), which is what moves the row up to ACTIVE.
 
 `restored` therefore no longer partitions anything — it records provenance, and
@@ -337,11 +337,12 @@ Claude repaints its terminal title several times a second, so without the pin a
 store-side rename survives about one frame. `renameSession` checks it first.
 
 It is **persisted**, and it is the one field on `Session` that had to become one
-later: the ledger left it out on the grounds that an ended row has no title
-stream to defend against, which resume made false. Reopening a restored row
-starts a real `claude`, which repaints the only name it knows — the id — so an
-unpinned row lost the `ABC-123` it came back with. `hydrateSessions` restores
-it, and the ledger enforces the same precedence on its own copy.
+later: the session history left it out on the grounds that an ended row has no
+title stream to defend against, which resume made false. Reopening a restored
+row starts a real `claude`, which repaints the only name it knows — the id —
+so an unpinned row lost the `ABC-123` it came back with. `hydrateSessions`
+restores it, and the session history enforces the same precedence on its own
+copy.
 
 Two rules follow, and both are load-bearing:
 

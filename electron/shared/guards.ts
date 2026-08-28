@@ -352,7 +352,7 @@ export function assertSessionName(value: unknown, label: string): string {
  * The renderer naming the ticket a session is being worked for (HIVE-87).
  *
  * `entityId` takes {@link assertId} rather than `assertText`: it is a lookup key
- * into the ledger's map, not a string to render, and the same argument that
+ * into the session history's map, not a string to render, and the same argument that
  * bounds a session id applies — a key with separators or control characters in
  * it is a lookup that can be made to mean something other than it looks like.
  *
@@ -405,7 +405,7 @@ function assertPrNumber(value: unknown, label: string): number {
  * Checked as an **absolute https URL** rather than as free text, because this
  * is the one field here that becomes an `href`. `assertText` would let
  * `javascript:…` through, and a value the renderer read back out of its own
- * ledger and put on a link is exactly the shape of a stored-XSS carrier. The
+ * session history and put on a link is exactly the shape of a stored-XSS carrier. The
  * scheme is the whole check: the host is GitHub's business, not this guard's,
  * and pinning it here would break the moment somebody points the app at an
  * enterprise instance.

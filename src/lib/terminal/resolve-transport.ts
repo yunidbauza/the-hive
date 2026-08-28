@@ -140,8 +140,8 @@ export function resolveTransport(entityId: string): TerminalTransport {
      *
      * Read here, not in `pty-transport.ts`, for the reason the model is: this is
      * the store-aware half of the seam. Main still has the last word — it
-     * honours `resume` only where its ledger can actually name the conversation,
-     * so a row wrongly marked here spawns fresh rather than failing.
+     * honours `resume` only where its session history can actually name the
+     * conversation, so a row wrongly marked here spawns fresh rather than failing.
      */
     ...(session.restored === true || session.resumable === true
       ? { resume: true }

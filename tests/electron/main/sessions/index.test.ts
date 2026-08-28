@@ -21,7 +21,7 @@ import {
   type Sessions,
 } from '../../../../electron/main/sessions';
 import { MIN_INTERVAL_MS } from '../../../../electron/main/sessions/git';
-import { createSessionLedger } from '../../../../electron/main/sessions/ledger';
+import { createSessionHistory } from '../../../../electron/main/sessions/history';
 
 /**
  * The sessions layer (story 096).
@@ -944,7 +944,7 @@ describe('status', () => {
    * `statusTracker.reset` on `onCleared`, the successor would inherit the
    * retired conversation's live subagent and sit on `idle (agents)` forever.
    */
-  it('withdraws the ledger uuid when the conversation is cleared (HIVE-88)', () => {
+  it('withdraws the history uuid when the conversation is cleared (HIVE-88)', () => {
     const written: { id: string; patch: Record<string, unknown> }[] = [];
     let clear: ((entityId: string) => void) | undefined;
     createSessions({
@@ -961,7 +961,7 @@ describe('status', () => {
         },
         stop: () => Promise.resolve(),
       } as unknown as Parameters<typeof createSessions>[0]['hooks'],
-      ledger: {
+      history: {
         begin: (id, patch) => written.push({ id, patch: { ...patch } }),
         record: (id, patch) => written.push({ id, patch: { ...patch } }),
         resumable: () => undefined,
@@ -1349,32 +1349,32 @@ describe('session authentication', () => {
 });
 
 /**
- * What reaches the ledger (HIVE-87).
+ * What reaches the history (HIVE-87).
  *
- * The ledger itself is tested against a real file in `ledger.test.ts`; these
+ * The history itself is tested against a real file in `history.test.ts`; these
  * pin the *wiring* — that each moment main knows something worth keeping
- * actually hands it over, and that a build without a ledger is unaffected. A
+ * actually hands it over, and that a build without a history is unaffected. A
  * fake rather than the real one, for the reason the supervisor is faked: a unit
  * test that wrote into `userData` would leave state behind.
  */
-describe('the ledger', () => {
+describe('the history', () => {
   interface Written {
     id: string;
     patch: Record<string, unknown>;
   }
 
-  const withLedger = (written: Written[], resumable?: Record<string, string>) =>
+  const withHistory = (written: Written[], resumable?: Record<string, string>) =>
     createSessions({
       supervisor,
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
       newSessionUuid: () => TEST_UUID,
-      ledger: {
+      history: {
         /*
           Both verbs land in one list. What these tests assert is *what main
-          hands over and when*; which of the two carried it is the ledger's own
-          concern and is covered in `ledger.test.ts`.
+          hands over and when*; which of the two carried it is the history's own
+          concern and is covered in `history.test.ts`.
         */
         begin: (id, patch, options) => {
           written.push({ id, patch: { ...patch, ...(options ?? {}) } });
@@ -1395,7 +1395,7 @@ describe('the ledger', () => {
 
   it('records the session at spawn, carrying the uuid it pinned', () => {
     const written: Written[] = [];
-    withLedger(written).open(OPEN);
+    withHistory(written).open(OPEN);
 
     expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
       project: 'nova-web',
@@ -1404,16 +1404,16 @@ describe('the ledger', () => {
     });
   });
 
-  it('writes the same uuid to the ledger and to the command line', () => {
+  it('writes the same uuid to the history and to the command line', () => {
     // The whole point of hoisting it out of the sessionCommand call: two calls
-    // to newSessionUuid() would leave the ledger naming a transcript that does
+    // to newSessionUuid() would leave the history naming a transcript that does
     // not exist, which is the one thing recording it is meant to make possible.
     //
     // The command line is *typed into* the pty rather than passed as spawn
     // args — `claude` runs inside a login shell — so this reads the bootstrap
     // write, exactly as the BOOT assertions above do.
     const written: Written[] = [];
-    const withIt = withLedger(written);
+    const withIt = withHistory(written);
     withIt.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
 
@@ -1431,7 +1431,7 @@ describe('the ledger', () => {
 
   it('records the model and effort a session was started as', () => {
     const written: Written[] = [];
-    withLedger(written).open({ ...OPEN, model: 'haiku', effort: 'low' });
+    withHistory(written).open({ ...OPEN, model: 'haiku', effort: 'low' });
 
     expect(patchesFor(written, 'hero-refresh')[0]).toMatchObject({
       model: 'haiku',
@@ -1441,14 +1441,14 @@ describe('the ledger', () => {
 
   it('omits a name nobody supplied rather than storing an empty one', () => {
     const written: Written[] = [];
-    withLedger(written).open(OPEN);
+    withHistory(written).open(OPEN);
 
     expect(patchesFor(written, 'hero-refresh')[0]).not.toHaveProperty('name');
   });
 
   it('records the ending when the pty exits', () => {
     const written: Written[] = [];
-    withLedger(written).open(OPEN);
+    withHistory(written).open(OPEN);
 
     emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
 
@@ -1458,10 +1458,10 @@ describe('the ledger', () => {
   });
 
   /**
-   * The title stream against a pinned name, over a **real** ledger (HIVE-107,
+   * The title stream against a pinned name, over a **real** history (HIVE-107,
    * relaxed by HIVE-108).
    *
-   * Both halves are pinned on their own — `ledger.test.ts` owns the merge rule,
+   * Both halves are pinned on their own — `history.test.ts` owns the merge rule,
    * and the tests above own the fact that `readTitle` records what it reads —
    * but the bug lived in the seam, so this is the one place they are composed.
    * A session renamed mid-conversation goes on painting the name Claude knows it
@@ -1479,14 +1479,14 @@ describe('the ledger', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hive-pin-'));
     const file = join(dir, 'sessions.json');
     try {
-      const ledger = createSessionLedger(file, () => 1000);
+      const history = createSessionHistory(file, () => 1000);
       const withIt = createSessions({
         supervisor,
         send: (channel, payload) =>
           sent.push({ channel, payload: payload as Record<string, unknown> }),
         config: () => CONFIG,
         newSessionUuid: () => TEST_UUID,
-        ledger,
+        history,
       });
       withIt.open(OPEN);
       const sessionId = mintedFor('hero-refresh');
@@ -1495,14 +1495,14 @@ describe('the ledger', () => {
       vi.advanceTimersByTime(158 + SUBMIT);
 
       // The user names a ticket mid-session; the renderer's note arrives.
-      ledger.record('hero-refresh', { ticket: 'HIVE-104', name: 'HIVE-104', namePinned: true });
+      history.record('hero-refresh', { ticket: 'HIVE-104', name: 'HIVE-104', namePinned: true });
 
       // And Claude, which was never told, goes on painting what it knows.
       emitData({ sessionId, chunk: '\u001b]0;✳ hero-refresh\u0007' });
       vi.advanceTimersByTime(8);
-      ledger.flush();
+      history.flush();
 
-      expect(ledger.all()[0]).toMatchObject({
+      expect(history.all()[0]).toMatchObject({
         name: 'HIVE-104-hero-refresh',
         namePinned: true,
         ticket: 'HIVE-104',
@@ -1511,7 +1511,7 @@ describe('the ledger', () => {
         The renderer is told the *raw* title and applies the same pin itself —
         main's job on this channel is to report what the terminal said, not to
         decide what the row is called. The two arrive at one answer because they
-        run one function, which is what `ledger.ts` and `renameSession` each say
+        run one function, which is what `history.ts` and `renameSession` each say
         in their own words.
       */
       expect(on(CH.sessionName).at(-1)?.payload).toMatchObject({
@@ -1526,7 +1526,7 @@ describe('the ledger', () => {
     // Same reason the activity tracker is not told: a clone's ending is not a
     // session's, and a `clone-1` row in the fleet list would be a fiction.
     const written: Written[] = [];
-    withLedger(written).openCommand({
+    withHistory(written).openCommand({
       entityId: 'clone-1',
       cwd: '/tmp',
       file: 'git',
@@ -1542,9 +1542,9 @@ describe('the ledger', () => {
   /**
    * Picking a previous run's conversation back up (HIVE-88).
    *
-   * The renderer asks; the ledger decides whether it can; the command line and
+   * The renderer asks; the history decides whether it can; the command line and
    * the record both follow that decision. The resumed uuid must reach
-   * `--resume` on the command line, the same uuid must be what the ledger is
+   * `--resume` on the command line, the same uuid must be what the history is
    * told, and the opening instruction must not be delivered again.
    */
   describe('resume', () => {
@@ -1557,9 +1557,9 @@ describe('the ledger', () => {
       vi.advanceTimersByTime(SUBMIT);
     };
 
-    it('resumes the conversation the ledger names, and says nothing twice', () => {
+    it('resumes the conversation the history names, and says nothing twice', () => {
       const written: Written[] = [];
-      withLedger(written, { 'hero-refresh': PRIOR }).open({
+      withHistory(written, { 'hero-refresh': PRIOR }).open({
         ...OPEN,
         task: 'fix the hero',
         resume: true,
@@ -1590,13 +1590,13 @@ describe('the ledger', () => {
      * So the entity-id fallback, which is right for a spawn, was the whole bug:
      * every resumed session was renamed to `sess-0n` on its way back, the title
      * stream reported that as the agent's own choice, and `readTitle` wrote it
-     * through to the ledger — so `troubleshooting-crawling` became `sess-0n`
+     * through to the history — so `troubleshooting-crawling` became `sess-0n`
      * permanently, having survived the quit that was supposed to be the risky
      * part.
      */
     it('leaves the resumed conversation the name it already has', () => {
       const written: Written[] = [];
-      withLedger(written, { 'hero-refresh': PRIOR }).open({ ...OPEN, resume: true });
+      withHistory(written, { 'hero-refresh': PRIOR }).open({ ...OPEN, resume: true });
       settle(mintedFor('hero-refresh'));
 
       const line = vi.mocked(supervisor.write).mock.calls.at(0)?.[1] ?? '';
@@ -1605,14 +1605,14 @@ describe('the ledger', () => {
 
     /**
      * A caller that *does* name a resume is obeyed, because it is saying
-     * something the ledger cannot: this conversation should now be called this.
+     * something the history cannot: this conversation should now be called this.
      * Nothing asks for that today — `resumeSession` and `resolveTransport` both
      * send `resume` and no name — and the flag is dropped only where the
      * alternative was inventing one.
      */
     it('still renames a resume the caller named on purpose', () => {
       const written: Written[] = [];
-      withLedger(written, { 'hero-refresh': PRIOR }).open({
+      withHistory(written, { 'hero-refresh': PRIOR }).open({
         ...OPEN,
         resume: true,
         name: 'HIVE-73',
@@ -1635,7 +1635,7 @@ describe('the ledger', () => {
       // renderer's request is honest but unanswerable, and the spawn is the
       // one it would have been without the flag.
       const written: Written[] = [];
-      withLedger(written).open({ ...OPEN, resume: true });
+      withHistory(written).open({ ...OPEN, resume: true });
       settle(mintedFor('hero-refresh'));
 
       expect(supervisor.write).toHaveBeenCalledWith(mintedFor('hero-refresh'), BOOT);
@@ -1646,9 +1646,9 @@ describe('the ledger', () => {
       });
     });
 
-    it('never resumes unasked, however well the ledger knows the id', () => {
+    it('never resumes unasked, however well the history knows the id', () => {
       const written: Written[] = [];
-      withLedger(written, { 'hero-refresh': PRIOR }).open(OPEN);
+      withHistory(written, { 'hero-refresh': PRIOR }).open(OPEN);
       settle(mintedFor('hero-refresh'));
 
       expect(supervisor.write).toHaveBeenCalledWith(mintedFor('hero-refresh'), BOOT);
@@ -1657,7 +1657,7 @@ describe('the ledger', () => {
       });
     });
 
-    it('works without a ledger: resume degrades to a plain spawn', () => {
+    it('works without a history: resume degrades to a plain spawn', () => {
       sessions.open({ ...OPEN, resume: true });
       settle(mintedFor('hero-refresh'));
 
@@ -1665,11 +1665,11 @@ describe('the ledger', () => {
     });
   });
 
-  it('keeps the ledger status current as the session reports it', () => {
+  it('keeps the history status current as the session reports it', () => {
     // `status` is documented as the last known one (HIVE-88). A renderer that
     // starts in front of a running pty reads it, so it has to be true.
     const written: Written[] = [];
-    const withIt = withLedger(written);
+    const withIt = withHistory(written);
     withIt.open(OPEN);
     const sessionId = mintedFor('hero-refresh');
     emitData({ sessionId, chunk: 'building' });
@@ -1682,7 +1682,7 @@ describe('the ledger', () => {
     expect(statuses.at(-1)).toBe('idle');
   });
 
-  it('works with no ledger at all — absent is supported, not degraded', () => {
+  it('works with no history at all — absent is supported, not degraded', () => {
     expect(() => {
       sessions.open(OPEN);
       emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
@@ -1752,7 +1752,7 @@ describe('/done', () => {
        * constant (HIVE-93).
        *
        * `resumable: () => undefined` is what let a real bug through a green
-       * suite: `publishFinished` asks the ledger whether the conversation can be
+       * suite: `publishFinished` asks the history whether the conversation can be
        * reopened, and it was asking *before* `settleExit` recorded the ending —
        * so every `/done` shipped `resumable: false` and the Resume control never
        * appeared. A stub that always says "no" agrees with a broken ordering and
@@ -1761,7 +1761,7 @@ describe('/done', () => {
        * So this mirrors the real rule — a record is resumable once it has a uuid
        * and has ended — and the ordering becomes something a test can see.
        *
-       * What it deliberately does **not** model is the real ledger's
+       * What it deliberately does **not** model is the real history's
        * `startedThisRun` half. That branch only decides an *unended, same-run*
        * record, which the rule above already refuses, so modelling it would add
        * nothing here. It would matter to a test that exercised `resumable`
@@ -1769,7 +1769,7 @@ describe('/done', () => {
        * diverges from the real rule in a case a future test does reach is the
        * exact shape of the stub this replaced.
        */
-      ledger: {
+      history: {
         begin: (id, patch, options) => {
           written.push({ id, patch: { ...patch, ...(options ?? {}) } });
         },
@@ -1899,10 +1899,10 @@ describe('/done', () => {
 
     /*
       The ordering assertion, and the reason it is worth its own test: the
-      ledger is asked this question *during* `settleExit`, so it has to have
+      history is asked this question *during* `settleExit`, so it has to have
       been told the session ended before anything asks. Recorded second, it
       answered "no" for every `/done` — the transcript still on disk, the uuid
-      still in the ledger, and nothing on screen able to reach either.
+      still in the history, and nothing on screen able to reach either.
     */
     expect(h.lastFinished('hero-refresh')).toMatchObject({ resumable: true });
   });

@@ -22,7 +22,7 @@ import { hiveNameFromTitle } from '../../electron/shared/session-contract';
  * ## Why this suite has to exist
  *
  * The whole feature is a flag that is no longer sent. Everything else — the
- * normaliser, the pin, the ledger merge — is downstream of one claim about
+ * normaliser, the pin, the session-history merge — is downstream of one claim about
  * someone else's binary: **`--name` suppresses Claude Code's own titling.**
  *
  * That claim cannot be tested against a mock, because a mock is where the belief

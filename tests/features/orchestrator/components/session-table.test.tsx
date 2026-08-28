@@ -734,7 +734,7 @@ describe('SessionTable', () => {
 
     /**
      * The case that has no answer, and the one worth protecting: a fixture or a
-     * ledger record from before the timestamps existed has `recencyOf` of `0`.
+     * session-history record from before the timestamps existed has `recencyOf` of `0`.
      * Measured as an age that reads `56 years ago` — a confident lie about a row
      * the app knows nothing about. An em dash is the honest cell, and it is the
      * one `PR` already renders for the same reason.

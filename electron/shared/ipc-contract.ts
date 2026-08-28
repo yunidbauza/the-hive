@@ -737,13 +737,14 @@ export interface SpawnRequest {
    *
    * Set by the renderer for exactly one spawn: a row restored under PREVIOUS
    * RUN that the user opens. Main then starts `claude --resume` with the uuid
-   * its ledger kept for that id, and the row carries on as the session it
-   * was rather than as a blank one wearing its name.
+   * its session history kept for that id, and the row carries on as the
+   * session it was rather than as a blank one wearing its name.
    *
-   * The renderer says so **explicitly**; main never infers it from "the ledger
-   * knows this id". A fresh spawn can take an id last run used — the ledger's
-   * own `begin` exists for that case — and inferring would hand that new
-   * session a conversation it was never part of.
+   * The renderer says so **explicitly**; main never infers it from "the
+   * session history knows this id". A fresh spawn can take an id last run
+   * used — the session history's own `begin` exists for that case — and
+   * inferring would hand that new session a conversation it was never part
+   * of.
    */
   resume?: boolean;
 }
@@ -1670,8 +1671,8 @@ export const BRIDGE_SESSION_KEYS = [
    * What it exposes to the page is a timing fact about a session the page
    * already has the id of. What it deliberately does *not* carry is the thing
    * its source has and this bridge has never passed: the `SessionStart` hook
-   * knows Claude's own session uuid, and that stays in main, where the ledger
-   * is the only thing that reads it.
+   * knows Claude's own session uuid, and that stays in main, where the
+   * session history is the only thing that reads it.
    */
   'onReady',
   /**

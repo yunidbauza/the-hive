@@ -102,7 +102,7 @@ Comments in the file are `"//"`-prefixed keys, the same convention
 `package.json` already uses here — JSON has no comment syntax, and the first-run
 template has to explain itself in the file the user opens.
 
-## What main writes to `userData`, and the session ledger (HIVE-87)
+## What main writes to `userData`, and the session history (HIVE-87)
 
 `~/.hive/config.json` is the user's; `app.getPath('userData')` is the app's, and
 five things live there. `window-state.json` (geometry, `window-state.ts`), the
@@ -121,7 +121,7 @@ than a wipe: regenerations and spawns interleave, and a wipe would leave a
 window in which a session starting right now reads an empty plugin. Deleting the
 whole directory is safe; the next spawn writes it again.
 
-The ledger (`sessions/ledger.ts`) exists because closing the app used to erase
+The session history (`sessions/history.ts`) exists because closing the app used to erase
 every record that any session had run: `hive-store` boots empty by design and
 the session registry is a `Map` cleared on quit. Claude Code itself does not
 behave that way — it writes each conversation to
@@ -142,7 +142,7 @@ step on: a mid-session association renames the row, that rename never reaches
 Claude, so it never comes back on the title stream main reads names from — and
 `ticketSessionName` de-duplicates across the fleet, so the key does not imply
 the name either. A name on the note is a pinned one by construction, and the
-ledger applies the pin over title-stream names exactly as `renameSession` does
+session history applies the pin over title-stream names exactly as `renameSession` does
 in the store. Without both halves the row read `HIVE-104` while the file
 underneath it went back to the session id on Claude's next repaint, and the next
 launch restored the id.
@@ -212,14 +212,14 @@ Three properties are worth knowing before changing it:
 - **It is lenient, not durable, and deliberately so.** A plain `writeFileSync`
   in a `try`, and a read that swallows every corruption case, following
   `window-state.ts` rather than `config/write.ts`'s temp-file/`fsync`/rename
-  discipline. A lost ledger write costs the last few seconds of a record of
+  discipline. A lost session-history write costs the last few seconds of a record of
   things already over; a durable path can refuse, throw or block on `fsync` at
   exactly the two moments this module runs — app start and app quit — and a
   history feature that can stop the app opening is a much worse bug.
 - **Nothing writes `closed`, because the quit is not observable.**
   `runShutdown()` starts every hook body concurrently rather than in order, so a
   flush registered there races the pty teardown, and a crash or SIGKILL runs no
-  hook at all. The ledger stores the last status it was told — every live
+  hook at all. The session history stores the last status it was told — every live
   status `publishStatus` sends, since HIVE-88, not only the `working` a spawn
   begins with — and the renderer infers the ending. A flush *is* registered on
   shutdown, but only to save a pending debounce — correctness does not depend
@@ -229,9 +229,9 @@ Three properties are worth knowing before changing it:
   reload), so the handler marks records whose id the registry holds as `live`
   (HIVE-88); the renderer hydrates those as this run's fleet rather than as
   history, with no `restored` flag. And a restored row
-  opened again is spawned with `resume`, which puts the ledger's uuid behind
-  `--resume` instead of `--session-id` and keeps the record rather than
-  starting it over (`SessionLedger.resumable`, `begin(…, { resume })`). It
+  opened again is spawned with `resume`, which puts the session history's
+  uuid behind `--resume` instead of `--session-id` and keeps the record
+  rather than starting it over (`SessionHistory.resumable`, `begin(…, { resume })`). It
   carries no `--name` — but then **nothing does any more** (HIVE-108), so this
   is no longer a carve-out. HIVE-107 dropped the flag for a resume, where it
   renames the stored conversation rather than labelling a new one; HIVE-108
@@ -239,10 +239,10 @@ Three properties are worth knowing before changing it:
   nothing to carve. A resumed conversation repaints the name it already has, and
   a fresh one names itself.
 - **It seeds from the file at construction, and that is load-bearing.** An
-  unseeded ledger answers `session:history` with nothing *and* writes that
+  unseeded history answers `session:history` with nothing *and* writes that
   nothing back at the next debounce, so the second launch after any session
   erases the first launch's history. That shipped in the first draft and no unit
-  test noticed, because each built a fresh ledger over a fresh temp file — the
+  test noticed, because each built a fresh history over a fresh temp file — the
   one arrangement where it is invisible. `tests/e2e/electron/session-history.spec.ts`
   is what catches it, by quitting a real app and starting it again.
 
@@ -587,11 +587,12 @@ and loses: a hook POST from a process that is already gone is not a bet worth
 making.
 
 `closed` is the third ending, and unlike the other two **nothing ever reports
-it** (HIVE-87). It is what a session restored from the ledger becomes when the
-record says it was still running: the process it describes died with the app
-that owned it, so a record claiming `working` is describing something that
-plainly is not. Main cannot write it — see the ledger section above for why the
-quit is not observable — so the renderer infers it in `hydrateSessions`, which
+it** (HIVE-87). It is what a session restored from the session history becomes
+when the record says it was still running: the process it describes died with
+the app that owned it, so a record claiming `working` is describing something
+that plainly is not. Main cannot write it — see the session history section
+above for why the quit is not observable — so the renderer infers it in
+`hydrateSessions`, which
 is an inference nothing can race and no crash can interrupt.
 
 It is a separate status rather than a reuse of `terminated` for a reason that

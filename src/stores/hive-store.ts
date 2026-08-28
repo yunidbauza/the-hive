@@ -712,7 +712,7 @@ let spawnCounter = 0;
  * The closed lists, checked rather than assumed (HIVE-87).
  *
  * `session-history-contract.ts` types `model` and `effort` as the unions but the
- * file they come from is not typed at all, and `ledger.ts` deliberately does not
+ * file they come from is not typed at all, and `history.ts` deliberately does not
  * re-check them — it points here instead. These are what make that pointer
  * true.
  */
@@ -860,8 +860,8 @@ function byRecency(
  * but only by skipping: with the counter at zero and `sess-05` restored, the
  * next four spawns take `sess-01`…`sess-04` and the fifth silently jumps the
  * gap. That is a fleet whose ids no longer say anything about order, and it is
- * the kind of thing that reads as a bug in the ledger long after the ledger has
- * stopped being involved.
+ * the kind of thing that reads as a bug in the session history long after the
+ * session history has stopped being involved.
  *
  * Parsed base 36 because that is what `nextSessionId` formats with. An id that
  * does not match the pattern — a fixture, a hand-edited file — is ignored
@@ -958,8 +958,8 @@ const line = (text: string, color: TermLine['color'] = 'ink'): TermLine => ({
  * {@link HiveActions.hydrateSessions} puts last run's sessions back shortly
  * after the first paint. That reads like a reversal of everything above, so the
  * difference is worth stating — **the seeds are still empty, and the rows still
- * arrive from a real producer.** The producer is main's ledger rather than a
- * pty, and every row it supplies is one that has already ended.
+ * arrive from a real producer.** The producer is main's session history rather
+ * than a pty, and every row it supplies is one that has already ended.
  *
  * The failure this comment is about is untouched. A seeded fleet claimed
  * sessions were *running* that were not, and a real read replaced them a frame
@@ -1255,7 +1255,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           The name rides along with it (HIVE-108), which it did not have to
           before: main used to learn this row's name from the `--name` on its
           own command line, and there is no longer one. A note carrying a name
-          is what sets `namePinned` in the ledger, so without it the file would
+          is what sets `namePinned` in the session history, so without it the file would
           take the agent's first title unpinned — and the next launch would
           restore `back-key-interception` for a row the app is showing as
           `HIVE-73-back-key-interception`.
@@ -1874,7 +1874,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          *
          * The counter has to learn about an id whether or not the row is kept.
          * A spawn that lands in the window between boot and this unawaited
-         * hydrate takes `sess-01`; the ledger's own `sess-01` is then skipped
+         * hydrate takes `sess-01`; the session history's own `sess-01` is then skipped
          * below as a collision, and if the counter never heard of it the next
          * spawn is handed `sess-02` — the id of another record still waiting to
          * be restored, which then vanishes the same way. Once past the skip,
@@ -1884,15 +1884,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
         /*
           A live row always wins. Not a conflict to resolve so much as the
-          ordinary case: entity ids are reused across a restart, so the ledger's
-          `sess-01` and this run's `sess-01` are different sessions wearing the
-          same name, and only one of them has a process behind it.
+          ordinary case: entity ids are reused across a restart, so the
+          session history's `sess-01` and this run's `sess-01` are different
+          sessions wearing the same name, and only one of them has a process
+          behind it.
 
           This is also the whole of restore's deduplication (HIVE-88), and the
           id is the right key for it. It is the one identity that survives a
           restart: a restored row reopened spawns under its own id, the
-          ledger is keyed by it, and `rememberSpawnId` above keeps this run's
-          counter from minting it a second time. Claude's own `sessionUuid`
+          session history is keyed by it, and `rememberSpawnId` above keeps
+          this run's counter from minting it a second time. Claude's own `sessionUuid`
           never reaches the renderer, and `cwd` or `ticket` would collapse two
           genuinely different sessions on one issue into one row.
         */
@@ -1918,8 +1919,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         /*
           A status this build does not know is a record written by one that did.
           Dropped rather than guessed at — an unrenderable row in the fleet
-          table is worse than a row missing from it, and the ledger is a
-          convenience, not a source of truth about anything.
+          table is worse than a row missing from it, and the session history is
+          a convenience, not a source of truth about anything.
         */
         if (stored === undefined) continue;
 
@@ -1980,7 +1981,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             The times the row really had, not the moment it was restored.
             `createdAt` is required on a record so it always lands; `endedAt` is
             not, and a record without one has already been stamped at load by
-            `ledger.ts` — a row that claims to be live in a file main is reading
+            `history.ts` — a row that claims to be live in a file main is reading
             back plainly is not. A live row promoted below keeps `createdAt` and
             has its `endedAt` removed by `stampLifecycle`, so a session the app
             outlived and then found still running does not sort as though it had
@@ -1996,7 +1997,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           ...(item.pr === undefined ? {} : { lastPr: item.pr }),
           /*
             Checked against the closed lists rather than trusted (HIVE-87).
-            `ledger.ts` casts these on the way in and says the store validates
+            `history.ts` casts these on the way in and says the store validates
             them — which was not true until now, so a hand-edited file or one
             from an older build could put an arbitrary string into a field typed
             as a union. An unknown value drops the field and keeps the row: the
@@ -2426,14 +2427,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      *   nowhere else — `ticketSessionName` de-duplicates against the whole
      *   fleet — so a caller can only send the key, and main had no other way
      *   to learn what the row is now called: this rename never reaches Claude,
-     *   so it never comes back on the title stream. The ledger kept the id, and
-     *   the next launch restored it over a name the user had been reading all
-     *   afternoon.
+     *   so it never comes back on the title stream. The session history kept
+     *   the id, and the next launch restored it over a name the user had been
+     *   reading all afternoon.
      * - **It only speaks when it acted.** The three refusals below are silent
      *   from outside, so an unconditional note beside the call wrote a ticket
-     *   into the ledger that the store had just declined — and keyed it on the
-     *   raw id rather than `currentSessionIn`, which after a `/clear` is a
-     *   different row.
+     *   into the session history that the store had just declined — and keyed
+     *   it on the raw id rather than `currentSessionIn`, which after a
+     *   `/clear` is a different row.
      *
      * `get()` before `set()` is the shape `resumeSession` uses a few actions
      * down, and for the same reason: the decision needs the state, and the
@@ -3648,7 +3649,7 @@ export const useNavOrder = () =>
  * **Both are newest-first** (`byRecency`). The table used to paint `order`
  * straight through, which is insertion order — so the newest session was at the
  * bottom of the live group, and the ended half read oldest-first from the top,
- * with last run's rows arriving in the ledger's own oldest-ending-first
+ * with last run's rows arriving in the session history's own oldest-ending-first
  * sequence. The one row a fleet table exists to show first was reliably the one
  * furthest from the header.
  */

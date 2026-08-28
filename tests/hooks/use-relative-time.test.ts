@@ -38,8 +38,8 @@ describe('formatRelativeTime', () => {
  * The fleet table's `LAST USED` column reads in words rather than in the
  * inbox's abbreviations: `5 min ago`, not `5m`.
  *
- * The vocabulary is capped at weeks and then months on purpose. A ledger row
- * from last spring has to fit the same 80px column as `59 min ago`, and
+ * The vocabulary is capped at weeks and then months on purpose. A session-history
+ * row from last spring has to fit the same 80px column as `59 min ago`, and
  * `412 days ago` does not — the cap is what keeps the longest value at ten
  * characters, which is the width the column is measured against.
  */

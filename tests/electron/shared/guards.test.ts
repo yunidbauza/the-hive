@@ -796,8 +796,8 @@ describe('parseSetProjectKeyRequest', () => {
  * produced.
  *
  * The interesting field is `url`, and it is the only one on this bridge that
- * later becomes an `href`: the renderer reads it back out of its own ledger and
- * puts it on a link, which is the shape of a stored-XSS carrier. `assertText`
+ * later becomes an `href`: the renderer reads it back out of its own session
+ * history and puts it on a link, which is the shape of a stored-XSS carrier. `assertText`
  * would let `javascript:` straight through, so the scheme is checked here — and
  * *only* the scheme, because the host is GitHub's business and pinning it would
  * break the moment somebody points the app at an enterprise instance.

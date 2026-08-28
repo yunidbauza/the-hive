@@ -15,8 +15,8 @@ import {
  * `window-state.spec.ts` gives about geometry: the fixture gives one app per
  * test, and the only honest proof here is two launches against the same profile
  * with a genuine `close()` in between. Asserting that `sessions.json` was
- * written would prove the ledger writes; it would not prove the fleet comes
- * back, which is the whole feature.
+ * written would prove the session history writes; it would not prove the
+ * fleet comes back, which is the whole feature.
  *
  * It is also the only place anything checks the *inference* end to end — that a
  * session which was running at the quit returns as `closed` rather than as the
@@ -40,7 +40,7 @@ test('start a session, quit, relaunch — it is still listed, under ENDED', asyn
   const id = await startSession(firstWindow, PROJECT);
 
   /*
-    The ledger write is debounced at 400ms like the window state's, and the
+    The session-history write is debounced at 400ms like the window state's, and the
     shutdown flush races the pty teardown by design — so this waits rather than
     relying on the flush, which is exactly the guarantee the module refuses to
     make.
@@ -81,7 +81,7 @@ test('start a session, quit, relaunch — it is still listed, under ENDED', asyn
       An ending, whichever one the quit produced.
 
       Deliberately not pinned to one word. Which ending this row carries depends
-      on the race the ledger documents and refuses to arbitrate: if the pty exit
+      on the race the session history documents and refuses to arbitrate: if the pty exit
       is forwarded before the app finishes tearing down, `settleExit` records
       `terminated`; if the app dies first, the record still says `working` and
       the renderer infers an app-close, which reads `done` (HIVE-93 — it read

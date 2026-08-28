@@ -141,8 +141,8 @@ test('the PR header still sits over the PR cells beside a resume control', async
   await firstWindow.waitForSelector('header');
   await startSession(firstWindow, PROJECT);
 
-  // The ledger write is debounced at 400ms — `session-history.spec.ts` says
-  // more about why this waits rather than trusting the shutdown flush.
+  // The session-history write is debounced at 400ms — `session-history.spec.ts`
+  // says more about why this waits rather than trusting the shutdown flush.
   await firstWindow.waitForTimeout(700);
   await first.close();
 
@@ -156,8 +156,8 @@ test('the PR header still sits over the PR cells beside a resume control', async
 
     /*
       Only meaningful if a resume control is actually on screen: the restored
-      row is resumable **or** `terminated`, depending on a race the ledger
-      documents and refuses to arbitrate (`session-history.spec.ts` spells it
+      row is resumable **or** `terminated`, depending on a race the session
+      history documents and refuses to arbitrate (`session-history.spec.ts` spells it
       out). Skipping the other half is honest; asserting alignment against a
       table with no Resume column would be asserting the first test again while
       claiming to test this one.
@@ -308,7 +308,7 @@ test('the columns hold together at the minimum window with a resumable row', asy
   await firstWindow.waitForSelector('header');
   await startSession(firstWindow, PROJECT);
 
-  // The ledger write is debounced at 400ms — see `session-history.spec.ts`.
+  // The session-history write is debounced at 400ms — see `session-history.spec.ts`.
   await firstWindow.waitForTimeout(700);
   await first.close();
 
@@ -323,7 +323,7 @@ test('the columns hold together at the minimum window with a resumable row', asy
     /*
       Wait for the restored fleet to paint **before** counting.
 
-      `count()` does not auto-wait, and the ledger arrives over IPC after
+      `count()` does not auto-wait, and the session history arrives over IPC after
       `waitForSelector('header')` has already resolved. Counting straight away
       can therefore find zero Resume controls simply because no row has
       rendered yet — and the `test.skip` below is this test's only guard, so a
@@ -335,8 +335,8 @@ test('the columns hold together at the minimum window with a resumable row', asy
 
     /*
       Same skip as the test above, and the same reason: whether the quit
-      produced a resumable row or a terminated one is a race the ledger
-      documents and refuses to arbitrate. Without a Resume control on screen
+      produced a resumable row or a terminated one is a race the session
+      history documents and refuses to arbitrate. Without a Resume control on screen
       this would be asserting the 1100px test again under a different name.
     */
     const resume = page.getByRole('button', { name: /^resume / });
