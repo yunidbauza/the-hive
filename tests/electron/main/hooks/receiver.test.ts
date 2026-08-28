@@ -73,7 +73,9 @@ describe('hook receiver', () => {
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
       onMetrics: () => {},
-      onLedgerRead: (caller, query) => ledger.read({ to: caller, ...query }),
+      // The wiring `hooks/index.ts` uses: the query goes down untouched and
+      // `visibleTo` inside the receiver is the only identity filter.
+      onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
     });
     const started = await receiver.start();
@@ -415,7 +417,7 @@ describe('hook receiver', () => {
       expect(response.status).toBe(404);
     });
 
-    it('defaults a read to the caller plus broadcast', async () => {
+    it('shows a third party only the broadcast, not what was addressed elsewhere', async () => {
       await post(LEDGER_POST_PATH, { to: 'sess-b', kind: 'post', body: 'private' }, { [HOOK_HEADER_SESSION]: 'sess-a' });
       await post(LEDGER_POST_PATH, { kind: 'post', body: 'everyone' }, { [HOOK_HEADER_SESSION]: 'sess-a' });
 
@@ -461,6 +463,98 @@ describe('hook receiver', () => {
         { [HOOK_HEADER_SESSION]: 'sess-b' },
       );
       expect(((await asBItself.json()) as LedgerSnapshot).entries).toHaveLength(1);
+    });
+
+    /**
+     * The other half of `visibleTo` (HIVE-111 final review, finding 2).
+     *
+     * An ask is written `from: sess-a, to: overmind`, so any `to: caller`
+     * default upstream — which is what the wiring used to apply — hides a
+     * session's own questions from it and leaves no query at all by which it
+     * could read its own correspondence back. The `from === caller` branch is
+     * what makes that possible, and it is only reachable once the query
+     * reaches `ledger.read` unmodified.
+     */
+    it('lets a session read back its own ask, addressed though it is to the overmind', async () => {
+      const written = await post(
+        LEDGER_POST_PATH,
+        { to: 'overmind', kind: 'ask', body: 'may I merge?' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      expect(written.status).toBe(200);
+
+      const asA = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      const mine = (await asA.json()) as LedgerSnapshot;
+      expect(mine.entries.map((entry) => entry.body)).toEqual(['may I merge?']);
+      expect(mine.openAsks.map((ask) => ask.body)).toEqual(['may I merge?']);
+
+      // And a party to neither end of it still sees nothing.
+      const asC = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-c' });
+      expect(((await asC.json()) as LedgerSnapshot).entries).toEqual([]);
+    });
+
+    /**
+     * The ask-openness rule on the *HTTP* path (HIVE-111 final review,
+     * finding 1).
+     *
+     * `Ledger.answer` is reachable from IPC alone; every out-of-process
+     * party — the MCP host of HIVE-112 included — arrives at `Ledger.append`
+     * through this route. Since `openAsks` closes an ask on any answer naming
+     * it, a second answer accepted here would silently retire a question.
+     */
+    it('refuses an answer to an already-closed thread, and appends nothing', async () => {
+      const asked = await post(
+        LEDGER_POST_PATH,
+        { to: 'overmind', kind: 'ask', body: 'ship it?' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const { id: thread } = (await asked.json()) as { id: string };
+
+      const first = await post(
+        LEDGER_POST_PATH,
+        { kind: 'answer', thread, body: 'yes' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(first.status).toBe(200);
+
+      const second = await post(
+        LEDGER_POST_PATH,
+        { kind: 'answer', thread, body: 'no, wait' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(second.status).toBe(400);
+      expect((await second.json()) as { reason: string }).toMatchObject({
+        reason: expect.stringContaining('not open'),
+      });
+
+      // Nothing was written: the log still holds the ask and its one answer.
+      expect(ledger.read({}).entries.map((entry) => entry.body)).toEqual([
+        'ship it?',
+        'yes',
+      ]);
+    });
+
+    /**
+     * `resolveRef` matches *any* entry id, not only an ask's, so a `thread`
+     * naming an ordinary post resolves — and the openness check is what stops
+     * an `answer` from being written against it.
+     */
+    it('refuses an answer whose thread names something that was never an ask', async () => {
+      const posted = await post(
+        LEDGER_POST_PATH,
+        { kind: 'post', body: 'just talking' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const { id: thread } = (await posted.json()) as { id: string };
+
+      const response = await post(
+        LEDGER_POST_PATH,
+        { kind: 'answer', thread, body: 'answering a post' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+
+      expect(response.status).toBe(400);
+      expect(ledger.read({}).entries).toHaveLength(1);
     });
 
     it('answers 413, naming the transport cap, for an oversized read query', async () => {

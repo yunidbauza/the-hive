@@ -79,25 +79,47 @@ export function createLedger(options: LedgerOptions): Ledger {
       }
 
       /*
-        A `thread` on any kind must name an ask that exists. An `answer` is
-        stricter still and goes through `answer()` below, which also checks the
-        thread is *open* — writing a second answer would leave two closings for
-        one question and no way to tell which the asker acted on.
+        A `thread` on any kind must name an ask that exists; an `answer` is
+        stricter still and its thread must also be *open*.
+
+        Both rules live here rather than only in `answer()`, because `answer()`
+        is reachable from the IPC channel alone. Every out-of-process party —
+        a session's hooks, and from HIVE-112 the MCP host — arrives through
+        `POST /ledger` and therefore through this function, and `openAsks`
+        closes an ask on *any* answer naming it: without the check a bogus or
+        duplicate answer would silently retire a question the asker is still
+        owed a reply to. `answer()` keeps its own copy and delegates here; the
+        check is idempotent, so paying for it twice costs nothing.
       */
-      if (request.thread !== undefined) {
-        const canonical = resolveRef(store.all(), request.thread);
+      let thread = request.thread;
+      if (thread !== undefined) {
+        const all = store.all();
+        const canonical = resolveRef(all, thread);
         if (canonical === undefined) {
-          return refuse(400, `no such thread: ${request.thread}`);
+          return refuse(400, `no such thread: ${thread}`);
         }
-        const stored = store.append({ ...request, thread: canonical });
-        return { ok: true, id: stored.id, ...(stored.ref === undefined ? {} : { ref: stored.ref }) };
+        if (
+          request.kind === 'answer' &&
+          !openAsks(all, now()).some((ask) => ask.id === canonical)
+        ) {
+          // Also the answer-to-a-non-ask case: `resolveRef` matches any entry
+          // id, and only an ask is ever in `openAsks`.
+          return refuse(400, `thread is not open: ${thread}`);
+        }
+        thread = canonical;
       }
 
-      const stored = store.append(request);
+      const stored = store.append(thread === undefined ? request : { ...request, thread });
       return { ok: true, id: stored.id, ...(stored.ref === undefined ? {} : { ref: stored.ref }) };
     },
 
     answer(request, from) {
+      /*
+        Kept even though `append` now re-checks both rules: this is the IPC
+        path's entry point, and refusing here names the *ref* the renderer
+        actually typed rather than the canonical id `append` would have
+        resolved it to.
+      */
       const all = store.all();
       const canonical = resolveRef(all, request.thread);
       if (canonical === undefined) {

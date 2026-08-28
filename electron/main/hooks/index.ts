@@ -153,10 +153,16 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         /*
           `caller` is the session id off `x-hive-session` (HIVE-111) — never
           trusted from the body, which is what `parseLedgerPostBody` already
-          drops it from. The receiver's own visibility filter applies to the
-          *result* of `onLedgerRead`, so this only has to answer the query.
+          drops it from.
+
+          The query goes down **unmodified**: `visibleTo` in the receiver
+          narrows the result to "addressed to me, or broadcast, or from me",
+          and defaulting `to: caller` here is strictly narrower than that —
+          it would drop a caller's own ask, which is `from: sess-a,
+          to: overmind`, and so leave no query at all by which a session could
+          read back its own correspondence.
         */
-        onLedgerRead: (caller, query) => ledger.read({ to: caller, ...query }),
+        onLedgerRead: (_caller, query) => ledger.read(query),
         onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
         knowsSession,
         ...(port === undefined ? {} : { port }),

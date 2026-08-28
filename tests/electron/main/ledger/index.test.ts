@@ -5,7 +5,11 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LEDGER_BODY_MAX, OVERMIND } from '../../../../electron/shared/ledger-contract';
+import {
+  LEDGER_ASK_TTL_MS,
+  LEDGER_BODY_MAX,
+  OVERMIND,
+} from '../../../../electron/shared/ledger-contract';
 import { createLedger, type Ledger } from '../../../../electron/main/ledger/index';
 
 const AT = new Date(2026, 7, 28, 14, 15, 30).getTime();
@@ -112,6 +116,81 @@ describe('createLedger', () => {
     expect(ledger.answer({ thread: ask.id, body: 'no' }, OVERMIND)).toMatchObject({
       ok: false,
       status: 400,
+    });
+  });
+
+  /**
+   * The openness rule belongs to `append`, not to `answer` (HIVE-111 final
+   * review, finding 1).
+   *
+   * `answer()` is reachable over IPC alone; every out-of-process party comes
+   * through `append`. These three cover it directly rather than through the
+   * HTTP route, so a later refactor of the receiver cannot quietly take the
+   * rule with it.
+   */
+  describe('an answer appended directly', () => {
+    const ask = (): string => {
+      const result = ledger.append({ from: 'sess-a', to: OVERMIND, kind: 'ask', body: 'ship?' });
+      if (!result.ok) throw new Error('setup failed');
+      return result.id;
+    };
+
+    it('closes an open thread', () => {
+      const thread = ask();
+
+      expect(ledger.append({ from: 'sess-b', kind: 'answer', thread, body: 'yes' })).toMatchObject({
+        ok: true,
+      });
+      expect(ledger.read({}).openAsks).toHaveLength(0);
+    });
+
+    it('is refused once the thread is already closed, and appends nothing', () => {
+      const thread = ask();
+      ledger.append({ from: 'sess-b', kind: 'answer', thread, body: 'yes' });
+
+      const second = ledger.append({ from: 'sess-b', kind: 'answer', thread, body: 'no' });
+
+      expect(second).toMatchObject({ ok: false, status: 400 });
+      if (second.ok) throw new Error('expected a refusal');
+      expect(second.reason).toContain('not open');
+      expect(ledger.read({}).entries).toHaveLength(2);
+    });
+
+    it('is refused once the thread has aged past the TTL', () => {
+      const thread = ask();
+      clock = AT + LEDGER_ASK_TTL_MS;
+
+      expect(ledger.append({ from: 'sess-b', kind: 'answer', thread, body: 'late' })).toMatchObject(
+        { ok: false, status: 400 },
+      );
+      expect(ledger.read({}).entries).toHaveLength(1);
+    });
+
+    /*
+      `resolveRef` matches any entry id, so a thread naming an ordinary post
+      resolves — only the openness check tells the two apart.
+    */
+    it('is refused when its thread names something that was never an ask', () => {
+      const posted = ledger.append({ from: 'sess-a', kind: 'post', body: 'talking' });
+      if (!posted.ok) throw new Error('setup failed');
+
+      expect(
+        ledger.append({ from: 'sess-b', kind: 'answer', thread: posted.id, body: 'eh' }),
+      ).toMatchObject({ ok: false, status: 400 });
+      expect(ledger.read({}).entries).toHaveLength(1);
+    });
+
+    /*
+      Every other kind keeps the looser rule: a `post` may carry a `thread` to
+      say "about that question" without pretending to close it.
+    */
+    it('does not stop a non-answer kind from naming a closed thread', () => {
+      const thread = ask();
+      ledger.append({ from: 'sess-b', kind: 'answer', thread, body: 'yes' });
+
+      expect(
+        ledger.append({ from: 'sess-c', kind: 'post', thread, body: 'noted' }),
+      ).toMatchObject({ ok: true });
     });
   });
 
