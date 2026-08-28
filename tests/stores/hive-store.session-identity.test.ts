@@ -400,21 +400,71 @@ describe('a pinned name outranks the agent', () => {
     expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
   });
 
-  it('refuses a name a live session already holds', () => {
+  /**
+   * Two sessions reaching one title (HIVE-109).
+   *
+   * Not hypothetical: asking two live sessions "whats the time now" put
+   * `"aiTitle":"Current time"` in *both* transcripts. HIVE-108 refused the
+   * second, so a row sat on `sess-0n` for the rest of its life while its own
+   * transcript held a perfectly good name.
+   */
+  it('numbers a name a live session already holds, rather than refusing it', () => {
+    const first = spawn();
+    const second = spawn();
+    useHiveStore.getState().renameSession(first, 'Current time');
+
+    useHiveStore.getState().renameSession(second, 'Current time');
+
+    expect(sessionAt(first).name).toBe('current-time');
+    expect(sessionAt(second).name).toBe('current-time-2');
+  });
+
+  it('keeps numbering past the second collision', () => {
+    const ids = [spawn(), spawn(), spawn()];
+    for (const id of ids) useHiveStore.getState().renameSession(id, 'Current time');
+
+    expect(ids.map((id) => sessionAt(id).name)).toEqual([
+      'current-time',
+      'current-time-2',
+      'current-time-3',
+    ]);
+  });
+
+  it('does not renumber on every repaint', () => {
     /**
-     * Inferred names collide in a way ids never did — two sessions asked the
-     * same kind of question reach the same title. Whoever holds the name keeps
-     * it, and the loser stays as it was rather than growing a suffix that the
-     * next repaint would recompute.
+     * The property HIVE-108 mis-traced when it chose refusal over a suffix:
+     * "a `-2` would not survive the next repaint … a write per frame, forever".
+     * It survives, because the comparison happens *after* disambiguation.
      */
     const first = spawn();
     const second = spawn();
-    useHiveStore.getState().renameSession(first, 'Mutex explanation');
+    useHiveStore.getState().renameSession(first, 'Current time');
+    useHiveStore.getState().renameSession(second, 'Current time');
 
-    useHiveStore.getState().renameSession(second, 'Mutex explanation');
+    const before = useHiveStore.getState().entities;
+    for (let i = 0; i < 5; i += 1) {
+      useHiveStore.getState().renameSession(second, 'Current time');
+    }
 
-    expect(sessionAt(first).name).toBe('mutex-explanation');
-    expect(sessionAt(second).name).not.toBe('mutex-explanation');
+    // Not merely the same name — the very same object, so no re-render.
+    expect(useHiveStore.getState().entities).toBe(before);
+    expect(sessionAt(second).name).toBe('current-time-2');
+  });
+
+  it('keeps its number when the row holding the bare name ends', () => {
+    /**
+     * Otherwise a row the user is watching renames itself for a reason they did
+     * nothing to cause — the moment some *other* session finished.
+     */
+    const first = spawn();
+    const second = spawn();
+    useHiveStore.getState().renameSession(first, 'Current time');
+    useHiveStore.getState().renameSession(second, 'Current time');
+
+    useHiveStore.getState().setSessionStatus(first, 'terminated');
+    useHiveStore.getState().renameSession(second, 'Current time');
+
+    expect(sessionAt(second).name).toBe('current-time-2');
   });
 
   it('carries the pin, the name and the branch across a /clear', () => {

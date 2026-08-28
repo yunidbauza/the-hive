@@ -1513,10 +1513,23 @@ export function createSessions(options: SessionsOptions): Sessions {
          * no prompt scraping, no second inference engine. `hiveNameFromTitle`
          * spells it the way the rail spells names.
          *
-         * What is given up is the opening frame: until Claude has titled it, its
-         * prompt box says `Claude Code` where it used to say `sess-07`. The row
-         * is untouched — `nameFromTitle` maps that string to the *absence* of a
-         * name, so the rail goes on saying `sess-07` until a real one lands.
+         * What is given up is the opening frame: until Claude has titled it, the
+         * label on its input box is simply **absent**, where it used to read
+         * `sess-07`. Measured against a real `claude` — the name is drawn into
+         * the box's top border, and with no name the border is unlabelled:
+         *
+         * ```
+         * named    ────────────────────── sess-probe ─
+         * unnamed  ──────────────────────────────────
+         * ```
+         *
+         * (HIVE-108 first recorded this as "the prompt box says `Claude Code`".
+         * It does not. `Claude Code` is the *terminal title* Claude writes while
+         * unnamed, and the splash banner — which prints either way and names the
+         * product, not the session.)
+         *
+         * The row is untouched: `nameFromTitle` maps that title to the *absence*
+         * of a name, so the rail goes on saying `sess-07` until a real one lands.
          *
          * **This subsumes HIVE-107.** That fix carved `--resume` out of the id
          * fallback, because `--name` on a resume renames the stored conversation

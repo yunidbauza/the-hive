@@ -522,18 +522,21 @@ export function createSessionLedger(
          *   successor inheriting the retired conversation's name. It is keyed on
          *   a terminal and on which row is current, neither of which this file
          *   models — records are per entity id, and a retired row keeps its own.
-         * - the **live-name uniqueness** check. "Live" is a property of this
-         *   run; the ledger is mostly history, where duplicate names are normal
-         *   and correct — two finished sessions may well have done the same
-         *   kind of work. Enforcing uniqueness across history would refuse names
-         *   that are not in conflict with anything.
+         * - the **live-name numbering** that gives the second session to reach a
+         *   title a `-2` (HIVE-109). "Live" is a property of this run; the
+         *   ledger is mostly history, where duplicate names are normal and
+         *   correct — two finished sessions may well have done the same kind of
+         *   work. Numbering across history would push a suffix onto records that
+         *   are not in conflict with anything.
          *
-         * So two live sessions that converge on one title leave the store with a
-         * single named row and this file with two identically named records, and
-         * `hydrateSessions` restores both. That is a cosmetic duplicate in the
-         * ENDED list rather than a broken invariant: the "one name, one session"
-         * rule is a rule about *renaming a live row*, which is where it is
-         * enforced, and ids — not names — identify a session everywhere.
+         * So two live sessions that converge on one title leave the store
+         * showing `current-time` and `current-time-2` while this file holds
+         * `current-time` twice, and `hydrateSessions` restores both under the
+         * bare name. That is a cosmetic duplicate in the ENDED list rather than a
+         * broken invariant: the numbering is a rule about *renaming a live row*,
+         * which is where it is enforced, and ids — not names — identify a
+         * session everywhere. Persisting the suffix would mean persisting a
+         * decision made against a fleet that no longer exists at restore.
          */
         /*
           Narrowed to a `string | undefined` rather than tested with a boolean

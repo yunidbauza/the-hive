@@ -2221,18 +2221,28 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (entity.name === next) return state;
 
       /**
-       * One name, one session.
+       * One name, one session — **numbered, not refused** (HIVE-109).
        *
-       * Inferred names collide in a way ids never did: two sessions on one ticket
-       * can reach the same title, and so can two unrelated sessions asked the
-       * same kind of question. `ticketSessionName` already disambiguates at
-       * spawn; this is the same rule at rename, and it resolves the same way —
-       * whoever holds the name keeps it.
+       * Inferred names collide in a way ids never did: two sessions on one
+       * ticket can reach the same title, and so can two unrelated sessions asked
+       * the same kind of question. Asking two sessions "whats the time now"
+       * produced `Current time` in both transcripts, measured.
        *
-       * Refusing rather than suffixing is what keeps this idempotent. A `-2`
-       * appended here would not survive the next repaint, which recomputes the
-       * unsuffixed candidate, finds it taken by the row that already renamed, and
-       * would append `-2` again — a write per frame, forever.
+       * HIVE-108 refused the loser, on the stated grounds that a `-2` "would not
+       * survive the next repaint … a write per frame, forever". **That trace was
+       * wrong**, and the cost of believing it was a row that sat on `sess-0n`
+       * for the rest of its life while its own transcript held a perfectly good
+       * title. Suffixing is stable, for two independent reasons:
+       *
+       * - the comparison below happens *after* disambiguation, so a row already
+       *   called `current-time-2` compares equal to its own recomputed name and
+       *   no write occurs; and
+       * - a name that is already this candidate plus a number is kept as-is, so
+       *   the number does not move when the row that took the bare name ends.
+       *
+       * `ticketSessionName` has spelled a second session on one ticket `-2`
+       * since HIVE-78. This is the same rule for inferred names, and it resolves
+       * the same way: first to arrive keeps the bare name.
        *
        * **Only live rows hold a name.** An ended one is a record of work that
        * finished, and it keeps its name for the ENDED list rather than to reserve
@@ -2241,17 +2251,37 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * the same name once the agent repaints it. Counting the dead here left
        * that successor unnamed for the life of the app.
        */
-      const taken = Object.values(state.entities).some(
-        (other) =>
-          isSession(other) &&
-          other.id !== target &&
-          !isEnded(other.status) &&
-          other.name === next,
-      );
-      if (taken) return state;
+      const heldByAnother = (candidate: string): boolean =>
+        Object.values(state.entities).some(
+          (other) =>
+            isSession(other) &&
+            other.id !== target &&
+            !isEnded(other.status) &&
+            other.name === candidate,
+        );
+
+      /*
+        Already wearing a number for this very name: keep it. Without this the
+        row would drop back to the bare name the moment the session holding it
+        ended — a rename the user did nothing to cause, on a row they are
+        watching.
+      */
+      const numberedVariant =
+        entity.name !== undefined &&
+        entity.name.startsWith(`${next}-`) &&
+        /^\d+$/.test(entity.name.slice(next.length + 1));
+      if (numberedVariant) return state;
+
+      let unique = next;
+      // Starts at 2, so the second session to reach a name is `-2`, exactly as
+      // `ticketSessionName` numbers a second session on one ticket.
+      for (let suffix = 2; heldByAnother(unique); suffix += 1) {
+        unique = `${next}-${suffix}`;
+      }
+      if (entity.name === unique) return state;
 
       return {
-        entities: { ...state.entities, [target]: { ...entity, name: next } },
+        entities: { ...state.entities, [target]: { ...entity, name: unique } },
       };
     }),
 

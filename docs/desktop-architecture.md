@@ -188,9 +188,24 @@ Three things are worth knowing before changing it:
   `ai-title`, stops painting it, or starts titling named sessions too. Every
   unit test in the repo passes in all of those cases.
 
-What is given up is the opening frame: until Claude has titled it, its prompt
-box says `Claude Code` where it used to say `sess-07`. The row is untouched —
-`nameFromTitle` maps that string to the *absence* of a name.
+What is given up is the opening frame: until Claude has titled it, the label on
+its input box is **absent** where it used to read `sess-07`. The name is drawn
+into the box's top border, so with no name the border is simply unlabelled:
+
+```
+named    ────────────────────── sess-probe ─
+unnamed  ──────────────────────────────────
+```
+
+HIVE-108 first recorded this as "its prompt box says `Claude Code`", which is
+wrong and worth naming because it is an easy inference to repeat: `Claude Code`
+is the *terminal title* an unnamed session writes, and the splash banner
+(`Claude Code v2.1.250`) — which prints either way and names the product, not
+the session. Neither is the box label.
+
+The row is untouched either way: `nameFromTitle` maps that title to the
+*absence* of a name, so the rail keeps `sess-07`, and two unnamed sessions stay
+distinct because they keep their distinct ids rather than sharing a title.
 
 Three properties are worth knowing before changing it:
 
