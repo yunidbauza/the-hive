@@ -346,7 +346,13 @@ interface HiveState {
    * what main answered with, and replacing would drop it.
    */
   hydrateNotifs: (notifs: HiveNotification[]) => void;
-  /** Replace the ledger's tail with a fresh snapshot (HIVE-111). */
+  /**
+   * Merge a fresh snapshot into the ledger's tail by `id` (HIVE-111).
+   *
+   * A union rather than a replacement, for the reason `hydrateNotifs` above
+   * gives — and see the note at the implementation for why a dropped entry
+   * here would never come back.
+   */
   hydrateLedger: (entries: LedgerEntry[]) => void;
   /** One entry landed — append it to the tail. */
   ledgerAppend: (entry: LedgerEntry) => void;
@@ -1883,7 +1889,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }),
 
   hydrateLedger: (entries) =>
-    set({ ledger: entries.slice(-LEDGER_MEMORY_CAP) }),
+    set((state) => {
+      /**
+       * Union, not replacement — `hydrateNotifs`' reason, with one difference
+       * that makes it sharper.
+       *
+       * `useLedgerSync` arms the push channel while `list()` is still in
+       * flight, so an entry appended after main took its snapshot lands here
+       * first and is absent from the snapshot that follows. A replace would
+       * discard it *permanently*: that hook mounts once at the composition
+       * root and never remounts, so there is no second hydrate to recover it.
+       *
+       * Ordered by `id` rather than by `ts`, because ids are fixed-width and
+       * sort as strings in write order — which is the same comparison
+       * `since` and the store's own load-time sort already rely on.
+       */
+      const seen = new Set(state.ledger.map((entry) => entry.id));
+      const merged = [
+        ...state.ledger,
+        ...entries.filter((entry) => !seen.has(entry.id)),
+      ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+      return { ledger: merged.slice(-LEDGER_MEMORY_CAP) };
+    }),
 
   ledgerAppend: (entry) =>
     set((state) => ({ ledger: [...state.ledger, entry].slice(-LEDGER_MEMORY_CAP) })),

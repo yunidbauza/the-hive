@@ -3025,6 +3025,31 @@ describe('the ledger slice', () => {
     expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2']);
   });
 
+  /**
+   * The hydrate/push race (HIVE-111 final review, finding 3).
+   *
+   * `useLedgerSync` arms the push channel while `list()` is still in flight,
+   * so an entry appended after main took its snapshot reaches the store first
+   * and is absent from the snapshot that follows. A replacing hydrate would
+   * discard it for good — the hook mounts once and never remounts.
+   */
+  it('keeps an entry that the snapshot it hydrates from does not contain', () => {
+    useHiveStore.getState().ledgerAppend(entry({ id: '3' }));
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' }), entry({ id: '2' })]);
+
+    expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('does not duplicate an entry that arrived on both paths', () => {
+    useHiveStore.getState().ledgerAppend(entry({ id: '2', body: 'from the channel' }));
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' }), entry({ id: '2' })]);
+
+    const kept = useHiveStore.getState().ledger;
+    expect(kept.map((found) => found.id)).toEqual(['1', '2']);
+    // The copy already in the mirror wins; both are the same immutable entry.
+    expect(kept[1].body).toBe('from the channel');
+  });
+
   it('keeps the newest when the cap is passed', () => {
     const many = Array.from({ length: LEDGER_MEMORY_CAP + 10 }, (_, index) =>
       entry({ id: String(index).padStart(5, '0') }),

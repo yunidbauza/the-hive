@@ -17,7 +17,8 @@ const entry = (id: string): LedgerEntry => ({
 describe('useLedgerSync', () => {
   afterEach(() => {
     delete (window as { hive?: unknown }).hive;
-    useHiveStore.getState().hydrateLedger([]);
+    // `hydrateLedger` merges rather than replaces, so it cannot be a reset.
+    useHiveStore.setState({ ledger: [] });
   });
 
   it('does nothing on the browser target, where there is no bridge', () => {
@@ -57,6 +58,40 @@ describe('useLedgerSync', () => {
     deliver?.(entry('2'));
 
     expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['2']);
+  });
+
+  /**
+   * The hydrate/push race, at the seam rather than in the store.
+   *
+   * `list()` resolves with a snapshot main took *before* the pushed entry
+   * existed. The hook mounts once and never remounts, so a replacing hydrate
+   * would lose `2` with nothing left to re-fetch it.
+   */
+  it('keeps an entry pushed while the hydrate is still in flight', async () => {
+    let deliver: ((entry: LedgerEntry) => void) | undefined;
+    let settle: ((snapshot: unknown) => void) | undefined;
+    (window as { hive?: unknown }).hive = {
+      ledger: {
+        list: vi.fn().mockReturnValue(
+          new Promise((resolve) => {
+            settle = resolve;
+          }),
+        ),
+        onChanged: vi.fn((callback: (entry: LedgerEntry) => void) => {
+          deliver = callback;
+          return () => {};
+        }),
+      },
+    };
+
+    renderHook(() => useLedgerSync());
+    await waitFor(() => expect(deliver).toBeDefined());
+    deliver?.(entry('2'));
+    settle?.({ entries: [entry('1')], openAsks: [], claims: {} });
+
+    await waitFor(() => {
+      expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2']);
+    });
   });
 
   it('unsubscribes on unmount', async () => {

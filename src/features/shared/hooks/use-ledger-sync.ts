@@ -21,13 +21,16 @@ export function useLedgerSync(): void {
     if (ledger === undefined) return;
 
     /*
-      Hydrate first, then subscribe — and accept that an entry landing between
-      the two is delivered twice rather than not at all. `id` is unique and the
-      store appends, so a duplicate is visible and fixable; a dropped entry is
-      neither.
+      Subscribe first, then hydrate, and let the two overlap: an entry
+      appended after main took its snapshot arrives on the channel, and an
+      entry from before it arrives in the snapshot. `hydrateLedger` merges by
+      `id` rather than replacing, so neither order loses one and the overlap
+      costs nothing — which matters because this hook mounts once and never
+      remounts, so a dropped entry would never be re-fetched.
     */
+    const stop = ledger.onChanged(append);
     void ledger.list().then((snapshot) => hydrate(snapshot.entries));
 
-    return ledger.onChanged(append);
+    return stop;
   }, [hydrate, append]);
 }
