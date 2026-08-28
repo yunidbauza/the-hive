@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   BrowserWindow,
@@ -45,6 +45,9 @@ import {
   parseDiagnoseEnvRequest,
   parseSpawnRequest,
   parseKillRequest,
+  parseLedgerAnswerRequest,
+  parseLedgerPostBody,
+  parseLedgerReadQuery,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
   parseSetProjectKeyRequest,
@@ -93,6 +96,7 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
   SESSION_HISTORY_FILE,
@@ -138,6 +142,7 @@ import { createGithub } from '../integrations/github';
 import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
+import { createLedger } from '../ledger';
 import {
   createNotificationHub,
   createNotifier,
@@ -754,6 +759,54 @@ export function registerIpcHandlers(): void {
     join(app.getPath('userData'), SESSION_HISTORY_FILE),
   );
 
+  /**
+   * The ledger lives beside the config, not in `userData` (HIVE-111).
+   *
+   * `~/.hive/` is the user's own directory — the one they can open, read and
+   * back up. A correspondence log between their agents belongs there for the
+   * same reason the config does, and `userData` belongs to the app.
+   *
+   * `knowsParty` closes over `sessions`, which is `null` at this point in
+   * startup and assigned below — safe because the closure runs on every read
+   * and write, always after registration, never at construction. Live
+   * sessions and resumable ones both count: an ended session's entries still
+   * have to be readable and answerable, because the party is the *identity*,
+   * not the process, and refusing a write from an id the app remembers would
+   * drop the tail of every conversation the moment a terminal closed.
+   */
+  const ledger = createLedger({
+    dir: join(dirname(configPath()), LEDGER_DIR),
+    knowsParty: (id) =>
+      id === OVERMIND ||
+      (sessions?.entities().includes(id) ?? false) ||
+      history?.resumable(id) !== undefined,
+  });
+
+  /**
+   * One entry landed, from any party — pushed the way `notifications:new` is
+   * (HIVE-75): straight to every window rather than through `send`, because
+   * there is nothing here for a tap to loop back into.
+   */
+  ledger.onChange((entry) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue;
+      window.webContents.send(CH.ledgerChanged, entry);
+    }
+  });
+
+  handle(CH.ledgerList, (_event, payload) => ledger.read(parseLedgerReadQuery(payload)));
+  handle(CH.ledgerPost, (_event, payload) =>
+    /*
+      `from` is supplied here, never taken from the renderer — the same rule
+      the receiver enforces with the session header. The renderer is the
+      overmind's only mouth.
+    */
+    ledger.append({ ...parseLedgerPostBody(payload), from: OVERMIND }),
+  );
+  handle(CH.ledgerAnswer, (_event, payload) =>
+    ledger.answer(parseLedgerAnswerRequest(payload), OVERMIND),
+  );
+
   /*
     Constructed before the session layer, which takes it as an option and syncs
     it on every spawn (HIVE-96). `app.getVersion()` is read here rather than
@@ -770,6 +823,7 @@ export function registerIpcHandlers(): void {
     userDataPath: app.getPath('userData'),
     // Read per call, so a config reload is picked up (HIVE-79).
     sessionMetrics: () => getConfig().sessionMetrics,
+    ledger,
   });
 
   skills = createSkillsRuntime({

@@ -6,6 +6,8 @@ import {
 } from '@shared/hook-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 
+import type { Ledger } from '../ledger';
+
 import { createReceiver, type Receiver } from './receiver';
 import { writeHookSettings } from './settings';
 
@@ -28,6 +30,16 @@ import { writeHookSettings } from './settings';
 export interface HookRuntimeOptions {
   /** Where the settings file is written. Electron's `app.getPath('userData')`. */
   userDataPath: string;
+  /**
+   * The ledger (HIVE-111), threaded through rather than constructed here.
+   *
+   * This runtime has no opinion about where `~/.hive/ledger` lives or who
+   * counts as a known party — `ipc/index.ts` is where both of those facts are
+   * already reachable, from `configPath()` and the session registry. Handing
+   * over a constructed `Ledger` keeps this module's only job the receiver's
+   * lifecycle, the same division `HookHandlers` draws for everything else.
+   */
+  ledger: Ledger;
   /**
    * Whether to inject the status line that reports usage (HIVE-79).
    *
@@ -112,7 +124,7 @@ export interface HookRuntime {
 }
 
 export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
-  const { userDataPath, port, sessionMetrics = () => true } = options;
+  const { userDataPath, port, sessionMetrics = () => true, ledger } = options;
 
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
@@ -138,9 +150,14 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onMetrics,
         onDone,
         onReady,
-        // Wired to the real ledger in the next commit (HIVE-111).
-        onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
-        onLedgerPost: () => ({ ok: false, status: 503, reason: 'ledger not wired yet' }),
+        /*
+          `caller` is the session id off `x-hive-session` (HIVE-111) — never
+          trusted from the body, which is what `parseLedgerPostBody` already
+          drops it from. The receiver's own visibility filter applies to the
+          *result* of `onLedgerRead`, so this only has to answer the query.
+        */
+        onLedgerRead: (caller, query) => ledger.read({ to: caller, ...query }),
+        onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
         knowsSession,
         ...(port === undefined ? {} : { port }),
       });

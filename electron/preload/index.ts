@@ -75,6 +75,14 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import type {
+  LedgerAnswerRequest,
+  LedgerEntry,
+  LedgerPostRequest,
+  LedgerReadQuery,
+  LedgerResult,
+  LedgerSnapshot,
+} from '@shared/ledger-contract';
 import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import type {
   HiveNotification,
@@ -395,6 +403,20 @@ const bridge: HiveBridge = {
     /** Hand a clicked row's action back to main to carry out. */
     act: (action: NotificationAction): Promise<void> =>
       ipcRenderer.invoke(CH.notificationsAct, action) as Promise<void>,
+  },
+  ledger: {
+    /** The log main holds. Hydration on mount. */
+    list: (query?: LedgerReadQuery): Promise<LedgerSnapshot> =>
+      ipcRenderer.invoke(CH.ledgerList, query ?? {}) as Promise<LedgerSnapshot>,
+    /** The overmind writes; main supplies `from`. */
+    post: (request: Omit<LedgerPostRequest, 'from'>): Promise<LedgerResult> =>
+      ipcRenderer.invoke(CH.ledgerPost, request) as Promise<LedgerResult>,
+    /** Close a thread, by canonical id or short ref. */
+    answer: (request: LedgerAnswerRequest): Promise<LedgerResult> =>
+      ipcRenderer.invoke(CH.ledgerAnswer, request) as Promise<LedgerResult>,
+    /** One entry landed, from any party. */
+    onChanged: (callback: (entry: LedgerEntry) => void) =>
+      subscribe<LedgerEntry>(CH.ledgerChanged, callback),
   },
   updates: {
     status: (): Promise<UpdateStatus> =>

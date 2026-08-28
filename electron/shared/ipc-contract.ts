@@ -72,6 +72,14 @@ import type {
   JiraStatus,
   JiraTransition,
 } from './jira-contract';
+import type {
+  LedgerAnswerRequest,
+  LedgerEntry,
+  LedgerPostRequest,
+  LedgerReadQuery,
+  LedgerResult,
+  LedgerSnapshot,
+} from './ledger-contract';
 import type { SessionMetricsEvent } from './metrics-contract';
 import type {
   HiveNotification,
@@ -384,6 +392,23 @@ export const CH = {
    * carrying free text is `url`, which `isSafeExternalUrl` already gates.
    */
   notificationsAct: 'notifications:act',
+  /**
+   * The ledger's four channels (HIVE-111).
+   *
+   * The renderer is the overmind's only mouth: `ledgerPost` and `ledgerAnswer`
+   * carry no `from`, because main supplies {@link OVERMIND} and would overwrite
+   * anything sent. A session's own writes arrive on the receiver routes
+   * instead, where the `x-hive-session` header names the writer.
+   *
+   * Read the log — hydration on mount, and any filtered view.
+   */
+  ledgerList: 'ledger:list',
+  /** The overmind writes. `from` is forced to OVERMIND in main. */
+  ledgerPost: 'ledger:post',
+  /** Close a thread, by canonical id or by short ref. */
+  ledgerAnswer: 'ledger:answer',
+  /** Push: one entry landed, from any party. main → renderer. */
+  ledgerChanged: 'ledger:changed',
   /** What the app knows about a newer version of itself. */
   updatesStatus: 'updates:status',
   /**
@@ -688,6 +713,7 @@ export const EVENT_CHANNELS = [
   CH.configCloneDone,
   CH.notificationsActivate,
   CH.fsChanged,
+  CH.ledgerChanged,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -1412,6 +1438,20 @@ export interface HiveBridge {
     act(action: NotificationAction): Promise<void>;
   };
   /**
+   * The ledger (HIVE-111).
+   *
+   * The renderer is the **overmind's** mouth and nothing else's: `post` and
+   * `answer` carry no `from`, because main supplies {@link OVERMIND} and would
+   * overwrite anything sent. A session's own writes arrive on the receiver
+   * routes instead, where the header names the writer.
+   */
+  ledger: {
+    list: (query?: LedgerReadQuery) => Promise<LedgerSnapshot>;
+    post: (request: Omit<LedgerPostRequest, 'from'>) => Promise<LedgerResult>;
+    answer: (request: LedgerAnswerRequest) => Promise<LedgerResult>;
+    onChanged: (callback: (entry: LedgerEntry) => void) => () => void;
+  };
+  /**
    * The app's newer self.
    *
    * A namespace of its own rather than fields on `appInfo`, because `appInfo`
@@ -1592,6 +1632,13 @@ export const RESIZE_THROTTLE_MS = 50;
  * where it may reach: `rename` names two skills under the same rule, and the
  * argument for it is recorded on {@link BRIDGE_SKILLS_KEYS} rather than here,
  * because it is a change to one namespace and not to the surface.
+ *
+ * HIVE-111 adds `ledger`. What a web page can now do that it could not before:
+ * read the whole correspondence log between every session and the overmind,
+ * append to it, and close an open ask — but always **as the overmind**. `post`
+ * and `answer` take no `from`; main supplies {@link OVERMIND} and would
+ * overwrite anything a caller sent, so this namespace cannot be used to forge
+ * another party's words the way a compromised page could try.
  */
 export const BRIDGE_KEYS = [
   'appInfo',
@@ -1600,6 +1647,7 @@ export const BRIDGE_KEYS = [
   'github',
   'integrations',
   'jira',
+  'ledger',
   'notifications',
   'pty',
   'session',
@@ -1910,6 +1958,15 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   // `CH.notificationsAct`.
   'act',
 ] as const;
+
+/**
+ * The exact key set of `window.hive.ledger` (HIVE-111).
+ *
+ * Four, and `post` / `answer` are the two worth watching: neither takes a
+ * `from`, so widening either signature to accept one would be the change this
+ * list exists to catch — it would let a compromised page speak as any party.
+ */
+export const BRIDGE_LEDGER_KEYS = ['list', 'post', 'answer', 'onChanged'] as const;
 
 /** The exact key set of `window.hive.updates`. */
 export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
