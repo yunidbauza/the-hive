@@ -3,9 +3,30 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLedgerStore, type LedgerStore } from '../../../../electron/main/ledger/store';
+
+/**
+ * Pinned, because one of the specs below is *about* a timezone.
+ *
+ * `vitest.config.ts` sets no `TZ` and this repo has no CI, so the suite runs
+ * in whatever zone the developer's machine is in. Under UTC — which has no
+ * DST — the spring-forward regression test passes against the naive
+ * `ms - 24h` implementation it exists to catch, so it proved nothing on a
+ * host set to UTC and everything on one set to New York. A regression test
+ * that only fails on some laptops is not one.
+ *
+ * Set before `AT` is computed, so every local-time instant in this file is
+ * built in the same zone the assertions reason about.
+ */
+const HOST_TZ = process.env.TZ;
+process.env.TZ = 'America/New_York';
+
+afterAll(() => {
+  if (HOST_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = HOST_TZ;
+});
 
 /** 2026-08-28 14:15:30 local. */
 const AT = new Date(2026, 7, 28, 14, 15, 30).getTime();
@@ -138,6 +159,85 @@ describe('ledger store', () => {
     // The body itself is correspondence and stays out of the log.
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not json'));
     warn.mockRestore();
+  });
+
+  /**
+   * Parsing is not validating.
+   *
+   * `null`, `123` and `"x"` are all valid JSON, and the old loader pushed each
+   * of them straight into `entries`. That is not a cosmetic wrong: the
+   * sequence reseed reads `newest.id`, so a bare number sorting last threw
+   * inside the constructor — and `createLedgerStore` runs inside
+   * `createLedger`, which runs inside `registerIpcHandlers()` unguarded at
+   * startup, so the app would have booted with **no IPC handlers at all**.
+   * A `null` survived construction and threw later, in `openAsks`, on
+   * `entry.kind`. This is a file the user is invited to open and edit, which
+   * is exactly how such a line arrives.
+   */
+  it('skips a line that parses but is not an entry, and still constructs', () => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, '2026-08-28.jsonl'),
+      [
+        '{"id":"20260828-100000-0001","ts":1,"from":"sess-a","kind":"post","body":"good"}',
+        'null',
+        '123',
+        '"just some text"',
+        '{"ts":2,"from":"sess-a","kind":"post","body":"no id"}',
+        '{"id":"20260828-100000-0003","ts":"soon","from":"sess-a","kind":"post","body":"ts"}',
+        '{"id":"20260828-100000-0004","ts":4,"from":"sess-a","kind":"nonsense","body":"kind"}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reopened = createLedgerStore({ dir, now: () => clock });
+
+    expect(reopened.all().map((entry) => entry.body)).toEqual(['good']);
+    // Counted and warned about through the same path a parse failure takes.
+    expect(reopened.malformed()).toHaveLength(6);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('skipped 6'));
+    warn.mockRestore();
+  });
+
+  /**
+   * A read that fails for a reason other than "no such file" is not an empty
+   * day. Booting empty would also leave the sequence at 0 while the file on
+   * disk already holds ids for this second — the exact duplicate-id failure
+   * the reseed exists to prevent — so it has to be said out loud. A directory
+   * where a file belongs gives a real EISDIR without mocking `fs`.
+   */
+  it('warns rather than silently booting empty when a day file cannot be read', () => {
+    mkdirSync(join(dir, '2026-08-28.jsonl'), { recursive: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reopened = createLedgerStore({ dir, now: () => clock });
+
+    expect(reopened.all()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('2026-08-28.jsonl'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('collide'));
+    warn.mockRestore();
+  });
+
+  /**
+   * `Number('xxxx')` is `NaN` and `pad(NaN, 4)` is `'0NaN'` — an id that is
+   * neither unique nor sortable, which breaks `since`, `resolveRef` and
+   * `thread` at once, permanently, in an append-only file.
+   */
+  it('falls back to sequence 0 when the newest id has an unparseable tail', () => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, '2026-08-28.jsonl'),
+      '{"id":"20260828-141530-xxxx","ts":1,"from":"sess-a","kind":"post","body":"hand edited"}\n',
+      'utf8',
+    );
+
+    const reopened = createLedgerStore({ dir, now: () => clock });
+
+    expect(reopened.append({ from: 'sess-a', kind: 'post', body: 'after' }).id).toBe(
+      '20260828-141530-0001',
+    );
   });
 
   it('says nothing when every line parses', () => {

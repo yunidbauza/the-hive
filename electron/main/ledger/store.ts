@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { type LedgerEntry } from '@shared/ledger-contract';
+import { LEDGER_KINDS, type LedgerEntry } from '@shared/ledger-contract';
 import { nextRef } from '@shared/ledger-derive';
 
 /**
@@ -28,6 +28,35 @@ export interface LedgerStore {
 }
 
 const pad = (value: number, width = 2): string => String(value).padStart(width, '0');
+
+/**
+ * Is this parsed line actually an entry?
+ *
+ * `JSON.parse` succeeding proves the line is JSON, not that it is a ledger
+ * entry: `null`, `123` and `"x"` all parse cleanly. Accepting one is not a
+ * cosmetic wrong — the sequence reseed below reads `newest.id`, so a bare
+ * number sorting last throws inside `createLedgerStore`, which is called from
+ * `createLedger` inside `registerIpcHandlers()`, which is called unguarded at
+ * startup. One hand-edited line in a file the user is *invited* to open would
+ * boot the app with no IPC handlers at all; a `null` line survives
+ * construction and throws later, in `openAsks`, on `entry.kind`.
+ *
+ * Only the fields the app actually reasons about are required. `to`, `ref`,
+ * `thread` and `meta` are optional in the contract, and rejecting a line for
+ * an odd rider would throw away correspondence this loader exists to keep.
+ */
+const isEntry = (value: unknown): value is LedgerEntry => {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.ts === 'number' &&
+    typeof candidate.from === 'string' &&
+    typeof candidate.body === 'string' &&
+    typeof candidate.kind === 'string' &&
+    (LEDGER_KINDS as readonly string[]).includes(candidate.kind)
+  );
+};
 
 /** `2026-08-28` — the file's name, in local time so "today" is the user's. */
 const dayOf = (ms: number): string => {
@@ -81,15 +110,36 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
     let raw: string;
     try {
       raw = readFileSync(path, 'utf8');
-    } catch {
-      // No file for that day is the normal case, not an error.
+    } catch (cause) {
+      /*
+        A missing file is the normal case and stays silent: most days have no
+        yesterday file, and the first launch of a day has no today file.
+
+        Anything else — EACCES, EIO, ENOTDIR — is a real failure, and treating
+        it as "the day was empty" is the dangerous reading: the sequence
+        reseed below would leave `seq` at 0 while the file on disk already
+        holds ids for this second, so the next appends would mint ids that
+        already exist. That is exactly the collision the reseed exists to
+        prevent, so it is said out loud rather than swallowed. `append` cannot
+        repair it, but it no longer throws either: a write that fails for the
+        same reason comes back as a refusal (see `Ledger.append`).
+      */
+      const code = (cause as NodeJS.ErrnoException | null)?.code;
+      if (code !== 'ENOENT') {
+        console.warn(
+          `[hive] ledger: could not read ${path} (${code ?? 'unknown error'});` +
+            ' its entries are not loaded and ids written this second may collide' +
+            ' with what is already in that file',
+        );
+      }
       return;
     }
     let skipped = 0;
     for (const line of raw.split('\n')) {
       if (line.trim() === '') continue;
+      let parsed: unknown;
       try {
-        entries.push(JSON.parse(line) as LedgerEntry);
+        parsed = JSON.parse(line);
       } catch {
         /*
           Kept, not thrown. A half-written final line — the app was killed
@@ -97,7 +147,15 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
         */
         bad.push(line);
         skipped += 1;
+        continue;
       }
+      // Parsing is not validating; see `isEntry`.
+      if (!isEntry(parsed)) {
+        bad.push(line);
+        skipped += 1;
+        continue;
+      }
+      entries.push(parsed);
     }
     /*
       Said out loud, once per file. `malformed()` is the programmatic record,
@@ -109,7 +167,7 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
     */
     if (skipped > 0) {
       console.warn(
-        `[hive] ledger: skipped ${skipped} unparseable line(s) in ${path};` +
+        `[hive] ledger: skipped ${skipped} unusable line(s) in ${path};` +
           ' the entries around them loaded normally',
       );
     }
@@ -129,8 +187,17 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
   const currentStamp = secondOf(at);
   const newest = entries[entries.length - 1];
   if (newest && newest.id.startsWith(`${currentStamp}-`)) {
+    /*
+      Validated, because `isEntry` proves `id` is a string and nothing more.
+      A hand-edited or foreign-format tail (`…-141530-x`) yields `NaN` here,
+      and `pad(NaN, 4)` mints `20260828-141530-0NaN` — an id that is neither
+      unique nor sortable, which breaks `since`, `resolveRef` and `thread` at
+      once. Falling back to 0 risks one duplicate id in the worst case; NaN
+      guarantees permanently broken ones.
+    */
+    const parsed = Number(newest.id.slice(currentStamp.length + 1));
     second = currentStamp;
-    seq = Number(newest.id.slice(currentStamp.length + 1));
+    seq = Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
   }
 
   return {

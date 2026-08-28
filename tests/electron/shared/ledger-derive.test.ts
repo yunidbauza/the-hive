@@ -125,6 +125,22 @@ describe('matches', () => {
     expect(matches(subject, { thread: 't2' })).toBe(false);
   });
 
+  /**
+   * "The conversation" has to mean the same thing here as it does in
+   * `thread()` above, which includes the ask. Matching only `entry.thread`
+   * gave one contract two definitions: a read for `thread: <askId>` came back
+   * with every reply and not the question they were replying to.
+   */
+  it('counts the ask itself as part of its own thread', () => {
+    expect(matches(subject, { thread: subject.id })).toBe(true);
+
+    const reply = entry({ id: 'reply', thread: subject.id });
+    expect(matches(reply, { thread: subject.id })).toBe(true);
+
+    const unrelated = entry({ id: 'other', thread: undefined });
+    expect(matches(unrelated, { thread: subject.id })).toBe(false);
+  });
+
   it('treats `to` as "addressed to me, or broadcast"', () => {
     expect(matches(subject, { to: 'sess-b' })).toBe(true);
     expect(matches(subject, { to: 'sess-c' })).toBe(false);

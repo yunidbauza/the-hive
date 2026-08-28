@@ -129,8 +129,13 @@ describe('createLedger', () => {
    * rule with it.
    */
   describe('an answer appended directly', () => {
+    /*
+      Addressed to `sess-b`, which answers it below: only a party to a thread
+      may close it (see the party rules further down), and these specs are
+      about the *openness* rule, not that one.
+    */
     const ask = (): string => {
-      const result = ledger.append({ from: 'sess-a', to: OVERMIND, kind: 'ask', body: 'ship?' });
+      const result = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'ship?' });
       if (!result.ok) throw new Error('setup failed');
       return result.id;
     };
@@ -213,6 +218,189 @@ describe('createLedger', () => {
     expect(ledger.read({ limit: 2 }).entries.map((entry) => entry.body)).toEqual([
       'two',
       'three',
+    ]);
+  });
+
+  /**
+   * `slice(-0)` is `slice(0)` — a whole copy — so the narrowest request a
+   * caller can make used to return the widest possible answer. And `0` is not
+   * an exotic input: `parseLedgerReadQuery` explicitly admits it, so
+   * `{"limit": 0}` returned the entire log over both the HTTP and IPC paths.
+   */
+  it('returns nothing, not everything, for a limit of zero', () => {
+    ledger.append({ from: 'sess-a', kind: 'post', body: 'one' });
+    ledger.append({ from: 'sess-a', kind: 'post', body: 'two' });
+
+    const snapshot = ledger.read({ limit: 0 });
+
+    expect(snapshot.entries).toEqual([]);
+    // The derived halves are computed from the whole log and are unaffected.
+    expect(snapshot.claims).toEqual({});
+  });
+
+  /**
+   * Only a party to a thread may close it (HIVE-111 ship review).
+   *
+   * `openAsks` retires an ask on *any* answer naming it, so an answer from a
+   * bystander does not merely add noise — it takes the question out of the
+   * recipient's inbox, and the party who was actually asked never sees it.
+   */
+  describe('who may answer', () => {
+    const askOf = (to: string | undefined): string => {
+      const result = ledger.append({
+        from: 'sess-a',
+        kind: 'ask',
+        body: 'ship?',
+        ...(to === undefined ? {} : { to }),
+      });
+      if (!result.ok) throw new Error('setup failed');
+      return result.id;
+    };
+
+    it('refuses a session that is neither the recipient nor the asker', () => {
+      const thread = askOf(OVERMIND);
+
+      const result = ledger.append({ from: 'sess-c', kind: 'answer', thread, body: 'sure' });
+
+      expect(result).toMatchObject({ ok: false, status: 403 });
+      if (result.ok) throw new Error('expected a refusal');
+      expect(result.reason).toContain('sess-c');
+      // Nothing written, so the question is still in the recipient's inbox.
+      expect(ledger.read({}).openAsks).toHaveLength(1);
+    });
+
+    it('lets the recipient answer', () => {
+      const thread = askOf('sess-b');
+
+      expect(ledger.append({ from: 'sess-b', kind: 'answer', thread, body: 'yes' })).toMatchObject({
+        ok: true,
+      });
+    });
+
+    it('lets the asker close its own question', () => {
+      const thread = askOf('sess-b');
+
+      expect(ledger.append({ from: 'sess-a', kind: 'answer', thread, body: 'never mind' })).toMatchObject(
+        { ok: true },
+      );
+    });
+
+    it('lets the overmind answer anything', () => {
+      const thread = askOf('sess-b');
+
+      expect(ledger.append({ from: OVERMIND, kind: 'answer', thread, body: 'yes' })).toMatchObject({
+        ok: true,
+      });
+    });
+
+    // A broadcast ask is addressed to everyone, so everyone is its recipient.
+    it('lets anyone answer a broadcast ask', () => {
+      const thread = askOf(undefined);
+
+      expect(ledger.append({ from: 'sess-c', kind: 'answer', thread, body: 'me' })).toMatchObject({
+        ok: true,
+      });
+    });
+  });
+
+  /**
+   * Only the holder may release a claim (HIVE-111 ship review).
+   *
+   * `claims()` deletes on any `release` naming the task regardless of `from`,
+   * so a release written by a third party moves the task exactly as if that
+   * party had posted as the holder — which the party rule promises can never
+   * happen. There is no matching rule for `claim`: the tool layer reports the
+   * current holder rather than refusing, so a losing claim is a fact.
+   */
+  describe('who may release a claim', () => {
+    const claim = (): void => {
+      ledger.append({ from: 'sess-a', kind: 'claim', body: '', meta: { task: 'HIVE-9' } });
+    };
+
+    it('refuses a release from a party that does not hold the task', () => {
+      claim();
+
+      const result = ledger.append({
+        from: 'sess-b',
+        kind: 'release',
+        body: '',
+        meta: { task: 'HIVE-9' },
+      });
+
+      expect(result).toMatchObject({ ok: false, status: 403 });
+      if (result.ok) throw new Error('expected a refusal');
+      expect(result.reason).toContain('sess-a');
+      expect(ledger.read({}).claims).toEqual({ 'HIVE-9': 'sess-a' });
+    });
+
+    it('lets the holder release it', () => {
+      claim();
+
+      expect(
+        ledger.append({ from: 'sess-a', kind: 'release', body: '', meta: { task: 'HIVE-9' } }),
+      ).toMatchObject({ ok: true });
+      expect(ledger.read({}).claims).toEqual({});
+    });
+
+    it('lets the overmind release a claim it does not hold', () => {
+      claim();
+
+      expect(
+        ledger.append({ from: OVERMIND, kind: 'release', body: '', meta: { task: 'HIVE-9' } }),
+      ).toMatchObject({ ok: true });
+      expect(ledger.read({}).claims).toEqual({});
+    });
+
+    // Nobody holds it, so there is nothing to misappropriate.
+    it('allows a release naming a task nobody holds', () => {
+      expect(
+        ledger.append({ from: 'sess-b', kind: 'release', body: '', meta: { task: 'HIVE-9' } }),
+      ).toMatchObject({ ok: true });
+    });
+
+    it('does not refuse a second claim on a held task', () => {
+      claim();
+
+      expect(
+        ledger.append({ from: 'sess-b', kind: 'claim', body: '', meta: { task: 'HIVE-9' } }),
+      ).toMatchObject({ ok: true });
+    });
+  });
+
+  /**
+   * An answer is addressed to whoever asked (HIVE-111 ship review).
+   *
+   * `LedgerAnswerRequest` carries no `to` and should not — the recipient of an
+   * answer is not a choice. Leaving it absent made every overmind answer a
+   * broadcast, and `visibleTo` in the receiver treats an absent `to` as
+   * "everyone", so a private reply was readable by every other session.
+   */
+  it('addresses an answer to the asker rather than broadcasting it', () => {
+    const asked = ledger.append({ from: 'sess-a', to: OVERMIND, kind: 'ask', body: 'ship?' });
+    if (!asked.ok) throw new Error('setup failed');
+
+    ledger.answer({ thread: asked.id, body: 'yes' }, OVERMIND);
+
+    expect(ledger.read({ kind: 'answer' }).entries[0]).toMatchObject({
+      from: OVERMIND,
+      to: 'sess-a',
+    });
+  });
+
+  /**
+   * A `thread` query returns the whole conversation, question included —
+   * the same definition `thread()` uses. Two readings of "the thread" in one
+   * contract would mean a read for `thread: <askId>` came back with the
+   * replies and not the ask they reply to.
+   */
+  it('includes the ask itself in a read filtered by its thread', () => {
+    const asked = ledger.append({ from: 'sess-a', to: OVERMIND, kind: 'ask', body: 'ship?' });
+    if (!asked.ok) throw new Error('setup failed');
+    ledger.answer({ thread: asked.id, body: 'yes' }, OVERMIND);
+
+    expect(ledger.read({ thread: asked.id }).entries.map((entry) => entry.body)).toEqual([
+      'ship?',
+      'yes',
     ]);
   });
 

@@ -1,6 +1,7 @@
 import {
   LEDGER_BODY_MAX,
   LEDGER_KINDS,
+  OVERMIND,
   type LedgerAnswerRequest,
   type LedgerEntry,
   type LedgerPostRequest,
@@ -8,7 +9,7 @@ import {
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
-import { claims, matches, openAsks, resolveRef } from '@shared/ledger-derive';
+import { claims, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
 
 import { createLedgerStore } from './store';
 
@@ -41,6 +42,25 @@ const refuse = (status: number, reason: string): LedgerResult => ({
   reason,
 });
 
+const describeCause = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+/**
+ * The newest `limit` entries, or all of them when no limit was given.
+ *
+ * A named function rather than an inline `slice`, because the inline version
+ * was wrong in a way that reads as correct: `slice(-Math.max(0, limit))` is
+ * `slice(-0)` for `limit: 0`, and `slice(-0)` is `slice(0)` — a whole copy.
+ * The narrowest request a caller can make returned the widest possible answer,
+ * and `parseLedgerReadQuery` admits `0` as valid, so it was reachable from
+ * both boundaries.
+ */
+const keepNewest = (entries: LedgerEntry[], limit: number | undefined): LedgerEntry[] => {
+  if (limit === undefined) return entries;
+  if (limit <= 0) return [];
+  return entries.slice(-limit);
+};
+
 export function createLedger(options: LedgerOptions): Ledger {
   const now = options.now ?? Date.now;
   const store = createLedgerStore({ dir: options.dir, now });
@@ -49,8 +69,6 @@ export function createLedger(options: LedgerOptions): Ledger {
     read(query) {
       const all = store.all();
       const filtered = all.filter((entry) => matches(entry, query));
-      const limited =
-        query.limit === undefined ? filtered : filtered.slice(-Math.max(0, query.limit));
 
       /*
         Derived from the *whole* log, not from the filtered slice. A query for
@@ -58,7 +76,7 @@ export function createLedger(options: LedgerOptions): Ledger {
         asks — the filter is about what to show, not about what is true.
       */
       return {
-        entries: limited,
+        entries: keepNewest(filtered, query.limit),
         openAsks: openAsks(all, now()),
         claims: claims(all),
       };
@@ -98,18 +116,74 @@ export function createLedger(options: LedgerOptions): Ledger {
         if (canonical === undefined) {
           return refuse(400, `no such thread: ${thread}`);
         }
-        if (
-          request.kind === 'answer' &&
-          !openAsks(all, now()).some((ask) => ask.id === canonical)
-        ) {
-          // Also the answer-to-a-non-ask case: `resolveRef` matches any entry
-          // id, and only an ask is ever in `openAsks`.
-          return refuse(400, `thread is not open: ${thread}`);
+        if (request.kind === 'answer') {
+          const ask = openAsks(all, now()).find((open) => open.id === canonical);
+          if (ask === undefined) {
+            // Also the answer-to-a-non-ask case: `resolveRef` matches any
+            // entry id, and only an ask is ever in `openAsks`.
+            return refuse(400, `thread is not open: ${thread}`);
+          }
+          /*
+            Only a party to the thread may close it.
+
+            `openAsks` retires an ask on *any* answer naming it, so without
+            this a session that merely saw the question could answer it, the
+            ask would drop out of the inbox, and the party it was actually
+            addressed to would never see it. A broadcast ask (`to` absent) is
+            addressed to everyone, so everyone is a recipient of it; the
+            overmind is a party to everything by definition, and the asker
+            itself can always close its own question.
+          */
+          if (
+            ask.to !== undefined &&
+            request.from !== ask.to &&
+            request.from !== ask.from &&
+            request.from !== OVERMIND
+          ) {
+            return refuse(
+              403,
+              `${thread} was asked of ${ask.to}; ${request.from} is not a party to it`,
+            );
+          }
         }
         thread = canonical;
       }
 
-      const stored = store.append(thread === undefined ? request : { ...request, thread });
+      /*
+        A `release` may only be written by the holder (or the overmind, which
+        arbitrates). `claims()` deletes on any release naming the task
+        regardless of who wrote it, so a release from a third party changes
+        derived state exactly as if that party had misbehaved as the holder —
+        the one thing the party rule promises can never happen.
+
+        There is deliberately no mirror-image rule for `claim`: the tool
+        layer's `ledger_claim` reports the current holder rather than refusing,
+        so a second claim is a fact worth recording, not a violation.
+      */
+      if (request.kind === 'release' && request.from !== OVERMIND) {
+        const task = taskOf(request);
+        const holder = task === undefined ? undefined : claims(store.all())[task];
+        if (holder !== undefined && holder !== request.from) {
+          return refuse(403, `${task} is held by ${holder}, not by ${request.from}`);
+        }
+      }
+
+      let stored: LedgerEntry;
+      try {
+        stored = store.append(thread === undefined ? request : { ...request, thread });
+      } catch (cause) {
+        /*
+          The one failure here that is nobody's fault: ENOSPC, EACCES, a
+          `~/.hive` the user moved out from under the app. Reported as a value
+          like every other refusal, because that is the whole reason
+          `LedgerResult` is a value — a throw would reach the HTTP caller as a
+          bare 500 with no body and the IPC caller as a rejected promise,
+          while both boundaries were built to hand a model a readable reason.
+          Nothing was written and nothing was kept in memory, so calling it a
+          refusal is also simply true.
+        */
+        return refuse(500, `could not write the ledger: ${describeCause(cause)}`);
+      }
       return { ok: true, id: stored.id, ...(stored.ref === undefined ? {} : { ref: stored.ref }) };
     },
 
@@ -125,13 +199,25 @@ export function createLedger(options: LedgerOptions): Ledger {
       if (canonical === undefined) {
         return refuse(400, `no such thread: ${request.thread}`);
       }
-      const open = openAsks(all, now()).some((ask) => ask.id === canonical);
-      if (!open) {
+      const ask = openAsks(all, now()).find((open) => open.id === canonical);
+      if (ask === undefined) {
         return refuse(400, `thread is not open: ${request.thread}`);
       }
 
+      /*
+        Addressed to whoever asked, never broadcast.
+
+        `LedgerAnswerRequest` carries no `to` and should not: the recipient of
+        an answer is not a choice, it is whoever is owed the reply. Leaving it
+        absent made every answer a broadcast, and since `visibleTo` in the
+        receiver treats an absent `to` as "everyone", the overmind's reply to
+        one session's private question was readable by every other session
+        over `POST /ledger/read` — the read boundary this log exists to draw,
+        undone by an omission.
+      */
       return ledger.append({
         from,
+        to: ask.from,
         kind: 'answer',
         thread: canonical,
         body: request.body,

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
+import { StringDecoder } from 'node:string_decoder';
 
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
@@ -819,6 +820,22 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           let body = '';
           let bytes = 0;
           let truncated = false;
+          /**
+           * One decoder for the whole request, not `chunk.toString('utf8')`
+           * per chunk.
+           *
+           * A TCP chunk boundary falls wherever the kernel put it, which can
+           * be in the middle of a multi-byte character. Decoding each chunk on
+           * its own turns that one character into two replacement characters,
+           * one at the end of a chunk and one at the start of the next. That
+           * was survivable while the only field ever read here was an ASCII
+           * `hook_event_name` in the first few hundred bytes; a ledger body is
+           * up to 16 KB of agent-written markdown that is appended to a file
+           * nothing ever edits, so the corruption would be permanent.
+           * `StringDecoder` holds the partial sequence back until the bytes
+           * that complete it arrive.
+           */
+          const decoder = new StringDecoder('utf8');
 
           req.on('data', (chunk: Buffer) => {
             bytes += chunk.length;
@@ -843,10 +860,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               truncated = true;
               return;
             }
-            body += chunk.toString('utf8');
+            body += decoder.write(chunk);
           });
 
           req.on('end', () => {
+            // Flushes a trailing incomplete sequence, if the body ended
+            // mid-character, as a single replacement character rather than
+            // dropping it.
+            body += decoder.end();
             let reply: Reply;
             try {
               reply = route.handle(req.headers, body, truncated);

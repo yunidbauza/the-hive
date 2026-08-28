@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -503,9 +504,11 @@ describe('hook receiver', () => {
      * it, a second answer accepted here would silently retire a question.
      */
     it('refuses an answer to an already-closed thread, and appends nothing', async () => {
+      // Addressed to `sess-b`, which answers it: only a party to a thread may
+      // close it, and this spec is about the openness rule, not that one.
       const asked = await post(
         LEDGER_POST_PATH,
-        { to: 'overmind', kind: 'ask', body: 'ship it?' },
+        { to: 'sess-b', kind: 'ask', body: 'ship it?' },
         { [HOOK_HEADER_SESSION]: 'sess-a' },
       );
       const { id: thread } = (await asked.json()) as { id: string };
@@ -568,6 +571,94 @@ describe('hook receiver', () => {
       expect((await response.json()) as { reason: string }).toMatchObject({
         reason: expect.stringContaining(String(HOOK_MAX_BODY_BYTES)),
       });
+    });
+
+    /**
+     * An answer is private to the thread it closes (HIVE-111 ship review).
+     *
+     * `Ledger.answer` used to write no `to` at all, and `visibleTo` reads an
+     * absent `to` as a broadcast — so the overmind's reply to one session's
+     * private question was readable by every other session over this route.
+     * Answered here rather than in the ledger's own spec because the leak was
+     * only observable at the boundary that filters.
+     */
+    it('shows an answer to a private ask only to the party that asked', async () => {
+      const asked = await post(
+        LEDGER_POST_PATH,
+        { to: 'overmind', kind: 'ask', body: 'may I merge?' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const { id: thread } = (await asked.json()) as { id: string };
+
+      // The overmind replies over its own (IPC) path, which is what `answer`
+      // exists for; the read below is the one that crosses the wire.
+      expect(ledger.answer({ thread, body: 'yes, go ahead' }, 'overmind')).toMatchObject({
+        ok: true,
+      });
+
+      const asC = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-c' });
+      expect(((await asC.json()) as LedgerSnapshot).entries).toEqual([]);
+
+      const asA = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      expect(((await asA.json()) as LedgerSnapshot).entries.map((entry) => entry.body)).toEqual([
+        'may I merge?',
+        'yes, go ahead',
+      ]);
+    });
+
+    /**
+     * A multibyte character straddling a TCP chunk boundary (HIVE-111 ship
+     * review).
+     *
+     * The body used to be assembled with `chunk.toString('utf8')` per chunk,
+     * which decodes each chunk in isolation: a character whose bytes are split
+     * across two of them became a replacement character on both sides. That
+     * was survivable while the only field ever read here was an ASCII
+     * `hook_event_name`; a ledger body is agent-written markdown appended to a
+     * file nothing ever edits, so the mangling would be permanent.
+     *
+     * The write is split *inside* the two-byte `é`, and the two halves are
+     * sent far enough apart (and with Nagle off) to arrive as separate `data`
+     * events.
+     */
+    it('keeps a multibyte character that straddles a chunk boundary intact', async () => {
+      const body = 'déjà vu — 🐝 ünicode';
+      const payload = Buffer.from(JSON.stringify({ kind: 'post', body }), 'utf8');
+      // 0xC3 is the lead byte of `é`; cutting after it leaves its continuation
+      // byte in the second chunk.
+      const cut = payload.indexOf(0xc3) + 1;
+      expect(cut).toBeGreaterThan(0);
+
+      const target = new URL(`${origin()}${LEDGER_POST_PATH}`);
+      await new Promise<void>((resolve, reject) => {
+        const request = httpRequest(
+          {
+            hostname: target.hostname,
+            port: target.port,
+            path: target.pathname,
+            method: 'POST',
+            headers: {
+              [HOOK_HEADER_TOKEN]: receiver.token,
+              [HOOK_HEADER_SESSION]: 'sess-a',
+              'content-type': 'application/json',
+              'content-length': String(payload.byteLength),
+            },
+          },
+          (response) => {
+            response.resume();
+            response.on('end', () => {
+              if (response.statusCode === 200) resolve();
+              else reject(new Error(`unexpected status ${String(response.statusCode)}`));
+            });
+          },
+        );
+        request.on('error', reject);
+        request.on('socket', (socket) => socket.setNoDelay(true));
+        request.write(payload.subarray(0, cut));
+        setTimeout(() => request.end(payload.subarray(cut)), 25);
+      });
+
+      expect(ledger.read({}).entries.map((entry) => entry.body)).toEqual([body]);
     });
   });
 

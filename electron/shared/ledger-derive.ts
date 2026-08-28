@@ -15,8 +15,15 @@ import {
   type OpenAsk,
 } from './ledger-contract';
 
-/** `meta.task`, when it is a non-empty string. */
-const taskOf = (entry: LedgerEntry): string | undefined => {
+/**
+ * `meta.task`, when it is a non-empty string.
+ *
+ * Exported because `Ledger.append` needs the *same* answer when it decides
+ * whether a `release` is allowed. Two readings of "which task does this entry
+ * name" would let a write pass the rule under one and change `claims()` under
+ * the other.
+ */
+export const taskOf = (entry: Pick<LedgerEntry, 'meta'>): string | undefined => {
   const task = entry.meta?.task;
   return typeof task === 'string' && task !== '' ? task : undefined;
 };
@@ -48,8 +55,14 @@ export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[
 /**
  * Who holds what, by the last word on each task.
  *
- * First-writer-wins is the *policy* (`ledger_claim` reports the holder rather
- * than failing); this function only reports the state that policy produced.
+ * A report, not an arbiter. Nothing here decides who *should* have won a
+ * contested task — `ledger_claim` in the tool layer reports the current holder
+ * rather than refusing, so a second `claim` is a fact the log records and this
+ * function reads back. The one rule that is enforced, and enforced in
+ * `Ledger.append` rather than here, is that a `release` must come from the
+ * holder: this function deletes on any release naming the task, so a release
+ * from a third party would change derived state exactly as if it had
+ * misbehaved as the holder.
  */
 export function claims(entries: readonly LedgerEntry[]): Record<string, string> {
   const held: Record<string, string> = {};
@@ -73,11 +86,19 @@ export function thread(entries: readonly LedgerEntry[], id: string): LedgerEntry
  * `to` is the asymmetric one: a query for `to: 'sess-b'` also matches
  * broadcasts, because a broadcast *is* addressed to sess-b — along with
  * everyone else.
+ *
+ * `thread` is the other one, and for the same reason `thread()` above is:
+ * "the conversation" includes the question. Matching only `entry.thread`
+ * would give one contract two definitions of a thread — a read for
+ * `thread: <askId>` would come back with every reply and not the ask they are
+ * replying to.
  */
 export function matches(entry: LedgerEntry, query: LedgerReadQuery): boolean {
   if (query.from !== undefined && entry.from !== query.from) return false;
   if (query.kind !== undefined && entry.kind !== query.kind) return false;
-  if (query.thread !== undefined && entry.thread !== query.thread) return false;
+  if (query.thread !== undefined && entry.thread !== query.thread && entry.id !== query.thread) {
+    return false;
+  }
   if (query.to !== undefined && entry.to !== undefined && entry.to !== query.to) return false;
   if (query.since !== undefined && entry.id <= query.since) return false;
   return true;
