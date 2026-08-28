@@ -32,6 +32,7 @@ import {
 
 import { effectiveRuntime } from '../config/runtime';
 import type { HookRuntime } from '../hooks';
+import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
@@ -658,7 +659,8 @@ export function createSessions(options: SessionsOptions): Sessions {
     onTicketIntent: (event) =>
       send(CH.sessionTicketIntent, {
         entityId: event.entityId,
-        key: event.key,
+        keys: [event.key],
+        source: event.source,
       } satisfies SessionTicketIntentEvent),
     onCleared: (entityId) => {
       /**
@@ -688,6 +690,21 @@ export function createSessions(options: SessionsOptions): Sessions {
        * as a fresh session instead.
        */
       history?.record(entityId, { sessionUuid: undefined });
+      /**
+       * The branch dedupe is primed for a row that no longer exists.
+       *
+       * `publishBranch` suppresses a read whose `{branch, cwd}` it has already
+       * published, and `lastBranch` is only ever cleared in `settleExit` — which
+       * `/clear` does not reach, because the pty is still running. The successor
+       * row therefore inherits a dedupe entry it never earned: its branch never
+       * publishes, and so no ticket candidate is ever offered for it.
+       *
+       * That lands squarely on the case the branch signal exists for — a session
+       * cleared and continued on `feat/hive-111-ledger` would never reach the
+       * HIVE-111 card unless the user said the key out loud again. Forgetting
+       * here costs one `git` read on the successor's first hook.
+       */
+      lastBranch.delete(entityId);
       publishCleared(entityId);
     },
     /**
@@ -1038,6 +1055,48 @@ export function createSessions(options: SessionsOptions): Sessions {
     */
     history?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
     send(CH.sessionBranch, { entityId, branch, cwd } satisfies SessionBranchEvent);
+
+    /**
+     * The branch is also a ticket candidate — the second signal.
+     *
+     * A prompt says which ticket a session is for exactly once, and only if the
+     * user phrased it in a way the scanner recognises. A branch says it for as
+     * long as the work lasts, which is what covers the session resumed the next
+     * morning onto `feat/hive-111-ledger` having never spoken the key here.
+     *
+     * ## Why it costs no extra Jira calls to speak of
+     *
+     * This sits after the dedupe above, not before it. `publishBranch` returns
+     * early unless the branch or cwd actually *changed*, so a candidate is
+     * emitted once per distinct branch per session — not once per hook event,
+     * which on a busy turn would be dozens. The renderer confirms each one with
+     * Jira, so that dedupe is the thing standing between this feature and a
+     * network call on every tool call the agent makes.
+     *
+     * ## Why it is still only a candidate
+     *
+     * Same reason the prompt's is: main does not know what is real. The branch
+     * scanner is looser than the prompt's by design — it has no grammar to read
+     * — so `release-2024-11` arrives here as `RELEASE-2024`, and the renderer's
+     * Jira check is what discards it. Nothing is associated or renamed on
+     * main's say-so.
+     */
+    /*
+      A command entity is not a session and can never hold a ticket, so a
+      candidate for one is a Jira read the store is guaranteed to throw away.
+      `openCommand` routes through `startProcess` like everything else, which is
+      the only reason this is reachable at all.
+    */
+    if (commandEntities.has(entityId)) return;
+
+    const candidates = ticketKeysFromBranch(branch);
+    if (candidates.length > 0) {
+      send(CH.sessionTicketIntent, {
+        entityId,
+        keys: candidates,
+        source: 'branch',
+      } satisfies SessionTicketIntentEvent);
+    }
   }
 
   /**

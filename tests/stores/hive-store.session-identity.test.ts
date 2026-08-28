@@ -172,6 +172,152 @@ describe('setSessionTicket', () => {
     expect(sessionAt(id).namePinned).toBe(true);
   });
 
+  it('associates without renaming when the key was inferred, not spoken', () => {
+    /**
+     * `{ source: 'branch' }` is the branch signal's whole difference from the
+     * spoken one, and the reason it is safe to infer at all.
+     *
+     * Reading `HIVE-73` off a branch is right often enough to file the session
+     * on the right WORK card — `facetsForTicket` matches on `ticket` and never
+     * on the name, so the row appears — and not right enough to rewrite a name
+     * the user has been reading, which a `git checkout` would otherwise be able
+     * to do.
+     */
+    const id = spawn();
+    const nameBefore = sessionAt(id).name;
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { source: 'branch' });
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe(nameBefore);
+    expect(sessionAt(id).namePinned).toBeUndefined();
+  });
+
+  it('leaves an agent-chosen name pinned by nobody', () => {
+    /**
+     * The case the option exists for (HIVE-108): Claude titled the session
+     * after the conversation actually running in it. A branch-inferred link
+     * must not take that name away, and must not pin it either — an unpinned
+     * name stays the agent's to change on its next repaint.
+     */
+    const id = spawn();
+    useHiveStore.getState().renameSession(id, 'ledger-spike');
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { source: 'branch' });
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe('ledger-spike');
+    expect(sessionAt(id).namePinned).toBeUndefined();
+
+    // And the agent can still rename it afterwards.
+    useHiveStore.getState().renameSession(id, 'ledger-spike-2');
+    expect(sessionAt(id).name).toBe('ledger-spike-2');
+  });
+
+  it('tells main the association but no name when it chose none', () => {
+    /**
+     * Sending `name: undefined` would be main being told to forget the name it
+     * has — the record survives a quit (HIVE-87, HIVE-107), and a silent link
+     * changed no name, so it has nothing to say about one.
+     */
+    const id = spawn();
+    noteSessionTicket.mockReset();
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { source: 'branch' });
+
+    /*
+      Asserted on the *keys*, not with `toHaveBeenCalledWith`.
+
+      `toHaveBeenCalledWith` uses `toEqual` semantics, which treat an own
+      property whose value is `undefined` as absent — so it passes just as
+      happily against `{ entityId, ticket, name: undefined }`. That is exactly
+      the shape this test exists to rule out, since sending an explicit
+      `undefined` name is main being told to forget the name it has. Keys are
+      the only assertion that can actually fail here.
+    */
+    expect(noteSessionTicket).toHaveBeenCalledTimes(1);
+    const [request] = noteSessionTicket.mock.calls[0]!;
+    expect(Object.keys(request).sort()).toEqual(['entityId', 'ticket']);
+    expect(request).toMatchObject({ entityId: id, ticket: 'HIVE-73' });
+  });
+
+  /**
+   * The spoken key beats the inferred one — even though it arrives second.
+   *
+   * This is the ordering that actually happens, and the plain "already has a
+   * ticket" refusal got it backwards. Main reads the branch **at spawn**, so a
+   * session opened in a worktree still on `feat/hive-108-titles` is associated
+   * before the user has typed a character. Under the old rule, typing
+   * `/work-on HIVE-111` — the very spelling this work exists to support — was
+   * then silently dropped, and because a branch link does not rename, nothing
+   * on screen said why.
+   */
+  it('lets a spoken key replace one that was only inferred', () => {
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-108', { source: 'branch' });
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-111');
+
+    expect(sessionAt(id).ticket).toBe('HIVE-111');
+    expect(sessionAt(id).name).toBe('HIVE-111');
+    expect(sessionAt(id).namePinned).toBe(true);
+    // Promoted, so the next checkout cannot displace it again.
+    expect(sessionAt(id).ticketInferred).toBeUndefined();
+  });
+
+  it('promotes an inferred key the user then says out loud', () => {
+    // Same key, now spoken: the row should take the name and the pin, rather
+    // than being refused as a no-op it looks like from the ticket alone.
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73', { source: 'branch' });
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    expect(sessionAt(id).name).toBe('HIVE-73');
+    expect(sessionAt(id).namePinned).toBe(true);
+    expect(sessionAt(id).ticketInferred).toBeUndefined();
+  });
+
+  it('does not let a branch displace anything, inferred or spoken', () => {
+    // The weaker signal never wins a contest, in either direction.
+    const spoken = spawn();
+    useHiveStore.getState().setSessionTicket(spoken, 'HIVE-73');
+    useHiveStore.getState().setSessionTicket(spoken, 'HIVE-99', { source: 'branch' });
+    expect(sessionAt(spoken).ticket).toBe('HIVE-73');
+
+    const inferred = spawn();
+    useHiveStore.getState().setSessionTicket(inferred, 'HIVE-73', { source: 'branch' });
+    useHiveStore.getState().setSessionTicket(inferred, 'HIVE-99', { source: 'branch' });
+    expect(sessionAt(inferred).ticket).toBe('HIVE-73');
+  });
+
+  it('refuses a second spoken key, which is a change of mind', () => {
+    /*
+      Not the same case as displacing an inference. Both keys were claimed by
+      the user, and the row would end up named for work that is not most of its
+      own transcript — `/clear` is the tool for that, and it retires the row.
+    */
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-99');
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe('HIVE-73');
+  });
+
+  it('still refuses a session that already has a ticket', () => {
+    // The branch signal fires on every branch change, so this refusal is what
+    // stops a checkout re-filing work that is already spoken for.
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-99', { source: 'branch' });
+
+    expect(sessionAt(id).ticket).toBe('HIVE-73');
+    expect(sessionAt(id).name).toBe('HIVE-73');
+  });
+
   it('de-duplicates against a session already named for the ticket', () => {
     const first = useHiveStore
       .getState()

@@ -3,6 +3,7 @@ import type {
   IdleDetail,
   ObservedStatus,
   StatusHookEvent,
+  TicketIntentSource,
 } from './hook-contract';
 
 /**
@@ -433,8 +434,29 @@ export interface SessionBranchEvent {
  */
 export interface SessionTicketIntentEvent {
   entityId: string;
-  /** A key-shaped candidate. Unconfirmed — the renderer checks it against Jira. */
-  key: string;
+  /**
+   * Key-shaped candidates, best-first. All unconfirmed — the renderer checks
+   * them against Jira and takes the first that is a real issue.
+   *
+   * A list rather than one key because a branch has no grammar to disambiguate
+   * with: `chore/bump-node-22-hive-118` offers `NODE-22` before `HIVE-118`, and
+   * sending only the leftmost let a version number permanently shadow the real
+   * ticket. A prompt sends exactly one — its verb phrase already decided.
+   *
+   * Never empty; main does not publish an event with nothing to confirm.
+   */
+  keys: readonly string[];
+  /**
+   * How the candidate was found, which is what decides whether confirming it
+   * also renames the row — see {@link TicketIntentSource}.
+   *
+   * A `branch` candidate is deliberately the looser of the two: main scans the
+   * branch name case-insensitively and with no grammar to read, so `release-2024`
+   * reaches here as a candidate. That is safe only because this is still a
+   * candidate — Jira is what throws it away, one call later, having renamed and
+   * associated nothing.
+   */
+  source: TicketIntentSource;
 }
 
 /**

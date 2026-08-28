@@ -186,6 +186,35 @@ export type PrSource =
   /** The first read failed, and there is nothing to keep. */
   | { kind: 'failed'; message: string };
 
+/**
+ * How sure the caller is that this session belongs to this ticket.
+ *
+ * There is one association and two ways of arriving at it, and the difference
+ * between them is worth exactly one field. The user *saying* "work on ABC-123"
+ * is a decision, and renaming the row to match is the app acknowledging it.
+ * Reading `ABC-123` out of a branch name is a good inference about a decision
+ * made somewhere else, possibly days ago — right often enough to file the
+ * session on the correct card, not right enough to rewrite what the row is
+ * called while the user is looking at it.
+ */
+export interface SetSessionTicketOptions {
+  /**
+   * How the key was learned. Defaults to `'prompt'`, the spoken-intent
+   * behaviour HIVE-78 shipped.
+   *
+   * One field rather than two, because everything that differs between the two
+   * callers follows from it and must not be settable independently:
+   *
+   * - `'prompt'` pins the session's name to the key, and may **replace** a
+   *   ticket that was merely inferred.
+   * - `'branch'` associates and nothing else — the name, pinned or not, is left
+   *   exactly as it was, an agent-chosen title (HIVE-108) goes on being the
+   *   agent's to change, and it never displaces an existing ticket of either
+   *   kind.
+   */
+  source?: 'prompt' | 'branch';
+}
+
 interface HiveState {
   entities: Record<string, Entity>;
   order: string[];
@@ -427,12 +456,19 @@ interface HiveState {
   /** A session reported its context and rate-limit usage (HIVE-79). */
   setSessionMetrics: (id: string, metrics: SessionMetrics) => void;
   /**
-   * The user named the ticket this session is for, in prose (HIVE-78).
+   * The ticket this session is for, however it was learned (HIVE-78).
    *
-   * Associates the session and pins its name to the key. The key must already
-   * have been confirmed against Jira; this action does not check.
+   * Associates the session, and by default pins its name to the key. The key
+   * must already have been confirmed against Jira; this action does not check.
+   *
+   * Pass `{ rename: false }` when the key was **inferred** rather than spoken —
+   * see {@link SetSessionTicketOptions}.
    */
-  setSessionTicket: (id: string, ticket: string) => void;
+  setSessionTicket: (
+    id: string,
+    ticket: string,
+    options?: SetSessionTicketOptions,
+  ) => void;
   /**
    * `/clear` ended this session's conversation; its terminal kept running.
    *
@@ -2455,12 +2491,16 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * against Jira — this action does no validation of its own, because the check
    * that matters is a network call and a store must stay synchronous.
    *
-   * ## Why it pins the name
+   * ## Why it pins the name — when the user spoke it
    *
    * Associating without renaming would leave a row called `sess-03` sitting on
    * the `ABC-123` card, which is the association the user asked for and none of
    * the recognition. Pinning is what makes the new name survive Claude's next
    * title repaint — see {@link Session.namePinned}.
+   *
+   * That reasoning is about a user who *said* the key, and it does not carry to
+   * a key merely read off a branch. `{ rename: false }` is the caller saying so
+   * — see {@link SetSessionTicketOptions}.
    *
    * ## Why it refuses a session that already has a ticket
    *
@@ -2469,7 +2509,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * describe most of its own transcript. A user who genuinely wants that has a
    * better tool: `/clear`, which retires the row and opens a fresh one.
    */
-  setSessionTicket: (id, ticket) => {
+  setSessionTicket: (id, ticket, { source = 'prompt' } = {}) => {
     /**
      * Read, decide, write, *then* tell main (HIVE-107) — rather than the bare
      * `set(updater)` this was, with the note made separately by its caller.
@@ -2498,29 +2538,102 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     const target = currentSessionIn(state, id);
     const entity = state.entities[target];
     if (!entity || !isSession(entity)) return;
-    if (entity.ticket !== undefined) return;
+    /**
+     * An existing ticket refuses a second one — **unless** the first was only
+     * inferred and the second was spoken.
+     *
+     * The plain "already has a ticket" refusal was right while the prompt was
+     * the only signal, and became a bug the moment a branch could associate:
+     * main reads the branch at spawn, so the inference reliably arrives *first*
+     * and the refusal handed every contest to the weaker evidence. See
+     * {@link Session.ticketInferred}.
+     *
+     * Two spoken keys still refuse the second. That is a user changing their
+     * mind mid-conversation, and the row would end up carrying a name that
+     * describes almost none of its own transcript — `/clear` is the honest tool
+     * for it, and it already retires the row and opens a successor.
+     */
+    if (entity.ticket !== undefined) {
+      const displaces = source === 'prompt' && entity.ticketInferred === true;
+      if (!displaces) return;
+    }
     // An ended row is history; naming it now would rewrite the record.
     if (isEnded(entity.status)) return;
 
-    const name = ticketSessionName(ticket, state.entities);
+    /**
+     * A branch-inferred link **associates without renaming**.
+     *
+     * The two callers are not equally sure of themselves, and the name is where
+     * that difference has to show. A prompt is the user saying it: they typed
+     * "work on ABC-123", so answering with a row called `ABC-123` is the
+     * recognition they asked for. A branch is an inference *about* them — often
+     * about a checkout they made days ago — and it is strong enough to file the
+     * session on the right card, which is a correction, but not strong enough
+     * to overwrite the name they have been reading all afternoon, which would
+     * be a surprise with no cause on screen.
+     *
+     * It costs the card nothing: `facetsForTicket` matches on `ticket`, never
+     * on the name, so the row appears either way. The only difference is what
+     * it is called when it gets there.
+     */
+    const name =
+      source === 'prompt' ? ticketSessionName(ticket, state.entities) : undefined;
+
+    /**
+     * `ticketInferred` is set by the branch path and *removed* by the prompt
+     * one.
+     *
+     * A promoted row must stop being displaceable: leaving the flag on after a
+     * spoken key would let the next branch-shaped guess overwrite it again, one
+     * checkout later. Deleted from a fresh object rather than assigned
+     * `undefined`, because this store's snapshots are compared key-for-key and
+     * an explicit `undefined` is a different shape from an absent key — the
+     * same rule `clearSession` follows a few actions down.
+     */
+    let next: Session;
+    if (name === undefined) {
+      next = { ...entity, ticket, ticketInferred: true };
+    } else {
+      next = { ...entity, ticket, name, namePinned: true };
+      delete next.ticketInferred;
+    }
 
     set((current) => ({
       entities: {
         ...current.entities,
-        [target]: { ...entity, ticket, name, namePinned: true },
+        [target]: next,
       },
       orchLines: capLines([
         ...current.orchLines,
-        // The new name, never the id (HIVE-91) — and only the name: it always
-        // carries the ticket key (`HIVE-73`, `HIVE-73-2`), so spelling the
-        // ticket again would read `HIVE-73 is working HIVE-73`.
-        line(`  renamed → ${name}`, 'dim'),
+        /*
+          The new name, never the id (HIVE-91) — and only the name: it always
+          carries the ticket key (`HIVE-73`, `HIVE-73-2`), so spelling the
+          ticket again would read `HIVE-73 is working HIVE-73`.
+
+          The silent branch has no name to spell, so it says what it did instead
+          — and it does still say something. An association the user did not ask
+          for out loud is exactly the kind that should leave a trace they can
+          find afterwards, because the card changing under them is otherwise the
+          only evidence it happened.
+        */
+        name === undefined
+          ? // Names the row, unlike the rename case: there the new name *is* the
+            // key and identifies itself, whereas `linked → HIVE-111` alone
+            // leaves the reader to guess which of thirteen sessions moved.
+            line(`  ${entityLabel(entity)} linked → ${ticket}`, 'dim')
+          : line(`  renamed → ${name}`, 'dim'),
       ]),
     }));
 
     // So the association *and the name it produced* survive a quit (HIVE-87,
     // HIVE-107). Fire and forget: `lib/session-history` swallows the failure.
-    noteSessionTicket({ entityId: target, ticket, name });
+    // A silent link sends no name because it changed none — main keeps the one
+    // it already had rather than being told `undefined` and clearing it.
+    noteSessionTicket({
+      entityId: target,
+      ticket,
+      ...(name === undefined ? {} : { name }),
+    });
   },
 
   /**
@@ -2786,6 +2899,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ...(current.branch === undefined ? {} : { branch: current.branch }),
       ...(current.cwd === undefined ? {} : { cwd: current.cwd }),
       ...(current.ticket === undefined ? {} : { ticket: current.ticket }),
+      /*
+        And how it was learned, with it. A successor that inherited the ticket
+        but not the flag would be a row the user never spoke for that could no
+        longer be corrected by speaking — the displacement rule reads this.
+      */
+      ...(current.ticketInferred === true ? { ticketInferred: true } : {}),
       /**
        * A pinned name **does** carry over, unlike a name the agent chose.
        *

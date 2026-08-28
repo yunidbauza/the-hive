@@ -51,6 +51,34 @@ describe('TicketCard', () => {
     expect(screen.queryByText('lead-form')).not.toBeInTheDocument();
   });
 
+  /**
+   * The reported bug, at the surface the user actually looked at.
+   *
+   * A session was working HIVE-111 all afternoon — the rail said so — and the
+   * ticket's card in WORK showed `+ new session` and nothing else, because
+   * nothing had ever set `session.ticket`. Everything below the association is
+   * fine and always was; this pins the end of the chain so a regression in it
+   * fails here rather than in a screenshot.
+   */
+  it('lists a session once its ticket is set, whatever the session is called', () => {
+    /*
+      `rails-upgrade` is the fixture on no ticket — the previous test asserts it
+      is absent from this card. Associating it is the entire difference.
+
+      Deliberately the *silent* association, because that is the harder case:
+      the row is still called `rails-upgrade`, not `GRAC-3018`, so the card can
+      only be finding it by ticket. A test that renamed first would pass even if
+      the card matched on the name.
+    */
+    useHiveStore
+      .getState()
+      .setSessionTicket('rails-upgrade', 'GRAC-3018', { source: 'branch' });
+
+    render(<TicketCard ticket={ticket()} />);
+
+    expect(screen.getByText('rails-upgrade')).toBeInTheDocument();
+  });
+
   it('shows the PRs those sessions opened', () => {
     render(<TicketCard ticket={ticket()} />);
 

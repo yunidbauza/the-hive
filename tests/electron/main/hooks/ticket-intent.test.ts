@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_PROMPT_SCAN,
+  ticketKeysFromBranch,
   ticketKeyFromPrompt,
 } from '../../../../electron/main/hooks/ticket-intent';
 
@@ -41,6 +42,19 @@ describe('ticketKeyFromPrompt', () => {
       'would you fix ABC-123',
       'Work On ABC-123',
       'WORK ON ABC-123',
+      /*
+        The slash-command spellings, which are how the work actually starts
+        here and which matched nothing at all before this. The verb is the same
+        verb; only the separator differs, because a command name cannot carry a
+        space. `/workstream:work-on` is the plugin-qualified form of the same
+        command, so the `:` has to be as transparent as the `/`.
+      */
+      '/work-on ABC-123',
+      '/workstream:work-on ABC-123',
+      '/pick-up ABC-123',
+      '/switch-to ABC-123',
+      'lets work-on ABC-123',
+      '/work-on ABC-123 and open a PR',
     ])('%s', (prompt) => {
       expect(ticketKeyFromPrompt(prompt)).toBe('ABC-123');
     });
@@ -51,6 +65,55 @@ describe('ticketKeyFromPrompt', () => {
         expect(ticketKeyFromPrompt(prompt)).toBe('ABC-123');
       },
     );
+  });
+
+  /**
+   * A question about a command is not an instruction to run it.
+   *
+   * `INTERROGATIVE_LEAD` guarded the prose spelling from the start, and stopped
+   * guarding anything the moment `VERB_GAP` made `/work-on` matchable: the
+   * lookback then ended on the `/`, and the pattern anchors on whitespace, so
+   * it could never fire. Every case below returned `ABC-123` before the
+   * lookback stripped its trailing delimiters.
+   */
+  describe('refuses a question about the command', () => {
+    it.each([
+      'did you /work-on ABC-123',
+      'what does /work-on ABC-123 do',
+      'why did /work-on ABC-123 fail',
+      'what happened when /switch-to ABC-123',
+      // The prose forms, which must not regress while fixing the slash ones.
+      'did you work on ABC-123',
+      'have you started ABC-123',
+    ])('%s', (prompt) => {
+      expect(ticketKeyFromPrompt(prompt)).toBeNull();
+    });
+
+    it('still admits the polite modals, which are real instructions', () => {
+      // The guard is past-and-perfect auxiliaries and wh-words, never `can` /
+      // `could` / `would` — refusing those would trade a narrow false-positive
+      // class for a very wide false-negative one.
+      expect(ticketKeyFromPrompt('can you /work-on ABC-123')).toBe('ABC-123');
+      expect(ticketKeyFromPrompt('please /work-on ABC-123')).toBe('ABC-123');
+    });
+
+    /**
+     * The limit of the guard, recorded rather than claimed away.
+     *
+     * It allows **one** word between the wh-word and the verb, so a longer
+     * lead-in still reads as intent. That is not new and is not a property of
+     * the slash spelling — the prose form behaves identically — so it is left
+     * alone here: widening it to `(?:\w+\s+)*` would start refusing genuine
+     * instructions like "what I want is to work on ABC-123".
+     */
+    it('does not catch a two-word interrogative lead, in either spelling', () => {
+      expect(ticketKeyFromPrompt('have you run /work-on ABC-123 yet')).toBe(
+        'ABC-123',
+      );
+      expect(ticketKeyFromPrompt('have you run work on ABC-123 yet')).toBe(
+        'ABC-123',
+      );
+    });
   });
 
   describe('refuses', () => {
@@ -171,5 +234,126 @@ describe('ticketKeyFromPrompt', () => {
     // unbounded — `assertJiraIssueKey` admits both, so this must too.
     expect(ticketKeyFromPrompt('work on H2-1')).toBe('H2-1');
     expect(ticketKeyFromPrompt('work on HIVE-104729')).toBe('HIVE-104729');
+  });
+});
+
+/**
+ * The second, weaker signal (goal/ticket-session-inference).
+ *
+ * A branch is evidence the user never spoke: they said it once to `git`, and
+ * the name persists long after the sentence that created it has scrolled away.
+ * That makes it the answer for a session resumed days later, or one whose
+ * intent was expressed before this app was watching.
+ *
+ * It is deliberately **looser** than the prompt scanner, and safe only because
+ * of what happens next: every candidate is put to Jira before it associates
+ * anything. `release-2024-11` yields `RELEASE-2024` here, and Jira is what
+ * throws it away. Tightening this into a classifier would buy nothing the
+ * confirmation step does not already provide.
+ */
+/**
+ * The second, weaker signal.
+ *
+ * A branch is evidence the user never spoke: they said it once to `git`, and
+ * the name persists long after the sentence that created it has scrolled away.
+ * That makes it the answer for a session resumed days later, or one whose
+ * intent was expressed before this app was watching.
+ *
+ * It is deliberately **looser** than the prompt scanner, and safe only because
+ * of what happens next: every candidate is put to Jira before it associates
+ * anything. `release-2024-11` yields `RELEASE-2024` here, and Jira is what
+ * throws it away. Tightening this into a classifier would buy nothing the
+ * confirmation step does not already provide.
+ */
+describe('ticketKeysFromBranch', () => {
+  describe('finds the key', () => {
+    it.each([
+      // The shape this app's own worktrees produce.
+      ['worktree-feat+hive-111-ledger', 'HIVE-111'],
+      ['feat/hive-111-ledger', 'HIVE-111'],
+      ['feat/HIVE-111-ledger', 'HIVE-111'],
+      ['fix/abc-42', 'ABC-42'],
+      ['abc-42', 'ABC-42'],
+      ['bugfix/ABC-42', 'ABC-42'],
+      ['feature/abc-42_retry', 'ABC-42'],
+      // A trailing word after the number is the common case, not the edge one.
+      ['hive-111-the-ledger', 'HIVE-111'],
+    ])('%s -> %s', (branch, key) => {
+      expect(ticketKeysFromBranch(branch)).toEqual([key]);
+    });
+
+    it('uppercases, because a branch is lowercase by convention', () => {
+      /*
+        The prompt scanner is case-*sensitive* on the key and must stay so — it
+        reads English, where a lowercase `hive-111` is far more likely to be a
+        branch name someone pasted than an issue they are claiming. A branch is
+        the opposite: it is lowercase precisely because git branches are, and
+        refusing it there would refuse nearly every real branch.
+      */
+      expect(ticketKeysFromBranch('feat/hive-111')).toEqual(['HIVE-111']);
+      expect(ticketKeyFromPrompt('feat/hive-111')).toBeNull();
+    });
+  });
+
+  describe('finds nothing', () => {
+    it.each([
+      'main',
+      'develop',
+      // The branch this very change is being written on: words, no number.
+      'goal/ticket-session-inference',
+      'worktree-goal+ticket-session-inference',
+      'feat/add-the-explorer',
+      // A number with no project prefix in front of it.
+      'release/2024',
+      '',
+    ])('%s', (branch) => {
+      expect(ticketKeysFromBranch(branch)).toEqual([]);
+    });
+
+    it('refuses a null branch, which is what a detached HEAD reports', () => {
+      expect(ticketKeysFromBranch(null)).toEqual([]);
+    });
+  });
+
+  /**
+   * Every candidate, in order — not just the leftmost.
+   *
+   * This is the finding that mattered most in review. The leftmost key-shaped
+   * token in a branch is routinely *not* the issue: version numbers, sprint
+   * numbers and node majors all match the same shape. While only the first was
+   * returned, it went to Jira, Jira rejected it, and the branch signal
+   * associated nothing — which is precisely the bug this signal exists to fix,
+   * reappearing for an ordinary branch name.
+   *
+   * The renderer confirms these in order and stops at the first real issue, so
+   * order still means something; it just no longer gets to be the only answer.
+   */
+  describe('offers every candidate, best-first', () => {
+    it.each([
+      ['chore/bump-node-22-hive-118', ['NODE-22', 'HIVE-118']],
+      ['release-2024-11-hive-111', ['RELEASE-2024', 'HIVE-111']],
+      ['feat/sprint-42-hive-111', ['SPRINT-42', 'HIVE-111']],
+    ])('%s -> %s', (branch, keys) => {
+      expect(ticketKeysFromBranch(branch)).toEqual(keys);
+    });
+
+    it('de-duplicates, because each entry costs a Jira read', () => {
+      expect(ticketKeysFromBranch('feat/hive-111-rebase-hive-111')).toEqual([
+        'HIVE-111',
+      ]);
+    });
+
+    it('caps what one branch may spend', () => {
+      // A pathological name must not turn a checkout into a dozen network
+      // calls. Five candidates, four allowed through.
+      const branch = 'a-1-b-2-c-3-d-4-e-5';
+
+      expect(ticketKeysFromBranch(branch)).toEqual(['A-1', 'B-2', 'C-3', 'D-4']);
+    });
+  });
+
+  it('does not split a longer number', () => {
+    // `hive-1112` is one issue, not `HIVE-111` with a stray digit.
+    expect(ticketKeysFromBranch('feat/hive-1112')).toEqual(['HIVE-1112']);
   });
 });

@@ -173,7 +173,7 @@ export function useSessionStatus(): void {
     let live = true;
 
     const disposeTicketIntent = bridge.session.onTicketIntent(
-      ({ entityId, key }) => {
+      ({ entityId, keys, source }) => {
         void (async () => {
           /**
            * **Confirmed before it is acted on.**
@@ -189,17 +189,40 @@ export function useSessionStatus(): void {
            * guess here is silently misfiled work, which the user has no obvious
            * way to notice.
            */
-          const result = await readJiraIssue({ key });
-          if (!live || result === null || !result.ok) return;
-          /*
-            And that tells main, so the link survives a quit (HIVE-87) — the
-            action makes the note itself now (HIVE-107), because the name it
-            pins has to go with the key and this side never sees it. This is
-            still the only moment main *can* be told: it matched the shape but
-            deliberately does not decide whether the key is real, and the
-            confirmation that it is exists only here, one line above.
-          */
-          setSessionTicket(entityId, result.value.key);
+          for (const key of keys) {
+            const result = await readJiraIssue({ key });
+            if (!live) return;
+            /*
+              A `null` is the bridge failing and an `ok: false` is Jira refusing
+              or not finding it. Neither is grounds for associating anything —
+              but neither is grounds for giving up on the *other* candidates
+              either, which is why this continues rather than returns.
+            */
+            if (result === null || !result.ok) continue;
+
+            /*
+              And that tells main, so the link survives a quit (HIVE-87) — the
+              action makes the note itself now (HIVE-107), because the name it
+              pins has to go with the key and this side never sees it. This is
+              still the only moment main *can* be told: it matched the shape but
+              deliberately does not decide whether the key is real, and the
+              confirmation that it is exists only here, one line above.
+            */
+            /**
+             * A branch-inferred key associates the session and stops there.
+             *
+             * The rename is the app answering something the user *said*, and a
+             * branch is not something they said — it is something main read off
+             * a checkout they may have made days ago. Renaming on it would take
+             * a row the user has been reading all afternoon, under a title
+             * Claude chose for the conversation actually in it (HIVE-108), and
+             * overwrite it because of a `git checkout`. The card does not need
+             * that: `facetsForTicket` matches on `ticket` alone, so the session
+             * appears under its ticket either way.
+             */
+            setSessionTicket(entityId, result.value.key, { source });
+            return;
+          }
         })();
       },
     );

@@ -905,6 +905,209 @@ describe('status', () => {
   });
 
   /**
+   * The branch is the second ticket signal.
+   *
+   * A prompt names the ticket once, and only if the user phrased it a way the
+   * scanner recognises. The branch goes on saying it for as long as the work
+   * lasts, which is what covers a session resumed onto `feat/hive-111-ledger`
+   * days later having never said the key here at all.
+   *
+   * The emit sits inside `publishBranch`, **after** its change check — so a
+   * candidate goes out once per distinct branch rather than once per hook
+   * event. That placement is the only thing between this and a Jira read on
+   * every tool call the agent makes, so it is pinned rather than assumed.
+   */
+  const branchHarness = (stdout: string) => {
+    let onEvent: ((event: HookStatusEvent) => void) | undefined;
+    let onCleared: ((entityId: string) => void) | undefined;
+    const clock = { t: 0 };
+    const run = vi.fn<RunAsync>().mockResolvedValue({
+      code: 0,
+      stdout,
+      stderr: '',
+      timedOut: false,
+    });
+
+    const hooked = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      branchReader: { run, gitPath: () => '/usr/bin/git', now: () => clock.t },
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: {
+          onEvent: (event: HookStatusEvent) => void;
+          onCleared: (entityId: string) => void;
+        }) => {
+          onEvent = opts.onEvent;
+          onCleared = opts.onCleared;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    /*
+      Opened, not merely created. `publishBranch` checks the registry after its
+      await and returns for a row that is gone — so an unopened session reads a
+      branch and then silently publishes nothing, which would make every
+      assertion below pass for the wrong reason.
+    */
+    hooked.open(OPEN);
+
+    const flush = async (): Promise<void> => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    };
+
+    const turnEnded = () =>
+      onEvent!({
+        entityId: 'hero-refresh',
+        status: 'idle',
+        event: 'Stop',
+        cwd: '/home/dev/repos/hero-refresh',
+      } as HookStatusEvent);
+
+    const cleared = () => onCleared!('hero-refresh');
+
+    const all = () =>
+      sent
+        .filter((entry) => entry.channel === CH.sessionTicketIntent)
+        .map((entry) => entry.payload);
+
+    /*
+      Opening the session reads a branch of its own, in the project's directory
+      rather than the one the hook names — a different cwd, so a legitimately
+      separate publish. `mark` draws the line under it so each test asserts on
+      what its *own* action produced instead of counting from zero and quietly
+      depending on how many reads `open` happens to do.
+    */
+    let baseline = 0;
+    const mark = () => {
+      baseline = all().length;
+    };
+    const intents = () => all().slice(baseline);
+
+    return { hooked, flush, turnEnded, cleared, intents, mark, clock };
+  };
+
+  it('publishes a ticket candidate read from the branch', async () => {
+    // The shape this app's own worktrees produce, lowercase as git leaves it.
+    const h = branchHarness('worktree-feat+hive-111-ledger\n');
+    await h.flush();
+    h.mark();
+
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toEqual([
+      { entityId: 'hero-refresh', keys: ['HIVE-111'], source: 'branch' },
+    ]);
+
+    h.hooked.dispose();
+  });
+
+  it('offers every candidate a branch carries, best-first', async () => {
+    /*
+      The leftmost key-shaped token is routinely not the issue. Sending only it
+      let a node major permanently shadow the real ticket — Jira rejected the
+      shadow, and the branch signal associated nothing.
+    */
+    const h = branchHarness('chore/bump-node-22-hive-118\n');
+    await h.flush();
+    h.mark();
+
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toEqual([
+      {
+        entityId: 'hero-refresh',
+        keys: ['NODE-22', 'HIVE-118'],
+        source: 'branch',
+      },
+    ]);
+
+    h.hooked.dispose();
+  });
+
+  it('publishes nothing for a branch carrying no key', async () => {
+    /*
+      The generic session, and the case that must stay quiet: a terminal opened
+      to look around, standing on `main`. No candidate, so no Jira read on the
+      other side, so no association — an empty answer is the right one here, and
+      the common one.
+    */
+    const h = branchHarness('main\n');
+    await h.flush();
+    h.mark();
+
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toEqual([]);
+
+    h.hooked.dispose();
+  });
+
+  it('offers the successor its branch again after /clear', async () => {
+    /**
+     * `/clear` retires the conversation and keeps the pty, so `settleExit` —
+     * the only place that forgot a branch — never runs. The dedupe entry stayed
+     * primed for a row that no longer exists, the successor's branch never
+     * republished, and no candidate was ever offered for it.
+     *
+     * That landed exactly on the case this signal is justified by: a session
+     * cleared and continued on `feat/hive-111-ledger` would never reach the
+     * HIVE-111 card unless the user said the key out loud again.
+     */
+    const h = branchHarness('feat/hive-111-ledger\n');
+    await h.flush();
+
+    h.turnEnded();
+    await h.flush();
+    h.mark();
+
+    h.cleared();
+    // Past the reader's floor, so this is a real re-read rather than the cache.
+    h.clock.t = MIN_INTERVAL_MS;
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toEqual([
+      { entityId: 'hero-refresh', keys: ['HIVE-111'], source: 'branch' },
+    ]);
+
+    h.hooked.dispose();
+  });
+
+  it('publishes one candidate per branch, not one per event', async () => {
+    /*
+      `publishBranch` returns early when neither branch nor cwd changed, and the
+      emit sits after that check. Without it, every `Stop` in a session on a
+      ticket branch would be one more confirmed Jira read for an association
+      that already exists.
+    */
+    const h = branchHarness('feat/hive-111-ledger\n');
+    await h.flush();
+    h.mark();
+
+    h.turnEnded();
+    await h.flush();
+    // Past the reader's floor, so the second turn genuinely re-reads git rather
+    // than being served the cache — the dedupe under test is the branch one.
+    h.clock.t = MIN_INTERVAL_MS;
+    h.turnEnded();
+    await h.flush();
+
+    expect(h.intents()).toHaveLength(1);
+
+    h.hooked.dispose();
+  });
+
+  /**
    * HIVE-83: the whole reason `hooks/tracker.ts` exists. `Bash` (A) and
    * `AskUserQuestion` (B) run in parallel; A's `PostToolUse` — a sibling
    * finishing — must not clear the block B's `PermissionRequest` is holding.
