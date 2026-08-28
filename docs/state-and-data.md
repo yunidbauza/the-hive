@@ -60,11 +60,31 @@ whose authority lives in the other process, and that shapes both of its actions:
   back on the channel, so the mirror can only ever hold what the log holds.
 
 Its selectors — `useLedgerEntries(filter?)`, `useOpenAsks()`, `useOpenAskCount()`
-and `useThread(id)` — are the freshness rule below applied to a slice the store
-does not own: *nothing* about openness or claims is stored. They call the same
-pure functions in `electron/shared/ledger-derive.ts` that main calls against the
-authoritative log, which is what stops "what counts as an open ask" from having
-two definitions. The deep-dive is [`docs/agents-and-ledger.md`](agents-and-ledger.md).
+and `useThread(id)` — apply the rule the whole store follows: *nothing* about
+openness or claims is stored. They call the same pure functions in
+`electron/shared/ledger-derive.ts` that main calls against the authoritative
+log, which is what stops "what counts as an open ask" from having two
+definitions.
+
+**The rule cannot drift; the input can, and does.** `useLedgerSync` throws
+away the `openAsks` main computed over the *whole* log and keeps only
+`snapshot.entries`, and both `hydrateLedger` and `ledgerAppend` then trim the
+mirror to the newest `LEDGER_MEMORY_CAP` (500) entries. So an ask that is
+genuinely still open — unanswered, and inside its 24h TTL — but older than the
+500 newest entries has been evicted from the mirror, and `useOpenAsks` /
+`useOpenAskCount` simply will not see it. `useThread(id)` loses an evicted ask
+the same way and shows the replies without the question. On a quiet machine 500
+entries is days of correspondence and the mirror and the log agree; on a busy
+one the renderer's view is **capped and best-effort**, and the authoritative
+answer is the one main gives — `window.hive.ledger.list()` with a query, which
+reads the real log.
+
+Storing `openAsks` would not fix it and is not the trade on offer: derived
+values are computed in selectors, never stored, everywhere in this codebase, and
+a stored copy would go stale the moment an answer landed. A consumer that must
+be right about an old ask asks main.
+
+The deep-dive is [`docs/agents-and-ledger.md`](agents-and-ledger.md).
 
 ### The freshness rule
 

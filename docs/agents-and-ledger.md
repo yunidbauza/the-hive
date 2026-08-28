@@ -53,6 +53,25 @@ console (the file and the count, never the line: a ledger body is
 correspondence) rather than thrown, because a half-written last line must not
 cost the user every entry that came before it.
 
+"Malformed" means *not an entry*, not merely *not JSON*. `null`, `123` and
+`"x"` are all valid JSON, and one of them reaching the loaded array is worse
+than a parse error: the sequence reseed reads `newest.id`, so a bare number
+sorting last throws inside the store's constructor — which runs inside
+`registerIpcHandlers()`, unguarded, at startup — and the app would boot with no
+IPC handlers at all. So a line must also *be* an object with a string `id`, a
+numeric `ts`, a string `from`, a known `kind` and a string `body` before it is
+accepted; anything else joins the same skipped-and-warned list.
+
+A read that fails for any reason other than the file not existing (EACCES, EIO)
+is warned about rather than treated as an empty day, because "empty" would also
+leave the sequence counter at zero while ids for this second already exist in
+the file, which is precisely the collision the reseed exists to prevent. And a
+*write* that fails — ENOSPC, a `~/.hive` moved out from under the app — comes
+back from `Ledger.append` as a refusal value (`500`, with the cause named)
+rather than as a throw, for the reason `LedgerResult` is a value at all: a
+throw reaches the HTTP caller as a bodyless 500 and the IPC caller as a
+rejected promise, and both were built to hand a model a readable reason.
+
 ## The two ids
 
 Every entry carries a canonical `id`: `${yyyymmdd}-${hhmmss}-${seq4}`, e.g.
@@ -101,6 +120,28 @@ Put together: no party can post, or answer, as another party. A compromised or
 merely buggy caller can misbehave as *itself*, and the log will say so
 truthfully — it can never misbehave as someone else.
 
+Two rules in `Ledger.append` exist because an entry written truthfully as
+yourself can still change *someone else's* derived state, which would defeat
+that guarantee from the other side:
+
+- **Only a party to a thread may answer it.** `openAsks` retires an ask on any
+  answer naming it, so a session that merely saw a question could close it and
+  the party it was addressed to would never see it. The answerer must be the
+  ask's recipient, its author, or the overmind; a broadcast ask (no `to`) is
+  addressed to everyone, so anyone may answer it. Refused `403` otherwise.
+- **Only the holder may release a claim.** `claims()` deletes on any `release`
+  naming the task regardless of who wrote it, so a release from a third party
+  moves the task exactly as if it had posted as the holder. Refused `403`.
+
+There is deliberately no matching rule for `claim` itself — see *Derived state*
+below.
+
+And one for the same reason on the way out: `Ledger.answer` addresses its entry
+`to` the asker rather than leaving it absent. An absent `to` is a broadcast, and
+`visibleTo` in the receiver treats a broadcast as readable by everyone, so an
+answer with no addressee would publish the overmind's reply to one session's
+private question to every other session.
+
 ## Derived state
 
 Two questions get asked constantly and answered nowhere on disk: *is this ask
@@ -115,10 +156,16 @@ functions in `electron/shared/ledger-derive.ts`:
   would close on a timer while someone is still owed a reply.
 - **`claims`** — a task is held by whichever party's `claim` entry (naming
   the task in `meta.task`) is the most recent one with no later `release` for
-  that same task. First-writer-wins is a *policy* decision made by whatever
-  calls this — `ledger_claim` reports the current holder rather than
-  refusing — and `claims()` itself only reports the state that policy
-  produced; it has no opinion about who should have won.
+  that same task. **The ledger records claims; it does not arbitrate them.**
+  Nothing here or in `append` refuses a second `claim` on a held task, and
+  nothing should: the tool layer's `ledger_claim` (HIVE-112) reports the
+  current holder back to the caller rather than failing, so a losing claim is
+  a fact worth having on the record. First-writer-wins, where it applies, is
+  that layer's policy — `claims()` reports the state it produced and has no
+  opinion about who should have won. The one thing this layer *does* enforce
+  is that a `release` comes from the holder, and it enforces it in
+  `Ledger.append` rather than here, because `claims()` reads the log and
+  `append` decides what may enter it.
 
 `ledger-derive.ts` lives in `electron/shared/`, not beside `ledger/store.ts`
 in `electron/main/`, for a structural reason rather than a stylistic one:
@@ -140,7 +187,7 @@ ledger paths:
 
 | Route | Purpose | Success | Refusals |
 | --- | --- | --- | --- |
-| `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token · `400` missing session header, unknown `kind`, unknown `thread`, or an `answer` whose thread is not an open ask · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap |
+| `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token, an `answer` from a non-party, or a `release` from a non-holder · `400` missing session header, unknown `kind`, unknown `thread`, or an `answer` whose thread is not an open ask · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap · `500` the write itself failed |
 | `POST /ledger/read` | Read a filtered snapshot | `200 LedgerSnapshot` | `403` bad token · `400` missing session header or malformed query · `404` unknown session · `413` over the transport cap |
 
 **Both are POST, including the read.** This server has never parsed a query

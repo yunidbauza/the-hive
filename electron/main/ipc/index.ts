@@ -768,11 +768,18 @@ export function registerIpcHandlers(): void {
    *
    * `knowsParty` closes over `sessions`, which is `null` at this point in
    * startup and assigned below — safe because the closure runs on every read
-   * and write, always after registration, never at construction. Live
-   * sessions and resumable ones both count: an ended session's entries still
-   * have to be readable and answerable, because the party is the *identity*,
-   * not the process, and refusing a write from an id the app remembers would
-   * drop the tail of every conversation the moment a terminal closed.
+   * and write, always after registration, never at construction.
+   *
+   * The `history.resumable` arm is **not** what lets an ended session keep
+   * writing, and today nothing reaches it. Every out-of-process caller arrives
+   * through the receiver, whose `reject()` answers `404` off the *live* pty
+   * registry before `knowsParty` is ever consulted — so an ended session's
+   * writes are already refused a layer earlier, and the only caller that gets
+   * this far is the overmind over IPC. What the arm does is state the rule
+   * this predicate is meant to hold: a party is an *identity*, not a process,
+   * so if the gate in front of it is ever widened (a background agent posting
+   * for a session that has closed, HIVE-112 onward), the ledger will not be
+   * the layer that refuses.
    */
   const ledger = createLedger({
     dir: join(dirname(configPath()), LEDGER_DIR),
