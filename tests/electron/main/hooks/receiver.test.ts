@@ -1,4 +1,8 @@
 // @vitest-environment node
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,10 +12,28 @@ import {
   type HookTicketIntentEvent,
 } from '../../../../electron/shared/hook-contract';
 import {
+  LEDGER_BODY_MAX,
+  LEDGER_POST_PATH,
+  LEDGER_READ_PATH,
+  type LedgerSnapshot,
+} from '../../../../electron/shared/ledger-contract';
+import {
   METRICS_PATH,
   type SessionMetrics,
 } from '../../../../electron/shared/metrics-contract';
+import { createLedger, type Ledger } from '../../../../electron/main/ledger';
 import { createReceiver, type Receiver } from '../../../../electron/main/hooks/receiver';
+
+/**
+ * Every call site below that is not exercising the ledger routes still needs
+ * these two — they are required options — but has no reason to care what they
+ * answer. A refusal that names itself keeps a test that *does* hit one of them
+ * by accident loud rather than silently green.
+ */
+const noLedger = {
+  onLedgerRead: (): LedgerSnapshot => ({ entries: [], openAsks: [], claims: {} }),
+  onLedgerPost: () => ({ ok: false as const, status: 503, reason: 'not exercised by this test' }),
+};
 
 /**
  * The receiver is exercised over a real loopback socket rather than by calling
@@ -30,6 +52,8 @@ describe('hook receiver', () => {
   let dones: string[];
   let readies: string[];
   let url: string;
+  let dir: string;
+  let ledger: Ledger;
 
   beforeEach(async () => {
     events = [];
@@ -37,6 +61,8 @@ describe('hook receiver', () => {
     cleared = [];
     dones = [];
     readies = [];
+    dir = mkdtempSync(join(tmpdir(), 'hive-receiver-ledger-'));
+    ledger = createLedger({ dir, knowsParty: (id) => id !== 'sess-gone' });
     receiver = createReceiver({
       onCleared: (entityId) => cleared.push(entityId),
       onEvent: (event) => events.push(event),
@@ -46,6 +72,8 @@ describe('hook receiver', () => {
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
       onMetrics: () => {},
+      onLedgerRead: (caller, query) => ledger.read({ to: caller, ...query }),
+      onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
     });
     const started = await receiver.start();
     expect(started).not.toBeNull();
@@ -54,6 +82,7 @@ describe('hook receiver', () => {
 
   afterEach(async () => {
     await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   const post = (
@@ -261,6 +290,108 @@ describe('hook receiver', () => {
 
       expect(response.status).toBe(204);
       expect(dones).toEqual(['sess-01']);
+    });
+  });
+
+  describe('the ledger routes', () => {
+    // `url` is the `/hook` route's full address, not the socket's origin.
+    const origin = () => new URL(url).origin;
+
+    const post = async (path: string, body: unknown, headers: Record<string, string>) =>
+      fetch(`${origin()}${path}`, {
+        method: 'POST',
+        headers: { [HOOK_HEADER_TOKEN]: receiver.token, ...headers },
+        body: JSON.stringify(body),
+      });
+
+    it('refuses a post with the wrong token', async () => {
+      const response = await fetch(`${origin()}${LEDGER_POST_PATH}`, {
+        method: 'POST',
+        headers: { [HOOK_HEADER_TOKEN]: 'wrong', [HOOK_HEADER_SESSION]: 'sess-a' },
+        body: JSON.stringify({ kind: 'post', body: 'hi' }),
+      });
+
+      expect(response.status).toBe(403);
+    });
+
+    it('refuses a post from a session the app does not have', async () => {
+      const response = await post(
+        LEDGER_POST_PATH,
+        { kind: 'post', body: 'hi' },
+        { [HOOK_HEADER_SESSION]: 'sess-gone' },
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it('stores the header session as `from`, ignoring the body', async () => {
+      const response = await post(
+        LEDGER_POST_PATH,
+        { from: 'someone-else', kind: 'post', body: 'hi' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      expect(response.status).toBe(200);
+
+      const read = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      const snapshot = (await read.json()) as LedgerSnapshot;
+
+      expect(snapshot.entries).toHaveLength(1);
+      expect(snapshot.entries[0].from).toBe('sess-a');
+    });
+
+    it('answers 413 with a reason for a body over the ledger cap', async () => {
+      const response = await post(
+        LEDGER_POST_PATH,
+        { kind: 'post', body: 'x'.repeat(LEDGER_BODY_MAX + 1) },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+
+      expect(response.status).toBe(413);
+      expect((await response.json()) as { reason: string }).toMatchObject({
+        reason: expect.stringContaining(String(LEDGER_BODY_MAX)),
+      });
+    });
+
+    it('answers 400 with a reason when an answer names no open thread', async () => {
+      const response = await post(
+        LEDGER_POST_PATH,
+        { kind: 'answer', thread: 'a99', body: 'yes' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()) as { reason: string }).toMatchObject({
+        reason: expect.stringContaining('a99'),
+      });
+    });
+
+    it('answers 400 for a body that is not JSON', async () => {
+      const response = await fetch(`${origin()}${LEDGER_POST_PATH}`, {
+        method: 'POST',
+        headers: { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-a' },
+        body: 'not json',
+      });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('refuses GET on a ledger route', async () => {
+      const response = await fetch(`${origin()}${LEDGER_READ_PATH}`, {
+        method: 'GET',
+        headers: { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-a' },
+      });
+
+      expect(response.status).toBe(404);
+    });
+
+    it('defaults a read to the caller plus broadcast', async () => {
+      await post(LEDGER_POST_PATH, { to: 'sess-b', kind: 'post', body: 'private' }, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      await post(LEDGER_POST_PATH, { kind: 'post', body: 'everyone' }, { [HOOK_HEADER_SESSION]: 'sess-a' });
+
+      const read = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-c' });
+      const snapshot = (await read.json()) as LedgerSnapshot;
+
+      expect(snapshot.entries.map((entry) => entry.body)).toEqual(['everyone']);
     });
   });
 
@@ -876,6 +1007,7 @@ describe('hook receiver', () => {
         onReady: () => {},
         knowsSession: () => true,
         onMetrics: () => {},
+        ...noLedger,
       });
       const started = (await ordered.start()) as string;
 
@@ -976,6 +1108,7 @@ describe('hook receiver', () => {
       onReady: () => {},
       knowsSession: () => true,
       onMetrics: () => {},
+      ...noLedger,
       port: 1,
     });
     await expect(doomed.start()).resolves.toBeNull();
@@ -993,6 +1126,7 @@ describe('hook receiver', () => {
       onReady: () => {},
       knowsSession: () => true,
       onMetrics: () => {},
+      ...noLedger,
     });
     const started = await exploding.start();
     const response = await fetch(started as string, {
@@ -1010,14 +1144,14 @@ describe('hook receiver', () => {
 
 describe('hook receiver tokens', () => {
   it('gives each receiver a distinct token', () => {
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
     expect(a.token).not.toBe(b.token);
     expect(a.token).toHaveLength(36);
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
     expect(receiver.url).toBeNull();
   });
 });
@@ -1046,6 +1180,7 @@ describe('the status line path', () => {
       onDone: () => {},
       onReady: () => {},
       knowsSession: (entityId) => entityId !== 'sess-gone',
+      ...noLedger,
     });
     const started = await receiver.start();
     expect(started).not.toBeNull();
@@ -1083,6 +1218,7 @@ describe('the status line path', () => {
       onDone: () => {},
       onReady: () => {},
       knowsSession: () => true,
+      ...noLedger,
     });
     expect(unbound.metricsUrl).toBeNull();
   });

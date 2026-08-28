@@ -16,6 +16,12 @@ import { writeHookSettings } from '../../electron/main/hooks/settings';
 import { writePluginDir } from '../../electron/main/skills/plugin';
 import type { SkillsRead } from '../../electron/main/skills/read';
 
+/** Not exercised by this suite — `/done`, not the ledger. */
+const noLedger = {
+  onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
+  onLedgerPost: () => ({ ok: false as const, status: 503, reason: 'not exercised by this test' }),
+};
+
 /**
  * `/done`, end to end, against a real `claude` (HIVE-93).
  *
@@ -95,6 +101,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
       onDone: (entityId) => declared.push(entityId),
       onReady: () => {},
       knowsSession: (entityId) => entityId === ENTITY,
+      ...noLedger,
     });
 
     const url = await receiver.start();

@@ -42,6 +42,13 @@ import type {
   WriteRequest,
 } from './ipc-contract';
 import { ISSUE_KEY_PATTERN } from './jira-contract';
+import {
+  LEDGER_KINDS,
+  type LedgerAnswerRequest,
+  type LedgerKind,
+  type LedgerPostRequest,
+  type LedgerReadQuery,
+} from './ledger-contract';
 import type { NotificationAction } from './notification-contract';
 import {
   NOTIFICATION_DELIVERIES,
@@ -1567,4 +1574,128 @@ export function parseDiagnoseEnvRequest(input: unknown): DiagnoseEnvRequest {
   return {
     ...(raw.id !== undefined ? { id: assertId(raw.id, 'diagnoseEnv.id') } : {}),
   };
+}
+
+/**
+ * The ledger's three payloads (HIVE-111).
+ *
+ * `parseLedgerPostBody` **drops** any `from` it is given rather than
+ * validating it. Identity comes from the transport — the `x-hive-session`
+ * header, or `OVERMIND` for the renderer — and a body that could name a party
+ * would be a party impersonating another with a one-word edit.
+ */
+
+const asRecord = (input: unknown, label: string): Record<string, unknown> => {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  return input as Record<string, unknown>;
+};
+
+const optionalString = (
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): string | undefined => {
+  const value = source[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value === '') {
+    throw new TypeError(`${label}.${key} must be a non-empty string`);
+  }
+  return value;
+};
+
+const requiredString = (
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const value = source[key];
+  if (typeof value !== 'string') {
+    throw new TypeError(`${label}.${key} must be a string`);
+  }
+  return value;
+};
+
+const optionalKind = (
+  source: Record<string, unknown>,
+  label: string,
+): LedgerKind | undefined => {
+  const value = source.kind;
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !(LEDGER_KINDS as readonly string[]).includes(value)) {
+    throw new TypeError(`${label}.kind must be one of ${LEDGER_KINDS.join(', ')}`);
+  }
+  return value as LedgerKind;
+};
+
+const optionalMeta = (
+  source: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> | undefined => {
+  const value = source.meta;
+  if (value === undefined) return undefined;
+  return asRecord(value, `${label}.meta`);
+};
+
+export function parseLedgerReadQuery(input: unknown): LedgerReadQuery {
+  const source = asRecord(input, 'ledger query');
+  const query: LedgerReadQuery = {};
+
+  const to = optionalString(source, 'to', 'ledger query');
+  if (to !== undefined) query.to = to;
+  const from = optionalString(source, 'from', 'ledger query');
+  if (from !== undefined) query.from = from;
+  const kind = optionalKind(source, 'ledger query');
+  if (kind !== undefined) query.kind = kind;
+  const thread = optionalString(source, 'thread', 'ledger query');
+  if (thread !== undefined) query.thread = thread;
+  const since = optionalString(source, 'since', 'ledger query');
+  if (since !== undefined) query.since = since;
+
+  const limit = source.limit;
+  if (limit !== undefined) {
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0) {
+      throw new TypeError('ledger query.limit must be a non-negative integer');
+    }
+    query.limit = limit;
+  }
+
+  return query;
+}
+
+export function parseLedgerPostBody(input: unknown): Omit<LedgerPostRequest, 'from'> {
+  const source = asRecord(input, 'ledger post');
+  const kind = optionalKind(source, 'ledger post');
+  if (kind === undefined) {
+    throw new TypeError(`ledger post.kind must be one of ${LEDGER_KINDS.join(', ')}`);
+  }
+
+  const request: Omit<LedgerPostRequest, 'from'> = {
+    kind,
+    body: requiredString(source, 'body', 'ledger post'),
+  };
+
+  const to = optionalString(source, 'to', 'ledger post');
+  if (to !== undefined) request.to = to;
+  const thread = optionalString(source, 'thread', 'ledger post');
+  if (thread !== undefined) request.thread = thread;
+  const meta = optionalMeta(source, 'ledger post');
+  if (meta !== undefined) request.meta = meta;
+
+  return request;
+}
+
+export function parseLedgerAnswerRequest(input: unknown): LedgerAnswerRequest {
+  const source = asRecord(input, 'ledger answer');
+  const request: LedgerAnswerRequest = {
+    thread: optionalString(source, 'thread', 'ledger answer') ?? '',
+    body: requiredString(source, 'body', 'ledger answer'),
+  };
+  if (request.thread === '') throw new TypeError('ledger answer.thread must be a non-empty string');
+
+  const meta = optionalMeta(source, 'ledger answer');
+  if (meta !== undefined) request.meta = meta;
+
+  return request;
 }

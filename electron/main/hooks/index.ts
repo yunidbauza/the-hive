@@ -138,6 +138,9 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onMetrics,
         onDone,
         onReady,
+        // Wired to the real ledger in the next commit (HIVE-111).
+        onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
+        onLedgerPost: () => ({ ok: false, status: 503, reason: 'ledger not wired yet' }),
         knowsSession,
         ...(port === undefined ? {} : { port }),
       });

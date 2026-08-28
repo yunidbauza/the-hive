@@ -8,6 +8,9 @@ import {
   parseAddProjectRequest,
   parseCloneRequest,
   parseKillRequest,
+  parseLedgerAnswerRequest,
+  parseLedgerPostBody,
+  parseLedgerReadQuery,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
   parseReorderProjectsRequest,
@@ -867,5 +870,60 @@ describe('parseSessionPrRequest', () => {
         ),
       ),
     ).toThrow(IpcValidationError);
+  });
+});
+
+describe('parseLedgerReadQuery', () => {
+  it('accepts an empty query', () => {
+    expect(parseLedgerReadQuery({})).toEqual({});
+  });
+
+  it('keeps only the fields it knows', () => {
+    expect(
+      parseLedgerReadQuery({ to: 'sess-a', kind: 'ask', limit: 5, bogus: 'x' }),
+    ).toEqual({ to: 'sess-a', kind: 'ask', limit: 5 });
+  });
+
+  it('refuses a kind that is not in the vocabulary', () => {
+    expect(() => parseLedgerReadQuery({ kind: 'nonsense' })).toThrow();
+  });
+
+  it('refuses a non-object', () => {
+    expect(() => parseLedgerReadQuery(null)).toThrow();
+    expect(() => parseLedgerReadQuery('all')).toThrow();
+  });
+});
+
+describe('parseLedgerPostBody', () => {
+  it('accepts a minimal post', () => {
+    expect(parseLedgerPostBody({ kind: 'post', body: 'hi' })).toEqual({
+      kind: 'post',
+      body: 'hi',
+    });
+  });
+
+  it('drops a `from` in the body — the header decides who is speaking', () => {
+    expect(parseLedgerPostBody({ from: 'someone-else', kind: 'post', body: 'hi' })).toEqual({
+      kind: 'post',
+      body: 'hi',
+    });
+  });
+
+  it('refuses a missing body or an unknown kind', () => {
+    expect(() => parseLedgerPostBody({ kind: 'post' })).toThrow();
+    expect(() => parseLedgerPostBody({ kind: 'nonsense', body: 'hi' })).toThrow();
+  });
+});
+
+describe('parseLedgerAnswerRequest', () => {
+  it('accepts a thread and a body', () => {
+    expect(parseLedgerAnswerRequest({ thread: 'a1', body: 'yes' })).toEqual({
+      thread: 'a1',
+      body: 'yes',
+    });
+  });
+
+  it('refuses a missing thread', () => {
+    expect(() => parseLedgerAnswerRequest({ body: 'yes' })).toThrow();
   });
 });

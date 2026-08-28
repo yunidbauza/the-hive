@@ -9,6 +9,12 @@ import { describe, expect, it } from 'vitest';
 import { createReceiver } from '../../electron/main/hooks/receiver';
 import { hookSettings } from '../../electron/main/hooks/settings';
 
+/** Not exercised by this suite — the ready signal, not the ledger. */
+const noLedger = {
+  onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
+  onLedgerPost: () => ({ ok: false as const, status: 503, reason: 'not exercised by this test' }),
+};
+
 /**
  * The ready signal, against a real `claude` (HIVE-101).
  *
@@ -64,6 +70,7 @@ describe.skipIf(!enabled)('ready-signal conformance', () => {
         readies.push(entityId);
       },
       knowsSession: (entityId) => entityId === ENTITY,
+      ...noLedger,
     });
 
     const url = await receiver.start();
