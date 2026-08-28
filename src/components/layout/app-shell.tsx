@@ -9,6 +9,7 @@ import { TitleBar } from '@components/layout/title-bar';
 import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
+import { useLedgerSync } from '@features/shared/hooks/use-ledger-sync';
 import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
 import { useSessionNames } from '@hooks/use-session-names';
@@ -61,6 +62,15 @@ export function AppShell() {
    * ignore twelve messages each.
    */
   useSessionStatus();
+
+  /**
+   * Keep the renderer's ledger mirror current (HIVE-111).
+   *
+   * Here for the same reason as the status subscription above: `ledger:changed`
+   * is a single broadcast channel, and a per-consumer subscription would mean
+   * one listener per card for one channel.
+   */
+  useLedgerSync();
 
   /**
    * Open the session a clicked OS notification was about (story 106).
