@@ -59,6 +59,7 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 | Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
 | Simulation script and the fake clock | [`docs/simulation.md`](docs/simulation.md) |
+| The ledger, parties, asks and claims | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
 | Any UI task — tokens and type scale, then atoms and props | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) · [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
 The visual source of truth is [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md):
@@ -87,10 +88,10 @@ one still fires.
 | **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
 | `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**` |
 
-`electron/shared/**` is the **only** module both processes may import, and it is
-types and constants only — no runtime imports, no Node APIs, no DOM APIs. The
-renderer reaches it through `@shared`; anything with behaviour behind it must be
-imported **type-only**, or main-process code lands in the renderer bundle. That
+`electron/shared/**` is the **only** module both processes may import, and it is types,
+constants, and pure dependency-free logic only — no runtime imports, no Node APIs, no
+DOM APIs. The renderer reaches it through `@shared`; anything with behaviour behind it
+must be imported **type-only**, or main-process code lands in the renderer bundle. That
 is what makes the IPC contract a compile-time artifact rather than a convention.
 
 `src/components/layout/` is the **composition root** and is exempt from the
@@ -121,8 +122,7 @@ silently becomes importable from everywhere.
 **The single most important invariant in the codebase.**
 
 `src/components/terminal/` speaks only `TerminalTransport`. It may not import from
-`features/`, `data/`, or `stores/` — and cannot, because the lint zone fails the
-build.
+`features/`, `data/`, or `stores/` — and cannot, because the lint zone fails the build.
 
 In this phase the transport is a static/scripted fake; later it becomes IPC to a
 local PTY daemon **with no changes to the component tree**. That is the whole
