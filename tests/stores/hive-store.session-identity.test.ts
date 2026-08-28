@@ -324,12 +324,77 @@ describe('a pinned name outranks the agent', () => {
   });
 
   it('still honours a rename on a session that was never pinned', () => {
-    // HIVE-61's behaviour, unchanged for every session the app has not named.
+    // HIVE-61's behaviour for every session the app has not named — now spelled
+    // in the rail's own register (HIVE-108).
     const id = spawn();
 
     useHiveStore.getState().renameSession(id, 'fix the login bug');
 
-    expect(sessionAt(id).name).toBe('fix the login bug');
+    expect(sessionAt(id).name).toBe('fix-the-login-bug');
+  });
+
+  /**
+   * What the pin defends is the **key**, not the whole name (HIVE-108).
+   *
+   * Refusing every title was right while the alternative was `sess-01`. The
+   * alternative is now a description of the work, and the ticket plus that
+   * description beats either alone — which is the whole shape the user asked
+   * for: `HIVE-1234-bug-fixing`.
+   */
+  it('lets a pinned session gain a topic, with the key still in front', () => {
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    useHiveStore.getState().renameSession(id, 'back key interception');
+
+    expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
+    // The pin is not spent by being honoured once.
+    expect(sessionAt(id).namePinned).toBe(true);
+  });
+
+  it('does not grow the name on every repaint', () => {
+    /**
+     * The failure this guards is a name a word longer each frame. Claude
+     * repaints its title several times a second, so a normaliser that took the
+     * *current name* as the prefix rather than the ticket would compound —
+     * `HIVE-73-back-key-interception-back-key-interception` and on from there.
+     */
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    for (let i = 0; i < 5; i += 1) {
+      useHiveStore.getState().renameSession(id, 'back key interception');
+    }
+
+    expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
+  });
+
+  it('keeps the pinned key even when the title names a different ticket', () => {
+    // A session routinely discusses another issue; the pin is what the user
+    // said this session is *for*.
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    useHiveStore.getState().renameSession(id, 'fixing hive-99 regression');
+
+    expect(sessionAt(id).name).toBe('HIVE-73-fixing-regression');
+  });
+
+  it('refuses a name a live session already holds', () => {
+    /**
+     * Inferred names collide in a way ids never did — two sessions asked the
+     * same kind of question reach the same title. Whoever holds the name keeps
+     * it, and the loser stays as it was rather than growing a suffix that the
+     * next repaint would recompute.
+     */
+    const first = spawn();
+    const second = spawn();
+    useHiveStore.getState().renameSession(first, 'Mutex explanation');
+
+    useHiveStore.getState().renameSession(second, 'Mutex explanation');
+
+    expect(sessionAt(first).name).toBe('mutex-explanation');
+    expect(sessionAt(second).name).not.toBe('mutex-explanation');
   });
 
   it('carries the pin, the name and the branch across a /clear', () => {

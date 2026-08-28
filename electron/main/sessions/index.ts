@@ -1488,50 +1488,48 @@ export function createSessions(options: SessionsOptions): Sessions {
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
         /**
-         * The session is named after the row it belongs to (HIVE-61), so the
-         * agent's own prompt box, `/resume` picker and terminal title all agree
-         * with the rail instead of inventing an auto-title from whatever the
-         * first message happened to be.
+         * **Nothing is named here any more, and that is the feature** (HIVE-108).
          *
-         * A rename *inside* Claude is not a conflict with this: the new name
-         * comes straight back out on the title stream and becomes the row's
-         * name. This only decides what the session is called to begin with.
+         * HIVE-61 sent the row's own id — `--name sess-07` — so that the agent's
+         * prompt box, its `/resume` picker and the terminal title all agreed with
+         * the rail. The cost of that agreement turned out to be the name itself:
+         * **`--name` suppresses Claude Code's own titling entirely.** Two arms of
+         * a real `claude`, same prompt, same moment, differing in nothing else:
          *
-         * HIVE-78 lets the renderer say what that name is, and it does so for
-         * exactly one case: a session started from a ticket card, which is
-         * called `HIVE-73` rather than `sess-07`. The **id** is untouched —
-         * it is the entities-map key and appears in every console line — so
-         * this is the display name and nothing more. Falling back to the id
-         * keeps every other spawn byte-identical to what HIVE-61 shipped.
+         * ```
+         * --name sess-probe   ai-title: (none)               OSC: "✳ sess-probe"
+         * (no flag)           ai-title: "Mutex explanation"  OSC: "✳ Claude Code"
+         *                                                    → "◐ Mutex explanation"
+         * ```
          *
-         * **And only on a spawn** (HIVE-107). `--name` on a `--resume` is not a label on a
-         * new session, it is a *rename of the old one*, written through into
-         * the transcript — measured against Claude Code 2.1.247: a resume
-         * carrying `--name probe-beta` reopened a conversation stored as
-         * `probe-alpha` and painted `✳ probe-beta`, and the next resume, with
-         * no flag at all, still said `probe-beta`.
+         * Every session this app has ever spawned carries a `custom-title` and no
+         * `ai-title` for exactly this reason — 25+ transcripts, some 3,000 lines
+         * long, all of them mute. The Hive was not failing to infer names; it was
+         * stopping Claude from inferring them.
          *
-         * So the id fallback was destroying exactly the thing a resume exists
-         * to preserve. A session the user had called `troubleshooting-crawling`
-         * came back as `sess-0n`, and not only on screen: the new title is
-         * indistinguishable from one the agent chose, so `readTitle` recorded
-         * it in the ledger and the old name was gone for good — lost by the
-         * recovery rather than by the crash.
+         * So the id fallback is gone. A session opens unnamed, Claude titles it
+         * from the conversation once there is one, and the title arrives on the
+         * OSC-0 stream `readTitle` has parsed since HIVE-61 — no new transport,
+         * no prompt scraping, no second inference engine. `hiveNameFromTitle`
+         * spells it the way the rail spells names.
          *
-         * A resume needs no name because the conversation already has one and
-         * Claude repaints it unprompted, which is also why this is a *dropped
-         * flag* rather than a name looked up and re-sent: sending the ledger's
-         * copy would re-assert something already true, and would still be
-         * wrong for the names the pattern cannot carry — `/rename` accepts
-         * "fix the login bug", and `isSendableSessionName` does not.
+         * What is given up is the opening frame: until Claude has titled it, its
+         * prompt box says `Claude Code` where it used to say `sess-07`. The row
+         * is untouched — `nameFromTitle` maps that string to the *absence* of a
+         * name, so the rail goes on saying `sess-07` until a real one lands.
          *
-         * An explicit `request.name` survives, because that is a caller saying
-         * something the transcript cannot: *call it this from now on*. Nothing
-         * asks for it on a resume today.
+         * **This subsumes HIVE-107.** That fix carved `--resume` out of the id
+         * fallback, because `--name` on a resume renames the stored conversation
+         * rather than labelling a new one. With no fallback left there is nothing
+         * to carve: a resume sends no flag because *no spawn does*.
+         *
+         * An explicit `request.name` still survives, because that is a caller
+         * saying something the transcript cannot: *call it this from now on*.
+         * Nothing asks for it today — a ticket session is named by the store,
+         * which pins `HIVE-73` in front of whatever Claude infers, rather than by
+         * a flag that would cost it the inference.
          */
-        ...(resume && request.name === undefined
-          ? {}
-          : { name: request.name ?? request.entityId }),
+        ...(request.name === undefined ? {} : { name: request.name }),
         sessionUuid,
         resume,
         /*

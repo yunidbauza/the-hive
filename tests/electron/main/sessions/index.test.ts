@@ -146,10 +146,15 @@ const TEST_UUID = '00000000-0000-4000-8000-000000000000';
 /**
  * The bootstrap command line a plain spawn produces.
  *
- * `--name` is the entity id (HIVE-61), so the agent's prompt box and `/resume`
- * entry agree with the rail. `--session-id` is pinned so the transcript path is
- * deterministic. No `--settings`, because this harness passes no hook runtime —
- * which is itself the "hooks unavailable" case, and it must still spawn.
+ * **There is no `--name` on it, and that is load-bearing** (HIVE-108). HIVE-61
+ * put the entity id there so the agent's prompt box and `/resume` entry agreed
+ * with the rail; the flag also suppresses Claude Code's own titling outright, so
+ * the price of that agreement was every context-derived name the app might have
+ * had. A session now opens unnamed and titles itself.
+ *
+ * `--session-id` is pinned so the transcript path is deterministic. No
+ * `--settings`, because this harness passes no hook runtime — which is itself
+ * the "hooks unavailable" case, and it must still spawn.
  */
 /**
  * The bootstrap line a plain spawn produces.
@@ -159,7 +164,7 @@ const TEST_UUID = '00000000-0000-4000-8000-000000000000';
  * user's profile and re-exports anything they set there. Without this the whole
  * subscription-auth feature is a no-op for the population it exists for.
  */
-const BOOT = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --session-id ${TEST_UUID} && exit`;
+const BOOT = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --session-id ${TEST_UUID} && exit`;
 
 /**
  * The same command line for a spawn that carries a task (HIVE-91).
@@ -167,7 +172,7 @@ const BOOT = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-r
  * The task is a positional argument on `BOOT`, not a second thing written into
  * the pty after it — which is why there is a constant for it at all.
  */
-const BOOT_WITH_TASK = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --name hero-refresh --session-id ${TEST_UUID} 'fix the hero' && exit`;
+const BOOT_WITH_TASK = `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; claude --session-id ${TEST_UUID} 'fix the hero' && exit`;
 
 /** How long after a stage's text its submitting `\r` follows (HIVE-63). */
 const SUBMIT = 300;
@@ -305,6 +310,34 @@ describe('what a session runs', () => {
       .join('');
     expect(written).toContain('claude-hooks.settings.json');
     expect(written).not.toContain('settings.light.json');
+  });
+
+  /**
+   * The flag that used to suppress Claude Code's own titling (HIVE-108).
+   *
+   * Asserted on its own, and not merely implied by `BOOT`, because this is the
+   * whole mechanism of the feature and it fails silently: a `--name` restored
+   * here would not break a single other test, and the app would simply stop
+   * inferring names again — the state it was in for its entire history before
+   * this change, which nobody noticed because there was nothing to compare it
+   * against.
+   *
+   * Measured cause, not inference: two arms of a real `claude` differing only in
+   * this flag produced an `ai-title` and no `ai-title` respectively. The live
+   * proof is `pnpm test:title`.
+   */
+  it('names nothing on an ordinary spawn, so the agent titles itself', () => {
+    sessions.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8);
+    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(SUBMIT);
+
+    const line = vi.mocked(supervisor.write).mock.calls.at(0)?.[1] ?? '';
+    expect(line).toContain('claude ');
+    expect(line).not.toContain('--name');
   });
 
   it('delivers a spawn task as claude’s initial prompt, on the command line', () => {
@@ -1425,18 +1458,24 @@ describe('the ledger', () => {
   });
 
   /**
-   * The title stream against a pinned name, over a **real** ledger (HIVE-107).
+   * The title stream against a pinned name, over a **real** ledger (HIVE-107,
+   * relaxed by HIVE-108).
    *
-   * Both halves are pinned on their own — `ledger.test.ts` owns the refusal,
+   * Both halves are pinned on their own — `ledger.test.ts` owns the merge rule,
    * and the tests above own the fact that `readTitle` records what it reads —
    * but the bug lived in the seam, so this is the one place they are composed.
-   * A session renamed mid-conversation goes on painting the name Claude knows
-   * it by, several times a second, and every one of those repaints reached
-   * `record`. The row on screen stayed `HIVE-104`; the file underneath it went
-   * back to `sess-01` before the user had finished reading the rename, and the
-   * file is what the next launch restores from.
+   * A session renamed mid-conversation goes on painting the name Claude knows it
+   * by, several times a second, and every one of those repaints reaches
+   * `record`. The file underneath the row used to go back to `sess-01` before
+   * the user had finished reading the rename, and the file is what the next
+   * launch restores from.
+   *
+   * What the pin defends is now the **key**, not the whole name: the agent's
+   * title is taken and `HIVE-104` is kept in front of it. The regression this
+   * guards against is the same one either way — the ticket falling off the
+   * front on the next repaint.
    */
-  it('keeps a pinned name against the agent’s own repaints', () => {
+  it('keeps a pinned key in front of the agent’s own repaints', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hive-pin-'));
     const file = join(dir, 'sessions.json');
     try {
@@ -1464,12 +1503,17 @@ describe('the ledger', () => {
       ledger.flush();
 
       expect(ledger.all()[0]).toMatchObject({
-        name: 'HIVE-104',
+        name: 'HIVE-104-hero-refresh',
         namePinned: true,
         ticket: 'HIVE-104',
       });
-      // The renderer is still told, and refuses it for itself — main's job here
-      // is the file, not the row.
+      /*
+        The renderer is told the *raw* title and applies the same pin itself —
+        main's job on this channel is to report what the terminal said, not to
+        decide what the row is called. The two arrive at one answer because they
+        run one function, which is what `ledger.ts` and `renameSession` each say
+        in their own words.
+      */
       expect(on(CH.sessionName).at(-1)?.payload).toMatchObject({
         name: 'hero-refresh',
       });
@@ -1582,9 +1626,9 @@ describe('the ledger', () => {
     });
 
     /**
-     * The fallback is dropped for a *resume*, not for a request that merely
-     * asked for one. A spawn that degrades to fresh is a beginning, and a
-     * beginning still gets named after its row (HIVE-61).
+     * A spawn that degrades to fresh is a beginning, and produces the ordinary
+     * bootstrap line — which since HIVE-108 names nothing, so that Claude can
+     * name the session from the conversation instead.
      */
     it('falls back to a fresh session when there is nothing to resume', () => {
       // A record older than uuids, or an id this run already began: the

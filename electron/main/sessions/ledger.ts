@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
+import { hiveNameFromTitle } from '@shared/session-contract';
 import {
   HISTORY_CAP,
   type SessionRecord,
@@ -492,28 +493,47 @@ export function createSessionLedger(
          * exists to prevent. One verb decides liveness, and it is not this one.
          */
         /**
-         * A pinned name outranks the agent's, here as in the store (HIVE-107).
+         * A title from the agent is normalised here exactly as the store
+         * normalises it (HIVE-107, reshaped by HIVE-108).
          *
-         * `readTitle` records every title it reads, and a session renamed
-         * mid-conversation goes on painting the name Claude knows it by — so
-         * without this the row on screen stayed `HIVE-104` while the file
-         * underneath it went back to `sess-0i` on the next repaint, and the
-         * file is what the next launch reads. `renameSession` has refused
-         * exactly this since HIVE-78; the ledger was the half nobody defended.
+         * `readTitle` records every title it reads, raw — that is the right
+         * thing for it to do, because the pin it would need to apply lives on
+         * the record rather than in the pty. So the rule is applied here, where
+         * `existing` is in hand, and it has to be *the same* rule the store
+         * runs: this file is what the next launch reads, and a row that came
+         * back named differently from how it was left would be the HIVE-107 bug
+         * again, one layer down.
          *
-         * A patch that carries `namePinned` is the app repinning and is
-         * obeyed — that is the note, and it is the only writer allowed to
+         * Pinned means the ticket key stays in front, not that the title is
+         * refused — see `renameSession` for why that relaxed, and for why the
+         * prefix is `ticket` and never `name`. A pin with no ticket behind it
+         * still refuses, matching the store's own fallback.
+         *
+         * A patch that carries `namePinned` is the app repinning and is obeyed
+         * verbatim — that is the note, and it is the only writer allowed to
          * replace one.
          */
-        const refuseName =
-          existing.namePinned === true &&
-          patch.name !== undefined &&
-          patch.namePinned === undefined;
+        /*
+          Narrowed to a `string | undefined` rather than tested with a boolean
+          and cast at the call, so the compiler is the thing proving there is a
+          title here and not a comment claiming it.
+        */
+        const title = patch.namePinned === undefined ? patch.name : undefined;
+        const pinned = existing.namePinned === true;
+        const renamed =
+          title === undefined || (pinned && existing.ticket === undefined)
+            ? undefined
+            : hiveNameFromTitle(title, pinned ? existing.ticket : undefined);
 
         const merged: SessionRecord = {
           ...existing,
           ...patch,
-          ...(refuseName ? { name: existing.name } : {}),
+          /*
+            `?? existing.name` covers both refusals — a pin the ticket cannot
+            complete, and a title that normalised to nothing — with the value
+            that was already true. Neither is a reason to forget the name.
+          */
+          ...(title === undefined ? {} : { name: renamed ?? existing.name }),
           // `createdAt` is deliberately not overwritable: it is the first thing
           // anyone knew about this session, and retention sorts on it.
           createdAt: existing.createdAt,

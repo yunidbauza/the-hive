@@ -142,10 +142,55 @@ step on: a mid-session association renames the row, that rename never reaches
 Claude, so it never comes back on the title stream main reads names from — and
 `ticketSessionName` de-duplicates across the fleet, so the key does not imply
 the name either. A name on the note is a pinned one by construction, and the
-ledger refuses title-stream names over it exactly as `renameSession` does in the
-store. Without both halves the row read `HIVE-104` while the file underneath it
-went back to the session id on Claude's next repaint, and the next launch
-restored the id.
+ledger applies the pin over title-stream names exactly as `renameSession` does
+in the store. Without both halves the row read `HIVE-104` while the file
+underneath it went back to the session id on Claude's next repaint, and the next
+launch restored the id.
+
+## Where a session's name comes from
+
+**Nothing is named on the command line, and that is the feature** (HIVE-108).
+
+HIVE-61 spawned every session as `claude --name sess-07` so the agent's prompt
+box, its `/resume` picker and its terminal title agreed with the rail. The cost
+of that agreement turned out to be the name itself: **`--name` suppresses Claude
+Code's own titling entirely.** Two arms of a real `claude`, same prompt, same
+moment, differing in nothing else:
+
+```
+--name sess-probe   ai-title: (none)               OSC: "✳ sess-probe"
+(no flag)           ai-title: "Mutex explanation"  OSC: "✳ Claude Code"
+                                                        → "◐ Mutex explanation"
+```
+
+Every session this app had ever spawned carried a `custom-title` and no
+`ai-title` for that reason. The Hive was not failing to infer names; it was
+stopping Claude from inferring them.
+
+So a session now opens unnamed, Claude titles it from the conversation, and the
+title arrives on the OSC-0 stream `readTitle` has parsed since HIVE-61 — no new
+transport and no second inference engine. `hiveNameFromTitle`
+(`electron/shared/session-contract.ts`) spells it the way the rail spells names:
+lower-cased, hyphenated, at most four words, with any ticket key upper-cased and
+hoisted to the front (`back key interception hive-53` →
+`HIVE-53-back-key-interception`).
+
+Three things are worth knowing before changing it:
+
+- **The normaliser must stay idempotent.** Claude repaints its title several
+  times a second and every repaint runs through it, so feeding it its own output
+  has to be a fixed point or the row renames itself every frame.
+- **A pinned session keeps its key, not its whole name.** The prefix passed is
+  `ticket`; passing the current name would compound it a word at a time. What a
+  pin defends is the ticket falling off the front.
+- **The claim is about someone else's binary**, so it is proven against one:
+  `pnpm test:title` runs both arms and fails if a future release stops emitting
+  `ai-title`, stops painting it, or starts titling named sessions too. Every
+  unit test in the repo passes in all of those cases.
+
+What is given up is the opening frame: until Claude has titled it, its prompt
+box says `Claude Code` where it used to say `sess-07`. The row is untouched —
+`nameFromTitle` maps that string to the *absence* of a name.
 
 Three properties are worth knowing before changing it:
 
@@ -171,12 +216,13 @@ Three properties are worth knowing before changing it:
   history, with no `restored` flag. And a restored row
   opened again is spawned with `resume`, which puts the ledger's uuid behind
   `--resume` instead of `--session-id` and keeps the record rather than
-  starting it over (`SessionLedger.resumable`, `begin(…, { resume })`). It also
-  carries **no `--name`** (HIVE-107): on a resume that flag is a rename of the existing
-  conversation rather than a label on a new one, so the entity-id fallback that
-  is right for a spawn (HIVE-61) came back through the title stream as the
-  agent's own choice and overwrote the row's — and the ledger's — real name.
-  A resumed conversation repaints the name it already has.
+  starting it over (`SessionLedger.resumable`, `begin(…, { resume })`). It
+  carries no `--name` — but then **nothing does any more** (HIVE-108), so this
+  is no longer a carve-out. HIVE-107 dropped the flag for a resume, where it
+  renames the stored conversation rather than labelling a new one; HIVE-108
+  dropped the entity-id fallback everywhere, and with no fallback left there is
+  nothing to carve. A resumed conversation repaints the name it already has, and
+  a fresh one names itself.
 - **It seeds from the file at construction, and that is load-bearing.** An
   unseeded ledger answers `session:history` with nothing *and* writes that
   nothing back at the next debounce, so the second launch after any session

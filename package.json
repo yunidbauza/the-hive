@@ -45,7 +45,8 @@
     "test:statusline": "HIVE_LIVE_STATUSLINE_PROOF=1 vitest run tests/live/statusline-conformance.test.ts",
     "test:skills": "HIVE_LIVE_SKILLS_PROOF=1 vitest run tests/live/skills-conformance.test.ts",
     "test:done": "HIVE_LIVE_DONE_PROOF=1 vitest run tests/live/done-conformance.test.ts",
-    "test:ready": "HIVE_LIVE_READY_PROOF=1 vitest run tests/live/ready-conformance.test.ts"
+    "test:ready": "HIVE_LIVE_READY_PROOF=1 vitest run tests/live/ready-conformance.test.ts",
+    "test:title": "HIVE_LIVE_TITLE_PROOF=1 vitest run tests/live/title-conformance.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

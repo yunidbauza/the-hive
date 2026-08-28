@@ -45,7 +45,11 @@ import type { IdleDetail } from '@shared/hook-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
-import { SESSION_EFFORTS, SESSION_MODELS } from '@shared/session-contract';
+import {
+  hiveNameFromTitle,
+  SESSION_EFFORTS,
+  SESSION_MODELS,
+} from '@shared/session-contract';
 import type {
   SessionHistoryEntry,
   SessionPrRequest,
@@ -2113,18 +2117,20 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }),
 
   /**
-   * The agent reported a new display name (HIVE-61).
+   * The agent reported a new display name (HIVE-61, reshaped by HIVE-108).
    *
    * The same shape and the same guards as `setSessionStatus`, and for the same
    * reasons: agents are ignored rather than rejected, and an unchanged value is
    * dropped so a session repeating its title — which Claude does on every
    * repaint — cannot produce a store write, and a re-render, per repaint.
    *
-   * The name is **not** validated against the pattern `--name` is filtered by.
-   * That pattern governs what the app is willing to put on a command line; this
-   * value came off a terminal title and is only ever rendered, so restricting it
-   * would reject the perfectly good "fix the login bug" a user just typed into
-   * `/rename`.
+   * The title is no longer taken verbatim. It is rewritten by
+   * {@link hiveNameFromTitle} into the register the rail spells names in, which
+   * is what makes `Mutex explanation` land as `mutex-explanation` and `back key
+   * interception hive-53` as `HIVE-53-back-key-interception`. That function is a
+   * fixed point on its own output, which is the property this action depends on
+   * most: Claude repaints several times a second, and a normaliser that grew its
+   * input would rename the session on every frame.
    */
   renameSession: (id, name) =>
     set((state) => {
@@ -2136,17 +2142,34 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (!entity || !isSession(entity)) return state;
 
       /**
-       * A pinned name outranks the agent's (HIVE-78).
+       * A pinned session keeps its key in front, rather than refusing the title
+       * outright (HIVE-78, relaxed by HIVE-108).
        *
-       * The app pinned it because the user said which ticket they were working
-       * on, and Claude has no idea that happened — it goes on repainting
-       * `✳ sess-03` several times a second. Without this the rename would be
-       * visible for about one frame.
+       * The pin says the user told the app which issue this session is for, and
+       * that outranks anything Claude infers. It used to be enforced by refusing
+       * *every* title, which was correct while the alternative was `sess-03` —
+       * but the alternative is now a description of the work, and `HIVE-73` plus
+       * that description beats either alone.
        *
-       * Checked before the stale-title guard because it subsumes it: while
-       * pinned, *every* title is refused, whatever its provenance.
+       * **The prefix is `ticket`, never `name`.** Passing the current name would
+       * compound: `HIVE-73-back-key-interception` would become the prefix of the
+       * next frame's name, and the row would grow a word a second. The ticket key
+       * is the one part of the name that is fixed.
+       *
+       * A pin with no ticket behind it cannot name a prefix, so it keeps the
+       * pre-HIVE-108 behaviour and refuses. Nothing produces that state today —
+       * `setSessionTicket` writes both fields together — and a restored record
+       * that somehow carries one without the other is better left alone than
+       * renamed on a guess.
        */
-      if (entity.namePinned === true) return state;
+      if (entity.namePinned === true && entity.ticket === undefined) return state;
+      const next = hiveNameFromTitle(
+        name,
+        entity.namePinned === true ? entity.ticket : undefined,
+      );
+      // A title with nothing nameable in it is not a rename, the same way an
+      // empty title never was.
+      if (next === undefined) return state;
 
       /**
        * Refuse the title the finished conversation left in the terminal.
@@ -2156,15 +2179,51 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * times a second and a one-shot guard would let the second one through.
        * Anything else means the agent has genuinely renamed itself, and the
        * terminal stops being suspect from then on.
+       *
+       * Compared **after** normalising, because that is the space `staleTitles`
+       * records in — it stores the retired row's `name`, which is already a
+       * normalised value. Comparing the raw title against it would never match,
+       * and the successor would inherit the name this guard exists to withhold.
        */
       const terminal = terminalOf(entity);
       const stale = staleTitles.get(terminal);
-      if (stale === name) return state;
+      if (stale === next) return state;
       if (stale !== undefined) staleTitles.delete(terminal);
 
-      if (entity.name === name) return state;
+      if (entity.name === next) return state;
+
+      /**
+       * One name, one session.
+       *
+       * Inferred names collide in a way ids never did: two sessions on one ticket
+       * can reach the same title, and so can two unrelated sessions asked the
+       * same kind of question. `ticketSessionName` already disambiguates at
+       * spawn; this is the same rule at rename, and it resolves the same way —
+       * whoever holds the name keeps it.
+       *
+       * Refusing rather than suffixing is what keeps this idempotent. A `-2`
+       * appended here would not survive the next repaint, which recomputes the
+       * unsuffixed candidate, finds it taken by the row that already renamed, and
+       * would append `-2` again — a write per frame, forever.
+       *
+       * **Only live rows hold a name.** An ended one is a record of work that
+       * finished, and it keeps its name for the ENDED list rather than to reserve
+       * it — most sharply after a `/clear`, where the retired row and its
+       * successor share a terminal and the successor is *expected* to arrive at
+       * the same name once the agent repaints it. Counting the dead here left
+       * that successor unnamed for the life of the app.
+       */
+      const taken = Object.values(state.entities).some(
+        (other) =>
+          isSession(other) &&
+          other.id !== target &&
+          !isEnded(other.status) &&
+          other.name === next,
+      );
+      if (taken) return state;
+
       return {
-        entities: { ...state.entities, [target]: { ...entity, name } },
+        entities: { ...state.entities, [target]: { ...entity, name: next } },
       };
     }),
 

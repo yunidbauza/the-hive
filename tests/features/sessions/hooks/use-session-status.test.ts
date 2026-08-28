@@ -225,6 +225,10 @@ describe('useSessionStatus', () => {
     /**
      * The pull half of HIVE-61: the name came off the agent's terminal title,
      * so a `/rename` inside Claude renames the row in the fleet view.
+     *
+     * Spelled in the rail's register since HIVE-108 — the title arrives as the
+     * user typed it and is hyphenated on the way in, which is the accepted cost
+     * of reading agent titles and `/rename` off one indistinguishable stream.
      */
     withBridge();
     renderHook(() => useSessionStatus());
@@ -233,7 +237,7 @@ describe('useSessionStatus', () => {
 
     const entity = useHiveStore.getState().entities['hero-refresh'];
     if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
-    expect(entity.name).toBe('fix the login bug');
+    expect(entity.name).toBe('fix-the-login-bug');
   });
 
   it('subscribes to names exactly once', () => {
@@ -444,18 +448,23 @@ describe('renameSession', () => {
     expect(useHiveStore.getState().entities).toBe(before);
   });
 
-  it('accepts a name the command line would refuse', () => {
+  it('takes a name the command line would refuse, and spells it', () => {
     /**
-     * The `--name` pattern governs what the app is willing to *send*. A name
-     * read back off a terminal title is only ever rendered, so a sentence a
-     * user typed into `/rename` must survive intact.
+     * The `--name` pattern governs what the app is willing to *send*, and a name
+     * read off a terminal title is never sent — so a title full of shell
+     * metacharacters is accepted rather than rejected.
+     *
+     * It is not kept verbatim, though (HIVE-108). Quotes and ampersands are not
+     * name material on a 130px rail, and the normaliser reduces the title to its
+     * words. What matters here is that nothing is *refused*: the row ends up
+     * named, which is what a user who typed `/rename` asked for.
      */
     const id = 'hero-refresh';
     act(() => useHiveStore.getState().renameSession(id, 'fix "login" & logout'));
 
     const entity = useHiveStore.getState().entities[id];
     if (!entity || !isSession(entity)) throw new Error('expected a fixture session');
-    expect(entity.name).toBe('fix "login" & logout');
+    expect(entity.name).toBe('fix-login-logout');
   });
 
   it('leaves the id and branch alone', () => {

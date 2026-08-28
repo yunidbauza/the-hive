@@ -156,12 +156,13 @@ describe('session ledger', () => {
      * The same rule `renameSession` enforces in the store, enforced here for
      * the same reason and against the same writer.
      *
-     * `readTitle` records every title it reads. While a name is pinned the
-     * store *refuses* those titles, so the row on screen stayed `HIVE-104`
-     * while the file underneath it went back to `sess-01` on the very next
-     * repaint — and the file is what the next launch reads.
+     * `readTitle` records every title it reads. A pin with no ticket behind it
+     * cannot name a prefix, so it refuses outright — the pre-HIVE-108 behaviour,
+     * kept for exactly this state. Without it the row on screen stayed
+     * `HIVE-104` while the file underneath it went back to `sess-01` on the very
+     * next repaint, and the file is what the next launch reads.
      */
-    it('refuses a title-stream name while one is pinned', () => {
+    it('refuses a title-stream name while one is pinned without a ticket', () => {
       const ledger = createSessionLedger(file, () => 1000);
       ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
       ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
@@ -169,6 +170,53 @@ describe('session ledger', () => {
       ledger.flush();
 
       expect(readLedger(file)[0]?.name).toBe('HIVE-104');
+    });
+
+    /**
+     * With a ticket to name the prefix, the pin *keeps the key in front* rather
+     * than refusing the title (HIVE-108) — the store's rule, mirrored, because
+     * this file is what the next launch restores from and the two must not
+     * disagree.
+     */
+    it('keeps a pinned key in front of a title-stream name', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', {
+        ticket: 'HIVE-104',
+        name: 'HIVE-104',
+        namePinned: true,
+      });
+      ledger.record('sess-01', { name: 'back key interception' });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.name).toBe('HIVE-104-back-key-interception');
+    });
+
+    it('does not lengthen a pinned name on every repaint', () => {
+      // The compounding failure, guarded here as well as in the store: the
+      // prefix is the ticket, never the name the last repaint produced.
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', {
+        ticket: 'HIVE-104',
+        name: 'HIVE-104',
+        namePinned: true,
+      });
+      for (let i = 0; i < 5; i += 1) {
+        ledger.record('sess-01', { name: 'back key interception' });
+      }
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.name).toBe('HIVE-104-back-key-interception');
+    });
+
+    it('spells an unpinned title-stream name in the rail’s register', () => {
+      const ledger = createSessionLedger(file, () => 1000);
+      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      ledger.record('sess-01', { name: 'Mutex explanation' });
+      ledger.flush();
+
+      expect(readLedger(file)[0]?.name).toBe('mutex-explanation');
     });
 
     it('lets the app repin over its own name', () => {
