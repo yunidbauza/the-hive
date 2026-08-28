@@ -44,7 +44,17 @@ const secondOf = (ms: number): string => {
   );
 };
 
-const yesterdayOf = (ms: number): string => dayOf(ms - 24 * 60 * 60 * 1000);
+/**
+ * The previous calendar day, by date-component arithmetic rather than a fixed
+ * 24h subtraction — a DST spring-forward day is only 23 real hours, so
+ * subtracting exact milliseconds can land one calendar day too early and
+ * silently drop yesterday's entries (still-open asks included) from load.
+ */
+const yesterdayOf = (ms: number): string => {
+  const at = new Date(ms);
+  const prev = new Date(at.getFullYear(), at.getMonth(), at.getDate() - 1);
+  return dayOf(prev.getTime());
+};
 
 export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
   const { dir } = options;
@@ -92,6 +102,19 @@ export function createLedgerStore(options: LedgerStoreOptions): LedgerStore {
   load(yesterdayOf(at));
   load(dayOf(at));
   entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+  /*
+    Seed the sequence from what was already on disk. Without this, a process
+    that appends at second S, exits, and restarts within that same
+    wall-clock second would start counting from 0001 again and collide with
+    what it just wrote.
+  */
+  const currentStamp = secondOf(at);
+  const newest = entries[entries.length - 1];
+  if (newest && newest.id.startsWith(`${currentStamp}-`)) {
+    second = currentStamp;
+    seq = Number(newest.id.slice(currentStamp.length + 1));
+  }
 
   return {
     all: () => [...entries],

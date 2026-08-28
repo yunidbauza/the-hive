@@ -64,10 +64,36 @@ describe('ledger store', () => {
     const post = store.append({ from: 'sess-a', kind: 'post', body: 'fyi' });
 
     expect(ask.ref).toBe('a1');
-    expect(post.ref).toBeUndefined();
+    expect('ref' in post).toBe(false);
 
     const next = store.append({ from: 'sess-a', kind: 'ask', body: 'again?' });
     expect(next.ref).toBe('a2');
+  });
+
+  it('does not reissue a colliding id after a restart within the same second', () => {
+    store.append({ from: 'sess-a', kind: 'post', body: 'one' });
+    store.append({ from: 'sess-a', kind: 'post', body: 'two' });
+
+    const restarted = createLedgerStore({ dir, now: () => clock });
+    const third = restarted.append({ from: 'sess-a', kind: 'post', body: 'three' });
+
+    const ids = restarted.all().map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(third.id).toBe('20260828-141530-0003');
+  });
+
+  it('loads yesterday correctly across a spring-forward boundary', () => {
+    // 2026-03-08: DST starts in America/New_York, 01:59:59 -> 03:00:00 local,
+    // so this calendar day is only 23 real hours long.
+    clock = new Date(2026, 2, 8, 10, 0, 0).getTime();
+    store.append({ from: 'sess-a', kind: 'post', body: 'dst-day' });
+
+    // Just after local midnight the next day — a naive `ms - 24h` yesterday
+    // calculation lands on 2026-03-07 instead of the true 2026-03-08.
+    clock = new Date(2026, 2, 9, 0, 30, 0).getTime();
+    const reopened = createLedgerStore({ dir, now: () => clock });
+
+    expect(reopened.all().map((entry) => entry.body)).toEqual(['dst-day']);
   });
 
   it('opens a new file when the day rolls over', () => {
