@@ -122,8 +122,13 @@ async function expectFile(path: string, contents: string): Promise<void> {
  * These two tests were failing from HIVE-61 until HIVE-88 for want of the
  * first three, which is the argument for adding HIVE-96's here at the same
  * time as the flag rather than after the next red run.
+ *
+ * It happened again with HIVE-112's `--mcp-config`, which is a per-run path
+ * under `userData` like the rest and left both tests red on `main` — there is
+ * no CI here to have said so. Anything added to the command line that carries
+ * a generated path belongs in this list **in the same commit as the flag**.
  */
-const IDENTITY_FLAGS = /\s*--(?:name|session-id|settings|plugin-dir)\s+\S+/g;
+const IDENTITY_FLAGS = /\s*--(?:name|session-id|settings|plugin-dir|mcp-config)\s+\S+/g;
 
 /** Assert the argv the stub recorded, ignoring the identity flags. */
 async function expectArgs(path: string, contents: string): Promise<void> {
