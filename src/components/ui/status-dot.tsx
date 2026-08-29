@@ -32,7 +32,14 @@ export type DotStatus = SessionStatus | AgentStatus;
  * giving them the same dot would erase the only distinction that matters when
  * deciding whether to go look.
  */
-const STATUS_FILL: Record<DotStatus, string> = {
+/**
+ * Exported since HIVE-114 for the one caller that cannot use `StatusDot`
+ * itself: the agent rail row draws a 9px ringed dot lifted off its avatar
+ * tile, which this atom deliberately is not. It takes the fill so the two
+ * still cannot drift to different colours — the property this file exists to
+ * hold.
+ */
+export const STATUS_FILL: Record<DotStatus, string> = {
   working: 'bg-green',
   waiting: 'bg-amber',
   idle: 'bg-subtle',
