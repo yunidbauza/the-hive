@@ -66,9 +66,16 @@ for (const command of ['ledger', 'ask sess-a hello', 'answer a12 main']) {
 test('the refusal is a line of its own, not just the echo', async ({ page }) => {
   await run(page, 'ledger');
 
+  /*
+    Settle first. `innerText()` is a single non-retrying read, so without an
+    auto-retrying assertion ahead of it this races xterm's paint — it passed
+    alone and failed under a loaded parallel run, which is the signature.
+  */
+  await expect(transcript(page)).toContainText('needs the desktop app');
+
   const text = (await transcript(page).innerText()).split('\n');
-  const echo = text.findIndex((line) => line.includes('❯ ledger'));
-  const refusal = text.findIndex((line) => line.includes('needs the desktop app'));
+  const echo = text.findIndex((row) => row.includes('ledger') && row.includes('❯'));
+  const refusal = text.findIndex((row) => row.includes('needs the desktop app'));
 
   expect(echo).toBeGreaterThanOrEqual(0);
   expect(refusal).toBeGreaterThan(echo);
