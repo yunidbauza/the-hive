@@ -2,10 +2,11 @@ import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PHRASES } from '@lib/swarm/phrases';
-import { isSession } from '@/types/entity';
+import { isAgent, isSession } from '@/types/entity';
 import type { SessionStatus } from '@/types/entity';
 import { statusLabel } from '@components/ui/status-dot';
 import type { IdleDetail } from '@shared/hook-contract';
+import type { AgentSummary } from '@shared/agent-contract';
 import { LEDGER_MEMORY_CAP, type LedgerEntry } from '@shared/ledger-contract';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
@@ -1716,6 +1717,85 @@ describe('hive-store', () => {
    * staying *inert*: they may not overwrite anything live, may not claim to be
    * running, and may not hand out an id a future spawn would collide with.
    */
+  describe('hydrateAgents', () => {
+    const summary = (
+      name: string,
+      over: Partial<AgentSummary> = {},
+    ): AgentSummary => ({
+      name,
+      description: `${name} does things`,
+      icon: 'Ghost',
+      status: 'sleeping',
+      wake: { on: [] },
+      ...over,
+    });
+
+    const agentAt = (id: string) => {
+      const entity = useHiveStore.getState().entities[id];
+      return entity !== undefined && isAgent(entity) ? entity : undefined;
+    };
+
+    it('fills entities and agentOrder alphabetically', () => {
+      useHiveStore.getState().hydrateAgents([summary('zulu'), summary('alpha')]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual(['alpha', 'zulu']);
+      expect(agentAt('alpha')).toMatchObject({
+        kind: 'agent',
+        id: 'alpha',
+        sub: 'alpha does things',
+        status: 'sleeping',
+      });
+    });
+
+    it('replaces, so a removed agent leaves both entities and order', () => {
+      // A definitions folder is a *set*, unlike the append-only ledger: a
+      // folder deleted in Finder must leave the list, which a merge could
+      // never express.
+      const store = useHiveStore.getState();
+      store.hydrateAgents([summary('alpha'), summary('zulu')]);
+      store.hydrateAgents([summary('alpha')]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual(['alpha']);
+      expect(useHiveStore.getState().entities.zulu).toBeUndefined();
+    });
+
+    it('keeps a rehydrated agent transcript, which is run output not definition', () => {
+      const store = useHiveStore.getState();
+      store.hydrateAgents([summary('alpha')]);
+      store.appendEntityLines('alpha', [{ text: 'hello', color: 'ink' }]);
+      store.hydrateAgents([summary('alpha', { description: 'now different' })]);
+
+      expect(agentAt('alpha')?.lines).toHaveLength(1);
+      expect(agentAt('alpha')?.sub).toBe('now different');
+    });
+
+    it('carries an invalid reason through', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([summary('broken', { invalid: 'nope: Unknown key.' })]);
+
+      expect(agentAt('broken')?.invalid).toBe('nope: Unknown key.');
+    });
+
+    it('leaves sessions untouched', () => {
+      const store = useHiveStore.getState();
+      store.spawnSession('nova-web');
+      const before = useHiveStore.getState().order;
+
+      store.hydrateAgents([summary('alpha')]);
+
+      expect(useHiveStore.getState().order).toEqual(before);
+    });
+
+    it('is empty-safe', () => {
+      const store = useHiveStore.getState();
+      store.hydrateAgents([summary('alpha')]);
+      store.hydrateAgents([]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual([]);
+    });
+  });
+
   describe('hydrateSessions', () => {
     const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
       id: 'sess-01',

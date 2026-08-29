@@ -16,6 +16,7 @@ import {
   branchLabel,
   endedReason,
   entityLabel,
+  isAgent,
   isEnded,
   isSession,
   recencyOf,
@@ -40,6 +41,7 @@ import { noteSessionPr, noteSessionTicket } from '@lib/session-history';
 import { pickPhrase } from '@lib/swarm/phrases';
 import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
+import type { AgentSummary } from '@shared/agent-contract';
 import type { PrRecord } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionNameReport } from '@shared/ipc-contract';
@@ -398,6 +400,20 @@ interface HiveState {
    * ordinary case rather than a corner, and the live row always wins.
    */
   hydrateSessions: (records: SessionHistoryEntry[]) => void;
+  /**
+   * Mirror `~/.hive/agents` into the fleet (HIVE-114).
+   *
+   * A **replacement**, which is the opposite of what {@link hydrateSessions}
+   * and {@link hydrateLedger} do, and deliberately so. Those two merge because
+   * a restarted session reuses its id and the ledger only ever grows. A
+   * definitions folder is a *set*: a folder deleted in Finder has to leave the
+   * list, and a merge cannot express a removal.
+   *
+   * A transcript survives the replacement even so — lines are run output, not
+   * definition, and re-reading the file is no reason to forget what the agent
+   * said.
+   */
+  hydrateAgents: (summaries: AgentSummary[]) => void;
   /**
    * Apply read-state the hub decided, without writing it back (HIVE-75).
    *
@@ -1922,6 +1938,54 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ].sort((a, b) => b.createdAt - a.createdAt);
 
       return { notifs: merged.slice(0, NOTIF_CAP) };
+    }),
+
+  hydrateAgents: (summaries) =>
+    set((state) => {
+      const entities = { ...state.entities };
+
+      // Clear the previous set first: this is a replacement, and an agent
+      // whose folder is gone has to go with it. Only ids this store already
+      // believes are agents are dropped, so a session can never be caught by
+      // a name collision.
+      for (const id of state.agentOrder) {
+        const previous = entities[id];
+
+        if (previous !== undefined && isAgent(previous)) delete entities[id];
+      }
+
+      for (const summary of summaries) {
+        const previous = state.entities[summary.name];
+        const kept =
+          previous !== undefined && isAgent(previous) ? previous.lines : [];
+
+        entities[summary.name] = {
+          kind: 'agent',
+          id: summary.name,
+          icon: summary.icon,
+          sub: summary.description,
+          status: summary.status,
+          wake: summary.wake,
+          ...(summary.lastRunAt === undefined
+            ? {}
+            : { lastRunAt: summary.lastRunAt }),
+          ...(summary.nextRunAt === undefined
+            ? {}
+            : { nextRunAt: summary.nextRunAt }),
+          ...(summary.invalid === undefined ? {} : { invalid: summary.invalid }),
+          task: summary.description,
+          // Run output, not definition — re-reading the file is no reason to
+          // forget what the agent said.
+          lines: kept,
+        };
+      }
+
+      return {
+        entities,
+        agentOrder: summaries
+          .map((summary) => summary.name)
+          .sort((a, b) => a.localeCompare(b)),
+      };
     }),
 
   hydrateLedger: (entries) =>
@@ -3919,9 +3983,30 @@ export const useHasResumable = (): boolean =>
     }),
   );
 
-/** The long-lived background agents, in fixture order (story 033). */
+/**
+ * The background agents, alphabetically (HIVE-114).
+ *
+ * Was "in fixture order (story 033)" — there are no agent fixtures any more.
+ * The order comes from `hydrateAgents`, and it is alphabetical because a
+ * folder listing has no meaningful order of its own and the user names these
+ * themselves.
+ */
 export const useAgentOrder = () =>
   useHiveStore(useShallow((state) => state.agentOrder));
+
+/**
+ * One agent by name, or `null` if that id is not an agent (HIVE-114).
+ *
+ * Narrows rather than casting, so a caller handed a *session*'s id gets `null`
+ * instead of a row that renders half-correctly — `entities` is one map and the
+ * two kinds share it.
+ */
+export const useAgent = (name: string) =>
+  useHiveStore((state) => {
+    const entity = state.entities[name];
+
+    return entity !== undefined && isAgent(entity) ? entity : null;
+  });
 
 /** Create a session on a project (stories 041, 044). */
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
