@@ -292,6 +292,16 @@ export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 /** The environment variable carrying the per-launch token into the hook. */
 export const HOOK_ENV_TOKEN = 'HIVE_HOOK_TOKEN';
 
+/**
+ * The environment variable carrying the receiver's base URL (HIVE-112).
+ *
+ * The third of the three the MCP host needs, and the one the hooks never
+ * wanted: a hook is handed its URL baked into the generated settings file, but
+ * the MCP host is started by `claude`, from a config file written before the
+ * receiver had bound. So it is told at spawn instead, the way its identity is.
+ */
+export const HOOK_ENV_RECEIVER_URL = 'HIVE_RECEIVER_URL';
+
 /** The path the receiver serves. */
 export const HOOK_PATH = '/hook';
 
