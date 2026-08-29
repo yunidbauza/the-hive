@@ -1,5 +1,13 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -53,6 +61,17 @@ describe('list', () => {
 
     expect(snapshot.agents).toEqual([]);
     expect(snapshot.agentsRoot).toBe(root);
+  });
+
+  it('creates the folder it is about to watch', async () => {
+    // fs.watch cannot attach to a path that does not exist and does not retry,
+    // so on a fresh install the watcher silently never bound and a hand-written
+    // AGENT.md did not appear until the next launch.
+    rmSync(root, { recursive: true, force: true });
+
+    await registry().list();
+
+    expect(existsSync(root)).toBe(true);
   });
 
   it('summarises a valid agent as sleeping', async () => {

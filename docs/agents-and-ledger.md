@@ -1,11 +1,15 @@
 # Agents and the ledger
 
-**Scope:** the ledger — one append-only log every party in The Hive reads from
-and writes to. **Owned by story HIVE-111.**
+**Scope:** two things that belong together — the **ledger**, one append-only log
+every party in The Hive reads from and writes to (HIVE-111), and the **agent
+definition**, the file that makes a party an agent in the first place
+(HIVE-114).
 
-Load this when working on `electron/main/ledger/`, `electron/shared/ledger-*`,
-the hook receiver's two ledger routes, or the renderer's mirror of the log
-(`use-ledger-sync.ts`, the `useLedger*` selectors in `hive-store.ts`).
+Load this when working on `electron/main/ledger/`, `electron/main/agents/`,
+`electron/shared/{ledger,agent}-contract.ts`, the hook receiver's two ledger
+routes, the renderer's mirrors of either (`use-ledger-sync.ts`,
+`use-agents-sync.ts`, the `useLedger*` and `useAgent*` selectors in
+`hive-store.ts`), or Settings › Agents.
 
 ## What the ledger is
 
@@ -281,12 +285,95 @@ see every claim; filtering it down to "claims I can see" would let two
 sessions each believe they're the only one holding a task that a third party
 already has.
 
+## Agent definitions
+
+An agent is a file before it is anything else: `~/.hive/agents/<name>/AGENT.md`,
+frontmatter over a markdown body, sitting beside `config.json`, `skills/` and
+`ledger/` for the reason all of those do — a definition is a document the person
+is invited to open, `grep` and back up, not an app-private artifact.
+
+Nothing *runs* one yet. HIVE-114 defines the file, teaches main to read,
+validate and watch a folder of them, and gives Settings a place to author them;
+the waker is HIVE-115. Every agent is therefore `sleeping`.
+
+### One table, three requirements
+
+`AGENT_FIELDS` in `electron/shared/agent-contract.ts` lists every legal key with
+its kind and its validator. Three requirements that look separate collapse into
+that one artifact:
+
+- **An unknown key is rejected**, not ignored — which is simply *no entry
+  matched*, rather than a second key-set to keep in step.
+- **A problem names its field**, and the name is a table path, so a refusal can
+  never point at a control the form does not render.
+- **The form is generated from the same table**, so the two cannot drift.
+
+The reader and the patcher live in the contract rather than under
+`electron/main/agents/` because the Settings form needs both at runtime and
+`src/**` may not import `electron/main/**`. One reader is what stops the pane
+and main disagreeing about what a file says.
+
+### The comment rule
+
+**Two or more spaces before `#` begin a trailing comment. One space does not.**
+
+This is the single most surprising line in the grammar and it is not arbitrary.
+Three readings of `#` have to be correct at once, and the obvious "space-hash
+starts a comment" silently truncates the first:
+
+| Line | Correct reading |
+| --- | --- |
+| `description: Watches #incorp-dev and my mentions.` | part of the value |
+| `icon: ChatCircleDots        # a Phosphor name` | a comment |
+| `on: [ledger, slack.channel:#incorp-dev]` | part of the value |
+
+### The form edits the file, not a model
+
+`patchFrontmatter` rewrites one line's value and leaves every other byte alone,
+re-aligning a trailing comment to its original column. Serialising a parsed
+model would be far less code and would destroy every comment and the author's
+key order — and a settings pane that reformats a file the user was invited to
+hand-edit has broken the promise that it is *their* file. That is what makes
+the editor's Form and Source tabs two views of one buffer in the strict sense:
+switching between them cannot change a byte.
+
+### Why this folder pushes where skills pull
+
+`skills/index.ts` re-reads on demand and has no change channel, and
+`ipc-contract.ts` says why: the Settings pane is a skill's only writer. An
+agents folder has two writers — the pane and the person with a text editor — so
+the registry watches and main pushes `agents:changed`, following the ledger's
+precedent rather than skills'.
+
+Two consequences worth knowing:
+
+- `list()` **creates** the folder before watching it. `fs.watch` cannot attach
+  to a path that does not exist and does not retry, so on a fresh install the
+  watcher silently never bound and a hand-written definition did not appear
+  until the next launch. A path the app names on screen is one it should be
+  willing to make.
+- The watch factory is injectable. `fs.watch` delivers on the OS event loop,
+  which fake timers cannot advance, so a real watcher would make the debounce
+  provable only with real waits.
+
+### A broken definition is listed, and can be opened
+
+An unparseable file is returned with its reason rather than dropped, and its row
+is **not** disabled — which is where this pane deliberately parts company with
+Settings › Skills. An invalid skill's row is disabled because main could not read
+a name out of the file, so there was nothing for the pane to address. An agent's
+*folder* names it, so there is always a file to open — and the user has to be
+able to open it to fix the key they were just told about.
+
 ## Related reading
 
 - [`docs/state-and-data.md`](state-and-data.md) — *The ledger slice is a mirror,
   not a source*: the shape backing `useLedgerEntries` / `useOpenAsks` /
   `useThread`, the 500-entry cap, why `hydrateLedger` merges rather than
   replaces, and why derived values live in selectors rather than in the store.
+- [`.claude/COMPONENTS.md`](../.claude/COMPONENTS.md) — why the disabled
+  *Run now* button uses a native `title` rather than a Radix tooltip: the app
+  mounts no `TooltipProvider`.
 - [`docs/desktop-architecture.md`](desktop-architecture.md) — the `~/.hive/`
   vs. `userData` split the ledger's location follows, and the receiver's
   broader security posture (loopback-only, per-launch token, closed route

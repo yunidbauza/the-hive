@@ -254,7 +254,8 @@ pre-populated now start empty in both targets, because each has a real producer:
 
 | Slice | Comes from |
 | --- | --- |
-| `entities`, `order`, `agentOrder` | sessions the user starts (PTYs) |
+| `entities`, `order` | sessions the user starts (PTYs) |
+| `agentOrder` | `AGENT.md` definitions under `~/.hive/agents`, mirrored by `use-agents-sync.ts` (HIVE-114) |
 | `projects` | the config file, read through `useProjects()` |
 | `tickets` | Jira, via `refreshTickets()` |
 | `orchLines` | what the orchestrator actually does |

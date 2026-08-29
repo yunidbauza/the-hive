@@ -176,6 +176,27 @@ export function createAgentRegistry({
 
   return {
     async list(): Promise<AgentsSnapshot> {
+      /*
+        Create the folder before watching it.
+
+        `fs.watch` cannot attach to a path that does not exist, and it does not
+        retry — so on a fresh install the watcher silently never bound, and an
+        AGENT.md written by hand did not appear until the app was restarted.
+        That is precisely the behaviour this registry watches for, so the
+        failure was invisible to every test that seeded a folder first.
+
+        Creating it is not merely a fix of convenience: the pane *tells* the
+        user "Agents folder: ~/.hive/agents", and a path the app names is one
+        it should be willing to make.
+      */
+      try {
+        await mkdir(root, { recursive: true });
+      } catch {
+        // A read-only home, or a file where the folder should be. `readdir`
+        // below reports the same condition as an empty list, which is the
+        // honest rendering either way.
+      }
+
       ensureWatcher();
 
       let folders: string[];

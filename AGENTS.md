@@ -59,7 +59,7 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 | Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
 | Simulation script and the fake clock | [`docs/simulation.md`](docs/simulation.md) |
-| The ledger, parties, asks and claims | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
+| The ledger, parties, asks and claims; agent definitions | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
 | Any UI task — tokens and type scale, then atoms and props | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) · [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
 The visual source of truth is [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md):
