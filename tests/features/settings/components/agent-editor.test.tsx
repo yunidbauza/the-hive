@@ -116,6 +116,54 @@ describe('AgentEditor', () => {
 
       expect(onChange.mock.calls[0]?.[0]).toContain('ChatCircleDots!');
     });
+
+    it('removes the line when a field is cleared, rather than leaving key:', async () => {
+      /*
+        Absence is a value in this grammar and there is no token that spells
+        it. Writing an empty `skills:` produced a line the parser rejects, so
+        clearing an optional field jammed the form with no way out but the
+        Source tab.
+      */
+      const withSkills = SOURCE.replace(
+        'autonomy: ask',
+        'skills: [a]\nautonomy: ask',
+      );
+      const onChange = vi.fn();
+
+      render(<AgentEditor {...props} source={withSkills} onChange={onChange} />);
+      await userEvent.clear(screen.getByDisplayValue('[a]'));
+
+      expect(onChange.mock.calls[0]?.[0]).not.toContain('skills:');
+    });
+  });
+
+  describe('a file with no frontmatter', () => {
+    const FENCELESS = 'name: a\ndescription: d\n';
+
+    it('says so instead of rendering a form that does nothing', () => {
+      // Every field would read blank and every keystroke would be a no-op,
+      // because patchFrontmatter returns the source unchanged. This is exactly
+      // the file the pane promises can be opened and fixed.
+      render(<AgentEditor {...props} source={FENCELESS} />);
+
+      expect(
+        screen.getByText('This file has no frontmatter.'),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Fix it in the Source tab/)).toBeInTheDocument();
+    });
+
+    it('still lets the Source tab edit it', async () => {
+      const onChange = vi.fn();
+
+      render(<AgentEditor {...props} source={FENCELESS} onChange={onChange} />);
+      await userEvent.click(screen.getByRole('tab', { name: 'Source' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'Agent source' }),
+        '-',
+      );
+
+      expect(onChange).toHaveBeenCalled();
+    });
   });
 
   describe('the two tabs are one buffer', () => {

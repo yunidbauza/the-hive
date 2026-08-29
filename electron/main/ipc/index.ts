@@ -1676,7 +1676,7 @@ export function registerIpcHandlers(): void {
 
   handle(CH.agentsRename, (_event, payload) => {
     const request = parseAgentRenameRequest(payload);
-    return agents?.rename(request.from, request.to);
+    return agents?.rename(request.from, request.to, request.source);
   });
 
   /**

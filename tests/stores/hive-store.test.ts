@@ -1984,6 +1984,26 @@ describe('hive-store', () => {
       expect(agentAt('alpha')?.sub).toBe('now different');
     });
 
+    it('never writes over a session that shares an agent name', () => {
+      /*
+        `entities` is one map for both kinds and an agent name is a legal
+        session id, so a definition called after a live session used to replace
+        its entity and orphan it from `order`. The clear loop guarded this; the
+        write did not.
+      */
+      const store = useHiveStore.getState();
+      const id = useHiveStore.getState().order[0];
+
+      expect(id).toBeDefined();
+
+      store.hydrateAgents([summary(id as string)]);
+
+      const entity = useHiveStore.getState().entities[id as string];
+
+      expect(entity && isSession(entity)).toBe(true);
+      expect(useHiveStore.getState().order).toContain(id);
+    });
+
     it('carries an invalid reason through', () => {
       useHiveStore
         .getState()

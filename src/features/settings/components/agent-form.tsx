@@ -94,10 +94,38 @@ const RENDERED_PATHS: readonly string[] = [
 ];
 
 export function AgentForm({ source, problems, onChange }: AgentFormProps) {
-  const fields = readFrontmatter(source)?.fields;
+  const read = readFrontmatter(source);
+  const fields = read?.fields;
   const at = (path: string) => fields?.get(path)?.value ?? '';
-  const set = (path: string, value: string) =>
+
+  /**
+   * Delete the key's line entirely.
+   *
+   * Absence is a *value* in this grammar — no `every:` means manual-only, no
+   * `model:` means the default — and there is no token that spells it. Writing
+   * `key:` with nothing after it instead produces a line the parser rejects
+   * ("Must be a list, like [a, b]"), which is what clearing an optional text
+   * field used to do: the form jammed, and the only way out was the Source tab.
+   */
+  const clear = (path: string) => {
+    const line = readFrontmatter(source)?.fields.get(path)?.line;
+
+    if (line === undefined) return;
+
+    const lines = source.split('\n');
+
+    lines.splice(line, 1);
+    onChange(lines.join('\n'));
+  };
+
+  const set = (path: string, value: string) => {
+    if (value.trim() === '') {
+      clear(path);
+      return;
+    }
+
     onChange(patchFrontmatter(source, path, value));
+  };
 
   const problemFor = (path: string) =>
     problems.find((problem) => problem.field === path)?.reason ?? null;
@@ -157,6 +185,27 @@ export function AgentForm({ source, problems, onChange }: AgentFormProps) {
       problem.field !== '' && !RENDERED_PATHS.includes(problem.field),
   );
 
+  /*
+    Without fences there is no frontmatter to read *or* patch: every field
+    would render blank and every keystroke would be a silent no-op, because
+    `patchFrontmatter` returns the source unchanged. That is precisely the file
+    the pane promises can be opened and fixed, so it says what is wrong and
+    sends the user to the tab that can fix it.
+  */
+  if (read === null) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-4 text-center">
+        <span className="text-[11.5px] text-amber">
+          This file has no frontmatter.
+        </span>
+        <span className="text-[11.5px] text-subtle">
+          It must open and close with a --- line. Fix it in the Source tab and
+          the form comes back.
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-3">
       {homeless.map((problem) => (
@@ -193,20 +242,8 @@ export function AgentForm({ source, problems, onChange }: AgentFormProps) {
               simply not being there. Writing `every: off` would be a value the
               parser rejects.
             */
-            const read = readFrontmatter(source);
-            const line = read?.fields.get('wake.every')?.line;
-
-            if (next !== 'off') {
-              set('wake.every', next);
-              return;
-            }
-
-            if (line === undefined) return;
-
-            const lines = source.split('\n');
-
-            lines.splice(line, 1);
-            onChange(lines.join('\n'));
+            if (next === 'off') clear('wake.every');
+            else set('wake.every', next);
           }}
         />,
       )}
@@ -245,19 +282,8 @@ export function AgentForm({ source, problems, onChange }: AgentFormProps) {
           }
           onChange={(next) => {
             // Same absence-is-a-value argument as `wake.every`'s `off`.
-            if (next !== 'default') {
-              set('model', next);
-              return;
-            }
-
-            const line = readFrontmatter(source)?.fields.get('model')?.line;
-
-            if (line === undefined) return;
-
-            const lines = source.split('\n');
-
-            lines.splice(line, 1);
-            onChange(lines.join('\n'));
+            if (next === 'default') clear('model');
+            else set('model', next);
           }}
         />,
       )}

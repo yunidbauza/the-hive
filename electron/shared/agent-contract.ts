@@ -143,6 +143,14 @@ export interface AgentNameRequest {
 export interface AgentRenameRequest {
   from: string;
   to: string;
+  /**
+   * The buffer being saved, when the caller has one.
+   *
+   * Carried so the move validates the text about to be written rather than the
+   * stale file on disk — without it, fixing a broken definition *and* renaming
+   * it in one edit was refused with problems the user had already resolved.
+   */
+  source?: string;
 }
 
 export type AgentWriteResult =
@@ -327,8 +335,17 @@ export function parseRange(
 // work, no Node.
 // ---------------------------------------------------------------------------
 
-/** A key line, split into its `key:` run and everything after it. */
-const VALUE = /^(\s*[a-z0-9_-]+:[ \t]*)(.*)$/;
+/**
+ * A key line, split into its `key:`, the run of space after it, and the rest.
+ *
+ * The gap is captured **separately** from the tail rather than folded into the
+ * head. Folding it in reads `model:        # pick one later` as a head of
+ * `model:` + eight spaces and a tail that begins at `#` — with no run of two
+ * spaces left inside the tail for the comment search to find, so the comment
+ * looked like a value and was overwritten. An empty value with an aligned
+ * comment is exactly the shape the pane's own template produces.
+ */
+const VALUE = /^(\s*[a-z0-9_-]+:)(\s*)(.*)$/;
 
 /** The smallest gap that still reads as a comment rather than a value. */
 const MIN_GAP = 2;
@@ -345,16 +362,26 @@ function replaceValue(line: string, value: string): string {
   if (match === null) return line;
 
   const head = match[1] as string;
-  const rest = match[2] as string;
-  const at = rest.search(/\s{2,}#/);
+  const gap = match[2] as string;
+  const tail = match[3] as string;
 
-  if (at === -1) return `${head}${value}`;
+  // An empty value whose line still carries a comment: the whole gap sat
+  // between the colon and the `#`, so the tail *is* the comment.
+  if (tail.startsWith('#') && gap.length >= MIN_GAP) {
+    const width = Math.max(MIN_GAP, gap.length - 1 - value.length);
 
-  const gap = /^\s+/.exec(rest.slice(at))?.[0].length ?? MIN_GAP;
-  const comment = rest.slice(at + gap);
-  const width = Math.max(MIN_GAP, gap - (value.length - at));
+    return `${head} ${value}${' '.repeat(width)}${tail}`;
+  }
 
-  return `${head}${value}${' '.repeat(width)}${comment}`;
+  const at = tail.search(/\s{2,}#/);
+
+  if (at === -1) return `${head}${gap}${value}`;
+
+  const pad = /^\s+/.exec(tail.slice(at))?.[0].length ?? MIN_GAP;
+  const comment = tail.slice(at + pad);
+  const width = Math.max(MIN_GAP, pad - (value.length - at));
+
+  return `${head}${gap}${value}${' '.repeat(width)}${comment}`;
 }
 
 export function patchFrontmatter(
@@ -388,8 +415,15 @@ export function patchFrontmatter(
 
   // The block may already be open, in which case the new key joins it —
   // otherwise `wake:` would appear twice and the reader would see one block.
+  /*
+    Through `stripComment`, matching how `readFrontmatter` recognised this same
+    line. Comparing the raw text instead meant a parent carrying a comment —
+    `wake:   # when to run` — was read as an open block but not found here, so
+    the patcher spliced a *second* `wake:` before the closing fence. The reader
+    still parsed the result (later keys win), so the corruption was silent.
+  */
   const opens = lines.findIndex(
-    (line, i) => i > 0 && i < close && line.trim() === `${parent}:`,
+    (line, i) => i > 0 && i < close && stripComment(line).trim() === `${parent}:`,
   );
 
   if (opens === -1) {

@@ -150,21 +150,29 @@ export async function deleteAgent(name: string): Promise<AgentWriteResult> {
 /**
  * Rename an agent.
  *
- * One call, unlike {@link renameSkill}'s two: main moves the folder **and**
- * rewrites the `name:` inside the file in the same operation, so there is no
- * window in which the definition contradicts its own folder. That window is
- * exactly what forced the skills version to report whether the move landed.
+ * One call, unlike {@link renameSkill}'s two: main moves the folder, rewrites
+ * the `name:` inside it, and writes `source` in the same operation — so there
+ * is no window in which the definition contradicts its own folder. That window
+ * is exactly what forced the skills version to report whether the move landed.
+ *
+ * `source` is the buffer being saved. Passing it is what makes the move
+ * validate the text about to be written rather than the stale file on disk.
  */
 export async function renameAgent(
   from: string,
   to: string,
+  source?: string,
 ): Promise<AgentWriteResult> {
   const bridge = window.hive;
 
   if (!bridge) return NO_BRIDGE;
 
   try {
-    const result = await bridge.agents.rename({ from, to });
+    const result = await bridge.agents.rename({
+      from,
+      to,
+      ...(source === undefined ? {} : { source }),
+    });
 
     if (result.ok) await loadAgents();
 

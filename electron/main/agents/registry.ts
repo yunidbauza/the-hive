@@ -31,13 +31,17 @@ import { join } from 'node:path';
 
 import {
   AGENT_FILE,
+  AGENT_NAME_PATTERN,
   KNOWN_AGENT_MCP,
+  RESERVED_AGENT_NAMES,
   type AgentsSnapshot,
   type AgentSummary,
   type AgentWriteResult,
 } from '@shared/agent-contract';
 
 import { parseAgent } from './definition';
+import { patchFrontmatter } from './patch';
+
 
 /**
  * Long enough to collapse the several events one save emits, short enough that
@@ -81,9 +85,30 @@ export interface AgentRegistry {
   read(name: string): Promise<string | null>;
   write(name: string, source: string): Promise<AgentWriteResult>;
   remove(name: string): Promise<void>;
-  rename(from: string, to: string): Promise<AgentWriteResult>;
+  /**
+   * Move a folder, and write `source` into it when given.
+   *
+   * `source` is the buffer the caller is saving. Without it the verb falls
+   * back to the file on disk, which is correct only for a plain move.
+   */
+  rename(from: string, to: string, source?: string): Promise<AgentWriteResult>;
   onChange(fn: () => void): () => void;
   close(): void;
+}
+
+/**
+ * Can the IPC layer address this folder at all?
+ *
+ * Mirrors `assertAgentName`: same pattern, same reserved names. A folder that
+ * fails this is listed with its reason rather than hidden, but nothing in the
+ * pane can open or delete it, because the guard that refuses it is the same
+ * one that makes a path unrepresentable.
+ */
+function addressable(name: string): boolean {
+  return (
+    AGENT_NAME_PATTERN.test(name) &&
+    !(RESERVED_AGENT_NAMES as readonly string[]).includes(name)
+  );
 }
 
 /** A name may only ever address one folder directly under the root. */
@@ -118,9 +143,19 @@ export function createAgentRegistry({
     }, DEBOUNCE_MS);
   };
 
-  const ensureWatcher = () => {
-    if (watcher !== null) return;
+  /**
+   * Bind the watcher, rebinding when the folder it was watching is gone.
+   *
+   * `fs.watch` holds an inode, not a path: delete `~/.hive/agents` in Finder
+   * and the handle stops delivering while staying non-null. A plain
+   * `if (watcher !== null) return` therefore turned live updates off for the
+   * rest of the session the first time the folder was removed — the same class
+   * of silent failure as never binding at all.
+   */
+  const ensureWatcher = (rebind = false) => {
+    if (watcher !== null && !rebind) return;
 
+    watcher?.close();
     watcher = makeWatcher(root, announce);
   };
 
@@ -189,15 +224,19 @@ export function createAgentRegistry({
         user "Agents folder: ~/.hive/agents", and a path the app names is one
         it should be willing to make.
       */
+      let recreated = false;
+
       try {
-        await mkdir(root, { recursive: true });
+        // `mkdir` reports whether it made anything: a defined return means the
+        // root did not exist, so any watcher we hold is bound to a dead inode.
+        recreated = (await mkdir(root, { recursive: true })) !== undefined;
       } catch {
         // A read-only home, or a file where the folder should be. `readdir`
         // below reports the same condition as an empty list, which is the
         // honest rendering either way.
       }
 
-      ensureWatcher();
+      ensureWatcher(recreated);
 
       let folders: string[];
 
@@ -213,6 +252,29 @@ export function createAgentRegistry({
       const agents: AgentSummary[] = [];
 
       for (const folder of folders) {
+        /*
+          A folder the IPC guard will refuse to address.
+
+          `assertAgentName` throws for upper case, spaces and the reserved
+          names, so `read` and `remove` cannot reach such a folder at all —
+          which used to leave a row that highlighted, opened nothing, offered
+          no Delete, and said nothing about why. Listing it with the real
+          reason is the only honest option: the guard is a security boundary
+          and must not be loosened, so the fix has to happen on disk.
+        */
+        if (!addressable(folder)) {
+          agents.push({
+            name: folder,
+            description: '',
+            icon: 'Warning',
+            status: 'sleeping',
+            wake: { on: [] },
+            invalid:
+              'The folder name cannot be used. Rename it on disk to lowercase letters, digits and dashes.',
+          });
+          continue;
+        }
+
         const source = await read(folder);
 
         // A folder with no AGENT.md is not an agent — it is somebody's notes.
@@ -256,7 +318,7 @@ export function createAgentRegistry({
     write,
     remove,
 
-    async rename(from, to) {
+    async rename(from, to, source) {
       if (!safe(from) || !safe(to)) {
         return { ok: false, problems: [{ field: 'name', reason: 'Bad name.' }] };
       }
@@ -272,9 +334,21 @@ export function createAgentRegistry({
         // Nothing there, which is what we want.
       }
 
-      const source = await read(from);
+      /*
+        Validate the text the caller is about to save, not the text on disk.
 
-      if (source === null) {
+        Reading the old file here meant a rename carried the *stale* content
+        through validation: open a broken agent, fix the bad key and rename it
+        in one edit — the flow this pane exists to support — and the rename was
+        refused with problems describing a key the user had already removed,
+        while the corrected buffer was never written.
+
+        Falling back to the file on disk keeps the verb usable on its own, for
+        a caller that only wants to move a folder.
+      */
+      const moving = source ?? (await read(from));
+
+      if (moving === null) {
         return {
           ok: false,
           problems: [{ field: 'name', reason: 'Not found.' }],
@@ -282,9 +356,9 @@ export function createAgentRegistry({
       }
 
       // The name inside the file has to follow the folder, or the definition
-      // the rename produces fails its own folder-match rule.
-      const moved = source.replace(/^name:[ \t]*.*$/m, `name: ${to}`);
-      const written = await write(to, moved);
+      // fails its own folder-match rule. Only the value is rewritten, so a
+      // comment on the `name:` line survives — `patchFrontmatter`'s rule.
+      const written = await write(to, patchFrontmatter(moving, 'name', to));
 
       if (!written.ok) return written;
 

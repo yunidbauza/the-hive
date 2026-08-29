@@ -189,7 +189,13 @@ describe('AgentsSection', () => {
       ).toBeInTheDocument();
     });
 
-    it('moves the folder first when the name changed', async () => {
+    it('renames in one call, carrying the buffer being saved', async () => {
+      /*
+        The buffer travels with the move, so the definition validated is the
+        one about to be written. Moving first and writing after validated the
+        *stale* file — which refused a rename that also fixed a broken key,
+        with problems the user had already resolved.
+      */
       const bridge = stub([agent('slack-watcher')]);
       render(<AgentsSection />);
 
@@ -197,17 +203,21 @@ describe('AgentsSection', () => {
       await waitFor(() => expect(bridge.read).toHaveBeenCalled());
       await userEvent.click(await screen.findByRole('tab', { name: 'Source' }));
 
+      const renamed = GOOD.replace('slack-watcher', 'slack-bot');
       const box = screen.getByRole('textbox', { name: 'Agent source' });
       await userEvent.clear(box);
-      await userEvent.type(box, GOOD.replace('slack-watcher', 'slack-bot'));
+      await userEvent.type(box, renamed);
       await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
       await waitFor(() =>
         expect(bridge.rename).toHaveBeenCalledWith({
           from: 'slack-watcher',
           to: 'slack-bot',
+          source: renamed,
         }),
       );
+      // One call, not a move followed by a write.
+      expect(bridge.write).not.toHaveBeenCalled();
     });
 
     it('does not write when the rename is refused', async () => {

@@ -126,6 +126,43 @@ Body.
     expect(patchFrontmatter(there, 'autonomy', 'ask')).toBe(SOURCE);
   });
 
+  it('joins a parent block whose own line carries a comment', () => {
+    /*
+      The reader recognises `wake:  # …` as an open block through
+      `stripComment`; the patcher compared the raw line and did not, so it
+      spliced a *second* `wake:` before the fence. The reader still parsed the
+      result — later keys win — so the file was silently corrupted.
+    */
+    const commented = SOURCE.replace('wake:', 'wake:   # when to run');
+    const next = patchFrontmatter(commented, 'wake.quiet', '23:00-07:00');
+
+    expect(
+      next.split('\n').filter((line) => line.trim().startsWith('wake:')),
+    ).toHaveLength(1);
+    expect(readFrontmatter(next)?.fields.get('wake.quiet')?.value).toBe(
+      '23:00-07:00',
+    );
+    expect(readFrontmatter(next)?.fields.get('wake.every')?.value).toBe('5m');
+  });
+
+  it('keeps the comment on a key that had no value yet', () => {
+    // The whole gap sat between the colon and the `#`, so the comment looked
+    // like the value and was overwritten. This is the shape the pane's own
+    // new-agent template produces.
+    const empty = `---
+name: a
+description: d
+icon: Ghost
+model:        # pick one later
+---
+Body.
+`;
+    const next = patchFrontmatter(empty, 'model', 'sonnet');
+
+    expect(readFrontmatter(next)?.fields.get('model')?.value).toBe('sonnet');
+    expect(next).toContain('# pick one later');
+  });
+
   it('is a no-op for a file with no closing fence', () => {
     const broken = '---\nname: x\n';
 

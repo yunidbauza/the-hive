@@ -154,7 +154,22 @@ export function AgentsSection() {
         setProblems([]);
 
         void readAgent(name).then((source) => {
-          if (source === null) return;
+          if (source === null) {
+            /*
+              The folder is on disk but the IPC guard refuses to address it —
+              an upper-case or reserved folder name. Saying so beats the
+              silence this used to render: the row highlighted, the editor
+              stayed on its placeholder, and nothing explained why.
+            */
+            setProblems([
+              {
+                field: '',
+                reason:
+                  'This folder cannot be opened. Rename it on disk to lowercase letters, digits and dashes.',
+              },
+            ]);
+            return;
+          }
 
           /*
             Drop a response the user has moved on from — two quick clicks race,
@@ -198,20 +213,17 @@ export function AgentsSection() {
     setProblems([]);
 
     void (async () => {
-      // Move first when the name changed, so the write lands in the folder the
-      // definition names rather than creating a second one beside it.
-      if (open !== null && open !== typed) {
-        const moved = await renameAgent(open, typed);
-
-        if (!moved.ok) {
-          setProblems(moved.problems);
-          return;
-        }
-
-        setOpen(typed);
-      }
-
-      const result = await saveAgent(typed, buffer);
+      /*
+        A rename carries the buffer, so it is one operation rather than a move
+        followed by a write. Moving first and writing after validated the
+        *stale* file: fixing a broken definition and renaming it in the same
+        edit — the flow this pane exists to support — was refused with problems
+        the user had already resolved, and the corrected buffer never landed.
+      */
+      const result =
+        open !== null && open !== typed
+          ? await renameAgent(open, typed, buffer)
+          : await saveAgent(typed, buffer);
 
       if (!result.ok) {
         setProblems(result.problems);

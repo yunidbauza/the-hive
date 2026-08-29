@@ -1611,10 +1611,15 @@ export function parseAgentNameRequest(input: unknown): AgentNameRequest {
  * request name a *source* main never listed.
  */
 export function parseAgentRenameRequest(input: unknown): AgentRenameRequest {
-  const raw = assertShape(input, ['from', 'to'], 'agentRename');
+  const raw = assertShape(input, ['from', 'to'], 'agentRename', ['source']);
   return {
     from: assertAgentName(raw.from, 'agentRename.from'),
     to: assertAgentName(raw.to, 'agentRename.to'),
+    // Same decision `parseAgentWriteRequest` documents: the bytes are not
+    // pattern-checked, because what makes them safe is *where* they land.
+    ...(raw.source === undefined
+      ? {}
+      : { source: assertString(raw.source, 'agentRename.source') }),
   };
 }
 

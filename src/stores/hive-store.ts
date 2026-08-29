@@ -2098,8 +2098,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
       for (const summary of summaries) {
         const previous = state.entities[summary.name];
-        const kept =
-          previous !== undefined && isAgent(previous) ? previous.lines : [];
+
+        /*
+          Never write over a session.
+
+          `entities` is one map for both kinds, and an agent name is a legal
+          session id — so a definition called `sess-01` used to replace a live
+          session's entity and orphan it from `order`. The clear loop above
+          already guarded this; the write did not.
+        */
+        if (previous !== undefined && !isAgent(previous)) continue;
+
+        const kept = previous === undefined ? [] : previous.lines;
 
         entities[summary.name] = {
           kind: 'agent',
