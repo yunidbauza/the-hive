@@ -1389,6 +1389,32 @@ describe('hive-store', () => {
         expect(transcript()).not.toContain('a note');
       });
 
+      /**
+       * Open-ness is derived from the whole log, then filtered.
+       *
+       * An answer is addressed back to the *asker*, so filtering first strips
+       * the answers while keeping the asks — and every already-answered
+       * question would be reported as still open.
+       */
+      it('does not call an answered ask open just because a filter hid the answer', () => {
+        useHiveStore.getState().hydrateLedger([
+          ask({ id: '20260829-120000-0001', from: 'overmind', to: 'sess-a', ref: 'a12' }),
+          ask({
+            id: '20260829-120000-0002',
+            from: 'sess-a',
+            to: 'overmind',
+            kind: 'answer',
+            ref: undefined,
+            thread: '20260829-120000-0001',
+            body: 'the answer',
+          }),
+        ]);
+
+        run('ledger --open --to sess-a');
+
+        expect(lastLine()).toMatchObject({ text: '  no entries', color: 'dim' });
+      });
+
       it('filters by party', () => {
         useHiveStore.getState().hydrateLedger([
           ask({ body: 'from a' }),
@@ -1419,6 +1445,37 @@ describe('hive-store', () => {
         });
         await vi.waitFor(() => expect(transcript()).toContain('(a14)'));
         expect(transcript()).toContain('asked');
+      });
+
+      /**
+       * Addressed by terminal, not by row id.
+       *
+       * Main's registry — and therefore `deliver`'s notion of who is live — is
+       * keyed by `terminalOf(session)`. The two ids agree until a row is
+       * cleared, and the successor is exactly where posting the wrong one
+       * either addresses a party main has never heard of or names a terminal
+       * that now belongs to somebody else.
+       */
+      it('addresses the terminal, so a cleared row’s successor is reachable', async () => {
+        seedDemoFleet();
+        const state = useHiveStore.getState();
+        const id = Object.keys(state.entities)[0];
+        const entity = state.entities[id];
+        if (entity === undefined || entity.kind !== 'session') throw new Error('no session');
+
+        // A successor minted by `/clear`: a fresh row id over the old terminal.
+        useHiveStore.setState({
+          entities: {
+            ...state.entities,
+            'sess-successor': { ...entity, id: 'sess-successor', terminalId: id },
+          },
+          order: [...state.order, 'sess-successor'],
+        });
+
+        run('ask sess-successor hello');
+
+        await vi.waitFor(() => expect(post).toHaveBeenCalled());
+        expect(post).toHaveBeenCalledWith({ to: id, kind: 'ask', body: 'hello' });
       });
 
       it('refuses a name that matches no session, the way open does', () => {

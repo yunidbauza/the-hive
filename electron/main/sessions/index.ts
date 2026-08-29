@@ -248,7 +248,16 @@ export interface Sessions {
    * loss, or a failure to start arrives first.
    */
   openCommand(request: OpenCommandRequest): void;
-  write(entityId: string, data: string): void;
+  /**
+   * Type into a session's pty.
+   *
+   * Returns whether the data actually reached one: `false` when no live session
+   * holds this id, and `false` while the bootstrap is still pending, where it
+   * is queued rather than written (HIVE-113). Callers that record having sent
+   * something — the ledger's delivery receipt — must gate on this, or they
+   * record a write that never happened and never retry it.
+   */
+  write(entityId: string, data: string): boolean;
   resize(entityId: string, cols: number, rows: number): void;
   ack(entityId: string, seq: number): void;
   kill(entityId: string): void;
@@ -553,12 +562,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        */
       if (status !== 'terminated' && hookDriven.has(entityId)) return;
       // The process is gone; drop its record rather than leak it (HIVE-83).
-      // `lastStatus` goes with it, so a successor taking this id cannot
-      // inherit an `idle` that was true of the session before it (HIVE-113).
-      if (status === 'terminated') {
-        statusTracker.forget(entityId);
-        lastStatus.delete(entityId);
-      }
+      if (status === 'terminated') statusTracker.forget(entityId);
       /**
        * A declared finish leaves on its own channel, not as a status (HIVE-93).
        *
@@ -684,20 +688,6 @@ export function createSessions(options: SessionsOptions): Sessions {
         derived.detail,
         event.toolName,
       );
-
-      /**
-       * The prompt is empty and nothing is running behind it (HIVE-113).
-       *
-       * Both halves are load-bearing. A session showing a permission prompt
-       * derives `waiting`, not `idle`, so it is excluded here — which is the
-       * whole point of the rule that nothing is ever written mid-turn. And a
-       * turn that ended while a backgrounded shell is still running *does*
-       * derive `idle`, with `detail: 'script'`, so the status alone would say
-       * yes to a session that is still working.
-       */
-      if (derived.status === 'idle' && statusTracker.held(event.entityId).bgShells === 0) {
-        onIdle?.(event.entityId);
-      }
 
       /**
        * `/done`'s two turning points, both of them events on this stream
@@ -888,6 +878,27 @@ export function createSessions(options: SessionsOptions): Sessions {
     // Retained so `isIdle` has a point-in-time answer (HIVE-113). Set for every
     // publisher, not just the hook path — see the note on `lastStatus`.
     lastStatus.set(entityId, status);
+
+    /**
+     * The prompt is empty and nothing is running behind it (HIVE-113).
+     *
+     * Fired **here**, at the one place every status reaches the renderer,
+     * rather than from the hook handler alone. A session spawned before
+     * `hooks.start()` resolves runs on the activity inference and produces no
+     * hook events at all — so a nudge held while it was busy would have waited
+     * for an idle signal that never came. This is the only point both
+     * publishers pass through.
+     *
+     * Both halves of the condition are load-bearing. A session showing a
+     * permission prompt reports `waiting`, not `idle`, so it is excluded —
+     * which is the whole of the rule that nothing is written mid-turn. And a
+     * turn that ended while a backgrounded shell is still running *does* report
+     * `idle`, with `detail: 'script'`, so the status alone would say yes to a
+     * session that is still working.
+     */
+    if (status === 'idle' && statusTracker.held(entityId).bgShells === 0) {
+      onIdle?.(entityId);
+    }
 
     send(CH.sessionStatus, {
       entityId,
@@ -1273,6 +1284,14 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     titles.delete(entityId);
     hookDriven.delete(entityId);
+    /*
+      Per-generation for the same reason (HIVE-113). A restart reuses the entity
+      id, and a retained `idle` would let the ledger write a nudge into the new
+      generation's prompt on the strength of what the dead one was doing. It is
+      dropped here rather than beside `statusTracker.forget` above, where the
+      `terminated` status published moments later put it straight back.
+    */
+    lastStatus.delete(entityId);
     /**
      * Per-generation too, and for a sharper reason than the other two: a
      * restarted session reuses the entity id, and a retained entry would make
@@ -1811,7 +1830,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
     write(entityId, data) {
       const sessionId = registry.sessionFor(entityId);
-      if (sessionId === undefined) return;
+      if (sessionId === undefined) return false;
 
       /**
        * Held, not dropped and not delivered early. See {@link heldInput}.
@@ -1819,15 +1838,23 @@ export function createSessions(options: SessionsOptions): Sessions {
        * Keystrokes typed directly into the terminal take this path too, which
        * is the right behaviour for the same reason: anything typed while
        * `claude` is still starting would otherwise be eaten by the shell.
+       *
+       * **Reported as *not* written** (HIVE-113). Held is not delivered: the
+       * queue is dropped by `settleExit` if the bootstrap never completes, so a
+       * caller that records "sent" on the strength of it can be recording
+       * something that never happens. The one caller that cares — the ledger's
+       * nudge — retries on the next idle, which is the correct outcome for a
+       * session that was still starting.
        */
       if (bootstrap.isPending(entityId)) {
         const held = heldInput.get(entityId) ?? [];
         held.push(data);
         heldInput.set(entityId, held);
-        return;
+        return false;
       }
 
       ptyIpc.write(sessionId, data);
+      return true;
     },
 
     resize(entityId, cols, rows) {

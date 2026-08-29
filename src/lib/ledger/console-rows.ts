@@ -68,9 +68,19 @@ export function ageLabel(deltaMs: number): string {
  * table would read as a single word.
  */
 function fit(text: string, width: number): string {
+  /*
+    Counted in code points, not UTF-16 units. `'📒'.length` is 2 and `'é'` can
+    be 2 as well, so `String.length` and `padEnd` disagree about the same string
+    — and a single emoji in a body or a party id would shift that row's columns
+    out of line with every other row, which is the one thing this module exists
+    to prevent. Not grapheme clusters: that needs `Intl.Segmenter` and a real
+    east-asian-width table to be worth anything, and xterm's own advance is what
+    ultimately decides. Code points fix the common case honestly.
+  */
+  const chars = [...text];
   const max = width - 1;
-  const clipped = text.length > max ? `${text.slice(0, max - 1)}…` : text;
-  return clipped.padEnd(width);
+  const clipped = chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text;
+  return clipped.padEnd(width + (clipped.length - [...clipped].length));
 }
 
 function firstLine(body: string): string {

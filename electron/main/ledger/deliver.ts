@@ -19,6 +19,35 @@ import type { Ledger } from './index';
 const NUDGE_BODY_MAX = 120;
 
 /**
+ * Strip every control character from a body before it reaches a pty.
+ *
+ * **This is the security boundary of this module, not a formatting nicety.** A
+ * body arrives from any party over `POST /ledger` or an MCP tool, validated
+ * only as a string under a size cap — and this is the one path that writes such
+ * a string into *another* session's prompt, terminated by `\r`. Left raw, a
+ * body containing its own `\r` submits a second prompt with no `📒` on it,
+ * indistinguishable from something the user typed; an `ESC` reaches the TUI's
+ * stdin and can address the cursor or switch screens.
+ *
+ * The rule is the one `assertText` enforces at the IPC boundary
+ * (`electron/shared/guards.ts`) and `stripControls` at the renderer's
+ * (`src/lib/terminal/text.ts`): C0, DEL and C1 have no business in text that is
+ * about to be typed. Restated here rather than imported because neither module
+ * exports it, and `electron/main/**` may not import `src/**` regardless.
+ *
+ * Line breaks go with them — a nudge is one line by construction, so there is
+ * nothing to preserve.
+ */
+function stripControls(text: string): string {
+  return [...text]
+    .filter((char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return !(code < 0x20 || (code >= 0x7f && code <= 0x9f));
+    })
+    .join('');
+}
+
+/**
  * The only kinds that reach a terminal.
  *
  * **This is a loop guard, not a filter.** This module subscribes to
@@ -72,11 +101,25 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
   }
 
   function nudgeLine(entry: LedgerEntry, handle: string): string {
-    const body = (entry.body.split('\n')[0] ?? '').slice(0, NUDGE_BODY_MAX);
+    /*
+      Cut at the first line break, *then* strip — in that order.
+
+      Stripping first would delete the break and splice the next line onto the
+      end of this one, turning two sentences into one run-on. Every break form
+      counts, `\r` included: it is not a newline to `split('\n')` but it is very
+      much a line break to a terminal, and it is the byte that would otherwise
+      submit a prompt of its own.
+
+      `from` is sanitised too. It is a party id rather than prose, but it
+      reaches here from a header this module does not own.
+    */
+    const firstLine = entry.body.split(/\r\n|\r|\n/u)[0] ?? '';
+    const body = stripControls(firstLine).slice(0, NUDGE_BODY_MAX);
+    const from = stripControls(entry.from);
 
     return entry.kind === 'ask'
-      ? `📒 ${entry.from} asks (${handle}): ${body} — reply with ledger_answer ${handle}`
-      : `📒 ${entry.from} answered ${handle}: ${body}`;
+      ? `📒 ${from} asks (${handle}): ${body} — reply with ledger_answer ${handle}`
+      : `📒 ${from} answered ${handle}: ${body}`;
   }
 
   /**
@@ -111,10 +154,10 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
     );
   }
 
-  /** Write one nudge, and record it only if it landed. */
-  function deliverOne(entityId: string, entry: LedgerEntry): void {
+  /** Write one nudge, and record it only if it landed. Reports whether it did. */
+  function deliverOne(entityId: string, entry: LedgerEntry): boolean {
     const handle = handleFor(entry);
-    if (!write(entityId, `${nudgeLine(entry, handle)}\r`)) return;
+    if (!write(entityId, `${nudgeLine(entry, handle)}\r`)) return false;
 
     /*
       `from: OVERMIND` is asserted rather than derived. The party set is
@@ -123,18 +166,48 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       is from. Addressed `to` the session so `visibleTo` lets that session read
       its own receipts, and so a broadcast is never created by accident.
     */
-    ledger.append({
+    const recorded = ledger.append({
       from: OVERMIND,
       to: entityId,
       kind: 'event',
       body: `nudge written (${handle})`,
       meta: { delivered: entry.id },
     });
+
+    /*
+      A refused receipt is reported, not swallowed. `Ledger.append` returns a
+      refusal as a value (ENOSPC, a `~/.hive` moved out from under the app), and
+      without a receipt this exact nudge is rewritten on every subsequent idle —
+      forever, into a real terminal. Saying so once is what makes that
+      diagnosable; the alternative is a session that mysteriously repeats a
+      question it already asked.
+    */
+    if (!recorded.ok) {
+      console.warn(
+        `[ledger] nudge ${handle} was written to ${entityId} but its receipt was refused ` +
+          `(${recorded.status}: ${recorded.reason}) — it may be delivered again`,
+      );
+    }
+
+    return true;
   }
 
+  /**
+   * Write everything this session is owed, one nudge per idle window.
+   *
+   * **`isIdle` is re-checked on every iteration, and the loop stops at the
+   * first delivery.** Each nudge ends in `\r`, which submits it — so the
+   * instant one lands the session is mid-turn, and writing the rest of the
+   * backlog behind it would break the single invariant this module exists to
+   * hold. The remainder is not lost: it has no receipt, so the next idle
+   * transition picks up exactly where this one stopped.
+   */
   function flush(entityId: string): void {
     if (!isLive(entityId) || !isIdle(entityId)) return;
-    for (const entry of undelivered(entityId)) deliverOne(entityId, entry);
+
+    for (const entry of undelivered(entityId)) {
+      if (deliverOne(entityId, entry)) return;
+    }
   }
 
   return {

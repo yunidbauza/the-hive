@@ -1673,9 +1673,23 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           ...(command.from === undefined ? {} : { from: command.from }),
           ...(command.to === undefined ? {} : { to: command.to }),
         };
-        const entries = get().ledger.filter((entry) => matches(entry, query));
+        /**
+         * Open-ness is derived from the **whole log**, then filtered — never
+         * the other way round.
+         *
+         * `openAsks` decides "answered" by scanning the array it is handed, and
+         * an answer is always addressed back to the asker rather than to the
+         * ask's recipient. So any `--from`/`--to` filter applied first removes
+         * the answers while keeping the asks, and `ledger --open --to <party>`
+         * would report every already-answered question as still open. Main
+         * states the same rule on `Ledger.read` for the same reason; this is
+         * the console keeping its side of it.
+         */
+        const entries = command.open
+          ? openAsks(get().ledger, now).filter((entry) => matches(entry, query))
+          : get().ledger.filter((entry) => matches(entry, query));
 
-        for (const row of ledgerRows(command.open ? openAsks(entries, now) : entries, {
+        for (const row of ledgerRows(entries, {
           now,
           showEvents: command.events,
           limit: command.limit,
@@ -1765,19 +1779,38 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         if (match === null) return;
 
         /**
+         * Addressed by **terminal**, not by row id.
+         *
+         * Main's party space is the one its registry is keyed by, and that is
+         * `terminalOf(session)` — the same id `sendToEntity` routes on, and the
+         * same one `knowsParty` checks. The two agree for every session that
+         * has never been cleared, and diverge exactly where it matters: a
+         * cleared row's successor carries a fresh `id` with the *predecessor's*
+         * `terminalId`. Posting the row id there addresses a party main has
+         * never heard of, and the ask is silently never delivered — while
+         * posting the *cleared* row's id names a terminal whose live pty now
+         * belongs to the successor, writing the nudge into a different agent's
+         * prompt. `send` has a documented guard against precisely that
+         * crossing; this is the same hazard reached through the log.
+         */
+        const entity = get().entities[match.id];
+        const party =
+          entity !== undefined && isSession(entity) ? terminalOf(entity) : match.id;
+
+        /**
          * Deliberately **not** gated on `match.ended`, unlike `send`.
          *
-         * `send` must refuse a finished session because a cleared row's
-         * terminal is inherited by its successor, so the message would be typed
-         * into a different live agent's prompt. An ask addresses an *id* in a
-         * log, not a terminal: `deliver.ts` holds it and flushes it when that
-         * id comes back. Refusing here would throw away the one case the
-         * hold-and-flush rule exists for.
+         * `send` must refuse a finished session because it writes *now*, into
+         * whatever pty holds that terminal at this instant. An ask is written
+         * down and delivered later: `deliver.ts` holds it and flushes it when
+         * the party comes back, and it re-checks liveness at that moment rather
+         * than trusting this one. Refusing here would throw away the one case
+         * the hold-and-flush rule exists for.
          */
         const held = match.ended !== null;
 
         void window.hive?.ledger
-          .post({ to: match.id, kind: 'ask', body: command.message })
+          .post({ to: party, kind: 'ask', body: command.message })
           .then((outcome) => {
             if (!outcome.ok) {
               // Verbatim, the way `send` prints a refusal: the reason names

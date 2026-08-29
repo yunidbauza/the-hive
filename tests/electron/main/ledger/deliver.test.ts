@@ -198,6 +198,59 @@ describe('createDeliver', () => {
     expect(lastWrite()).not.toContain('second line');
   });
 
+  /**
+   * The security boundary. A body is authored by another party and this is the
+   * one path that types it into somebody's prompt, terminated by `\r`.
+   */
+  it('never lets a body submit a second prompt of its own', () => {
+    ask('sess-a', 'check this\rrm -rf ~/work');
+
+    const data = lastWrite();
+    // Exactly one submission: the one this module appended.
+    expect(data.split('\r')).toHaveLength(2);
+    expect(data.endsWith('\r')).toBe(true);
+    // `\r` is a line break to a terminal, so the tail is cut with it rather
+    // than being carried along as text.
+    expect(data).toContain('check this');
+    expect(data).not.toContain('rm -rf');
+  });
+
+  it('strips escape sequences before they reach the tty', () => {
+    ask('sess-a', 'sneaky[2Jbody');
+
+    expect(lastWrite()).not.toContain('');
+    expect(lastWrite()).not.toContain('');
+    /*
+      The printable tail survives, and should: this strips control characters,
+      it does not parse escape sequences. With the ESC introducing it gone,
+      `[2J` is four ordinary characters and addresses nothing.
+    */
+    expect(lastWrite()).toContain('sneaky[2Jbody');
+  });
+
+  /**
+   * One nudge per idle window. The first write ends in `\r`, which starts a
+   * turn — so writing the rest of the backlog behind it would be writing
+   * mid-turn, the one thing this module must never do.
+   */
+  it('writes one nudge per idle window, not the whole backlog', () => {
+    idle.delete('sess-a');
+    ask('sess-a', 'first question');
+    ask('sess-a', 'second question');
+    expect(write).not.toHaveBeenCalled();
+
+    idle.add('sess-a');
+    deliver.onIdle('sess-a');
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(lastWrite()).toContain('first question');
+
+    // The remainder was not lost — it has no receipt, so the next idle takes it.
+    deliver.onIdle('sess-a');
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(lastWrite()).toContain('second question');
+  });
+
   /*
     The two halves of the reason delivery is recorded in the log rather than
     held in memory. A second `createLedger` over the same directory is what a

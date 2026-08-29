@@ -807,11 +807,11 @@ export function registerIpcHandlers(): void {
     ledger,
     isLive: (id) => sessions?.entities().includes(id) ?? false,
     isIdle: (id) => sessions?.isIdle(id) ?? false,
-    write: (id, text) => {
-      if (sessions === null) return false;
-      sessions.write(id, text);
-      return true;
-    },
+    // `Sessions.write` reports whether the bytes reached a pty — it answers
+    // false for an unknown id and for a session still bootstrapping, where the
+    // input is queued and may never be sent. Passed straight through, because
+    // `deliver` records a receipt on the strength of it.
+    write: (id, text) => sessions?.write(id, text) ?? false,
   });
 
   /**
@@ -829,7 +829,21 @@ export function registerIpcHandlers(): void {
       if (window.isDestroyed()) continue;
       window.webContents.send(CH.ledgerChanged, entry);
     }
-    deliver.onEntry(entry);
+    /**
+     * Delivery cannot fail the write that triggered it.
+     *
+     * This listener runs *inside* `Ledger.append`'s own try/catch, so a throw
+     * from the pty on the way to a terminal would be reported to the party who
+     * appended as `500 could not write the ledger` — for an entry that is
+     * already safely on disk. The console would print a red failure and the
+     * user would ask again, producing a duplicate of a question that was in
+     * fact recorded. The append succeeded; only the telling failed.
+     */
+    try {
+      deliver.onEntry(entry);
+    } catch (cause) {
+      console.warn(`[ledger] could not deliver ${entry.id}:`, cause);
+    }
   });
 
   handle(CH.ledgerList, (_event, payload) => ledger.read(parseLedgerReadQuery(payload)));
