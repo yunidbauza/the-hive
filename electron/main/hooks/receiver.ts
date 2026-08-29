@@ -27,6 +27,7 @@ import {
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
+import { keepNewest } from '@shared/ledger-derive';
 import {
   METRICS_MAX_BODY_BYTES,
   METRICS_PATH,
@@ -530,12 +531,25 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return { status: 400, json: { reason: describeCause(cause) } };
     }
 
-    const snapshot = onLedgerRead(caller, query);
+    /*
+      Queried with no limit, so nothing is trimmed before the caller's
+      visibility is known. `onLedgerRead` (via `Ledger.read`) would otherwise
+      take the newest `limit` entries over the *whole* ledger and hand back a
+      set `visibleTo` then narrows — which can discard an entry addressed to
+      this caller in favour of ones addressed elsewhere, with nothing to
+      signal the truncation. The limit is applied below, after filtering,
+      against what the caller can actually see.
+    */
+    const { limit, ...unbounded } = query;
+    const snapshot = onLedgerRead(caller, unbounded);
     const visible: LedgerSnapshot = {
       // Identity-locked here rather than trusted from `onLedgerRead`, so a
       // query's own `to` can never widen what a caller is shown — see
       // `visibleTo`.
-      entries: snapshot.entries.filter((entry) => visibleTo(caller, entry)),
+      entries: keepNewest(
+        snapshot.entries.filter((entry) => visibleTo(caller, entry)),
+        limit,
+      ),
       openAsks: snapshot.openAsks.filter((entry) => visibleTo(caller, entry)),
       claims: snapshot.claims,
     };

@@ -660,6 +660,56 @@ describe('hook receiver', () => {
 
       expect(ledger.read({}).entries.map((entry) => entry.body)).toEqual([body]);
     });
+
+    /**
+     * The limit must apply *after* visibility, not before (HIVE-112 fold-in).
+     *
+     * `onLedgerRead` (via `Ledger.read`) used to take the newest `limit`
+     * entries over the *whole* ledger before `visibleTo` ever ran, so an ask
+     * addressed to the caller could be pushed out of that global window by
+     * more-recent entries the caller cannot even see — with nothing to signal
+     * the truncation. Here, more than `limit` entries addressed to a fourth
+     * party land *after* an ask addressed to `sess-a`; a caller who reads with
+     * that limit must still get the ask.
+     */
+    it('does not let entries the caller cannot see push a visible ask out of the limit', async () => {
+      const asked = await post(
+        LEDGER_POST_PATH,
+        { to: 'sess-a', kind: 'ask', body: 'urgent: need your answer' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(asked.status).toBe(200);
+
+      const limit = 3;
+      // More than `limit` entries land after the ask, all addressed to a
+      // *fourth* party — invisible to `sess-a`, and deliberately not
+      // broadcasts, or they would be visible to `sess-a` too and this would
+      // not reproduce the bug. A limit applied over the whole log spends its
+      // budget on these before `sess-a`'s visibility is ever considered,
+      // pushing the (older, visible) ask out of the window entirely.
+      for (let i = 0; i < limit + 2; i += 1) {
+        const noise = await post(
+          LEDGER_POST_PATH,
+          { to: 'sess-d', kind: 'post', body: `noise ${i}` },
+          { [HOOK_HEADER_SESSION]: 'sess-c' },
+        );
+        expect(noise.status).toBe(200);
+      }
+
+      const read = await post(
+        LEDGER_READ_PATH,
+        { limit },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const snapshot = (await read.json()) as LedgerSnapshot;
+
+      // The caller still sees the ask addressed to it...
+      expect(snapshot.entries.map((entry) => entry.body)).toContain(
+        'urgent: need your answer',
+      );
+      // ...and the limit is still honoured against what it can see.
+      expect(snapshot.entries.length).toBeLessThanOrEqual(limit);
+    });
   });
 
   it.each([

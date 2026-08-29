@@ -9,7 +9,7 @@ import {
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
-import { claims, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
+import { claims, keepNewest, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
 
 import { createLedgerStore } from './store';
 
@@ -44,22 +44,6 @@ const refuse = (status: number, reason: string): LedgerResult => ({
 
 const describeCause = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
-
-/**
- * The newest `limit` entries, or all of them when no limit was given.
- *
- * A named function rather than an inline `slice`, because the inline version
- * was wrong in a way that reads as correct: `slice(-Math.max(0, limit))` is
- * `slice(-0)` for `limit: 0`, and `slice(-0)` is `slice(0)` — a whole copy.
- * The narrowest request a caller can make returned the widest possible answer,
- * and `parseLedgerReadQuery` admits `0` as valid, so it was reachable from
- * both boundaries.
- */
-const keepNewest = (entries: LedgerEntry[], limit: number | undefined): LedgerEntry[] => {
-  if (limit === undefined) return entries;
-  if (limit <= 0) return [];
-  return entries.slice(-limit);
-};
 
 export function createLedger(options: LedgerOptions): Ledger {
   const now = options.now ?? Date.now;
