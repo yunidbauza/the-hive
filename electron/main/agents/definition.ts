@@ -14,9 +14,12 @@ import {
   AGENT_FIELDS,
   AGENT_LIMIT_DEFAULTS,
   AGENT_NAME_PATTERN,
-  AGENT_PARENT_KEYS,
   RESERVED_AGENT_NAMES,
   WAKE_EVERY_FLOOR_MS,
+  parseDuration,
+  parseList,
+  parseRange,
+  readFrontmatter,
   type AgentDefinition,
   type AgentProblem,
   type Autonomy,
@@ -28,12 +31,6 @@ import type {
   SessionModel,
 } from '@shared/session-contract';
 
-export interface RawField {
-  value: string;
-  /** 0-based index into the source's lines — the patcher addresses by this. */
-  line: number;
-}
-
 export interface ParseContext {
   folder: string;
   skillNames: readonly string[];
@@ -44,103 +41,18 @@ export type ParseResult =
   | { def: AgentDefinition }
   | { problems: AgentProblem[] };
 
-const FENCE = '---';
-const KEY = /^(\s*)([a-z0-9_-]+):\s*(.*)$/;
-const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-/**
- * Strip a trailing comment.
- *
- * **Two or more spaces before `#` begin a comment; one space does not.**
- *
- * Not a flourish. The three readings of `#` in the ticket's own example file
- * demand exactly this rule, and the obvious "space-hash starts a comment"
- * would silently truncate the first of them:
- *
- * - `description: Watches #incorp-dev …` — one space, part of the value
- * - `icon: ChatCircleDots        # a Phosphor name` — aligned, a comment
- * - `on: [… slack.channel:#incorp-dev]` — no space, part of the value
- */
-function stripComment(line: string): string {
-  const at = line.search(/\s{2,}#/);
-
-  return at === -1 ? line : line.slice(0, at);
-}
-
-export function readFrontmatter(
-  source: string,
-): { fields: Map<string, RawField>; body: string } | null {
-  const lines = source.split('\n');
-
-  if (lines[0]?.trim() !== FENCE) return null;
-
-  const close = lines.findIndex((line, i) => i > 0 && line.trim() === FENCE);
-
-  if (close === -1) return null;
-
-  const fields = new Map<string, RawField>();
-  let parent: string | null = null;
-
-  for (let i = 1; i < close; i += 1) {
-    const raw = lines[i] as string;
-
-    if (raw.trim() === '' || /^\s*#/.test(raw)) continue;
-
-    const match = KEY.exec(stripComment(raw));
-
-    if (match === null) continue;
-
-    const indent = match[1] as string;
-    const key = match[2] as string;
-    const value = (match[3] as string).trim();
-
-    if (indent.length === 0) {
-      // A bare `wake:` opens a block; anything else is a leaf, and closes one.
-      parent = value === '' && AGENT_PARENT_KEYS.includes(key) ? key : null;
-
-      if (parent === null) fields.set(key, { value, line: i });
-      continue;
-    }
-
-    fields.set(parent === null ? key : `${parent}.${key}`, { value, line: i });
-  }
-
-  return { fields, body: lines.slice(close + 1).join('\n') };
-}
-
-/** `5m` / `2h` / `daily` → milliseconds. `null` when it is none of those. */
-export function parseDuration(text: string): number | null {
-  if (text === 'daily') return 86_400_000;
-
-  const match = /^(\d+)([mh])$/.exec(text);
-
-  if (match === null) return null;
-
-  const size = Number(match[1]);
-
-  return match[2] === 'h' ? size * 3_600_000 : size * 60_000;
-}
-
-export function parseList(text: string): string[] | null {
-  if (!text.startsWith('[') || !text.endsWith(']')) return null;
-
-  const inner = text.slice(1, -1).trim();
-
-  return inner === '' ? [] : inner.split(',').map((part) => part.trim());
-}
-
-export function parseRange(
-  text: string,
-): { from: string; to: string } | null {
-  const parts = text.split('-');
-
-  if (parts.length !== 2) return null;
-
-  const from = parts[0] as string;
-  const to = parts[1] as string;
-
-  return TIME.test(from) && TIME.test(to) ? { from, to } : null;
-}
+/*
+  The reader itself lives in the contract, because the Settings form needs it
+  and `src/**` cannot import `electron/main/**`. Re-exported here so main-side
+  callers keep a single import.
+*/
+export {
+  parseDuration,
+  parseList,
+  parseRange,
+  readFrontmatter,
+  type RawField,
+} from '@shared/agent-contract';
 
 /** Shape-check one field against its spec. Cross-field rules come after. */
 function checkKind(spec: FieldSpec, raw: string): string | null {

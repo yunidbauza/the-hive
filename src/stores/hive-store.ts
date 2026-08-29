@@ -4838,6 +4838,9 @@ export const useNotifs = () => useHiveStore((state) => state.notifs);
 
 /** Hydration and the push subscription — see `use-ledger-sync.ts`. */
 export const useHydrateLedger = () => useHiveStore((state) => state.hydrateLedger);
+
+/** Mirror `~/.hive/agents` into the fleet (HIVE-114). */
+export const useHydrateAgents = () => useHiveStore((state) => state.hydrateAgents);
 export const useLedgerAppend = () => useHiveStore((state) => state.ledgerAppend);
 
 /**

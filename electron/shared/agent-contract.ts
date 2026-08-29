@@ -204,3 +204,205 @@ export const AGENT_PARENT_KEYS: readonly string[] = [
     ),
   ),
 ];
+
+// ---------------------------------------------------------------------------
+// The reader.
+//
+// Pure, dependency-free, and living here rather than in `electron/main/agents/`
+// because the **renderer** needs it too: the Settings form reads the buffer it
+// is editing, and `src/**` may not import `electron/main/**`. One reader is
+// what stops the pane and main disagreeing about what a file says — which,
+// given the comment rule below, would be very easy to do and very hard to see.
+// ---------------------------------------------------------------------------
+
+export interface RawField {
+  value: string;
+  /** 0-based index into the source's lines — the patcher addresses by this. */
+  line: number;
+}
+
+const FENCE = '---';
+const KEY = /^(\s*)([a-z0-9_-]+):\s*(.*)$/;
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Strip a trailing comment.
+ *
+ * **Two or more spaces before `#` begin a comment; one space does not.**
+ *
+ * Not a flourish. The three readings of `#` in the ticket's own example file
+ * demand exactly this rule, and the obvious "space-hash starts a comment"
+ * would silently truncate the first of them:
+ *
+ * - `description: Watches #incorp-dev …` — one space, part of the value
+ * - `icon: ChatCircleDots        # a Phosphor name` — aligned, a comment
+ * - `on: [… slack.channel:#incorp-dev]` — no space, part of the value
+ */
+function stripComment(line: string): string {
+  const at = line.search(/\s{2,}#/);
+
+  return at === -1 ? line : line.slice(0, at);
+}
+
+export function readFrontmatter(
+  source: string,
+): { fields: Map<string, RawField>; body: string } | null {
+  const lines = source.split('\n');
+
+  if (lines[0]?.trim() !== FENCE) return null;
+
+  const close = lines.findIndex((line, i) => i > 0 && line.trim() === FENCE);
+
+  if (close === -1) return null;
+
+  const fields = new Map<string, RawField>();
+  let parent: string | null = null;
+
+  for (let i = 1; i < close; i += 1) {
+    const raw = lines[i] as string;
+
+    if (raw.trim() === '' || /^\s*#/.test(raw)) continue;
+
+    const match = KEY.exec(stripComment(raw));
+
+    if (match === null) continue;
+
+    const indent = match[1] as string;
+    const key = match[2] as string;
+    const value = (match[3] as string).trim();
+
+    if (indent.length === 0) {
+      // A bare `wake:` opens a block; anything else is a leaf, and closes one.
+      parent = value === '' && AGENT_PARENT_KEYS.includes(key) ? key : null;
+
+      if (parent === null) fields.set(key, { value, line: i });
+      continue;
+    }
+
+    fields.set(parent === null ? key : `${parent}.${key}`, { value, line: i });
+  }
+
+  return { fields, body: lines.slice(close + 1).join('\n') };
+}
+
+/** `5m` / `2h` / `daily` → milliseconds. `null` when it is none of those. */
+export function parseDuration(text: string): number | null {
+  if (text === 'daily') return 86_400_000;
+
+  const match = /^(\d+)([mh])$/.exec(text);
+
+  if (match === null) return null;
+
+  const size = Number(match[1]);
+
+  return match[2] === 'h' ? size * 3_600_000 : size * 60_000;
+}
+
+export function parseList(text: string): string[] | null {
+  if (!text.startsWith('[') || !text.endsWith(']')) return null;
+
+  const inner = text.slice(1, -1).trim();
+
+  return inner === '' ? [] : inner.split(',').map((part) => part.trim());
+}
+
+export function parseRange(
+  text: string,
+): { from: string; to: string } | null {
+  const parts = text.split('-');
+
+  if (parts.length !== 2) return null;
+
+  const from = parts[0] as string;
+  const to = parts[1] as string;
+
+  return TIME.test(from) && TIME.test(to) ? { from, to } : null;
+}
+
+// ---------------------------------------------------------------------------
+// The writer.
+//
+// Here for the same reason the reader is: the Settings form patches the buffer
+// it is editing, and `src/**` cannot import `electron/main/**`. Pure string
+// work, no Node.
+// ---------------------------------------------------------------------------
+
+/** A key line, split into its `key:` run and everything after it. */
+const VALUE = /^(\s*[a-z0-9_-]+:[ \t]*)(.*)$/;
+
+/** The smallest gap that still reads as a comment rather than a value. */
+const MIN_GAP = 2;
+
+/**
+ * Replace the value on one line, preserving its `key:` run and re-aligning any
+ * trailing comment so the `#` stays in its original column. A longer value
+ * that shoved its comment rightward would ripple an aligned block out of true
+ * on every single edit.
+ */
+function replaceValue(line: string, value: string): string {
+  const match = VALUE.exec(line);
+
+  if (match === null) return line;
+
+  const head = match[1] as string;
+  const rest = match[2] as string;
+  const at = rest.search(/\s{2,}#/);
+
+  if (at === -1) return `${head}${value}`;
+
+  const gap = /^\s+/.exec(rest.slice(at))?.[0].length ?? MIN_GAP;
+  const comment = rest.slice(at + gap);
+  const width = Math.max(MIN_GAP, gap - (value.length - at));
+
+  return `${head}${value}${' '.repeat(width)}${comment}`;
+}
+
+export function patchFrontmatter(
+  source: string,
+  path: string,
+  value: string,
+): string {
+  const read = readFrontmatter(source);
+
+  if (read === null) return source;
+
+  const lines = source.split('\n');
+  const existing = read.fields.get(path);
+
+  if (existing !== undefined) {
+    lines[existing.line] = replaceValue(lines[existing.line] as string, value);
+
+    return lines.join('\n');
+  }
+
+  const dot = path.indexOf('.');
+  const parent = dot === -1 ? null : path.slice(0, dot);
+  const leaf = dot === -1 ? path : path.slice(dot + 1);
+  const close = lines.findIndex((line, i) => i > 0 && line.trim() === FENCE);
+
+  if (parent === null) {
+    lines.splice(close, 0, `${leaf}: ${value}`);
+
+    return lines.join('\n');
+  }
+
+  // The block may already be open, in which case the new key joins it —
+  // otherwise `wake:` would appear twice and the reader would see one block.
+  const opens = lines.findIndex(
+    (line, i) => i > 0 && i < close && line.trim() === `${parent}:`,
+  );
+
+  if (opens === -1) {
+    lines.splice(close, 0, `${parent}:`, `  ${leaf}: ${value}`);
+
+    return lines.join('\n');
+  }
+
+  let after = opens + 1;
+
+  while (after < close && /^\s+\S/.test(lines[after] as string)) after += 1;
+
+  lines.splice(after, 0, `  ${leaf}: ${value}`);
+
+  return lines.join('\n');
+}

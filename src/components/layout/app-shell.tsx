@@ -9,6 +9,7 @@ import { TitleBar } from '@components/layout/title-bar';
 import { useProjectWatcher } from '@features/explorer/hooks/use-project-watcher';
 import { useSessionStatus } from '@features/sessions/hooks/use-session-status';
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
+import { useAgentsSync } from '@features/shared/hooks/use-agents-sync';
 import { useLedgerSync } from '@features/shared/hooks/use-ledger-sync';
 import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
@@ -71,6 +72,15 @@ export function AppShell() {
    * one listener per card for one channel.
    */
   useLedgerSync();
+
+  /**
+   * Keep the fleet's agents in step with `~/.hive/agents` (HIVE-114).
+   *
+   * One broadcast channel again, and here rather than in the Settings pane
+   * because the rail lists agents whether or not Settings has ever been
+   * opened — the same argument `useNotificationStream` makes below.
+   */
+  useAgentsSync();
 
   /**
    * Open the session a clicked OS notification was about (story 106).
