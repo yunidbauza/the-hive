@@ -86,7 +86,8 @@ one still fires.
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
 | **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
-| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**` |
+| **`electron/mcp-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
+| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**`, `electron/mcp-host/**` |
 
 `electron/shared/**` is the **only** module both processes may import, and it is types,
 constants, and pure dependency-free logic only — no runtime imports, no Node APIs, no
