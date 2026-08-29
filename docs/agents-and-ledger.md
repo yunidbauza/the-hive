@@ -1,11 +1,13 @@
 # Agents and the ledger
 
 **Scope:** the ledger — one append-only log every party in The Hive reads from
-and writes to. **Owned by story HIVE-111.**
+and writes to. **Owned by stories HIVE-111 (the log) and HIVE-113 (delivery and
+the console verbs).**
 
 Load this when working on `electron/main/ledger/`, `electron/shared/ledger-*`,
-the hook receiver's two ledger routes, or the renderer's mirror of the log
-(`use-ledger-sync.ts`, the `useLedger*` selectors in `hive-store.ts`).
+the hook receiver's two ledger routes, the renderer's mirror of the log
+(`use-ledger-sync.ts`, the `useLedger*` selectors in `hive-store.ts`), or the
+`ledger` / `ask` / `answer` console verbs.
 
 ## What the ledger is
 
@@ -146,6 +148,75 @@ And one for the same reason on the way out: `Ledger.answer` addresses its entry
 `visibleTo` in the receiver treats a broadcast as readable by everyone, so an
 answer with no addressee would publish the overmind's reply to one session's
 private question to every other session.
+
+## Delivery
+
+The ledger records; it does not tell anyone. `electron/main/ledger/deliver.ts`
+is the first rule on top of it (HIVE-113): an `ask` or an `answer` addressed to
+a **live session** is written into that session's terminal as one line, through
+the same `sessions.write` primitive `send` uses. The trailing `\r` submits it,
+which is the intent — the nudge becomes a turn the agent takes.
+
+Two constraints shape it.
+
+It writes **only at an empty prompt**. Main learns this from the hook stream:
+`SessionsOptions.onIdle` fires when a derived status of `idle` coincides with
+`held(id).bgShells === 0`, and `Sessions.isIdle` answers the same question for a
+caller arriving between events. Both halves are load-bearing. A session showing
+a permission prompt derives `waiting`, not `idle`, so it is excluded — that is
+the whole of "never write mid-turn". And a turn that ended while a backgrounded
+shell is still running *does* derive `idle`, with `detail: 'script'`, so the
+status alone would say yes to a session that is still working.
+
+And it **never loses a nudge**. Every line that lands is recorded as an `event`
+entry carrying `meta.delivered`, which turns "what does this session still owe a
+reading of" into a query against the log rather than a queue in memory. That
+choice pays for itself three times: a restart cannot drop a pending nudge;
+`publishReady` is deliberately not idempotent — `/clear` fires a second one —
+and the duplicate costs a read rather than a second line in the terminal; and
+the log answers who was told what, and when.
+
+The receipt is written **after** the write and only if the write landed, which
+is why `DeliverOptions.write` returns a boolean rather than `void`. The session
+layer is reached through a nullable binding in `ipc/index.ts` — it is
+constructed after the ledger — and a receipt for a nudge that never reached a
+terminal would suppress the retry forever, leaving a question nobody was asked
+and a log claiming they were.
+
+`onEntry` ignores every kind but `ask` and `answer`. **That is a loop guard, not
+a filter**: deliver subscribes to `ledger.onChange` and also appends to the same
+log, so without the gate each receipt would re-enter it and it would feed
+itself.
+
+An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
+line; one addressed to an agent is a wake (HIVE-120); a broadcast wakes nobody,
+because parties read those on their own schedule.
+
+## The console verbs
+
+The overmind's own mouth is three verbs in the orchestrator console —
+`ledger`, `ask` and `answer` (`src/types/command.ts`,
+`features/orchestrator/utils/parse-command.ts`, `runOrchCommand`).
+
+`ledger` reads the renderer's **mirror**, not IPC: `runOrchCommand` is
+synchronous and `use-ledger-sync.ts` already keeps that slice current, so an
+`invoke` would make the verb async to fetch what is in memory. It filters
+through the same `matches` and `openAsks` main uses, so the console and the log
+cannot drift apart about what "open" means. Rows are drawn by
+`src/lib/ledger/console-rows.ts` — its own module rather than three more helpers
+in a five-thousand-line store, and column arithmetic worth asserting directly.
+
+Delivery receipts are folded out of the default tail and shown by
+`ledger --events`. The filter keys on `meta.delivered`, **not** on
+`kind === 'event'`, so the expiry events HIVE-120 adds will not be swept up by
+the same rule.
+
+`ask` differs from `send` in one deliberate way: it does **not** refuse an ended
+session. `send` must, because a cleared row's terminal is inherited by its
+successor and the message would be typed into a different live agent's prompt.
+An ask addresses an id in a log rather than a terminal, so it is held and
+flushed when that id comes back — which is the one case the hold-and-flush rule
+exists for.
 
 ## Derived state
 
