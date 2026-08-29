@@ -130,7 +130,7 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
       place a model would otherwise have to parse a JSON string out of a text
       field before it could do anything with it.
     */
-    return ok(JSON.stringify(snapshot), snapshot as unknown as Record<string, unknown>);
+    return ok(JSON.stringify(snapshot), { ...snapshot });
   };
 
   const claim = async (args: Record<string, unknown>): Promise<CallToolResult> => {

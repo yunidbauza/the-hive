@@ -710,6 +710,34 @@ describe('hook receiver', () => {
       // ...and the limit is still honoured against what it can see.
       expect(snapshot.entries.length).toBeLessThanOrEqual(limit);
     });
+
+    /**
+     * The limit itself, proven at this HTTP boundary rather than at
+     * `Ledger.read` (HIVE-112 fold-in).
+     *
+     * The regression test above only proves an *upper* bound, and in its own
+     * scenario that bound holds vacuously — `sess-a` can see just the one ask
+     * either way, so `1 <= 3` says nothing about whether trimming happens at
+     * all. This asserts the exact surviving entries against a caller who can
+     * see every one of them, so it fails both if the trim is dropped (all
+     * five would come back) and if the wrong end is kept (the oldest three
+     * instead of the newest two).
+     */
+    it("trims the visible entries to the caller's limit", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const written = await post(
+          LEDGER_POST_PATH,
+          { to: 'sess-a', kind: 'post', body: `n${i}` },
+          { [HOOK_HEADER_SESSION]: 'sess-b' },
+        );
+        expect(written.status).toBe(200);
+      }
+
+      const read = await post(LEDGER_READ_PATH, { limit: 2 }, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      const snapshot = (await read.json()) as LedgerSnapshot;
+
+      expect(snapshot.entries.map((entry) => entry.body)).toEqual(['n3', 'n4']);
+    });
   });
 
   it.each([
