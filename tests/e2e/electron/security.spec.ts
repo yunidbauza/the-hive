@@ -194,6 +194,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'github',
     'integrations',
     'jira',
+    /*
+      HIVE-111 added the ledger namespace to `BRIDGE_KEYS` and to the preload,
+      but not to this list, so this assertion has been failing on `main` since
+      that story merged — there is no PR CI here to have caught it. Recorded
+      rather than merely corrected: the page may now read the log and write as
+      the overmind, and `main` supplies `from` on both write paths so it cannot
+      post as anyone else (`docs/agents-and-ledger.md`, *The party rule*).
+    */
+    'ledger',
     'notifications',
     'pty',
     'session',
