@@ -143,6 +143,7 @@ import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
 import { createLedger } from '../ledger';
+import { createMcpRuntime } from '../mcp';
 import {
   createNotificationHub,
   createNotifier,
@@ -844,11 +845,27 @@ export function registerIpcHandlers(): void {
     doneUrl: () => hooks.doneUrl(),
   });
 
+  /*
+    The MCP config runtime (HIVE-112). Written once, here, rather than before
+    every spawn: its content depends only on where the app is installed and
+    where its own bundle sits, and neither moves while the app runs.
+
+    `import.meta.dirname` is `out/main/` in both dev and a packaged build, which
+    is where `mcp-host.js` is emitted — the same resolution `pty-host` uses.
+  */
+  const mcp = createMcpRuntime({
+    userDataPath: app.getPath('userData'),
+    execPath: process.execPath,
+    scriptPath: join(import.meta.dirname, 'mcp-host.js'),
+  });
+  void mcp.start();
+
   sessions = createSessions({
     supervisor,
     config: getConfig,
     send,
     skills,
+    mcp,
     hooks,
     history,
   });

@@ -186,6 +186,24 @@ export interface Receiver {
    * discover one.
    */
   readonly readyUrl: string | null;
+  /**
+   * The scheme and authority alone, or `null` before a successful start
+   * (HIVE-112).
+   *
+   * Every other URL on this interface is a *path* — `url` is `origin +
+   * HOOK_PATH`, and the same shape holds for `metricsUrl`, `doneUrl` and
+   * `readyUrl` — because each names one fixed route this receiver serves and
+   * the caller that reads it never appends anything of its own.
+   *
+   * The MCP host is different: it is handed a base and builds its own
+   * request paths from `@shared/ledger-contract` (`LEDGER_POST_PATH`,
+   * `LEDGER_READ_PATH`), because a single client speaks to more than one
+   * route. Handing it `url` instead would have it POST to
+   * `…/hook/ledger/read`, a path this server never registers — so this is a
+   * distinct field rather than a reuse of `url` with the last segment
+   * trimmed off by a caller.
+   */
+  readonly origin: string | null;
   stop(): Promise<void>;
 }
 
@@ -769,6 +787,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
     get url() {
       return url;
+    },
+
+    get origin() {
+      return origin;
     },
 
     get metricsUrl() {

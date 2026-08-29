@@ -35,6 +35,7 @@ import type { HookRuntime } from '../hooks';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
+import type { McpRuntime } from '../mcp';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import type { SkillsRuntime } from '../skills';
 
@@ -86,6 +87,13 @@ export interface SessionsOptions {
    * plugin could not be written" — both omit the flag.
    */
   skills?: SkillsRuntime;
+  /**
+   * The generated MCP config, when the app has one (HIVE-112).
+   *
+   * Optional for the reason `skills` is: absent is supported, not degraded. A
+   * session without it is an ordinary `claude` that cannot reach the ledger.
+   */
+  mcp?: McpRuntime;
   /**
    * The uuid pinned as `--session-id` on a spawn (HIVE-61).
    *
@@ -273,6 +281,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     maxSessions = MAX_SESSIONS,
     hooks,
     skills,
+    mcp,
     newSessionUuid = randomUUID,
     branchReader,
     history,
@@ -1484,6 +1493,13 @@ export function createSessions(options: SessionsOptions): Sessions {
     const pluginDir = skills?.pluginDirPath() ?? null;
 
     /**
+     * The ledger tools (HIVE-112). Resolved here for the same reason
+     * `pluginDir` is: it is main's own path, chosen at spawn, and it never
+     * crosses IPC.
+     */
+    const mcpConfig = mcp?.configPathFor() ?? null;
+
+    /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
      *
      * It has to reach two places now — the command line, and the history — and
@@ -1617,6 +1633,12 @@ export function createSessions(options: SessionsOptions): Sessions {
           it and deliberately never will.
         */
         ...(pluginDir == null ? {} : { pluginDir }),
+        /*
+          The ledger tools (HIVE-112). Resolved here for the same reason
+          `pluginDir` is: it is main's own path, chosen at spawn, and it never
+          crosses IPC.
+        */
+        ...(mcpConfig == null ? {} : { mcpConfig }),
         /*
           Belt *and* braces, deliberately. `stripEnv` above covers the ambient
           environment and a project's own `env` block; this covers the login
