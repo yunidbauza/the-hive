@@ -33,6 +33,9 @@ import type {
 import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import {
   parseAckRequest,
+  parseAgentNameRequest,
+  parseAgentRenameRequest,
+  parseAgentWriteRequest,
   parseAddProjectRequest,
   parseCloneRequest,
   parseDiagnoseCommandRequest,
@@ -104,6 +107,7 @@ import {
 } from '@shared/session-history-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
+import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { createCloneFlow, type CloneFlow } from '../clone';
 import {
   addProject,
@@ -249,6 +253,7 @@ let history: SessionHistory | null = null;
  * `skills:*` handlers below read and write the tree it manages.
  */
 let skills: SkillsRuntime | null = null;
+let agents: AgentRegistry | null = null;
 /** The clone flow (story 102), or `null` before registration. */
 let cloneFlow: CloneFlow | null = null;
 /** The single project watcher, or `null` before registration. */
@@ -842,6 +847,21 @@ export function registerIpcHandlers(): void {
       app. `sync()` happens before every spawn, which is always afterwards.
     */
     doneUrl: () => hooks.doneUrl(),
+  });
+
+  agents = createAgentsRuntime();
+
+  /*
+    The folder changed — on disk, or through the pane. Broadcast to every live
+    window the way `ledger.onChange` above does, and with no payload: the
+    renderer re-`list`s, which keeps this push incapable of carrying anything
+    `agents:list` would not already return.
+  */
+  agents.onChange(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue;
+      window.webContents.send(CH.agentsChanged);
+    }
   });
 
   sessions = createSessions({
@@ -1551,6 +1571,38 @@ export function registerIpcHandlers(): void {
   handle(CH.skillsRename, (_event, payload) => {
     const request = parseSkillRenameRequest(payload);
     return skills?.rename(request.from, request.to);
+  });
+
+  /**
+   * Agent definitions (HIVE-114).
+   *
+   * `agents` is non-null from registration onward; the optional chaining
+   * matches every other runtime in this file, for the window between module
+   * load and `registerIpc`.
+   *
+   * `write` and `rename` answer with an `AgentWriteResult` rather than a fresh
+   * snapshot, unlike their skills counterparts. A refusal here has structure —
+   * problems, each naming its field — and the editor renders them beside the
+   * controls they name; the change push is what refreshes the list.
+   */
+  handle(CH.agentsList, () => agents?.list());
+
+  handle(CH.agentsRead, (_event, payload) =>
+    agents?.read(parseAgentNameRequest(payload).name),
+  );
+
+  handle(CH.agentsWrite, (_event, payload) => {
+    const request = parseAgentWriteRequest(payload);
+    return agents?.write(request.name, request.source);
+  });
+
+  handle(CH.agentsRemove, (_event, payload) =>
+    agents?.remove(parseAgentNameRequest(payload).name),
+  );
+
+  handle(CH.agentsRename, (_event, payload) => {
+    const request = parseAgentRenameRequest(payload);
+    return agents?.rename(request.from, request.to);
   });
 
   /**

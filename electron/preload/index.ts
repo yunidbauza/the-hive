@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 
 import type {
+  AgentNameRequest,
+  AgentRenameRequest,
+  AgentsSnapshot,
+  AgentWriteRequest,
+  AgentWriteResult,
+} from '@shared/agent-contract';
+import type {
   AddProjectRequest,
   CloneDoneEvent,
   CloneRequest,
@@ -303,6 +310,31 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.skillsRemove, request),
     rename: (request: SkillRenameRequest): Promise<SkillsSnapshot> =>
       ipcRenderer.invoke(CH.skillsRename, request),
+  },
+  /*
+    HIVE-114. The same five path-free verbs as `skills`, plus `onChanged` —
+    which skills deliberately lack. The difference is that main is a second
+    writer here: an AGENT.md is a file the user is invited to edit outside the
+    app, so the pane cannot learn about every change from its own responses.
+
+    `onChanged` carries no payload. The renderer is poked and re-`list`s, which
+    keeps this listener incapable of leaking anything `list` would not already
+    have handed over.
+  */
+  agents: {
+    list: (): Promise<AgentsSnapshot> => ipcRenderer.invoke(CH.agentsList),
+    read: (request: AgentNameRequest): Promise<string | null> =>
+      ipcRenderer.invoke(CH.agentsRead, request),
+    write: (request: AgentWriteRequest): Promise<AgentWriteResult> =>
+      ipcRenderer.invoke(CH.agentsWrite, request),
+    remove: (request: AgentNameRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.agentsRemove, request),
+    rename: (request: AgentRenameRequest): Promise<AgentWriteResult> =>
+      ipcRenderer.invoke(CH.agentsRename, request),
+    onChanged: (callback: () => void) =>
+      subscribe<undefined>(CH.agentsChanged, () => {
+        callback();
+      }),
   },
   // Story 106. `status` takes no argument — see the contract for why that is
   // the security design and not an oversight.

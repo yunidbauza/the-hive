@@ -1,3 +1,12 @@
+import {
+  AGENT_NAME_PATTERN,
+  RESERVED_AGENT_NAMES,
+} from './agent-contract';
+import type {
+  AgentNameRequest,
+  AgentRenameRequest,
+  AgentWriteRequest,
+} from './agent-contract';
 import type {
   AddProjectRequest,
   CloneRequest,
@@ -1557,6 +1566,77 @@ export function parseSkillWriteRequest(input: unknown): SkillWriteRequest {
   return {
     name: assertSkillName(raw.name, 'skillWrite.name'),
     body: assertString(raw.body, 'skillWrite.body'),
+  };
+}
+
+/**
+ * An agent name — a folder name, and the identity a ledger entry is `from`
+ * (HIVE-114).
+ *
+ * The same job as {@link assertSkillName} and for the same reason: main will
+ * `join` this onto a directory it owns, so the work here is making a path
+ * unrepresentable rather than sanitising one. Nothing downstream re-checks
+ * containment.
+ *
+ * {@link RESERVED_AGENT_NAMES} is refused here as well as in the reader,
+ * following the argument `assertSkillName` makes about `done`: a reservation
+ * is part of the contract rather than a detail of the filesystem layer.
+ * `overmind` matters more than `done` does here — it is the ledger's
+ * coordinator identity, and an agent that could take that name could sign its
+ * entries as the overmind.
+ */
+export function assertAgentName(value: unknown, label: string): string {
+  const name = assertString(value, label);
+
+  if (!AGENT_NAME_PATTERN.test(name)) {
+    return fail(`${label}: must be lowercase letters, digits and dashes`);
+  }
+  if ((RESERVED_AGENT_NAMES as readonly string[]).includes(name)) {
+    return fail(`${label}: "${name}" is reserved`);
+  }
+  return name;
+}
+
+export function parseAgentNameRequest(input: unknown): AgentNameRequest {
+  const raw = assertShape(input, ['name'], 'agentName');
+  return { name: assertAgentName(raw.name, 'agentName.name') };
+}
+
+/**
+ * `agents:rename` — two names, and no path between them.
+ *
+ * Both run through {@link assertAgentName} for the reason
+ * {@link parseSkillRenameRequest} spells out: `from` arrives from the page
+ * exactly as `to` does, and validating only the destination would let a
+ * request name a *source* main never listed.
+ */
+export function parseAgentRenameRequest(input: unknown): AgentRenameRequest {
+  const raw = assertShape(input, ['from', 'to'], 'agentRename');
+  return {
+    from: assertAgentName(raw.from, 'agentRename.from'),
+    to: assertAgentName(raw.to, 'agentRename.to'),
+  };
+}
+
+/**
+ * `agents:write` — the whole file the user typed, under a validated name.
+ *
+ * `source` gets no length cap and no control-character sweep, the same
+ * decision {@link parseSkillWriteRequest} documents: an AGENT.md legitimately
+ * contains tabs and newlines, and what makes this safe is *where* the bytes
+ * land — a directory main chose, under a name that cannot name anywhere else.
+ *
+ * The frontmatter inside is deliberately **not** validated here. This layer
+ * decides what a payload may express; whether the definition is well-formed is
+ * the registry's question, and it answers with field-addressed problems the
+ * editor can render. A guard that threw on a half-typed file would turn every
+ * keystroke-in-progress into an IPC error.
+ */
+export function parseAgentWriteRequest(input: unknown): AgentWriteRequest {
+  const raw = assertShape(input, ['name', 'source'], 'agentWrite');
+  return {
+    name: assertAgentName(raw.name, 'agentWrite.name'),
+    source: assertString(raw.source, 'agentWrite.source'),
   };
 }
 

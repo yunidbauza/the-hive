@@ -18,6 +18,13 @@
  */
 
 import type {
+  AgentNameRequest,
+  AgentRenameRequest,
+  AgentsSnapshot,
+  AgentWriteRequest,
+  AgentWriteResult,
+} from './agent-contract';
+import type {
   AddProjectRequest,
   CloneDoneEvent,
   CloneRequest,
@@ -633,6 +640,29 @@ export const CH = {
   skillsWrite: 'skills:write',
   skillsRemove: 'skills:remove',
   skillsRename: 'skills:rename',
+  /**
+   * Agent definitions — the same five verbs as `skills`, and one more thing
+   * (HIVE-114).
+   *
+   * The bound is identical: every verb names an **agent**, never a path, and
+   * main already knows the one directory agents live in, so traversal is
+   * unrepresentable rather than filtered. `agent-contract.ts` carries the
+   * grammar those names are checked against.
+   *
+   * Unlike skills, this block **has** an event channel. Skills have none
+   * because the Settings pane is their only writer; an `AGENT.md` is a file
+   * the user is invited to write by hand, and the story requires a folder
+   * deleted in Finder to leave the list without a restart. That makes main a
+   * second writer, and a second writer is exactly what an event channel is
+   * for.
+   */
+  agentsList: 'agents:list',
+  agentsRead: 'agents:read',
+  agentsWrite: 'agents:write',
+  agentsRemove: 'agents:remove',
+  agentsRename: 'agents:rename',
+  /** The folder changed — on disk or through this pane. Carries no payload. */
+  agentsChanged: 'agents:changed',
   appInfo: 'app:info',
   /**
    * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
@@ -714,6 +744,7 @@ export const EVENT_CHANNELS = [
   CH.notificationsActivate,
   CH.fsChanged,
   CH.ledgerChanged,
+  CH.agentsChanged,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -1452,6 +1483,25 @@ export interface HiveBridge {
     onChanged: (callback: (entry: LedgerEntry) => void) => () => void;
   };
   /**
+   * Agent definitions on disk (HIVE-114).
+   *
+   * `write` answers with a {@link AgentWriteResult} rather than the fresh
+   * snapshot the skills verbs return, because a refusal here has *structure* —
+   * a list of problems, each naming the field it belongs to — and the editor
+   * renders each one beside the control it names. A snapshot could only say
+   * that nothing changed.
+   */
+  agents: {
+    list(): Promise<AgentsSnapshot>;
+    /** The raw file, or `null` when there is no such agent. */
+    read(request: AgentNameRequest): Promise<string | null>;
+    write(request: AgentWriteRequest): Promise<AgentWriteResult>;
+    remove(request: AgentNameRequest): Promise<void>;
+    rename(request: AgentRenameRequest): Promise<AgentWriteResult>;
+    /** The folder changed; re-`list` to see how. */
+    onChanged(callback: () => void): () => void;
+  };
+  /**
    * The app's newer self.
    *
    * A namespace of its own rather than fields on `appInfo`, because `appInfo`
@@ -1641,6 +1691,7 @@ export const RESIZE_THROTTLE_MS = 50;
  * another party's words the way a compromised page could try.
  */
 export const BRIDGE_KEYS = [
+  'agents',
   'appInfo',
   'config',
   'fs',
@@ -1693,6 +1744,34 @@ export const BRIDGE_SKILLS_KEYS = [
   'write',
   'remove',
   'rename',
+] as const;
+
+/**
+ * The exact key set of `window.hive.agents` (HIVE-114).
+ *
+ * Five verbs matching {@link BRIDGE_SKILLS_KEYS} one for one, and the same
+ * security story: two readers and three writers, all bounded to one directory
+ * by the shape of what they accept rather than by a check they perform.
+ * `assertAgentName` is what makes that true, and it refuses the reserved names
+ * as well as any name that could be a path.
+ *
+ * The sixth is `onChanged`, and it widens nothing — it is a *listener*, not a
+ * verb. It carries no payload at all (the renderer re-`list`s on being poked),
+ * so it cannot leak the contents of a definition the renderer could not
+ * already have asked for. It exists because main became a second writer the
+ * moment the folder was declared hand-editable; see `CH.agentsChanged`.
+ *
+ * HIVE-115 appends `run`, HIVE-117 `pause`/`resume`. Each of those is a change
+ * to what the renderer may make the machine *do*, rather than to what it may
+ * read or write, and should be argued for here before it is written.
+ */
+export const BRIDGE_AGENTS_KEYS = [
+  'list',
+  'read',
+  'write',
+  'remove',
+  'rename',
+  'onChanged',
 ] as const;
 
 /** The exact key set of `window.hive.session`. */

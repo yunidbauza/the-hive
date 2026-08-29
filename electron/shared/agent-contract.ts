@@ -134,6 +134,17 @@ export interface AgentWriteRequest {
   source: string;
 }
 
+/** `agents:read` and `agents:remove` — one agent, and never a path. */
+export interface AgentNameRequest {
+  name: string;
+}
+
+/** `agents:rename` — two names, and still no path between them. */
+export interface AgentRenameRequest {
+  from: string;
+  to: string;
+}
+
 export type AgentWriteResult =
   | { ok: true }
   | { ok: false; problems: AgentProblem[] };
