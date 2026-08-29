@@ -169,7 +169,7 @@ describe('ConsoleInput', () => {
 
     expect(input()).toHaveAttribute(
       'placeholder',
-      'help · status · send <session> <message> · spawn <project> <task>',
+      'help · status · ledger · send <session> <message> · spawn <project> <task>',
     );
   });
 

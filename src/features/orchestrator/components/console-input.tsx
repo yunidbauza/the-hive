@@ -12,7 +12,14 @@ import {
 } from '@stores/hive-store';
 import { useSelId, useSetSelId } from '@stores/ui-store';
 
-const PLACEHOLDER = 'help · status · send <session> <message> · spawn <project> <task>';
+/*
+  A curated subset, not the whole grammar — `open` and `clear` have never been
+  here. `ledger` earns the space because it is the verb that makes the rest of
+  the board discoverable (HIVE-113); `ask` and `answer` are reachable from
+  `help` once you know the log exists.
+*/
+const PLACEHOLDER =
+  'help · status · ledger · send <session> <message> · spawn <project> <task>';
 const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
 
 /**

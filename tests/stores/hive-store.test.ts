@@ -527,9 +527,30 @@ describe('hive-store', () => {
         run('help');
         const text = transcript();
 
-        for (const command of ['help', 'status', 'open', 'send', 'spawn', 'clear']) {
+        for (const command of [
+          'help',
+          'status',
+          'ledger',
+          'open',
+          'send',
+          'ask',
+          'answer',
+          'spawn',
+          'clear',
+        ]) {
           expect(text).toContain(command);
         }
+      });
+
+      it('spells out the ledger verbs’ arguments (HIVE-113)', () => {
+        // `help` is where a user goes to find out a verb takes arguments at
+        // all, so the row has to carry the shape, not just the word.
+        run('help');
+        const text = transcript();
+
+        expect(text).toContain('ledger [--open]');
+        expect(text).toContain('ask <session> <message>');
+        expect(text).toContain('answer <id> <text>');
       });
     });
 
@@ -1310,6 +1331,143 @@ describe('hive-store', () => {
           { text: 'console cleared — help for commands', color: 'dim' },
         ]);
       });
+    });
+
+    /**
+     * The ledger verbs (HIVE-113).
+     *
+     * `ledger` reads the store's own mirror, so it needs no bridge at all —
+     * only `isDesktop`. `ask` and `answer` write, so they are the only console
+     * verbs that reach `window.hive` directly, and they resolve asynchronously
+     * inside a synchronous action.
+     */
+    describe('ledger verbs', () => {
+      const post = vi.fn();
+      const answer = vi.fn();
+
+      beforeEach(() => {
+        post.mockReset().mockResolvedValue({ ok: true, id: 'id-1', ref: 'a14' });
+        answer.mockReset().mockResolvedValue({ ok: true, id: 'id-2' });
+        vi.mocked(isDesktop).mockReturnValue(true);
+        Object.defineProperty(window, 'hive', {
+          configurable: true,
+          value: { ledger: { post, answer } },
+        });
+      });
+
+      afterEach(() => {
+        Reflect.deleteProperty(window, 'hive');
+      });
+
+      const ask = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
+        id: '20260829-120000-0001',
+        ts: Date.now(),
+        from: 'sess-a',
+        to: 'overmind',
+        kind: 'ask',
+        ref: 'a12',
+        body: 'which branch?',
+        ...over,
+      });
+
+      it('prints the tail from the store mirror', () => {
+        useHiveStore.getState().hydrateLedger([ask()]);
+        run('ledger');
+
+        expect(transcript()).toContain('a12');
+        expect(transcript()).toContain('which branch?');
+      });
+
+      it('prints only open asks for --open', () => {
+        useHiveStore.getState().hydrateLedger([
+          ask(),
+          ask({ id: '20260829-120000-0002', kind: 'post', ref: undefined, body: 'a note' }),
+        ]);
+        run('ledger --open');
+
+        expect(transcript()).toContain('which branch?');
+        expect(transcript()).not.toContain('a note');
+      });
+
+      it('filters by party', () => {
+        useHiveStore.getState().hydrateLedger([
+          ask({ body: 'from a' }),
+          ask({ id: '20260829-120000-0002', from: 'sess-b', ref: 'a13', body: 'from b' }),
+        ]);
+        run('ledger --from sess-b');
+
+        expect(transcript()).toContain('from b');
+        expect(transcript()).not.toContain('from a');
+      });
+
+      it('says so when the log is empty', () => {
+        run('ledger');
+        expect(lastLine()).toMatchObject({ text: '  no entries', color: 'dim' });
+      });
+
+      it('asks a live session and prints the ref it got back', async () => {
+        seedDemoFleet();
+        const id = Object.keys(useHiveStore.getState().entities)[0];
+
+        run(`ask ${id} post a summary`);
+
+        await vi.waitFor(() => expect(post).toHaveBeenCalled());
+        expect(post).toHaveBeenCalledWith({
+          to: id,
+          kind: 'ask',
+          body: 'post a summary',
+        });
+        await vi.waitFor(() => expect(transcript()).toContain('(a14)'));
+        expect(transcript()).toContain('asked');
+      });
+
+      it('refuses a name that matches no session, the way open does', () => {
+        run('ask nosuch hello');
+
+        expect(lastLine()).toMatchObject({
+          text: '  no such session: nosuch',
+          color: 'red',
+        });
+        expect(post).not.toHaveBeenCalled();
+      });
+
+      it('prints main’s reason when a post is refused', async () => {
+        seedDemoFleet();
+        const id = Object.keys(useHiveStore.getState().entities)[0];
+        post.mockResolvedValue({ ok: false, status: 404, reason: 'unknown party: sess-z' });
+
+        run(`ask ${id} hello`);
+
+        await vi.waitFor(() => expect(transcript()).toContain('unknown party: sess-z'));
+      });
+
+      it('answers an open ask', async () => {
+        run('answer a12 main');
+
+        await vi.waitFor(() => expect(answer).toHaveBeenCalled());
+        expect(answer).toHaveBeenCalledWith({ thread: 'a12', body: 'main' });
+        await vi.waitFor(() => expect(transcript()).toContain('answered a12'));
+      });
+
+      it('prints the reason when a thread is not open', async () => {
+        answer.mockResolvedValue({ ok: false, status: 400, reason: 'a12 is not an open ask' });
+
+        run('answer a12 main');
+
+        await vi.waitFor(() => expect(transcript()).toContain('a12 is not an open ask'));
+      });
+
+      it.each(['ledger', 'ask sess-a hi', 'answer a12 hi'])(
+        'refuses %s on the browser target',
+        (input) => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run(input);
+
+          expect(lastLine()?.text).toContain('needs the desktop app');
+          expect(lastLine()?.color).toBe('red');
+        },
+      );
     });
 
     it('reports an unknown command and points at help', () => {
