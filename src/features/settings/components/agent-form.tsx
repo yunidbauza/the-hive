@@ -1,7 +1,10 @@
 import { useState } from 'react';
 
 import { IconPicker, type IconGroup } from '@components/ui/icon-picker';
-import { SegmentedControl } from '@components/ui/segmented-control';
+import {
+  SegmentedControl,
+  type SegmentedOption,
+} from '@components/ui/segmented-control';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import {
   AGENT_LIMIT_DEFAULTS,
@@ -321,7 +324,9 @@ export function AgentForm({
    * so the blur that renumbers leaves a muted sentence saying what it did,
    * cleared by the next keystroke.
    */
-  const [renamed, setRenamed] = useState<string | null>(null);
+  const [renamed, setRenamed] = useState<{ from: string; to: string } | null>(
+    null,
+  );
 
   const read = readFrontmatter(source);
   const fields = read?.fields;
@@ -491,9 +496,17 @@ export function AgentForm({
               {help}
             </span>
           )}
-          {path === 'name' && renamed !== null ? (
+          {/*
+            Shown only while it is still true. `AgentForm` is not remounted when
+            a different agent is opened — `AgentEditor` swaps the `source` prop —
+            so a notice cleared by keystroke alone outlived its own subject and
+            rendered "drone was taken — using <the other agent's name>", which is
+            not stale so much as false. Tying it to the name it describes means
+            the sentence disappears with the buffer that earned it.
+          */}
+          {path === 'name' && renamed !== null && renamed.to === at('name') ? (
             <span role="status" className="text-[10.5px] text-muted">
-              {renamed} was taken — using {at('name')}.
+              {renamed.from} was taken — using {renamed.to}.
             </span>
           ) : null}
         </div>
@@ -594,6 +607,21 @@ export function AgentForm({
 
   const wakeEvery = at('wake.every');
 
+  /*
+    Any `<n>m` or `<n>h` is legal — `parseDuration` says so and the docstring on
+    WAKE_OPTIONS advertises it — but only nine of them are on the control. An
+    unlisted one used to fall back to showing `5m` selected while the file said
+    `2h`, which is not a missing option but a false statement: the row claimed a
+    schedule the agent did not have, with nothing beside it to disagree.
+
+    So an unlisted value joins the list as itself. It reads as the truth, stays
+    selectable, and disappears again the moment the user picks something else.
+  */
+  const wakeOptions: readonly SegmentedOption<string>[] =
+    wakeEvery !== '' && !WAKE_OPTIONS.some((option) => option.value === wakeEvery)
+      ? [...WAKE_OPTIONS, { value: wakeEvery, label: wakeEvery }]
+      : WAKE_OPTIONS;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 py-3">
       {homeless.map((problem) => (
@@ -640,10 +668,10 @@ export function AgentForm({
 
                 if (typed === '' || !taken.includes(typed)) return;
 
-                setRenamed(typed);
-                onChange(
-                  patchFrontmatter(source, 'name', firstFree(typed, taken)),
-                );
+                const free = firstFree(typed, taken);
+
+                setRenamed({ from: typed, to: free });
+                onChange(patchFrontmatter(source, 'name', free));
               }}
               className="min-w-0 rounded-[5px] border border-border-soft bg-panel-2 px-2 py-1 text-[11.5px] text-ink outline-none focus:border-border"
             />,
@@ -695,12 +723,8 @@ export function AgentForm({
                 'every',
                 <SegmentedControl
                   label="Wake every"
-                  options={WAKE_OPTIONS}
-                  value={
-                    WAKE_OPTIONS.some((option) => option.value === wakeEvery)
-                      ? (wakeEvery as (typeof WAKE_OPTIONS)[number]['value'])
-                      : '5m'
-                  }
+                  options={wakeOptions}
+                  value={wakeEvery}
                   onChange={(next) => set('wake.every', next)}
                 />,
               )

@@ -341,6 +341,19 @@ describe('parseAgent — the calendar wake mode', () => {
     ).toEqual(['mon', 'fri']);
   });
 
+  /*
+    A duplicate time is worse than untidy: the form draws one chip per time, so
+    two copies shared a React key, and toggling either filtered out both —
+    emptying the list, tripping the "cannot remove the last time" guard, and
+    leaving the pair undeletable from the form.
+  */
+  it('drops a duplicated time, as days already drops a duplicated day', () => {
+    expect(definition(calendar('  at: [07:30, 07:30, 09:00]\n')).wake.at).toEqual([
+      '07:30',
+      '09:00',
+    ]);
+  });
+
   it('treats at: without days: as every day', () => {
     const def = definition(calendar('  at: [09:00]\n'));
 

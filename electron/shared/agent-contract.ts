@@ -361,9 +361,19 @@ export function parseTimes(text: string): string[] | null {
   if (list === null || list.length === 0) return null;
   if (!list.every((part) => TIME.test(part))) return null;
 
-  // Sorted here rather than at every reader: `HH:MM` sorts lexically as it
-  // sorts chronologically, so "the next one today" is a scan, not a search.
-  return [...list].sort();
+  /*
+    Deduplicated and sorted, for the two reasons `parseDays` gives plus one of
+    its own. Sorted because `HH:MM` sorts lexically as it sorts chronologically,
+    so "the next one today" is a scan rather than a search; deduplicated so two
+    files meaning one schedule cannot disagree about what they mean.
+
+    The third reason is that a duplicate is worse than untidy here: the form
+    draws one chip per time, so `[07:30, 07:30]` rendered two chips on one React
+    key, and toggling either filtered out *both* — emptying the list, tripping
+    the "cannot remove the last time" guard, and leaving the pair undeletable
+    from the form.
+  */
+  return [...new Set(list)].sort();
 }
 
 /** `[mon, fri]` → the days, in week order. `null` when any is not a day. */

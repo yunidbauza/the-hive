@@ -148,6 +148,37 @@ describe('AgentForm', () => {
       );
     });
 
+    /*
+      The form is not remounted when another agent is opened — `AgentEditor`
+      swaps the `source` prop — so a notice cleared by keystroke alone outlived
+      its subject and read "watcher was taken — using <the other agent's name>".
+      False, not merely stale.
+    */
+    it('drops the rename notice when the buffer becomes another agent', async () => {
+      const { rerender } = render(
+        <AgentForm
+          source={SOURCE.replace('slack-watcher', 'watcher')}
+          problems={[]}
+          taken={['watcher']}
+          onChange={vi.fn()}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('textbox', { name: 'name' }));
+      await userEvent.tab();
+
+      rerender(
+        <AgentForm
+          source={SOURCE.replace('slack-watcher', 'someone-else')}
+          problems={[]}
+          taken={['watcher']}
+          onChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
     it('leaves a free name alone', async () => {
       const onChange = setup({ taken: ['someone-else'] });
 
@@ -360,6 +391,34 @@ describe('AgentForm', () => {
       expect(fields?.has('wake.at')).toBe(false);
       expect(fields?.has('wake.days')).toBe(false);
       expect(fields?.get('wake.every')?.value).toBe('5m');
+    });
+
+    /*
+      Any `<n>m` / `<n>h` is legal, but only nine are on the control. An
+      unlisted one used to show `5m` selected while the file said `2h` — not a
+      missing option but a false statement about the agent's schedule.
+    */
+    it('shows an unlisted but legal interval as itself', () => {
+      setup({ source: SOURCE.replace('every: 5m', 'every: 2h') });
+
+      expect(screen.getByRole('radio', { name: '2h' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(screen.getByRole('radio', { name: '5m' })).toHaveAttribute(
+        'aria-checked',
+        'false',
+      );
+    });
+
+    it('drops the improvised option once a listed one is picked', async () => {
+      const onChange = setup({
+        source: SOURCE.replace('every: 5m', 'every: 2h'),
+      });
+
+      await userEvent.click(screen.getByRole('radio', { name: '1h' }));
+
+      expect(patched(onChange, 'wake.every')).toBe('1h');
     });
 
     it('offers intervals the old control left out', () => {

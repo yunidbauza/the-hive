@@ -176,6 +176,35 @@ describe('AgentsSection', () => {
     });
 
     /*
+      `taken` excludes the currently open agent so its own name does not read as
+      a duplicate of itself. Seeding the template from that same list could draw
+      the open agent's name, producing a brand-new agent that arrives already
+      refused — the exact state the name field exists to make unreachable.
+    */
+    it('never seeds the name of the agent that was open', async () => {
+      // Only one roster name is free, and the other ten are all held — one of
+      // them by the agent being viewed when New agent is clicked.
+      const held = AGENT_NAME_POOL.slice(0, -1);
+
+      stub(held.map((name) => agent(name)));
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: new RegExp(held[0] as string) }),
+      );
+      await userEvent.click(
+        screen.getByRole('button', { name: '+ New agent' }),
+      );
+
+      expect(await screen.findByRole('textbox', { name: 'name' })).toHaveValue(
+        AGENT_NAME_POOL.at(-1) as string,
+      );
+      expect(
+        screen.queryByText(/You already have an agent called/),
+      ).not.toBeInTheDocument();
+    });
+
+    /*
       Two new agents in a row must not collide. The second is seeded from a
       fleet that now contains the first, which is the whole reason the template
       is a function of `taken` rather than a constant.

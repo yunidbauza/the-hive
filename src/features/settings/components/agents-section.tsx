@@ -121,7 +121,8 @@ export function AgentsSection() {
    * whose frontmatter name and folder disagree, which is exactly the name the
    * user is then likely to type.
    */
-  const taken = agents.map((agent) => agent.name).filter((name) => name !== open);
+  const allNames = agents.map((agent) => agent.name);
+  const taken = allNames.filter((name) => name !== open);
   const typed = buffer === null ? '' : frontmatterName(buffer);
   const localProblem = buffer === null ? null : nameProblem(typed, taken);
 
@@ -205,7 +206,15 @@ export function AgentsSection() {
     guard(
       () => {
         setOpen(null);
-        setBuffer(templateFor(taken));
+        /*
+          `allNames`, not `taken`. `taken` excludes the *currently open* agent
+          so its own name does not read as a duplicate of itself — but by the
+          time this runs `open` is being set to null, so seeding from it could
+          draw the open agent's own name and produce a brand-new agent that
+          arrives already refused: exactly the pre-refused state the name field
+          exists to make unreachable.
+        */
+        setBuffer(templateFor(allNames));
         // Never equal to the buffer, so a fresh template counts as unsaved —
         // which it is: nothing has been written.
         setSaved(null);
