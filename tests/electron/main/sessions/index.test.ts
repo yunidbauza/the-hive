@@ -671,7 +671,7 @@ describe('identity: the renderer only ever sees entity ids', () => {
  * capture, and reading status back by entity is exactly what `on()` already
  * does for the suite's default instance.
  */
-function harness(): {
+function harness(onIdle?: (entityId: string) => void): {
   hook: (
     event: { entityId: string; event: HookStatusEvent['event'] } & Partial<
       Omit<HookStatusEvent, 'entityId' | 'event' | 'status'>
@@ -680,17 +680,20 @@ function harness(): {
   cleared: (entityId: string) => void;
   lastStatus: (entityId: string) => unknown;
   lastEvent: (entityId: string) => Record<string, unknown>;
+  /** The instance itself, for the queries that are not events (HIVE-113). */
+  sessions: Sessions;
 } {
   let onEvent: ((event: HookStatusEvent) => void) | undefined;
   let onCleared: ((entityId: string) => void) | undefined;
   const localSent: Sent[] = [];
 
-  createSessions({
+  const instance = createSessions({
     supervisor,
     send: (channel, payload) =>
       localSent.push({ channel, payload: payload as Record<string, unknown> }),
     config: () => CONFIG,
     newSessionUuid: () => TEST_UUID,
+    ...(onIdle === undefined ? {} : { onIdle }),
     hooks: {
       settingsPathFor: () => undefined,
       envFor: () => ({}),
@@ -721,6 +724,7 @@ function harness(): {
     cleared: (entityId) => onCleared!(entityId),
     lastStatus: (entityId) => statusFor(entityId).status,
     lastEvent: (entityId) => statusFor(entityId),
+    sessions: instance,
   };
 }
 
@@ -2256,5 +2260,75 @@ describe('/done', () => {
       .map((patch) => patch.status)
       .filter((status) => status !== undefined);
     expect(statuses).not.toContain('done');
+  });
+});
+
+/**
+ * The idle signal the ledger's delivery rule reads (HIVE-113).
+ *
+ * Two shapes of the same question. `onIdle` is the push — main telling a
+ * consumer a prompt just came free — and `isIdle` is the pull, for a caller
+ * that arrives between events and has to ask.
+ */
+describe('the idle signal', () => {
+  it('fires when a session goes idle with nothing running behind it', () => {
+    const onIdle = vi.fn();
+    const h = harness(onIdle);
+    h.sessions.open(OPEN);
+
+    h.hook({ entityId: 'hero-refresh', event: 'Stop', backgroundShells: [] });
+
+    expect(onIdle).toHaveBeenCalledWith('hero-refresh');
+  });
+
+  it('stays quiet while a background shell is still running', () => {
+    /*
+      `Stop` with a live background shell still derives `idle` — with
+      `detail: 'script'` — so the status alone would say yes to a session that
+      is still working. This is the case the `bgShells` half of the guard is
+      for.
+    */
+    const onIdle = vi.fn();
+    const h = harness(onIdle);
+    h.sessions.open(OPEN);
+
+    h.hook({ entityId: 'hero-refresh', event: 'Stop', backgroundShells: ['shell-1'] });
+
+    expect(onIdle).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet for a session waiting on a permission prompt', () => {
+    // `waiting` is not `idle`; writing here would be writing mid-turn.
+    const onIdle = vi.fn();
+    const h = harness(onIdle);
+    h.sessions.open(OPEN);
+
+    h.hook({ entityId: 'hero-refresh', event: 'PermissionRequest', toolName: 'Bash' });
+
+    expect(onIdle).not.toHaveBeenCalled();
+  });
+
+  it('reports isIdle only for a live session at an empty prompt', () => {
+    const h = harness();
+
+    // No pty yet: not idle, whatever any hook has said.
+    expect(h.sessions.isIdle('hero-refresh')).toBe(false);
+
+    h.sessions.open(OPEN);
+    h.hook({ entityId: 'hero-refresh', event: 'Stop', backgroundShells: [] });
+    expect(h.sessions.isIdle('hero-refresh')).toBe(true);
+
+    // `UserPromptSubmit` derives `working` — the turn started again.
+    h.hook({ entityId: 'hero-refresh', event: 'UserPromptSubmit' });
+    expect(h.sessions.isIdle('hero-refresh')).toBe(false);
+  });
+
+  it('does not report isIdle while a background shell is running', () => {
+    const h = harness();
+    h.sessions.open(OPEN);
+
+    h.hook({ entityId: 'hero-refresh', event: 'Stop', backgroundShells: ['shell-1'] });
+
+    expect(h.sessions.isIdle('hero-refresh')).toBe(false);
   });
 });

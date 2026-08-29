@@ -147,6 +147,8 @@ import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
 import { createLedger } from '../ledger';
+import { createDeliver } from '../ledger/deliver';
+import { createMcpRuntime } from '../mcp';
 import {
   createNotificationHub,
   createNotifier,
@@ -795,14 +797,57 @@ export function registerIpcHandlers(): void {
   });
 
   /**
+   * Delivery — what happens to an entry after it is written (HIVE-113).
+   *
+   * Lazy accessors rather than the session layer itself, for the reason
+   * `knowsParty` above reaches for it through `?.`: `sessions` is a
+   * module-level binding initialised *after* this point.
+   *
+   * `write` reports whether the line landed, and that return value is load
+   * bearing rather than defensive — `deliver` records a receipt only on a
+   * successful write, and a receipt for a nudge that never reached a terminal
+   * would suppress the retry forever.
+   */
+  const deliver = createDeliver({
+    ledger,
+    isLive: (id) => sessions?.entities().includes(id) ?? false,
+    isIdle: (id) => sessions?.isIdle(id) ?? false,
+    // `Sessions.write` reports whether the bytes reached a pty — it answers
+    // false for an unknown id and for a session still bootstrapping, where the
+    // input is queued and may never be sent. Passed straight through, because
+    // `deliver` records a receipt on the strength of it.
+    write: (id, text) => sessions?.write(id, text) ?? false,
+  });
+
+  /**
    * One entry landed, from any party — pushed the way `notifications:new` is
    * (HIVE-75): straight to every window rather than through `send`, because
    * there is nothing here for a tap to loop back into.
+   *
+   * One subscription, both jobs (HIVE-113). The renderer's mirror and the
+   * terminal nudge read the same entry in the same order; two subscribers could
+   * not be made to disagree today, but they are two places to remember when a
+   * third consumer arrives.
    */
   ledger.onChange((entry) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (window.isDestroyed()) continue;
       window.webContents.send(CH.ledgerChanged, entry);
+    }
+    /**
+     * Delivery cannot fail the write that triggered it.
+     *
+     * This listener runs *inside* `Ledger.append`'s own try/catch, so a throw
+     * from the pty on the way to a terminal would be reported to the party who
+     * appended as `500 could not write the ledger` — for an entry that is
+     * already safely on disk. The console would print a red failure and the
+     * user would ask again, producing a duplicate of a question that was in
+     * fact recorded. The append succeeded; only the telling failed.
+     */
+    try {
+      deliver.onEntry(entry);
+    } catch (cause) {
+      console.warn(`[ledger] could not deliver ${entry.id}:`, cause);
     }
   });
 
@@ -864,13 +909,42 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  /*
+    The MCP config runtime (HIVE-112). Written once, its content depends only
+    on where the app is installed and where its own bundle sits, and neither
+    moves while the app runs.
+
+    `import.meta.dirname` is `out/main/` in both dev and a packaged build, which
+    is where `mcp-host.js` is emitted — the same resolution `pty-host` uses.
+
+    Fired here, unawaited, so a slow write cannot delay the first window — the
+    same reasoning `startLoginEnvImport` gives in `main/index.ts`. That leaves
+    a window between construction and the write settling in which
+    `configPathFor()` reads `null`; the `ptySpawn` and `ptyRestart` handlers
+    close it by `await`-ing the same memoised promise (`mcp.start()`) before a
+    session can be spawned, exactly as they already `await loginEnvStatus()`.
+  */
+  const mcp = createMcpRuntime({
+    userDataPath: app.getPath('userData'),
+    execPath: process.execPath,
+    scriptPath: join(import.meta.dirname, 'mcp-host.js'),
+  });
+  void mcp.start();
+
   sessions = createSessions({
     supervisor,
     config: getConfig,
     send,
     skills,
+    mcp,
     hooks,
     history,
+    /*
+      The two moments a held nudge can finally be written (HIVE-113): a prompt
+      coming free mid-life, and a session coming back at all.
+    */
+    onIdle: (entityId) => deliver.onIdle(entityId),
+    onReady: (entityId) => deliver.onReady(entityId),
   });
 
   /**
@@ -1730,6 +1804,19 @@ export function registerIpcHandlers(): void {
      * than any protocol that would tell us the tree changed.
      */
     await skills?.sync();
+    /**
+     * Wait for the MCP config write before a session can be spawned (HIVE-112).
+     *
+     * `mcp.start()` is fired once, unawaited, at construction so a slow write
+     * cannot delay the first window — but `sessions.open()` calls `spawn()`
+     * synchronously below, and `spawn()` reads `mcp.configPathFor()` the same
+     * instant. Without this await, a session opened inside that window would
+     * see `null` and start silently and permanently without ledger tools. The
+     * promise is memoised, so this either resolves immediately (the ordinary
+     * case, long since settled by the time anyone opens a session) or joins
+     * the one write already in flight — never a second one.
+     */
+    await mcp.start();
     sessions?.open({
       entityId: request.sessionId,
       projectId: request.projectId,
@@ -1752,6 +1839,9 @@ export function registerIpcHandlers(): void {
     // And the same regeneration, for the same reason: a restart builds a fresh
     // command line, so it must see the skills the user has now (HIVE-96).
     await skills?.sync();
+    // Same wait as `ptySpawn` above, for the same reason: a restart's `spawn()`
+    // reads `mcp.configPathFor()` synchronously too (HIVE-112).
+    await mcp.start();
     /**
      * The task is deliberately **not** forwarded (story 097).
      *

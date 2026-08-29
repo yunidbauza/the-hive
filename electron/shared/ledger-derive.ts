@@ -81,6 +81,22 @@ export function thread(entries: readonly LedgerEntry[], id: string): LedgerEntry
 }
 
 /**
+ * The newest `limit` entries, or all of them when no limit was given.
+ *
+ * A named function rather than an inline `slice`, because the inline version
+ * was wrong in a way that reads as correct: `slice(-Math.max(0, limit))` is
+ * `slice(-0)` for `limit: 0`, and `slice(-0)` is `slice(0)` — a whole copy.
+ * The narrowest request a caller can make returned the widest possible answer,
+ * and `parseLedgerReadQuery` admits `0` as valid, so it was reachable from
+ * both boundaries.
+ */
+export function keepNewest(entries: LedgerEntry[], limit: number | undefined): LedgerEntry[] {
+  if (limit === undefined) return entries;
+  if (limit <= 0) return [];
+  return entries.slice(-limit);
+}
+
+/**
  * Does one entry satisfy a query?
  *
  * `to` is the asymmetric one: a query for `to: 'sess-b'` also matches

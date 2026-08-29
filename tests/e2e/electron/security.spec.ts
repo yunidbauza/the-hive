@@ -189,27 +189,22 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * destination that exists rather than replacing it. The argument for the
    * fifth verb is recorded on `BRIDGE_SKILLS_KEYS`.
    *
-   * ## `ledger` (HIVE-111) and `agents` (HIVE-114)
+   * ## `agents` (HIVE-114)
    *
-   * `ledger` shipped without being added to this list, so this assertion was
-   * red from the moment it landed — the alarm this test exists to be, silenced
-   * by nobody having read it. Both are added here together for that reason.
+   * The third namespace that writes to the user's disk, and the first with six
+   * keys. What keeps it inside story 082's posture:
    *
-   * What keeps them inside story 082's posture:
-   *
-   * - **Neither takes a path.** Every `agents` verb names an *agent*, and
-   *   `assertAgentName` makes a path unrepresentable rather than filtering one
-   *   — the same bound `skills` has, with the reserved names (`overmind`,
-   *   `done`) refused at the boundary too. `overmind` matters most: it is the
-   *   ledger's coordinator identity, and an agent holding it could sign
-   *   entries as the overmind.
-   * - **Neither lets the page speak as another party.** `ledger.post` and
-   *   `ledger.answer` take no `from`; main supplies it. Widening either
-   *   signature to accept one is the change this list exists to catch.
-   * - **The two listeners grant nothing.** `ledger.onChanged` and
-   *   `agents.onChanged` are main → renderer only, and the agents one carries
-   *   no payload at all — the renderer is poked and re-`list`s, so it cannot
-   *   surface anything `agents:list` would not already return.
+   * - **No verb takes a path.** Each names an *agent*, and `assertAgentName`
+   *   makes a path unrepresentable rather than filtering one — the same bound
+   *   `skills` has. The reserved names are refused at the boundary too, and
+   *   `overmind` matters most: it is the ledger's coordinator identity, so an
+   *   agent holding it could sign entries as the overmind.
+   * - **The sixth key is a listener, not a capability.** `onChanged` is main →
+   *   renderer only and carries no payload at all: the renderer is poked and
+   *   re-`list`s, so it cannot surface anything `agents:list` would not
+   *   already return.
+   * - **A refusal is a value, not a write.** `write` validates before touching
+   *   the disk, so a page that spams malformed definitions creates nothing.
    */
   expect(surface.top).toEqual([
     'agents',
@@ -219,6 +214,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'github',
     'integrations',
     'jira',
+    /*
+      HIVE-111 added the ledger namespace to `BRIDGE_KEYS` and to the preload,
+      but not to this list, so this assertion has been failing on `main` since
+      that story merged — there is no PR CI here to have caught it. Recorded
+      rather than merely corrected: the page may now read the log and write as
+      the overmind, and `main` supplies `from` on both write paths so it cannot
+      post as anyone else (`docs/agents-and-ledger.md`, *The party rule*).
+    */
     'ledger',
     'notifications',
     'pty',

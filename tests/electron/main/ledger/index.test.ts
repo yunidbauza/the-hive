@@ -388,6 +388,72 @@ describe('createLedger', () => {
   });
 
   /**
+   * `to` defaults to the ask's `from` on the direct-`append` path too
+   * (HIVE-112 self-review).
+   *
+   * `Ledger.answer()` — the IPC entry point — has always set `to: ask.from`
+   * itself, but the MCP host reaches `append` directly and its tool schema
+   * exposes no `to`, so a POST-ed answer left it `undefined` — which
+   * `visibleTo` in the receiver treats as "everyone". These three prove the
+   * default lives in `append` now, for both callers alike.
+   */
+  describe('an answer defaults `to` to the asker', () => {
+    it('stores `to` as the ask\'s `from` when the request omits it', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'ship?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-b', kind: 'answer', thread: asked.id, body: 'yes' });
+
+      expect(ledger.read({ kind: 'answer' }).entries[0]).toMatchObject({
+        from: 'sess-b',
+        to: 'sess-a',
+      });
+    });
+
+    it('preserves an explicit `to`', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'ship?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({
+        from: 'sess-b',
+        to: 'sess-z',
+        kind: 'answer',
+        thread: asked.id,
+        body: 'redirected',
+      });
+
+      expect(ledger.read({ kind: 'answer' }).entries[0]).toMatchObject({ to: 'sess-z' });
+    });
+
+    it('produces the same `to` from both `append` directly and from `answer()`', () => {
+      const askedForAppend = ledger.append({
+        from: 'sess-a',
+        to: 'sess-b',
+        kind: 'ask',
+        body: 'ship one?',
+      });
+      const askedForAnswer = ledger.append({
+        from: 'sess-a',
+        to: OVERMIND,
+        kind: 'ask',
+        body: 'ship two?',
+      });
+      if (!askedForAppend.ok || !askedForAnswer.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-b', kind: 'answer', thread: askedForAppend.id, body: 'yes' });
+      ledger.answer({ thread: askedForAnswer.id, body: 'yes' }, OVERMIND);
+
+      const answers = ledger.read({ kind: 'answer' }).entries;
+      expect(answers.find((entry) => entry.thread === askedForAppend.id)).toMatchObject({
+        to: 'sess-a',
+      });
+      expect(answers.find((entry) => entry.thread === askedForAnswer.id)).toMatchObject({
+        to: 'sess-a',
+      });
+    });
+  });
+
+  /**
    * A `thread` query returns the whole conversation, question included —
    * the same definition `thread()` uses. Two readings of "the thread" in one
    * contract would mean a read for `thread: <askId>` came back with the

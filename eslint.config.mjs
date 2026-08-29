@@ -342,6 +342,7 @@ export default tseslint.config(
                 './electron/main/**/*',
                 './electron/preload/**/*',
                 './electron/pty-host/**/*',
+                './electron/mcp-host/**/*',
               ],
               message:
                 'The renderer may only see @shared. Reaching into electron/main/ or electron/preload/ would bundle main-process code into the renderer.',
@@ -367,6 +368,26 @@ export default tseslint.config(
               ],
               message:
                 'The pty host owns processes, not policy. It may import electron/shared/ only — config, fixtures and main-process code are all off limits.',
+            },
+            /**
+             * THE HOST IS A CLIENT, NOT A PEER (HIVE-112).
+             *
+             * The MCP host runs in a process `claude` started, not one the app
+             * did. It reaches the ledger the same way any other caller would —
+             * over the receiver, with a token — so that "one writer in main"
+             * survives a second process wanting to write. An import from
+             * `electron/main` here would be a second writer with a different
+             * lock, which is the bug this fence exists to make impossible.
+             */
+            {
+              target: './electron/mcp-host/**/*',
+              from: [
+                './src/**/*',
+                './electron/main/**/*',
+                './electron/preload/**/*',
+              ],
+              message:
+                'The MCP host is a client of the receiver, not a peer of main. It may import electron/shared/ only — reaching into main would mean a second writer on the ledger.',
             },
           ],
         },

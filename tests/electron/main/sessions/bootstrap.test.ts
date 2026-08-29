@@ -797,4 +797,42 @@ describe('sessionCommand', () => {
       );
     });
   });
+
+  describe('sessionCommand — the MCP config (HIVE-112)', () => {
+    it('passes --mcp-config when one is offered', () => {
+      const command = sessionCommand('claude', { mcpConfig: '/userData/hive/hive.mcp.json' });
+
+      expect(command).toContain("--mcp-config '/userData/hive/hive.mcp.json'");
+    });
+
+    it('omits the flag when there is none', () => {
+      expect(sessionCommand('claude', {})).not.toContain('--mcp-config');
+    });
+
+    it('quotes a path with a space, like userData always has', () => {
+      const command = sessionCommand('claude', {
+        mcpConfig: '/Users/x/Application Support/Hive/hive.mcp.json',
+      });
+
+      expect(command).toContain("'/Users/x/Application Support/Hive/hive.mcp.json'");
+    });
+
+    it('does not pass --strict-mcp-config — a session keeps its own servers', () => {
+      // Verified against the real CLI: without --strict, --mcp-config merges.
+      // With it, the user's own MCP servers would vanish inside the Hive.
+      const command = sessionCommand('claude', { mcpConfig: '/a/b.json' });
+
+      expect(command).not.toContain('--strict-mcp-config');
+    });
+
+    it('sits alongside --plugin-dir rather than replacing it', () => {
+      const command = sessionCommand('claude', {
+        pluginDir: '/userData/hive/plugin',
+        mcpConfig: '/userData/hive/hive.mcp.json',
+      });
+
+      expect(command).toContain('--plugin-dir');
+      expect(command).toContain('--mcp-config');
+    });
+  });
 });

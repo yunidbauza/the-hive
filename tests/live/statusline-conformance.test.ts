@@ -126,7 +126,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
         {
           ...process.env,
           [HOOK_ENV_SESSION]: 'sess-live',
-          [HOOK_ENV_TOKEN]: receiver.token,
+          [HOOK_ENV_TOKEN]: receiver.tokenFor('sess-live'),
         },
         JSON.stringify(PAYLOAD),
       );
@@ -193,7 +193,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       {
         ...process.env,
         [HOOK_ENV_SESSION]: 'sess-live',
-        [HOOK_ENV_TOKEN]: receiver.token,
+        [HOOK_ENV_TOKEN]: receiver.tokenFor('sess-live'),
       },
       JSON.stringify(PAYLOAD),
     );

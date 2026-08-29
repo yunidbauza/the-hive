@@ -1,15 +1,17 @@
 # Agents and the ledger
 
 **Scope:** two things that belong together — the **ledger**, one append-only log
-every party in The Hive reads from and writes to (HIVE-111), and the **agent
-definition**, the file that makes a party an agent in the first place
-(HIVE-114).
+every party in The Hive reads from and writes to, and the **agent definition**,
+the file that makes a party an agent in the first place. **Owned by stories
+HIVE-111 (the log), HIVE-112 (the MCP tools), HIVE-113 (delivery and the
+console verbs) and HIVE-114 (definitions).**
 
 Load this when working on `electron/main/ledger/`, `electron/main/agents/`,
-`electron/shared/{ledger,agent}-contract.ts`, the hook receiver's two ledger
-routes, the renderer's mirrors of either (`use-ledger-sync.ts`,
+`electron/mcp-host/`, `electron/shared/{ledger,agent}-*`, the hook receiver's
+two ledger routes, the renderer's mirrors of either (`use-ledger-sync.ts`,
 `use-agents-sync.ts`, the `useLedger*` and `useAgent*` selectors in
-`hive-store.ts`), or Settings › Agents.
+`hive-store.ts`), the `ledger` / `ask` / `answer` console verbs, or
+Settings › Agents.
 
 ## What the ledger is
 
@@ -151,6 +153,75 @@ And one for the same reason on the way out: `Ledger.answer` addresses its entry
 answer with no addressee would publish the overmind's reply to one session's
 private question to every other session.
 
+## Delivery
+
+The ledger records; it does not tell anyone. `electron/main/ledger/deliver.ts`
+is the first rule on top of it (HIVE-113): an `ask` or an `answer` addressed to
+a **live session** is written into that session's terminal as one line, through
+the same `sessions.write` primitive `send` uses. The trailing `\r` submits it,
+which is the intent — the nudge becomes a turn the agent takes.
+
+Two constraints shape it.
+
+It writes **only at an empty prompt**. Main learns this from the hook stream:
+`SessionsOptions.onIdle` fires when a derived status of `idle` coincides with
+`held(id).bgShells === 0`, and `Sessions.isIdle` answers the same question for a
+caller arriving between events. Both halves are load-bearing. A session showing
+a permission prompt derives `waiting`, not `idle`, so it is excluded — that is
+the whole of "never write mid-turn". And a turn that ended while a backgrounded
+shell is still running *does* derive `idle`, with `detail: 'script'`, so the
+status alone would say yes to a session that is still working.
+
+And it **never loses a nudge**. Every line that lands is recorded as an `event`
+entry carrying `meta.delivered`, which turns "what does this session still owe a
+reading of" into a query against the log rather than a queue in memory. That
+choice pays for itself three times: a restart cannot drop a pending nudge;
+`publishReady` is deliberately not idempotent — `/clear` fires a second one —
+and the duplicate costs a read rather than a second line in the terminal; and
+the log answers who was told what, and when.
+
+The receipt is written **after** the write and only if the write landed, which
+is why `DeliverOptions.write` returns a boolean rather than `void`. The session
+layer is reached through a nullable binding in `ipc/index.ts` — it is
+constructed after the ledger — and a receipt for a nudge that never reached a
+terminal would suppress the retry forever, leaving a question nobody was asked
+and a log claiming they were.
+
+`onEntry` ignores every kind but `ask` and `answer`. **That is a loop guard, not
+a filter**: deliver subscribes to `ledger.onChange` and also appends to the same
+log, so without the gate each receipt would re-enter it and it would feed
+itself.
+
+An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
+line; one addressed to an agent is a wake (HIVE-120); a broadcast wakes nobody,
+because parties read those on their own schedule.
+
+## The console verbs
+
+The overmind's own mouth is three verbs in the orchestrator console —
+`ledger`, `ask` and `answer` (`src/types/command.ts`,
+`features/orchestrator/utils/parse-command.ts`, `runOrchCommand`).
+
+`ledger` reads the renderer's **mirror**, not IPC: `runOrchCommand` is
+synchronous and `use-ledger-sync.ts` already keeps that slice current, so an
+`invoke` would make the verb async to fetch what is in memory. It filters
+through the same `matches` and `openAsks` main uses, so the console and the log
+cannot drift apart about what "open" means. Rows are drawn by
+`src/lib/ledger/console-rows.ts` — its own module rather than three more helpers
+in a five-thousand-line store, and column arithmetic worth asserting directly.
+
+Delivery receipts are folded out of the default tail and shown by
+`ledger --events`. The filter keys on `meta.delivered`, **not** on
+`kind === 'event'`, so the expiry events HIVE-120 adds will not be swept up by
+the same rule.
+
+`ask` differs from `send` in one deliberate way: it does **not** refuse an ended
+session. `send` must, because a cleared row's terminal is inherited by its
+successor and the message would be typed into a different live agent's prompt.
+An ask addresses an id in a log rather than a terminal, so it is held and
+flushed when that id comes back — which is the one case the hold-and-flush rule
+exists for.
+
 ## Derived state
 
 Two questions get asked constantly and answered nowhere on disk: *is this ask
@@ -284,6 +355,90 @@ the whole map. A claims map only prevents double-claiming if every party can
 see every claim; filtering it down to "claims I can see" would let two
 sessions each believe they're the only one holding a task that a third party
 already has.
+
+## The MCP host (HIVE-112)
+
+Every `claude` session The Hive launches is handed `--mcp-config` pointing at
+a generated file (`electron/main/mcp/config.ts`) naming one server: the built
+output of `electron/mcp-host/`, run as `${execPath} out/main/mcp-host.js`
+with `ELECTRON_RUN_AS_NODE=1` so the app's own binary runs it as plain Node
+instead of booting Chromium. `claude` starts one host process per session and
+keeps it for that session's life — it talks JSON-RPC over stdio, the same
+protocol shape every MCP server speaks, hand-rolled here because the surface
+is eight tools and did not justify a dependency.
+
+**Identity comes from the environment, not from an argument the host could be
+handed on the command line.** Three variables, all set on the session's own
+`env` before `claude` is spawned — `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN`, and
+`HIVE_RECEIVER_URL` (the receiver's `origin`, *not* its `url`: `url` is
+`origin + '/hook'`, a fixed path for the hook route alone, while the host
+builds its own request paths from `@shared/ledger-contract`'s
+`LEDGER_POST_PATH` / `LEDGER_READ_PATH` onto whatever base it's given — handing
+it `url` would make every ledger call 404). None of the host's tools accepts a
+`from` argument, so a model calling them has no way to name a session other
+than its own — that is a property of the **MCP tool surface**, reading
+identity out of the environment the app itself controls, not a transport-level
+guarantee: the receiver's per-launch token is shared by every session it
+spawns (HIVE-111), so a model with shell access could still `curl` the
+receiver directly using another session's header value. Closing that is
+tracked separately, not attempted here. If any of the three is missing — the
+process was started outside The Hive, or by hand in a plain terminal —
+`createHandlers` still lists all eight tools (so
+`/mcp` shows a connected server, not a broken one) but every *call* answers
+with a sentence explaining why the ledger is out of reach, rather than the
+server refusing to start.
+
+The host reaches the ledger the same way a session's hooks do: **both
+receiver routes are POST**, and the host's `ReceiverClient` (`client.ts`)
+calls them with the same two headers the hook path uses
+(`x-hive-session`, `x-hive-token`) and the same per-launch token.
+
+**The eight tools, one ledger kind each:** `ledger_post` → `post`,
+`ledger_ask` → `ask`, `ledger_answer` → `answer`, `ledger_claim` → `claim`,
+`ledger_release` → `release`, `ledger_done` → `done`, `ledger_failed` →
+`failed`, and `ledger_read`, which takes no kind — it is the one tool that
+reads rather than appends. `ledger_claim` and `ledger_release` still write
+through `client.post` under the hood; they are separate tools rather than
+`kind` arguments to `ledger_post` because their argument shape (a bare `task`)
+and their response text (naming the previous holder, if any) are specific
+enough to earn their own schema.
+
+**A refusal is a result, not a protocol error.** The MCP spec draws that line
+deliberately: a JSON-RPC error tells the client the *call itself* was
+malformed and the model never sees the text, while a tool result with
+`isError: true` is handed to the model to read and act on. Every refusal the
+receiver can give — `403` bad token, `400` unknown thread or missing session
+header, `404` unknown session, `413` over the body cap, `500` a write that
+failed — surfaces this way, worded with the receiver's own `reason` (`client.ts`
+falls back to a transport-failure sentence if the receiver couldn't be reached
+at all, and to a generic one if a refusal came back with no `reason` field).
+
+**Naming: `mcp__hive__<tool>`, not `mcp__plugin_hive_hive__<tool>`.** Claude
+Code derives the middle segment of every tool's fully-qualified name from how
+the server was delivered — the short form is what a server named in
+`--mcp-config` gets; a server delivered through `--plugin-dir` would double the
+name (`hive` as the plugin, `hive` again as the server inside it). HIVE-115's
+preamble and HIVE-119's `--permission-prompt-tool` both hardcode the short
+form, which is the whole reason `--mcp-config` was the delivery mechanism this
+story chose over a plugin.
+
+**The read cursor lives for the process, not the ledger.** `createToolHandlers`
+(`tools.ts`) closes over one `cursor` variable — the id of the newest entry the
+host has handed back — and defaults `since` to it on every `ledger_read` that
+doesn't name its own. It is deliberately never persisted: since `claude`
+starts one host per session and keeps it for that session's life, the cursor's
+life is exactly the session's life, and a cursor that survived a restart would
+mean a session coming back after a crash silently skipped whatever arrived
+while it was down. The bound (`LEDGER_READ_DEFAULT_LIMIT`, 50) only applies
+when there is no cursor yet and no explicit `since` — the very first read of a
+process — so a session opened against months of ledger history isn't handed
+all of it in one tool result.
+
+Proved against a real `claude` binary in `tests/live/ledger-conformance.test.ts`
+(`pnpm test:ledger`): that the binary actually loads the generated config and
+finds eight tools named the short way, that the identity in the environment —
+not anything the model typed — is what lands in a written line's `from`, and
+that a refusal's reason reaches the model as readable text.
 
 ## Agent definitions
 

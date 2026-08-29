@@ -32,6 +32,7 @@ import { isDesktop } from '@config/runtime';
 import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
+import { ledgerRows } from '@lib/ledger/console-rows';
 import {
   projectConfigSnapshot,
   resolveProjectRef,
@@ -653,12 +654,26 @@ function currentSessionIn(state: HiveState, terminalId: string): string {
 const capLines = (lines: TermLine[]) =>
   lines.length > ORCH_LINE_CAP ? lines.slice(lines.length - ORCH_LINE_CAP) : lines;
 
+/**
+ * Why the ledger verbs cannot run in the browser preview (HIVE-113).
+ *
+ * Store-local rather than a reuse of `SESSIONS_REQUIRE_DESKTOP`: that constant
+ * lives in `src/features/sessions/`, and `src/stores/**` may not import
+ * `src/features/**`. Worded to match the browser refusals this file already
+ * prints for pull requests and search.
+ */
+const LEDGER_REQUIRES_DESKTOP =
+  'the ledger needs the desktop app — this is the browser preview';
+
 /** The `help` output — one row per command in the grammar. */
 const HELP_LINES = [
   '  help                       show this list',
   '  status                     one line per session',
+  '  ledger [--open] [-n 20]    print the ledger tail',
   '  open <session>             open a session in the center stage',
   '  send <session> <message>   route a message to a session',
+  '  ask <session> <message>    ask a session a question',
+  '  answer <id> <text>         answer an open ask',
   '  spawn <project> <task>     start a new session on a project',
   '  clear                      empty this transcript',
   /*
@@ -1655,6 +1670,51 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         return;
       }
 
+      case 'ledger': {
+        if (!isDesktop()) {
+          pushOrch(`  ${LEDGER_REQUIRES_DESKTOP}`, 'red');
+          return;
+        }
+        /*
+          Read from the store's own mirror, not over IPC (HIVE-113).
+
+          `runOrchCommand` is synchronous, and `use-ledger-sync.ts` already
+          keeps this slice hydrated and pushed — an `invoke` here would make the
+          whole verb async to fetch what is already sitting in memory. Filtering
+          goes through the same `matches`/`openAsks` main uses, so the console
+          and the log cannot drift apart about what "open" means.
+        */
+        const now = Date.now();
+        const query: LedgerReadQuery = {
+          ...(command.from === undefined ? {} : { from: command.from }),
+          ...(command.to === undefined ? {} : { to: command.to }),
+        };
+        /**
+         * Open-ness is derived from the **whole log**, then filtered — never
+         * the other way round.
+         *
+         * `openAsks` decides "answered" by scanning the array it is handed, and
+         * an answer is always addressed back to the asker rather than to the
+         * ask's recipient. So any `--from`/`--to` filter applied first removes
+         * the answers while keeping the asks, and `ledger --open --to <party>`
+         * would report every already-answered question as still open. Main
+         * states the same rule on `Ledger.read` for the same reason; this is
+         * the console keeping its side of it.
+         */
+        const entries = command.open
+          ? openAsks(get().ledger, now).filter((entry) => matches(entry, query))
+          : get().ledger.filter((entry) => matches(entry, query));
+
+        for (const row of ledgerRows(entries, {
+          now,
+          showEvents: command.events,
+          limit: command.limit,
+        })) {
+          pushOrch(row.text, row.color);
+        }
+        return;
+      }
+
       case 'clear': {
         set({ orchLines: [line('console cleared — help for commands', 'dim')] });
         return;
@@ -1723,6 +1783,88 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          * whether it matched at all.
          */
         pushOrch(`  routed → ${match.label}`, 'dim');
+        return;
+      }
+
+      case 'ask': {
+        if (!isDesktop()) {
+          pushOrch(`  ${LEDGER_REQUIRES_DESKTOP}`, 'red');
+          return;
+        }
+        const match = resolve(command.target);
+        if (match === null) return;
+
+        /**
+         * Addressed by **terminal**, not by row id.
+         *
+         * Main's party space is the one its registry is keyed by, and that is
+         * `terminalOf(session)` — the same id `sendToEntity` routes on, and the
+         * same one `knowsParty` checks. The two agree for every session that
+         * has never been cleared, and diverge exactly where it matters: a
+         * cleared row's successor carries a fresh `id` with the *predecessor's*
+         * `terminalId`. Posting the row id there addresses a party main has
+         * never heard of, and the ask is silently never delivered — while
+         * posting the *cleared* row's id names a terminal whose live pty now
+         * belongs to the successor, writing the nudge into a different agent's
+         * prompt. `send` has a documented guard against precisely that
+         * crossing; this is the same hazard reached through the log.
+         */
+        const entity = get().entities[match.id];
+        const party =
+          entity !== undefined && isSession(entity) ? terminalOf(entity) : match.id;
+
+        /**
+         * Deliberately **not** gated on `match.ended`, unlike `send`.
+         *
+         * `send` must refuse a finished session because it writes *now*, into
+         * whatever pty holds that terminal at this instant. An ask is written
+         * down and delivered later: `deliver.ts` holds it and flushes it when
+         * the party comes back, and it re-checks liveness at that moment rather
+         * than trusting this one. Refusing here would throw away the one case
+         * the hold-and-flush rule exists for.
+         */
+        const held = match.ended !== null;
+
+        void window.hive?.ledger
+          .post({ to: party, kind: 'ask', body: command.message })
+          .then((outcome) => {
+            if (!outcome.ok) {
+              // Verbatim, the way `send` prints a refusal: the reason names
+              // what the user has to do about it.
+              pushOrch(`  ${outcome.reason}`, 'red');
+              return;
+            }
+            const handle = outcome.ref ?? outcome.id;
+            pushOrch(
+              held
+                ? `  asked ${match.label} (${handle}) — held until it resumes`
+                : `  asked ${match.label} (${handle})`,
+              'dim',
+            );
+          });
+        return;
+      }
+
+      case 'answer': {
+        if (!isDesktop()) {
+          pushOrch(`  ${LEDGER_REQUIRES_DESKTOP}`, 'red');
+          return;
+        }
+        /*
+          The thread argument is passed through untouched. `ledger.answer` in
+          main accepts a short ref or a canonical id and resolves it there, so
+          the console does not need a second copy of that rule — and could not
+          have one, since a ref only resolves against the whole log.
+        */
+        void window.hive?.ledger
+          .answer({ thread: command.thread, body: command.message })
+          .then((outcome) => {
+            if (!outcome.ok) {
+              pushOrch(`  ${outcome.reason}`, 'red');
+              return;
+            }
+            pushOrch(`  answered ${command.thread}`, 'dim');
+          });
         return;
       }
 

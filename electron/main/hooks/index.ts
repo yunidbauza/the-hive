@@ -1,4 +1,5 @@
 import {
+  HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   type HookStatusEvent,
@@ -234,7 +235,22 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       if (running === null || settingsPath === null) return {};
       return {
         [HOOK_ENV_SESSION]: entityId,
-        [HOOK_ENV_TOKEN]: running.token,
+        [HOOK_ENV_TOKEN]: running.tokenFor(entityId),
+        /*
+          The third variable, for the MCP host (HIVE-112). A hook is handed its
+          URL baked into the generated settings file, but the MCP host is
+          started by `claude` from a config file written before this socket had
+          bound — so it is told at spawn, the way its identity is.
+
+          `running.origin` rather than `running.url`: the host builds its own
+          request paths from `@shared/ledger-contract`, so it needs the bare
+          scheme-and-authority, not `url`'s `/hook` suffix — see
+          {@link Receiver.origin}.
+
+          `running.origin` is non-null here: `settingsPath` is only set after a
+          successful `start()`, which is also what assigns it.
+        */
+        ...(running.origin === null ? {} : { [HOOK_ENV_RECEIVER_URL]: running.origin }),
       };
     },
 

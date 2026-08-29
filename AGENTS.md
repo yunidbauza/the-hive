@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, and that an unnamed session titles itself (~2½ min) |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), and the ledger MCP tools |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -85,8 +85,8 @@ one still fires.
 | `src/**`, `electron/**` | `tests/**` (test scaffolding never ships) |
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
-| **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
-| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**` |
+| **`electron/pty-host/**`, `electron/mcp-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
+| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**`, `electron/mcp-host/**` |
 
 `electron/shared/**` is the **only** module both processes may import, and it is types,
 constants, and pure dependency-free logic only — no runtime imports, no Node APIs, no
