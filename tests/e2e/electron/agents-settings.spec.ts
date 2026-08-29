@@ -197,3 +197,90 @@ test('an agent authored in the pane survives a restart', async ({}, testInfo) =>
     await app.close();
   }
 });
+
+/**
+ * The form half, driven for real.
+ *
+ * Every other spec here goes through the Source tab, which means nothing has
+ * ever exercised the controls themselves in a browser — and the controls are
+ * where this story's work is. A picker that renders no options, a mode toggle
+ * that writes both keys, or a grid that cannot be clicked would all leave the
+ * unit tests green: they assert on plumbing against a happy-dom that performs
+ * no layout, and a control nobody can reach still reports the right value.
+ */
+test('authors an agent through the form controls', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithConfig((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openAgents(page);
+
+    await page.getByRole('button', { name: '+ New agent' }).click();
+
+    // The template seeds a roster name, so the form opens valid rather than
+    // opening on a refusal the form itself cannot answer.
+    const name = page.getByRole('textbox', { name: 'name' });
+    await expect(name).toBeVisible();
+    await name.fill('build-watcher');
+
+    await page
+      .getByRole('textbox', { name: 'description' })
+      .fill('Watches the build.');
+
+    // The icon is a picker: pick by the glyph's spoken name, not by typing.
+    await page.getByRole('radio', { name: 'envelope' }).click();
+
+    // Swap the interval mode for the calendar one, then choose a second time.
+    await page.getByRole('radio', { name: 'on a schedule' }).click();
+    await page.getByRole('button', { name: '17:00' }).click();
+    await page.getByRole('button', { name: 'sat' }).click();
+    await page.getByRole('button', { name: 'sun' }).click();
+
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    await expect(
+      page.getByRole('button', { name: /build-watcher/ }),
+    ).toBeVisible();
+
+    const written = readFileSync(
+      join(dirname(configPath), 'agents', 'build-watcher', 'AGENT.md'),
+      'utf8',
+    );
+
+    expect(written).toContain('name: build-watcher');
+    expect(written).toContain('icon: ph-envelope');
+    expect(written).toContain('at: [09:00, 17:00]');
+    expect(written).toContain('days: [mon, tue, wed, thu, fri]');
+    // The two modes are exclusive, so switching must have taken the other key
+    // with it rather than leaving a file the parser refuses.
+    expect(written).not.toContain('every:');
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The bug the picker exists to make unreachable.
+ *
+ * `GLYPHS` is keyed `ph-robot`; the pane's old template wrote `icon: Robot`,
+ * which missed it and drew the fallback question mark on the agent's own row.
+ * Anything authored through the form now carries a name the registry resolves.
+ */
+test('seeds a new agent with an icon the registry can draw', async ({}, testInfo) => {
+  const { app, page } = await launchWithConfig((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openAgents(page);
+    await page.getByRole('button', { name: '+ New agent' }).click();
+    await page.getByRole('tab', { name: 'Source' }).click();
+
+    await expect(page.getByLabel('Agent source')).toHaveValue(
+      /icon: ph-[a-z-]+/,
+    );
+  } finally {
+    await app.close();
+  }
+});

@@ -28,6 +28,7 @@ interface Props {
   onChange: (source: string) => void;
   onSave: () => void;
   onDelete: () => void;
+  taken: readonly string[];
 }
 
 const props: Props = {
@@ -35,6 +36,7 @@ const props: Props = {
   source: SOURCE,
   dirty: false,
   problems: [],
+  taken: [],
   onChange: vi.fn(),
   onSave: vi.fn(),
   onDelete: vi.fn(),
@@ -109,12 +111,18 @@ describe('AgentEditor', () => {
       expect(onChange.mock.calls[0]?.[0]).not.toContain('every:');
     });
 
+    /*
+      Was driven through the icon field, which is a picker rather than a text
+      box since the roster landed. `description` is the remaining free-text
+      field, and the assertion it carries — a keystroke reaches the buffer — is
+      unchanged.
+    */
     it('edits a text field', async () => {
       const { onChange } = setup();
 
-      await userEvent.type(screen.getByDisplayValue('ChatCircleDots'), '!');
+      await userEvent.type(screen.getByDisplayValue('Watches #incorp-dev and my mentions.'), '!');
 
-      expect(onChange.mock.calls[0]?.[0]).toContain('ChatCircleDots!');
+      expect(onChange.mock.calls[0]?.[0]).toContain('Watches #incorp-dev and my mentions.!');
     });
 
     it('removes the line when a field is cleared, rather than leaving key:', async () => {
@@ -223,8 +231,16 @@ describe('AgentEditor', () => {
         ],
       });
 
-      // Once, in the form's unmatched block — the footer only counts it.
-      expect(screen.getAllByText(/nope: Unknown key/)).toHaveLength(1);
+      /*
+        Once, in the form's unmatched block — the footer only counts it. The
+        path and the sentence are separate nodes now, so the sentence is what
+        is matched: a reader scanning for the complaint should not have to read
+        past a key path to find it.
+      */
+      expect(
+        screen.getAllByText('Unknown key. Remove it or fix the spelling.'),
+      ).toHaveLength(1);
+      expect(screen.getByText('nope:')).toBeInTheDocument();
     });
 
     it('shows a whole-file problem in the footer, which owns it alone', () => {

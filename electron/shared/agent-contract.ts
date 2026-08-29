@@ -59,6 +59,25 @@ export const RESERVED_AGENT_NAMES = [OVERMIND, RESERVED_SKILL_NAME] as const;
  */
 export const KNOWN_AGENT_MCP = ['slack'] as const;
 
+/**
+ * Days a calendar wake may name, Monday first.
+ *
+ * Monday first rather than JavaScript's Sunday-first `getDay()`, because the
+ * list is read by a person before it is read by a scheduler and "mon-fri" is
+ * the shape almost every real schedule takes. The one conversion that needs
+ * doing lives wherever a `Date` is involved, not here.
+ */
+export const WAKE_DAYS = [
+  'mon',
+  'tue',
+  'wed',
+  'thu',
+  'fri',
+  'sat',
+  'sun',
+] as const;
+export type WakeDay = (typeof WAKE_DAYS)[number];
+
 export const WAKE_EVERY_FLOOR_MS = 60_000;
 export const WAKE_EVERY_DEFAULT_MS = 300_000;
 
@@ -87,9 +106,26 @@ export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
 export type WakeOn = 'ledger' | 'slack.mention' | `slack.channel:${string}`;
 
+/**
+ * When an agent wakes on its own.
+ *
+ * Two **modes**, not two settings that combine. `everyMs` repeats on an
+ * interval measured from the last wake; `at` fires at fixed local times on
+ * `days`. A definition naming both is refused rather than silently resolved,
+ * because there is no honest answer to "every 3 hours, and also at 09:00" —
+ * either the interval or the clock has to lose, and a scheduler that picked one
+ * would be guessing at intent that the file failed to express.
+ *
+ * `at` is what makes the calendar mode a calendar: a definition with `days` and
+ * no `at` names a day and no time, which is not a schedule.
+ */
 export interface WakeSpec {
-  /** Absent means *not scheduled* — the agent wakes on an event or by hand. */
+  /** Absent means *not on an interval* — see `at` for the other mode. */
   everyMs?: number;
+  /** Local `HH:MM`, one or more. Present iff the agent is on a calendar. */
+  at?: string[];
+  /** Which days `at` fires on. Absent alongside `at` means every day. */
+  days?: WakeDay[];
   on: WakeOn[];
   /** Local `HH:MM`. No scheduled wakes inside the window; events still wake. */
   quiet?: { from: string; to: string };
@@ -167,6 +203,8 @@ export type FieldKind =
   | 'enum'
   | 'duration'
   | 'list'
+  | 'day-list'
+  | 'time-list'
   | 'time-range'
   | 'number';
 
@@ -190,6 +228,8 @@ export const AGENT_FIELDS: readonly FieldSpec[] = [
   { path: 'model', kind: 'enum', required: false, values: SESSION_MODELS },
   { path: 'effort', kind: 'enum', required: false, values: SESSION_EFFORTS },
   { path: 'wake.every', kind: 'duration', required: false },
+  { path: 'wake.at', kind: 'time-list', required: false },
+  { path: 'wake.days', kind: 'day-list', required: false },
   { path: 'wake.on', kind: 'list', required: false },
   { path: 'wake.quiet', kind: 'time-range', required: false },
   { path: 'skills', kind: 'list', required: false },
@@ -312,6 +352,35 @@ export function parseList(text: string): string[] | null {
   const inner = text.slice(1, -1).trim();
 
   return inner === '' ? [] : inner.split(',').map((part) => part.trim());
+}
+
+/** `[09:00, 17:00]` → the times, sorted. `null` when any of it is not a time. */
+export function parseTimes(text: string): string[] | null {
+  const list = parseList(text);
+
+  if (list === null || list.length === 0) return null;
+  if (!list.every((part) => TIME.test(part))) return null;
+
+  // Sorted here rather than at every reader: `HH:MM` sorts lexically as it
+  // sorts chronologically, so "the next one today" is a scan, not a search.
+  return [...list].sort();
+}
+
+/** `[mon, fri]` → the days, in week order. `null` when any is not a day. */
+export function parseDays(text: string): WakeDay[] | null {
+  const list = parseList(text);
+
+  if (list === null || list.length === 0) return null;
+  if (!list.every((part) => (WAKE_DAYS as readonly string[]).includes(part))) {
+    return null;
+  }
+
+  /*
+    Deduplicated and put back into week order, so `[fri, mon, mon]` and
+    `[mon, fri]` produce the same spec. Two definitions that mean the same
+    schedule should not be able to disagree about what they mean.
+  */
+  return WAKE_DAYS.filter((day) => list.includes(day));
 }
 
 export function parseRange(

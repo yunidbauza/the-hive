@@ -298,3 +298,99 @@ Wait to be asked.
     expect(definition(source, alone).skills).toEqual([]);
   });
 });
+
+/**
+ * The calendar wake mode.
+ *
+ * `every:` measures from the last wake; `at:` fires on the clock. They are two
+ * modes rather than two settings, which is why naming both is refused instead
+ * of resolved — see `WakeSpec`.
+ */
+describe('parseAgent — the calendar wake mode', () => {
+  /** GOOD with its `every:` line swapped for whatever the calendar needs. */
+  const calendar = (lines: string) =>
+    GOOD.replace(
+      '  every: 5m                         # omit for event/manual-only; floor 1m\n',
+      lines,
+    );
+
+  it('reads times and days', () => {
+    const def = definition(
+      calendar('  at: [09:00, 17:00]\n  days: [mon, wed, fri]\n'),
+    );
+
+    expect(def.wake.at).toEqual(['09:00', '17:00']);
+    expect(def.wake.days).toEqual(['mon', 'wed', 'fri']);
+    expect(def.wake.everyMs).toBeUndefined();
+  });
+
+  it('sorts times, so "the next one today" is a scan', () => {
+    expect(definition(calendar('  at: [17:00, 09:00]\n')).wake.at).toEqual([
+      '09:00',
+      '17:00',
+    ]);
+  });
+
+  /*
+    Two definitions that mean the same schedule must not be able to disagree
+    about what they mean.
+  */
+  it('puts days back in week order and drops duplicates', () => {
+    expect(
+      definition(calendar('  at: [09:00]\n  days: [fri, mon, mon]\n')).wake.days,
+    ).toEqual(['mon', 'fri']);
+  });
+
+  it('treats at: without days: as every day', () => {
+    const def = definition(calendar('  at: [09:00]\n'));
+
+    expect(def.wake.at).toEqual(['09:00']);
+    expect(def.wake.days).toBeUndefined();
+  });
+
+  it('refuses days: with no time, which names no wake', () => {
+    expect(problems(calendar('  days: [mon]\n'))).toContainEqual({
+      field: 'wake.at',
+      reason: 'Give at least one time, like [09:00] — days alone name no wake.',
+    });
+  });
+
+  it('refuses every: and at: together, rather than picking a winner', () => {
+    expect(
+      problems(calendar('  every: 5m\n  at: [09:00]\n')),
+    ).toContainEqual({
+      field: 'wake.every',
+      reason: 'Use every: or at:, not both — they are two ways to schedule.',
+    });
+  });
+
+  it('refuses a time that is not a time', () => {
+    expect(problems(calendar('  at: [9am]\n'))).toContainEqual({
+      field: 'wake.at',
+      reason: 'Must be a list of local times, like [09:00, 17:00].',
+    });
+  });
+
+  it('refuses an empty time list', () => {
+    expect(problems(calendar('  at: []\n'))).toContainEqual({
+      field: 'wake.at',
+      reason: 'Must be a list of local times, like [09:00, 17:00].',
+    });
+  });
+
+  it('refuses a day that is not a day', () => {
+    expect(
+      problems(calendar('  at: [09:00]\n  days: [mon, funday]\n')).map(
+        (problem) => problem.field,
+      ),
+    ).toContain('wake.days');
+  });
+
+  it('still reads an interval-only definition', () => {
+    const def = definition(GOOD);
+
+    expect(def.wake.everyMs).toBe(300_000);
+    expect(def.wake.at).toBeUndefined();
+    expect(def.wake.days).toBeUndefined();
+  });
+});

@@ -51,6 +51,8 @@ describe('agent-contract', () => {
       'model',
       'effort',
       'wake.every',
+      'wake.at',
+      'wake.days',
       'wake.on',
       'wake.quiet',
       'skills',

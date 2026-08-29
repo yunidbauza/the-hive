@@ -230,6 +230,65 @@ export function frontmatterName(source: string): string {
   return readFrontmatter(source)?.fields.get('name')?.value ?? '';
 }
 
+/**
+ * The names a new agent is drawn from.
+ *
+ * Zerg units, because the app is already speaking this language: it ships a
+ * `hydralisk` sprite, and the agents empty state reads "The brood sleeps. No
+ * drones assigned. Ready to spawn." A default of `agent-1` was the thing out of
+ * place in that room.
+ *
+ * Lowercased to satisfy `AGENT_NAME_PATTERN`, which is `[a-z0-9-]+`.
+ *
+ * `overlord` is kept despite sitting one syllable from `overmind`, the ledger's
+ * coordinator identity — they are different strings, so nothing collides, and
+ * the roster reads worse without it.
+ */
+export const AGENT_NAME_POOL = [
+  'drone',
+  'zergling',
+  'hydralisk',
+  'ultralisk',
+  'lurker',
+  'mutalisk',
+  'overlord',
+  'scourge',
+  'broodling',
+  'devourer',
+  'defiler',
+] as const;
+
+/**
+ * A name for a new agent: one of {@link AGENT_NAME_POOL}, drawn at random.
+ *
+ * **Unheld names are preferred over numbering.** Drawing blind and numbering on
+ * collision would offer `drone-2` while `hydralisk` sat free, which reads as the
+ * app having run out of names when it has ten left. Numbering is the fallback
+ * for a fleet that genuinely holds all eleven.
+ *
+ * `pick` is injected so a test can be deterministic. It is not a seed — it is
+ * the source of randomness itself, which keeps this a pure function of its
+ * arguments and means no test has to stub a global.
+ */
+export function nextAgentName(
+  taken: readonly string[],
+  pick: () => number = Math.random,
+): string {
+  const free = AGENT_NAME_POOL.filter((name) => !taken.includes(name));
+  const from = free.length > 0 ? free : AGENT_NAME_POOL;
+  const index = Math.min(from.length - 1, Math.floor(pick() * from.length));
+  const base = from[index] as string;
+
+  if (!taken.includes(base)) return base;
+
+  // Starts at 2, exactly as a second session on one ticket is numbered.
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${base}-${suffix}`;
+
+    if (!taken.includes(candidate)) return candidate;
+  }
+}
+
 /** Test-only: drop the snapshot and every subscriber. */
 export function resetAgents(): void {
   snapshot = null;

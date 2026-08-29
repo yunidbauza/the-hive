@@ -5,6 +5,7 @@ import {
   deleteAgent,
   frontmatterName,
   loadAgents,
+  nextAgentName,
   readAgent,
   renameAgent,
   saveAgent,
@@ -47,14 +48,23 @@ import {
  * What a new agent starts as.
  *
  * A template rather than an empty box: the frontmatter is not guessable and a
- * file without it is one main refuses. `name` is left blank deliberately — it
- * is the field the user must supply, the folder is named from it, and seeding
- * it would invite a tree full of `new-agent`s.
+ * file without it is one main refuses.
+ *
+ * **`name` is seeded, not blank.** It used to be left empty on the argument
+ * that the user must supply it and that seeding invites a tree full of
+ * `new-agent`s — but the form had no name control at all, so the only
+ * expression that argument found was a red box the form could not clear. A
+ * free `agent-n` plus an editable field is the same argument made somewhere
+ * the user can act on it, and it is how a session already opens.
+ *
+ * `icon` is seeded with a name the icon registry can actually draw. `Robot`
+ * was not one: `GLYPHS` is keyed `ph-robot`, so every agent created from this
+ * template rendered the fallback question mark on its own row.
  */
-const TEMPLATE = `---
-name:
+const templateFor = (taken: readonly string[]): string => `---
+name: ${nextAgentName(taken)}
 description: What this agent watches, and what it does about it
-icon: Robot
+icon: ph-robot
 wake:
   every: 5m
   on: [ledger]
@@ -195,7 +205,7 @@ export function AgentsSection() {
     guard(
       () => {
         setOpen(null);
-        setBuffer(TEMPLATE);
+        setBuffer(templateFor(taken));
         // Never equal to the buffer, so a fresh template counts as unsaved —
         // which it is: nothing has been written.
         setSaved(null);
@@ -380,6 +390,7 @@ export function AgentsSection() {
               }
               source={buffer}
               dirty={dirty}
+              taken={taken}
               problems={shown}
               onChange={setBuffer}
               onSave={save}

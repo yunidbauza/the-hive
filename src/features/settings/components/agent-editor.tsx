@@ -15,6 +15,8 @@ interface AgentEditorProps {
   dirty: boolean;
   /** Why it cannot be saved. Empty means it can. */
   problems: readonly AgentProblem[];
+  /** Names already spoken for. Forwarded to the form's name field. */
+  taken: readonly string[];
   onChange: (source: string) => void;
   onSave: () => void;
   onDelete: () => void;
@@ -50,6 +52,7 @@ export function AgentEditor({
   source,
   dirty,
   problems,
+  taken,
   onChange,
   onSave,
   onDelete,
@@ -159,7 +162,12 @@ export function AgentEditor({
       </div>
 
       {tab === 'form' ? (
-        <AgentForm source={source} problems={problems} onChange={onChange} />
+        <AgentForm
+          source={source}
+          problems={problems}
+          taken={taken}
+          onChange={onChange}
+        />
       ) : (
         <textarea
           aria-label="Agent source"

@@ -1,10 +1,12 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetAgents } from '@/lib/agents';
 
 import { AgentsSection } from '@features/settings/components/agents-section';
+
+import { AGENT_NAME_POOL } from '@/lib/agents';
 
 import type { AgentSummary } from '@shared/agent-contract';
 
@@ -137,7 +139,13 @@ describe('AgentsSection', () => {
       expect(await screen.findByText('edited')).toBeInTheDocument();
     });
 
-    it('starts a new agent from a template with a blank name', async () => {
+    /*
+      The template used to open with a blank `name:` and a red box telling the
+      user to write one in the Source tab — the form had no name control at all,
+      so the refusal was unanswerable from the form it appeared in. It opens
+      named and editable instead.
+    */
+    it('starts a new agent already named, with no refusal to clear', async () => {
       stub([agent('slack-watcher')]);
       render(<AgentsSection />);
 
@@ -145,10 +153,58 @@ describe('AgentsSection', () => {
         await screen.findByRole('button', { name: '+ New agent' }),
       );
 
-      // The name is the one field the user must supply, so it is not seeded.
+      const name = await screen.findByRole('textbox', { name: 'name' });
+
+      expect(AGENT_NAME_POOL).toContain((name as HTMLInputElement).value);
       expect(
-        await screen.findByText('Give the agent a name in its frontmatter.'),
-      ).toBeInTheDocument();
+        screen.queryByText('Give the agent a name in its frontmatter.'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('never seeds a name the fleet already holds', async () => {
+      // Everything but the last roster name is taken, so only one is free.
+      stub(AGENT_NAME_POOL.slice(0, -1).map((name) => agent(name)));
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findAllByRole('button', { name: '+ New agent' }).then((all) => all[0] as HTMLElement),
+      );
+
+      expect(await screen.findByRole('textbox', { name: 'name' })).toHaveValue(
+        AGENT_NAME_POOL.at(-1) as string,
+      );
+    });
+
+    /*
+      Two new agents in a row must not collide. The second is seeded from a
+      fleet that now contains the first, which is the whole reason the template
+      is a function of `taken` rather than a constant.
+    */
+    it('gives two consecutive new agents distinct names', async () => {
+      stub([agent('slack-watcher')]);
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: '+ New agent' }),
+      );
+      const firstName = (
+        (await screen.findByRole('textbox', { name: 'name' })) as HTMLInputElement
+      ).value;
+
+      // The first one is saved, so the fleet now holds it. Remount against
+      // that fleet, which is what the pane sees on the next visit.
+      cleanup();
+      resetAgents();
+      stub([agent('slack-watcher'), agent(firstName)]);
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: '+ New agent' }),
+      );
+
+      expect(
+        await screen.findByRole('textbox', { name: 'name' }),
+      ).not.toHaveValue(firstName);
     });
   });
 
