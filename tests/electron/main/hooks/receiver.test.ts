@@ -92,7 +92,7 @@ describe('hook receiver', () => {
   const post = (
     body: unknown,
     headers: Record<string, string> = {
-      [HOOK_HEADER_TOKEN]: receiver.token,
+      [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
       [HOOK_HEADER_SESSION]: 'sess-01',
     },
   ) =>
@@ -126,7 +126,7 @@ describe('hook receiver', () => {
   describe('/ready', () => {
     const ready = (
       headers: Record<string, string> = {
-        [HOOK_HEADER_TOKEN]: receiver.token,
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
         [HOOK_HEADER_SESSION]: 'sess-01',
       },
       init: RequestInit = {},
@@ -175,7 +175,7 @@ describe('hook receiver', () => {
 
     it('refuses a session the app does not have', async () => {
       const response = await ready({
-        [HOOK_HEADER_TOKEN]: receiver.token,
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-gone'),
         [HOOK_HEADER_SESSION]: 'sess-gone',
       });
 
@@ -184,7 +184,7 @@ describe('hook receiver', () => {
     });
 
     it('refuses a request that names no session at all', async () => {
-      const response = await ready({ [HOOK_HEADER_TOKEN]: receiver.token });
+      const response = await ready({ [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01') });
 
       expect(response.status).toBe(400);
       expect(readies).toEqual([]);
@@ -205,7 +205,7 @@ describe('hook receiver', () => {
     it('drains a body rather than refusing one', async () => {
       const response = await ready(
         {
-          [HOOK_HEADER_TOKEN]: receiver.token,
+          [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
           [HOOK_HEADER_SESSION]: 'sess-01',
         },
         { body: 'x'.repeat(4096) },
@@ -219,7 +219,7 @@ describe('hook receiver', () => {
   describe('/done', () => {
     const done = (
       headers: Record<string, string> = {
-        [HOOK_HEADER_TOKEN]: receiver.token,
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
         [HOOK_HEADER_SESSION]: 'sess-01',
       },
       init: RequestInit = {},
@@ -255,7 +255,7 @@ describe('hook receiver', () => {
 
     it('refuses a session the app does not have', async () => {
       const response = await done({
-        [HOOK_HEADER_TOKEN]: receiver.token,
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-gone'),
         [HOOK_HEADER_SESSION]: 'sess-gone',
       });
 
@@ -264,7 +264,7 @@ describe('hook receiver', () => {
     });
 
     it('refuses a request that names no session at all', async () => {
-      const response = await done({ [HOOK_HEADER_TOKEN]: receiver.token });
+      const response = await done({ [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01') });
 
       expect(response.status).toBe(400);
       expect(dones).toEqual([]);
@@ -285,7 +285,7 @@ describe('hook receiver', () => {
       */
       const response = await done(
         {
-          [HOOK_HEADER_TOKEN]: receiver.token,
+          [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
           [HOOK_HEADER_SESSION]: 'sess-01',
           'content-type': 'application/json',
         },
@@ -304,7 +304,14 @@ describe('hook receiver', () => {
     const post = async (path: string, body: unknown, headers: Record<string, string>) =>
       fetch(`${origin()}${path}`, {
         method: 'POST',
-        headers: { [HOOK_HEADER_TOKEN]: receiver.token, ...headers },
+        // The default token is derived for whatever session the caller names —
+        // never a fixed value — so a test that claims a different session id
+        // still presents that session's *own* valid token unless it explicitly
+        // overrides `HOOK_HEADER_TOKEN` itself.
+        headers: {
+          [HOOK_HEADER_TOKEN]: receiver.tokenFor(headers[HOOK_HEADER_SESSION] ?? ''),
+          ...headers,
+        },
         body: JSON.stringify(body),
       });
 
@@ -402,7 +409,7 @@ describe('hook receiver', () => {
     it('answers 400 for a body that is not JSON', async () => {
       const response = await fetch(`${origin()}${LEDGER_POST_PATH}`, {
         method: 'POST',
-        headers: { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-a' },
+        headers: { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-a'), [HOOK_HEADER_SESSION]: 'sess-a' },
         body: 'not json',
       });
 
@@ -412,7 +419,7 @@ describe('hook receiver', () => {
     it('refuses GET on a ledger route', async () => {
       const response = await fetch(`${origin()}${LEDGER_READ_PATH}`, {
         method: 'GET',
-        headers: { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-a' },
+        headers: { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-a'), [HOOK_HEADER_SESSION]: 'sess-a' },
       });
 
       expect(response.status).toBe(404);
@@ -607,6 +614,39 @@ describe('hook receiver', () => {
     });
 
     /**
+     * The same privacy holds when the answer arrives over `POST /ledger`
+     * itself — the MCP host's own path (HIVE-112 self-review).
+     *
+     * `ledger_answer`'s tool schema exposes no `to`, so this route is the only
+     * one that can reach `Ledger.append` with `kind: 'answer'` and no `to` at
+     * all; the default now lives in `append`, not only in `answer()`.
+     */
+    it('shows an answer POSTed with no `to` only to the party that asked', async () => {
+      const asked = await post(
+        LEDGER_POST_PATH,
+        { to: 'sess-b', kind: 'ask', body: 'may I merge?' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const { id: thread } = (await asked.json()) as { id: string };
+
+      const answered = await post(
+        LEDGER_POST_PATH,
+        { kind: 'answer', thread, body: 'yes, go ahead' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(answered.status).toBe(200);
+
+      const asC = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-c' });
+      expect(((await asC.json()) as LedgerSnapshot).entries).toEqual([]);
+
+      const asA = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      expect(((await asA.json()) as LedgerSnapshot).entries.map((entry) => entry.body)).toEqual([
+        'may I merge?',
+        'yes, go ahead',
+      ]);
+    });
+
+    /**
      * A multibyte character straddling a TCP chunk boundary (HIVE-111 ship
      * review).
      *
@@ -638,7 +678,7 @@ describe('hook receiver', () => {
             path: target.pathname,
             method: 'POST',
             headers: {
-              [HOOK_HEADER_TOKEN]: receiver.token,
+              [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-a'),
               [HOOK_HEADER_SESSION]: 'sess-a',
               'content-type': 'application/json',
               'content-length': String(payload.byteLength),
@@ -659,6 +699,84 @@ describe('hook receiver', () => {
       });
 
       expect(ledger.read({}).entries.map((entry) => entry.body)).toEqual([body]);
+    });
+
+    /**
+     * The limit must apply *after* visibility, not before (HIVE-112 fold-in).
+     *
+     * `onLedgerRead` (via `Ledger.read`) used to take the newest `limit`
+     * entries over the *whole* ledger before `visibleTo` ever ran, so an ask
+     * addressed to the caller could be pushed out of that global window by
+     * more-recent entries the caller cannot even see — with nothing to signal
+     * the truncation. Here, more than `limit` entries addressed to a fourth
+     * party land *after* an ask addressed to `sess-a`; a caller who reads with
+     * that limit must still get the ask.
+     */
+    it('does not let entries the caller cannot see push a visible ask out of the limit', async () => {
+      const asked = await post(
+        LEDGER_POST_PATH,
+        { to: 'sess-a', kind: 'ask', body: 'urgent: need your answer' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(asked.status).toBe(200);
+
+      const limit = 3;
+      // More than `limit` entries land after the ask, all addressed to a
+      // *fourth* party — invisible to `sess-a`, and deliberately not
+      // broadcasts, or they would be visible to `sess-a` too and this would
+      // not reproduce the bug. A limit applied over the whole log spends its
+      // budget on these before `sess-a`'s visibility is ever considered,
+      // pushing the (older, visible) ask out of the window entirely.
+      for (let i = 0; i < limit + 2; i += 1) {
+        const noise = await post(
+          LEDGER_POST_PATH,
+          { to: 'sess-d', kind: 'post', body: `noise ${i}` },
+          { [HOOK_HEADER_SESSION]: 'sess-c' },
+        );
+        expect(noise.status).toBe(200);
+      }
+
+      const read = await post(
+        LEDGER_READ_PATH,
+        { limit },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const snapshot = (await read.json()) as LedgerSnapshot;
+
+      // The caller still sees the ask addressed to it...
+      expect(snapshot.entries.map((entry) => entry.body)).toContain(
+        'urgent: need your answer',
+      );
+      // ...and the limit is still honoured against what it can see.
+      expect(snapshot.entries.length).toBeLessThanOrEqual(limit);
+    });
+
+    /**
+     * The limit itself, proven at this HTTP boundary rather than at
+     * `Ledger.read` (HIVE-112 fold-in).
+     *
+     * The regression test above only proves an *upper* bound, and in its own
+     * scenario that bound holds vacuously — `sess-a` can see just the one ask
+     * either way, so `1 <= 3` says nothing about whether trimming happens at
+     * all. This asserts the exact surviving entries against a caller who can
+     * see every one of them, so it fails both if the trim is dropped (all
+     * five would come back) and if the wrong end is kept (the oldest three
+     * instead of the newest two).
+     */
+    it("trims the visible entries to the caller's limit", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const written = await post(
+          LEDGER_POST_PATH,
+          { to: 'sess-a', kind: 'post', body: `n${i}` },
+          { [HOOK_HEADER_SESSION]: 'sess-b' },
+        );
+        expect(written.status).toBe(200);
+      }
+
+      const read = await post(LEDGER_READ_PATH, { limit: 2 }, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      const snapshot = (await read.json()) as LedgerSnapshot;
+
+      expect(snapshot.entries.map((entry) => entry.body)).toEqual(['n3', 'n4']);
     });
   });
 
@@ -1000,7 +1118,7 @@ describe('hook receiver', () => {
   it('does not report a cleared session the app has never heard of', async () => {
     const response = await post(
       { hook_event_name: 'SessionEnd', reason: 'clear' },
-      { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+      { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-gone'), [HOOK_HEADER_SESSION]: 'sess-gone' },
     );
 
     expect(response.status).toBe(404);
@@ -1028,7 +1146,7 @@ describe('hook receiver', () => {
   it('rejects a request naming no session', async () => {
     const response = await post(
       { hook_event_name: 'Stop' },
-      { [HOOK_HEADER_TOKEN]: receiver.token },
+      { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01') },
     );
     expect(response.status).toBe(400);
     expect(events).toEqual([]);
@@ -1041,7 +1159,7 @@ describe('hook receiver', () => {
      */
     const response = await post(
       { hook_event_name: 'Stop' },
-      { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+      { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-gone'), [HOOK_HEADER_SESSION]: 'sess-gone' },
     );
     expect(response.status).toBe(404);
     expect(events).toEqual([]);
@@ -1281,7 +1399,7 @@ describe('hook receiver', () => {
       await fetch(started, {
         method: 'POST',
         headers: {
-          [HOOK_HEADER_TOKEN]: ordered.token,
+          [HOOK_HEADER_TOKEN]: ordered.tokenFor('sess-01'),
           [HOOK_HEADER_SESSION]: 'sess-01',
         },
         body: JSON.stringify({
@@ -1344,7 +1462,7 @@ describe('hook receiver', () => {
     it('reports nothing for a session the app does not have', async () => {
       const response = await post(
         { hook_event_name: 'UserPromptSubmit', prompt: 'work on ABC-123' },
-        { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+        { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-gone'), [HOOK_HEADER_SESSION]: 'sess-gone' },
       );
 
       expect(response.status).toBe(404);
@@ -1401,7 +1519,7 @@ describe('hook receiver', () => {
     const response = await fetch(started as string, {
       method: 'POST',
       headers: {
-        [HOOK_HEADER_TOKEN]: exploding.token,
+        [HOOK_HEADER_TOKEN]: exploding.tokenFor('sess-01'),
         [HOOK_HEADER_SESSION]: 'sess-01',
       },
       body: JSON.stringify({ hook_event_name: 'Stop' }),
@@ -1411,12 +1529,170 @@ describe('hook receiver', () => {
   });
 });
 
+/**
+ * The whole point of HIVE-112: a token proves the session it was derived for,
+ * and nothing else — on every route this receiver serves, not only the ledger
+ * ones a curious model has a reason to try.
+ *
+ * Before this change, `reject` compared the presented token against one
+ * secret shared by every session, so any known session's token unlocked every
+ * other known session's identity. `impersonates()` below is the regression
+ * test for exactly that: session A's own, genuinely valid token, presented
+ * with session B's header. It must be refused on all six routes.
+ */
+describe('the token binds to one session (HIVE-112)', () => {
+  let receiver: Receiver;
+  let dir: string;
+
+  const VALID_METRICS = {
+    model: { display_name: 'Opus 4.5' },
+    context_window: { used_percentage: 10, context_window_size: 1_000_000 },
+    rate_limits: {
+      five_hour: { used_percentage: 1, resets_at: 1 },
+      seven_day: { used_percentage: 1, resets_at: 1 },
+    },
+  };
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-receiver-token-binding-'));
+    const ledger = createLedger({ dir, knowsParty: () => true });
+    receiver = createReceiver({
+      onCleared: () => {},
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      knowsSession: (entityId) => entityId === 'sess-a' || entityId === 'sess-b',
+      onLedgerRead: (_caller, query) => ledger.read(query),
+      onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
+    });
+    await receiver.start();
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * One entry per route this receiver answers. `ok` is the status a *correctly*
+   * paired request gets, so the table doubles as proof that the pairing check
+   * does not accidentally break the happy path on any of them.
+   */
+  const ROUTES: { name: string; url: (r: Receiver) => string; body: unknown; ok: number }[] = [
+    {
+      name: '/hook',
+      url: (r) => r.url as string,
+      body: { hook_event_name: 'Stop' },
+      ok: 204,
+    },
+    {
+      name: '/metrics',
+      url: (r) => r.metricsUrl as string,
+      body: VALID_METRICS,
+      ok: 204,
+    },
+    { name: '/done', url: (r) => r.doneUrl as string, body: {}, ok: 204 },
+    { name: '/ready', url: (r) => r.readyUrl as string, body: {}, ok: 204 },
+    {
+      name: '/ledger',
+      url: (r) => `${r.origin as string}${LEDGER_POST_PATH}`,
+      body: { kind: 'post', body: 'hi' },
+      ok: 200,
+    },
+    {
+      name: '/ledger/read',
+      url: (r) => `${r.origin as string}${LEDGER_READ_PATH}`,
+      body: {},
+      ok: 200,
+    },
+  ];
+
+  const send = (target: string, token: string, session: string, body: unknown) =>
+    fetch(target, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: token,
+        [HOOK_HEADER_SESSION]: session,
+      },
+      body: JSON.stringify(body),
+    });
+
+  it.each(ROUTES)(
+    'refuses session A\'s own valid token presented as session B on $name',
+    async ({ url, body }) => {
+      const response = await send(
+        url(receiver),
+        receiver.tokenFor('sess-a'),
+        'sess-b',
+        body,
+      );
+
+      expect(response.status).toBe(403);
+    },
+  );
+
+  it.each(ROUTES)('accepts the matching pair on $name', async ({ url, body, ok }) => {
+    const response = await send(url(receiver), receiver.tokenFor('sess-a'), 'sess-a', body);
+
+    expect(response.status).toBe(ok);
+  });
+
+  it.each(ROUTES)('refuses an unknown, garbage token on $name', async ({ url, body }) => {
+    const response = await send(url(receiver), 'not-a-real-token', 'sess-a', body);
+
+    expect(response.status).toBe(403);
+  });
+
+  it.each(ROUTES)(
+    'refuses a token derived by a different receiver for the same session on $name',
+    async ({ url, body }) => {
+      const impostor = createReceiver({
+        onCleared: () => {},
+        onEvent: () => {},
+        onTicketIntent: () => {},
+        onDone: () => {},
+        onReady: () => {},
+        onMetrics: () => {},
+        knowsSession: () => true,
+        ...noLedger,
+      });
+
+      const response = await send(url(receiver), impostor.tokenFor('sess-a'), 'sess-a', body);
+
+      expect(response.status).toBe(403);
+    },
+  );
+
+  it('is deterministic: the same receiver and id yield the same token twice', () => {
+    expect(receiver.tokenFor('sess-a')).toBe(receiver.tokenFor('sess-a'));
+  });
+});
+
 describe('hook receiver tokens', () => {
-  it('gives each receiver a distinct token', () => {
+  it('derives a different token for the same session id on two receivers', () => {
+    // Two receivers, each with their own launch secret, minting a token for
+    // *the same* session id — the launch secret is what has to differ for
+    // this to hold, since `tokenFor` is otherwise a pure function of its
+    // argument (HIVE-112).
     const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
     const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
-    expect(a.token).not.toBe(b.token);
-    expect(a.token).toHaveLength(36);
+    expect(a.tokenFor('sess-01')).not.toBe(b.tokenFor('sess-01'));
+    // Hex-encoded SHA-256, not a v4 uuid.
+    expect(a.tokenFor('sess-01')).toHaveLength(64);
+    expect(a.tokenFor('sess-01')).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('is deterministic: the same receiver and session id always agree', () => {
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    expect(receiver.tokenFor('sess-01')).toBe(receiver.tokenFor('sess-01'));
+  });
+
+  it('derives a different token for a different session id on the same receiver', () => {
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    expect(receiver.tokenFor('sess-01')).not.toBe(receiver.tokenFor('sess-02'));
   });
 
   it('has no url before it starts', () => {
@@ -1463,7 +1739,7 @@ describe('the status line path', () => {
   const post = (
     body: unknown,
     headers: Record<string, string> = {
-      [HOOK_HEADER_TOKEN]: receiver.token,
+      [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
       [HOOK_HEADER_SESSION]: 'sess-01',
     },
   ) =>
@@ -1530,7 +1806,7 @@ describe('the status line path', () => {
   });
 
   it('rejects a request naming no session', async () => {
-    const response = await post({}, { [HOOK_HEADER_TOKEN]: receiver.token });
+    const response = await post({}, { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01') });
 
     expect(response.status).toBe(400);
     expect(metrics).toEqual([]);
@@ -1539,7 +1815,7 @@ describe('the status line path', () => {
   it('refuses a session the app does not have', async () => {
     const response = await post(
       {},
-      { [HOOK_HEADER_TOKEN]: receiver.token, [HOOK_HEADER_SESSION]: 'sess-gone' },
+      { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-gone'), [HOOK_HEADER_SESSION]: 'sess-gone' },
     );
 
     expect(response.status).toBe(404);

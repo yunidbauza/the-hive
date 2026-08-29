@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -27,6 +27,7 @@ import {
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
+import { keepNewest } from '@shared/ledger-derive';
 import {
   METRICS_MAX_BODY_BYTES,
   METRICS_PATH,
@@ -53,17 +54,29 @@ import { ticketKeyFromPrompt } from './ticket-intent';
  * are true of this one and are enforced below rather than documented:
  *
  * 1. It binds **`127.0.0.1`**, never `0.0.0.0` — unreachable from the network.
- * 2. It requires a **per-launch token**, generated at start and never written
- *    anywhere but the settings file the app itself wrote and the environment of
- *    the PTYs it spawned. A token that leaks dies with the app.
- * 3. It answers a **closed set of two paths** and reads a **capped body** on
- *    each, so nothing about it is a general-purpose server. The second path
- *    (HIVE-79) takes Claude Code's status line payload; it shares the token and
- *    the session header, and carries a cap four times smaller.
+ * 2. It requires a **per-session token**, keyed off a per-launch secret that
+ *    is generated at start and never leaves this file — not on the
+ *    {@link Receiver} interface, not in an environment variable, not in the
+ *    generated config, not in a log line. What a session is handed, and what
+ *    the settings file and the environment of the PTYs it spawned carry, is
+ *    {@link tokenFor} applied to that one session's own id (HIVE-112) — so a
+ *    session that leaks its token hands over only its own identity, not
+ *    every other session's.
+ * 3. It answers a **closed set of six paths** — the hook event, the status
+ *    line's metrics (HIVE-79), `/done`, the boot-ready signal, and, since
+ *    HIVE-111, a ledger post and a ledger read — and reads a **capped body**
+ *    on each, so nothing about it is a general-purpose server. Every path
+ *    checks the token against the session header it was issued for; several
+ *    carry a smaller cap than the hook path.
  *
- * It also has no authority: the only thing a valid POST can do is move a status
- * dot, or record usage percentages, for a session id that is already known.
- * There is no command surface here to reach.
+ * Its authority is correspondingly wider than it once was: a valid POST can
+ * still move a status dot or record usage percentages, but the ledger paths
+ * let a known session id append to the shared log — post, ask, answer, claim,
+ * release, done, failed, event, handoff — and read it back. `from` is always
+ * the caller's own session header, never a value the body supplies, and
+ * `Ledger.append` (`electron/main/ledger/index.ts`) is the one place that
+ * decides what a party may write; this file only authenticates the caller and
+ * forwards. There is still no command surface here to reach.
  *
  * ## Why a failure to bind is not an error
  *
@@ -156,8 +169,19 @@ export interface Receiver {
    * Never rejects: see the note above on why a failure here is not fatal.
    */
   start(): Promise<string | null>;
-  /** The per-launch shared secret. Stable for the lifetime of the receiver. */
-  readonly token: string;
+  /**
+   * The token a session named `entityId` must present (HIVE-112).
+   *
+   * A keyed derivation — `HMAC-SHA256(launchSecret, entityId)`, hex — of a
+   * secret that is minted once per receiver and never leaves this module: it
+   * is not a field here, not an environment variable, not written to the
+   * generated config, not logged. Two calls with the same `entityId` on the
+   * same receiver always agree, which is what lets `reject` recompute the
+   * expected token from a request's own session header instead of looking one
+   * up in a map — there is no map, so there is nothing to grow or evict as
+   * sessions come and go.
+   */
+  tokenFor(entityId: string): string;
   /** The URL hooks should POST to, or `null` before a successful start. */
   readonly url: string | null;
   /**
@@ -186,6 +210,24 @@ export interface Receiver {
    * discover one.
    */
   readonly readyUrl: string | null;
+  /**
+   * The scheme and authority alone, or `null` before a successful start
+   * (HIVE-112).
+   *
+   * Every other URL on this interface is a *path* — `url` is `origin +
+   * HOOK_PATH`, and the same shape holds for `metricsUrl`, `doneUrl` and
+   * `readyUrl` — because each names one fixed route this receiver serves and
+   * the caller that reads it never appends anything of its own.
+   *
+   * The MCP host is different: it is handed a base and builds its own
+   * request paths from `@shared/ledger-contract` (`LEDGER_POST_PATH`,
+   * `LEDGER_READ_PATH`), because a single client speaks to more than one
+   * route. Handing it `url` instead would have it POST to
+   * `…/hook/ledger/read`, a path this server never registers — so this is a
+   * distinct field rather than a reuse of `url` with the last segment
+   * trimmed off by a caller.
+   */
+  readonly origin: string | null;
   stop(): Promise<void>;
 }
 
@@ -349,7 +391,18 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     );
   };
 
-  const token = randomUUID();
+  /**
+   * Minted once per receiver and never returned from this function — see the
+   * {@link tokenFor} doc on {@link Receiver} for why. `randomUUID` is used here
+   * only as a convenient source of high-entropy randomness, not because the
+   * result is ever compared as a uuid.
+   */
+  const launchSecret = randomUUID();
+
+  /** HMAC-SHA256(launchSecret, entityId), hex — see {@link Receiver.tokenFor}. */
+  const tokenFor = (entityId: string): string =>
+    createHmac('sha256', launchSecret).update(entityId).digest('hex');
+
   let server: Server | null = null;
   let url: string | null = null;
   /**
@@ -425,17 +478,21 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function reject(
     headers: Record<string, string | string[] | undefined>,
   ): number | null {
-    /**
-     * Compared before anything else is read.
-     *
-     * Not a timing-safe comparison, and deliberately not: the secret is a v4
-     * uuid on a loopback socket, where an attacker able to time it is already
-     * running as this user and has no need of it.
-     */
-    if (headers[HOOK_HEADER_TOKEN] !== token) return 403;
-
     const entityId = headers[HOOK_HEADER_SESSION];
     if (typeof entityId !== 'string' || entityId === '') return 400;
+
+    /**
+     * The presented token must be the one derived for *this* session id, not
+     * merely a token this receiver minted for someone else (HIVE-112).
+     *
+     * Not a timing-safe comparison, and deliberately not: this is a derived
+     * secret on a loopback socket, where an attacker able to time the
+     * comparison is already running as this user and has no need to — the
+     * thing being protected is one session's isolation from another's ledger
+     * entries, not the socket as a whole, and timing leaks nothing an
+     * on-machine attacker does not already have.
+     */
+    if (headers[HOOK_HEADER_TOKEN] !== tokenFor(entityId)) return 403;
 
     /**
      * An unknown session is refused rather than remembered.
@@ -512,12 +569,25 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return { status: 400, json: { reason: describeCause(cause) } };
     }
 
-    const snapshot = onLedgerRead(caller, query);
+    /*
+      Queried with no limit, so nothing is trimmed before the caller's
+      visibility is known. `onLedgerRead` (via `Ledger.read`) would otherwise
+      take the newest `limit` entries over the *whole* ledger and hand back a
+      set `visibleTo` then narrows — which can discard an entry addressed to
+      this caller in favour of ones addressed elsewhere, with nothing to
+      signal the truncation. The limit is applied below, after filtering,
+      against what the caller can actually see.
+    */
+    const { limit, ...unbounded } = query;
+    const snapshot = onLedgerRead(caller, unbounded);
     const visible: LedgerSnapshot = {
       // Identity-locked here rather than trusted from `onLedgerRead`, so a
       // query's own `to` can never widen what a caller is shown — see
       // `visibleTo`.
-      entries: snapshot.entries.filter((entry) => visibleTo(caller, entry)),
+      entries: keepNewest(
+        snapshot.entries.filter((entry) => visibleTo(caller, entry)),
+        limit,
+      ),
       openAsks: snapshot.openAsks.filter((entry) => visibleTo(caller, entry)),
       claims: snapshot.claims,
     };
@@ -765,10 +835,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   }
 
   return {
-    token,
+    tokenFor,
 
     get url() {
       return url;
+    },
+
+    get origin() {
+      return origin;
     },
 
     get metricsUrl() {

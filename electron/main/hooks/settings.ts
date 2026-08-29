@@ -159,7 +159,9 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * - `x-hive-session` carries the Hive's own entity id, read from the pty's
  *   environment. Correlation is the identity function rather than a lookup
  *   through Claude's uuid — see `hook-contract.ts`.
- * - `x-hive-token` carries the per-launch secret, also from the environment.
+ * - `x-hive-token` carries this session's own token, also from the
+ *   environment — derived from the launch secret and this session's id, so it
+ *   proves nothing about any other session (HIVE-112).
  *
  * Both are named in `allowedEnvVars`, without which Claude will not interpolate
  * them — a hook whose headers silently arrive as the literal strings `$VAR` is

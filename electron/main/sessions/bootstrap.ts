@@ -153,6 +153,25 @@ export interface SessionOptions {
    */
   pluginDir?: string;
   /**
+   * The generated `--mcp-config`, giving this session the ledger tools
+   * (HIVE-112).
+   *
+   * A **separate flag from `--plugin-dir`**, and that is the whole design: a
+   * server delivered inside the plugin is named `mcp__plugin_hive_hive__*`,
+   * while one delivered here is `mcp__hive__*` — the name HIVE-115's agent
+   * preamble and HIVE-119's `--permission-prompt-tool` both use. Two names for
+   * one tool set would mean the preamble had to branch on who was reading it.
+   *
+   * Deliberately **without** `--strict-mcp-config`: verified against the CLI,
+   * this flag merges rather than replaces, so a session inside the Hive keeps
+   * whatever MCP servers the user configured for themselves. Adding `--strict`
+   * here would silently take them away.
+   *
+   * {@link shellQuote}d for the reason `pluginDir` is — it lives under
+   * `app.getPath('userData')`, which contains a space on every Mac.
+   */
+  mcpConfig?: string;
+  /**
    * The session's opening instruction, as `claude`'s initial prompt.
    *
    * An **argument**, not a second thing typed into the shell afterwards, and
@@ -275,6 +294,7 @@ export const sessionCommand = (
     resume = false,
     settingsPath,
     pluginDir,
+    mcpConfig,
     subscriptionAuth = false,
     task,
   }: SessionOptions = {},
@@ -294,6 +314,7 @@ export const sessionCommand = (
       : []),
     ...(settingsPath === undefined ? [] : ['--settings', shellQuote(settingsPath)]),
     ...(pluginDir === undefined ? [] : ['--plugin-dir', shellQuote(pluginDir)]),
+    ...(mcpConfig === undefined ? [] : ['--mcp-config', shellQuote(mcpConfig)]),
   ];
   /**
    * Unset the API credentials **here**, not only in the spawned environment

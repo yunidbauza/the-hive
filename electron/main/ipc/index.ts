@@ -144,6 +144,7 @@ import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
 import { createLedger } from '../ledger';
 import { createDeliver } from '../ledger/deliver';
+import { createMcpRuntime } from '../mcp';
 import {
   createNotificationHub,
   createNotifier,
@@ -874,11 +875,34 @@ export function registerIpcHandlers(): void {
     doneUrl: () => hooks.doneUrl(),
   });
 
+  /*
+    The MCP config runtime (HIVE-112). Written once, its content depends only
+    on where the app is installed and where its own bundle sits, and neither
+    moves while the app runs.
+
+    `import.meta.dirname` is `out/main/` in both dev and a packaged build, which
+    is where `mcp-host.js` is emitted — the same resolution `pty-host` uses.
+
+    Fired here, unawaited, so a slow write cannot delay the first window — the
+    same reasoning `startLoginEnvImport` gives in `main/index.ts`. That leaves
+    a window between construction and the write settling in which
+    `configPathFor()` reads `null`; the `ptySpawn` and `ptyRestart` handlers
+    close it by `await`-ing the same memoised promise (`mcp.start()`) before a
+    session can be spawned, exactly as they already `await loginEnvStatus()`.
+  */
+  const mcp = createMcpRuntime({
+    userDataPath: app.getPath('userData'),
+    execPath: process.execPath,
+    scriptPath: join(import.meta.dirname, 'mcp-host.js'),
+  });
+  void mcp.start();
+
   sessions = createSessions({
     supervisor,
     config: getConfig,
     send,
     skills,
+    mcp,
     hooks,
     history,
     /*
@@ -1714,6 +1738,19 @@ export function registerIpcHandlers(): void {
      * than any protocol that would tell us the tree changed.
      */
     await skills?.sync();
+    /**
+     * Wait for the MCP config write before a session can be spawned (HIVE-112).
+     *
+     * `mcp.start()` is fired once, unawaited, at construction so a slow write
+     * cannot delay the first window — but `sessions.open()` calls `spawn()`
+     * synchronously below, and `spawn()` reads `mcp.configPathFor()` the same
+     * instant. Without this await, a session opened inside that window would
+     * see `null` and start silently and permanently without ledger tools. The
+     * promise is memoised, so this either resolves immediately (the ordinary
+     * case, long since settled by the time anyone opens a session) or joins
+     * the one write already in flight — never a second one.
+     */
+    await mcp.start();
     sessions?.open({
       entityId: request.sessionId,
       projectId: request.projectId,
@@ -1736,6 +1773,9 @@ export function registerIpcHandlers(): void {
     // And the same regeneration, for the same reason: a restart builds a fresh
     // command line, so it must see the skills the user has now (HIVE-96).
     await skills?.sync();
+    // Same wait as `ptySpawn` above, for the same reason: a restart's `spawn()`
+    // reads `mcp.configPathFor()` synchronously too (HIVE-112).
+    await mcp.start();
     /**
      * The task is deliberately **not** forwarded (story 097).
      *

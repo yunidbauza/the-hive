@@ -9,7 +9,7 @@ import {
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
-import { claims, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
+import { claims, keepNewest, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
 
 import { createLedgerStore } from './store';
 
@@ -44,22 +44,6 @@ const refuse = (status: number, reason: string): LedgerResult => ({
 
 const describeCause = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
-
-/**
- * The newest `limit` entries, or all of them when no limit was given.
- *
- * A named function rather than an inline `slice`, because the inline version
- * was wrong in a way that reads as correct: `slice(-Math.max(0, limit))` is
- * `slice(-0)` for `limit: 0`, and `slice(-0)` is `slice(0)` — a whole copy.
- * The narrowest request a caller can make returned the widest possible answer,
- * and `parseLedgerReadQuery` admits `0` as valid, so it was reachable from
- * both boundaries.
- */
-const keepNewest = (entries: LedgerEntry[], limit: number | undefined): LedgerEntry[] => {
-  if (limit === undefined) return entries;
-  if (limit <= 0) return [];
-  return entries.slice(-limit);
-};
 
 export function createLedger(options: LedgerOptions): Ledger {
   const now = options.now ?? Date.now;
@@ -110,6 +94,7 @@ export function createLedger(options: LedgerOptions): Ledger {
         check is idempotent, so paying for it twice costs nothing.
       */
       let thread = request.thread;
+      let to = request.to;
       if (thread !== undefined) {
         const all = store.all();
         const canonical = resolveRef(all, thread);
@@ -145,6 +130,19 @@ export function createLedger(options: LedgerOptions): Ledger {
               `${thread} was asked of ${ask.to}; ${request.from} is not a party to it`,
             );
           }
+          /*
+            An `answer` with no `to` defaults to the ask's `from`.
+
+            `Ledger.answer()` (the IPC entry point) has always set this
+            itself, but the MCP host reaches `append` directly and its tool
+            schema exposes no `to` — so a POST-ed answer left `to` undefined,
+            and `visibleTo` in the receiver treats an absent `to` as
+            "everyone". A private question answered over the MCP path was
+            readable by every other session on its next read. Defaulting here
+            closes that for every caller, `answer()` included; its own
+            `to: ask.from` becomes redundant rather than wrong, so it stays.
+          */
+          to = to ?? ask.from;
         }
         thread = canonical;
       }
@@ -170,7 +168,11 @@ export function createLedger(options: LedgerOptions): Ledger {
 
       let stored: LedgerEntry;
       try {
-        stored = store.append(thread === undefined ? request : { ...request, thread });
+        stored = store.append({
+          ...request,
+          ...(thread === undefined ? {} : { thread }),
+          ...(to === undefined ? {} : { to }),
+        });
       } catch (cause) {
         /*
           The one failure here that is nobody's fault: ENOSPC, EACCES, a

@@ -586,7 +586,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
       // A real pty, so the TUI behaves as it does in a session.
       const driver = [
         'import os, pty, time, select',
-        `env = dict(os.environ, HIVE_SESSION_ID='sess-live', HIVE_HOOK_TOKEN=${JSON.stringify(receiver.token)}, TERM='xterm-256color')`,
+        `env = dict(os.environ, HIVE_SESSION_ID='sess-live', HIVE_HOOK_TOKEN=${JSON.stringify(receiver.tokenFor('sess-live'))}, TERM='xterm-256color')`,
         "env.pop('CLAUDE_CODE_CHILD_SESSION', None)",
         `argv = ['claude', '--settings', ${JSON.stringify(settingsPath)}, '--model', 'haiku']`,
         'pid, fd = pty.fork()',

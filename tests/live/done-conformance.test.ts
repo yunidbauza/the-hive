@@ -133,7 +133,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
         ['--plugin-dir', pluginRoot, '--settings', settingsPath, '/done'],
         {
           [HOOK_ENV_SESSION]: ENTITY,
-          [HOOK_ENV_TOKEN]: receiver.token,
+          [HOOK_ENV_TOKEN]: receiver.tokenFor(ENTITY),
         },
       );
 
@@ -167,7 +167,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
         ['--plugin-dir', pluginRoot, '--settings', settingsPath, '/done'],
         {
           [HOOK_ENV_SESSION]: 'sess-not-ours',
-          [HOOK_ENV_TOKEN]: receiver.token,
+          [HOOK_ENV_TOKEN]: receiver.tokenFor('sess-not-ours'),
         },
       );
 

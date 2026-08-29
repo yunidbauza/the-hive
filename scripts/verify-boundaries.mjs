@@ -310,6 +310,33 @@ const CASES = [
     },
   },
   {
+    name: 'zone: electron/mcp-host/ may not import electron/main/ (HIVE-112)',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/main/probe-target.ts': 'export const main = 1;\n',
+      'electron/mcp-host/probe.ts':
+        "import { main } from '../main/probe-target';\nexport const probe = main;\n",
+    },
+  },
+  {
+    name: 'zone: electron/mcp-host/ may not import src/ — no store, no config',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/utils/probe-target.ts': 'export const renderer = 1;\n',
+      'electron/mcp-host/probe.ts':
+        "import { renderer } from '@/utils/probe-target';\nexport const probe = renderer;\n",
+    },
+  },
+  {
+    name: 'zone: src/ may not import electron/mcp-host/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/mcp-host/probe-target.ts': 'export const host = 1;\n',
+      'src/utils/probe.ts':
+        "import { host } from '../../electron/mcp-host/probe-target';\nexport const probe = host;\n",
+    },
+  },
+  {
     name: 'PascalCase folder name is rejected under electron/ too',
     rule: 'check-file/folder-naming-convention',
     files: { 'electron/main/ProbeFolder/probe.ts': 'export const probe = 1;\n' },

@@ -7,6 +7,7 @@ import {
 } from '../../../electron/shared/ledger-contract';
 import {
   claims,
+  keepNewest,
   matches,
   nextRef,
   openAsks,
@@ -169,6 +170,36 @@ describe('resolveRef', () => {
 
   it('returns undefined for anything it does not know', () => {
     expect(resolveRef(entries, 'a9')).toBeUndefined();
+  });
+});
+
+describe('keepNewest', () => {
+  const entries = [
+    entry({ id: '1', body: 'one' }),
+    entry({ id: '2', body: 'two' }),
+    entry({ id: '3', body: 'three' }),
+  ];
+
+  it('returns everything when no limit is given', () => {
+    expect(keepNewest(entries, undefined)).toEqual(entries);
+  });
+
+  it('keeps the newest `limit` entries', () => {
+    expect(keepNewest(entries, 2).map((e) => e.body)).toEqual(['two', 'three']);
+  });
+
+  /**
+   * `slice(-0)` is `slice(0)` — a whole copy — so the narrowest request a
+   * caller can make used to return the widest possible answer. `0` is not an
+   * exotic input: `parseLedgerReadQuery` explicitly admits it, so
+   * `{"limit": 0}` returned the entire log over both the HTTP and IPC paths.
+   */
+  it('returns nothing, not everything, for a limit of zero', () => {
+    expect(keepNewest(entries, 0)).toEqual([]);
+  });
+
+  it('returns everything when the limit is larger than the log', () => {
+    expect(keepNewest(entries, 10)).toEqual(entries);
   });
 });
 
