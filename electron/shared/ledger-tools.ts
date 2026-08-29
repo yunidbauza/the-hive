@@ -67,7 +67,15 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
       'Leave a note on the ledger. Use it to tell other parties what you did or what you found. It wakes nobody — if you need an answer, use ledger_ask instead. Omit "to" to broadcast to everyone.',
     inputSchema: {
       type: 'object',
-      properties: { to: party, body, meta },
+      properties: {
+        to: party,
+        body,
+        thread: {
+          type: 'string',
+          description: 'The ask this continues, if it continues one.',
+        },
+        meta,
+      },
       required: ['body'],
     },
   },

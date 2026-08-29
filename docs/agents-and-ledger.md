@@ -299,12 +299,16 @@ handed on the command line.** Three variables, all set on the session's own
 `origin + '/hook'`, a fixed path for the hook route alone, while the host
 builds its own request paths from `@shared/ledger-contract`'s
 `LEDGER_POST_PATH` / `LEDGER_READ_PATH` onto whatever base it's given — handing
-it `url` would make every ledger call 404). A party that could name itself on
-the command line could name a different one; reading identity out of the
-environment the app itself controls is the same discipline the receiver's
-`x-hive-session` header follows for every other out-of-process caller. If any
-of the three is missing — the process was started outside The Hive, or by
-hand in a plain terminal — `createHandlers` still lists all eight tools (so
+it `url` would make every ledger call 404). None of the host's tools accepts a
+`from` argument, so a model calling them has no way to name a session other
+than its own — that is a property of the **MCP tool surface**, reading
+identity out of the environment the app itself controls, not a transport-level
+guarantee: the receiver's per-launch token is shared by every session it
+spawns (HIVE-111), so a model with shell access could still `curl` the
+receiver directly using another session's header value. Closing that is
+tracked separately, not attempted here. If any of the three is missing — the
+process was started outside The Hive, or by hand in a plain terminal —
+`createHandlers` still lists all eight tools (so
 `/mcp` shows a connected server, not a broken one) but every *call* answers
 with a sentence explaining why the ledger is out of reach, rather than the
 server refusing to start.

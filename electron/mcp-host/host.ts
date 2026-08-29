@@ -19,9 +19,13 @@ import { createToolHandlers } from './tools';
  * worth reading and no window — everything it needs arrives in the
  * environment.
  *
- * Identity comes from the environment on purpose. A party that could name
- * itself on the command line could name a different one, and the receiver
- * takes `from` from the `x-hive-session` header for the same reason.
+ * Identity comes from the environment on purpose: none of this host's tools
+ * accepts a `from`, so a model calling them has no argument through which to
+ * name a different session. That is a property of the **MCP tool surface**,
+ * not a transport-level guarantee — the receiver's per-launch token is shared
+ * by every session it spawns (HIVE-111), so a model with shell access could
+ * still `curl` the receiver directly with another session's header value.
+ * Closing that is tracked separately, not attempted here.
  *
  * This module has no side effects at import: no `process.stdin`, no
  * `serve(...)` call. That is what lets it be imported directly in a test.

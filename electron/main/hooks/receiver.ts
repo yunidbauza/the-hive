@@ -57,14 +57,21 @@ import { ticketKeyFromPrompt } from './ticket-intent';
  * 2. It requires a **per-launch token**, generated at start and never written
  *    anywhere but the settings file the app itself wrote and the environment of
  *    the PTYs it spawned. A token that leaks dies with the app.
- * 3. It answers a **closed set of two paths** and reads a **capped body** on
- *    each, so nothing about it is a general-purpose server. The second path
- *    (HIVE-79) takes Claude Code's status line payload; it shares the token and
- *    the session header, and carries a cap four times smaller.
+ * 3. It answers a **closed set of six paths** — the hook event, the status
+ *    line's metrics (HIVE-79), `/done`, the boot-ready signal, and, since
+ *    HIVE-111, a ledger post and a ledger read — and reads a **capped body**
+ *    on each, so nothing about it is a general-purpose server. Every path
+ *    shares the token and the session header; several carry a smaller cap
+ *    than the hook path.
  *
- * It also has no authority: the only thing a valid POST can do is move a status
- * dot, or record usage percentages, for a session id that is already known.
- * There is no command surface here to reach.
+ * Its authority is correspondingly wider than it once was: a valid POST can
+ * still move a status dot or record usage percentages, but the ledger paths
+ * let a known session id append to the shared log — post, ask, answer, claim,
+ * release, done, failed, event, handoff — and read it back. `from` is always
+ * the caller's own session header, never a value the body supplies, and
+ * `Ledger.append` (`electron/main/ledger/index.ts`) is the one place that
+ * decides what a party may write; this file only authenticates the caller and
+ * forwards. There is still no command surface here to reach.
  *
  * ## Why a failure to bind is not an error
  *

@@ -55,6 +55,18 @@ describe('ledger-tools', () => {
     }
   });
 
+  /**
+   * `ledger_post`'s handler has always forwarded `thread` (HIVE-112
+   * self-review) — the schema just never told the model the capability
+   * existed. `ledger_done` and `ledger_failed` already declare it.
+   */
+  it('declares thread on every tool whose handler can carry one', () => {
+    for (const name of ['ledger_post', 'ledger_done', 'ledger_failed']) {
+      const tool = LEDGER_TOOLS.find((candidate) => candidate.name === name);
+      expect(tool?.inputSchema.properties).toHaveProperty('thread');
+    }
+  });
+
   it('names only kinds the ledger accepts', () => {
     // Every tool maps to one kind; a typo here is a 400 at runtime.
     for (const kind of ['post', 'ask', 'answer', 'claim', 'release', 'done', 'failed']) {

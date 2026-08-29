@@ -94,6 +94,7 @@ export function createLedger(options: LedgerOptions): Ledger {
         check is idempotent, so paying for it twice costs nothing.
       */
       let thread = request.thread;
+      let to = request.to;
       if (thread !== undefined) {
         const all = store.all();
         const canonical = resolveRef(all, thread);
@@ -129,6 +130,19 @@ export function createLedger(options: LedgerOptions): Ledger {
               `${thread} was asked of ${ask.to}; ${request.from} is not a party to it`,
             );
           }
+          /*
+            An `answer` with no `to` defaults to the ask's `from`.
+
+            `Ledger.answer()` (the IPC entry point) has always set this
+            itself, but the MCP host reaches `append` directly and its tool
+            schema exposes no `to` — so a POST-ed answer left `to` undefined,
+            and `visibleTo` in the receiver treats an absent `to` as
+            "everyone". A private question answered over the MCP path was
+            readable by every other session on its next read. Defaulting here
+            closes that for every caller, `answer()` included; its own
+            `to: ask.from` becomes redundant rather than wrong, so it stays.
+          */
+          to = to ?? ask.from;
         }
         thread = canonical;
       }
@@ -154,7 +168,11 @@ export function createLedger(options: LedgerOptions): Ledger {
 
       let stored: LedgerEntry;
       try {
-        stored = store.append(thread === undefined ? request : { ...request, thread });
+        stored = store.append({
+          ...request,
+          ...(thread === undefined ? {} : { thread }),
+          ...(to === undefined ? {} : { to }),
+        });
       } catch (cause) {
         /*
           The one failure here that is nobody's fault: ENOSPC, EACCES, a

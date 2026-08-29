@@ -50,10 +50,19 @@ export const RPC_METHOD_NOT_FOUND = -32601;
 /** Standard JSON-RPC: the params were the wrong shape, or named no such tool. */
 export const RPC_INVALID_PARAMS = -32602;
 
-/** A message from the client. A request has an `id`; a notification does not. */
+/** Standard JSON-RPC: a handler threw instead of producing a result. */
+export const RPC_INTERNAL_ERROR = -32603;
+
+/**
+ * A message from the client. A request has an `id`; a notification does not.
+ *
+ * `id` is typed `null` as well as absent because the spec allows a client to
+ * send `"id": null` on a genuine request — but this server treats a `null` id
+ * exactly like a missing one: both draw no reply, per `handleMessage`.
+ */
 export interface JsonRpcRequest {
   jsonrpc: typeof JSONRPC_VERSION;
-  id?: string | number;
+  id?: string | number | null;
   method: string;
   params?: Record<string, unknown>;
 }

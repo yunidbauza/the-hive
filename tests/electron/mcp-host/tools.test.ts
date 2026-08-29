@@ -124,6 +124,96 @@ describe('ledger_read', () => {
       expect.objectContaining({ to: 'me', from: 'you', kind: 'ask', thread: 'a1' }),
     );
   });
+
+  /**
+   * The cursor only advances on the undirected inbox drain (HIVE-112
+   * self-review).
+   *
+   * `snapshot.entries` is the *filtered and trimmed* set, not the whole log —
+   * so moving the cursor to its last id after a targeted read moves the
+   * high-water mark past entries the caller was never shown. A `kind`-filtered
+   * read used to permanently skip every other kind older than its newest
+   * match; these prove a call naming any filter leaves the cursor alone.
+   */
+  describe('the cursor moves only for the undirected drain', () => {
+    it('does not move the cursor for a read filtered by kind', async () => {
+      const snapshot: LedgerSnapshot = {
+        entries: [{ id: 'e5', ts: 5, from: 'sess-a', kind: 'ask', body: 'ship?' }],
+        openAsks: [],
+        claims: {},
+      };
+      const client = stub({ read: vi.fn(async () => snapshot) });
+      const handlers = createToolHandlers(client);
+
+      await handlers.callTool('ledger_read', { kind: 'ask' });
+      await handlers.callTool('ledger_read', {});
+
+      // The default drain still falls back to the first-read bound, not
+      // `since: e5` — the kind-filtered call never touched the cursor.
+      expect(client.read).toHaveBeenLastCalledWith({ limit: 50 });
+    });
+
+    it('does not move the cursor for an explicit-limit read', async () => {
+      const snapshot: LedgerSnapshot = {
+        entries: [
+          { id: 'e1', ts: 1, from: 'overmind', kind: 'post', body: 'one' },
+          { id: 'e2', ts: 2, from: 'overmind', kind: 'post', body: 'two' },
+        ],
+        openAsks: [],
+        claims: {},
+      };
+      const client = stub({ read: vi.fn(async () => snapshot) });
+      const handlers = createToolHandlers(client);
+
+      await handlers.callTool('ledger_read', { limit: 1 });
+      await handlers.callTool('ledger_read', {});
+
+      expect(client.read).toHaveBeenLastCalledWith({ limit: 50 });
+    });
+
+    it('leaves an established cursor untouched across a filtered read in between', async () => {
+      const drained: LedgerSnapshot = {
+        entries: [{ id: 'e1', ts: 1, from: 'overmind', kind: 'post', body: 'one' }],
+        openAsks: [],
+        claims: {},
+      };
+      const filtered: LedgerSnapshot = {
+        entries: [{ id: 'e9', ts: 9, from: 'sess-a', kind: 'ask', body: 'ship?' }],
+        openAsks: [],
+        claims: {},
+      };
+      const client = stub({
+        read: vi
+          .fn()
+          .mockResolvedValueOnce(drained)
+          .mockResolvedValueOnce(filtered)
+          .mockResolvedValue(emptySnapshot),
+      });
+      const handlers = createToolHandlers(client);
+
+      await handlers.callTool('ledger_read', {}); // establishes the cursor at e1
+      await handlers.callTool('ledger_read', { kind: 'ask' }); // must not move it to e9
+      await handlers.callTool('ledger_read', {});
+
+      expect(client.read).toHaveBeenLastCalledWith({ since: 'e1' });
+    });
+
+    // The plain default read is the drain, and still advances as today.
+    it('still moves the cursor for the plain default read', async () => {
+      const snapshot: LedgerSnapshot = {
+        entries: [{ id: 'e3', ts: 3, from: 'overmind', kind: 'post', body: 'three' }],
+        openAsks: [],
+        claims: {},
+      };
+      const client = stub({ read: vi.fn(async () => snapshot) });
+      const handlers = createToolHandlers(client);
+
+      await handlers.callTool('ledger_read', {});
+      await handlers.callTool('ledger_read', {});
+
+      expect(client.read).toHaveBeenLastCalledWith({ since: 'e3' });
+    });
+  });
 });
 
 describe('the writing tools', () => {
@@ -288,6 +378,29 @@ describe('ledger_claim and ledger_release', () => {
 
     expect(result.isError).toBe(true);
     expect(client.post).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The informational read names a previous holder; it does not authorize
+   * the claim (HIVE-112 self-review). A transient receiver failure on that
+   * read must not sink a claim the `post` below would otherwise have made.
+   */
+  it('still claims, unnamed, when the informational read fails', async () => {
+    const client = stub({
+      read: vi.fn(async () => {
+        throw new ReceiverError(500, 'receiver unreachable');
+      }),
+    });
+
+    const result = await createToolHandlers(client).callTool('ledger_claim', { task: 'HIVE-112' });
+
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toBe('claimed HIVE-112');
+    expect(client.post).toHaveBeenCalledWith({
+      kind: 'claim',
+      body: 'claimed HIVE-112',
+      meta: { task: 'HIVE-112' },
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_SERVER_NAME,
   MCP_SERVER_VERSION,
+  RPC_INTERNAL_ERROR,
   RPC_INVALID_PARAMS,
   RPC_METHOD_NOT_FOUND,
   type CallToolResult,
@@ -63,8 +64,16 @@ export async function handleMessage(
 ): Promise<JsonRpcResponse | null> {
   const { id, method, params } = message;
 
-  // A notification. Act on nothing, answer nothing.
-  if (id === undefined) return null;
+  /*
+    A notification. Act on nothing, answer nothing.
+
+    `id === null` is included on purpose: the spec permits a client to send
+    `"id": null` on what is nominally a request, and answering it would put a
+    reply with `id: null` on the wire that nothing asked for. The `ping`
+    comment below already argues for tolerating whatever a later CLI sends;
+    this is the same stance applied to `id` itself.
+  */
+  if (id === undefined || id === null) return null;
 
   if (method === 'initialize') {
     /*
@@ -150,6 +159,20 @@ export function serve({ input, write, log, handlers }: ServeOptions): void {
         // A handler that threw is a bug in this app, not a client error. Report
         // it where a developer can see it and leave the stream intact.
         log(`handler threw: ${String(cause)}`);
+
+        /*
+          A client that sent an `id` is owed a reply — silence here means it
+          waits on an answer that will never come, all the way out to its own
+          timeout, instead of failing fast with a message a model could act
+          on. A notification (`id` absent or `null`) drew no reply from
+          `handleMessage` either, so there is nothing to send back for it.
+        */
+        const { id } = message;
+        if (id !== undefined && id !== null) {
+          write(
+            `${JSON.stringify(failure(id, RPC_INTERNAL_ERROR, `handler threw: ${String(cause)}`))}\n`,
+          );
+        }
       });
   });
 }

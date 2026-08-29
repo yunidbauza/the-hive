@@ -607,6 +607,39 @@ describe('hook receiver', () => {
     });
 
     /**
+     * The same privacy holds when the answer arrives over `POST /ledger`
+     * itself — the MCP host's own path (HIVE-112 self-review).
+     *
+     * `ledger_answer`'s tool schema exposes no `to`, so this route is the only
+     * one that can reach `Ledger.append` with `kind: 'answer'` and no `to` at
+     * all; the default now lives in `append`, not only in `answer()`.
+     */
+    it('shows an answer POSTed with no `to` only to the party that asked', async () => {
+      const asked = await post(
+        LEDGER_POST_PATH,
+        { to: 'sess-b', kind: 'ask', body: 'may I merge?' },
+        { [HOOK_HEADER_SESSION]: 'sess-a' },
+      );
+      const { id: thread } = (await asked.json()) as { id: string };
+
+      const answered = await post(
+        LEDGER_POST_PATH,
+        { kind: 'answer', thread, body: 'yes, go ahead' },
+        { [HOOK_HEADER_SESSION]: 'sess-b' },
+      );
+      expect(answered.status).toBe(200);
+
+      const asC = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-c' });
+      expect(((await asC.json()) as LedgerSnapshot).entries).toEqual([]);
+
+      const asA = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+      expect(((await asA.json()) as LedgerSnapshot).entries.map((entry) => entry.body)).toEqual([
+        'may I merge?',
+        'yes, go ahead',
+      ]);
+    });
+
+    /**
      * A multibyte character straddling a TCP chunk boundary (HIVE-111 ship
      * review).
      *

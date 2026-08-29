@@ -98,6 +98,27 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
     const limit = typeof args['limit'] === 'number' ? args['limit'] : undefined;
 
     /*
+      Whether this call is the undirected inbox drain the preamble mandates
+      first on every wake, or a targeted lookup — and only the drain may move
+      the cursor. `snapshot.entries` below is the *filtered and trimmed* set,
+      not the whole log, so advancing the cursor to its last id after a
+      targeted read would move the high-water mark past entries the caller
+      was never shown: a `kind`-filtered read would permanently skip every
+      other kind older than its newest match, a `limit`-bounded read would
+      lose whatever it discarded past that limit, and a `since` older than the
+      cursor could walk the cursor *backwards*, re-delivering entries already
+      seen on the next default read. A call naming none of these is the plain
+      drain, and behaves exactly as before.
+    */
+    const isTargetedLookup =
+      query.to !== undefined ||
+      query.from !== undefined ||
+      query.kind !== undefined ||
+      query.thread !== undefined ||
+      since !== undefined ||
+      limit !== undefined;
+
+    /*
       An explicit `since` wins over the cursor, and the cursor wins over the
       default bound. The bound only exists for the very first read of a process:
       without it, a session opened against a months-old ledger would be handed
@@ -111,13 +132,16 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
     const snapshot = await client.read(query);
 
     /*
-      Advanced only when something came back. Entries are newest-last, so the
-      last one is the high-water mark. A read that returned nothing leaves the
-      cursor where it was — moving it to `undefined` would re-bound the next
-      read as if the process had just started.
+      Advanced only for the undirected drain, and only when something came
+      back. Entries are newest-last, so the last one is the high-water mark. A
+      read that returned nothing leaves the cursor where it was — moving it to
+      `undefined` would re-bound the next read as if the process had just
+      started.
     */
-    const newest = snapshot.entries.at(-1);
-    if (newest !== undefined) cursor = newest.id;
+    if (!isTargetedLookup) {
+      const newest = snapshot.entries.at(-1);
+      if (newest !== undefined) cursor = newest.id;
+    }
 
     /*
       Compact JSON, not a rendered digest. `meta` is an arbitrary map that
@@ -143,12 +167,28 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
       caller does hold the task afterwards — so this reports rather than
       refuses, and says plainly what changed.
 
-      `limit: 0` asks the receiver for zero entries: `claims` is derived from
-      the whole log regardless of the query's limit (see `Ledger.read` in
-      `electron/main/ledger/index.ts`), so this still gets the full claims map
-      without paying to ship every entry back just to throw them away.
+      `limit: 0` asks for zero entries in the reply. The receiver strips
+      `limit` out of the query before it ever reaches `Ledger.read`
+      (`electron/main/hooks/receiver.ts`'s `handleLedgerRead`), so `claims` —
+      always derived from the whole log inside `Ledger.read`, per
+      `electron/main/ledger/index.ts` — is unaffected either way; what the
+      receiver does with the limit is trim the *visible* entries down to it
+      after filtering, right before shipping the reply back over the socket.
+      Asking for zero means the full claims map still comes back and no entry
+      does.
+
+      This read is purely informational — it names a *previous* holder in the
+      reply, it does not authorize the claim below. A transient failure here
+      must not sink a claim the `post` would otherwise have made, so it
+      degrades to an unnamed claim instead of failing the whole call; `post`
+      still surfaces its own failures normally.
     */
-    const before = (await client.read({ limit: 0 })).claims[task];
+    let before: string | undefined;
+    try {
+      before = (await client.read({ limit: 0 })).claims[task];
+    } catch {
+      before = undefined;
+    }
 
     await client.post({ kind: 'claim', body: `claimed ${task}`, meta: { task } });
 
