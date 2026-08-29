@@ -69,6 +69,8 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     integrations: Object.keys(window.hive!.integrations).sort(),
     fs: Object.keys(window.hive!.fs).sort(),
     skills: Object.keys(window.hive!.skills).sort(),
+    agents: Object.keys(window.hive!.agents).sort(),
+    ledger: Object.keys(window.hive!.ledger).sort(),
     github: Object.keys(window.hive!.github).sort(),
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
@@ -186,14 +188,38 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * it can name no directory `remove` could not already name, and it refuses a
    * destination that exists rather than replacing it. The argument for the
    * fifth verb is recorded on `BRIDGE_SKILLS_KEYS`.
+   *
+   * ## `ledger` (HIVE-111) and `agents` (HIVE-114)
+   *
+   * `ledger` shipped without being added to this list, so this assertion was
+   * red from the moment it landed — the alarm this test exists to be, silenced
+   * by nobody having read it. Both are added here together for that reason.
+   *
+   * What keeps them inside story 082's posture:
+   *
+   * - **Neither takes a path.** Every `agents` verb names an *agent*, and
+   *   `assertAgentName` makes a path unrepresentable rather than filtering one
+   *   — the same bound `skills` has, with the reserved names (`overmind`,
+   *   `done`) refused at the boundary too. `overmind` matters most: it is the
+   *   ledger's coordinator identity, and an agent holding it could sign
+   *   entries as the overmind.
+   * - **Neither lets the page speak as another party.** `ledger.post` and
+   *   `ledger.answer` take no `from`; main supplies it. Widening either
+   *   signature to accept one is the change this list exists to catch.
+   * - **The two listeners grant nothing.** `ledger.onChanged` and
+   *   `agents.onChanged` are main → renderer only, and the agents one carries
+   *   no payload at all — the renderer is poked and re-`list`s, so it cannot
+   *   surface anything `agents:list` would not already return.
    */
   expect(surface.top).toEqual([
+    'agents',
     'appInfo',
     'config',
     'fs',
     'github',
     'integrations',
     'jira',
+    'ledger',
     'notifications',
     'pty',
     'session',
@@ -202,6 +228,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'ui',
     'updates',
   ]);
+  expect(surface.agents).toEqual([
+    'list',
+    'onChanged',
+    'read',
+    'remove',
+    'rename',
+    'write',
+  ]);
+  expect(surface.ledger).toEqual(['answer', 'list', 'onChanged', 'post']);
   expect(surface.skills).toEqual([
     'list',
     'read',

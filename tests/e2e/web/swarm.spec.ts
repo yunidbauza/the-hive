@@ -88,7 +88,7 @@ const RAILS = [
     rail: 'Projects, work, and agents',
     pool: 'empty.agents' as const,
     cast: 'hydralisk',
-    keeps: 'No agents running.',
+    keeps: 'No agents yet — create one in Settings › Agents.',
   },
 ];
 
