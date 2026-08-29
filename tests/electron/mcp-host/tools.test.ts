@@ -194,6 +194,10 @@ describe('ledger_claim and ledger_release', () => {
     const client = stub();
     const result = await createToolHandlers(client).callTool('ledger_claim', { task: 'HIVE-112' });
 
+    // `limit: 0` still gets the full claims map back — `claims` is derived
+    // from the whole log regardless of the query's limit — without shipping
+    // every entry back just to read one key.
+    expect(client.read).toHaveBeenCalledWith({ limit: 0 });
     expect(client.post).toHaveBeenCalledWith({
       kind: 'claim',
       body: 'claimed HIVE-112',
@@ -210,6 +214,7 @@ describe('ledger_claim and ledger_release', () => {
 
     const result = await createToolHandlers(client).callTool('ledger_claim', { task: 'HIVE-112' });
 
+    expect(client.read).toHaveBeenCalledWith({ limit: 0 });
     // Not an error: the store records a second claim deliberately.
     expect(result.isError).toBe(false);
     expect(textOf(result)).toMatch(/slack-watcher/);

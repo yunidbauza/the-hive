@@ -84,6 +84,14 @@ describe('handleMessage', () => {
     expect(set.callTool).toHaveBeenCalledWith('ledger_read', {});
   });
 
+  it('answers ping with an empty result, not a protocol error', async () => {
+    // The spec requires an empty result. `claude` does not currently send
+    // this, but a keepalive that did must not see an error back.
+    const reply = await handleMessage({ jsonrpc: '2.0', id: 7, method: 'ping' }, handlers());
+
+    expect(reply).toEqual({ jsonrpc: '2.0', id: 7, result: {} });
+  });
+
   it('returns a JSON-RPC error for an unknown method', async () => {
     const reply = await handleMessage({ jsonrpc: '2.0', id: 5, method: 'resources/list' }, handlers());
 

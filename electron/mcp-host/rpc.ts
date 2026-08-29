@@ -99,6 +99,16 @@ export async function handleMessage(
     return success(id, await handlers.callTool(name, args));
   }
 
+  if (method === 'ping') {
+    /*
+      The spec requires an empty result, not a protocol error. `claude` 2.1.251
+      does not currently send this, but a keepalive is exactly the kind of
+      thing a later CLI adds without warning, and falling through to
+      `RPC_METHOD_NOT_FOUND` for it would make an idle connection look broken.
+    */
+    return success(id, {});
+  }
+
   return failure(id, RPC_METHOD_NOT_FOUND, `no method ${method}`);
 }
 

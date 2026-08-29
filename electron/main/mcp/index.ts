@@ -15,7 +15,13 @@ import { MCP_CONFIG_FILE } from './paths';
  */
 
 export interface McpRuntime {
-  /** Write the config. Never rejects; a failure leaves the flag omitted. */
+  /**
+   * Write the config. Never rejects; a failure leaves the flag omitted.
+   *
+   * Memoised: the write happens once, and every call — the fire-and-forget
+   * one at construction and any later `await` on the spawn path — shares the
+   * same in-flight (or settled) promise rather than triggering a second write.
+   */
   start(): Promise<void>;
   /**
    * The `--mcp-config` argument, or `null` when the file has never been
@@ -45,24 +51,39 @@ export function createMcpRuntime({
 }: McpRuntimeOptions): McpRuntime {
   const path = join(userDataPath, MCP_CONFIG_FILE);
   let written = false;
+  /*
+    The in-flight (or settled) write, shared by every caller — the same
+    memoisation `login-env.ts` uses for the login-shell probe. `registerIpcHandlers`
+    fires this once, unawaited, at construction so a slow write cannot delay the
+    first window; the `ptySpawn` and `ptyRestart` handlers `await` it before a
+    session can be spawned, so a session can never observe `configPathFor()`
+    returning `null` merely because the write had not finished yet. Awaiting a
+    second time here costs nothing and writes the file only once.
+  */
+  let inFlight: Promise<void> | null = null;
+
+  const run = async (): Promise<void> => {
+    try {
+      await writeMcpConfig(path, { execPath, scriptPath });
+      written = true;
+    } catch (cause) {
+      /*
+        Non-fatal, for the reason the skills runtime gives: a session that
+        starts without its ledger tools works. A session that does not start
+        because a file could not be written does not, and nothing on screen
+        would connect the two.
+      */
+      written = false;
+      console.info(
+        `[hive] the MCP config could not be written — sessions start without ledger tools (${String(cause)})`,
+      );
+    }
+  };
 
   return {
-    async start(): Promise<void> {
-      try {
-        await writeMcpConfig(path, { execPath, scriptPath });
-        written = true;
-      } catch (cause) {
-        /*
-          Non-fatal, for the reason the skills runtime gives: a session that
-          starts without its ledger tools works. A session that does not start
-          because a file could not be written does not, and nothing on screen
-          would connect the two.
-        */
-        written = false;
-        console.info(
-          `[hive] the MCP config could not be written — sessions start without ledger tools (${String(cause)})`,
-        );
-      }
+    start(): Promise<void> {
+      inFlight ??= run();
+      return inFlight;
     },
 
     configPathFor(): string | null {

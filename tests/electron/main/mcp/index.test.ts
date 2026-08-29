@@ -42,6 +42,31 @@ describe('createMcpRuntime', () => {
     expect((await stat(expected)).isFile()).toBe(true);
   });
 
+  it('memoises the write: a second start() joins the same promise instead of writing again', async () => {
+    /*
+      HIVE-112 fix: `registerIpcHandlers` fires `start()` once, unawaited, at
+      construction, and the `ptySpawn`/`ptyRestart` handlers `await` it again
+      on the spawn path so a session can never observe `configPathFor()`
+      returning `null` merely because the write had not settled yet. That only
+      works if a second `start()` shares the first call's promise rather than
+      triggering a second write.
+    */
+    const runtime = createMcpRuntime({
+      userDataPath: dir,
+      execPath: '/bin/app',
+      scriptPath: '/out/mcp-host.js',
+    });
+
+    const first = runtime.start();
+    const second = runtime.start();
+
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+
+    const expected = join(dir, MCP_CONFIG_FILE);
+    expect(runtime.configPathFor()).toBe(expected);
+  });
+
   it('keeps answering null when the write failed, so the flag is omitted', async () => {
     /*
       A session that starts without ledger tools works; one that does not

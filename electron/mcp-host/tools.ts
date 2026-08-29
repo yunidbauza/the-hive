@@ -136,8 +136,13 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
       not guard `claim` — a second claim is a fact worth recording, and the
       caller does hold the task afterwards — so this reports rather than
       refuses, and says plainly what changed.
+
+      `limit: 0` asks the receiver for zero entries: `claims` is derived from
+      the whole log regardless of the query's limit (see `Ledger.read` in
+      `electron/main/ledger/index.ts`), so this still gets the full claims map
+      without paying to ship every entry back just to throw them away.
     */
-    const before = (await client.read({})).claims[task];
+    const before = (await client.read({ limit: 0 })).claims[task];
 
     await client.post({ kind: 'claim', body: `claimed ${task}`, meta: { task } });
 

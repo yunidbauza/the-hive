@@ -143,10 +143,24 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
     const files = await readdir(ledgerDir);
     expect(files.length).toBeGreaterThan(0);
 
-    const lines = (await readFile(join(ledgerDir, files[0] as string), 'utf8'))
-      .split('\n')
-      .filter((line) => line !== '');
-    const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    /*
+      The ledger rotates by day (HIVE-111), so a run that straddles midnight
+      leaves two files and the entry this test just posted can be in either.
+      `files[0]` assumed the first one readdir returns is the right one, which
+      is true right up until it is yesterday's file — and then this fails for a
+      reason nobody chasing a red run would think to check. Read every file and
+      search all of them.
+    */
+    const entries = (
+      await Promise.all(
+        files.map(async (file) => {
+          const lines = (await readFile(join(ledgerDir, file), 'utf8'))
+            .split('\n')
+            .filter((line) => line !== '');
+          return lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+        }),
+      )
+    ).flat();
     const posted = entries.find((entry) => String(entry['body']).includes('live conformance ok'));
 
     expect(posted).toBeDefined();

@@ -66,10 +66,14 @@ export default defineConfig({
            * `index.js`, which is what lets main resolve the path it writes into
            * the generated config with `import.meta.dirname`.
            *
-           * It has no dependencies at all, so `externalizeDepsPlugin` has
-           * nothing to externalise here and the emitted file is self-contained —
-           * which is also why it needs no `asarUnpack` entry to be readable in
-           * the packaged app.
+           * It has no `dependencies` — `externalizeDepsPlugin` has nothing to
+           * externalise here — but it is not self-contained: it imports
+           * `@shared/*`, and rollup emits that as its own
+           * `out/main/chunks/mcp-contract-*.js`, alongside `mcp-host.js`
+           * rather than inlined into it. It still needs no `asarUnpack` entry,
+           * because that chunk ships inside `out/` like every other build
+           * output and is read through Electron's asar-aware `fs`, the same
+           * as `index.js` reading its own chunks.
            */
           'mcp-host': 'electron/mcp-host/index.ts',
         },
