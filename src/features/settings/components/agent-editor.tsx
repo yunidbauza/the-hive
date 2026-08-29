@@ -68,15 +68,38 @@ export function AgentEditor({
     A whole-file problem has no field to sit beside, so the footer owns it
     outright.
   */
-  const wholeFile = problems.find((problem) => problem.field === '');
-  const footer =
-    wholeFile !== undefined
-      ? wholeFile.reason
-      : problems.length === 0
-        ? 'The name in the frontmatter names the folder.'
-        : problems.length === 1
-          ? `1 problem — see ${problems[0]?.field ?? 'the form'}.`
-          : `${problems.length} problems — see the form.`;
+  const footer = ((): string => {
+    const wholeFile = problems.find((problem) => problem.field === '');
+
+    if (wholeFile !== undefined) return wholeFile.reason;
+    if (problems.length === 0) {
+      return 'The name in the frontmatter names the folder.';
+    }
+
+    /*
+      On the Source tab the form is not mounted, so nothing else on screen is
+      showing these. Say the first one in full rather than counting — a count
+      with no reachable detail is the disabled-Save-with-no-explanation this
+      whole line exists to replace.
+    */
+    if (tab === 'source') {
+      const first = problems[0];
+      const text =
+        first === undefined
+          ? ''
+          : first.field === 'name'
+            ? first.reason
+            : `${first.field}: ${first.reason}`;
+
+      return problems.length === 1
+        ? text
+        : `${text} (+${problems.length - 1} more)`;
+    }
+
+    return problems.length === 1
+      ? `1 problem — see ${problems[0]?.field ?? 'the form'}.`
+      : `${problems.length} problems — see the form.`;
+  })();
 
   const tabClass = (which: Tab) =>
     cn(

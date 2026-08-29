@@ -1,6 +1,5 @@
 import { SegmentedControl } from '@components/ui/segmented-control';
 import {
-  AGENT_FIELDS,
   AUTONOMIES,
   patchFrontmatter,
   readFrontmatter,
@@ -32,10 +31,10 @@ interface AgentFormProps {
  *
  * ## Why the fields come from a table
  *
- * `AGENT_FIELDS` is the same table `parseAgent` validates against, so a
- * problem's `field` is guaranteed to name a control rendered here. Hand-listing
- * the fields in JSX would let the two drift, and the drift would show up as an
- * error message pointing at nothing.
+ * `AGENT_FIELDS` is the same table `parseAgent` validates against, so every
+ * problem's `field` is a path this file knows about. The ones with a control
+ * render beside it; the ones without — see {@link RENDERED_PATHS} — render at
+ * the top, so a refusal can never point at nothing.
  */
 
 /** Wake intervals worth one click. `off` writes no `every:` at all. */
@@ -73,6 +72,26 @@ const LIMIT_FIELDS = [
   { path: 'limits.budget_usd', label: 'budget $' },
   { path: 'limits.rotate_after', label: 'rotate after' },
 ] as const;
+
+/**
+ * The paths this form actually draws a control for.
+ *
+ * Not the same as `AGENT_FIELDS`, and the difference is load-bearing. `name`
+ * is in the table but has no control on purpose — it is *mirrored* from the
+ * frontmatter so an agent has exactly one name — and `effort` has none yet. A
+ * problem naming either would have no row to sit beside, so testing membership
+ * against the table rather than against this set made those problems render
+ * nowhere at all: refused Save, no visible reason.
+ */
+const RENDERED_PATHS: readonly string[] = [
+  ...TEXT_FIELDS,
+  'wake.every',
+  'wake.quiet',
+  ...LIST_FIELDS.map((field) => field.path),
+  'autonomy',
+  'model',
+  ...LIMIT_FIELDS.map((field) => field.path),
+];
 
 export function AgentForm({ source, problems, onChange }: AgentFormProps) {
   const fields = readFrontmatter(source)?.fields;
@@ -122,8 +141,36 @@ export function AgentForm({ source, problems, onChange }: AgentFormProps) {
   const wakeEvery = at('wake.every');
   const model = at('model');
 
+  /*
+    Problems with nowhere to sit: the name (mirrored, so it has no control), an
+    unknown key (whose `field` is whatever the user typed), and `effort`.
+
+    At the **top** rather than the bottom. This form scrolls past a dozen rows,
+    and a homeless problem is the most global one there is — putting it below
+    the fold is the same as not showing it.
+
+    Whole-file problems are excluded: the footer owns those, and printing them
+    in both places says one sentence twice.
+  */
+  const homeless = problems.filter(
+    (problem) =>
+      problem.field !== '' && !RENDERED_PATHS.includes(problem.field),
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-3">
+      {homeless.map((problem) => (
+        <p
+          key={`${problem.field}:${problem.reason}`}
+          role="alert"
+          className="rounded-[5px] border border-red px-2.5 py-1.5 text-[11px] text-red"
+        >
+          {problem.field === 'name'
+            ? problem.reason
+            : `${problem.field}: ${problem.reason}`}
+        </p>
+      ))}
+
       {TEXT_FIELDS.map((path) =>
         row(path, path, input(path, path === 'icon' ? 'a Phosphor name' : '')),
       )}
@@ -216,30 +263,6 @@ export function AgentForm({ source, problems, onChange }: AgentFormProps) {
       )}
 
       {LIMIT_FIELDS.map(({ path, label }) => row(path, label, input(path)))}
-
-      {/*
-        Unknown keys, which by definition have no row: the `field` is whatever
-        the user typed. Whole-file problems (`field: ''`) are deliberately
-        excluded — the footer owns those, and rendering them in both places
-        says the same sentence twice.
-      */}
-      {problems
-        .filter(
-          (problem) =>
-            problem.field !== '' &&
-            !AGENT_FIELDS.some((field) => field.path === problem.field),
-        )
-        .map((problem) => (
-          <p
-            key={`${problem.field}:${problem.reason}`}
-            role="alert"
-            className="rounded-[5px] border border-red px-2.5 py-1.5 text-[11px] text-red"
-          >
-            {problem.field === ''
-              ? problem.reason
-              : `${problem.field}: ${problem.reason}`}
-          </p>
-        ))}
     </div>
   );
 }
