@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createLedger } from '../../electron/main/ledger';
 import { createReceiver } from '../../electron/main/hooks/receiver';
 import { mcpConfig } from '../../electron/main/mcp/config';
+import { OVERMIND } from '../../electron/shared/ledger-contract';
+import { openAsks } from '../../electron/shared/ledger-derive';
 
 /**
  * What only a real `claude` can prove (HIVE-112).
@@ -28,6 +30,12 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
   const SESSION = 'sess-live-ledger';
   let dir: string;
   let ledgerDir: string;
+  /*
+    Hoisted so a test can both seed the log and read its derived state back
+    (HIVE-113). Reading the files off disk, as the write test does, proves the
+    line landed; only `openAsks` proves the *ask closed*.
+  */
+  let ledger: ReturnType<typeof createLedger>;
   let receiver: Awaited<ReturnType<typeof createReceiver>> | null = null;
   let origin: string | null = null;
   let configFile: string;
@@ -36,10 +44,15 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
     dir = await mkdtemp(join(tmpdir(), 'hive-live-ledger-'));
     ledgerDir = join(dir, 'ledger');
 
-    const ledger = createLedger({
+    ledger = createLedger({
       dir: ledgerDir,
-      // Only this session exists, and only it may write.
-      knowsParty: (party: string) => party === SESSION,
+      /*
+        The session, and the overmind — which HIVE-113 needs so a test can
+        stage the real shape of the exchange: the coordinator asks, the session
+        answers. Widening this grants the *model* nothing, because `from` on
+        the receiver path is always taken from the `x-hive-session` header.
+      */
+      knowsParty: (party: string) => party === SESSION || party === OVERMIND,
     });
 
     receiver = createReceiver({
@@ -181,4 +194,50 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
 
     expect(out).toMatch(/no such thread/i);
   }, 180_000);
+
+  /**
+   * HIVE-113's second acceptance criterion, and the half that could not be
+   * written until the MCP tools existed.
+   *
+   * The console side is proven against a mocked bridge and `deliver.ts` against
+   * a recording `write`; what neither can answer is whether a **real model**,
+   * handed the ref a nudge would carry, calls `ledger_answer` in a way that
+   * actually retires the ask. `openAsks` is the assertion that matters — a
+   * `ledger --open` that still listed an answered question is the failure this
+   * whole exchange exists to prevent.
+   */
+  it('a session answering by ref closes the overmind’s ask', async () => {
+    const asked = ledger.append({
+      from: OVERMIND,
+      to: SESSION,
+      kind: 'ask',
+      body: 'which branch should the demo use?',
+    });
+    expect(asked.ok).toBe(true);
+
+    const ref = asked.ok ? asked.ref : undefined;
+    const id = asked.ok ? asked.id : '';
+    // Refs are what a person — and a nudge line — can actually carry.
+    expect(ref).toBeDefined();
+
+    expect(openAsks(ledger.read({}).entries, Date.now())).toHaveLength(1);
+
+    await runClaude(
+      `Call ledger_answer with thread "${ref ?? ''}" and body "main", then reply DONE.`,
+    );
+
+    const entries = ledger.read({}).entries;
+
+    // The ask is retired: `ledger --open` would no longer list it.
+    expect(openAsks(entries, Date.now())).toHaveLength(0);
+
+    /*
+      And the answer stored the **canonical id**, not the ref it was given.
+      That is what keeps `thread()` a plain `id === x || thread === x` filter
+      for every future reader, long after the ref has been reused.
+    */
+    const answer = entries.find((entry) => entry.kind === 'answer');
+    expect(answer?.from).toBe(SESSION);
+    expect(answer?.thread).toBe(id);
+  }, 240_000);
 });
