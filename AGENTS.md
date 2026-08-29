@@ -85,8 +85,7 @@ one still fires.
 | `src/**`, `electron/**` | `tests/**` (test scaffolding never ships) |
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
-| **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
-| **`electron/mcp-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
+| **`electron/pty-host/**`, `electron/mcp-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
 | `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**`, `electron/mcp-host/**` |
 
 `electron/shared/**` is the **only** module both processes may import, and it is types,
