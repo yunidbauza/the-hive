@@ -1515,7 +1515,7 @@ describe('hive-store', () => {
         .appendEntityLines('slack-agent', [{ text: 'ping', color: 'ink' }]);
 
       const entity = useHiveStore.getState().entities['slack-agent'];
-      expect(entity.status).toBe('online');
+      expect(entity.status).toBe('sleeping');
       expect(entity.lines.at(-1)?.text).toBe('ping');
     });
 

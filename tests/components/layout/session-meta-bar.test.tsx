@@ -163,7 +163,7 @@ describe('SessionMetaBar', () => {
 
       expect(screen.getByText('slack-agent')).toBeInTheDocument();
       expect(screen.getByText('dedicated agent')).toBeInTheDocument();
-      expect(screen.getByText('online')).toBeInTheDocument();
+      expect(screen.getByText('sleeping')).toBeInTheDocument();
     });
   });
 

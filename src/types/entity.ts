@@ -1,11 +1,12 @@
 import type { TermLine } from '@/types/terminal';
 
+import type { AgentStatus, WakeSpec } from '@shared/agent-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionEffort, SessionModel } from '@shared/session-contract';
 import type { SessionPrRecord } from '@shared/session-history-contract';
 
 /**
- * Session lifecycle. Agents are always `online` and are tracked separately.
+ * Session lifecycle. Agents have their own states — see {@link AgentStatus}.
  *
  * **Two endings, and they answer different questions** (story 108, HIVE-93).
  *
@@ -348,14 +349,39 @@ export interface Session {
   lines: TermLine[]; // terminal transcript
 }
 
-/** A long-lived background worker, not tied to a branch. */
+/**
+ * A long-lived background worker, not tied to a branch (HIVE-114).
+ *
+ * Backed by a real `AGENT.md` under `~/.hive/agents` rather than by a fixture:
+ * `id` is the agent's name, which is also its folder and the identity its
+ * ledger entries are `from`.
+ *
+ * `status` used to be the literal `'online'`, which described a *socket* and
+ * an agent is not one. Between two wakes there is no process at all — only a
+ * definition on disk and a resumable session — so the states that matter are
+ * about correspondence: asleep, running, waiting on an answer, held, broken.
+ */
 export interface Agent {
   kind: 'agent';
-  id: string; // 'slack-agent'
-  icon: string; // phosphor icon name, e.g. 'ph-slack-logo'
-  sub: string; // '#eng-alerts · #deploys · #ask-eng'
+  /** The agent's name — also its folder under `~/.hive/agents`. */
+  id: string; // 'slack-watcher'
+  icon: string; // phosphor icon name, e.g. 'ChatCircleDots'
+  /** The definition's `description`. */
+  sub: string; // 'Watches #incorp-dev and my mentions.'
   task: string;
-  status: 'online';
+  status: AgentStatus;
+  wake: WakeSpec;
+  lastRunAt?: number;
+  nextRunAt?: number;
+  /**
+   * Why the definition failed to parse, when it did.
+   *
+   * Present on a *listed* agent rather than causing it to be dropped: a broken
+   * file the user cannot see is a folder on disk with no way to connect it to
+   * the thing that is missing.
+   */
+  invalid?: string;
+  cost?: string;
   lines: TermLine[];
 }
 

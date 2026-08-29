@@ -1,10 +1,25 @@
 import { cn } from '@/lib/utils';
 import type { SessionStatus } from '@/types/entity';
 
+import type { AgentStatus } from '@shared/agent-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 
-/** Sessions have four states; agents are always `online`. */
-export type DotStatus = SessionStatus | 'online';
+/**
+ * Sessions have five states; agents have five of their own (HIVE-114).
+ *
+ * A union rather than a widened `SessionStatus`, because the two halves answer
+ * different questions — one is about a terminal, the other about a
+ * correspondent — and `working` appears in both meaning the same thing, so the
+ * overlap collapses for free rather than needing a synonym.
+ *
+ * `'online'` is gone with it. It described a socket, and an agent is not one:
+ * between two wakes there is no process to be connected to.
+ *
+ * The four new members all take `idle`'s grey for now. That is deliberate and
+ * temporary — HIVE-116 owns the agent palette — and grey is the honest
+ * placeholder because every agent in this story *is* asleep.
+ */
+export type DotStatus = SessionStatus | AgentStatus;
 
 /**
  * `terminated` is muted, not blue, and not `subtle` either (story 108).
@@ -23,7 +38,11 @@ const STATUS_FILL: Record<DotStatus, string> = {
   idle: 'bg-subtle',
   done: 'bg-brand',
   terminated: 'bg-muted',
-  online: 'bg-green',
+  // Agent states, all grey until HIVE-116 gives them a palette.
+  sleeping: 'bg-subtle',
+  asking: 'bg-subtle',
+  paused: 'bg-subtle',
+  failed: 'bg-subtle',
 };
 
 /**
@@ -39,7 +58,10 @@ export const STATUS_TEXT: Record<DotStatus, string> = {
   idle: 'text-subtle',
   done: 'text-brand',
   terminated: 'text-muted',
-  online: 'text-green',
+  sleeping: 'text-subtle',
+  asking: 'text-subtle',
+  paused: 'text-subtle',
+  failed: 'text-subtle',
 };
 
 /**
@@ -56,7 +78,10 @@ export const STATUS_LABEL: Record<DotStatus, string> = {
   idle: 'idle',
   done: 'done',
   terminated: 'terminated',
-  online: 'online',
+  sleeping: 'sleeping',
+  asking: 'asking',
+  paused: 'paused',
+  failed: 'failed',
 };
 
 /**
@@ -86,7 +111,10 @@ const STATUS_RING: Record<DotStatus, string> = {
   idle: 'border-subtle',
   done: 'border-brand',
   terminated: 'border-muted',
-  online: 'border-green',
+  sleeping: 'border-subtle',
+  asking: 'border-subtle',
+  paused: 'border-subtle',
+  failed: 'border-subtle',
 };
 
 /**

@@ -202,7 +202,7 @@ describe('MessageInput', () => {
       expect(acks).toHaveLength(2);
     });
 
-    it('keeps an agent online rather than marking it working', () => {
+    it('leaves an agent asleep rather than marking it working', () => {
       vi.useFakeTimers();
       render(<MessageInput entityId="slack-agent" />);
 
@@ -213,7 +213,7 @@ describe('MessageInput', () => {
 
       // Agents are long-lived workers; `working` is a session lifecycle state.
       expect(useHiveStore.getState().entities['slack-agent']).toMatchObject({
-        status: 'online',
+        status: 'sleeping',
       });
     });
 
