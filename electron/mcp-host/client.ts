@@ -42,7 +42,7 @@ export interface ReceiverClientOptions {
   url: string;
   /** This process's party id, from `HIVE_SESSION_ID`. */
   session: string;
-  /** The per-launch shared secret, from `HIVE_HOOK_TOKEN`. */
+  /** This session's own token, from `HIVE_HOOK_TOKEN` (HIVE-112). */
   token: string;
   fetch: typeof globalThis.fetch;
   timeoutMs?: number;

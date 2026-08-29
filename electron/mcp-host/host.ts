@@ -21,11 +21,14 @@ import { createToolHandlers } from './tools';
  *
  * Identity comes from the environment on purpose: none of this host's tools
  * accepts a `from`, so a model calling them has no argument through which to
- * name a different session. That is a property of the **MCP tool surface**,
- * not a transport-level guarantee — the receiver's per-launch token is shared
- * by every session it spawns (HIVE-111), so a model with shell access could
- * still `curl` the receiver directly with another session's header value.
- * Closing that is tracked separately, not attempted here.
+ * name a different session. That used to be a property of the **MCP tool
+ * surface** alone, not a transport-level guarantee: every session shared one
+ * receiver-wide token (HIVE-111), so a model with shell access could `curl`
+ * the receiver directly with another session's header value and be believed.
+ * The receiver now binds each session's token to its own id — a token proves
+ * only the session it was derived for (HIVE-112) — so that `curl` is refused
+ * with a 403 at the transport itself, and this host's identity guarantee no
+ * longer depends solely on its narrow tool surface.
  *
  * This module has no side effects at import: no `process.stdin`, no
  * `serve(...)` call. That is what lets it be imported directly in a test.

@@ -100,7 +100,7 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
           env: {
             ...process.env,
             HIVE_SESSION_ID: SESSION,
-            HIVE_HOOK_TOKEN: receiver?.token ?? '',
+            HIVE_HOOK_TOKEN: receiver?.tokenFor(SESSION) ?? '',
             HIVE_RECEIVER_URL: origin ?? '',
           },
           stdio: ['ignore', 'pipe', 'pipe'],

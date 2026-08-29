@@ -235,7 +235,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       if (running === null || settingsPath === null) return {};
       return {
         [HOOK_ENV_SESSION]: entityId,
-        [HOOK_ENV_TOKEN]: running.token,
+        [HOOK_ENV_TOKEN]: running.tokenFor(entityId),
         /*
           The third variable, for the MCP host (HIVE-112). A hook is handed its
           URL baked into the generated settings file, but the MCP host is

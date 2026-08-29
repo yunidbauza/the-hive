@@ -65,4 +65,23 @@ describe('createHookRuntime — envFor', () => {
 
     await runtime.stop();
   });
+
+  /**
+   * The regression `envFor` itself is answerable for (HIVE-112): a shared
+   * per-launch token would hand every session the same string here, which is
+   * exactly what let one session's environment be replayed as another's.
+   */
+  it('hands two different sessions two different tokens', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    const a = runtime.envFor('sess-a')['HIVE_HOOK_TOKEN'];
+    const b = runtime.envFor('sess-b')['HIVE_HOOK_TOKEN'];
+
+    expect(a).not.toBe(b);
+    // And deterministic for the same session, since there is no map behind it.
+    expect(runtime.envFor('sess-a')['HIVE_HOOK_TOKEN']).toBe(a);
+
+    await runtime.stop();
+  });
 });

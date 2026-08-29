@@ -95,7 +95,7 @@ describe.skipIf(!enabled)('ready-signal conformance', () => {
       */
       const driver = [
         'import os, pty, time, select',
-        `env = dict(os.environ, HIVE_SESSION_ID=${JSON.stringify(ENTITY)}, HIVE_HOOK_TOKEN=${JSON.stringify(receiver.token)}, TERM='xterm-256color')`,
+        `env = dict(os.environ, HIVE_SESSION_ID=${JSON.stringify(ENTITY)}, HIVE_HOOK_TOKEN=${JSON.stringify(receiver.tokenFor(ENTITY))}, TERM='xterm-256color')`,
         "env.pop('CLAUDE_CODE_CHILD_SESSION', None)",
         `argv = ['claude', '--settings', ${JSON.stringify(settingsPath)}, '--model', 'haiku']`,
         'pid, fd = pty.fork()',

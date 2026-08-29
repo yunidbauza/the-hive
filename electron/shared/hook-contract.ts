@@ -283,13 +283,18 @@ export const NOTIFICATION_TYPE_STATUS: Record<
  */
 export const HOOK_HEADER_SESSION = 'x-hive-session';
 
-/** The header carrying the per-launch shared secret. */
+/** The header carrying the caller's own session-bound token (HIVE-112). */
 export const HOOK_HEADER_TOKEN = 'x-hive-token';
 
 /** The environment variable each session's pty carries its Hive id in. */
 export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 
-/** The environment variable carrying the per-launch token into the hook. */
+/**
+ * The environment variable carrying a session's own token into the hook.
+ *
+ * A derivation of the receiver's launch secret and this one session's id
+ * (HIVE-112) — not the launch secret itself, which never leaves the receiver.
+ */
 export const HOOK_ENV_TOKEN = 'HIVE_HOOK_TOKEN';
 
 /**
