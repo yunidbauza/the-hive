@@ -94,4 +94,17 @@ export interface McpToolDefinition {
 export interface CallToolResult {
   content: { type: 'text'; text: string }[];
   isError: boolean;
+  /**
+   * The same payload as the text block, as data rather than a string to parse.
+   *
+   * Observed against real `claude` 2.1.251: the client reads this field and
+   * **prefers it over `content`'s text** when both are present and disagree.
+   * It does that without the tool having declared an `outputSchema` — so this
+   * is additive, not a contract. `outputSchema` is deliberately never declared
+   * on any tool here: it would oblige every successful result to validate
+   * against it, which is a sharp edge for an `isError` result that carries no
+   * payload at all. Optional, and present on only the two tools where a model
+   * would otherwise have to parse a JSON string or a sentence to get at it.
+   */
+  structuredContent?: Record<string, unknown>;
 }

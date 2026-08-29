@@ -17,9 +17,10 @@ import type { RpcHandlers } from './rpc';
  * is what happens when that call is refused — see {@link failed}.
  */
 
-const ok = (text: string): CallToolResult => ({
+const ok = (text: string, structuredContent?: Record<string, unknown>): CallToolResult => ({
   content: [{ type: 'text', text }],
   isError: false,
+  ...(structuredContent === undefined ? {} : { structuredContent }),
 });
 
 /**
@@ -123,8 +124,13 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
       HIVE-119 (permission asks) and HIVE-123 (Slack timestamps) both read keys
       out of, so anything lossy here breaks a story that has not been written
       yet — and a digest that kept `meta` would give back the tokens it saved.
+
+      The same snapshot also rides along as `structuredContent`: this call is
+      the one the preamble mandates first on every wake, so it is the one
+      place a model would otherwise have to parse a JSON string out of a text
+      field before it could do anything with it.
     */
-    return ok(JSON.stringify(snapshot));
+    return ok(JSON.stringify(snapshot), snapshot as unknown as Record<string, unknown>);
   };
 
   const claim = async (args: Record<string, unknown>): Promise<CallToolResult> => {
@@ -182,6 +188,10 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
 
     return ok(
       `asked ${to}: ${ref ?? id}. Now end your turn and wait — you will be woken with the answer.`,
+      // The same id/ref, as data — HIVE-119 and HIVE-120 both need to answer
+      // this thread later, and today that means extracting the ref out of a
+      // sentence rather than reading a field.
+      { id, ...(ref === undefined ? {} : { ref }) },
     );
   };
 

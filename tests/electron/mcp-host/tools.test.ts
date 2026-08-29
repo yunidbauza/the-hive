@@ -53,6 +53,29 @@ describe('ledger_read', () => {
     expect(textOf(result)).toBe(JSON.stringify(emptySnapshot));
   });
 
+  /**
+   * `structuredContent` carries the same snapshot as the text block, so the
+   * model reading the first call the preamble mandates on every wake does not
+   * have to parse a JSON string out of a text field to get at it. The text
+   * stays exactly as it was — the MCP spec's backward-compatibility guidance
+   * is that a structured result should *also* serialise into text, and this
+   * still needs to work for a client that reads only `content`.
+   */
+  it('carries the snapshot as structuredContent, alongside the unchanged text', async () => {
+    const snapshot: LedgerSnapshot = {
+      entries: [{ id: 'e1', ts: 1, from: 'overmind', kind: 'post', body: 'one' }],
+      openAsks: [],
+      claims: { 'HIVE-9': 'sess-a' },
+    };
+    const client = stub({ read: vi.fn(async () => snapshot) });
+    const handlers = createToolHandlers(client);
+
+    const result = await handlers.callTool('ledger_read', {});
+
+    expect(result.structuredContent).toEqual(snapshot);
+    expect(textOf(result)).toBe(JSON.stringify(snapshot));
+  });
+
   it('advances a cursor so the next read returns only what is new', async () => {
     const snapshot: LedgerSnapshot = {
       entries: [
@@ -144,6 +167,20 @@ describe('the writing tools', () => {
     expect(textOf(result)).toMatch(/a1/);
     // The model must stop after asking; the result says so.
     expect(textOf(result)).toMatch(/end your turn/i);
+    // And the same id/ref as data, not just inside the sentence — HIVE-119
+    // and HIVE-120 both need to answer this thread later.
+    expect(result.structuredContent).toEqual({ id: 'id-1', ref: 'a1' });
+  });
+
+  it('ledger_ask omits ref from structuredContent when the receiver returned none', async () => {
+    const client = stub({ post: vi.fn(async () => ({ id: 'id-1' })) });
+    const result = await createToolHandlers(client).callTool('ledger_ask', {
+      to: 'overmind',
+      body: 'ship it?',
+    });
+
+    expect(result.structuredContent).toEqual({ id: 'id-1' });
+    expect(result.structuredContent).not.toHaveProperty('ref');
   });
 
   it('ledger_answer sends the thread through untouched, ref or id', async () => {
@@ -251,5 +288,35 @@ describe('ledger_claim and ledger_release', () => {
 
     expect(result.isError).toBe(true);
     expect(client.post).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `ledger_read` and `ledger_ask` are deliberately the only two tools that gain
+ * `structuredContent` — everything else stays byte-identical to what it
+ * returned before HIVE-112's structured-content change.
+ */
+describe('structuredContent stays off everywhere else', () => {
+  it('carries no structuredContent for ledger_post, ledger_answer, ledger_claim, ledger_release, ledger_done or ledger_failed', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client);
+
+    const post = await handlers.callTool('ledger_post', { body: 'hello' });
+    expect(post.structuredContent).toBeUndefined();
+
+    const answer = await handlers.callTool('ledger_answer', { thread: 'a1', body: 'yes' });
+    expect(answer.structuredContent).toBeUndefined();
+
+    const claim = await handlers.callTool('ledger_claim', { task: 'HIVE-112' });
+    expect(claim.structuredContent).toBeUndefined();
+
+    const release = await handlers.callTool('ledger_release', { task: 'HIVE-112' });
+    expect(release.structuredContent).toBeUndefined();
+
+    const done = await handlers.callTool('ledger_done', { body: 'merged' });
+    expect(done.structuredContent).toBeUndefined();
+
+    const failed = await handlers.callTool('ledger_failed', { body: 'blocked' });
+    expect(failed.structuredContent).toBeUndefined();
   });
 });
