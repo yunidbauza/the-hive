@@ -117,6 +117,29 @@ export interface SessionsOptions {
    * differently on the second run.
    */
   history?: SessionHistory;
+  /**
+   * A session reached an empty prompt with nothing running behind it
+   * (HIVE-113).
+   *
+   * Optional in the same spirit as `hooks` — absent is a supported state rather
+   * than a degraded one; the browser build has no main process at all.
+   *
+   * **Fired on every qualifying event, not only on the edge.** The hook tracker
+   * recomputes a snapshot per event and has no notion of a *transition*, so
+   * building one here would mean a second copy of the status this file already
+   * publishes, kept in step by hand. The one consumer — the ledger's delivery
+   * rule — is idempotent, because a nudge that was written has a receipt in the
+   * log, so a repeat costs a read rather than a second line in a terminal.
+   */
+  onIdle?: (entityId: string) => void;
+  /**
+   * A session's agent came up, including after a resume (HIVE-113).
+   *
+   * The same event `CH.sessionReady` reports to the renderer, offered to main's
+   * own callers so delivery does not have to round-trip through the renderer to
+   * learn a held nudge can now be written.
+   */
+  onReady?: (entityId: string) => void;
 }
 
 export interface OpenRequest {
@@ -226,6 +249,21 @@ export interface Sessions {
   /** Live entity ids, for diagnostics and the session cap. */
   entities(): string[];
   /**
+   * Is this session live and at an empty prompt right now? (HIVE-113)
+   *
+   * Answered from the status this module last **published**, because
+   * `StatusTracker` exposes `apply`, `reset`, `forget` and `held` — and no
+   * reader. Retaining what was already sent is not new knowledge, and it is the
+   * only point-in-time answer available to a caller that did not witness the
+   * event itself.
+   *
+   * `bgShells` participates for the same reason it gates {@link
+   * SessionsOptions.onIdle}: a turn that has ended while a backgrounded shell
+   * is still running derives `idle`, and writing into that prompt is still
+   * writing into a session that is doing something.
+   */
+  isIdle(entityId: string): boolean;
+  /**
    * The working directory this session was last observed in, or `undefined`.
    *
    * **Main's own observation**, taken from that session's hook payloads — never
@@ -276,6 +314,8 @@ export function createSessions(options: SessionsOptions): Sessions {
     newSessionUuid = randomUUID,
     branchReader,
     history,
+    onIdle,
+    onReady,
   } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
@@ -415,6 +455,20 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   const hookDriven = new Set<string>();
 
+  /**
+   * What this module last told the renderer each session was doing (HIVE-113).
+   *
+   * Written in {@link publishStatus} rather than in the hook handler, so every
+   * path that reports a status — hooks *and* the activity inference — keeps it
+   * true. A copy maintained only on the hook path would answer `idle` for a
+   * session the inference had since moved on.
+   *
+   * Dropped in `settleExit` with the rest of the session's record: an entity id
+   * is reused when a terminal's successor takes it, and inheriting a stale
+   * `idle` would let a nudge be written into a prompt that is mid-turn.
+   */
+  const lastStatus = new Map<string, ObservedStatus>();
+
   /** One OSC-0 reader per session — a partial sequence is per-stream state. */
   const titles = new Map<string, TitleReader>();
 
@@ -490,7 +544,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        */
       if (status !== 'terminated' && hookDriven.has(entityId)) return;
       // The process is gone; drop its record rather than leak it (HIVE-83).
-      if (status === 'terminated') statusTracker.forget(entityId);
+      // `lastStatus` goes with it, so a successor taking this id cannot
+      // inherit an `idle` that was true of the session before it (HIVE-113).
+      if (status === 'terminated') {
+        statusTracker.forget(entityId);
+        lastStatus.delete(entityId);
+      }
       /**
        * A declared finish leaves on its own channel, not as a status (HIVE-93).
        *
@@ -616,6 +675,21 @@ export function createSessions(options: SessionsOptions): Sessions {
         derived.detail,
         event.toolName,
       );
+
+      /**
+       * The prompt is empty and nothing is running behind it (HIVE-113).
+       *
+       * Both halves are load-bearing. A session showing a permission prompt
+       * derives `waiting`, not `idle`, so it is excluded here — which is the
+       * whole point of the rule that nothing is ever written mid-turn. And a
+       * turn that ended while a backgrounded shell is still running *does*
+       * derive `idle`, with `detail: 'script'`, so the status alone would say
+       * yes to a session that is still working.
+       */
+      if (derived.status === 'idle' && statusTracker.held(event.entityId).bgShells === 0) {
+        onIdle?.(event.entityId);
+      }
+
       /**
        * `/done`'s two turning points, both of them events on this stream
        * (HIVE-93).
@@ -802,6 +876,10 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     if (status !== 'terminated') history?.record(entityId, { status });
 
+    // Retained so `isIdle` has a point-in-time answer (HIVE-113). Set for every
+    // publisher, not just the hook path — see the note on `lastStatus`.
+    lastStatus.set(entityId, status);
+
     send(CH.sessionStatus, {
       entityId,
       status,
@@ -850,6 +928,12 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   function publishReady(entityId: string): void {
     send(CH.sessionReady, { entityId } satisfies SessionReadyEvent);
+    /*
+      Main's own callers get the same event (HIVE-113). The repeat `/clear`
+      produces is harmless to the one consumer: a nudge already written has a
+      receipt in the ledger, so the second call finds nothing to do.
+    */
+    onReady?.(entityId);
   }
 
   function publishFinished(entityId: string): void {
@@ -1772,6 +1856,11 @@ export function createSessions(options: SessionsOptions): Sessions {
     },
 
     entities: () => registry.entities(),
+
+    isIdle: (entityId) =>
+      registry.sessionFor(entityId) !== undefined &&
+      lastStatus.get(entityId) === 'idle' &&
+      statusTracker.held(entityId).bgShells === 0,
     observedCwd: (entityId) => lastCwd.get(entityId),
     diagnostics: () => ptyIpc.diagnostics(),
 

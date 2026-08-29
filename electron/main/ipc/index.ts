@@ -143,6 +143,7 @@ import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
 import { createLedger } from '../ledger';
+import { createDeliver } from '../ledger/deliver';
 import {
   createNotificationHub,
   createNotifier,
@@ -790,15 +791,44 @@ export function registerIpcHandlers(): void {
   });
 
   /**
+   * Delivery — what happens to an entry after it is written (HIVE-113).
+   *
+   * Lazy accessors rather than the session layer itself, for the reason
+   * `knowsParty` above reaches for it through `?.`: `sessions` is a
+   * module-level binding initialised *after* this point.
+   *
+   * `write` reports whether the line landed, and that return value is load
+   * bearing rather than defensive — `deliver` records a receipt only on a
+   * successful write, and a receipt for a nudge that never reached a terminal
+   * would suppress the retry forever.
+   */
+  const deliver = createDeliver({
+    ledger,
+    isLive: (id) => sessions?.entities().includes(id) ?? false,
+    isIdle: (id) => sessions?.isIdle(id) ?? false,
+    write: (id, text) => {
+      if (sessions === null) return false;
+      sessions.write(id, text);
+      return true;
+    },
+  });
+
+  /**
    * One entry landed, from any party — pushed the way `notifications:new` is
    * (HIVE-75): straight to every window rather than through `send`, because
    * there is nothing here for a tap to loop back into.
+   *
+   * One subscription, both jobs (HIVE-113). The renderer's mirror and the
+   * terminal nudge read the same entry in the same order; two subscribers could
+   * not be made to disagree today, but they are two places to remember when a
+   * third consumer arrives.
    */
   ledger.onChange((entry) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (window.isDestroyed()) continue;
       window.webContents.send(CH.ledgerChanged, entry);
     }
+    deliver.onEntry(entry);
   });
 
   handle(CH.ledgerList, (_event, payload) => ledger.read(parseLedgerReadQuery(payload)));
@@ -851,6 +881,12 @@ export function registerIpcHandlers(): void {
     skills,
     hooks,
     history,
+    /*
+      The two moments a held nudge can finally be written (HIVE-113): a prompt
+      coming free mid-life, and a session coming back at all.
+    */
+    onIdle: (entityId) => deliver.onIdle(entityId),
+    onReady: (entityId) => deliver.onReady(entityId),
   });
 
   /**
