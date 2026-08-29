@@ -57,6 +57,21 @@ export default defineConfig({
            * the chunk they both import.
            */
           'session-manager': 'electron/pty-host/session-manager.ts',
+          /**
+           * A fourth input: the MCP server every session is given (HIVE-112).
+           *
+           * On the `main` target rather than a target of its own for the reason
+           * the pty host is: `defineConfig` takes `main`, `preload` and
+           * `renderer` and no fourth. It emits `out/main/mcp-host.js`, beside
+           * `index.js`, which is what lets main resolve the path it writes into
+           * the generated config with `import.meta.dirname`.
+           *
+           * It has no dependencies at all, so `externalizeDepsPlugin` has
+           * nothing to externalise here and the emitted file is self-contained —
+           * which is also why it needs no `asarUnpack` entry to be readable in
+           * the packaged app.
+           */
+          'mcp-host': 'electron/mcp-host/index.ts',
         },
       },
     },
