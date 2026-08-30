@@ -516,9 +516,16 @@ export interface HookStatusEvent {
  *
  * A distinct type rather than a widened {@link HookStatusEvent}, because the
  * two travel on different callbacks and only one of them may reach a status
- * push or the session history — see `ReceiverOptions.onAgentEvent`. Naming the
- * agent's shape separately is what lets the compiler say which of the two a
- * given consumer was written for.
+ * push or the session history — see `ReceiverOptions.onAgentEvent`.
+ *
+ * **The name documents; it does not enforce.** `sessionUuid` is optional, so
+ * the two interfaces are mutually assignable and the compiler will not stop a
+ * consumer written for one from being handed the other. What actually keeps an
+ * agent's event off the session path is *positional*: `receiver.ts` parts the
+ * two id spaces before it reads a field of the payload, and the branch that
+ * builds this shape can only reach `onAgentEvent`. This type's job is to give
+ * the uuid somewhere to live that is not the session's shape, and to say at a
+ * glance which register a signature is about.
  *
  * It extends the session shape rather than replacing it because everything on
  * that shape is still true here: an agent's headless turn raises the same

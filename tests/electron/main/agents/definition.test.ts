@@ -173,6 +173,23 @@ describe('parseAgent — refusals', () => {
     });
   });
 
+  /**
+   * The reader refuses it too, not only the IPC guard (HIVE-115).
+   *
+   * A definition reaches this parser from `~/.hive/agents` as well as from the
+   * Settings form, and a folder created by hand never passes through
+   * `assertAgentName`. An agent called `sess-01` would share a live terminal's
+   * identity — see `isReservedAgentName` for what that costs.
+   */
+  it('refuses the session-id shape as a name', () => {
+    const source = GOOD.replace('name: slack-watcher', 'name: sess-01');
+
+    expect(problems(source, { folder: 'sess-01' })).toContainEqual({
+      field: 'name',
+      reason: 'sess-01 is reserved.',
+    });
+  });
+
   it('refuses a name that does not match its folder', () => {
     expect(problems(GOOD, { folder: 'something-else' })).toContainEqual({
       field: 'name',

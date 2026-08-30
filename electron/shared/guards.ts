@@ -1,6 +1,6 @@
 import {
   AGENT_NAME_PATTERN,
-  RESERVED_AGENT_NAMES,
+  isReservedAgentName,
 } from './agent-contract';
 import type {
   AgentNameRequest,
@@ -1579,12 +1579,14 @@ export function parseSkillWriteRequest(input: unknown): SkillWriteRequest {
  * unrepresentable rather than sanitising one. Nothing downstream re-checks
  * containment.
  *
- * {@link RESERVED_AGENT_NAMES} is refused here as well as in the reader,
- * following the argument `assertSkillName` makes about `done`: a reservation
- * is part of the contract rather than a detail of the filesystem layer.
- * `overmind` matters more than `done` does here — it is the ledger's
+ * A reserved name — {@link isReservedAgentName} — is refused here as well as in
+ * the reader, following the argument `assertSkillName` makes about `done`: a
+ * reservation is part of the contract rather than a detail of the filesystem
+ * layer. `overmind` matters more than `done` does here — it is the ledger's
  * coordinator identity, and an agent that could take that name could sign its
- * entries as the overmind.
+ * entries as the overmind. Since HIVE-115 the session-id shape is reserved on
+ * the same footing, and for a sharper reason: an agent called `sess-01` would
+ * have a live *terminal*'s identity, not just a confusing one.
  */
 export function assertAgentName(value: unknown, label: string): string {
   const name = assertString(value, label);
@@ -1592,7 +1594,7 @@ export function assertAgentName(value: unknown, label: string): string {
   if (!AGENT_NAME_PATTERN.test(name)) {
     return fail(`${label}: must be lowercase letters, digits and dashes`);
   }
-  if ((RESERVED_AGENT_NAMES as readonly string[]).includes(name)) {
+  if (isReservedAgentName(name)) {
     return fail(`${label}: "${name}" is reserved`);
   }
   return name;

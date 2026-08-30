@@ -50,6 +50,49 @@ export const AGENT_NAME_PATTERN = SKILL_NAME_PATTERN;
 export const RESERVED_AGENT_NAMES = [OVERMIND, RESERVED_SKILL_NAME] as const;
 
 /**
+ * The shape of a **session** id, which an agent may not take (HIVE-115).
+ *
+ * `hive-store.ts`'s `nextSessionId` mints `sess-01`, `sess-02`, … — base 36,
+ * two digits, and `rememberSpawnId` reads them back with `/^sess-([0-9a-z]+)$/`.
+ * Every one of those is a legal agent name under
+ * {@link AGENT_NAME_PATTERN}, so without this an agent could be *called* a live
+ * session's id.
+ *
+ * That is not a cosmetic clash. Sessions and agents are disjoint id spaces
+ * everywhere the app reasons about them — the hook receiver routes on which
+ * register a name is in, `entities` in the store is one map keyed by both, and
+ * the ledger authenticates a party by name. An agent wearing `sess-01` puts a
+ * collision into all three at once: its headless hooks take the session branch
+ * in `receiver.ts` (the session wins, deliberately, because it is the one with
+ * a pty to keep truthful), so they would move a real terminal's status dot and
+ * write its history — and its `/done` would arm `/exit` on that terminal.
+ *
+ * Reserved as a **prefix** rather than as the exact minted shape. `sess-foo` is
+ * no more nameable than `sess-01` is: the prefix is what the fleet reads as
+ * "this is a terminal", and a rule a person can predict is worth more than the
+ * three extra names a tighter one would allow.
+ *
+ * A pattern rather than an entry in {@link RESERVED_AGENT_NAMES}, because the
+ * set is unbounded — there is no list of session ids to enumerate, only a shape.
+ * {@link isReservedAgentName} is what puts the two questions back together so
+ * every caller asks one.
+ */
+export const SESSION_ID_PREFIX_PATTERN = /^sess-/;
+
+/**
+ * Is this name spoken for — by the ledger, by a skill, or by the fleet?
+ *
+ * One function rather than the same two checks written at each of the four
+ * places that validate a name (the IPC guard, the definition parser, the
+ * registry's listing filter, and the Settings form). Those four must agree, and
+ * a reservation added to only three of them is a name the user can create in
+ * one place and see refused in another.
+ */
+export const isReservedAgentName = (name: string): boolean =>
+  (RESERVED_AGENT_NAMES as readonly string[]).includes(name) ||
+  SESSION_ID_PREFIX_PATTERN.test(name);
+
+/**
  * Integrations an agent's `mcp:` list may name.
  *
  * One entry, because one integration is planned. Whether Slack is *connected*

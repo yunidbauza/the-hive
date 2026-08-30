@@ -1902,6 +1902,8 @@ describe('the agent id space (HIVE-115)', () => {
   let dones: string[];
   let readies: string[];
   let metrics: string[];
+  let dir: string;
+  let ledger: Ledger;
 
   beforeEach(async () => {
     sessionEvents = [];
@@ -1911,6 +1913,14 @@ describe('the agent id space (HIVE-115)', () => {
     dones = [];
     readies = [];
     metrics = [];
+    dir = mkdtempSync(join(tmpdir(), 'hive-receiver-agents-'));
+    /*
+      A real ledger rather than the `noLedger` stub, because the POST route is
+      the one place an agent is *meant* to get through — `PartyKind` has named
+      'agent' since HIVE-111 — and a stub that refuses everything could not tell
+      "the receiver let it past `reject`" from "the receiver refused it".
+    */
+    ledger = createLedger({ dir, knowsParty: (id) => id === AGENT || id === SESSION });
     receiver = createReceiver({
       /*
         Disjoint on purpose, and the whole suite depends on it: a fixture in
@@ -1926,7 +1936,8 @@ describe('the agent id space (HIVE-115)', () => {
       onDone: (entityId) => dones.push(entityId),
       onReady: (entityId) => readies.push(entityId),
       onMetrics: (entityId) => metrics.push(entityId),
-      ...noLedger,
+      onLedgerRead: (_caller, query) => ledger.read(query),
+      onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
     });
     const started = await receiver.start();
     expect(started).not.toBeNull();
@@ -1935,6 +1946,7 @@ describe('the agent id space (HIVE-115)', () => {
 
   afterEach(async () => {
     await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   const postAs = (entityId: string, body: unknown, target = url) =>
@@ -2102,7 +2114,7 @@ describe('the agent id space (HIVE-115)', () => {
    * its own name, and refusing them would leave a run with no durable record of
    * itself. `visibleTo` is still the only thing that decides what comes back.
    */
-  it('lets an agent reach the ledger routes', async () => {
+  it('lets an agent read the ledger', async () => {
     const response = await postAs(
       AGENT,
       {},
@@ -2110,6 +2122,51 @@ describe('the agent id space (HIVE-115)', () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  /**
+   * The state-mutating half, which is the one that matters.
+   *
+   * A run's `run.started` / `run.ended` entries are the only durable record
+   * that a wake happened, and an agent's `ledger_*` MCP tools post them under
+   * the agent's own name — `mcp-host/client.ts` sends `HIVE_SESSION_ID`, which
+   * the waker sets from `hooks.envFor(name)`. Refusing this route would leave
+   * every run unrecorded.
+   *
+   * `from` is asserted because it is the discipline the whole route rests on:
+   * the identity comes off the header, never the body, so an agent cannot post
+   * as the session it shares a socket with.
+   */
+  it('lets an agent post to the ledger, as itself', async () => {
+    const response = await postAs(AGENT, { kind: 'post', body: 'woke up' }, `${
+      receiver.origin as string
+    }${LEDGER_POST_PATH}`);
+
+    expect(response.status).toBe(200);
+    expect(ledger.read({}).entries.map((entry) => [entry.from, entry.body])).toEqual([
+      [AGENT, 'woke up'],
+    ]);
+  });
+
+  it('refuses a ledger post from an id in neither register', async () => {
+    const response = await postAs('nobody-at-all', { kind: 'post', body: 'hi' }, `${
+      receiver.origin as string
+    }${LEDGER_POST_PATH}`);
+
+    expect(response.status).toBe(404);
+    expect(ledger.read({}).entries).toEqual([]);
+  });
+
+  /**
+   * The body's `from` is discarded by `parseLedgerPostBody` and the header's is
+   * used instead, so an agent cannot sign an entry as the session.
+   */
+  it('will not let an agent post as a session', async () => {
+    await postAs(AGENT, { from: SESSION, kind: 'post', body: 'not mine' }, `${
+      receiver.origin as string
+    }${LEDGER_POST_PATH}`);
+
+    expect(ledger.read({}).entries.map((entry) => entry.from)).toEqual([AGENT]);
   });
 
   it('refuses an agent presenting another identity’s token', async () => {

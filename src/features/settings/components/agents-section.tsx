@@ -18,7 +18,7 @@ import { SkillDiscardConfirm } from '@features/settings/components/skill-discard
 import { useAgents } from '@hooks/use-agents';
 import {
   AGENT_NAME_PATTERN,
-  RESERVED_AGENT_NAMES,
+  isReservedAgentName,
   type AgentProblem,
 } from '@shared/agent-contract';
 
@@ -77,7 +77,7 @@ You are … . On every wake, read your ledger inbox first, then do your job.
 /** Why this name cannot be saved, or `null`. Mirrors main's own rules. */
 function nameProblem(name: string, taken: readonly string[]): string | null {
   if (name === '') return 'Give the agent a name in its frontmatter.';
-  if ((RESERVED_AGENT_NAMES as readonly string[]).includes(name)) {
+  if (isReservedAgentName(name)) {
     return `"${name}" is reserved by The Hive.`;
   }
   if (!AGENT_NAME_PATTERN.test(name)) {

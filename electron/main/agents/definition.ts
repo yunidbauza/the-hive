@@ -14,10 +14,10 @@ import {
   AGENT_FIELDS,
   AGENT_LIMIT_DEFAULTS,
   AGENT_NAME_PATTERN,
-  RESERVED_AGENT_NAMES,
   WAKE_EVERY_FLOOR_MS,
   WAKE_ON_CHANNEL_PREFIX,
   WAKE_ON_EVENTS,
+  isReservedAgentName,
   isWakeOn,
   parseDays,
   parseDuration,
@@ -176,7 +176,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
         field: 'name',
         reason: 'Lower-case letters, digits and dashes only.',
       });
-    } else if ((RESERVED_AGENT_NAMES as readonly string[]).includes(name)) {
+    } else if (isReservedAgentName(name)) {
       problems.push({ field: 'name', reason: `${name} is reserved.` });
     } else if (name !== ctx.folder) {
       problems.push({

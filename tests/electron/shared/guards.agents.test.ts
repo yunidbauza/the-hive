@@ -33,6 +33,29 @@ describe('assertAgentName', () => {
     expect(() => assertAgentName('done', 'x')).toThrow(IpcValidationError);
   });
 
+  /**
+   * The session-id shape is reserved too (HIVE-115).
+   *
+   * `hive-store.ts` mints `sess-01`, `sess-02`, … and every one of those passes
+   * `AGENT_NAME_PATTERN`. An agent wearing a live terminal's id is not a
+   * cosmetic clash: the hook receiver routes on which register a name is in and
+   * lets the *session* win a collision, so that agent's headless hooks would
+   * move a real terminal's status dot and write its history — and its `/done`
+   * would arm `/exit` on it.
+   */
+  it('refuses the session-id shape', () => {
+    expect(() => assertAgentName('sess-01', 'x')).toThrow(IpcValidationError);
+    expect(() => assertAgentName('sess-1', 'x')).toThrow(IpcValidationError);
+    // The prefix is what the fleet reads as "this is a terminal", so the whole
+    // of it is reserved rather than only the two-digit base-36 form.
+    expect(() => assertAgentName('sess-watcher', 'x')).toThrow(IpcValidationError);
+  });
+
+  it('still accepts a name that merely contains the prefix', () => {
+    // Reserved at the start, not anywhere: `assess-risk` is an ordinary name.
+    expect(assertAgentName('assess-risk', 'x')).toBe('assess-risk');
+  });
+
   it('refuses a non-string', () => {
     expect(() => assertAgentName(3, 'x')).toThrow(IpcValidationError);
   });

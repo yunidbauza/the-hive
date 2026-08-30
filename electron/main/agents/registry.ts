@@ -33,7 +33,7 @@ import {
   AGENT_FILE,
   AGENT_NAME_PATTERN,
   KNOWN_AGENT_MCP,
-  RESERVED_AGENT_NAMES,
+  isReservedAgentName,
   type AgentsSnapshot,
   type AgentSummary,
   type AgentWriteResult,
@@ -106,16 +106,15 @@ export interface AgentRegistry {
 /**
  * Can the IPC layer address this folder at all?
  *
- * Mirrors `assertAgentName`: same pattern, same reserved names. A folder that
+ * Mirrors `assertAgentName`: same pattern, same reservations — including the
+ * session-id shape (HIVE-115), which is why the question is asked through
+ * `isReservedAgentName` rather than by re-listing what it covers. A folder that
  * fails this is listed with its reason rather than hidden, but nothing in the
  * pane can open or delete it, because the guard that refuses it is the same
  * one that makes a path unrepresentable.
  */
 function addressable(name: string): boolean {
-  return (
-    AGENT_NAME_PATTERN.test(name) &&
-    !(RESERVED_AGENT_NAMES as readonly string[]).includes(name)
-  );
+  return AGENT_NAME_PATTERN.test(name) && !isReservedAgentName(name);
 }
 
 /** A name may only ever address one folder directly under the root. */
