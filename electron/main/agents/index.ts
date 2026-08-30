@@ -9,9 +9,20 @@
  * `skillNames` is a *function*, not a snapshot: skills can be written while
  * the app runs, and an agent naming a skill the user added a minute ago must
  * validate against the folder as it is now, not as it was at boot.
+ *
+ * It resolves **three** roots, not one. An agent is a `claude -p` process on
+ * this machine, so it already loads the user's `~/.claude/skills` and their
+ * installed plugins; validating against `~/.hive/skills` alone refused names
+ * the agent could reach anyway, and refused every name at all on the fresh
+ * install where that folder is empty. `available.ts` carries the argument in
+ * full.
  */
-import { skillsRoot } from '../skills/paths';
-import { readUserSkills } from '../skills/read';
+import { readAvailableSkillNames } from '../skills/available';
+import {
+  installedPluginsFile,
+  skillsRoot,
+  userSkillsRoot,
+} from '../skills/paths';
 
 import { agentsRoot } from './paths';
 import { createAgentRegistry, type AgentRegistry } from './registry';
@@ -19,8 +30,12 @@ import { createAgentRegistry, type AgentRegistry } from './registry';
 export function createAgentsRuntime(): AgentRegistry {
   return createAgentRegistry({
     root: agentsRoot(),
-    skillNames: async () =>
-      (await readUserSkills(skillsRoot())).skills.map((skill) => skill.name),
+    skillNames: () =>
+      readAvailableSkillNames({
+        hive: skillsRoot(),
+        user: userSkillsRoot(),
+        installedPlugins: installedPluginsFile(),
+      }),
   });
 }
 

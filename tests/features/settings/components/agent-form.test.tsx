@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ICON_NAMES } from '@components/ui/icon';
 import {
-  AGENT_ICON_GROUPS,
+  AGENT_ICON_NAMES,
   AgentForm,
   FIELD_HELP,
   RENDERED_PATHS,
@@ -216,13 +216,16 @@ describe('AgentForm', () => {
   it('gives every text field the accessible name the pane shows', () => {
     setup();
 
+    /*
+      `wake on` and `systems` are absent because they are no longer text boxes:
+      both are closed sets, so both became chip rows. Their accessible names are
+      asserted where they now live, in the wake and capability specs.
+    */
     for (const label of [
       'name',
       'description',
       'quiet hours',
-      'wake on',
       'skills',
-      'integrations',
       'tools',
       'turns',
       'budget $',
@@ -264,11 +267,32 @@ describe('AgentForm', () => {
       anywhere to say why.
     */
     it('offers only names the Icon atom can draw', () => {
-      for (const group of AGENT_ICON_GROUPS) {
-        for (const name of group.names) {
-          expect(ICON_NAMES).toContain(name);
-        }
+      for (const name of AGENT_ICON_NAMES) {
+        expect(ICON_NAMES).toContain(name);
       }
+    });
+
+    /*
+      The headings are gone, and this is what "gone" has to mean: not merely
+      that six labels stopped rendering, but that the picker is one grid with
+      one tab stop. A regression that reintroduced groups would most likely do
+      it by nesting radiogroups, which is the part that costs a keyboard user.
+    */
+    it('draws one flat group, with no category headings', () => {
+      setup();
+
+      /*
+        Scoped to the picker: the pane's segmented controls are radiogroups too,
+        so a bare `getAllByRole` would be counting the wake mode and the model
+        alongside the icons.
+      */
+      const picker = screen.getByRole('radiogroup', { name: 'Icon' });
+
+      expect(within(picker).getAllByRole('radio')).toHaveLength(
+        AGENT_ICON_NAMES.length,
+      );
+      expect(screen.queryByText('watching')).not.toBeInTheDocument();
+      expect(screen.queryByText('kind and state')).not.toBeInTheDocument();
     });
   });
 
@@ -320,8 +344,15 @@ describe('AgentForm', () => {
       setup();
 
       expect(FIELD_HELP['limits.turns']).toMatch(/Default 40\./);
-      expect(FIELD_HELP['limits.budget_usd']).toMatch(/Default 0\.50\./);
       expect(FIELD_HELP['limits.rotate_after']).toMatch(/Default 50\./);
+      /*
+        Budget has no default to name, which is the whole change: a cap is
+        unlimited unless the author sets one. The sentence has to say so, and
+        has to say list-priced — the intuition it corrects is that a cap cannot
+        matter on a subscription, and it does.
+      */
+      expect(FIELD_HELP['limits.budget_usd']).toMatch(/unlimited/i);
+      expect(FIELD_HELP['limits.budget_usd']).toMatch(/list rates/);
     });
   });
 
@@ -479,6 +510,199 @@ describe('AgentForm', () => {
       )?.fields;
 
       expect(fields?.has('wake.days')).toBe(false);
+    });
+
+    /*
+      The gap this closes was one the pane admitted to in its own help text:
+      "other times can be added in the Source tab". A form that sends you to a
+      text editor to express its own field is a form with a hole in it, and the
+      grammar never had one — `parseTimes` has always taken any 24-hour time.
+    */
+    describe('a time the presets do not offer', () => {
+      const addTime = async (text: string) => {
+        await userEvent.click(screen.getByRole('button', { name: '+ time' }));
+        await userEvent.type(
+          screen.getByRole('textbox', { name: 'time' }),
+          `${text}{Enter}`,
+        );
+      };
+
+      it('adds it to at:, in order', async () => {
+        const onChange = setup({ source: CAL });
+
+        await addTime('07:30');
+
+        expect(patched(onChange, 'wake.at')).toBe('[07:30, 09:00]');
+      });
+
+      it('draws it as a chip once it is in the buffer', async () => {
+        setup({ source: CAL });
+
+        await addTime('07:30');
+
+        expect(screen.getByRole('button', { name: '07:30' })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        );
+      });
+
+      /*
+        Validated through `parseTimes` rather than a regex of the form's own, so
+        the control and the parser cannot disagree about what a time is. The
+        buffer must be untouched: a rejected value is not a small edit, it is no
+        edit.
+      */
+      it('refuses a time that is not one, and patches nothing', async () => {
+        const onChange = setup({ source: CAL });
+
+        await addTime('25:00');
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          /24-hour time/,
+        );
+        expect(onChange).not.toHaveBeenCalled();
+      });
+
+      it('closes without patching when nothing was typed', async () => {
+        const onChange = setup({ source: CAL });
+
+        await userEvent.click(screen.getByRole('button', { name: '+ time' }));
+        await userEvent.tab();
+
+        expect(onChange).not.toHaveBeenCalled();
+        expect(
+          screen.queryByRole('textbox', { name: 'time' }),
+        ).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  /*
+    `wake.on` was a free-text list over a closed vocabulary of three, and the
+    one list in the grammar the parser never checked — so a typo saved cleanly
+    and then silently never fired. Chips make an illegal value unreachable,
+    which is the same argument the icon picker made against its text field.
+  */
+  describe('what wakes it besides the schedule', () => {
+    it('draws the fixed events as chips, lit by what the file names', () => {
+      setup();
+
+      expect(screen.getByRole('button', { name: 'ledger' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(
+        screen.getByRole('button', { name: 'slack.mention' }),
+      ).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('adds an event when its chip is pressed', async () => {
+      const onChange = setup();
+
+      await userEvent.click(
+        screen.getByRole('button', { name: 'slack.mention' }),
+      );
+
+      expect(patched(onChange, 'wake.on')).toBe('[ledger, slack.mention]');
+    });
+
+    /*
+      Emptying the list deletes the line rather than writing `[]`. Both parse,
+      and both mean "no events" — but one of them is a line that says nothing.
+    */
+    it('drops the line when the last event is turned off', async () => {
+      const onChange = setup();
+
+      await userEvent.click(screen.getByRole('button', { name: 'ledger' }));
+
+      const fields = readFrontmatter(
+        onChange.mock.calls.at(-1)?.[0] as string,
+      )?.fields;
+
+      expect(fields?.has('wake.on')).toBe(false);
+    });
+
+    it('shows a channel the file already names, and can remove it', async () => {
+      const onChange = setup({
+        source: SOURCE.replace(
+          'on: [ledger]',
+          'on: [ledger, slack.channel:#incorp-dev]',
+        ),
+      });
+      const channel = screen.getByRole('button', {
+        name: 'slack.channel:#incorp-dev',
+      });
+
+      expect(channel).toHaveAttribute('aria-pressed', 'true');
+
+      await userEvent.click(channel);
+
+      expect(patched(onChange, 'wake.on')).toBe('[ledger]');
+    });
+
+    it('adds a channel typed into the adder', async () => {
+      const onChange = setup();
+
+      await userEvent.click(screen.getByRole('button', { name: '+ channel' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'channel' }),
+        '#incorp-dev{Enter}',
+      );
+
+      expect(patched(onChange, 'wake.on')).toBe(
+        '[ledger, slack.channel:#incorp-dev]',
+      );
+    });
+
+    it('refuses a channel name that is not one', async () => {
+      const onChange = setup();
+
+      await userEvent.click(screen.getByRole('button', { name: '+ channel' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'channel' }),
+        'two words{Enter}',
+      );
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/channel name/);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+  });
+
+  /* One legal value, so a text box was the wrong control for the same reason. */
+  describe('the systems it may reach', () => {
+    it('is a chip, off until the file names it', async () => {
+      const onChange = setup();
+      const slack = screen.getByRole('button', { name: 'slack' });
+
+      expect(slack).toHaveAttribute('aria-pressed', 'false');
+
+      await userEvent.click(slack);
+
+      expect(patched(onChange, 'mcp')).toBe('[slack]');
+    });
+  });
+
+  /*
+    A cap is unlimited unless the author sets one, and absence is how this
+    grammar spells that. Writing `budget_usd:` empty instead produces a line the
+    parser rejects — the exact jam the `clear` path exists to avoid.
+  */
+  describe('the budget', () => {
+    it('deletes the line when the field is emptied', async () => {
+      const onChange = setup({
+        source: SOURCE.replace(
+          'autonomy: ask',
+          'autonomy: ask\nlimits:\n  budget_usd: 2.00',
+        ),
+      });
+
+      await userEvent.clear(screen.getByRole('textbox', { name: 'budget $' }));
+
+      const fields = readFrontmatter(
+        onChange.mock.calls.at(-1)?.[0] as string,
+      )?.fields;
+
+      expect(fields?.has('limits.budget_usd')).toBe(false);
     });
   });
 

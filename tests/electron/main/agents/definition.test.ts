@@ -183,8 +183,30 @@ describe('parseAgent — refusals', () => {
   it('refuses a skill that does not exist, naming it', () => {
     expect(problems(GOOD, { skillNames: ['jira-writer'] })).toContainEqual({
       field: 'skills',
-      reason: 'release-notes is not in ~/.hive/skills.',
+      reason:
+        'No skill called release-notes — looked in ~/.hive/skills, ~/.claude/skills and your installed plugins.',
     });
+  });
+
+  /*
+    The field is a declaration, not a sandbox. An agent runs as a `claude -p`
+    process on this machine, which loads `~/.claude/skills` and the user's
+    installed plugins whether or not the definition names them — so a validator
+    that only knew `~/.hive/skills` refused names the agent could reach anyway,
+    and on the fresh install where that folder is empty it refused every name
+    there is.
+  */
+  it('accepts a name from outside the hive, including a plugin skill', () => {
+    const source = GOOD.replace(
+      'skills: [jira-writer, release-notes]',
+      'skills: [graphify, superpowers:brainstorming]',
+    );
+
+    expect(
+      definition(source, {
+        skillNames: ['graphify', 'superpowers:brainstorming'],
+      }).skills,
+    ).toEqual(['graphify', 'superpowers:brainstorming']);
   });
 
   it('refuses an unknown integration, naming it', () => {
@@ -269,9 +291,28 @@ Wait to be asked.
     const def = definition(MINIMAL, alone);
 
     expect(def.autonomy).toBe('ask');
-    expect(def.limits).toEqual({ turns: 40, budgetUsd: 0.5, rotateAfter: 50 });
+    expect(def.limits).toEqual({ turns: 40, rotateAfter: 50 });
     expect(def.skills).toEqual([]);
     expect(def.tools).toEqual([]);
+  });
+
+  /*
+    Unlimited is *absence*, not a number. The waker reads `undefined` as "no
+    --max-budget-usd on the command line", and any default small enough to feel
+    safe is small enough to cut off ordinary wakes: the binary prices a run at
+    list rates whether or not a subscription is billed for it.
+  */
+  it('leaves the budget unset when the file names none', () => {
+    expect(definition(MINIMAL, alone).limits.budgetUsd).toBeUndefined();
+  });
+
+  it('reads a budget the file does name', () => {
+    const source = MINIMAL.replace(
+      'icon: Ghost',
+      'icon: Ghost\nlimits:\n  budget_usd: 2.5',
+    );
+
+    expect(definition(source, alone).limits.budgetUsd).toBe(2.5);
   });
 
   it('reads daily as a full day', () => {
@@ -397,6 +438,48 @@ describe('parseAgent — the calendar wake mode', () => {
         (problem) => problem.field,
       ),
     ).toContain('wake.days');
+  });
+
+  /*
+    `wake.on` was the one list here with no check at all — the strings were cast
+    straight to `WakeOn[]`, so a typo saved cleanly and then silently never
+    woke anything. That is a worse failure than a refusal: nothing is wrong on
+    screen and nothing ever happens.
+  */
+  describe('wake.on', () => {
+    it('refuses an event that is not one, naming what it accepts', () => {
+      const [problem] = problems(
+        GOOD.replace('on: [ledger, slack.mention, slack.channel:#incorp-dev]', 'on: [bananna]'),
+      ).filter((each) => each.field === 'wake.on');
+
+      expect(problem?.reason).toContain('bananna is not a wake event');
+      expect(problem?.reason).toContain('ledger, slack.mention');
+      expect(problem?.reason).toContain('slack.channel:#name');
+    });
+
+    it('takes the three legal shapes, the ticket example included', () => {
+      expect(definition(GOOD).wake.on).toEqual([
+        'ledger',
+        'slack.mention',
+        'slack.channel:#incorp-dev',
+      ]);
+    });
+
+    it('takes a channel written without its hash', () => {
+      expect(
+        definition(
+          GOOD.replace('slack.channel:#incorp-dev', 'slack.channel:incorp-dev'),
+        ).wake.on,
+      ).toContain('slack.channel:incorp-dev');
+    });
+
+    it('refuses a channel with no name after the colon', () => {
+      expect(
+        problems(GOOD.replace('slack.channel:#incorp-dev', 'slack.channel:')).map(
+          (problem) => problem.field,
+        ),
+      ).toContain('wake.on');
+    });
   });
 
   it('still reads an interval-only definition', () => {

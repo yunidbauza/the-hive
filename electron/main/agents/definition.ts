@@ -16,6 +16,9 @@ import {
   AGENT_NAME_PATTERN,
   RESERVED_AGENT_NAMES,
   WAKE_EVERY_FLOOR_MS,
+  WAKE_ON_CHANNEL_PREFIX,
+  WAKE_ON_EVENTS,
+  isWakeOn,
   parseDays,
   parseDuration,
   parseList,
@@ -205,14 +208,46 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
     });
   }
 
+  /*
+    Every string in `wake.on` must be one The Hive knows how to act on.
+
+    This was the one list in the grammar with no check at all — the parsed
+    strings were cast straight to `WakeOn[]`, so `on: [bananna]` saved cleanly
+    and then silently never woke anything. Every other list here is validated
+    against something, and the vocabulary is closed and tiny, so there is no
+    reason this one should not be.
+  */
+  for (const event of parseList(shaped('wake.on') ?? '[]') ?? []) {
+    if (isWakeOn(event)) continue;
+
+    problems.push({
+      field: 'wake.on',
+      reason: `${event} is not a wake event. Use ${WAKE_ON_EVENTS.join(', ')}, or ${WAKE_ON_CHANNEL_PREFIX}#name.`,
+    });
+  }
+
   const skills = parseList(shaped('skills') ?? '[]') ?? [];
 
   for (const skill of skills) {
     if (ctx.skillNames.includes(skill)) continue;
 
+    /*
+      Named against everything on the machine, not only `~/.hive/skills`.
+
+      An agent runs as a `claude -p` process on this machine, which loads the
+      user's own `~/.claude/skills` and their installed plugins whether or not
+      this file names them. Refusing `superpowers:brainstorming` here therefore
+      refused a skill the agent could reach anyway — a validator holding an
+      opinion the runtime does not share, and on a machine with an empty
+      `~/.hive/skills` (the default) it refused *every* name.
+
+      What the field is, then, is a declaration this catches typos in. The
+      sentence says where it looked so that a name it did not find can be
+      chased.
+    */
     problems.push({
       field: 'skills',
-      reason: `${skill} is not in ~/.hive/skills.`,
+      reason: `No skill called ${skill} — looked in ~/.hive/skills, ~/.claude/skills and your installed plugins.`,
     });
   }
 
@@ -238,6 +273,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
   const quiet = shaped('wake.quiet');
   const model = shaped('model');
   const effort = shaped('effort');
+  const budget = shaped('limits.budget_usd');
   const limit = (path: string, fallback: number): number => {
     const value = shaped(path);
 
@@ -264,7 +300,17 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
       autonomy: (shaped('autonomy') ?? 'ask') as Autonomy,
       limits: {
         turns: limit('limits.turns', AGENT_LIMIT_DEFAULTS.turns),
-        budgetUsd: limit('limits.budget_usd', AGENT_LIMIT_DEFAULTS.budgetUsd),
+        /*
+          Absent stays absent, rather than falling back to a number.
+
+          A budget is unlimited unless the author sets one, and the waker reads
+          `undefined` as "no `--max-budget-usd` on the command line". Defaulting
+          it here would put a cap on every agent that never asked for one — and
+          any number small enough to be a safe default is small enough to cut
+          off ordinary wakes, since a wake is priced at list rates whether or
+          not a subscription is actually billed for it.
+        */
+        ...(budget === undefined ? {} : { budgetUsd: Number(budget) }),
         rotateAfter: limit('limits.rotate_after', AGENT_LIMIT_DEFAULTS.rotateAfter),
       },
       body,

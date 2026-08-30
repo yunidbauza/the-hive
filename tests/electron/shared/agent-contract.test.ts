@@ -9,6 +9,8 @@ import {
   KNOWN_AGENT_MCP,
   RESERVED_AGENT_NAMES,
   WAKE_EVERY_FLOOR_MS,
+  WAKE_ON_EVENTS,
+  isWakeOn,
 } from '../../../electron/shared/agent-contract';
 import { OVERMIND } from '../../../electron/shared/ledger-contract';
 import { RESERVED_SKILL_NAME } from '../../../electron/shared/skills-contract';
@@ -33,11 +35,47 @@ describe('agent-contract', () => {
     expect(KNOWN_AGENT_MCP).toEqual(['slack']);
   });
 
-  it('defaults limits to 40 turns, $0.50 and 50 runs', () => {
+  /*
+    Two defaults, not three. A budget has none on purpose: a cap is unlimited
+    unless the author sets one, and any number safe enough to impose is small
+    enough to cut off ordinary wakes — the binary prices a run at list rates
+    whether or not a subscription is billed for it.
+  */
+  it('defaults limits to 40 turns and 50 runs, and no budget', () => {
     expect(AGENT_LIMIT_DEFAULTS).toEqual({
       turns: 40,
-      budgetUsd: 0.5,
       rotateAfter: 50,
+    });
+    expect(AGENT_LIMIT_DEFAULTS).not.toHaveProperty('budgetUsd');
+  });
+
+  /*
+    `wake.on` was the one list in the grammar `parseAgent` never checked — it
+    cast the parsed strings straight to `WakeOn`, so a typo saved cleanly and
+    then silently never fired. This is the rule that closed it.
+  */
+  describe('isWakeOn', () => {
+    it('takes the two fixed events', () => {
+      for (const event of WAKE_ON_EVENTS) expect(isWakeOn(event)).toBe(true);
+    });
+
+    it('takes a channel, with or without its hash', () => {
+      expect(isWakeOn('slack.channel:#incorp-dev')).toBe(true);
+      expect(isWakeOn('slack.channel:incorp-dev')).toBe(true);
+      expect(isWakeOn('slack.channel:build_alerts.v2')).toBe(true);
+    });
+
+    it('refuses a word that is not an event', () => {
+      expect(isWakeOn('bananna')).toBe(false);
+      expect(isWakeOn('')).toBe(false);
+      expect(isWakeOn('slack')).toBe(false);
+    });
+
+    it('refuses a channel with nothing, or nonsense, after the colon', () => {
+      expect(isWakeOn('slack.channel:')).toBe(false);
+      expect(isWakeOn('slack.channel:#')).toBe(false);
+      expect(isWakeOn('slack.channel:two words')).toBe(false);
+      expect(isWakeOn('slack.channel:#Shouty')).toBe(false);
     });
   });
 

@@ -16,17 +16,20 @@ import { Icon } from '@components/ui/icon';
  * registry cannot reach that state: what you can pick is exactly what can be
  * drawn.
  *
- * ## Groups are one control, not several
+ * ## One flat grid, and why the headings went
  *
- * Thirty-six glyphs in an undifferentiated block is a wall, so the options
- * arrive grouped. But there is **one** `radiogroup` spanning every group and
- * one roving tabindex across the flattened list — six radio groups would mean
- * six tab stops for a single choice, and arrowing off the end of "Watching"
- * would dead-end rather than continue into "Messaging".
+ * The options were once six labelled groups. Six headings and six sub-grids
+ * made the icon field the tallest control in the pane by a wide margin, in a
+ * form that already scrolls past a dozen rows — and the labels were carrying
+ * almost nothing, because the options already announce themselves ("envelope",
+ * "slack logo") and the grouping was never anything a reader had to act on.
  *
- * Headings are `presentation`: they organise the grid for the eye, and the
- * options already carry distinct accessible names ("envelope", "slack logo"),
- * so announcing a heading before each would add length without adding meaning.
+ * They cost nothing to remove because they were never structural. This has
+ * always been **one** `radiogroup` with one roving tabindex across the whole
+ * list — six radio groups would have meant six tab stops for a single choice —
+ * and the headings were already `role="presentation"`. So the grouping survives
+ * where it was actually doing the work: related glyphs are still adjacent in
+ * the array, and a wrapping grid keeps them near each other on screen.
  *
  * Arrow keys move linearly rather than by row. The grid reflows with the pane's
  * width, so "the cell above" is not a fact this component knows — and a
@@ -34,16 +37,11 @@ import { Icon } from '@components/ui/icon';
  * practices describe for a single-select group whose layout is presentational.
  */
 
-export interface IconGroup {
-  label: string;
-  names: readonly string[];
-}
-
 interface IconPickerProps {
   /** Labels the group for assistive tech. Rendered by the caller, not here. */
   label: string;
-  /** The options, grouped. Every name must be drawable by {@link Icon}. */
-  groups: readonly IconGroup[];
+  /** The options, in display order. Every name must be drawable by {@link Icon}. */
+  names: readonly string[];
   /** The chosen name, or one that is not on offer when the file names one. */
   value: string;
   onChange: (name: string) => void;
@@ -57,18 +55,12 @@ function spoken(name: string): string {
 
 export function IconPicker({
   label,
-  groups,
+  names,
   value,
   onChange,
   className,
 }: IconPickerProps) {
   const id = useId();
-
-  /*
-    One list across every group, which is what makes the roving tabindex and
-    the arrow keys behave as a single control rather than six.
-  */
-  const flat = groups.flatMap((group) => group.names);
 
   /*
     Where the roving tabindex sits when the file names an icon this picker does
@@ -77,12 +69,12 @@ export function IconPicker({
     order, and the one user who most needs to change the value is the one who
     cannot reach it.
   */
-  const selected = flat.indexOf(value);
+  const selected = names.indexOf(value);
   const focusable = selected === -1 ? 0 : selected;
 
   const move = (from: number, delta: number) => {
-    const next = (from + delta + flat.length) % flat.length;
-    const name = flat[next];
+    const next = (from + delta + names.length) % names.length;
+    const name = names[next];
 
     if (name === undefined) return;
 
@@ -90,8 +82,7 @@ export function IconPicker({
     document.getElementById(`${id}-${next}`)?.focus();
   };
 
-  const cell = (name: string) => {
-    const index = flat.indexOf(name);
+  const cell = (name: string, index: number) => {
     const active = name === value;
 
     return (
@@ -116,7 +107,7 @@ export function IconPicker({
             move(0, 0);
           } else if (event.key === 'End') {
             event.preventDefault();
-            move(flat.length - 1, 0);
+            move(names.length - 1, 0);
           }
         }}
         className={cn(
@@ -137,23 +128,11 @@ export function IconPicker({
       role="radiogroup"
       aria-label={label}
       className={cn(
-        'flex flex-col gap-2 rounded-[5px] border border-border-soft bg-panel-2 p-1.5',
+        'grid grid-cols-[repeat(auto-fill,minmax(28px,1fr))] gap-1 rounded-[5px] border border-border-soft bg-panel-2 p-1.5',
         className,
       )}
     >
-      {groups.map((group) => (
-        <div key={group.label} className="flex flex-col gap-1">
-          <span
-            role="presentation"
-            className="px-0.5 text-[10px] tracking-wide text-subtle"
-          >
-            {group.label}
-          </span>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(28px,1fr))] gap-1">
-            {group.names.map(cell)}
-          </div>
-        </div>
-      ))}
+      {names.map(cell)}
     </div>
   );
 }

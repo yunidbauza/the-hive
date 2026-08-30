@@ -7,19 +7,13 @@ import { IconPicker } from '@components/ui/icon-picker';
 
 const NAMES = ['ph-robot', 'ph-slack-logo', 'ph-lightning'] as const;
 
-/* Two groups, so the specs also cover arrowing across a group boundary. */
-const GROUPS = [
-  { label: 'kind', names: ['ph-robot', 'ph-slack-logo'] },
-  { label: 'state', names: ['ph-lightning'] },
-] as const;
-
 const renderPicker = (value: string = 'ph-robot') => {
   const onChange = vi.fn();
 
   render(
     <IconPicker
       label="Icon"
-      groups={GROUPS}
+      names={NAMES}
       value={value}
       onChange={onChange}
     />,

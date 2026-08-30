@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { IconPicker, type IconGroup } from '@components/ui/icon-picker';
+import { IconPicker } from '@components/ui/icon-picker';
 import {
   SegmentedControl,
   type SegmentedOption,
@@ -9,8 +9,13 @@ import { SettingsGroup } from '@features/settings/components/settings-group';
 import {
   AGENT_LIMIT_DEFAULTS,
   AUTONOMIES,
+  KNOWN_AGENT_MCP,
   WAKE_DAYS,
+  WAKE_ON_CHANNEL_PREFIX,
+  WAKE_ON_EVENTS,
+  isWakeOn,
   parseDays,
+  parseList,
   parseTimes,
   patchFrontmatter,
   readFrontmatter,
@@ -127,7 +132,7 @@ const AUTONOMY_OPTIONS = [
 ] as const;
 
 /**
- * The glyphs an agent may wear, grouped by the kind of thing an agent is.
+ * The glyphs an agent may wear, in one flat list.
  *
  * A curated roster rather than the whole registry: most of what the app bundles
  * is file-type glyphs for the explorer, which say nothing about a background
@@ -136,81 +141,68 @@ const AUTONOMY_OPTIONS = [
  * the property that makes the picker unable to reproduce the free-text field's
  * question mark.
  *
- * The groups earn their place at this size: thirty-six in one block is a wall,
- * and these six are genuinely the kinds of thing a background agent tends to be.
+ * The six groups these came from — watching, messaging, code, time, data, kind
+ * — are gone as *labels* and kept as **order**. Six headings and six sub-grids
+ * made this the tallest control in a form that already scrolls, and the labels
+ * were carrying nothing a reader had to act on: the options announce themselves
+ * ("envelope", "slack logo"), and nobody picks an icon by first picking a
+ * category. Adjacency is what the grouping was really buying, and a flat
+ * wrapping grid keeps it.
  */
-export const AGENT_ICON_GROUPS: readonly IconGroup[] = [
-  {
-    label: 'watching',
-    names: [
-      'ph-eye',
-      'ph-binoculars',
-      'ph-detective',
-      'ph-broadcast',
-      'ph-pulse',
-      'ph-target',
-    ],
-  },
-  {
-    label: 'messaging',
-    names: [
-      'ph-envelope',
-      'ph-chat-circle-dots',
-      'ph-slack-logo',
-      'ph-paper-plane-tilt',
-      'ph-megaphone',
-      'ph-bell',
-    ],
-  },
-  {
-    label: 'code and repos',
-    names: [
-      'ph-git-pull-request',
-      'ph-github-logo',
-      'ph-git-branch',
-      'ph-terminal',
-      'ph-file-code',
-      'ph-bug',
-    ],
-  },
-  {
-    label: 'time',
-    names: [
-      'ph-calendar-check',
-      'ph-clock',
-      'ph-alarm',
-      'ph-hourglass',
-      'ph-moon',
-      'ph-arrows-clockwise',
-    ],
-  },
-  {
-    label: 'data',
-    names: [
-      'ph-database',
-      'ph-chart-line',
-      'ph-graph',
-      'ph-stack',
-      'ph-package',
-      'ph-funnel',
-    ],
-  },
-  {
-    label: 'kind and state',
-    names: [
-      'ph-robot',
-      'ph-gear',
-      'ph-shield-check',
-      'ph-warning',
-      'ph-fire',
-      'ph-lightning',
-    ],
-  },
+export const AGENT_ICON_NAMES: readonly string[] = [
+  // watching
+  'ph-eye',
+  'ph-binoculars',
+  'ph-detective',
+  'ph-broadcast',
+  'ph-pulse',
+  'ph-target',
+  // messaging
+  'ph-envelope',
+  'ph-chat-circle-dots',
+  'ph-slack-logo',
+  'ph-paper-plane-tilt',
+  'ph-megaphone',
+  'ph-bell',
+  // code and repos
+  'ph-git-pull-request',
+  'ph-github-logo',
+  'ph-git-branch',
+  'ph-terminal',
+  'ph-file-code',
+  'ph-bug',
+  // time
+  'ph-calendar-check',
+  'ph-clock',
+  'ph-alarm',
+  'ph-hourglass',
+  'ph-moon',
+  'ph-arrows-clockwise',
+  // data
+  'ph-database',
+  'ph-chart-line',
+  'ph-graph',
+  'ph-stack',
+  'ph-package',
+  'ph-funnel',
+  // kind and state
+  'ph-robot',
+  'ph-gear',
+  'ph-shield-check',
+  'ph-warning',
+  'ph-fire',
+  'ph-lightning',
 ];
 
+/**
+ * The two capability lists that stay free text, because both are open sets.
+ *
+ * `mcp` used to be here and is now a chip row: it has exactly one legal value,
+ * and a text box for a closed set of one is the same mistake the icon field
+ * made before it became a picker.
+ */
 const LIST_FIELDS = [
-  { path: 'skills', label: 'skills', hint: '[jira-writer]' },
-  { path: 'mcp', label: 'integrations', hint: '[slack]' },
+  { path: 'skills', label: 'skills', hint: '[jira-writer, superpowers:brainstorming]' },
   { path: 'tools', label: 'tools', hint: '[Read, Grep]' },
 ] as const;
 
@@ -221,9 +213,10 @@ const LIMIT_FIELDS = [
     hint: String(AGENT_LIMIT_DEFAULTS.turns),
   },
   {
+    // No default to show, because there is none — empty means unlimited.
     path: 'limits.budget_usd',
     label: 'budget $',
-    hint: AGENT_LIMIT_DEFAULTS.budgetUsd.toFixed(2),
+    hint: 'unlimited',
   },
   {
     path: 'limits.rotate_after',
@@ -252,25 +245,38 @@ export const FIELD_HELP: Record<string, string> = {
   'wake.every':
     'Measured from the last wake, so daily means every 24 hours rather than a fixed time of day. For a fixed time, use the schedule mode instead.',
   'wake.at':
-    'Local times, as [09:00, 17:00]. Two times means it wakes twice a day. Other times can be added in the Source tab.',
+    'Local times, as [09:00, 17:00]. Two times means it wakes twice a day. Add one the presets do not offer with + time.',
   'wake.days':
     'Days those times fire on. Selecting all seven, or none, means every day.',
   'wake.quiet':
     'Local HH:MM-HH:MM, and may wrap midnight. No scheduled wakes inside the window; a message addressed to the agent still wakes it.',
+  /*
+    `ledger` gets the most words because it is the one that is load-bearing and
+    the one whose *absence* is easy to misread. Turning it off does not mean
+    "nobody can reach it" — it means a question addressed to it sits unread, and
+    then expires. A field that quiet deserves to say so.
+  */
   'wake.on':
-    'Events that wake it outside its schedule. ledger — someone addresses it in the log. slack.mention — it is @-mentioned. slack.channel:#name — anything posted there.',
+    'ledger — anyone addressing it in the log wakes it: you from the console, a session, or another agent. Without it, only the schedule wakes it, and a question addressed to it waits unread until then. slack.mention searches your mentions on wakes it already takes; slack.channel:#name wakes it on anything posted there. Both need the Slack integration, which is not built yet.',
   skills:
-    'Skills the agent may invoke, by name, as [a, b]. Empty means it runs with none.',
-  mcp: 'Integrations it may reach, as [a, b]. Naming one here does not connect it — signing in is separate.',
+    'Skills it may invoke, from ~/.hive/skills, your own ~/.claude/skills, or an installed plugin as plugin:skill. A declaration rather than a sandbox — it catches a name that does not exist; it cannot stop a skill this machine has.',
+  mcp: 'Outside systems it may reach. Naming one does not connect it — signing in happens in Settings › Integrations, and the agent then acts as you, not as a bot.',
   tools:
-    'Tools it may call, as [a, b]. The hive ledger tools are always granted. A tool its body needs but this list omits is refused while it runs.',
+    'Tools it may call without stopping to ask, as [a, b]. The hive ledger tools are always granted. A wake has nobody to prompt, so a tool its body needs but this list omits is simply refused.',
   autonomy:
     'ask first — it posts a question to the ledger and waits for an answer. act — it proceeds and reports afterwards.',
   model:
     'Which model each wake runs on. Default follows the model Claude Code would pick on its own.',
-  'limits.turns': `Most turns in one wake before the run is cut off. Default ${AGENT_LIMIT_DEFAULTS.turns}.`,
-  'limits.budget_usd': `Most dollars one wake may spend. Default ${AGENT_LIMIT_DEFAULTS.budgetUsd.toFixed(2)}.`,
-  'limits.rotate_after': `Runs before the agent starts a fresh session, carrying a written handoff. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
+  'limits.turns': `Most turns in one wake before it is cut off — one turn is one reply from the model, tool call included. Default ${AGENT_LIMIT_DEFAULTS.turns}.`,
+  /*
+    Says list-priced outright, because the intuition it corrects is a costly
+    one: a cap looks irrelevant on a subscription, and it is not. The binary
+    prices every run at list rates and stops at this number whether or not a
+    dollar is ever billed.
+  */
+  'limits.budget_usd':
+    'Empty means unlimited. A number caps one wake, priced at list rates — so it stops a run on a subscription too, wherever the run happens to be.',
+  'limits.rotate_after': `Runs before it starts a fresh session, carrying a written handoff. Every wake resumes the last one, so this is what stops the transcript growing forever. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
 };
 
 /**
@@ -295,10 +301,140 @@ export const RENDERED_PATHS: readonly string[] = [
   'wake.quiet',
   'wake.on',
   ...LIST_FIELDS.map((field) => field.path),
+  // Explicit, because `mcp` left LIST_FIELDS for a chip row of its own. A path
+  // missing from here is a problem the form refuses to draw anywhere at all.
+  'mcp',
   'autonomy',
   'model',
   ...LIMIT_FIELDS.map((field) => field.path),
 ];
+
+/**
+ * A `+ …` button that opens one small input.
+ *
+ * Two rows need the same shape — a time the five presets do not offer, and a
+ * Slack channel — and both were previously unreachable from the Form tab. The
+ * schedule row's help text said so outright ("added in the Source tab"), which
+ * is a form conceding it cannot express its own field.
+ *
+ * `validate` is handed in rather than written here, and every caller passes a
+ * rule from `@shared/agent-contract` rather than a regex of its own. That is
+ * the point: the form and the parser cannot disagree about what a time is if
+ * only one of them knows.
+ *
+ * It holds its own state so the two adders cannot see each other's draft, and
+ * so a half-typed value never reaches the buffer — nothing is patched until a
+ * value passes.
+ */
+function Adder({
+  label,
+  placeholder,
+  validate,
+  onAdd,
+}: {
+  label: string;
+  placeholder: string;
+  /** The problem with this text, or `null` when it is acceptable. */
+  validate: (text: string) => string | null;
+  onAdd: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+
+  /*
+    Focus on mount, rather than `autoFocus`.
+
+    The a11y rule against `autoFocus` is aimed at focus a user did not ask for —
+    a page that steals the caret on load. This input does not exist until the
+    user clicks `+ …`, so moving focus into it *is* the request being honoured;
+    landing the click on a button and leaving the caret behind would be the
+    surprising behaviour. An effect with no dependencies fires exactly once,
+    which an inline callback ref would not: this component re-renders on every
+    keystroke, and a ref that refocused on each would fight anyone tabbing away.
+  */
+  useEffect(() => {
+    if (open) field.current?.focus();
+  }, [open]);
+
+  const close = () => {
+    setOpen(false);
+    setDraft('');
+    setProblem(null);
+  };
+
+  const commit = () => {
+    const text = draft.trim();
+
+    // Opened and abandoned. Closing silently is kinder than complaining about
+    // an empty box the user has already decided against.
+    if (text === '') {
+      close();
+      return;
+    }
+
+    const reason = validate(text);
+
+    if (reason !== null) {
+      setProblem(reason);
+      return;
+    }
+
+    onAdd(text);
+    close();
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-[4px] border border-dashed border-border bg-transparent px-2 py-0.5 text-[11.5px] text-subtle hover:border-brand hover:text-ink"
+      >
+        + {label}
+      </button>
+    );
+  }
+
+  return (
+    <span className="flex flex-col gap-1">
+      <input
+        ref={field}
+        type="text"
+        spellCheck={false}
+        aria-label={label}
+        value={draft}
+        placeholder={placeholder}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setProblem(null);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            commit();
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            close();
+          }
+        }}
+        /*
+          Blur commits rather than cancels, so clicking away from a valid entry
+          keeps it — but an *invalid* one stays open with its reason showing,
+          because closing would discard what the user typed and say nothing.
+        */
+        onBlur={commit}
+        className="w-24 rounded-[4px] border border-border bg-panel-2 px-2 py-0.5 text-[11.5px] text-ink outline-none focus:border-brand"
+      />
+      {problem === null ? null : (
+        <span role="alert" className="text-[10.5px] text-red">
+          {problem}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /** The first free `-n` for a name someone else already holds. */
 function firstFree(base: string, taken: readonly string[]): string {
@@ -437,6 +573,55 @@ export function AgentForm({
 
     set('wake.at', `[${next.join(', ')}]`);
   };
+
+  /**
+   * Write a list field, or delete its line when the list empties.
+   *
+   * `set` already deletes on an empty *string*, but an emptied list arrives
+   * here as `[]`, which is a value the parser accepts and which means the same
+   * thing as absence in both fields that use this. Writing `[]` would leave a
+   * line saying nothing; deleting it says nothing more quietly.
+   */
+  const setList = (path: string, values: readonly string[]) => {
+    if (values.length === 0) {
+      onChange(clear(path));
+      return;
+    }
+
+    set(path, `[${values.join(', ')}]`);
+  };
+
+  const wakeOn = parseList(at('wake.on')) ?? [];
+
+  const toggleWakeOn = (event: string) =>
+    setList(
+      'wake.on',
+      wakeOn.includes(event)
+        ? wakeOn.filter((each) => each !== event)
+        : [...wakeOn, event],
+    );
+
+  /*
+    The two fixed events, plus whatever channels the file already names — the
+    same rule the time chips follow. A channel is a value with a target in it,
+    so it can never be a preset; it has to arrive from the file or the adder.
+  */
+  const wakeOnChips = [
+    ...WAKE_ON_EVENTS,
+    ...wakeOn.filter(
+      (event) => !(WAKE_ON_EVENTS as readonly string[]).includes(event),
+    ),
+  ];
+
+  const mcp = parseList(at('mcp')) ?? [];
+
+  const toggleMcp = (server: string) =>
+    setList(
+      'mcp',
+      mcp.includes(server)
+        ? mcp.filter((each) => each !== server)
+        : [...mcp, server],
+    );
 
   /*
     What is *selected*, as opposed to what the file spells.
@@ -682,7 +867,7 @@ export function AgentForm({
             'icon',
             <IconPicker
               label="Icon"
-              groups={AGENT_ICON_GROUPS}
+              names={AGENT_ICON_NAMES}
               value={at('icon')}
               onChange={(next) => set('icon', next)}
             />,
@@ -744,10 +929,31 @@ export function AgentForm({
               {row(
                 'wake.at',
                 'at',
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap items-start gap-1">
                   {timeChips.map((time) =>
                     chip(time, times.includes(time), () => toggleTime(time)),
                   )}
+                  <Adder
+                    label="time"
+                    placeholder="07:30"
+                    /*
+                      The contract's own rule, reached through the parser rather
+                      than copied as a regex: `parseTimes` is what will read this
+                      value back, so asking it directly is the only check that
+                      cannot drift from the one that matters.
+                    */
+                    validate={(text) =>
+                      parseTimes(`[${text}]`) === null
+                        ? 'Use a 24-hour time, like 07:30.'
+                        : null
+                    }
+                    onAdd={(time) =>
+                      setList(
+                        'wake.at',
+                        [...new Set([...times, time])].sort(),
+                      )
+                    }
+                  />
                 </div>,
               )}
             </>
@@ -758,7 +964,30 @@ export function AgentForm({
             'quiet hours',
             input('wake.quiet', 'quiet hours', '23:00-07:00'),
           )}
-          {row('wake.on', 'wake on', input('wake.on', 'wake on', '[ledger]'))}
+          {row(
+            'wake.on',
+            'wake on',
+            <div className="flex flex-wrap items-start gap-1">
+              {wakeOnChips.map((event) =>
+                chip(event, wakeOn.includes(event), () => toggleWakeOn(event)),
+              )}
+              <Adder
+                label="channel"
+                placeholder="#incorp-dev"
+                validate={(text) =>
+                  isWakeOn(`${WAKE_ON_CHANNEL_PREFIX}${text}`)
+                    ? null
+                    : 'A channel name, like #incorp-dev.'
+                }
+                onAdd={(channel) =>
+                  setList('wake.on', [
+                    ...wakeOn,
+                    `${WAKE_ON_CHANNEL_PREFIX}${channel}`,
+                  ])
+                }
+              />
+            </div>,
+          )}
         </div>
       </SettingsGroup>
 
@@ -767,9 +996,21 @@ export function AgentForm({
         description="Everything it may reach while awake. Anything not listed is refused."
       >
         <div className="flex flex-col gap-2.5">
-          {LIST_FIELDS.map(({ path, label, hint }) =>
-            row(path, label, input(path, label, hint)),
+          {row(
+            'skills',
+            'skills',
+            input('skills', 'skills', LIST_FIELDS[0].hint),
           )}
+          {row(
+            'mcp',
+            'systems',
+            <div className="flex flex-wrap gap-1">
+              {KNOWN_AGENT_MCP.map((server) =>
+                chip(server, mcp.includes(server), () => toggleMcp(server)),
+              )}
+            </div>,
+          )}
+          {row('tools', 'tools', input('tools', 'tools', LIST_FIELDS[1].hint))}
           {row(
             'autonomy',
             'autonomy',

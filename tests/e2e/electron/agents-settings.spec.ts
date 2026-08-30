@@ -98,6 +98,57 @@ test('authors an agent through the pane and writes it to disk', async ({}, testI
   }
 });
 
+test('adds a schedule time the presets do not offer, and saves it', async ({}, testInfo) => {
+  /**
+   * The Form tab driven for real, which is the half no unit test can settle.
+   *
+   * The pane used to tell the user outright to go and edit the file — "other
+   * times can be added in the Source tab" — so this walks the path that
+   * sentence stood in for: switch to the calendar mode, type a time no preset
+   * offers, and watch it reach `~/.hive/agents` as bytes main's own parser
+   * accepted. A jsdom test can assert the buffer; only this can assert that the
+   * chip, the patch, the IPC, the validator and the disk all agree.
+   */
+  const { app, page, configPath } = await launchWithConfig((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openAgents(page);
+    await page.getByRole('button', { name: '+ New agent' }).click();
+    await page.getByRole('tab', { name: 'Source' }).click();
+    await page.getByLabel('Agent source').fill(DEFINITION);
+    await page.getByRole('tab', { name: 'Form' }).click();
+
+    await page.getByRole('radio', { name: 'on a schedule' }).click();
+    await page.getByRole('button', { name: '+ time' }).click();
+    await page.getByRole('textbox', { name: 'time' }).fill('07:30');
+    await page.getByRole('textbox', { name: 'time' }).press('Enter');
+
+    // Lit, and alongside the preset the mode switch seeded rather than instead
+    // of it — the adder must not be a replacement for the chips.
+    await expect(page.getByRole('button', { name: '07:30' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(
+      page.getByRole('button', { name: /slack-watcher/ }),
+    ).toBeVisible();
+
+    const written = readFileSync(
+      join(dirname(configPath), 'agents', 'slack-watcher', 'AGENT.md'),
+      'utf8',
+    );
+
+    expect(written).toContain('at: [07:30, 09:00]');
+    expect(written).not.toContain('every:');
+  } finally {
+    await app.close();
+  }
+});
+
 test('refuses a sub-minute wake interval and writes nothing', async ({}, testInfo) => {
   /**
    * The acceptance criterion in full: the refusal names the floor, **and** the

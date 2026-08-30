@@ -81,9 +81,20 @@ export type WakeDay = (typeof WAKE_DAYS)[number];
 export const WAKE_EVERY_FLOOR_MS = 60_000;
 export const WAKE_EVERY_DEFAULT_MS = 300_000;
 
+/**
+ * Limits that have a default. **`budgetUsd` is deliberately not among them.**
+ *
+ * A cap is unlimited unless the author sets one, which is absence — the same
+ * value `model`, `every` and `at` express by having no line. The alternative
+ * was a default in dollars, and the number it would have to be is not knowable
+ * here: a wake is priced at list rates whether or not anything is billed
+ * (`costBasis: "list"` in the binary's own result payload), and the same run
+ * costs four times as much on the default model as on `sonnet`. A default that
+ * cuts off most real wakes is worse than no default at all, and the person who
+ * knows what a wake of *theirs* is worth is the one writing the file.
+ */
 export const AGENT_LIMIT_DEFAULTS = {
   turns: 40,
-  budgetUsd: 0.5,
   rotateAfter: 50,
 } as const;
 
@@ -105,6 +116,50 @@ export const AGENT_STATUSES = [
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
 export type WakeOn = 'ledger' | 'slack.mention' | `slack.channel:${string}`;
+
+/**
+ * The two wake events that are a fixed word, rather than a word plus a target.
+ *
+ * These strings are **The Hive's**, not Slack's, and the second one is worth
+ * saying out loud because it reads like an event name and is not one. Slack's
+ * real `app_mention` fires for mentions of a Slack *app*, never for mentions of
+ * a person, so `slack.mention` can only ever mean *search my mentions on the
+ * wakes this agent already takes*. It is a poll instruction; it adds no wakes.
+ *
+ * `ledger` is the one that adds wakes, and it is the reason background agents
+ * are addressable at all: an `ask` or `answer` whose `to` names the agent wakes
+ * it, whoever wrote it — the overmind through the console's `ask` verb, a
+ * terminal session through `ledger_ask`, or another agent through the same
+ * tools. A broadcast (no `to`) wakes nobody, because parties read those on
+ * their own schedule.
+ */
+export const WAKE_ON_EVENTS = ['ledger', 'slack.mention'] as const;
+
+/** `slack.channel:#incorp-dev` — the prefix, and what may follow it. */
+export const WAKE_ON_CHANNEL_PREFIX = 'slack.channel:';
+
+/*
+  Slack's own channel rule, loosened to tolerate the leading `#` a person will
+  type because that is how the channel is written everywhere else. It is not
+  stripped: the value is the author's, and `#incorp-dev` is what the ticket's
+  own example file spells.
+*/
+const CHANNEL = /^#?[a-z0-9_-][a-z0-9._-]*$/;
+
+/**
+ * Is this a wake event The Hive knows how to act on?
+ *
+ * Exists because `wake.on` was the one list `parseAgent` never checked — it
+ * cast the parsed strings straight to {@link WakeOn}, so a typo saved cleanly
+ * and then silently never fired. Every other list in the grammar is validated
+ * against something; this is that something.
+ */
+export function isWakeOn(value: string): value is WakeOn {
+  if ((WAKE_ON_EVENTS as readonly string[]).includes(value)) return true;
+  if (!value.startsWith(WAKE_ON_CHANNEL_PREFIX)) return false;
+
+  return CHANNEL.test(value.slice(WAKE_ON_CHANNEL_PREFIX.length));
+}
 
 /**
  * When an agent wakes on its own.
@@ -142,7 +197,8 @@ export interface AgentDefinition {
   mcp: string[];
   tools: string[];
   autonomy: Autonomy;
-  limits: { turns: number; budgetUsd: number; rotateAfter: number };
+  /** `budgetUsd` absent means unlimited — no `--max-budget-usd` on the wake. */
+  limits: { turns: number; budgetUsd?: number; rotateAfter: number };
   body: string;
 }
 

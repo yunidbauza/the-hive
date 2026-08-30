@@ -451,6 +451,12 @@ Nothing *runs* one yet. HIVE-114 defines the file, teaches main to read,
 validate and watch a folder of them, and gives Settings a place to author them;
 the waker is HIVE-115. Every agent is therefore `sleeping`.
 
+That matters for how the pane is worded. A field describing runtime behaviour
+that has no implementation — and, in the case of `--max-turns` below, no
+mechanism in the CLI to implement it with — is worse than a field that says "not
+yet", so the sections below record what is enforced, what is merely declared,
+and what is waiting on the waker.
+
 ### One table, three requirements
 
 `AGENT_FIELDS` in `electron/shared/agent-contract.ts` lists every legal key with
@@ -481,6 +487,111 @@ starts a comment" silently truncates the first:
 | `description: Watches #incorp-dev and my mentions.` | part of the value |
 | `icon: ChatCircleDots        # a Phosphor name` | a comment |
 | `on: [ledger, slack.channel:#incorp-dev]` | part of the value |
+
+### What `wake.on` names, and who names it
+
+Three shapes, and all three strings are **The Hive's** rather than any external
+service's — which matters most for the middle one, because it reads like a Slack
+event name and is not one.
+
+| Value | What it means |
+| --- | --- |
+| `ledger` | An `ask` or `answer` whose `to` is this agent wakes it, whoever wrote it: the overmind through the console's `ask` verb, a terminal session through `ledger_ask`, or another agent through the same tools. A broadcast (no `to`) wakes nobody — parties read those on their own schedule. |
+| `slack.mention` | *Search my mentions on the wakes this agent already takes.* Slack's real `app_mention` fires for mentions of a Slack **app**, never of a person, so there is no push to subscribe to. It adds no wakes of its own. |
+| `slack.channel:#name` | A genuine push trigger, requiring the optional Socket Mode bridge and the app being a member of that channel. Inert without the bridge. |
+
+`ledger` is the one worth understanding before turning it off, because its
+*absence* is easy to misread. Off does not mean "nobody can reach this agent" —
+`run <agent>` still wakes it by hand. It means a question addressed to it sits
+unread until the next scheduled wake, and if there is no schedule, until
+`LEDGER_ASK_TTL_MS` retires it. The asker gets silence and then an expiry. The
+form says so under the field.
+
+`isWakeOn` in the contract is what closes the set. It exists because `wake.on`
+was, until then, the one list `parseAgent` never checked: the strings were cast
+straight to `WakeOn[]`, so `on: [bananna]` saved cleanly and then silently never
+fired — a worse failure than a refusal, since nothing looks wrong and nothing
+ever happens.
+
+### `skills`, `mcp` and `tools` are three layers, not three spellings of one
+
+They are easy to read as redundant — an agent reaches everything through tools
+in the end — and they are not. Each answers a different question and fails in a
+different way.
+
+| Field | Question | Mechanism |
+| --- | --- | --- |
+| `skills` | Which skills this agent may invoke | Names checked against what exists on the machine |
+| `mcp` | Which outside systems are plugged in, and as whom | Entries in the agent's `--mcp-config`; whose OAuth token is used |
+| `tools` | Which calls proceed **without stopping to ask** | `--allowedTools` |
+
+`mcp` decides whether a system's tools exist in the process at all, and on whose
+behalf — Claude Code holds the user's Slack OAuth in the Keychain, so the agent
+posts **as them**, not as a bot. `tools` decides which of the tools that exist
+may run unattended, and it is worth wording as *without asking* rather than
+*allowed*: a wake is headless, so there is nobody to prompt, and the fallback is
+refusal. Naming a system while granting none of its tools is a legitimate state
+(it can reach nothing until each call is approved); so is granting a tool whose
+system was never named (it does not exist).
+
+**`skills` is a declaration, not a sandbox.** This is the honest framing and it
+was arrived at the hard way. It was validated against `~/.hive/skills` alone,
+which was wrong in both directions: an agent is a `claude -p` process on the
+user's machine, so it loads their `~/.claude/skills` and their installed plugins
+whether or not the definition names them — and on a fresh install, where
+`~/.hive/skills` is empty, the field refused *every* name a person could type.
+
+`skills/available.ts` therefore resolves three roots — `~/.hive/skills`,
+`~/.claude/skills`, and each `installPath` in
+`~/.claude/plugins/installed_plugins.json`, whose skills are namespaced
+`plugin:skill`. The registry rather than a glob over the plugin cache, because
+several versions of one plugin sit there at once and only that file says which
+is installed. What the field buys is a name that does not exist caught in the
+editor; what it cannot do is stop a skill the machine has.
+
+Making it a real sandbox would mean `--restricted`, which ignores the user's
+settings sources entirely — and would therefore cut off exactly the external
+skills the widening exists to allow. That trade is recorded here rather than
+made silently; the waker (HIVE-115) is where it would be taken.
+
+### Two limits the CLI can enforce, and one it cannot
+
+Verified against `claude` 2.1.251 rather than assumed, because the epic's waker
+command names a flag that does not exist.
+
+**`--max-budget-usd` fires under subscription auth.** A run capped at `$0.0001`
+comes back `"terminal_reason": "budget_exhausted"`, `"subtype":
+"error_max_budget_usd"`, `is_error: true`. What it is not is a billing control:
+the same payload reports `"costBasis": "list"`, so the run is priced at list API
+rates and compared against the cap whether or not a dollar is ever charged. On a
+subscription it is therefore a **work ceiling denominated in dollars**; on an API
+key it is that and a spend cap.
+
+Which is why `budgetUsd` has **no default** and is optional on
+`AgentDefinition`. Absence means unlimited and means no flag on the command
+line. A default was tried at `$0.50` and is not defensible: measured on this
+machine, a single trivial turn costs `$0.096` on `sonnet` and `$0.417` on the
+default model — nearly all of it creating the system-prompt cache that every
+wake pays for. A real wake carries a larger prompt than that (the body, the
+ledger preamble, the MCP schemas) before doing any work, so `$0.50` would have
+guaranteed the failure it was meant to prevent.
+
+**`--max-turns` does not exist.** It is an Agent SDK option, not a CLI flag;
+2.1.251's flag set has `--max-budget-usd` and no turn cap. So `limits.turns`
+cannot be handed to the binary, and the pane was drawing a control for a limit
+nothing could apply. `electron/shared/agent-turns.ts` is the answer: the waker
+already reads `--output-format stream-json` off the child's stdout to build the
+run log, so it can count `assistant` events there and terminate the child past
+the limit. It is a fold rather than a function over lines because a pipe splits
+where it likes — a chunk boundary inside an event would otherwise undercount,
+which is the direction that makes a limit useless rather than merely wrong.
+
+`rotate_after` is unaffected and worth stating plainly: every wake is
+`claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
+the feature — it is how an agent remembers it already answered a thread — and
+the cost is a transcript that only grows. Rotation writes a handoff to the
+ledger and starts the next run on a fresh session id carrying it. Deliberate
+forgetting, with a note left behind.
 
 ### The form edits the file, not a model
 
