@@ -205,6 +205,37 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *   already return.
    * - **A refusal is a value, not a write.** `write` validates before touching
    *   the disk, so a page that spams malformed definitions creates nothing.
+   *
+   * ## `agents` grows to ten (HIVE-115)
+   *
+   * `run` and `kill` are the first verbs in this bridge that **start and stop a
+   * process** from a namespace whose other members only move files around, so
+   * they are exactly what this assertion exists to force an argument for. The
+   * argument is recorded in full on `BRIDGE_AGENTS_KEYS` in
+   * `electron/shared/ipc-contract.ts`; in short:
+   *
+   * - **`run` widens timing, not reach.** Its payload is one agent name through
+   *   the same `assertAgentName` that `read` and `remove` pass — no path, no
+   *   argv, no flag, no environment, not even the trigger string, which main
+   *   writes as `manual` itself. Main reads the definition off a folder it
+   *   chose, resolves `claudeCommand` from its own config, and hands `spawn` an
+   *   array. There is no shell on that path, so there is no quoting to get
+   *   wrong and no alias to inherit. A page that can call `run` can already
+   *   call `write`, and `write` is the verb that decides what an agent *is*;
+   *   `run` only decides when a definition the user already approved gets its
+   *   turn.
+   * - **`kill` is narrower than `run` by construction.** Same validated name,
+   *   and it can only ever reach a child **this app spawned and still holds** —
+   *   the tracker looks the name up in its own map and answers `false` for
+   *   anything else. It cannot name a pid. It has to exist because one run per
+   *   agent at a time means a wedged run blocks every future wake, and the only
+   *   other way out is quitting the app.
+   * - **`onStatus` and `onLines` are listeners, like `onChanged`.** `onStatus`
+   *   carries a strict subset of what `agents:list` already returns for that
+   *   agent — less, in fact, since it omits `sessionUuid`. `onLines` carries
+   *   the agent's own stdout, the one genuinely new fact, and it is the fact
+   *   the feature exists to show: a run nobody can read is a run nobody can
+   *   trust.
    */
   expect(surface.top).toEqual([
     'agents',
@@ -232,11 +263,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'updates',
   ]);
   expect(surface.agents).toEqual([
+    'kill',
     'list',
     'onChanged',
+    'onLines',
+    'onStatus',
     'read',
     'remove',
     'rename',
+    'run',
     'write',
   ]);
   expect(surface.ledger).toEqual(['answer', 'list', 'onChanged', 'post']);
