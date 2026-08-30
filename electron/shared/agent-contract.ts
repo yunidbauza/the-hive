@@ -763,12 +763,17 @@ export interface AgentRunRequest {
  * up at all, which the tracker cannot say because there is no tracker to say
  * it. Every value the tracker *can* return is one of these, and the
  * `agents:run` handler's declared return type is what keeps that true.
+ *
+ * `paused` is a refusal rather than a silent no-op (HIVE-117) for the reason
+ * the whole union is values rather than throws: the console prints the reason
+ * beside the agent, and "nothing happened" is the one answer that teaches the
+ * user to press the button again.
  */
 export type AgentRunResult =
   | { started: true; run: string }
   | {
       started: false;
-      refused: 'working' | 'unknown' | 'invalid';
+      refused: 'working' | 'unknown' | 'invalid' | 'paused';
       reason?: string;
     };
 

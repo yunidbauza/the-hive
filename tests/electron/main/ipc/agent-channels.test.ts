@@ -306,6 +306,170 @@ describe('agents:kill (HIVE-115)', () => {
   });
 });
 
+describe('agents:pause and agents:resume (HIVE-117)', () => {
+  /** A live window, so the status push has somewhere to land. */
+  const watchWindow = () => {
+    const send = vi.fn();
+    windows.push({ isDestroyed: () => false, webContents: { send } });
+    return send;
+  };
+
+  it('pauses by writing the status and pushing the row, without touching the run', async () => {
+    const send = watchWindow();
+
+    await expect(
+      invoke(CH.agentsPause, { name: 'slack-watcher' }),
+    ).resolves.toBe('paused');
+
+    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
+      status: 'paused',
+    });
+    /*
+      The whole of the pause-is-not-a-kill decision, in one assertion: a turn in
+      flight finishes. `kill` is the verb next door for the other case.
+    */
+    expect(trackerKill).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      CH.agentsStatus,
+      expect.objectContaining({ name: 'slack-watcher', status: 'paused' }),
+    );
+  });
+
+  it('resumes to sleeping when the agent has no unanswered question', async () => {
+    const send = watchWindow();
+    stored['slack-watcher'] = {
+      status: 'paused',
+      runsSinceRotate: 0,
+      runs: [],
+    };
+
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).resolves.toBe('sleeping');
+
+    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
+      status: 'sleeping',
+    });
+    expect(send).toHaveBeenCalledWith(
+      CH.agentsStatus,
+      expect.objectContaining({ name: 'slack-watcher', status: 'sleeping' }),
+    );
+  });
+
+  it('resumes to asking when a question of the agent’s is still open', async () => {
+    stored['slack-watcher'] = {
+      status: 'paused',
+      runsSinceRotate: 0,
+      runs: [],
+    };
+    ledgerOpenAsks = [
+      {
+        id: '20260830-120000-0001',
+        ts: 1,
+        from: 'slack-watcher',
+        kind: 'ask',
+        body: 'ship it?',
+      } as LedgerEntry,
+    ];
+
+    /*
+      Recomputed, not restored. Nothing records what the status was before the
+      pause — deliberately, because a remembered `sleeping` would hide a
+      question the agent asked while it was paused.
+    */
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).resolves.toBe('asking');
+
+    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
+      status: 'asking',
+    });
+  });
+
+  it('ignores an open ask that belongs to somebody else', async () => {
+    stored['slack-watcher'] = {
+      status: 'paused',
+      runsSinceRotate: 0,
+      runs: [],
+    };
+    ledgerOpenAsks = [
+      {
+        id: '20260830-120000-0001',
+        ts: 1,
+        from: 'some-session',
+        kind: 'ask',
+        body: 'unrelated',
+      } as LedgerEntry,
+    ];
+
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).resolves.toBe('sleeping');
+  });
+
+  it('is idempotent: resuming an agent that was never paused writes nothing', async () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+    };
+
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).resolves.toBe('sleeping');
+
+    expect(statePatch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The destructive case the guard exists for: resume is the inverse of pause
+   * and of nothing else. Applied to a running agent it would rewrite the row to
+   * `sleeping` while the process is still going, and only the next
+   * `finalizeRun` would put it back.
+   */
+  it('will not resume a working agent out of its own run', async () => {
+    stored['slack-watcher'] = {
+      status: 'working',
+      runsSinceRotate: 0,
+      runs: [],
+    };
+
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).resolves.toBe('working');
+
+    expect(statePatch).not.toHaveBeenCalled();
+  });
+
+  it('takes the same name guard as every other verb in the namespace', async () => {
+    await expect(invoke(CH.agentsPause, { name: '../../claude' })).rejects.toThrow();
+    await expect(invoke(CH.agentsResume, { name: '../../claude' })).rejects.toThrow();
+    expect(statePatch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a payload carrying anything but a name', async () => {
+    await expect(
+      invoke(CH.agentsPause, { name: 'slack-watcher', until: 'tomorrow' }),
+    ).rejects.toThrow();
+    expect(statePatch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The counterpart to `agents:kill still answers a boolean once the runtime is
+   * gone`, and it goes the other way on purpose: `kill`'s type has a value for
+   * "nothing happened" and this one's does not. Every {@link AgentStatus} is a
+   * claim that something was written, so a pause that reached no file has to
+   * reject rather than pick one.
+   */
+  it('rejects rather than reporting a status it never wrote', async () => {
+    resetIpcHandlers();
+
+    await expect(invoke(CH.agentsPause, { name: 'slack-watcher' })).rejects.toThrow(
+      'The agent runtime is not running.',
+    );
+  });
+});
+
 describe('agents:list merges run state (R2)', () => {
   it('answers with the definition joined to what has happened to it', async () => {
     stored['slack-watcher'] = {

@@ -8,6 +8,7 @@ import type {
   AgentRunRequest,
   AgentRunResult,
   AgentsSnapshot,
+  AgentStatus,
   AgentStatusPush,
   AgentWriteRequest,
   AgentWriteResult,
@@ -350,6 +351,16 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.agentsRun, request),
     kill: (request: AgentNameRequest): Promise<boolean> =>
       ipcRenderer.invoke(CH.agentsKill, request),
+    /*
+      HIVE-117's two, and the narrowest verbs here: they set one field and start
+      nothing. They take the same `AgentNameRequest` as `kill`, so the same
+      guard refuses the same payloads, and they answer the status now in force
+      rather than a boolean — `resume` has two honest answers.
+    */
+    pause: (request: AgentNameRequest): Promise<AgentStatus> =>
+      ipcRenderer.invoke(CH.agentsPause, request),
+    resume: (request: AgentNameRequest): Promise<AgentStatus> =>
+      ipcRenderer.invoke(CH.agentsResume, request),
     onStatus: (callback: (push: AgentStatusPush) => void) =>
       subscribe<AgentStatusPush>(CH.agentsStatus, callback),
     onLines: (callback: (push: AgentLinesPush) => void) =>

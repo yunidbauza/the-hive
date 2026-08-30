@@ -24,6 +24,7 @@ import type {
   AgentRunRequest,
   AgentRunResult,
   AgentsSnapshot,
+  AgentStatus,
   AgentStatusPush,
   AgentWriteRequest,
   AgentWriteResult,
@@ -683,6 +684,22 @@ export const CH = {
    */
   agentsRun: 'agents:run',
   agentsKill: 'agents:kill',
+  /**
+   * Stop this agent waking, and let it wake again (HIVE-117).
+   *
+   * Narrower than `run` and `kill`: neither starts or stops a process. They set
+   * one field — `status` — and the consequence is a refusal inside
+   * `RunTracker.run`, which is the single door every trigger passes through.
+   * That placement is the point: a guard on `agents:run` alone would leave a
+   * paused agent woken by HIVE-121's timer.
+   *
+   * Both answer the {@link AgentStatus} now in force rather than a boolean,
+   * because `resume` genuinely has two answers — an agent with an unanswered
+   * ask resumes to `asking`, not `sleeping` — and the caller should not have to
+   * re-`list` to find out which.
+   */
+  agentsPause: 'agents:pause',
+  agentsResume: 'agents:resume',
   /** A run started, ended, or changed the agent's status. */
   agentsStatus: 'agents:status',
   /** A batch of run-log lines. */
@@ -1538,6 +1555,18 @@ export interface HiveBridge {
      * error: the run may have ended between the row rendering and the click.
      */
     kill(request: AgentNameRequest): Promise<boolean>;
+    /**
+     * Stop this agent waking (HIVE-117). Any turn already in flight finishes —
+     * a pause is not a kill, and `kill` is next door for that.
+     *
+     * Answers the status now in force, which is always `paused`.
+     */
+    pause(request: AgentNameRequest): Promise<AgentStatus>;
+    /**
+     * Let it wake again. Answers the status it resumed *to*: `asking` when the
+     * agent has an unanswered question in the ledger, `sleeping` otherwise.
+     */
+    resume(request: AgentNameRequest): Promise<AgentStatus>;
     /** A run started, ended, or changed this agent's status. */
     onStatus(callback: (push: AgentStatusPush) => void): () => void;
     /** Run-log lines, as the process writes them. */
@@ -1843,6 +1872,34 @@ export const BRIDGE_SKILLS_KEYS = [
  * other way out is quitting the app — which takes the other twelve sessions
  * with it.
  *
+ * ## The argument for `pause` and `resume` (HIVE-117)
+ *
+ * The narrowest pair in the namespace, and the first that make the machine do
+ * *less*. Neither starts a process, stops one, or reads a file. Each takes the
+ * same validated {@link AgentNameRequest} the four verbs above take and writes
+ * a single field — `status` — to `agents.json`, a file main already owns and
+ * rewrites on every run.
+ *
+ * Against the question `run` had to answer — what can a compromised renderer
+ * make this machine execute? — the answer here is *strictly less than before*.
+ * `pause` can only subtract: a paused agent refuses every trigger, including
+ * the ones no renderer can reach (HIVE-120's ledger wakes, HIVE-121's timer).
+ * `resume` can only restore an agent to the state it was in before someone
+ * paused it — it cannot create an agent, change what one is, or wake one, and
+ * a renderer that wanted a run still has to call `run` and be refused or
+ * obeyed on `run`'s own terms.
+ *
+ * The one widening worth naming is availability: a renderer that can call
+ * `pause` can stop an agent the user is relying on. That is the same reach
+ * `kill` already has, on a verb that recovers with a single `resume`, where
+ * `kill` costs a turn. It is also, unlike `kill`, plainly visible — the row
+ * says `paused` until someone changes it.
+ *
+ * Why the refusal lives in `RunTracker.run` rather than on the `agents:run`
+ * channel: the channel is only today's caller. Guarding there would leave a
+ * paused agent woken by a clock the moment HIVE-121 lands, and the bug would
+ * look like the timer's.
+ *
  * ## `onStatus` and `onLines` widen nothing
  *
  * Listeners, like `onChanged`, and the same test applies: can either carry
@@ -1861,6 +1918,8 @@ export const BRIDGE_AGENTS_KEYS = [
   'onChanged',
   'run',
   'kill',
+  'pause',
+  'resume',
   'onStatus',
   'onLines',
 ] as const;

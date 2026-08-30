@@ -19,6 +19,7 @@ import {
   formatRunCost,
   type AgentLinesPush,
   type AgentRunResult,
+  type AgentStatus,
   type AgentStatusPush,
 } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS } from '@shared/config-contract';
@@ -2086,6 +2087,81 @@ export function registerIpcHandlers(): void {
     // nothing to stop" — an `undefined` on a `Promise<boolean>` is neither.
     runs?.kill(parseAgentNameRequest(payload).name) ?? false,
   );
+
+  /**
+   * Write one status and say what it now is (HIVE-117).
+   *
+   * Both verbs are this short because neither owns the *consequence*: pausing
+   * does not stop anything here, it makes `RunTracker.run` refuse — which is
+   * the one door every trigger passes through, today's `agents:run` and the
+   * wakes HIVE-120 and HIVE-121 will add alike.
+   *
+   * `agentState` rather than `runs` is what they need, so both keep working
+   * when an agent has never run: there is no tracker entry to pause.
+   *
+   * The answer is **read back** from the state rather than echoed from the
+   * argument, for `pushAgentStatus`'s own reason: a reply and the next
+   * `agents:list` must not be able to disagree.
+   *
+   * A missing state throws rather than answering. `run` and `kill` can both
+   * report "the runtime is not up" inside their return types — `refused:
+   * 'unknown'` and `false` — and this one cannot, since every member of
+   * {@link AgentStatus} is a claim that something was written. Answering
+   * `paused` for a pause that reached no file is the one outcome worth a
+   * rejected promise.
+   */
+  const setAgentStatus = (name: string, status: AgentStatus): AgentStatus => {
+    if (agentState === null) {
+      throw new Error('The agent runtime is not running.');
+    }
+
+    const next = agentState.patch(name, { status });
+
+    pushAgentStatus(name);
+
+    return next.status;
+  };
+
+  handle(CH.agentsPause, (_event, payload): AgentStatus =>
+    // No `kill`. A pause lets the turn in flight finish — see the contract, and
+    // `finalizeRun`, which is what stops that turn writing the pause back out.
+    setAgentStatus(parseAgentNameRequest(payload).name, 'paused'),
+  );
+
+  /**
+   * Resume **recomputes** the resting status rather than restoring a
+   * remembered one.
+   *
+   * Nothing records what an agent was before it was paused, and deliberately:
+   * `AgentRunState` has no second representation of a status, and a remembered
+   * `sleeping` would be wrong the moment the agent asked something while
+   * paused — which is exactly when it can, since a turn in flight is allowed
+   * to finish.
+   *
+   * The rule is `finalizeRun`'s, reused: an unanswered ask outranks everything
+   * else, because status is about what the user must do next.
+   */
+  handle(CH.agentsResume, (_event, payload): AgentStatus => {
+    const { name } = parseAgentNameRequest(payload);
+    const current = agentState?.read(name).status;
+
+    /*
+      Only a paused agent resumes.
+
+      Without this the verb is destructive on every other status: a `working`
+      agent resumed mid-turn would have its row rewritten to `sleeping` while
+      its process is still running, and the next `finalizeRun` would be the
+      only thing to put it right. Resume is the inverse of pause and nothing
+      else, so anything not paused is already resumed — answer what it is.
+    */
+    if (current !== 'paused') return current ?? 'sleeping';
+
+    const asking = ledger
+      .read({ from: name })
+      .openAsks.some((ask) => ask.from === name);
+
+    return setAgentStatus(name, asking ? 'asking' : 'sleeping');
+  });
 
   /**
    * Getting a theme file on and off disk (HIVE-80).

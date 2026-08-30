@@ -54,7 +54,11 @@ const FLUSH_WINDOW_MS = 500;
 
 export type RunStart =
   | { started: true; run: string }
-  | { started: false; refused: 'working' | 'invalid'; reason?: string };
+  | {
+      started: false;
+      refused: 'working' | 'invalid' | 'paused';
+      reason?: string;
+    };
 
 export interface RunTrackerDeps {
   spawn: (
@@ -255,8 +259,21 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         agent is still waiting on the user, and a row reading `sleeping` hides
         the question rather than the failure. Status is about what the user must
         do next; the outcome is about what happened.
+
+        An explicit pause outranks both (HIVE-117).
+
+        A pause is allowed to land while a turn is in flight — the design lets
+        that turn finish rather than killing it — so this finalizer runs seconds
+        after the user paused the agent, and without this guard it would write
+        the pause straight back out. The ask is not lost by holding `paused`:
+        `agents:resume` recomputes from the ledger and finds it.
       */
-      status: outcome === 'asking' || asking ? 'asking' : 'sleeping',
+      status:
+        current.status === 'paused'
+          ? 'paused'
+          : outcome === 'asking' || asking
+            ? 'asking'
+            : 'sleeping',
       lastRunAt: endedAt,
       // A run that never reached the model cost nothing and should not pull
       // session rotation forward.
@@ -340,6 +357,23 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
   return {
     run(name, trigger, extra) {
       if (running.has(name)) return { started: false, refused: 'working' };
+
+      /*
+        A paused agent does not wake, for any trigger (HIVE-117).
+
+        Refused here rather than at the `agents:run` channel, because the channel
+        is only *today's* caller: HIVE-120's ledger-addressed wakes and HIVE-121's
+        timer both arrive through this same method, and a guard on the channel
+        would leave a paused agent woken by a clock. The tracker is the one place
+        every trigger passes through.
+
+        Before `deps.command`, too. Building the argv reads the definition off
+        disk and mints a session uuid, and a refusal that did that work first
+        would let a paused agent's session rotate by being asked.
+      */
+      if (deps.state.read(name).status === 'paused') {
+        return { started: false, refused: 'paused' };
+      }
 
       const command = deps.command(name, trigger, extra);
 

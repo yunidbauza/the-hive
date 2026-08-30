@@ -194,6 +194,8 @@ describe('exposed surface', () => {
       'onChanged',
       'run',
       'kill',
+      'pause',
+      'resume',
       'onStatus',
       'onLines',
     ]);
@@ -209,6 +211,31 @@ describe('exposed surface', () => {
     // preload never registers, and the allowlist is what says so.
     expect(EVENT_CHANNELS).not.toContain(CH.agentsRun);
     expect(EVENT_CHANNELS).not.toContain(CH.agentsKill);
+  });
+
+  /**
+   * HIVE-117's two, held to the same rule as HIVE-115's: invoke channels, never
+   * pushable. A pause is a thing the user does, so main has nothing to announce
+   * on these — the consequence travels on `agents:status` like every other
+   * change to a row.
+   */
+  it('carries the two HIVE-117 agent channels, neither of them pushable', () => {
+    expect(CH.agentsPause).toBe('agents:pause');
+    expect(CH.agentsResume).toBe('agents:resume');
+    expect(EVENT_CHANNELS).not.toContain(CH.agentsPause);
+    expect(EVENT_CHANNELS).not.toContain(CH.agentsResume);
+  });
+
+  it('sends a pause and a resume through their own channels', () => {
+    void agents().pause?.({ name: 'slack-watcher' });
+    void agents().resume?.({ name: 'slack-watcher' });
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.agentsPause, {
+      name: 'slack-watcher',
+    });
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.agentsResume, {
+      name: 'slack-watcher',
+    });
   });
 
   it('sends a run through the run channel and a kill through the kill channel', () => {

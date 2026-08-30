@@ -569,4 +569,65 @@ describe('createRunTracker', () => {
     expect(state.read('a').runs.at(-1)?.outcome).toBe('failed');
     expect(state.read('a').runsSinceRotate).toBe(0);
   });
+
+  /**
+   * HIVE-117. `paused` is a status, not a second field, so the tracker is what
+   * has to honour it: the two places a run's status is decided are the only
+   * two places a pause could be lost.
+   */
+  describe('paused (HIVE-117)', () => {
+    it('refuses to wake a paused agent, and never reaches the command builder', () => {
+      state.patch('a', { status: 'paused' });
+
+      expect(tracker.run('a', 'manual')).toEqual({
+        started: false,
+        refused: 'paused',
+      });
+      /*
+        Refused *before* `deps.command`, not after: building the argv reads the
+        definition off disk and mints a session uuid, and a refusal that did
+        that work first would rotate a paused agent's session by being asked.
+      */
+      expect(commandCalls).toBe(0);
+      expect(spawnCalls).toHaveLength(0);
+      // No `run.started` for a run that never started.
+      expect(ledger).toEqual([]);
+    });
+
+    it('leaves a run that was live at pause time paused when it ends', () => {
+      tracker.run('a', 'ledger');
+      // The pause lands mid-turn — the design lets the turn finish rather than
+      // killing it, so this is the ordering that actually happens.
+      state.patch('a', { status: 'paused' });
+      childInstances[0]?.emitStdout(resultLine());
+      childInstances[0]?.emitClose(0);
+
+      const persisted = state.read('a');
+
+      /*
+        Without the guard in `finalizeRun`, this reads `sleeping` a few seconds
+        after the user paused it — the pause silently undone by the turn it was
+        careful not to kill.
+      */
+      expect(persisted.status).toBe('paused');
+      // The run itself is still recorded honestly; only the status is held.
+      expect(persisted.runs.at(-1)?.outcome).toBe('done');
+      expect(persisted.runsSinceRotate).toBe(1);
+    });
+
+    it('holds paused even when the finished run left an open ask', () => {
+      openAsks = true;
+      tracker.run('a', 'ledger');
+      state.patch('a', { status: 'paused' });
+      childInstances[0]?.emitStdout(resultLine());
+      childInstances[0]?.emitClose(0);
+
+      /*
+        `asking` outranks the outcome for an agent that is awake; it does not
+        outrank an explicit pause. The ask is not lost — `resume` recomputes and
+        finds it — but until then the row says what the user did last.
+      */
+      expect(state.read('a').status).toBe('paused');
+    });
+  });
 });
