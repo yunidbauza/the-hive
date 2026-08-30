@@ -25,9 +25,26 @@ import {
 } from '../skills/paths';
 
 import { agentsRoot } from './paths';
-import { createAgentRegistry, type AgentRegistry } from './registry';
+import {
+  createAgentRegistry,
+  type AgentRegistry,
+  type AgentRunFiles,
+} from './registry';
 
-export function createAgentsRuntime(): AgentRegistry {
+export interface AgentsRuntimeOptions {
+  /**
+   * How a delete or a rename reaches the run bookkeeping that is keyed by an
+   * agent's name but does not live in its folder (HIVE-115).
+   *
+   * Passed in rather than built here for the reason this whole file exists: it
+   * needs `agents.json`, which only `ipc/index.ts` opens.
+   */
+  runFiles?: AgentRunFiles;
+}
+
+export function createAgentsRuntime(
+  options: AgentsRuntimeOptions = {},
+): AgentRegistry {
   return createAgentRegistry({
     root: agentsRoot(),
     skillNames: () =>
@@ -36,7 +53,8 @@ export function createAgentsRuntime(): AgentRegistry {
         user: userSkillsRoot(),
         installedPlugins: installedPluginsFile(),
       }),
+    ...(options.runFiles === undefined ? {} : { runFiles: options.runFiles }),
   });
 }
 
-export type { AgentRegistry } from './registry';
+export type { AgentRegistry, AgentRunFiles } from './registry';

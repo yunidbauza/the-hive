@@ -41,6 +41,16 @@ export interface AgentState {
   read(name: string): AgentRunState;
   patch(name: string, change: Partial<AgentRunState>): AgentRunState;
   recordRun(name: string, summary: RunSummary): void;
+  /**
+   * Drop this agent's entry — the definition is gone.
+   *
+   * Without it a name freed by a delete is reused with the previous agent's
+   * session uuid, run history and rotation counter still attached to it. See
+   * `AgentRunFiles` in `registry.ts` for what that actually does.
+   */
+  forget(name: string): void;
+  /** Move an entry to a new name, so a rename keeps the conversation. */
+  carry(from: string, to: string): void;
   /** Write now, synchronously. For shutdown. */
   flush(): void;
   /**
@@ -57,6 +67,34 @@ export interface AgentState {
   dispose(): void;
 }
 
+/**
+ * No agent is `working` at the moment this file is read.
+ *
+ * `working` is a claim about a **live child process**, and every child this app
+ * spawned died with it. A graceful quit records each run and leaves `sleeping`
+ * behind, but a force-quit, a crash or a power cut runs no hook at all — and
+ * the `working` that was true when the file was last written is then false and
+ * unrecoverable. Nothing would ever correct it: the tracker's map starts empty,
+ * so no `close` is coming, and `agents:kill` answers `false` for a name it does
+ * not hold. The row would read `working` forever, with no way for the user to
+ * clear it.
+ *
+ * `asking` is deliberately left alone. It is a claim about an unanswered entry
+ * in the ledger, which is a file — it survives the crash, and it is still true.
+ */
+function wakeFromWorking(
+  agents: Record<string, AgentRunState>,
+): Record<string, AgentRunState> {
+  const woken: Record<string, AgentRunState> = {};
+
+  for (const [name, agent] of Object.entries(agents)) {
+    woken[name] =
+      agent.status === 'working' ? { ...agent, status: 'sleeping' } : agent;
+  }
+
+  return woken;
+}
+
 function seed(path: string): Record<string, AgentRunState> {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
@@ -65,7 +103,7 @@ function seed(path: string): Record<string, AgentRunState> {
       return {};
     }
 
-    return parsed as Record<string, AgentRunState>;
+    return wakeFromWorking(parsed as Record<string, AgentRunState>);
   } catch {
     /*
       A missing file is the fresh-install case and a corrupt one is a
@@ -133,6 +171,23 @@ export function createAgentState(options: AgentStateOptions): AgentState {
             ? runs.slice(runs.length - AGENT_RUN_HISTORY)
             : runs,
       };
+      schedule();
+    },
+
+    forget(name) {
+      if (!(name in agents)) return;
+
+      delete agents[name];
+      schedule();
+    },
+
+    carry(from, to) {
+      const entry = agents[from];
+
+      if (entry === undefined) return;
+
+      agents[to] = entry;
+      delete agents[from];
       schedule();
     },
 

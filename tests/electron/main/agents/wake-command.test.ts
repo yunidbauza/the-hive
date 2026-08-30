@@ -68,6 +68,17 @@ const state = (): AgentState => ({
     return next;
   },
   recordRun: vi.fn(),
+  forget: (name) => {
+    delete stored[name];
+  },
+  carry: (from, to) => {
+    const entry = stored[from];
+
+    if (entry === undefined) return;
+
+    stored[to] = entry;
+    delete stored[from];
+  },
   flush: vi.fn(),
   dispose: vi.fn(),
 });
@@ -247,6 +258,36 @@ describe('createWakeCommand', () => {
     expect(built).toEqual({
       problem: 'Could not prepare the run: EROFS: read-only file system',
     });
+  });
+
+  /**
+   * A rotation that could not be prepared has not happened.
+   *
+   * Recording it before the `mkdir`/`write` meant a transient fs error threw
+   * away the session uuid *and* returned no command: no run, and the
+   * conversation gone anyway, with the next wake starting fresh for a reason
+   * the user could never see.
+   */
+  it('keeps the rotation unrecorded when preparing the run fails', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 5,
+      runs: [],
+      sessionUuid: 'stale-uuid',
+    };
+
+    const built = build({
+      fs: {
+        ...fs,
+        write: () => {
+          throw new Error('ENOSPC: no space left on device');
+        },
+      },
+    })('slack-watcher', 'manual');
+
+    expect('problem' in built).toBe(true);
+    expect(stored['slack-watcher']?.sessionUuid).toBe('stale-uuid');
+    expect(stored['slack-watcher']?.runsSinceRotate).toBe(5);
   });
 
   it('strips the API-key variables when the user is on a subscription', () => {

@@ -102,6 +102,72 @@ describe('createAgentState', () => {
     expect(state.all()).toEqual({});
   });
 
+  /**
+   * `working` is a claim about a live child process, and every child died with
+   * the app that spawned them. A force-quit or a crash runs no shutdown hook,
+   * so the claim is left true on disk and nothing would ever correct it: the
+   * tracker's map starts empty, no `close` is coming, and `agents:kill` answers
+   * `false` for a name it does not hold.
+   */
+  it('wakes a persisted working agent, which no process backs any more', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        a: { status: 'working', runsSinceRotate: 2, runs: [], sessionUuid: 'u-1' },
+      }),
+      'utf8',
+    );
+
+    const state = createAgentState({ path });
+
+    expect(state.read('a').status).toBe('sleeping');
+    // Only the status is touched — the conversation and the counter are still
+    // true, and losing them would cost the agent its history.
+    expect(state.read('a').sessionUuid).toBe('u-1');
+    expect(state.read('a').runsSinceRotate).toBe(2);
+  });
+
+  it('leaves a persisted asking agent alone — the ledger entry survived too', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({ a: { status: 'asking', runsSinceRotate: 0, runs: [] } }),
+      'utf8',
+    );
+
+    expect(createAgentState({ path }).read('a').status).toBe('asking');
+  });
+
+  it('forgets an agent outright, so a reused name starts clean', () => {
+    const state = createAgentState({ path });
+
+    state.patch('a', { sessionUuid: 'u-1', runsSinceRotate: 4 });
+    state.forget('a');
+
+    expect(state.all()).toEqual({});
+    expect(state.read('a').sessionUuid).toBeUndefined();
+  });
+
+  it('carries an entry to a new name, so a rename keeps the conversation', () => {
+    const state = createAgentState({ path });
+
+    state.patch('a', { sessionUuid: 'u-1', runsSinceRotate: 4 });
+    state.carry('a', 'b');
+
+    expect(state.read('b')).toMatchObject({
+      sessionUuid: 'u-1',
+      runsSinceRotate: 4,
+    });
+    expect(state.all()['a']).toBeUndefined();
+  });
+
+  it('carrying an agent that never ran writes nothing', () => {
+    const state = createAgentState({ path });
+
+    state.carry('a', 'b');
+
+    expect(state.all()).toEqual({});
+  });
+
   it('keeps only the most recent runs', () => {
     const state = createAgentState({ path });
 

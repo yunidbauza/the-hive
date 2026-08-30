@@ -74,8 +74,39 @@ export const watchFolder: WatchFactory = (root, onEvent) => {
   }
 };
 
+/**
+ * The run bookkeeping a definition owns but this registry does not hold
+ * (HIVE-115).
+ *
+ * `remove` and `rename` used to move a folder and nothing else, which was
+ * correct only for as long as an agent *was* its folder. It is not any more:
+ * `~/.hive/ledger/agents.json` holds its session uuid, its run history and its
+ * rotation counter, and `~/.hive/work/<name>` holds whatever it has been
+ * writing. Both are keyed by the name, so both outlive a delete and neither
+ * follows a rename.
+ *
+ * The consequence of leaving them is not untidiness. Delete an agent, then
+ * create a new one with the same name — a normal thing to do after getting a
+ * definition wrong — and its very first wake spells `--resume <the deleted
+ * agent's uuid>`: a brand-new definition running inside the old conversation,
+ * with the old system prompt in its history, showing the deleted agent's cost.
+ *
+ * Injected rather than done here, because the registry knows about definitions
+ * and this is the one thing about an agent it deliberately does not know.
+ * Optional, because at boot the state file is opened *after* this registry is,
+ * and because a test about definitions should not have to supply one.
+ */
+export interface AgentRunFiles {
+  /** Drop everything this app remembers about running `name`. */
+  forget: (name: string) => Promise<void>;
+  /** Carry it across, so a renamed agent keeps its conversation. */
+  carry: (from: string, to: string) => Promise<void>;
+}
+
 export interface RegistryOptions {
   root: string;
+  /** See {@link AgentRunFiles}. */
+  runFiles?: AgentRunFiles;
   /**
    * The skill names an agent may reference, and the subset The Hive owns.
    *
@@ -131,6 +162,7 @@ function safe(name: string): boolean {
 export function createAgentRegistry({
   root,
   skillNames,
+  runFiles,
   watch: makeWatcher = watchFolder,
 }: RegistryOptions): AgentRegistry {
   const listeners = new Set<() => void>();
@@ -225,10 +257,25 @@ export function createAgentRegistry({
     return { ok: true };
   };
 
-  const remove = async (name: string): Promise<void> => {
+  /**
+   * The folder, and only the folder.
+   *
+   * `rename` needs this half on its own: it moves the run state *forward* to
+   * the new name and must not then forget it while clearing the old folder.
+   */
+  const removeFolder = async (name: string): Promise<void> => {
     if (!safe(name)) return;
 
     await rm(join(root, name), { recursive: true, force: true });
+  };
+
+  const remove = async (name: string): Promise<void> => {
+    if (!safe(name)) return;
+
+    await removeFolder(name);
+    // After the folder, so a failure to clear the bookkeeping cannot leave a
+    // definition the pane still lists.
+    await runFiles?.forget(name);
   };
 
   return {
@@ -386,7 +433,10 @@ export function createAgentRegistry({
 
       if (!written.ok) return written;
 
-      await remove(from);
+      // Before the old folder goes, and never through `remove`: the run state
+      // is being *moved*, and `remove` would forget what was just carried.
+      await runFiles?.carry(from, to);
+      await removeFolder(from);
 
       return { ok: true };
     },

@@ -13,7 +13,10 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAgentRegistry } from '../../../../electron/main/agents/registry';
+import {
+  createAgentRegistry,
+  type AgentRunFiles,
+} from '../../../../electron/main/agents/registry';
 
 let root: string;
 const open: Array<{ close: () => void }> = [];
@@ -33,10 +36,11 @@ const seed = (name: string, source: string) => {
 
 const named = (name: string) => GOOD.replace('slack-watcher', name);
 
-const registry = () => {
+const registry = (runFiles?: AgentRunFiles) => {
   const made = createAgentRegistry({
     root,
     skillNames: async () => ({ all: ['jira-writer'], hive: ['jira-writer'] }),
+    ...(runFiles === undefined ? {} : { runFiles }),
   });
 
   open.push(made);
@@ -217,6 +221,80 @@ describe('remove and rename', () => {
 
   it('refuses a rename of something that is not there', async () => {
     expect((await registry().rename('ghost', 'other')).ok).toBe(false);
+  });
+});
+
+/**
+ * An agent is more than its folder (HIVE-115): `agents.json` holds its session
+ * uuid, its history and its rotation counter, and `~/.hive/work/<name>` holds
+ * what it has been writing. Both are keyed by the name, so a delete that moved
+ * only the folder left the next agent to take that name resuming the deleted
+ * one's conversation and showing its cost.
+ */
+describe('the run bookkeeping follows the definition', () => {
+  const spy = () => {
+    const forgotten: string[] = [];
+    const carried: [string, string][] = [];
+
+    return {
+      forgotten,
+      carried,
+      files: {
+        forget: async (name: string) => {
+          forgotten.push(name);
+        },
+        carry: async (from: string, to: string) => {
+          carried.push([from, to]);
+        },
+      } satisfies AgentRunFiles,
+    };
+  };
+
+  it('remove clears it', async () => {
+    seed('slack-watcher', GOOD);
+
+    const runFiles = spy();
+
+    await registry(runFiles.files).remove('slack-watcher');
+
+    expect(runFiles.forgotten).toEqual(['slack-watcher']);
+  });
+
+  it('remove refuses an unsafe name without touching it', async () => {
+    const runFiles = spy();
+
+    await registry(runFiles.files).remove('../escape');
+
+    expect(runFiles.forgotten).toEqual([]);
+  });
+
+  /**
+   * `rename` clears the old folder through the *folder-only* path. Going
+   * through `remove` would forget the state it had just carried forward, which
+   * is the same orphaning by a longer route.
+   */
+  it('rename carries it across and never forgets it', async () => {
+    seed('slack-watcher', GOOD);
+
+    const runFiles = spy();
+
+    expect(await registry(runFiles.files).rename('slack-watcher', 'slack-bot')).toEqual(
+      { ok: true },
+    );
+    expect(runFiles.carried).toEqual([['slack-watcher', 'slack-bot']]);
+    expect(runFiles.forgotten).toEqual([]);
+  });
+
+  it('a refused rename moves nothing', async () => {
+    seed('slack-watcher', GOOD);
+    seed('taken', named('taken'));
+
+    const runFiles = spy();
+
+    await registry(runFiles.files).rename('slack-watcher', 'taken');
+
+    expect(runFiles.carried).toEqual([]);
+    expect(runFiles.forgotten).toEqual([]);
   });
 });
 

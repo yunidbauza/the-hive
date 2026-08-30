@@ -230,21 +230,14 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       resuming the old one.
 
       A resumed session carries every earlier turn, so its cost per wake climbs
-      without bound. The counter is reset *here*, at the moment the decision is
-      made, rather than at close — `close()` increments whatever it finds, so a
-      reset written afterwards would be immediately overwritten by the run that
+      without bound. The decision is made here, before anything is prepared,
+      because it decides what gets prepared — but it is *recorded* further down,
+      after the writes that can fail. The counter has to be reset on this side
+      of the run rather than at close: `close()` increments whatever it finds,
+      so a reset written afterwards would be immediately overwritten by the run
       the rotation started.
-
-      `sessionUuid` is cleared with it. Leaving it would mean a rotating run
-      that failed before it emitted a `result` resumed the very conversation the
-      rotation existed to leave behind, with the counter already back at zero.
     */
     const rotating = previous.runsSinceRotate >= def.limits.rotateAfter;
-
-    if (rotating) {
-      deps.state.patch(name, { runsSinceRotate: 0, sessionUuid: undefined });
-    }
-
     const workdir = deps.workdir(name);
     const systemPrompt = deps.promptFile(name);
 
@@ -256,6 +249,26 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       fs.write(systemPrompt, systemPromptFor(AGENT_PREAMBLE, def));
     } catch (cause) {
       return { problem: `Could not prepare the run: ${describe(cause)}` };
+    }
+
+    /*
+      Written **after** the writes that can fail, and only on the path that
+      returns a command.
+
+      The rotation is still decided above, before anything is prepared, because
+      it decides what gets prepared. But *recording* it before the `mkdir`/
+      `write` meant a transient fs error — a full disk, a home that is not
+      mounted yet — threw away the session uuid and returned `{ problem }`: no
+      run, and the conversation gone anyway. The next wake would then start
+      fresh for no reason a user could see.
+
+      `sessionUuid` is cleared with the counter. Leaving it would mean a rotating
+      run that failed before it emitted a `result` resumed the very conversation
+      the rotation existed to leave behind, with the counter already back at
+      zero.
+    */
+    if (rotating) {
+      deps.state.patch(name, { runsSinceRotate: 0, sessionUuid: undefined });
     }
 
     const resuming = rotating ? undefined : previous.sessionUuid;
