@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ParsedCommand } from '@/types/command';
 import { USAGE } from '@/types/command';
 import type {
+  Agent,
   Effort,
   Entity,
   Model,
@@ -29,6 +30,7 @@ import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
 import { isDesktop } from '@config/runtime';
+import { describeNextRun, describeWake } from '@lib/agents';
 import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
@@ -42,10 +44,13 @@ import { noteSessionPr, noteSessionTicket } from '@lib/session-history';
 import { pickPhrase } from '@lib/swarm/phrases';
 import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
-import type {
-  AgentLinesPush,
-  AgentStatusPush,
-  AgentSummary,
+import {
+  formatRunCost,
+  type AgentLinesPush,
+  type AgentStatus,
+  type AgentStatusPush,
+  type AgentSummary,
+  type RunSummary,
 } from '@shared/agent-contract';
 import type { PrRecord } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
@@ -2175,6 +2180,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           // so a folder change must not blank the cost the live push put in
           // this row until whenever the agent happens to run again.
           ...(summary.cost === undefined ? {} : { cost: summary.cost }),
+          /*
+            Run state, like `cost` above (HIVE-116). `runsSinceRotate` is
+            optional on the wire — a summary the registry built for an agent
+            with no entry in `agents.json` omits it — and zero is the honest
+            reading of "nothing has run yet".
+          */
+          runsSinceRotate: summary.runsSinceRotate ?? 0,
+          rotateAfter: summary.rotateAfter,
+          runs: summary.runs,
+          ...(summary.sessionUuid === undefined
+            ? {}
+            : { sessionUuid: summary.sessionUuid }),
           task: summary.description,
           // Run output, not definition — re-reading the file is no reason to
           // forget what the agent said.
@@ -2207,6 +2224,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             ...(push.lastRunAt === undefined ? {} : { lastRunAt: push.lastRunAt }),
             ...(push.nextRunAt === undefined ? {} : { nextRunAt: push.nextRunAt }),
             ...(push.cost === undefined ? {} : { cost: push.cost }),
+            /*
+              Assigned, not spread-guarded: both are required on the push, and
+              a run that closes with an empty history is a real state the tile
+              must show as `0 runs` rather than as last render's number.
+            */
+            runs: push.runs,
+            runsSinceRotate: push.runsSinceRotate,
           },
         },
       };
@@ -4263,6 +4287,182 @@ export const useAgentLines = (name: string): TermLine[] =>
 
     return entity !== undefined && isAgent(entity) ? entity.lines : EMPTY_LINES;
   });
+
+/**
+ * Stable identity for an agent that has never run, and for a name that is not
+ * an agent at all — a fresh `[]` per call re-renders every consumer on any
+ * unrelated store write. The same reason `EMPTY_LINES` exists above it.
+ */
+const EMPTY_RUNS: RunSummary[] = [];
+
+export interface AgentGroup {
+  key: 'awake' | 'sleeping' | 'paused';
+  label: string;
+  ids: string[];
+}
+
+/**
+ * The rail's groups, in the order they are read (HIVE-116).
+ *
+ * The question a grouping answers here is *should I look at this?*, which is
+ * why `failed` files under Awake rather than earning a fourth group: a broken
+ * agent is not resting, and filing it under Sleeping would bury the one row
+ * that actually needs a person. Inside Awake, `asking` sorts first and ties
+ * break on the most recent run — the same "what needs me first" order the
+ * fleet table reads in.
+ *
+ * An empty group is omitted rather than drawn with a zero: a header reading
+ * `PAUSED 0` is a line of noise about nothing.
+ */
+export const useAgentsByGroup = (): AgentGroup[] => {
+  const order = useHiveStore((state) => state.agentOrder);
+  const entities = useHiveStore((state) => state.entities);
+
+  return useMemo(() => {
+    const bucket: Record<AgentGroup['key'], Agent[]> = {
+      awake: [],
+      sleeping: [],
+      paused: [],
+    };
+
+    for (const id of order) {
+      const entity = entities[id];
+
+      // `entities` holds both kinds and an agent name is a legal session id,
+      // so the same narrowing every other agent selector does.
+      if (entity === undefined || !isAgent(entity)) continue;
+
+      if (entity.status === 'paused') bucket.paused.push(entity);
+      else if (entity.status === 'sleeping') bucket.sleeping.push(entity);
+      else bucket.awake.push(entity);
+    }
+
+    bucket.awake.sort((a, b) => {
+      if (a.status === 'asking' && b.status !== 'asking') return -1;
+      if (b.status === 'asking' && a.status !== 'asking') return 1;
+
+      return (b.lastRunAt ?? 0) - (a.lastRunAt ?? 0);
+    });
+
+    const labels: Record<AgentGroup['key'], string> = {
+      awake: 'Awake',
+      sleeping: 'Sleeping',
+      paused: 'Paused',
+    };
+
+    return (['awake', 'sleeping', 'paused'] as const)
+      .filter((key) => bucket[key].length > 0)
+      .map((key) => ({
+        key,
+        label: labels[key],
+        ids: bucket[key].map((agent) => agent.id),
+      }));
+  }, [order, entities]);
+};
+
+/** One agent's run summaries, oldest last as `agents.json` keeps them. */
+export const useAgentRuns = (name: string): RunSummary[] =>
+  useHiveStore((state) => {
+    const entity = state.entities[name];
+
+    return entity !== undefined && isAgent(entity) ? entity.runs : EMPTY_RUNS;
+  });
+
+export interface AgentFacts {
+  status: AgentStatus;
+  /** The open ask this agent is waiting on, when it is `asking`. */
+  askRef?: string;
+  wake: string;
+  next: string;
+  todayRuns: number;
+  todayCost: string;
+  sessionUuid?: string;
+  runsSinceRotate: number;
+  rotateAfter: number;
+}
+
+/**
+ * The agent view's five fact tiles, derived on read (HIVE-116).
+ *
+ * "Today" is the **user's** calendar day, compared with `toDateString()` rather
+ * than against a UTC boundary — the same reason the ledger files itself by
+ * local day: it is the person's day, and there is no server to have another
+ * one. Storing the pair instead would make it wrong every midnight.
+ */
+export const useAgentFacts = (name: string): AgentFacts | null => {
+  const entity = useHiveStore((state) => state.entities[name]);
+  const ledger = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => {
+    if (entity === undefined || !isAgent(entity)) return null;
+
+    const today = new Date().toDateString();
+    const todays = entity.runs.filter(
+      (run) => new Date(run.startedAt).toDateString() === today,
+    );
+    const spend = todays.reduce((sum, run) => sum + (run.costUsd ?? 0), 0);
+    const open = openAsks(ledger, Date.now()).find((ask) => ask.from === name);
+
+    return {
+      status: entity.status,
+      ...(open?.ref === undefined ? {} : { askRef: open.ref }),
+      wake: describeWake(entity.wake),
+      next: describeNextRun(entity),
+      todayRuns: todays.length,
+      /*
+        `$0.00` rather than a blank for a quiet day: the tile is a fact about
+        spend, and an empty cell reads as "not measured" instead of "nothing".
+
+        The no-runs case is spelled here rather than left to `formatRunCost`,
+        which answers `$0.0000` for zero. Four decimals is right for a *run* —
+        a wake routinely costs less than a cent, and `$0.00` for real work
+        reads as a bug — but it is false precision about a day on which
+        nothing happened. A day that did run, and cost less than a cent, still
+        gets the four decimals for the original reason.
+      */
+      todayCost: todays.length === 0 ? '$0.00' : (formatRunCost(spend) ?? '$0.00'),
+      ...(entity.sessionUuid === undefined
+        ? {}
+        : { sessionUuid: entity.sessionUuid }),
+      runsSinceRotate: entity.runsSinceRotate,
+      rotateAfter: entity.rotateAfter,
+    };
+  }, [entity, ledger, name]);
+};
+
+/**
+ * The Agents tab's badge: open asks an **agent** is waiting on.
+ *
+ * Deliberately not `useOpenAskCount()`, which counts every open ask including
+ * a session's, and deliberately not the Inbox's `useUnreadCount()`, which
+ * counts notifications. Three badges, three different numbers — this one
+ * answers "how many of my tenants are stuck on me?".
+ *
+ * Filtered here rather than in `openAsks`: that function is shared with main,
+ * which has no notion of which parties are agents, and only the renderer holds
+ * `agentOrder`.
+ */
+export const useAgentAskCount = (): number => {
+  const ledger = useHiveStore((state) => state.ledger);
+  const order = useHiveStore((state) => state.agentOrder);
+
+  return useMemo(() => {
+    const agents = new Set(order);
+
+    return openAsks(ledger, Date.now()).filter((ask) => agents.has(ask.from))
+      .length;
+  }, [ledger, order]);
+};
+
+/** The open ask one agent is waiting on — the `a71` in its row meta. */
+export const useAgentAskRef = (name: string): string | undefined => {
+  const ledger = useHiveStore((state) => state.ledger);
+
+  return useMemo(
+    () => openAsks(ledger, Date.now()).find((ask) => ask.from === name)?.ref,
+    [ledger, name],
+  );
+};
 
 /** Create a session on a project (stories 041, 044). */
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);

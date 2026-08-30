@@ -1,7 +1,9 @@
 import {
   readFrontmatter,
+  type AgentStatus,
   type AgentsSnapshot,
   type AgentWriteResult,
+  type WakeSpec,
 } from '@shared/agent-contract';
 
 /**
@@ -38,6 +40,49 @@ function emit(): void {
 }
 
 /** `useSyncExternalStore`'s subscribe. Returns its own disposer. */
+/**
+ * What happens next without you — `08:30`, `on answer`, or `manual`.
+ *
+ * Here rather than in either caller because two surfaces say it: the rail
+ * row's meta and the agent view's `Next` tile. A row reading `next 08:30`
+ * beside a tile reading `manual` would be one fact spelled two ways, and this
+ * is the smaller half of that fact — `useAgentFacts` composes the rest.
+ *
+ * An `asking` agent has no scheduled wake worth naming even when it has a
+ * `nextRunAt`: the thing that will actually move it is a reply, and saying
+ * `08:30` would promise a wake the answer is going to pre-empt.
+ */
+export function describeNextRun(agent: {
+  status: AgentStatus;
+  nextRunAt?: number;
+}): string {
+  if (agent.status === 'asking') return 'on answer';
+  if (agent.nextRunAt === undefined) return 'manual';
+
+  return new Date(agent.nextRunAt).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * How it wakes — `every 5m · slack`, or `manual`.
+ *
+ * Beside {@link describeNextRun} for the same reason: the `Wake` tile and any
+ * future row that summarises a schedule must not word it differently.
+ */
+export function describeWake(wake: WakeSpec): string {
+  const parts: string[] = [];
+
+  if (wake.everyMs !== undefined) {
+    parts.push(`every ${Math.round(wake.everyMs / 60_000)}m`);
+  }
+  if (wake.at !== undefined) parts.push(`at ${wake.at}`);
+  if (wake.on.length > 0) parts.push(wake.on.join(' · '));
+
+  return parts.length === 0 ? 'manual' : parts.join(' · ');
+}
+
 export function subscribeAgents(listener: () => void): () => void {
   listeners.add(listener);
 

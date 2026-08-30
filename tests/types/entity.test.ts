@@ -39,6 +39,9 @@ const agent: Agent = {
   task: '',
   status: 'sleeping',
   wake: { on: [] },
+  runsSinceRotate: 0,
+  rotateAfter: 50,
+  runs: [],
   lines: [],
 };
 

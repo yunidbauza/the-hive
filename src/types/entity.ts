@@ -1,6 +1,10 @@
 import type { TermLine } from '@/types/terminal';
 
-import type { AgentStatus, WakeSpec } from '@shared/agent-contract';
+import type {
+  AgentStatus,
+  RunSummary,
+  WakeSpec,
+} from '@shared/agent-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionEffort, SessionModel } from '@shared/session-contract';
 import type { SessionPrRecord } from '@shared/session-history-contract';
@@ -382,6 +386,25 @@ export interface Agent {
    */
   invalid?: string;
   cost?: string;
+  /**
+   * Claude's own conversation id for this agent, once it has run (HIVE-116).
+   *
+   * Arrives on `agents:list` only — never on a status push, which is soon
+   * enough for a fact that changes on a first run and on a rotation.
+   */
+  sessionUuid?: string;
+  /** Runs since the last rotation — the numerator in `run 17/50`. */
+  runsSinceRotate: number;
+  /** `limits.rotateAfter` from the definition — the denominator. */
+  rotateAfter: number;
+  /**
+   * The last `AGENT_RUN_HISTORY` runs, oldest first.
+   *
+   * The view's `Today` tile counts and sums the ones that started today, which
+   * is why the array is here rather than a stored pair: "today" is the user's
+   * calendar day, and a stored count would be wrong by morning.
+   */
+  runs: RunSummary[];
   lines: TermLine[];
 }
 
