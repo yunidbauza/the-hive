@@ -1,5 +1,5 @@
 import type { AgentDefinition } from '@shared/agent-contract';
-import { AUTH_ENV_KEYS } from '@shared/config-contract';
+import { AUTH_ENV_KEYS, isSessionEnvDenied } from '@shared/config-contract';
 
 /**
  * The command line one wake runs (HIVE-115).
@@ -116,8 +116,27 @@ export function wakeCommand(input: WakeInput): WakeCommand {
 
   const merged: Record<string, string> = {};
 
+  /*
+    The same deny rule a pty gets, through the same predicate.
+
+    `buildSessionEnv` is deliberately *not* called here: it also forces `TERM`,
+    `COLORTERM` and `PWD`, which are a terminal's identity and mean nothing to a
+    headless child with no tty. What a headless child does need is
+    `isSessionEnvDenied`, and it needs it more than a pty does.
+
+    Launch The Hive with `pnpm desktop:dev` from inside a Claude Code session —
+    which is how it gets developed — and main inherits `CLAUDECODE=1`,
+    `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_CHILD_SESSION=1`. Handed on, every
+    agent **joins the launching session instead of starting its own**: `--name`
+    is ignored, `Stop` reports the launching session's `session_id` so
+    `noteTurnEnded` discards it and the stall watchdog can never arm, and the
+    inherited child-session marker turns transcript saving off, which is what
+    `--resume` reads on the next wake. `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS`
+    and `NODE_PATH` are the other half: Electron's own wiring, meaningless to a
+    node CLI started from it and actively harmful to one.
+  */
   for (const [key, value] of Object.entries(env.base)) {
-    if (value !== undefined) merged[key] = value;
+    if (value !== undefined && !isSessionEnvDenied(key)) merged[key] = value;
   }
 
   /*

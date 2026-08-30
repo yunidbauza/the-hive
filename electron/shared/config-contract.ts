@@ -847,7 +847,24 @@ export const SESSION_ENV_DENY_PREFIXES: readonly string[] = [
   ...SESSION_ENV_PREFIXES,
 ];
 
-function isSessionEnvDenied(key: string): boolean {
+/**
+ * Is this a name that breaks whatever inherits it?
+ *
+ * Exported because {@link buildSessionEnv} is not the only place that spawns a
+ * `claude`. The waker (HIVE-115) builds a **headless** child's environment and
+ * cannot use `buildSessionEnv` wholesale — that function also forces `TERM`,
+ * `COLORTERM` and `PWD`, which are a terminal's identity and mean nothing to a
+ * process with no tty. What it does need is exactly this predicate, and it
+ * needs it for the reason spelled out on {@link SESSION_ENV_DENY_PREFIXES}: an
+ * agent that inherits `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID` and
+ * `CLAUDE_CODE_CHILD_SESSION` joins the launching session instead of starting
+ * its own — which would also defeat the uuid correlation the run tracker is
+ * built on, and disable the transcript saving `--resume` depends on.
+ *
+ * Sharing the predicate rather than the two lists is the point: a name added to
+ * either list reaches both spawn paths at once, which is the drift HIVE-65 was.
+ */
+export function isSessionEnvDenied(key: string): boolean {
   return (
     SESSION_ENV_DENY_EXACT.includes(key) ||
     SESSION_ENV_DENY_PREFIXES.some((prefix) => key.startsWith(prefix))

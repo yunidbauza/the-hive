@@ -153,6 +153,46 @@ describe('wakeCommand', () => {
 
     expect(result['ANTHROPIC_API_KEY']).toBe('sk-leak');
   });
+
+  /*
+    The leak these two pin is the one `SESSION_ENV_DENY_PREFIXES` documents:
+    launched from inside a Claude Code session, main inherits that session's
+    markers, and an agent handed them joins it instead of starting its own.
+  */
+  it('strips a denied exact key, so a wake is not another session already', () => {
+    const leaky = {
+      ...env,
+      base: { ...env.base, CLAUDECODE: '1', NODE_OPTIONS: '--inspect' },
+    };
+    const result = build({ env: leaky }).env;
+
+    expect(result['CLAUDECODE']).toBeUndefined();
+    expect(result['NODE_OPTIONS']).toBeUndefined();
+  });
+
+  it('strips a denied prefix, so --resume still has a transcript to resume', () => {
+    const leaky = {
+      ...env,
+      base: {
+        ...env.base,
+        CLAUDE_CODE_SESSION_ID: 'outer',
+        CLAUDE_CODE_CHILD_SESSION: '1',
+        ELECTRON_RUN_AS_NODE: '1',
+      },
+    };
+    const result = build({ env: leaky }).env;
+
+    expect(result['CLAUDE_CODE_SESSION_ID']).toBeUndefined();
+    expect(result['CLAUDE_CODE_CHILD_SESSION']).toBeUndefined();
+    expect(result['ELECTRON_RUN_AS_NODE']).toBeUndefined();
+  });
+
+  it('keeps everything the deny list does not name', () => {
+    const result = build().env;
+
+    expect(result['PATH']).toBe('/usr/bin');
+    expect(result['HOME']).toBe('/home/me');
+  });
 });
 
 describe('wakePrompt', () => {
