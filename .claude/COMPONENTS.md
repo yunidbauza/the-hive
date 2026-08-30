@@ -376,22 +376,60 @@ resolution itself is the exported pure function `resolveTicketPrs()`.
 Colour and findings wording live in `src/features/shared/pr-presentation.ts`,
 because the PRs panel (052) is a separate slice that must agree with this one.
 
-### `<AgentsPanel />`
+### `<AgentsPanel />` and `<AgentRow />`
 
-`src/features/agents/components/agents-panel.tsx` — story 033, built.
+`src/features/agents/components/` — stories 033 and HIVE-114, regrouped by
+HIVE-116.
 
-`AgentsPanel` → `AgentRow`, one per id in `agentOrder`. Clicking a row opens the
-agent's terminal — the session view with agent chips (043).
+`AgentsPanel` → a header per group → `AgentRow`. The grouping is **state**, not
+name: a rail is read to answer "what needs me", and the state is what changes
+minute to minute. Every ordering rule lives in `useAgentsByGroup` — asking first
+inside Awake, ties broken on the most recent run, `failed` filed under Awake
+because a broken agent is the loudest yes on the panel, empty groups omitted —
+so the panel renders a decision rather than making one.
 
-**The online dot is not `StatusDot`.** That atom is a 7px unringed dot; this one
+`+ New agent…` at the foot calls `openSettings('agents')`. The empty state names
+the same pane in prose and draws no button, because the copy already is one.
+
+**The status dot is not `StatusDot`.** That atom is a 7px unringed dot; this one
 is 9px with a 2px `--cc-panel` ring so it reads as lifted off the avatar tile.
-Deliberately built inline rather than bending the atom to fit two shapes.
+Deliberately built inline rather than bending the atom to fit two shapes. It
+takes its fill from `STATUS_FILL` and pulses for `working`, the same rules the
+atom applies.
 
-Its `online` text is `sr-only` and sits **last** in the row, so the row announces
-`"slack-agent … online"` rather than leading with its status. Agents are always
-online in this phase, but the state still may not ride on the green alone.
+The status **word** is visible in the right-hand meta rather than `sr-only`,
+which is what changed with HIVE-116: while `sleeping` was the only state an
+agent could be in, saying so on screen was noise. With four possible at once it
+is the point of the row. Beneath it sits whatever makes that word actionable —
+the open ask's ref, the run's cost, the next wake — and `invalid` beats all of
+them, because a file that will not parse is not running.
 
-Creating and pausing agents is out of scope here — they are fixture-defined.
+### `<AgentView />`, `<AgentRunLog />` and `<AgentLedger />`
+
+`src/features/agents/components/` — HIVE-116, built.
+
+An agent's place on the centre stage, and **deliberately not a terminal**:
+nothing is typed into a process, and the log is a transcript of turns that have
+already ended. It keeps the terminal's rhythm — header, body, one input at the
+bottom — and that is the whole of the resemblance.
+
+Header, five fact tiles, then the two regions side by side, then the input. The
+split is `minmax(0, 1fr) clamp(280px, 22%, 380px)` under a **container query**
+that stacks below an 800px stage. Both halves of that are load-bearing and both
+are argued in `docs/agents-and-ledger.md`; the short version is that the log is
+elastic because it renders at the user's terminal type scale, `1fr` alone would
+give the app a horizontal scrollbar, and the rails drag so only the container
+knows how wide the stage is.
+
+`AgentRunLog` takes its colours from the theme's terminal palette in JS, the way
+the xterm surface does — those four values already exist and are already
+themeable, and a `--cc-run-*` group would be a second copy of them. Finished
+runs are one-line receipts with no chevron: their lines were never kept.
+
+`AgentLedger` stacks each entry's kind chip and timestamp **above** its body,
+because an inline chip costs 44px of a 280px column. All nine `LedgerKind`
+members get a chip. An open ask draws no option buttons — that control is
+HIVE-118's, and until it lands the input below is the way to answer.
 
 ### `<InboxPanel />` and `<NotificationCard />`
 
@@ -491,12 +529,16 @@ renders comes from `resolveView()` in `src/lib/resolve-view.ts`.
 `src/components/layout/session-meta-bar.tsx`
 
 ```ts
-function SessionMetaBar(props: { entity: Entity }): JSX.Element
+function SessionMetaBar(props: { entity: Session }): JSX.Element
 ```
 
-The bar above the terminal in the session and agent views (040): a back pill,
-the entity id, its one-line task, and status chips. Sessions get branch, status,
-and PR; agents get "dedicated agent" and "online".
+The bar above the terminal in the **session** view (040): a back pill, the
+entity id, its one-line task, and status chips — branch, status, and PR.
+
+It took an `Entity` and rendered a `dedicated agent` chip for the other kind
+until HIVE-116, which gave agents a view of their own. The prop narrowed to
+`Session` with the branch that drew those chips: a type that admits what the
+component can no longer draw is an invitation to reach it again.
 
 Everything is derived from the entity, so a status change reaches this bar the
 same moment it reaches the rails — including the `waiting → "needs input"`

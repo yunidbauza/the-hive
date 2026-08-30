@@ -4,14 +4,15 @@
 every party in The Hive reads from and writes to, and the **agent definition**,
 the file that makes a party an agent in the first place. **Owned by stories
 HIVE-111 (the log), HIVE-112 (the MCP tools), HIVE-113 (delivery and the
-console verbs) and HIVE-114 (definitions).**
+console verbs), HIVE-114 (definitions) and HIVE-116 (the Agents tab and the
+agent view).**
 
 Load this when working on `electron/main/ledger/`, `electron/main/agents/`,
 `electron/mcp-host/`, `electron/shared/{ledger,agent}-*`, the hook receiver's
 two ledger routes, the renderer's mirrors of either (`use-ledger-sync.ts`,
 `use-agents-sync.ts`, the `useLedger*` and `useAgent*` selectors in
-`hive-store.ts`), the `ledger` / `ask` / `answer` console verbs, or
-Settings › Agents.
+`hive-store.ts`), the `ledger` / `ask` / `answer` console verbs, Settings ›
+Agents, or the agents rail and `src/features/agents/`.
 
 ## What the ledger is
 
@@ -731,6 +732,139 @@ Settings › Skills. An invalid skill's row is disabled because main could not r
 a name out of the file, so there was nothing for the pane to address. An agent's
 *folder* names it, so there is always a file to open — and the user has to be
 able to open it to fix the key they were just told about.
+
+## The agent on screen (HIVE-116)
+
+### Two fields the bridge had to grow
+
+HIVE-115 shipped `AgentSummary` carrying the **latest** run's `cost` and nothing
+else, on the reasoning that a row draws one number. An agent view draws more
+than a row: its `Today` tile is a count and a sum over the day's runs, and its
+`Session` tile is `runsSinceRotate` over the definition's ceiling. Neither is
+derivable from one cost, so `runs: RunSummary[]` and `rotateAfter` now cross —
+on `agents:list`, and on the status push.
+
+The array rather than a precomputed `todayRuns` / `todayCost` pair, because
+"today" is a question only the renderer can answer: the user's calendar day, in
+the user's zone. A stored pair would be wrong by morning. `useAgentFacts`
+compares with `toDateString()`, the same local-day rule the ledger files itself
+by, and for the same reason — it is the person's day, and there is no server to
+have another one.
+
+**`AgentStatusPush` carrying the history is a deliberate widening**, and its doc
+comment used to say it never would. The alternative was emitting
+`agents:changed` at every run close so the renderer re-lists, which re-reads and
+re-parses every `AGENT.md` on disk to learn one number main already holds.
+Twenty summaries on a push that fires a few times an hour is the cheaper
+honesty. `sessionUuid` still stays behind: it moves on a first run and on a
+rotation, and `agents:list` is soon enough for both.
+
+### An agent is not a terminal
+
+Until this story, opening an agent mounted a `SessionMetaBar`, a read-only xterm
+replaying `entity.lines`, and a `MessageInput` — terminal chrome around
+something that owns no process, and a place to type that reached nothing. All
+three are gone. `resolveView` still returns `'agent'`; what changed is that the
+predicate deciding "is there a terminal here?" no longer says yes to it.
+
+That predicate had to **split** rather than narrow, and the split is the part
+worth remembering:
+
+- `isEntityView` — *is the user already looking at this thing?* Still true for
+  both kinds. The foreground gate (HIVE-81) suppresses notifications on it, and
+  an agent view answers exactly as a session's terminal does.
+- `isTerminalView` — *does a terminal and its meta bar belong here?* Session
+  only.
+
+Narrowing the single predicate silently un-gated notifications for an agent the
+user was looking at. The suite caught it, which is the argument for the
+foreground hook mirroring the stage's selectors rather than re-deriving them.
+
+Agents also left `center-stage`'s terminal `ids`, so no transport is built for a
+definition on disk. `resolveTransport` keeps its agent guard anyway: its
+contract is "a transport for any id", and a defence removed the moment its
+caller goes away is one that has to be rediscovered when the next caller
+arrives.
+
+### The split, and its three numbers
+
+The run log and the ledger sit side by side under
+
+```css
+grid-template-columns: minmax(0, 1fr) clamp(280px, 22%, 380px);
+```
+
+with a container query stacking them below an 800px stage. Every number in that
+line is derived rather than chosen:
+
+- **The log is the elastic half** because it renders at the *terminal* type
+  scale, which the user sets anywhere from 10px to 18px
+  (`TERMINAL_FONT_SIZES`); the ledger is chrome at a fixed size showing short
+  correspondence. Giving the moving one the remainder is what keeps both right
+  at every size.
+- **280px** is the activity rail's own text measure — 316px less 14px of padding
+  either side. A ledger entry and an Inbox card show the same thing, and
+  HIVE-118 turns one into the other.
+- **380px** because a tool line is `<name> <arg>` with `ARG_LIMIT = 60` in
+  `run-log.ts`, so the longest line main can emit is ~95 characters. Past ~110
+  neither panel gains from more width.
+- **800px** because below it the log falls under 70 characters, narrower than
+  the prose the model writes into it. There it drops to the stacked layout the
+  ticket started from, so nothing is lost.
+
+`minmax(0, 1fr)` and never a bare `1fr`: `1fr` carries an `auto` minimum, so one
+unbreakable 95-character tool line would push the grid past the stage and give
+the whole app a horizontal scrollbar.
+
+**A container query, not a media query**, and the first in this codebase. The
+rails drag between 268px and 520px each, so a 1920px window can hold a 700px
+stage — the viewport width simply is not the question being asked.
+
+### Run-log colour comes from JS, and the run log is honest about history
+
+`RunLineColor` names four terminal slots, and terminal colour deliberately never
+reaches CSS (`tokens.css` says so at the top). A `--cc-run-*` group would have
+been a second representation of values the theme already carries — and
+`tests/lib/theme/built-in.test.ts` would have refused them, because it fails any
+`--cc-*` colour that appears in no key list, on the grounds that an imported
+theme could never set it. So `AgentRunLog` reads `useTerminalAppearance()` and
+paints inline, exactly as the xterm surface is handed its palette.
+
+Lines arrive as a flat stream with **no run id on them**. The log therefore
+names a run only while one is *live* — the case where the buffer genuinely is
+that run's output — and once it ends, every run becomes a one-line receipt and
+the buffer is labelled for what it is. Receipts carry no chevron: `agents:lines`
+is a live push that nothing writes to disk, so a disclosure control would open
+onto nothing. Partitioning a finished buffer would mean sniffing the closing
+line's colour, which breaks the moment the fold emits a second cyan line.
+
+### The status palette, and the one shape that stayed
+
+The five agent states each take the utility of the session state they mirror, so
+one word means one colour across the app: `asking` is `waiting`'s amber,
+`working` is `working`'s green and pulses by the same derivation, `sleeping` is
+`idle`'s subtle, `paused` is `terminated`'s muted. Only `failed` needed a hue
+the session vocabulary lacks.
+
+`paused` is a **solid fill, not a hollow ring**, and it was drawn as a ring
+first. `StatusDot` gates `hollow` on `status === 'idle' && detail !== undefined`
+and records that narrowing as a deliberate review fix — "makes a hollow non-grey
+dot unrepresentable regardless of what the caller passes". Reaching for the ring
+would have reopened a settled invariant to buy a distinction the visible status
+word already carries.
+
+### Three badges, three different numbers
+
+The Agents tab's badge is `useAgentAskCount` — open asks whose `from` is an
+agent. It is neither of the other two on that screen: not `useOpenAskCount`,
+which counts a session's asks as well, and not the Inbox's `useUnreadCount`,
+which counts notifications. They converge only once HIVE-118 turns an ask into
+an inbox card.
+
+The agent filter lives in the renderer rather than in `openAsks`, which main
+also calls and which has no notion of which parties are agents. `OpenAsk`
+spreads the entry, so `from` is already there; only `agentOrder` is missing, and
+only the renderer has it.
 
 ## Related reading
 
