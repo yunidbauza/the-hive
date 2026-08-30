@@ -1892,6 +1892,43 @@ describe('hive-store', () => {
         });
       });
 
+      /*
+        `agents:pause` and `agents:resume` throw by design when the runtime is
+        not up — answering a status they never wrote is what their contract
+        calls the one outcome worth a rejected promise. A dropped rejection
+        would leave the console showing the echoed command and nothing else,
+        with an unhandled rejection in the renderer.
+      */
+      it('prints why a verb failed rather than falling silent', async () => {
+        useHiveStore.getState().hydrateAgents([summary()]);
+        bridge.pause.mockRejectedValue(
+          new Error('The agent runtime is not running.'),
+        );
+
+        run('pause slack-watcher');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(lastLine()).toMatchObject({
+          text: expect.stringContaining('The agent runtime is not running.'),
+          color: 'red',
+        });
+      });
+
+      /*
+        Resolution is the shared one — `open`, `send` and `ask` all match
+        case-insensitively, and a `pause` that alone demanded the exact key
+        would refuse `SLACK-WATCHER` on the same screen where `open` accepts it.
+      */
+      it('resolves an agent name the way every other targeted verb does', async () => {
+        useHiveStore.getState().hydrateAgents([summary()]);
+
+        run('pause SLACK-WATCHER');
+        await Promise.resolve();
+
+        expect(bridge.pause).toHaveBeenCalledWith({ name: 'slack-watcher' });
+      });
+
       it('lists all five in help', () => {
         run('help');
 

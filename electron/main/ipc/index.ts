@@ -2122,10 +2122,34 @@ export function registerIpcHandlers(): void {
     return next.status;
   };
 
-  handle(CH.agentsPause, (_event, payload): AgentStatus =>
+  /**
+   * Refuse a name that is not an agent this machine has a definition for.
+   *
+   * `parseAgentNameRequest` validates the name's *shape* and nothing else, and
+   * `AgentState.patch` creates an entry for whatever it is handed. Without this
+   * check, `pause` on an unknown name writes `{"ghost": {"status": "paused"}}`
+   * into `agents.json` permanently — and an agent later created under that name
+   * would be born paused, refusing every trigger for a reason nothing on screen
+   * explains. `BRIDGE_AGENTS_KEYS` claims these two verbs cannot create an
+   * agent; this is what makes that true of its run state as well.
+   *
+   * `run` needs no equivalent: it reaches `deps.command`, which reads the
+   * definition off disk and refuses `invalid` when there is none.
+   */
+  const requireAgent = async (name: string): Promise<string> => {
+    const snapshot = await agents?.list();
+
+    if (!snapshot?.agents.some((agent) => agent.name === name)) {
+      throw new Error(`No such agent: ${name}`);
+    }
+
+    return name;
+  };
+
+  handle(CH.agentsPause, async (_event, payload): Promise<AgentStatus> =>
     // No `kill`. A pause lets the turn in flight finish — see the contract, and
     // `finalizeRun`, which is what stops that turn writing the pause back out.
-    setAgentStatus(parseAgentNameRequest(payload).name, 'paused'),
+    setAgentStatus(await requireAgent(parseAgentNameRequest(payload).name), 'paused'),
   );
 
   /**
@@ -2139,11 +2163,19 @@ export function registerIpcHandlers(): void {
    * to finish.
    *
    * The rule is `finalizeRun`'s, reused: an unanswered ask outranks everything
-   * else, because status is about what the user must do next.
+   * else, because status is about what the user must do next — with one term
+   * `finalizeRun` does not need, because it only ever runs when the child is
+   * already gone: a **live run outranks the ledger**. Pausing mid-turn does not
+   * kill the child, so `paused` and "a process is running" are not exclusive,
+   * and resuming into `sleeping` there would put a resting word on a row whose
+   * agent is working — which `run` would then contradict by refusing.
    */
-  handle(CH.agentsResume, (_event, payload): AgentStatus => {
-    const { name } = parseAgentNameRequest(payload);
-    const current = agentState?.read(name).status;
+  handle(CH.agentsResume, async (_event, payload): Promise<AgentStatus> => {
+    const name = await requireAgent(parseAgentNameRequest(payload).name);
+
+    if (agentState === null) {
+      throw new Error('The agent runtime is not running.');
+    }
 
     /*
       Only a paused agent resumes.
@@ -2153,12 +2185,20 @@ export function registerIpcHandlers(): void {
       its process is still running, and the next `finalizeRun` would be the
       only thing to put it right. Resume is the inverse of pause and nothing
       else, so anything not paused is already resumed — answer what it is.
-    */
-    if (current !== 'paused') return current ?? 'sleeping';
 
-    const asking = ledger
-      .read({ from: name })
-      .openAsks.some((ask) => ask.from === name);
+      Read after the null check rather than through `?.`: answering `sleeping`
+      for a resume that reached no file is exactly the lie the docblock above
+      rejects for `pause`, and it is no more true here.
+    */
+    const current = agentState.read(name).status;
+
+    if (current !== 'paused') return current;
+
+    if (runs?.live().includes(name) === true) {
+      return setAgentStatus(name, 'working');
+    }
+
+    const asking = ledger.read({}).openAsks.some((ask) => ask.from === name);
 
     return setAgentStatus(name, asking ? 'asking' : 'sleeping');
   });

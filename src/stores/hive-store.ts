@@ -885,15 +885,27 @@ export function agentStatusColor(status: AgentStatus): TermLine['color'] {
  *
  * Main's `reason` is printed verbatim where it has one — an `invalid` refusal
  * names the field of the definition that is wrong, and no wording here could
- * reproduce that. What this adds is the two cases main has no words for,
- * because they are not faults: the agent is busy, or the user themselves
- * stopped it. Both lines end in the thing to do next.
+ * reproduce that. What this adds is the cases main has no words for, because
+ * they are not faults: the agent is busy, or the user themselves stopped it.
+ * Each line ends in the thing to do next.
  *
  * `working` says "try again when it sleeps" rather than promising a queue.
  * HIVE-120 is what makes a run wait for the next wake; until it lands, saying
  * "your run is queued" would describe a feature that does not exist.
+ *
+ * **Exported, and read by the agent view as well as the console.** Both surfaces
+ * draw the refusal from one `AgentRunResult`, and the view had its own ternary
+ * chain ending in a bare `else` — so when this story widened `refused` with
+ * `paused`, the view began telling users that the runtime was not up about an
+ * agent they had paused thirty seconds earlier. An exhaustive `switch` over the
+ * union in one place is what makes the next member a compile error there
+ * instead of a plausible sentence.
+ *
+ * In `hive-store.ts` rather than a lib module because it is the console's
+ * wording first; `features/` may import `stores/`, and the reverse is the
+ * direction the fence forbids.
  */
-function refusalText(
+export function agentRunRefusal(
   name: string,
   outcome: Extract<AgentRunResult, { started: false }>,
 ): string {
@@ -904,10 +916,10 @@ function refusalText(
       return `${name} is working — try again when it sleeps`;
     case 'paused':
       return `${name} is paused — resume it first`;
+    case 'invalid':
+      return `${name}'s definition could not be read — edit it to fix that`;
     case 'unknown':
       return 'the agent runtime is not running';
-    default:
-      return `${name} could not be woken`;
   }
 }
 
@@ -2204,23 +2216,37 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         }
 
         /**
-         * Resolved here rather than through `resolve()` (HIVE-117).
+         * Resolved through `resolveEntityRef` but worded here (HIVE-117).
          *
-         * `resolve` speaks about *sessions* — "no such session", "use a session
-         * id" — and its ended-gate is a session's. These four verbs name an
-         * agent, so a miss has to say so in the noun the user typed, and a hit
-         * that turns out to be a session has to be refused rather than sent to
-         * main: `entities` holds both kinds under one map, so `run sess-01`
+         * Not through `resolve()`, whose sentences are a session's — "no such
+         * session", "use a session id" — and whose ended-gate is a session's
+         * too. But the *resolution* has to be the shared one: `open`, `send`
+         * and `ask` all match case-insensitively and by label, and a `pause`
+         * that alone demanded the exact key would refuse `SLACK-WATCHER` on the
+         * same screen where `open SLACK-WATCHER` works.
+         *
+         * A hit that turns out to be a session is refused here rather than sent
+         * to main. `entities` holds both kinds under one map, so `run sess-01`
          * resolves perfectly well and would come back rejected by main's name
-         * guard, with a message about legal agent names rather than about what
+         * guard — with a message about legal agent names rather than about what
          * the user actually did.
          */
-        const entity = get().entities[command.target];
-        if (entity === undefined) {
+        const match = resolveEntityRef(command.target, get().entities);
+
+        if (match.kind === 'none') {
           pushOrch(`  no such agent: ${command.target}`, 'red');
           return;
         }
-        if (!isAgent(entity)) {
+        if (match.kind === 'ambiguous') {
+          pushOrch(
+            `  ${command.target} matches ${match.labels.join(', ')} — use an agent name`,
+            'red',
+          );
+          return;
+        }
+
+        const entity = get().entities[match.id];
+        if (entity === undefined || !isAgent(entity)) {
           pushOrch(
             `  ${command.target} is a session, not an agent — try open or send`,
             'red',
@@ -2230,45 +2256,80 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
         const name = entity.id;
         const agents = window.hive?.agents;
-        if (agents === undefined) return;
+
+        /*
+          Desktop with no bridge is not a state the app reaches, but a silent
+          return would be indistinguishable from a verb that ran and said
+          nothing — the failure the ledger verbs' desktop guard exists to
+          prevent. Say it instead.
+        */
+        if (agents === undefined) {
+          pushOrch(`  ${AGENTS_REQUIRE_DESKTOP}`, 'red');
+          return;
+        }
+
+        /**
+         * Every one of these rejects, and a dropped rejection is a silent verb.
+         *
+         * `agents:pause` and `agents:resume` throw by design when the runtime is
+         * not up — answering a status they never wrote is the one outcome their
+         * contract calls worth a rejected promise — and `assertSender` and the
+         * payload guards reject on every channel. Without this the console
+         * would print the echoed command and nothing else, and the renderer
+         * would log an unhandled rejection where the user was owed a sentence.
+         */
+        const said = (work: Promise<void>) => {
+          void work.catch((cause: unknown) => {
+            pushOrch(
+              `  ${cause instanceof Error ? cause.message : String(cause)}`,
+              'red',
+            );
+          });
+        };
 
         if (command.kind === 'run') {
-          void agents.run({ name }).then((outcome) => {
-            if (outcome.started) {
-              pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
-              return;
-            }
-            /*
-              Main's reason wins where it has one — an `invalid` refusal names
-              the field of the definition that is wrong, which no wording here
-              could reproduce. The two refusals the console can say better than
-              main are the two that name the user's next move.
-            */
-            pushOrch(`  ${refusalText(name, outcome)}`, 'red');
-          });
+          said(
+            agents.run({ name }).then((outcome) => {
+              if (outcome.started) {
+                pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
+                return;
+              }
+              /*
+                Main's reason wins where it has one — an `invalid` refusal names
+                the field of the definition that is wrong, which no wording here
+                could reproduce. The refusals the console says better than main
+                are the ones that name the user's next move.
+              */
+              pushOrch(`  ${agentRunRefusal(name, outcome)}`, 'red');
+            }),
+          );
           return;
         }
 
         if (command.kind === 'kill') {
-          void agents.kill({ name }).then((stopped) => {
-            /*
-              `false` is not an error: a run can end between the table being
-              read and the command being typed, and colouring that red would
-              teach the user to distrust a verb that did exactly what they
-              wanted.
-            */
-            pushOrch(
-              stopped ? `  killed ${name}'s run` : `  nothing running`,
-              'dim',
-            );
-          });
+          said(
+            agents.kill({ name }).then((stopped) => {
+              /*
+                `false` is not an error: a run can end between the table being
+                read and the command being typed, and colouring that red would
+                teach the user to distrust a verb that did exactly what they
+                wanted.
+              */
+              pushOrch(
+                stopped ? `  killed ${name}'s run` : `  nothing running`,
+                'dim',
+              );
+            }),
+          );
           return;
         }
 
         if (command.kind === 'pause') {
-          void agents.pause({ name }).then(() => {
-            pushOrch(`  paused ${name}`, 'dim');
-          });
+          said(
+            agents.pause({ name }).then(() => {
+              pushOrch(`  paused ${name}`, 'dim');
+            }),
+          );
           return;
         }
 
@@ -2280,9 +2341,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           a line saying only "resumed" would bury the question it came back
           holding.
         */
-        void agents.resume({ name }).then((status) => {
-          pushOrch(`  resumed ${name} — ${agentStatusWord(status)}`, 'dim');
-        });
+        said(
+          agents.resume({ name }).then((status) => {
+            pushOrch(`  resumed ${name} — ${agentStatusWord(status)}`, 'dim');
+          }),
+        );
         return;
       }
 
@@ -4398,6 +4461,15 @@ export const useNavOrder = () =>
        * about where "here" is, so the partition *and* the sort have to match
        * `session-table.tsx` exactly. A flattening in a different order from the
        * one on screen makes the down arrow skip a row and come back to it.
+       *
+       * **Three** buckets since HIVE-117, because the table draws three. The
+       * agents sit between the two session groups, ranked by `rankedAgents` —
+       * the same function the table's own group is drawn from, not a second
+       * copy of its rule. Without them here an agent row was still *selectable*
+       * (it renders the caret and sets `selId` on click) while being absent
+       * from the order every arrow key consults: `↓` from one teleported to the
+       * first session, `↑` to the last ended row, and `→` opened nothing at all
+       * because `console-input.tsx` gates on membership of this list.
        */
       const active: string[] = [];
       const ended: string[] = [];
@@ -4409,6 +4481,7 @@ export const useNavOrder = () =>
       }
       return [
         ...byRecency(active, state.entities),
+        ...rankedAgents(state.agentOrder, state.entities),
         ...byRecency(ended, state.entities),
       ];
     }),
@@ -4802,7 +4875,67 @@ const AGENT_RANK: Record<AgentStatus, number> = {
   paused: 4,
 };
 
+/** The three fields the AGENTS group's order is a function of. */
+interface AgentRank {
+  id: string;
+  status: AgentStatus;
+  /** `0` for an agent nothing is scheduled to wake. */
+  nextRunAt: number;
+}
+
+/**
+ * The AGENTS group's comparator.
+ *
+ * Extracted rather than left inside {@link useFleetAgents} because
+ * {@link useNavOrder} has to produce the identical sequence: its docblock says
+ * the partition and the sort "have to match `session-table.tsx` exactly", and
+ * the table now draws a third group. Two spellings of one order is the defect
+ * that docblock is warning about — a caret that skips a row and comes back to
+ * it.
+ */
+function byFleetRank(a: AgentRank, b: AgentRank): number {
+  const rank = AGENT_RANK[a.status] - AGENT_RANK[b.status];
+  if (rank !== 0) return rank;
+
+  /*
+    Soonest wake first within a rank, and an agent with no scheduled wake last:
+    absence arrives here as `0`, and treating it as a time would sort the one
+    agent that will never wake on its own ahead of the one about to.
+  */
+  if (a.nextRunAt === b.nextRunAt) return a.id.localeCompare(b.id);
+  if (a.nextRunAt === 0) return 1;
+  if (b.nextRunAt === 0) return -1;
+
+  return a.nextRunAt - b.nextRunAt;
+}
+
+/** The agents of `agentOrder`, ranked — shared by the table and the caret. */
+function rankedAgents(
+  order: readonly string[],
+  entities: Record<string, Entity>,
+): string[] {
+  const rows: AgentRank[] = [];
+
+  for (const id of order) {
+    const entity = entities[id];
+
+    // `entities` holds both kinds and an agent name is a legal session id.
+    if (entity === undefined || !isAgent(entity)) continue;
+
+    rows.push({ id, status: entity.status, nextRunAt: entity.nextRunAt ?? 0 });
+  }
+
+  return rows.sort(byFleetRank).map((row) => row.id);
+}
+
 export const useFleetAgents = (): string[] => {
+  /*
+    Encoded as strings for `useShallow`'s reason, which `useAgentsByGroup`
+    records at length: an array of freshly built objects is never equal to the
+    last one, so every read looks like a change and React stops it with
+    "maximum update depth exceeded". `|` is safe as a separator because
+    `AGENT_NAME_PATTERN` admits lowercase letters, digits and dashes only.
+  */
   const rows = useHiveStore(
     useShallow((state) =>
       state.agentOrder.flatMap((id) => {
@@ -4815,49 +4948,50 @@ export const useFleetAgents = (): string[] => {
     ),
   );
 
-  return useMemo(() => {
-    const parsed = rows.map((row) => {
-      const [id = '', status = 'sleeping', next = '0'] = row.split('|');
+  return useMemo(
+    () =>
+      rows
+        .map((row) => {
+          const [id = '', status = 'sleeping', next = '0'] = row.split('|');
 
-      return { id, status: status as AgentStatus, next: Number(next) };
-    });
-
-    return parsed
-      .sort((a, b) => {
-        const rank = AGENT_RANK[a.status] - AGENT_RANK[b.status];
-        if (rank !== 0) return rank;
-        /*
-          Soonest wake first *within* `sleeping`, and a manual agent last:
-          `nextRunAt` is absent for one, which arrives here as `0` and would
-          otherwise sort it to the front — ahead of an agent that really is
-          about to run.
-        */
-        if (a.next === b.next) return a.id.localeCompare(b.id);
-        if (a.next === 0) return 1;
-        if (b.next === 0) return -1;
-
-        return a.next - b.next;
-      })
-      .map((row) => row.id);
-  }, [rows]);
+          return { id, status: status as AgentStatus, nextRunAt: Number(next) };
+        })
+        .sort(byFleetRank)
+        .map((row) => row.id),
+    [rows],
+  );
 };
 
-/** How many agents there are, and how many are waiting on you (HIVE-117). */
-export const useAgentCounts = (): { agents: number; asking: number } =>
-  useHiveStore(
-    useShallow((state) => {
-      let agents = 0;
-      let asking = 0;
-      for (const id of state.agentOrder) {
-        const entity = state.entities[id];
-        if (entity === undefined || !isAgent(entity)) continue;
-        agents += 1;
-        if (entity.status === 'asking') asking += 1;
+/**
+ * How many agents are waiting on you (HIVE-117).
+ *
+ * The *count* of agents is deliberately not here: every caller of this already
+ * holds {@link useFleetAgents}' array, whose length is the same number by
+ * construction — both walk `agentOrder` applying the same narrowing. A second
+ * subscription over the same data to recompute `.length` is the kind of derived
+ * value `CLAUDE.md` means by "one truth per number on screen".
+ *
+ * `asking` earns its own walk because nothing else derives it, and it is the
+ * only number in that heading worth a glance.
+ */
+export const useAskingAgentCount = (): number =>
+  useHiveStore((state) => {
+    let asking = 0;
+    for (const id of state.agentOrder) {
+      const entity = state.entities[id];
+      if (entity !== undefined && isAgent(entity) && entity.status === 'asking') {
+        asking += 1;
       }
+    }
 
-      return { agents, asking };
-    }),
-  );
+    return asking;
+  });
+
+/** An agent's pull request: always a number, linkable only when the sweep knows it. */
+export interface AgentPr {
+  n: number;
+  url?: string;
+}
 
 /**
  * The pull request this agent last finished, if it named one (HIVE-117).
@@ -4871,8 +5005,9 @@ export const useAgentCounts = (): { agents: number; asking: number } =>
  * The last one wins: an agent that opens a PR a day accumulates `done` entries,
  * and the row has space for the current one.
  */
-export const useAgentPr = (name: string): number | undefined => {
+export const useAgentPr = (name: string): AgentPr | null => {
   const ledger = useHiveStore((state) => state.ledger);
+  const prs = useHiveStore((state) => state.prs);
 
   return useMemo(() => {
     for (let i = ledger.length - 1; i >= 0; i -= 1) {
@@ -4880,19 +5015,37 @@ export const useAgentPr = (name: string): number | undefined => {
       if (entry === undefined || entry.from !== name || entry.kind !== 'done') {
         continue;
       }
-      const pr = entry.meta?.['pr'];
+      const written = entry.meta?.['pr'];
       /*
         A number, or a string that is one. Main writes `meta` from whatever the
-        agent handed `ledger_post`, so this is renderer-side input in every
-        sense that matters — `#12` and `"12"` are both things a model will
-        write, and neither should put `NaN` in the table.
+        agent handed `ledger_post`, so this is model-authored input in every
+        sense that matters — `#12` and `"12"` are both things it will write, and
+        neither should put `NaN` in the table.
       */
-      const n = typeof pr === 'number' ? pr : Number(String(pr).replace(/^#/, ''));
-      if (Number.isInteger(n) && n > 0) return n;
+      const n =
+        typeof written === 'number'
+          ? written
+          : Number(String(written).replace(/^#/, ''));
+
+      if (!Number.isInteger(n) || n <= 0) continue;
+
+      /*
+        The URL comes from the **sweep**, not from the number.
+
+        A `done` entry records that an agent opened a pull request; it does not
+        say which repository, and there is no honest URL to build from an
+        integer alone. A GitHub-wide search for "42" is a worse answer than no
+        link — it looks like a destination and lands on thousands of unrelated
+        results. So the number renders as plain text until the PR list happens
+        to hold it, which is the same standing a session's *remembered* PR has.
+      */
+      const known = prs.find((pr) => pr.number === n);
+
+      return { n, ...(known === undefined ? {} : { url: known.url }) };
     }
 
-    return undefined;
-  }, [ledger, name]);
+    return null;
+  }, [ledger, prs, name]);
 };
 
 /** Create a session on a project (stories 041, 044). */

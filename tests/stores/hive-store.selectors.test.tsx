@@ -17,7 +17,7 @@ import {
 import {
   useActiveEntity,
   useActiveSessions,
-  useAgentCounts,
+  useAskingAgentCount,
   useAgentOrder,
   useAgentPr,
   useCounts,
@@ -167,6 +167,11 @@ describe('hive-store selectors', () => {
     it('puts active sessions before done ones', () => {
       const { result } = renderHook(() => useNavOrder());
 
+      /*
+        The demo fleet seeds three agents, and HIVE-117 put them in the table
+        between the two session groups — so they are in this order too, in the
+        rank `useFleetAgents` applies.
+      */
       expect(result.current).toEqual([
         'hero-refresh',
         'lead-form',
@@ -176,14 +181,33 @@ describe('hive-store selectors', () => {
         'dark-tokens',
         'e2e-quote',
         'nplusone',
+        'pr-reviewer',
+        'slack-agent',
+        'standup-agent',
         'tz-fix',
         'ecs-scaling',
       ]);
     });
 
-    it('excludes agents', () => {
+    /**
+     * Agents **are** in the order, since HIVE-117 put them in the table.
+     *
+     * This assertion used to be `not.toContain`, and it was right while the
+     * fleet table drew sessions only. Once an agent row renders the caret and
+     * sets `selId` on click, leaving it out of this list makes it selectable
+     * and unreachable at once: `↓` from an agent teleported to the first
+     * session, `↑` to the last ended row, and `→` opened nothing, because
+     * `console-input.tsx` gates opening on membership here.
+     */
+    it('includes agents, between the two session groups', () => {
       const { result } = renderHook(() => useNavOrder());
-      expect(result.current).not.toContain('slack-agent');
+
+      const agentAt = result.current.indexOf('slack-agent');
+
+      expect(agentAt).toBeGreaterThan(-1);
+      // After the last active session, before the first ended one.
+      expect(agentAt).toBeGreaterThan(result.current.indexOf('nplusone'));
+      expect(agentAt).toBeLessThan(result.current.indexOf('tz-fix'));
     });
 
     /**
@@ -216,12 +240,16 @@ describe('hive-store selectors', () => {
         ]);
       });
 
-      const { result } = renderHook(() =>
-        ({ nav: useNavOrder(), active: useActiveSessions(), ended: useEndedSessions() }),
-      );
-      const { nav, active, ended } = result.current;
+      const { result } = renderHook(() => ({
+        nav: useNavOrder(),
+        active: useActiveSessions(),
+        agents: useFleetAgents(),
+        ended: useEndedSessions(),
+      }));
+      const { nav, active, agents, ended } = result.current;
 
-      expect(nav).toEqual([...active, ...ended]);
+      // The three groups the table paints, in the order it paints them.
+      expect(nav).toEqual([...active, ...agents, ...ended]);
       // Restored in oldest-first session-history order, walked newest-first.
       expect(nav.indexOf('old-newest')).toBeLessThan(nav.indexOf('old-oldest'));
     });
@@ -240,14 +268,14 @@ describe('hive-store selectors', () => {
       );
 
       /*
-        Seven still running, then the three that have ended. `hero-refresh` is
-        first among them because it is the only one with a time on it —
-        `stampLifecycle` stamped `endedAt` as it crossed into `terminated`,
-        while the two fixture rows carry none and hold their fixture order
-        below it. An absent time sorts last rather than first, so an unknown
-        never claims to be the newest thing on the table.
+        Seven still running, then the demo fleet's three agents, then the three
+        that have ended. `hero-refresh` is first among the endings because it is
+        the only one with a time on it — `stampLifecycle` stamped `endedAt` as
+        it crossed into `terminated`, while the two fixture rows carry none and
+        hold their fixture order below it. An absent time sorts last rather than
+        first, so an unknown never claims to be the newest thing on the table.
       */
-      expect(result.current.slice(7)).toEqual([
+      expect(result.current.slice(10)).toEqual([
         'hero-refresh',
         'tz-fix',
         'ecs-scaling',
@@ -1632,7 +1660,7 @@ describe('hive-store selectors', () => {
     });
   });
 
-  describe('useAgentCounts', () => {
+  describe('useAskingAgentCount', () => {
     const agent = (over: Partial<AgentSummary> = {}): AgentSummary => ({
       name: 'slack-watcher',
       description: 'Watches.',
@@ -1644,7 +1672,7 @@ describe('hive-store selectors', () => {
       ...over,
     });
 
-    it('counts the agents, and the ones waiting on you', () => {
+    it('counts only the agents waiting on you', () => {
       act(() => {
         useHiveStore.getState().hydrateAgents([
           agent({ name: 'a', status: 'asking' }),
@@ -1653,9 +1681,26 @@ describe('hive-store selectors', () => {
         ]);
       });
 
-      const { result } = renderHook(() => useAgentCounts());
+      const { result } = renderHook(() => useAskingAgentCount());
 
-      expect(result.current).toEqual({ agents: 3, asking: 2 });
+      expect(result.current).toBe(2);
+    });
+
+    /*
+      The count of agents is `useFleetAgents().length` by construction — both
+      walk `agentOrder` with the same narrowing — so it is not a second
+      selector. One truth per number on screen.
+    */
+    it('leaves the total to useFleetAgents', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateAgents([agent({ name: 'a' }), agent({ name: 'b' })]);
+      });
+
+      const { result } = renderHook(() => useFleetAgents());
+
+      expect(result.current).toHaveLength(2);
     });
 
     /*
@@ -1671,6 +1716,7 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useCounts());
 
       expect(result.current).not.toHaveProperty('asking');
+      expect(result.current).not.toHaveProperty('agents');
     });
   });
 
@@ -1701,7 +1747,22 @@ describe('hive-store selectors', () => {
 
       const { result } = renderHook(() => useAgentPr('slack-watcher'));
 
-      expect(result.current).toBe(152);
+      expect(result.current?.n).toBe(152);
+    });
+
+    /*
+      A `done` says an agent opened a pull request; it never says in which
+      repository. The URL therefore comes from the sweep or not at all — a
+      GitHub-wide search for the integer looks like a destination and is not.
+    */
+    it('carries no url when the PR sweep has not seen that number', () => {
+      act(() => {
+        useHiveStore.getState().hydrateLedger([done({ meta: { pr: 152 } })]);
+      });
+
+      const { result } = renderHook(() => useAgentPr('slack-watcher'));
+
+      expect(result.current).toEqual({ n: 152 });
     });
 
     /*
@@ -1723,7 +1784,7 @@ describe('hive-store selectors', () => {
 
       const { result } = renderHook(() => useAgentPr('slack-watcher'));
 
-      expect(result.current).toBe(expected);
+      expect(result.current?.n).toBe(expected);
     });
 
     it('ignores another party’s done, and a done with no pr', () => {
@@ -1736,7 +1797,7 @@ describe('hive-store selectors', () => {
 
       const { result } = renderHook(() => useAgentPr('slack-watcher'));
 
-      expect(result.current).toBeUndefined();
+      expect(result.current).toBeNull();
     });
 
     it('ignores an ask that happens to carry one', () => {
@@ -1748,7 +1809,7 @@ describe('hive-store selectors', () => {
 
       const { result } = renderHook(() => useAgentPr('slack-watcher'));
 
-      expect(result.current).toBeUndefined();
+      expect(result.current).toBeNull();
     });
   });
 });

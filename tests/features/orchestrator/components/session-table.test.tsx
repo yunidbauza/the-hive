@@ -987,9 +987,13 @@ describe('SessionTable', () => {
 
       render(<SessionTable />);
 
-      // The most recent wins — the row has space for the current one.
-      const link = screen.getByRole('link', { name: /#152/ });
-      expect(link).toHaveTextContent('#152');
+      /*
+        The most recent wins — the row has space for the current one. It renders
+        as text rather than a link: a `done` says an agent opened a PR, never in
+        which repository, so the URL comes from the PR sweep or not at all.
+      */
+      expect(screen.getByTestId('agent-row')).toHaveTextContent('#152');
+      expect(screen.queryByRole('link', { name: /#152/ })).not.toBeInTheDocument();
     });
 
     it('ignores a done from somebody else, and a meta with no pr', () => {

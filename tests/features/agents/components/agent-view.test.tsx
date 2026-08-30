@@ -152,13 +152,87 @@ describe('AgentView', () => {
       render(<AgentView entity={seed()} />);
       await userEvent.click(screen.getByRole('button', { name: /Run now/i }));
 
-      expect(await screen.findByText(/Already running/)).toBeInTheDocument();
+      // The wording is `agentRunRefusal`'s, shared with the console (HIVE-117).
+      expect(await screen.findByText(/is working/)).toBeInTheDocument();
     });
 
-    it('renders Pause disabled until it has a channel', () => {
-      render(<AgentView entity={seed()} />);
+    /**
+     * HIVE-117 widened `AgentRunResult.refused` with `paused`, and this view's
+     * refusal used to be a ternary ending in a bare `else` reading "The agent
+     * runtime is not up." — so the new member arrived as a confident lie about
+     * an agent the user had paused themselves. The wording is shared now, and
+     * this is the case that would have caught it.
+     */
+    it('names a pause as a pause, not as a dead runtime', async () => {
+      const run = vi
+        .fn()
+        .mockResolvedValue({ started: false, refused: 'paused' });
+      vi.stubGlobal('hive', {
+        agents: { run },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
 
-      expect(screen.getByRole('button', { name: /Pause/i })).toBeDisabled();
+      render(<AgentView entity={seed()} />);
+      await userEvent.click(screen.getByRole('button', { name: /Run now/i }));
+
+      expect(await screen.findByText(/is paused/)).toBeInTheDocument();
+      expect(screen.queryByText(/runtime is not/)).not.toBeInTheDocument();
+    });
+
+    it('pauses a running agent through the channel (HIVE-117)', async () => {
+      const pause = vi.fn().mockResolvedValue('paused');
+      vi.stubGlobal('hive', {
+        agents: { pause, resume: vi.fn() },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
+
+      render(<AgentView entity={seed()} />);
+      await userEvent.click(screen.getByRole('button', { name: /Pause/i }));
+
+      expect(pause).toHaveBeenCalledWith({ name: 'watcher' });
+    });
+
+    /*
+      One control, not two: the states are exclusive, so the button names the
+      move rather than offering a disabled twin.
+    */
+    it('offers Resume, and only Resume, for a paused agent', async () => {
+      const resume = vi.fn().mockResolvedValue('sleeping');
+      vi.stubGlobal('hive', {
+        agents: { pause: vi.fn(), resume },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
+
+      render(<AgentView entity={{ ...seed(), status: 'paused' }} />);
+
+      expect(
+        screen.queryByRole('button', { name: /⏸ Pause/ }),
+      ).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /Resume/i }));
+
+      expect(resume).toHaveBeenCalledWith({ name: 'watcher' });
+    });
+
+    /*
+      Both channels reject when the runtime is not up — answering a status they
+      never wrote is what their contract calls worth a rejected promise — so the
+      user is owed the sentence rather than a button that did nothing.
+    */
+    it('shows why a pause failed instead of swallowing it', async () => {
+      const pause = vi
+        .fn()
+        .mockRejectedValue(new Error('The agent runtime is not running.'));
+      vi.stubGlobal('hive', {
+        agents: { pause, resume: vi.fn() },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
+
+      render(<AgentView entity={seed()} />);
+      await userEvent.click(screen.getByRole('button', { name: /Pause/i }));
+
+      expect(
+        await screen.findByText(/The agent runtime is not running/),
+      ).toBeInTheDocument();
     });
 
     it('offers no Stop, because a run is one bounded turn', () => {

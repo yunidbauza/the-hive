@@ -52,11 +52,18 @@ function emit(): void {
  * An `asking` agent has no scheduled wake worth naming even when it has a
  * `nextRunAt`: the thing that will actually move it is a reply, and saying
  * `08:30` would promise a wake the answer is going to pre-empt.
+ *
+ * A `paused` one has none for a stronger reason (HIVE-117): `RunTracker.run`
+ * refuses every trigger while an agent is paused, and nothing clears
+ * `nextRunAt` when the pause is set — so the field outlives the schedule it
+ * describes. Left unhandled, a paused agent would count down to a time at which
+ * nothing happens.
  */
 export function describeNextRun(agent: {
   status: AgentStatus;
   nextRunAt?: number;
 }): string {
+  if (agent.status === 'paused') return 'paused';
   if (agent.status === 'asking') return 'on answer';
   if (agent.nextRunAt === undefined) return 'manual';
 

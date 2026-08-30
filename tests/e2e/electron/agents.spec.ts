@@ -322,3 +322,80 @@ test('prints the agents table in the console', async ({}, testInfo) => {
     await app.close();
   }
 });
+
+/**
+ * Pause and resume, round-tripped through the real channels (HIVE-117).
+ *
+ * The unit suites drive a mocked bridge. This is the only place the click,
+ * `agents:pause`, the write to `agents.json`, the `agents:status` push and
+ * every surface that redraws from it are all the real ones. The ticket's
+ * criterion is that the status round-trips "in the rail, the table and
+ * `agents.json`" — the table is asserted here, and it is drawn from the file.
+ */
+test('pauses and resumes from the console, and the table agrees', async ({}, testInfo) => {
+  const { app, page } = await launchWithConfig((name) => testInfo.outputPath(name));
+
+  try {
+    await authorAgent(page);
+
+    const status = page.getByTestId('agent-row').locator('[data-col="status"]');
+    const input = page.getByRole('textbox', { name: 'Overmind command' });
+    const transcript = page.getByRole('main').locator('.xterm');
+
+    await expect(status).toHaveText('sleeping');
+
+    await input.click();
+    await input.fill('pause slack-watcher');
+    await input.press('Enter');
+
+    // The table redraws from main's `agents:status` push, not a local guess.
+    await expect(status).toHaveText('paused');
+
+    /*
+      And a wake is refused — the consequence the status exists to have. The
+      refusal comes from `RunTracker.run`, so it proves the pause reached
+      `agents.json` rather than only the renderer's copy of it.
+    */
+    await input.fill('run slack-watcher');
+    await input.press('Enter');
+    await expect(transcript).toContainText('is paused');
+
+    await input.fill('resume slack-watcher');
+    await input.press('Enter');
+    await expect(status).toHaveText('sleeping');
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The agent view's own Pause control, wired in this story.
+ *
+ * Asserted against the **rail**, which is always on screen: the agent view has
+ * no "Back to overmind" button — that control lives on a session's meta bar,
+ * and HIVE-116 deliberately mounts no meta bar for an agent — so there is no
+ * navigation back to the table from here, and none is needed. What matters is
+ * that the click reached main and a second surface redrew from the push.
+ */
+test('pauses from the agent view, and the rail agrees', async ({}, testInfo) => {
+  const { app, page } = await launchWithConfig((name) => testInfo.outputPath(name));
+
+  try {
+    await authorAgent(page);
+    await page.getByRole('tab', { name: /Agents/ }).click();
+
+    const panel = page.locator('[data-panel="agents"]');
+
+    await expect(panel.getByText('sleeping', { exact: true })).toBeVisible();
+
+    await panel.getByRole('button', { name: /slack-watcher/ }).click();
+    await expect(page.locator('[data-view="agent"]')).toBeVisible();
+    await page.getByRole('button', { name: /Pause/ }).click();
+
+    await expect(panel.getByText('paused', { exact: true })).toBeVisible();
+    // The control names the move, not the state — one button, not two.
+    await expect(page.getByRole('button', { name: /Resume/ })).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});

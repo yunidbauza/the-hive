@@ -464,9 +464,57 @@ describe('agents:pause and agents:resume (HIVE-117)', () => {
   it('rejects rather than reporting a status it never wrote', async () => {
     resetIpcHandlers();
 
-    await expect(invoke(CH.agentsPause, { name: 'slack-watcher' })).rejects.toThrow(
-      'The agent runtime is not running.',
-    );
+    // Whichever guard fires first, the promise rejects — what must never happen
+    // is a resolved `AgentStatus` for a write that reached no file.
+    await expect(
+      invoke(CH.agentsPause, { name: 'slack-watcher' }),
+    ).rejects.toThrow();
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).rejects.toThrow();
+  });
+
+  /**
+   * A name with no definition is refused before anything is written.
+   *
+   * `parseAgentNameRequest` validates the name's *shape* only, and
+   * `AgentState.patch` creates whatever entry it is handed — so without this
+   * guard, `pause` on an unknown name persisted `{"ghost": {"status":
+   * "paused"}}` forever, and an agent later created under that name would be
+   * born paused with nothing on screen to explain it. The namespace's own
+   * security note claims these verbs cannot create an agent; this is what makes
+   * that true of its run state too.
+   */
+  it.each([CH.agentsPause, CH.agentsResume])(
+    '%s refuses a name with no definition, writing nothing',
+    async (channel) => {
+      await expect(invoke(channel, { name: 'ghost' })).rejects.toThrow(
+        'No such agent: ghost',
+      );
+      expect(statePatch).not.toHaveBeenCalled();
+    },
+  );
+
+  /**
+   * A pause is allowed to land mid-turn, so `paused` and "a child is alive" are
+   * not exclusive — and resuming there must not put a resting word on a row
+   * whose agent is still working. `run` would immediately contradict it.
+   */
+  it('resumes a mid-run pause back to working, not to sleeping', async () => {
+    stored['slack-watcher'] = {
+      status: 'paused',
+      runsSinceRotate: 0,
+      runs: [],
+    };
+    liveRuns = ['slack-watcher'];
+
+    await expect(
+      invoke(CH.agentsResume, { name: 'slack-watcher' }),
+    ).resolves.toBe('working');
+
+    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
+      status: 'working',
+    });
   });
 });
 

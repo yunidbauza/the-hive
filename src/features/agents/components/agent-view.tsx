@@ -8,7 +8,7 @@ import { STATUS_TEXT, STATUS_LABEL } from '@components/ui/status-dot';
 import { AgentLedger } from '@features/agents/components/agent-ledger';
 import { AgentRunLog } from '@features/agents/components/agent-run-log';
 import { parseAgentInput } from '@lib/ledger/agent-input';
-import { useAgentFacts } from '@stores/hive-store';
+import { agentRunRefusal, useAgentFacts } from '@stores/hive-store';
 import { useSettingsActions } from '@stores/ui-store';
 
 interface AgentViewProps {
@@ -61,21 +61,59 @@ export function AgentView({ entity }: AgentViewProps) {
    */
   const [notice, setNotice] = useState<string | null>(null);
 
+  /** A rejected channel is news the user is owed, not a console line. */
+  const showFailure = (cause: unknown) => {
+    setNotice(cause instanceof Error ? cause.message : String(cause));
+  };
+
   const runNow = () => {
     setNotice(null);
 
-    void window.hive?.agents.run({ name: entity.id }).then((result) => {
-      if (result.started) return;
+    /*
+      The wording comes from `agentRunRefusal`, not from a ternary here
+      (HIVE-117).
 
-      setNotice(
-        result.reason ??
-          (result.refused === 'working'
-            ? 'Already running — one run at a time.'
-            : result.refused === 'invalid'
-              ? 'Its definition could not be read. Edit it to fix that.'
-              : 'The agent runtime is not up.'),
-      );
-    });
+      This chain used to end in a bare `else` reading "The agent runtime is not
+      up." — so the moment `AgentRunResult.refused` gained `paused`, pressing
+      Run now on an agent the user had paused thirty seconds earlier reported a
+      dead runtime. A fallback cannot be checked by the compiler; the shared
+      function switches exhaustively over the union, so the next member is an
+      error rather than a plausible sentence.
+    */
+    void window.hive?.agents
+      .run({ name: entity.id })
+      .then((result) => {
+        if (result.started) return;
+
+        setNotice(agentRunRefusal(entity.id, result));
+      })
+      .catch(showFailure);
+  };
+
+  /**
+   * Stop this agent waking, and let it wake again (HIVE-117).
+   *
+   * One control rather than two, because the states are exclusive and the
+   * button's job is to name what pressing it does. The status word beside it
+   * already says which state the agent is in, so a disabled twin would be a
+   * second thing to read for no extra fact.
+   *
+   * Both channels **reject** when the runtime is not up — answering a status
+   * they never wrote is what their contract calls the one outcome worth a
+   * rejected promise — so both need the catch.
+   */
+  const togglePause = () => {
+    setNotice(null);
+
+    const bridge = window.hive?.agents;
+
+    if (bridge === undefined) return;
+
+    void (
+      entity.status === 'paused'
+        ? bridge.resume({ name: entity.id })
+        : bridge.pause({ name: entity.id })
+    ).catch(showFailure);
   };
 
   const submit = () => {
@@ -144,19 +182,22 @@ export function AgentView({ entity }: AgentViewProps) {
             ▶ Run now
           </button>
           {/*
-            Disabled rather than absent: pause is a control this surface will
-            have, and hiding it until HIVE-117 lands would make the header
-            change shape under the user for a reason they cannot see. There is
-            no Stop — a run is one bounded turn, and `kill` belongs in the
-            console for a runaway.
+            Wired in HIVE-117. One button, not two: `paused` and everything else
+            are exclusive, so the control names the move rather than offering a
+            disabled twin. There is still no Stop — a run is one bounded turn,
+            and `kill` belongs in the console for a runaway.
           */}
           <button
             type="button"
-            disabled
-            title="Pausing an agent arrives with HIVE-117"
-            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted opacity-40"
+            onClick={togglePause}
+            title={
+              entity.status === 'paused'
+                ? 'Let this agent wake again'
+                : 'Stop this agent waking. A turn already running finishes.'
+            }
+            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:bg-hover hover:text-ink"
           >
-            ⏸ Pause
+            {entity.status === 'paused' ? '▶ Resume' : '⏸ Pause'}
           </button>
           <button
             type="button"

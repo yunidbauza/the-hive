@@ -21,7 +21,7 @@ import { prStateText } from '@features/shared/pr-presentation';
 import {
   useActiveSessions,
   useAgentAskRef,
-  useAgentCounts,
+  useAskingAgentCount,
   useAgentPr,
   useEndedSessions,
   useEntity,
@@ -284,7 +284,7 @@ export function SessionTable() {
   const active = useActiveSessions();
   const ended = useEndedSessions();
   const agents = useFleetAgents();
-  const agentCounts = useAgentCounts();
+  const askingAgents = useAskingAgentCount();
   /*
     Agents are deliberately **not** part of `empty` (HIVE-117).
 
@@ -463,11 +463,11 @@ export function SessionTable() {
         <>
           <div className="flex items-center gap-2 px-2 pt-3.5 pb-1.5">
             <span className="shrink-0 text-[11px] tracking-[0.06em] text-term-head">
-              AGENTS · {agentCounts.agents}
+              AGENTS · {agents.length}
             </span>
-            {agentCounts.asking > 0 ? (
+            {askingAgents > 0 ? (
               <span className="shrink-0 text-[11px] tracking-[0.06em] text-amber">
-                {agentCounts.asking} asking
+                {askingAgents} asking
               </span>
             ) : null}
             <span className="flex-1 border-t border-border" />
@@ -963,29 +963,43 @@ function AgentTableRow({
 
         No `prStateText` here, unlike a session's. Those colours assert something
         current about GitHub — green is "alive and not yet landed" — and this
-        number came out of a `done` the agent wrote down, which the PR sweep has
-        never been asked about. `text-subtle` is what a session's *remembered*
-        PR gets, for the identical reason: this cell knows a number and nothing
-        else about it.
+        number came out of a `done` the agent wrote down. `text-subtle` is what
+        a session's *remembered* PR gets, for the identical reason: this cell
+        knows a number, and a URL only when the sweep happens to hold one.
       */}
       <span className={COL.pr} data-col="pr">
-        {pr === undefined ? (
+        {pr === null ? (
           <span className="text-subtle" title="no pull request">
             —<span className="sr-only"> no pull request</span>
           </span>
+        ) : pr.url === undefined ? (
+          /*
+            A number the sweep does not know, rendered as text rather than as a
+            link. A `done` entry says an agent opened a pull request; it never
+            says in which repository, so there is no honest href to build — and
+            a GitHub-wide search for the integer looks like a destination while
+            landing on thousands of unrelated results.
+          */
+          <span
+            className="text-subtle"
+            title={`#${String(pr.n)} · reported by ${id} — not in the current PR sweep`}
+          >
+            #{pr.n}
+            <span className="sr-only"> reported by {id}, no link available</span>
+          </span>
         ) : (
           <a
-            href={`https://github.com/search?q=${String(pr)}&type=pullrequests`}
+            href={pr.url}
             target="_blank"
             rel="noreferrer"
             className={cn(
               'text-subtle underline underline-offset-2',
               'hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
             )}
-            title={`#${String(pr)} · last reported by ${id} — open on GitHub`}
-            aria-label={`#${String(pr)}, last reported by ${id} — open on GitHub`}
+            title={`#${String(pr.n)} · last reported by ${id} — open on GitHub`}
+            aria-label={`#${String(pr.n)}, last reported by ${id} — open on GitHub`}
           >
-            #{pr}
+            #{pr.n}
           </a>
         )}
       </span>
