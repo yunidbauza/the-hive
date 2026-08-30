@@ -48,6 +48,10 @@ export class MockChild {
     code: number | null,
     signal: string | null,
   ) => void)[] = [];
+  private readonly closeListeners: ((
+    code: number | null,
+    signal: string | null,
+  ) => void)[] = [];
   private readonly errorListeners: ((error: Error) => void)[] = [];
 
   readonly kill = vi.fn((signal?: string) => {
@@ -57,8 +61,14 @@ export class MockChild {
   });
 
   on(event: string, cb: (...args: never[]) => void) {
-    if (event === 'exit' || event === 'close') {
+    if (event === 'exit') {
       this.exitListeners.push(
+        cb as (code: number | null, signal: string | null) => void,
+      );
+    }
+
+    if (event === 'close') {
+      this.closeListeners.push(
         cb as (code: number | null, signal: string | null) => void,
       );
     }
@@ -77,9 +87,17 @@ export class MockChild {
     this.stderr.emit(chunk);
   }
 
-  /** Test-only: end the process. */
+  /**
+   * Test-only: fire 'exit' — the process ended, but stdio may not be fully
+   * drained yet. Does not by itself finalize a run; see `emitClose`.
+   */
   emitExit(code: number | null = 0, signal: string | null = null) {
     for (const cb of [...this.exitListeners]) cb(code, signal);
+  }
+
+  /** Test-only: fire 'close' — stdio has drained. This is what finalizes a run. */
+  emitClose(code: number | null = 0, signal: string | null = null) {
+    for (const cb of [...this.closeListeners]) cb(code, signal);
   }
 
   /** Test-only: fail the spawn itself. */

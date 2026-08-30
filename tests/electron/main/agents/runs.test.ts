@@ -21,10 +21,11 @@ const resultLine = (over: Record<string, unknown> = {}) =>
   })}\n`;
 
 describe('createRunTracker', () => {
-  let ledger: { kind: string; meta?: Record<string, unknown> }[];
+  let ledger: { kind: string; body?: string; meta?: Record<string, unknown> }[];
   let statuses: string[];
   let lines: { name: string; count: number }[];
   let openAsks: boolean;
+  let commandCalls: number;
   let tracker: ReturnType<typeof createRunTracker>;
   let state: ReturnType<typeof createAgentState>;
 
@@ -35,16 +36,22 @@ describe('createRunTracker', () => {
     statuses = [];
     lines = [];
     openAsks = false;
+    commandCalls = 0;
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
 
     tracker = createRunTracker({
       spawn,
-      command: () => ({
-        file: '/opt/bin/claude',
-        args: ['-p', 'do it'],
-        env: { HIVE_AGENT: '1' },
-        cwd: '/tmp/work',
-      }),
+      command: () => {
+        commandCalls += 1;
+
+        return {
+          file: '/opt/bin/claude',
+          args: ['-p', 'do it'],
+          env: { HIVE_AGENT: '1' },
+          cwd: '/tmp/work',
+          sessionUuid: `sess-${commandCalls}`,
+        };
+      },
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => openAsks,
@@ -108,6 +115,40 @@ describe('createRunTracker', () => {
     });
   });
 
+  it('closes failed when spawn itself throws synchronously, without orphaning the ledger entry or bumping runsSinceRotate', () => {
+    const throwing = createRunTracker({
+      spawn: () => {
+        throw new Error('EMFILE: too many open files');
+      },
+      command: () => ({
+        file: '/opt/bin/claude',
+        args: [],
+        env: {},
+        cwd: '/tmp/work',
+        sessionUuid: 'sess-1',
+      }),
+      state,
+      appendLedger: (entry) => ledger.push(entry),
+      openAsksFor: () => false,
+      pushStatus: (name) => statuses.push(name),
+      pushLines: () => {},
+      now: () => 1_000,
+      newRunId: () => 'run-1',
+    });
+
+    const start = throwing.run('a', 'ledger');
+
+    expect(start).toEqual({ started: true, run: 'run-1' });
+    expect(ledger).toHaveLength(2);
+    expect(ledger[0]).toMatchObject({ body: 'run.started — ledger' });
+    expect(ledger[1]).toMatchObject({
+      body: 'run.ended — failed',
+      meta: { outcome: 'failed', reason: 'EMFILE: too many open files' },
+    });
+    expect(state.read('a').runs.at(-1)?.outcome).toBe('failed');
+    expect(state.read('a').runsSinceRotate).toBe(0);
+  });
+
   it('pushes folded lines as the child writes', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStdout(
@@ -120,10 +161,33 @@ describe('createRunTracker', () => {
     expect(lines).toEqual([{ name: 'a', count: 1 }]);
   });
 
-  it('closes done on exit 0 and persists the session uuid', () => {
+  it('folds stderr into a run line', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStderr('warning: something noisy\n');
+
+    expect(lines).toEqual([{ name: 'a', count: 1 }]);
+  });
+
+  it('folds a result line split across two stdout writes, and still captures the result', () => {
+    tracker.run('a', 'ledger');
+
+    const whole = resultLine();
+    const splitAt = Math.floor(whole.length / 2);
+
+    childInstances[0]?.emitStdout(whole.slice(0, splitAt));
+    childInstances[0]?.emitStdout(whole.slice(splitAt));
+    childInstances[0]?.emitClose(0);
+
+    const persisted = state.read('a');
+
+    expect(persisted.runs.at(-1)?.outcome).toBe('done');
+    expect(persisted.sessionUuid).toBe('uuid-from-result');
+  });
+
+  it('closes done on close and persists the session uuid, pushing status on start and on close', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStdout(resultLine());
-    childInstances[0]?.emitExit(0);
+    childInstances[0]?.emitClose(0);
 
     const persisted = state.read('a');
 
@@ -134,29 +198,62 @@ describe('createRunTracker', () => {
       outcome: 'done',
       costUsd: 0.02,
     });
+    expect(statuses).toEqual(['a', 'a']);
   });
 
-  it('closes failed on a non-zero exit', () => {
+  it('a result that arrives after exit but before close still counts (close is authoritative)', () => {
     tracker.run('a', 'ledger');
-    childInstances[0]?.emitExit(1);
+    childInstances[0]?.emitExit(0);
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    const persisted = state.read('a');
+
+    expect(persisted.runs.at(-1)?.outcome).toBe('done');
+    expect(persisted.sessionUuid).toBe('uuid-from-result');
+  });
+
+  it('finalizes on the flush-window fallback when close never fires after exit', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitExit(0);
+
+    expect(state.read('a').runs).toHaveLength(0);
+
+    vi.advanceTimersByTime(2_000);
+
+    expect(state.read('a').runs.at(-1)?.outcome).toBe('done');
+  });
+
+  it('closes failed on a non-zero close', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitClose(1);
 
     expect(state.read('a').runs.at(-1)?.outcome).toBe('failed');
     expect(state.read('a').status).toBe('sleeping');
   });
 
-  it('closes turns when the cap stopped it', () => {
+  it('closes turns when the turn cap stopped it, even though the process exits non-zero', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStdout(resultLine({ subtype: 'error_max_turns' }));
-    childInstances[0]?.emitExit(0);
+    childInstances[0]?.emitClose(1);
 
     expect(state.read('a').runs.at(-1)?.outcome).toBe('turns');
+  });
+
+  it('closes budget when the budget cap stopped it, even though the process exits non-zero', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine({ subtype: 'error_max_budget_usd' }));
+    childInstances[0]?.emitClose(1);
+
+    expect(state.read('a').runs.at(-1)?.outcome).toBe('budget');
   });
 
   it('closes asking when the run left an open ask, and says so in the status', () => {
     openAsks = true;
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStdout(resultLine());
-    childInstances[0]?.emitExit(0);
+    childInstances[0]?.emitClose(0);
 
     expect(state.read('a').runs.at(-1)?.outcome).toBe('asking');
     expect(state.read('a').status).toBe('asking');
@@ -165,30 +262,73 @@ describe('createRunTracker', () => {
   it('closes exactly once, and a late Stop is harmless', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStdout(resultLine());
-    childInstances[0]?.emitExit(0);
+    childInstances[0]?.emitClose(0);
 
-    const runsAfterExit = state.read('a').runs.length;
+    const runsAfterClose = state.read('a').runs.length;
 
     tracker.noteTurnEnded('a');
     vi.advanceTimersByTime(AGENT_KILL_GRACE_MS * 2);
 
-    expect(state.read('a').runs).toHaveLength(runsAfterExit);
+    expect(state.read('a').runs).toHaveLength(runsAfterClose);
+  });
+
+  it('does not double-record a run on a repeated exit/close after it has already closed', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    const runsAfterClose = state.read('a').runs.length;
+    const rotateAfterClose = state.read('a').runsSinceRotate;
+
+    childInstances[0]?.emitExit(0);
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').runs).toHaveLength(runsAfterClose);
+    expect(state.read('a').runsSinceRotate).toBe(rotateAfterClose);
+  });
+
+  it('killAll after a run has already closed is a no-op', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    const runsAfterClose = state.read('a').runs.length;
+    const rotateAfterClose = state.read('a').runsSinceRotate;
+
+    tracker.killAll('app-closed');
+
+    expect(state.read('a').runs).toHaveLength(runsAfterClose);
+    expect(state.read('a').runsSinceRotate).toBe(rotateAfterClose);
+    expect(childInstances[0]?.killSignals).toEqual([]);
   });
 
   it('kills a stalled run when Stop arrives and the process does not exit', () => {
     tracker.run('a', 'ledger');
-    tracker.noteTurnEnded('a');
+    tracker.noteTurnEnded('a', 'sess-1');
 
     vi.advanceTimersByTime(AGENT_KILL_GRACE_MS);
 
     expect(childInstances[0]?.killSignals).toContain('SIGTERM');
 
-    childInstances[0]?.emitExit(null, 'SIGTERM');
+    childInstances[0]?.emitClose(null, 'SIGTERM');
 
     expect(state.read('a').runs.at(-1)).toMatchObject({
       outcome: 'failed',
       reason: 'stalled',
     });
+  });
+
+  it("ignores a Stop whose session uuid belongs to a prior, already-closed run of the same agent", () => {
+    tracker.run('a', 'ledger'); // run 1, sess-1
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    tracker.run('a', 'ledger'); // run 2, sess-2 — a fresh, healthy run
+
+    tracker.noteTurnEnded('a', 'sess-1'); // stale Stop for run 1, arriving late
+    vi.advanceTimersByTime(AGENT_KILL_GRACE_MS);
+
+    expect(childInstances[1]?.killSignals).toEqual([]);
   });
 
   it('escalates SIGTERM to SIGKILL after the grace', () => {
@@ -202,33 +342,45 @@ describe('createRunTracker', () => {
     expect(childInstances[0]?.killSignals).toEqual(['SIGTERM', 'SIGKILL']);
   });
 
-  it('records a killed run as failed and frees the agent for the next one', () => {
+  it('records a killed run as failed (with the reason in the ledger) and frees the agent for the next one', () => {
     tracker.run('a', 'ledger');
     tracker.kill('a');
-    childInstances[0]?.emitExit(null, 'SIGTERM');
+    childInstances[0]?.emitClose(null, 'SIGTERM');
 
     expect(state.read('a').runs.at(-1)).toMatchObject({
       outcome: 'failed',
       reason: 'killed',
     });
+    expect(ledger.at(-1)).toMatchObject({
+      kind: 'event',
+      body: 'run.ended — failed',
+      meta: { run: 'run-1', outcome: 'failed', reason: 'killed' },
+    });
     expect(tracker.run('a', 'ledger')).toMatchObject({ started: true });
   });
 
-  it('records every live run as failed when the app closes', () => {
+  it('records every live run as failed when the app closes, for every agent', () => {
     tracker.run('a', 'ledger');
+    tracker.run('b', 'ledger');
     tracker.killAll('app-closed');
-    childInstances[0]?.emitExit(null, 'SIGTERM');
+    childInstances[0]?.emitClose(null, 'SIGTERM');
+    childInstances[1]?.emitClose(null, 'SIGTERM');
 
     expect(state.read('a').runs.at(-1)).toMatchObject({
       outcome: 'failed',
       reason: 'app-closed',
     });
+    expect(state.read('b').runs.at(-1)).toMatchObject({
+      outcome: 'failed',
+      reason: 'app-closed',
+    });
   });
 
-  it('closes failed when the spawn itself errors', () => {
+  it('closes failed when the spawn itself errors, and does not bump runsSinceRotate', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitError(new Error('ENOENT'));
 
     expect(state.read('a').runs.at(-1)?.outcome).toBe('failed');
+    expect(state.read('a').runsSinceRotate).toBe(0);
   });
 });
