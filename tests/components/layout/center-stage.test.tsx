@@ -78,12 +78,23 @@ describe('CenterStage', () => {
     expect(visibleSurfaces()).toHaveLength(1);
   });
 
-  it('shows the agent chips for an agent', () => {
+  /**
+   * An agent gets its own surface, not a terminal's (HIVE-116).
+   *
+   * Opening one used to mount a session meta bar, a read-only xterm replaying
+   * its lines, and a message row beneath — three pieces of terminal chrome
+   * around something that is not a terminal, and a place to type that reached
+   * no process.
+   */
+  it('mounts the agent view, and none of the terminal chrome', () => {
     render(<CenterStage />);
 
     act(() => useUiStore.getState().openTab('slack-agent'));
 
-    expect(screen.getByText('dedicated agent')).toBeInTheDocument();
+    expect(screen.getByText('Today')).toBeInTheDocument();
+    expect(screen.getByText('Session')).toBeInTheDocument();
+    expect(screen.queryByTestId('session-meta-bar')).not.toBeInTheDocument();
+    expect(screen.queryByText('dedicated agent')).not.toBeInTheDocument();
   });
 
   it('drops the meta bar again on the way back to the orchestrator', () => {
@@ -195,10 +206,24 @@ describe('CenterStage', () => {
     act(() => useUiStore.getState().backToOrch());
     act(() => useUiStore.getState().openTab('hero-refresh'));
 
-    // orchestrator + hero-refresh + slack-agent, constructed once each.
-    expect(terminalInstances).toHaveLength(3);
+    /*
+      Orchestrator + hero-refresh, constructed once each — and *not* one for
+      slack-agent. Agents left the terminal list with HIVE-116: a definition on
+      disk used to get a cached transport and an xterm nobody mounts, which the
+      count here was quietly asserting was correct.
+    */
+    expect(terminalInstances).toHaveLength(2);
     expect(terminalInstances.some((instance) => instance.disposed)).toBe(false);
     expect(visibleSurfaces()).toHaveLength(1);
+  });
+
+  it('builds no terminal at all for an agent', () => {
+    render(<CenterStage />);
+
+    act(() => useUiStore.getState().openTab('slack-agent'));
+
+    // Only the orchestrator's, which is constructed on mount.
+    expect(terminalInstances).toHaveLength(1);
   });
 });
 
@@ -278,13 +303,12 @@ describe('CenterStage — interactive terminals', () => {
     expect(optionsFor(0).cursorBlink).toBe(false);
   });
 
-  it('keeps an agent read-only, because its transcript is a replay', () => {
-    withBridge();
-    render(<CenterStage />);
-    act(() => useUiStore.getState().openTab('slack-agent'));
-
-    expect(optionsFor(1).disableStdin).toBe(true);
-  });
+  /*
+    There is no agent row in this table any more (HIVE-116). An agent used to
+    get a read-only xterm over a replayed transcript; it now gets a view with
+    no terminal in it at all, which `builds no terminal at all for an agent`
+    above is the assertion for.
+  */
 
   describe('the message row (story 108)', () => {
     const messageRow = () => screen.queryByLabelText(/^Message /);
@@ -313,12 +337,15 @@ describe('CenterStage — interactive terminals', () => {
       expect(messageRow()).toBeInTheDocument();
     });
 
-    it('stays over an agent, whose transcript is a replay on desktop too', () => {
+    it('is absent over an agent, which has an input of its own', () => {
+      // The agent view carries a ledger box, and it is deliberately not this
+      // row: it posts to the log rather than typing at a process. Two inputs
+      // on one stage is the bug the row was removed from live sessions over.
       withBridge();
       render(<CenterStage />);
       act(() => useUiStore.getState().openTab('slack-agent'));
 
-      expect(messageRow()).toBeInTheDocument();
+      expect(messageRow()).not.toBeInTheDocument();
     });
   });
 

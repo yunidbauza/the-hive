@@ -27,9 +27,14 @@ import { useActiveTab, usePickerState, useSettingsOpen } from '@stores/ui-store'
  * one does not. That distinction is the entire reason `resolveView` takes one
  * `editorFull` boolean instead of `placement`.
  *
- * An **agent** tab counts. `isEntityView` already groups `'session'` and
- * `'agent'`, and the rule the gate encodes is "you can already see it", which
- * has nothing to do with which kind of entity it is.
+ * An **agent** tab counts. `isEntityView` groups `'session'` and `'agent'`,
+ * and the rule the gate encodes is "you can already see it", which has nothing
+ * to do with which kind of entity it is.
+ *
+ * That is why this keeps `isEntityView` while `center-stage.tsx` moved to
+ * `isTerminalView` (HIVE-116). The two used to be one predicate; an agent view
+ * is still something the user is looking at, but it is no longer a terminal,
+ * and only the stage cares about the difference.
  *
  * Publishes a **terminal** id, not a row id. A notification's action carries a
  * terminal id, so main compares like with like; a row id would silently never

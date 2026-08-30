@@ -54,12 +54,18 @@ function liveSession(entityId: string): Session | null {
   const entity = useHiveStore.getState().entities[entityId];
 
   /**
-   * Agents keep their recorded transcripts this epic (story 096's scope note).
+   * An agent never reaches this function at all any more (HIVE-116).
    *
-   * They are long-lived background workers, not `claude` in a repository — they
-   * have no project and no branch, so there is no directory to spawn one in.
-   * Falling through to a PTY would spawn a shell in whatever the last resolved
-   * path happened to be, which is worse than the recording.
+   * It used to, and this branch is what kept it honest: an agent is a
+   * long-lived background worker rather than `claude` in a repository, with no
+   * project and no branch, so falling through to a PTY would have spawned a
+   * shell in whatever path resolved last. It got a recording instead.
+   *
+   * Agents now have a view of their own and are not in `center-stage`'s
+   * terminal list, so nothing asks for a transport for one. The guard stays,
+   * because this module's contract is "a transport for any id" and a defence
+   * removed the moment its caller went away is a defence that has to be
+   * rediscovered when the next one arrives.
    */
   if (!entity || !isSession(entity)) return null;
 

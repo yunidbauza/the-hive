@@ -1,26 +1,24 @@
-import { ArrowLeft, GitBranch, GitPullRequest, Robot } from '@phosphor-icons/react';
+import { ArrowLeft, GitBranch, GitPullRequest } from '@phosphor-icons/react';
 
-import {
-  branchLabel,
-  type Entity,
-  entityLabel,
-  isSession,
-} from '@/types/entity';
+import { branchLabel, entityLabel, type Session } from '@/types/entity';
 
 import { Chip } from '@components/ui/chip';
-import {
-  StatusDot,
-  STATUS_LABEL,
-  STATUS_TEXT,
-  statusLabel,
-  statusText,
-} from '@components/ui/status-dot';
+import { StatusDot, statusLabel, statusText } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
 import { useSessionPr } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
 interface SessionMetaBarProps {
-  entity: Entity;
+  /**
+   * A session, never an `Entity`.
+   *
+   * It was the wider type while an agent tab mounted this bar too, which meant
+   * every field below had to be guarded for a kind that owns no branch and no
+   * PR. HIVE-116 gave agents their own view, so the guard became a branch that
+   * could not be reached — and a prop type that admits what the component can
+   * no longer draw is an invitation to reach it again.
+   */
+  entity: Session;
 }
 
 /**
@@ -37,7 +35,6 @@ interface SessionMetaBarProps {
  */
 export function SessionMetaBar({ entity }: SessionMetaBarProps) {
   const backToOrch = useBackToOrch();
-  const session = isSession(entity) ? entity : null;
   /**
    * The PR chip's subject, resolved from the live GitHub list (HIVE-100).
    *
@@ -86,83 +83,56 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
         {entity.task}
       </span>
 
-      {session ? (
-        <>
-          <Chip>
-            <GitBranch size={13} aria-hidden="true" className="shrink-0" />
-            {branchLabel(session)}
-          </Chip>
+      <Chip>
+        <GitBranch size={13} aria-hidden="true" className="shrink-0" />
+        {branchLabel(entity)}
+      </Chip>
 
-          <Chip className={statusText(session.status, session.idleDetail)}>
-            {/* No `label` — the status word sits immediately beside the dot. */}
-            <StatusDot status={session.status} detail={session.idleDetail} />
-            {statusLabel(session.status, session.idleDetail)}
-          </Chip>
+      <Chip className={statusText(entity.status, entity.idleDetail)}>
+        {/* No `label` — the status word sits immediately beside the dot. */}
+        <StatusDot status={entity.status} detail={entity.idleDetail} />
+        {statusLabel(entity.status, entity.idleDetail)}
+      </Chip>
 
-          {pr ? (
-            /*
-              A link, not a chip-shaped label: the bar sits above the terminal a
-              user is watching a PR from, and the number is the fastest way to
-              the page it names. Same target and `rel` as every other PR link in
-              the app — `pr-card`, `ticket-pr-row`, the fleet table.
-            */
-            <a
-              href={pr.url}
-              target="_blank"
-              rel="noreferrer"
-              /*
-                The state is in the label when there is one, and "last seen" is
-                in it when there is not — a remembered PR must not be announced
-                as though the app had just looked it up (`SessionPr.state`).
-              */
-              aria-label={
-                pr.state === undefined
-                  ? `Open PR #${String(pr.n)} on GitHub — last seen on this session`
-                  : `Open PR #${String(pr.n)} on GitHub — ${pr.state}`
-              }
-              className="shrink-0 rounded-full hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-            >
-              {/*
-                Neutral when the sweep cannot see this PR any more. The colours
-                in `prStateText` each assert something current about GitHub —
-                green is "alive and not yet landed" — and a remembered number
-                has no standing to assert any of them.
-              */}
-              <Chip
-                className={
-                  pr.state === undefined ? 'text-subtle' : prStateText(pr.state)
-                }
-              >
-                <GitPullRequest
-                  size={13}
-                  aria-hidden="true"
-                  className="shrink-0"
-                />
-                {`#${pr.n} · ${pr.state ?? 'last seen'}`}
-              </Chip>
-            </a>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <Chip>
-            <Robot size={13} aria-hidden="true" className="shrink-0" />
-            dedicated agent
-          </Chip>
-
+      {pr ? (
+        /*
+          A link, not a chip-shaped label: the bar sits above the terminal a
+          user is watching a PR from, and the number is the fastest way to
+          the page it names. Same target and `rel` as every other PR link in
+          the app — `pr-card`, `ticket-pr-row`, the fleet table.
+        */
+        <a
+          href={pr.url}
+          target="_blank"
+          rel="noreferrer"
+          /*
+            The state is in the label when there is one, and "last seen" is
+            in it when there is not — a remembered PR must not be announced
+            as though the app had just looked it up (`SessionPr.state`).
+          */
+          aria-label={
+            pr.state === undefined
+              ? `Open PR #${String(pr.n)} on GitHub — last seen on this session`
+              : `Open PR #${String(pr.n)} on GitHub — ${pr.state}`
+          }
+          className="shrink-0 rounded-full hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        >
           {/*
-            The agent's real state, not a hardcoded "online" (HIVE-114).
-
-            This chip used to say `online` unconditionally, which was true of a
-            fixture and is not true of anything else: an agent is a definition
-            on disk, and between two wakes there is no process to be online.
+            Neutral when the sweep cannot see this PR any more. The colours
+            in `prStateText` each assert something current about GitHub —
+            green is "alive and not yet landed" — and a remembered number
+            has no standing to assert any of them.
           */}
-          <Chip className={STATUS_TEXT[entity.status]}>
-            <StatusDot status={entity.status} />
-            {STATUS_LABEL[entity.status]}
+          <Chip
+            className={
+              pr.state === undefined ? 'text-subtle' : prStateText(pr.state)
+            }
+          >
+            <GitPullRequest size={13} aria-hidden="true" className="shrink-0" />
+            {`#${pr.n} · ${pr.state ?? 'last seen'}`}
           </Chip>
-        </>
-      )}
+        </a>
+      ) : null}
     </div>
   );
 }

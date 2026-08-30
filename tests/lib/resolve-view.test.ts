@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Agent, Session } from '@/types/entity';
-import { isEntityView, resolveView, type ViewState } from '@/lib/resolve-view';
+import {
+  isEntityView,
+  isTerminalView,
+  resolveView,
+  type ViewState,
+} from '@/lib/resolve-view';
 
 /**
  * The view-state machine, tested exhaustively (story 040). The component's only
@@ -205,11 +210,31 @@ describe('resolveView', () => {
 });
 
 describe('isEntityView', () => {
-  it('is true exactly for the views that show a terminal and meta bar', () => {
+  it('is true for both kinds of entity on the stage', () => {
     expect(isEntityView('session')).toBe(true);
     expect(isEntityView('agent')).toBe(true);
     expect(isEntityView('orchestrator')).toBe(false);
     expect(isEntityView('picker')).toBe(false);
     expect(isEntityView('settings')).toBe(false);
+  });
+});
+
+/**
+ * Split from `isEntityView` by HIVE-116, because the two questions stopped
+ * having the same answer.
+ *
+ * An agent view is an entity view — the foreground gate suppresses a
+ * notification about whatever the user is already looking at, whichever kind
+ * it is — but it is not a *terminal* view. Answering true here is what used to
+ * mount a read-only xterm, a session meta bar and a message row for an agent.
+ */
+describe('isTerminalView', () => {
+  it('is true only where a terminal and its meta bar belong', () => {
+    expect(isTerminalView('session')).toBe(true);
+    expect(isTerminalView('agent')).toBe(false);
+    expect(isTerminalView('orchestrator')).toBe(false);
+    expect(isTerminalView('picker')).toBe(false);
+    expect(isTerminalView('settings')).toBe(false);
+    expect(isTerminalView('editor')).toBe(false);
   });
 });

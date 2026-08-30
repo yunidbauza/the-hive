@@ -80,7 +80,33 @@ export function resolveView({
   return entity.kind === 'agent' ? 'agent' : 'session';
 }
 
-/** Whether a view shows the terminal and its meta bar. */
+/**
+ * Whether the stage is about one entity, of either kind.
+ *
+ * The question "is the user already looking at this thing?" — which is what
+ * the foreground gate (HIVE-81) suppresses notifications on. An agent view
+ * answers it exactly as a session's terminal does, and the rule has nothing to
+ * do with which kind of entity is on screen.
+ */
 export function isEntityView(view: ViewState): boolean {
   return view === 'session' || view === 'agent';
+}
+
+/**
+ * Whether a view shows the **terminal** and its meta bar.
+ *
+ * Split from {@link isEntityView} by HIVE-116, because the two questions
+ * stopped having the same answer. `'agent'` used to be an entity view *and* a
+ * terminal one, which is what mounted a read-only xterm replaying the agent's
+ * lines, a session meta bar, and a message row beneath it. An agent now has a
+ * surface of its own, and a run log is not a terminal: nothing is typed into a
+ * process, the input posts to the ledger, and the transcript is of turns that
+ * have already ended.
+ *
+ * Widening this one again would put two places to type on one stage — the bug
+ * the message row was removed from live sessions to avoid. Widening the other
+ * is harmless; they are separate on purpose.
+ */
+export function isTerminalView(view: ViewState): boolean {
+  return view === 'session';
 }

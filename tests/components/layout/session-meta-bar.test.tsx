@@ -2,16 +2,24 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { Entity } from '@/types/entity';
+import { isSession, type Session } from '@/types/entity';
 
 import { SessionMetaBar } from '@components/layout/session-meta-bar';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
-const entity = (id: string): Entity => {
+/**
+ * A fixture **session**.
+ *
+ * The bar took an `Entity` while an agent tab mounted it too. HIVE-116 gave
+ * agents their own view, so the prop narrowed and this helper narrowed with
+ * it — asking for an agent here is now a test bug, and says so.
+ */
+const entity = (id: string): Session => {
   const found = useHiveStore.getState().entities[id];
   if (!found) throw new Error(`no fixture entity ${id}`);
+  if (!isSession(found)) throw new Error(`${id} is not a session`);
   return found;
 };
 
@@ -106,17 +114,6 @@ describe('SessionMetaBar', () => {
     });
 
     /**
-     * An agent has no branch and no session record, so the selector it shares
-     * with sessions must answer `null` rather than throwing — the bar renders
-     * for both kinds of entity.
-     */
-    it('shows no PR chip for an agent', () => {
-      render(<SessionMetaBar entity={entity('slack-agent')} />);
-
-      expect(screen.queryByRole('link')).toBeNull();
-    });
-
-    /**
      * HIVE-83: the chip's dot goes hollow and its word names what is still
      * running, matching the rails and the fleet table rather than collapsing
      * a quiet-but-busy session into plain "idle".
@@ -157,13 +154,17 @@ describe('SessionMetaBar', () => {
     });
   });
 
+  /**
+   * The bar is a session's, and only a session's (HIVE-116).
+   *
+   * It used to render for an agent too, with a `dedicated agent` chip and a
+   * status — the visible half of an agent tab that mounted a read-only xterm
+   * and a message row. That surface is gone: an agent has a view of its own,
+   * and this component no longer accepts one.
+   */
   describe('agents', () => {
-    it('shows the agent chips rather than branch and PR', () => {
-      render(<SessionMetaBar entity={entity('slack-agent')} />);
-
-      expect(screen.getByText('slack-agent')).toBeInTheDocument();
-      expect(screen.getByText('dedicated agent')).toBeInTheDocument();
-      expect(screen.getByText('sleeping')).toBeInTheDocument();
+    it('is not a surface an agent can reach', () => {
+      expect(() => entity('slack-agent')).toThrow(/not a session/);
     });
   });
 
