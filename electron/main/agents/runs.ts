@@ -57,8 +57,21 @@ export interface RunTrackerDeps {
   /**
    * The command for this agent, and the session uuid it invokes (minted or
    * resumed) — or why the command cannot be built.
+   *
+   * It is handed the **trigger** as well as the name, because the trigger is
+   * part of the command line rather than only a label for the log: `wakePrompt`
+   * writes "You woke because: <trigger>[ — <extra>]" into the prompt the
+   * process is started with. A builder given only a name could not spell the
+   * argv at all, and the composition would have to smuggle the trigger across
+   * by some other route — which is a mutable slot outside the type system, safe
+   * only for as long as `run` stays synchronous. Passing it as an argument
+   * makes that guarantee structural.
    */
-  command: (name: string) => (WakeCommand & { sessionUuid: string }) | { problem: string };
+  command: (
+    name: string,
+    trigger: string,
+    extra?: string,
+  ) => (WakeCommand & { sessionUuid: string }) | { problem: string };
   state: AgentState;
   appendLedger: (entry: {
     from: string;
@@ -228,7 +241,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     run(name, trigger, extra) {
       if (running.has(name)) return { started: false, refused: 'working' };
 
-      const command = deps.command(name);
+      const command = deps.command(name, trigger, extra);
 
       if ('problem' in command) {
         return { started: false, refused: 'invalid', reason: command.problem };

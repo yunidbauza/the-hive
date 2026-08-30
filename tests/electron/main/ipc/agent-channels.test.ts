@@ -256,7 +256,7 @@ describe('agents:run (HIVE-115)', () => {
       run: 'run-1',
     });
 
-    expect(trackerRun).toHaveBeenCalledWith('slack-watcher', 'manual', undefined);
+    expect(trackerRun).toHaveBeenCalledWith('slack-watcher', 'manual');
   });
 
   it('refuses a name that could reach anything but an agent folder', async () => {
@@ -364,7 +364,7 @@ describe('the ledger accepts an agent as a party (HIVE-115)', () => {
     // successful build is a stronger proof of existence than the cached list.
     // The build fails here (no such file), which is the case that must *not*
     // widen the ledger.
-    trackerDeps?.command('never-listed');
+    trackerDeps?.command('never-listed', 'manual');
 
     expect(capturedKnowsParty?.('never-listed')).toBe(false);
   });

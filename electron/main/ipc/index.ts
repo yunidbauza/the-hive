@@ -300,23 +300,6 @@ let agentState: AgentState | null = null;
  */
 let runs: RunTracker | null = null;
 /**
- * Wake an agent, whatever the reason (HIVE-115).
- *
- * Module scope for the reason `runs` is: `agents:run` calls it now, and
- * HIVE-121's timer and HIVE-123's Slack listener will call it from places that
- * never see this function's definition. It is the only sanctioned way in — see
- * the comment on `wakeReason` for what it does that `runs.run` alone does not.
- */
-let wakeAgent: (
-  name: string,
-  trigger: string,
-  extra?: string,
-) => AgentRunResult = () => ({
-  started: false,
-  refused: 'unknown',
-  reason: 'The agent runtime is not running.',
-});
-/**
  * The agent names the ledger will accept as a party.
  *
  * A `Set` rather than an `await agents.list()` because `knowsParty` is
@@ -1142,27 +1125,6 @@ export function registerIpcHandlers(): void {
     } satisfies AgentStatusPush);
   };
 
-  /**
-   * Why the wake being built right now is happening.
-   *
-   * `RunTracker.run` takes a trigger and hands it to the ledger, but
-   * `RunTrackerDeps.command` is called with the **name alone** — and the
-   * trigger is part of the argv, because `wakePrompt` writes "You woke
-   * because: …" into the prompt the process is started with. Something has to
-   * carry it across those two lines.
-   *
-   * A one-slot record is safe here, and provably rather than incidentally:
-   * `run()` is synchronous and calls `command()` before it returns, so no
-   * other wake can interleave between {@link wakeAgent} setting this and the
-   * builder reading it. It is reset in a `finally`, so a builder that throws
-   * cannot leave a stale reason behind for the next wake to inherit.
-   *
-   * The tidier shape is for `command` to take the trigger as an argument. That
-   * is a change to `runs.ts`'s interface, and this file is not where an
-   * interface belonging to another module gets rewritten.
-   */
-  let wakeReason: { trigger: string; extra?: string } = { trigger: 'manual' };
-
   runs = createRunTracker({
     /*
       `spawn` is injected rather than imported by `runs.ts`, which is what lets
@@ -1174,8 +1136,13 @@ export function registerIpcHandlers(): void {
     */
     spawn: (file, args, options) =>
       spawn(file, [...args], options as SpawnOptions) as unknown as ChildLike,
-    command: (name) => {
-      const built = buildWakeCommand(name, wakeReason.trigger, wakeReason.extra);
+    /*
+      Handed straight through. The tracker passes the trigger it was called
+      with, so the wake prompt and the `run.started` ledger entry are spelled
+      from one value rather than from two that could disagree.
+    */
+    command: (name, trigger, extra) => {
+      const built = buildWakeCommand(name, trigger, extra);
 
       /*
         Proof of existence, taken at the strongest moment there is. Building a
@@ -1215,31 +1182,6 @@ export function registerIpcHandlers(): void {
     now: () => Date.now(),
     newRunId: () => randomUUID(),
   });
-
-  /**
-   * The one door into a wake, whoever is knocking.
-   *
-   * `agents:run` is today's only caller; HIVE-121's scheduler and HIVE-123's
-   * Slack listener will be the others, and each will pass its own trigger. It
-   * exists so that setting {@link wakeReason} cannot be forgotten by whichever
-   * of them is written next — a wake started around this function would spawn
-   * with the *previous* wake's reason in its prompt.
-   */
-  wakeAgent = (name, trigger, extra) => {
-    wakeReason = extra === undefined ? { trigger } : { trigger, extra };
-
-    try {
-      return (
-        runs?.run(name, trigger, extra) ?? {
-          started: false,
-          refused: 'unknown',
-          reason: 'The agent runtime is not running.',
-        }
-      );
-    } finally {
-      wakeReason = { trigger: 'manual' };
-    }
-  };
 
   sessions = createSessions({
     supervisor,
@@ -2057,7 +1999,13 @@ export function registerIpcHandlers(): void {
     await loginEnvStatus();
     await mcp.start();
 
-    return wakeAgent(request.name, 'manual');
+    return (
+      runs?.run(request.name, 'manual') ?? {
+        started: false,
+        refused: 'unknown',
+        reason: 'The agent runtime is not running.',
+      }
+    );
   });
 
   /**

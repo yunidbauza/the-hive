@@ -26,6 +26,7 @@ describe('createRunTracker', () => {
   let lines: { name: string; count: number }[];
   let openAsks: boolean;
   let commandCalls: number;
+  let commandArgs: { name: string; trigger: string; extra?: string }[];
   let tracker: ReturnType<typeof createRunTracker>;
   let state: ReturnType<typeof createAgentState>;
 
@@ -37,12 +38,14 @@ describe('createRunTracker', () => {
     lines = [];
     openAsks = false;
     commandCalls = 0;
+    commandArgs = [];
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
 
     tracker = createRunTracker({
       spawn,
-      command: () => {
+      command: (name, trigger, extra) => {
         commandCalls += 1;
+        commandArgs.push({ name, trigger, ...(extra === undefined ? {} : { extra }) });
 
         return {
           file: '/opt/bin/claude',
@@ -75,6 +78,28 @@ describe('createRunTracker', () => {
     expect(spawnCalls[0]?.options).toMatchObject({ cwd: '/tmp/work' });
   });
 
+  /**
+   * The trigger is part of the **command line**, not only a label for the log:
+   * `wakePrompt` writes "You woke because: <trigger>[ — <extra>]" into the
+   * prompt the process is started with. A builder handed only the name could
+   * not spell the argv, so this is the assertion that keeps the dependency
+   * honest — it is what a mutable slot in the composition was standing in for
+   * before the signature was widened.
+   */
+  it('hands the builder the trigger and the extra, not only the name', () => {
+    tracker.run('a', 'ledger', 'a12 was answered');
+
+    expect(commandArgs).toEqual([
+      { name: 'a', trigger: 'ledger', extra: 'a12 was answered' },
+    ]);
+  });
+
+  it('omits the extra when the wake had none, rather than inventing one', () => {
+    tracker.run('a', 'manual');
+
+    expect(commandArgs).toEqual([{ name: 'a', trigger: 'manual' }]);
+  });
+
   it('appends run.started and sets the agent working', () => {
     tracker.run('a', 'ledger');
 
@@ -98,7 +123,7 @@ describe('createRunTracker', () => {
   it('refuses to start when the command cannot be built', () => {
     const refusing = createRunTracker({
       spawn,
-      command: () => ({ problem: 'claude was not found on PATH.' }),
+      command: (_name: string) => ({ problem: 'claude was not found on PATH.' }),
       state,
       appendLedger: () => {},
       openAsksFor: () => false,
@@ -120,7 +145,7 @@ describe('createRunTracker', () => {
       spawn: () => {
         throw new Error('EMFILE: too many open files');
       },
-      command: () => ({
+      command: (_name: string) => ({
         file: '/opt/bin/claude',
         args: [],
         env: {},
