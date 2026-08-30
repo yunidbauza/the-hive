@@ -440,15 +440,6 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
-    // A __mocks__ filename names the module it fakes (`node:child_process`,
-    // matched exactly for Vitest's mock resolution) — it is not ours to
-    // rename kebab-case.
-    files: ['__mocks__/**/*.ts'],
-    rules: {
-      'check-file/filename-naming-convention': 'off',
-    },
-  },
-  {
     /**
      * The main process runs on Node — `globals.browser` would declare `window`
      * and `document` as legal there, which is exactly the mistake the zones

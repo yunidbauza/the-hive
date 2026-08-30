@@ -5,7 +5,7 @@ import {
   resetChildProcessMock,
   spawn,
   spawnCalls,
-} from '../../../../__mocks__/child_process';
+} from '../../../../__mocks__/child-process';
 import { createAgentState } from '../../../../electron/main/agents/state';
 import { createRunTracker } from '../../../../electron/main/agents/runs';
 import { AGENT_KILL_GRACE_MS } from '../../../../electron/shared/agent-contract';
