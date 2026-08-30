@@ -511,6 +511,45 @@ export interface HookStatusEvent {
 }
 
 /**
+ * The same POST, arriving under an **agent's** name rather than a session's
+ * (HIVE-115).
+ *
+ * A distinct type rather than a widened {@link HookStatusEvent}, because the
+ * two travel on different callbacks and only one of them may reach a status
+ * push or the session history — see `ReceiverOptions.onAgentEvent`. Naming the
+ * agent's shape separately is what lets the compiler say which of the two a
+ * given consumer was written for.
+ *
+ * It extends the session shape rather than replacing it because everything on
+ * that shape is still true here: an agent's headless turn raises the same
+ * events, in the same vocabulary, with the same `cwd` and tool identity. Only
+ * {@link HookAgentEvent.sessionUuid} is new, and only agents have a use for it.
+ */
+export interface HookAgentEvent extends HookStatusEvent {
+  /**
+   * Claude's own uuid for the conversation this hook fired in — the payload's
+   * `session_id`.
+   *
+   * {@link HOOK_HEADER_SESSION} explains why a *session* never correlates on
+   * this field: the app puts its own id in the environment and the hook echoes
+   * it, so the mapping is the identity function and a second table would be one
+   * more thing to keep right. An agent needs both, and for a reason a session
+   * does not have: a wake is one process per turn, and the id in the header is
+   * the agent's **name**, which every run it ever makes shares. A `Stop`
+   * delivered late — after the run it belonged to exited and the next one
+   * started under the same name — would otherwise arm a stall watchdog against
+   * a different, healthy run. The uuid is what tells the two apart, because the
+   * waker minted it for `--session-id` (or is resuming it) and therefore knows
+   * which run it names.
+   *
+   * Optional because it is read off a payload this app does not control. Absent
+   * means the correlation cannot be made and the consumer decides what to do
+   * with that; it is never inferred.
+   */
+  sessionUuid?: string;
+}
+
+/**
  * A prompt in which the user named a ticket they intend to work on (HIVE-78).
  *
  * Separate from {@link HookStatusEvent} because it is a different kind of fact

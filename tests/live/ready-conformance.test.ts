@@ -16,6 +16,17 @@ const noLedger = {
 };
 
 /**
+ * The agent half of the id space, closed (HIVE-115).
+ *
+ * The boot-ready signal is a session's — an agent has no terminal to uncover —
+ * so this scenario keeps the second register empty and the route session-only.
+ */
+const noAgents = {
+  knowsAgent: () => false,
+  onAgentEvent: () => {},
+};
+
+/**
  * The ready signal, against a real `claude` (HIVE-101).
  *
  * ## Why this suite has to exist
@@ -71,6 +82,7 @@ describe.skipIf(!enabled)('ready-signal conformance', () => {
       },
       knowsSession: (entityId) => entityId === ENTITY,
       ...noLedger,
+      ...noAgents,
     });
 
     const url = await receiver.start();

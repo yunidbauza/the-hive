@@ -22,7 +22,11 @@ import {
 
 const noopHandlers: HookHandlers = {
   knowsSession: () => true,
+  // The second id space (HIVE-115), closed: this suite is about the runtime's
+  // lifecycle, and an agent has nothing to add to that.
+  knowsAgent: () => false,
   onEvent: () => {},
+  onAgentEvent: () => {},
   onTicketIntent: () => {},
   onCleared: () => {},
   onMetrics: () => {},

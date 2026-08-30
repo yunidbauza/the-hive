@@ -23,6 +23,17 @@ const noLedger = {
 };
 
 /**
+ * The agent half of the id space, closed (HIVE-115).
+ *
+ * `/done` is a session's declaration — it ends in an `/exit` written into a pty
+ * — so this scenario knows no agents and the route stays session-only.
+ */
+const noAgents = {
+  knowsAgent: () => false,
+  onAgentEvent: () => {},
+};
+
+/**
  * `/done`, end to end, against a real `claude` (HIVE-93).
  *
  * The one thing no unit test can establish. Everything about `/done` that could
@@ -102,6 +113,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
       onReady: () => {},
       knowsSession: (entityId) => entityId === ENTITY,
       ...noLedger,
+      ...noAgents,
     });
 
     const url = await receiver.start();

@@ -2,6 +2,7 @@ import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
+  type HookAgentEvent,
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
@@ -70,7 +71,24 @@ export interface HookRuntimeOptions {
 export interface HookHandlers {
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
+  /**
+   * Whether an entity id is an agent this app has a definition for (HIVE-115).
+   *
+   * Its own question rather than a wider {@link HookHandlers.knowsSession}, so
+   * that "an agent gets hook events, and never a `session:status` push or a
+   * history record" is decided by which callback matched. See
+   * `ReceiverOptions.knowsAgent` for the argument in full.
+   */
+  knowsAgent: (entityId: string) => boolean;
   onEvent: (event: HookStatusEvent) => void;
+  /**
+   * A hook event from an agent's headless turn (HIVE-115).
+   *
+   * {@link HookHandlers.onEvent}'s agent-space twin. Both required, because a
+   * composition that supplied only one would be answering an id space it then
+   * had nowhere to report — a shape worth failing to compile.
+   */
+  onAgentEvent: (event: HookAgentEvent) => void;
   /** A prompt named a ticket (HIVE-78). Unconfirmed — see the contract. */
   onTicketIntent: (event: HookTicketIntentEvent) => void;
   onCleared: (entityId: string) => void;
@@ -137,7 +155,9 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 
     async start({
       knowsSession,
+      knowsAgent,
       onEvent,
+      onAgentEvent,
       onTicketIntent,
       onCleared,
       onMetrics,
@@ -146,6 +166,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     }) {
       const created = createReceiver({
         onEvent,
+        onAgentEvent,
         onTicketIntent,
         onCleared,
         onMetrics,
@@ -166,6 +187,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onLedgerRead: (_caller, query) => ledger.read(query),
         onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
         knowsSession,
+        knowsAgent,
         ...(port === undefined ? {} : { port }),
       });
 

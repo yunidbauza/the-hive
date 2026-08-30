@@ -21,6 +21,17 @@ const noLedger = {
 };
 
 /**
+ * The agent half of the id space, closed (HIVE-115).
+ *
+ * A status line is a session's: `claude -p` does not run one, so an agent has
+ * no business on this route and `knowsAgent` answering `false` is what says so.
+ */
+const noAgents = {
+  knowsAgent: () => false,
+  onAgentEvent: () => {},
+};
+
+/**
  * Run the script with a payload on stdin and collect everything it emitted.
  *
  * `spawn` rather than `promisify(execFile)`, which has no way to *write* stdin —
@@ -109,6 +120,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onReady: () => {},
       knowsSession: (entityId) => entityId === 'sess-live',
       ...noLedger,
+      ...noAgents,
     });
 
     const started = await receiver.start();
@@ -179,6 +191,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onReady: () => {},
       knowsSession: () => true,
       ...noLedger,
+      ...noAgents,
     });
     await receiver.start();
     const url = receiver.metricsUrl as string;
@@ -218,6 +231,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onReady: () => {},
       knowsSession: () => true,
       ...noLedger,
+      ...noAgents,
     });
     await receiver.start();
 

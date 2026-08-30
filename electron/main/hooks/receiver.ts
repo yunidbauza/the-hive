@@ -15,6 +15,7 @@ import {
   HOOK_EVENTS,
   NOTIFICATION_TYPE_STATUS,
   isHookNotificationType,
+  type HookAgentEvent,
   type HookEvent,
   type HookStatusEvent,
   type HookTicketIntentEvent,
@@ -158,6 +159,35 @@ export interface ReceiverOptions {
   ) => LedgerResult;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
+  /**
+   * Whether an entity id is an **agent** this app has a definition for
+   * (HIVE-115).
+   *
+   * Separate from {@link ReceiverOptions.knowsSession} rather than folded into
+   * it. An agent and a session are disjoint id spaces, and the difference has
+   * consequences downstream: an agent must not produce a `session:status` push
+   * and must not reach the session history. Keeping the two questions apart is
+   * what makes that a matter of which callback matched, rather than a branch
+   * somewhere later that a future story can forget to write.
+   *
+   * Nothing about the token changes for it: a token is
+   * `HMAC(launchSecret, entityId)` and an agent name is a legal entity id, so
+   * the only thing that ever stood between an agent's `Stop` and this receiver
+   * was the question this answers.
+   */
+  knowsAgent: (entityId: string) => boolean;
+  /**
+   * A hook event from an agent's headless turn (HIVE-115).
+   *
+   * The agent-space twin of {@link ReceiverOptions.onEvent}, and deliberately
+   * not the same callback. What a session's event goes on to do — move a
+   * status dot, write a history record, close a `/done` — is meaningless for a
+   * name with no pty behind it, and *harmful* for it: a `session:status` push
+   * for an id the fleet has never heard of is a row the user cannot explain.
+   * With two callbacks the guarantee is structural. There is no path from an
+   * agent's POST to `onEvent`, so there is none to any of that either.
+   */
+  onAgentEvent: (event: HookAgentEvent) => void;
   /** Overridable for tests; `0` asks the OS for any free port. */
   port?: number;
 }
@@ -368,6 +398,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onLedgerRead,
     onLedgerPost,
     knowsSession,
+    knowsAgent,
+    onAgentEvent,
     port = 0,
   } = options;
 
@@ -467,11 +499,33 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const TOOL_NAME_IN_PREFIX = /"tool_name"\s*:\s*"([A-Za-z0-9_]+)"/;
 
   /**
-   * Token, session id, and "do we still have this session".
+   * And once more for `session_id`, which correlates an agent's `Stop` with the
+   * run it belongs to (HIVE-115).
    *
-   * Shared by both paths because both need exactly this and in this order —
+   * A uuid is the narrowest vocabulary of any of these, so the shape is the
+   * strictest: hex and hyphens only, which no truncated tail can half-satisfy.
+   * It survives truncation on every payload measured — `session_id` is the
+   * first key Claude Code writes — but the regex is here rather than assumed,
+   * because dropping the uuid silently is exactly the failure this correlation
+   * exists to prevent: a `Stop` with no uuid arms a watchdog against whatever
+   * is live under that name, which after a fast turnaround is the *next* run.
+   */
+  const SESSION_ID_IN_PREFIX = /"session_id"\s*:\s*"([0-9a-fA-F-]+)"/;
+
+  /**
+   * Token, entity id, and "is this an identity this app still has".
+   *
+   * Shared by every path because they all need exactly this and in this order —
    * and because a second endpoint that checked two of the three would be the
    * kind of drift a reviewer has to notice rather than the compiler.
+   *
+   * "An identity this app has" is **two** registers since HIVE-115: the pty
+   * sessions, and the agents `~/.hive/agents` holds a definition for. Both post
+   * here, both authenticate identically — a token is
+   * `HMAC(launchSecret, entityId)` and an agent name is a legal entity id — and
+   * both are refused when the app has never heard of them. What differs is what
+   * each may reach afterwards, which is {@link rejectUnlessSession}'s and the
+   * hook route's business rather than this function's.
    *
    * Answers the status to return, or `null` when the request may proceed.
    */
@@ -495,15 +549,41 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (headers[HOOK_HEADER_TOKEN] !== tokenFor(entityId)) return 403;
 
     /**
-     * An unknown session is refused rather than remembered.
+     * An unknown identity is refused rather than remembered.
      *
-     * Sessions outlive nothing here: if the app does not have this entity, the
-     * event is about a pty that has already gone, and creating state for it
-     * would leak an entry per stale hook forever.
+     * Neither register outlives anything here: if the app has neither a pty nor
+     * an agent definition under this name, the event is about something that
+     * has already gone, and creating state for it would leak an entry per stale
+     * hook forever.
      */
-    if (!knowsSession(entityId)) return 404;
+    if (!knowsSession(entityId) && !knowsAgent(entityId)) return 404;
 
     return null;
+  }
+
+  /**
+   * {@link reject}, and then "and it must be a **session**" (HIVE-115).
+   *
+   * Three routes here are session-only in a way the hook route and the ledger
+   * routes are not. `/metrics` reports a status line that `claude -p` never
+   * runs; `/done` and `/ready` both end in a `session:*` push about a terminal
+   * on the fleet. An agent has no terminal, so every one of those is either
+   * inert or a row the user cannot account for — and "inert" is not a property
+   * to rely on from over here, since it is enforced in `sessions/index.ts` and
+   * could stop being true without this file noticing.
+   *
+   * A named layer rather than a line inside each handler, so that which id
+   * space a route serves is visible at its first statement, and a route added
+   * later has to choose one on purpose.
+   */
+  function rejectUnlessSession(
+    headers: Record<string, string | string[] | undefined>,
+  ): number | null {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    // Narrowed by `reject`, which refused every non-string case above.
+    return knowsSession(headers[HOOK_HEADER_SESSION] as string) ? null : 404;
   }
 
   /**
@@ -519,7 +599,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     body: string,
     truncated: boolean,
   ): number {
-    const refusal = reject(headers);
+    const refusal = rejectUnlessSession(headers);
     if (refusal !== null) return refusal;
 
     /*
@@ -648,7 +728,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function handleDone(
     headers: Record<string, string | string[] | undefined>,
   ): number {
-    const refusal = reject(headers);
+    const refusal = rejectUnlessSession(headers);
     if (refusal !== null) return refusal;
 
     onDone(headers[HOOK_HEADER_SESSION] as string);
@@ -669,10 +749,82 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function handleReady(
     headers: Record<string, string | string[] | undefined>,
   ): number {
-    const refusal = reject(headers);
+    const refusal = rejectUnlessSession(headers);
     if (refusal !== null) return refusal;
 
     onReady(headers[HOOK_HEADER_SESSION] as string);
+    return 204;
+  }
+
+  /**
+   * A hook from an **agent's** headless turn (HIVE-115).
+   *
+   * Its own function rather than a flag inside {@link handle}, and that is the
+   * whole of the story: the only callback reachable from here is
+   * `onAgentEvent`. An agent therefore cannot produce a `session:status` push,
+   * a session history record, a ticket rename or a `/clear` — not because
+   * something downstream remembers to skip it, but because the code that would
+   * do any of those is on a path this function never joins.
+   *
+   * It reads two fields where `handle` reads nine, which is honest rather than
+   * lazy. Measured against `claude` 2.1.251, a `-p` run fires `SessionStart`,
+   * `PreToolUse`, `PostToolUse`, `Stop` and `SubagentStop` — `Notification` and
+   * `PermissionRequest` do not fire headless — and the only one the app acts on
+   * today is `Stop`. The rest are accepted so the run does not print a hook
+   * failure into its own log, and are carried no further until HIVE-116 has
+   * somewhere to draw them. When it does, this is the one place that has to
+   * learn a field, and it can learn it without touching the session path.
+   */
+  function handleAgent(
+    entityId: string,
+    body: string,
+    truncated: boolean,
+  ): number {
+    let event: unknown;
+    let sessionUuid: unknown;
+
+    if (truncated) {
+      // The prefix is all there is; see EVENT_IN_PREFIX and SESSION_ID_IN_PREFIX.
+      event = EVENT_IN_PREFIX.exec(body)?.[1];
+      sessionUuid = SESSION_ID_IN_PREFIX.exec(body)?.[1];
+    } else {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return 400;
+      }
+      const fields =
+        typeof parsed === 'object' && parsed !== null
+          ? (parsed as { hook_event_name?: unknown; session_id?: unknown })
+          : undefined;
+      event = fields?.hook_event_name;
+      sessionUuid = fields?.session_id;
+    }
+
+    // An event outside the subscribed set is a success, not an error — the
+    // same reading the session path takes, and for the same reason.
+    if (!isHookEvent(event)) return 204;
+
+    /*
+      `SessionEnd` leaves here with no callback at all. It is a lifecycle event
+      about a conversation, and a run's lifecycle is the *process* — which
+      `runs.ts` watches on 'close' and 'exit', where the exit code is. There is
+      nothing this could add that is not already known more accurately a moment
+      later, and `HOOK_STATUS` has no entry for it by construction.
+    */
+    if (event === 'SessionEnd') return 204;
+
+    onAgentEvent({
+      entityId,
+      event,
+      status: HOOK_STATUS[event],
+      // Absent rather than empty when the payload did not carry one, the same
+      // discipline every optional field on the session event follows.
+      ...(typeof sessionUuid === 'string' && sessionUuid !== ''
+        ? { sessionUuid }
+        : {}),
+    });
     return 204;
   }
 
@@ -686,6 +838,25 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
     // Narrowed by `reject`, which refused every non-string case above.
     const entityId = headers[HOOK_HEADER_SESSION] as string;
+
+    /**
+     * The two id spaces part **here**, before a field of the payload is read
+     * (HIVE-115).
+     *
+     * Everything below this line belongs to a session, and an agent's event has
+     * already left on {@link handleAgent}. That is the guarantee, and it is
+     * positional: there is no arrangement of the payload, no event name and no
+     * later edit to the parsing below that can carry an agent-named event into
+     * `onEvent`, `onTicketIntent` or `onCleared`.
+     *
+     * A session wins a collision. The registers are disjoint in practice —
+     * `sess-07` is not a folder in `~/.hive/agents` — but were they ever not,
+     * the session is the one with a pty, a status dot and a history record that
+     * have to stay truthful.
+     */
+    if (!knowsSession(entityId) && knowsAgent(entityId)) {
+      return handleAgent(entityId, body, truncated);
+    }
 
     let event: unknown;
     let reason: unknown;

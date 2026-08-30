@@ -59,6 +59,10 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
       knowsSession: (id: string) => id === SESSION,
+      // The agent id space, closed here (HIVE-115): this scenario speaks as a
+      // session, so nothing should be answered on the other register.
+      knowsAgent: () => false,
+      onAgentEvent: () => undefined,
       // Not exercised by this test: every other route the receiver serves.
       onEvent: () => undefined,
       onTicketIntent: () => undefined,

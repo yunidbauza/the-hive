@@ -11,7 +11,10 @@ import {
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
 } from '../../../../electron/shared/config-contract';
-import type { HookStatusEvent } from '../../../../electron/shared/hook-contract';
+import type {
+  HookAgentEvent,
+  HookStatusEvent,
+} from '../../../../electron/shared/hook-contract';
 import { CH } from '../../../../electron/shared/ipc-contract';
 
 import type { RunAsync } from '../../../../electron/main/integrations/github/run';
@@ -2330,5 +2333,159 @@ describe('the idle signal', () => {
     h.hook({ entityId: 'hero-refresh', event: 'Stop', backgroundShells: ['shell-1'] });
 
     expect(h.sessions.isIdle('hero-refresh')).toBe(false);
+  });
+});
+
+/**
+ * What this layer supplies for the *agent* id space (HIVE-115).
+ *
+ * `receiver.test.ts` proves the socket keeps the two apart. This proves the
+ * other half of the wiring: that the two answers this file hands the receiver —
+ * "is this a name I have a definition for" and "an agent's hook arrived" — are
+ * built the way the receiver's guarantee assumes, and that neither of them ends
+ * in a `session:status` push.
+ */
+describe('the agent id space (HIVE-115)', () => {
+  const AGENT = 'slack-watcher';
+  const UUID = 'f9589d3c-8987-4f7d-ba2f-537952d2633c';
+
+  const agentHarness = (): {
+    knowsAgent: (entityId: string) => boolean;
+    agentEvent: (event: Partial<HookAgentEvent> & { event: HookAgentEvent['event'] }) => void;
+    sessionEvent: (event: HookStatusEvent['event']) => void;
+    turnsEnded: ReturnType<typeof vi.fn>;
+    names: Set<string>;
+    sent: Sent[];
+    sessions: Sessions;
+  } => {
+    let knowsAgent: ((entityId: string) => boolean) | undefined;
+    let onAgentEvent: ((event: HookAgentEvent) => void) | undefined;
+    let onEvent: ((event: HookStatusEvent) => void) | undefined;
+    const localSent: Sent[] = [];
+    /*
+      Mutated after `createSessions` has run, which is the point: a user can
+      write a definition while the app is open, so a set captured at
+      construction would be wrong by the time the agent's first hook lands.
+    */
+    const names = new Set<string>();
+    const turnsEnded = vi.fn();
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        localSent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      newSessionUuid: () => TEST_UUID,
+      agentNames: () => names,
+      onAgentTurnEnded: turnsEnded,
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: {
+          knowsAgent: (entityId: string) => boolean;
+          onAgentEvent: (event: HookAgentEvent) => void;
+          onEvent: (event: HookStatusEvent) => void;
+        }) => {
+          knowsAgent = opts.knowsAgent;
+          onAgentEvent = opts.onAgentEvent;
+          onEvent = opts.onEvent;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    return {
+      knowsAgent: (entityId) => knowsAgent!(entityId),
+      // `status` is required on the wire contract and unread here.
+      agentEvent: (event) =>
+        onAgentEvent!({ entityId: AGENT, status: 'idle', ...event } as HookAgentEvent),
+      sessionEvent: (event: HookStatusEvent['event']) =>
+        onEvent!({ entityId: 'hero-refresh', status: 'idle', event } as HookStatusEvent),
+      turnsEnded,
+      names,
+      sent: localSent,
+      sessions: instance,
+    };
+  };
+
+  it('answers knowsAgent from the register as it stands, not as it was', () => {
+    const h = agentHarness();
+
+    expect(h.knowsAgent(AGENT)).toBe(false);
+
+    // Written while the app is running — the case a snapshot would miss.
+    h.names.add(AGENT);
+
+    expect(h.knowsAgent(AGENT)).toBe(true);
+    expect(h.knowsAgent('nobody-at-all')).toBe(false);
+
+    h.sessions.dispose();
+  });
+
+  it('forwards a Stop with the session uuid that came with it', () => {
+    const h = agentHarness();
+
+    h.agentEvent({ event: 'Stop', sessionUuid: UUID });
+
+    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, UUID);
+
+    h.sessions.dispose();
+  });
+
+  /**
+   * Absent, not invented. The tracker reads a missing uuid as "cannot
+   * correlate" and decides for itself; substituting anything here would be
+   * this layer asserting a match it has no evidence for.
+   */
+  it('forwards a Stop with no uuid as undefined', () => {
+    const h = agentHarness();
+
+    h.agentEvent({ event: 'Stop' });
+
+    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, undefined);
+
+    h.sessions.dispose();
+  });
+
+  it.each(['SessionStart', 'PreToolUse', 'PostToolUse', 'SubagentStop'] as const)(
+    'accepts %s from an agent and acts on none of it',
+    (event) => {
+      const h = agentHarness();
+
+      h.agentEvent({ event, sessionUuid: UUID });
+
+      expect(h.turnsEnded).not.toHaveBeenCalled();
+
+      h.sessions.dispose();
+    },
+  );
+
+  /**
+   * The guarantee the second callback exists for, stated where it can be
+   * observed: no agent event, of any kind, puts a row on the fleet.
+   *
+   * The session event at the end is the control. Without it this would pass on
+   * a harness that publishes nothing at all, which is the shape of a test that
+   * is green for the wrong reason.
+   */
+  it('never publishes a session status for an agent, though a session does', () => {
+    const h = agentHarness();
+
+    for (const event of ['SessionStart', 'PreToolUse', 'Stop'] as const) {
+      h.agentEvent({ event, sessionUuid: UUID });
+    }
+
+    expect(h.sent.filter((entry) => entry.channel === CH.sessionStatus)).toEqual([]);
+
+    h.sessionEvent('Stop');
+
+    expect(
+      h.sent
+        .filter((entry) => entry.channel === CH.sessionStatus)
+        .map((entry) => entry.payload['entityId']),
+    ).toEqual(['hero-refresh']);
+
+    h.sessions.dispose();
   });
 });

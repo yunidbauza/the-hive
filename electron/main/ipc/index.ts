@@ -1197,6 +1197,22 @@ export function registerIpcHandlers(): void {
     */
     onIdle: (entityId) => deliver.onIdle(entityId),
     onReady: (entityId) => deliver.onReady(entityId),
+    /*
+      The same register the ledger authenticates a party against (HIVE-115),
+      and deliberately not a second one: an agent that may write to the log is
+      exactly an agent whose hooks the receiver should answer, and two lists
+      that could disagree about that would be a bug nobody sees until one of
+      them is stale. Passed as the live set rather than a copy, so a name
+      `refreshKnownAgents` or `command()` adds is visible on the next hook
+      without anything re-registering.
+    */
+    agentNames: () => knownAgents,
+    /*
+      The uuid is forwarded, not dropped: `noteTurnEnded` ignores a `Stop`
+      whose uuid does not match the run it is holding, which is what keeps a
+      late Stop from arming the watchdog on the next run under the same name.
+    */
+    onAgentTurnEnded: (name, sessionUuid) => runs?.noteTurnEnded(name, sessionUuid),
   });
 
   /**

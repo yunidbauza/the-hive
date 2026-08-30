@@ -10,6 +10,7 @@ import {
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
+  type HookAgentEvent,
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '../../../../electron/shared/hook-contract';
@@ -35,6 +36,20 @@ import { createReceiver, type Receiver } from '../../../../electron/main/hooks/r
 const noLedger = {
   onLedgerRead: (): LedgerSnapshot => ({ entries: [], openAsks: [], claims: {} }),
   onLedgerPost: () => ({ ok: false as const, status: 503, reason: 'not exercised by this test' }),
+};
+
+/**
+ * The agent half of the id space, closed (HIVE-115).
+ *
+ * `knowsAgent` answering `false` is what makes every test that does not name an
+ * agent read exactly as it did before the second register existed: an id the
+ * app has no session for is still a 404, and nothing can reach `onAgentEvent`.
+ * The suite at the bottom of this file is the one that opens it, and it builds
+ * its own receiver to do so.
+ */
+const noAgents = {
+  knowsAgent: () => false,
+  onAgentEvent: () => {},
 };
 
 /**
@@ -73,6 +88,7 @@ describe('hook receiver', () => {
       onReady: (entityId) => readies.push(entityId),
       // Every session exists except the one explicitly named as gone.
       knowsSession: (entityId) => entityId !== 'sess-gone',
+      ...noAgents,
       onMetrics: () => {},
       // The wiring `hooks/index.ts` uses: the query goes down untouched and
       // `visibleTo` inside the receiver is the only identity filter.
@@ -1393,6 +1409,8 @@ describe('hook receiver', () => {
         knowsSession: () => true,
         onMetrics: () => {},
         ...noLedger,
+      ...noAgents,
+        ...noAgents,
       });
       const started = (await ordered.start()) as string;
 
@@ -1496,6 +1514,7 @@ describe('hook receiver', () => {
       knowsSession: () => true,
       onMetrics: () => {},
       ...noLedger,
+      ...noAgents,
       port: 1,
     });
     await expect(doomed.start()).resolves.toBeNull();
@@ -1514,6 +1533,7 @@ describe('hook receiver', () => {
       knowsSession: () => true,
       onMetrics: () => {},
       ...noLedger,
+      ...noAgents,
     });
     const started = await exploding.start();
     const response = await fetch(started as string, {
@@ -1564,6 +1584,7 @@ describe('the token binds to one session (HIVE-112)', () => {
       onReady: () => {},
       onMetrics: () => {},
       knowsSession: (entityId) => entityId === 'sess-a' || entityId === 'sess-b',
+      ...noAgents,
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
     });
@@ -1658,6 +1679,8 @@ describe('the token binds to one session (HIVE-112)', () => {
         onMetrics: () => {},
         knowsSession: () => true,
         ...noLedger,
+      ...noAgents,
+        ...noAgents,
       });
 
       const response = await send(url(receiver), impostor.tokenFor('sess-a'), 'sess-a', body);
@@ -1677,8 +1700,8 @@ describe('hook receiver tokens', () => {
     // *the same* session id — the launch secret is what has to differ for
     // this to hold, since `tokenFor` is otherwise a pure function of its
     // argument (HIVE-112).
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(a.tokenFor('sess-01')).not.toBe(b.tokenFor('sess-01'));
     // Hex-encoded SHA-256, not a v4 uuid.
     expect(a.tokenFor('sess-01')).toHaveLength(64);
@@ -1686,17 +1709,17 @@ describe('hook receiver tokens', () => {
   });
 
   it('is deterministic: the same receiver and session id always agree', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.tokenFor('sess-01')).toBe(receiver.tokenFor('sess-01'));
   });
 
   it('derives a different token for a different session id on the same receiver', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.tokenFor('sess-01')).not.toBe(receiver.tokenFor('sess-02'));
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.url).toBeNull();
   });
 });
@@ -1726,6 +1749,7 @@ describe('the status line path', () => {
       onReady: () => {},
       knowsSession: (entityId) => entityId !== 'sess-gone',
       ...noLedger,
+      ...noAgents,
     });
     const started = await receiver.start();
     expect(started).not.toBeNull();
@@ -1764,6 +1788,7 @@ describe('the status line path', () => {
       onReady: () => {},
       knowsSession: () => true,
       ...noLedger,
+      ...noAgents,
     });
     expect(unbound.metricsUrl).toBeNull();
   });
@@ -1842,5 +1867,263 @@ describe('the status line path', () => {
 
   it('answers 404 on the metrics path for a method other than POST', async () => {
     expect((await fetch(url, { method: 'GET' })).status).toBe(404);
+  });
+});
+
+/**
+ * The two id spaces (HIVE-115).
+ *
+ * An agent's hooks arrive under the agent's **name**, which the pty registry
+ * has never heard of — so before this story every one of them was refused 404
+ * by `knowsSession`. The token needed no change at all: it is
+ * `HMAC(launchSecret, entityId)` and a name is a legal entity id.
+ *
+ * What these tests are really about is the *shape* of the fix. A wider
+ * `knowsSession` would have let an agent through the door and left "and it must
+ * not get a `session:status` push, or a history record" to a branch somewhere
+ * downstream. A second callback makes that a property of which one matched, and
+ * the assertion that `sessionEvents` stays empty is the only way to state it
+ * from out here.
+ *
+ * Its own receiver rather than the shared fixture at the top of this file,
+ * because the fixture treats every id but one as a live session — which is
+ * exactly the condition under which the agent branch can never be reached.
+ */
+describe('the agent id space (HIVE-115)', () => {
+  const AGENT = 'slack-watcher';
+  const SESSION = 'sess-01';
+
+  let receiver: Receiver;
+  let url: string;
+  let sessionEvents: HookStatusEvent[];
+  let agentEvents: HookAgentEvent[];
+  let intents: HookTicketIntentEvent[];
+  let cleared: string[];
+  let dones: string[];
+  let readies: string[];
+  let metrics: string[];
+
+  beforeEach(async () => {
+    sessionEvents = [];
+    agentEvents = [];
+    intents = [];
+    cleared = [];
+    dones = [];
+    readies = [];
+    metrics = [];
+    receiver = createReceiver({
+      /*
+        Disjoint on purpose, and the whole suite depends on it: a fixture in
+        which one id answered both would be testing a state the app cannot be
+        in — `sess-07` is not a folder in `~/.hive/agents`.
+      */
+      knowsSession: (entityId) => entityId === SESSION,
+      knowsAgent: (entityId) => entityId === AGENT,
+      onEvent: (event) => sessionEvents.push(event),
+      onAgentEvent: (event) => agentEvents.push(event),
+      onTicketIntent: (event) => intents.push(event),
+      onCleared: (entityId) => cleared.push(entityId),
+      onDone: (entityId) => dones.push(entityId),
+      onReady: (entityId) => readies.push(entityId),
+      onMetrics: (entityId) => metrics.push(entityId),
+      ...noLedger,
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  const postAs = (entityId: string, body: unknown, target = url) =>
+    fetch(target, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(entityId),
+        [HOOK_HEADER_SESSION]: entityId,
+      },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+
+  it('accepts a hook from a known agent', async () => {
+    const response = await postAs(AGENT, { hook_event_name: 'Stop' });
+
+    expect(response.status).toBe(204);
+  });
+
+  it('still refuses an id that is neither a session nor an agent', async () => {
+    const response = await postAs('nobody-at-all', { hook_event_name: 'Stop' });
+
+    expect(response.status).toBe(404);
+    expect(agentEvents).toEqual([]);
+    expect(sessionEvents).toEqual([]);
+  });
+
+  it('routes an agent hook to onAgentEvent and never to onEvent', async () => {
+    await postAs(AGENT, { hook_event_name: 'Stop' });
+
+    expect(agentEvents).toHaveLength(1);
+    expect(sessionEvents).toEqual([]);
+  });
+
+  it('leaves a session hook on the session channel', async () => {
+    await postAs(SESSION, { hook_event_name: 'Stop' });
+
+    expect(sessionEvents).toHaveLength(1);
+    expect(agentEvents).toEqual([]);
+  });
+
+  /**
+   * The correlation key, and the reason it is not optional in practice.
+   *
+   * A `Stop` keyed by the agent's name alone cannot say *which* run ended — the
+   * name is shared by every run that agent will ever make — so a late one would
+   * arm the stall watchdog against whatever is live, which after a fast
+   * turnaround is a different, healthy process.
+   */
+  it('carries the session uuid off a Stop', async () => {
+    await postAs(AGENT, {
+      session_id: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
+      hook_event_name: 'Stop',
+      cwd: '/tmp/agent',
+    });
+
+    expect(agentEvents).toEqual([
+      {
+        entityId: AGENT,
+        event: 'Stop',
+        status: 'idle',
+        sessionUuid: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
+      },
+    ]);
+  });
+
+  /**
+   * `session_id` is the first key Claude Code writes, so it survives a body cut
+   * at `HOOK_MAX_BODY_BYTES` — which is where a long `last_assistant_message`
+   * puts a real `Stop`. Losing the uuid there would silently give the watchdog
+   * the wrong run to act on.
+   */
+  it('recovers the uuid from a truncated body', async () => {
+    const body =
+      `{"session_id":"f9589d3c-8987-4f7d-ba2f-537952d2633c",` +
+      `"hook_event_name":"Stop","last_assistant_message":"${'x'.repeat(HOOK_MAX_BODY_BYTES)}"}`;
+
+    const response = await postAs(AGENT, body);
+
+    expect(response.status).toBe(204);
+    expect(agentEvents).toEqual([
+      {
+        entityId: AGENT,
+        event: 'Stop',
+        status: 'idle',
+        sessionUuid: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
+      },
+    ]);
+  });
+
+  it('omits the uuid rather than inventing one when the payload has none', async () => {
+    await postAs(AGENT, { hook_event_name: 'Stop' });
+
+    expect(agentEvents).toEqual([{ entityId: AGENT, event: 'Stop', status: 'idle' }]);
+  });
+
+  /**
+   * Everything `claude -p` fires is answered, and only `Stop` is acted on
+   * today. Measured against 2.1.251: `Notification` and `PermissionRequest` do
+   * not fire headless, so the list here is the real one.
+   */
+  it.each(['SessionStart', 'PreToolUse', 'PostToolUse', 'SubagentStop'])(
+    'accepts %s from an agent without making it a session event',
+    async (event) => {
+      const response = await postAs(AGENT, { hook_event_name: event });
+
+      expect(response.status).toBe(204);
+      expect(agentEvents).toHaveLength(1);
+      expect(sessionEvents).toEqual([]);
+    },
+  );
+
+  /**
+   * The three things an agent must never reach, asserted from the outside.
+   *
+   * `UserPromptSubmit` naming a ticket is what renames a session's row;
+   * `SessionEnd reason=clear` is what tells the app a conversation ended. Both
+   * are session facts about a pty, and an agent has none — so neither callback
+   * may fire, no matter what the payload says.
+   */
+  it('cannot rename anything or report a clear', async () => {
+    await postAs(AGENT, {
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'work on HIVE-115',
+    });
+    await postAs(AGENT, { hook_event_name: 'SessionEnd', reason: 'clear' });
+
+    expect(intents).toEqual([]);
+    expect(cleared).toEqual([]);
+    expect(sessionEvents).toEqual([]);
+  });
+
+  /**
+   * The routes that end in a `session:*` push stay session-only.
+   *
+   * `reject` answers "is this an identity this app has", which is now two
+   * registers; `rejectUnlessSession` is what keeps `/done`, `/ready` and
+   * `/metrics` to the one of them that has a terminal behind it. Without it an
+   * agent holding its own perfectly valid token could put a `session:ready` on
+   * the wire for a row that does not exist.
+   */
+  it.each([
+    ['/done', (r: Receiver) => r.doneUrl as string],
+    ['/ready', (r: Receiver) => r.readyUrl as string],
+    ['/metrics', (r: Receiver) => r.metricsUrl as string],
+  ])('refuses an agent on %s', async (_name, target) => {
+    const response = await postAs(AGENT, {}, target(receiver));
+
+    expect(response.status).toBe(404);
+    expect(dones).toEqual([]);
+    expect(readies).toEqual([]);
+    expect(metrics).toEqual([]);
+  });
+
+  it('still serves a session on those routes', async () => {
+    expect((await postAs(SESSION, {}, receiver.doneUrl as string)).status).toBe(204);
+    expect((await postAs(SESSION, {}, receiver.readyUrl as string)).status).toBe(204);
+    expect(dones).toEqual([SESSION]);
+    expect(readies).toEqual([SESSION]);
+  });
+
+  /**
+   * The ledger is the one shared surface, and deliberately so: `PartyKind` has
+   * named `'agent'` since HIVE-111, an agent's `ledger_*` MCP tools post under
+   * its own name, and refusing them would leave a run with no durable record of
+   * itself. `visibleTo` is still the only thing that decides what comes back.
+   */
+  it('lets an agent reach the ledger routes', async () => {
+    const response = await postAs(
+      AGENT,
+      {},
+      `${receiver.origin as string}${LEDGER_READ_PATH}`,
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it('refuses an agent presenting another identity’s token', async () => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(SESSION),
+        [HOOK_HEADER_SESSION]: AGENT,
+      },
+      body: JSON.stringify({ hook_event_name: 'Stop' }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(agentEvents).toEqual([]);
   });
 });

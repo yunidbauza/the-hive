@@ -148,6 +148,37 @@ export interface SessionsOptions {
    * learn a held nudge can now be written.
    */
   onReady?: (entityId: string) => void;
+  /**
+   * The agent names this app has definitions for (HIVE-115).
+   *
+   * A **function**, not a snapshot, for the reason `config` is one and the
+   * reason `createAgentsRuntime` gives for `skillNames`: a definition can be
+   * written while the app is running, and a set captured at construction would
+   * pin whatever `~/.hive/agents` held at boot — leaving an agent the user
+   * created five minutes ago unable to report its own turns.
+   *
+   * Absent means "this build has no agents", which answers every hook under an
+   * unknown name with the 404 it got before this story. That is the same
+   * supported-not-degraded reading `hooks` and `skills` have: the browser build
+   * has no main process at all.
+   */
+  agentNames?: () => ReadonlySet<string>;
+  /**
+   * An agent's headless turn ended — its `Stop` hook (HIVE-115).
+   *
+   * Injected rather than reached, because the run tracker lives in `ipc/`
+   * alongside the state file it writes, and this module has no business
+   * knowing that agents are processes at all. What it does know, and nothing
+   * else in main does, is that a `Stop` arrived on the hook receiver under this
+   * name.
+   *
+   * `sessionUuid` is Claude's own id for the conversation the hook fired in,
+   * forwarded rather than dropped: a `Stop` keyed only by agent name could arm
+   * a stall watchdog against a *different, healthy* run started after the one
+   * the `Stop` belonged to. Absent when the payload did not carry one, which
+   * the tracker reads as "cannot correlate" rather than as a match.
+   */
+  onAgentTurnEnded?: (name: string, sessionUuid?: string) => void;
 }
 
 export interface OpenRequest {
@@ -334,6 +365,15 @@ export function createSessions(options: SessionsOptions): Sessions {
     history,
     onIdle,
     onReady,
+    /*
+      An empty register is the honest default (HIVE-115): a build with no agents
+      answers a hook under an unknown name exactly as it did before the second
+      id space existed, with a 404. Fail-closed rather than fail-open, which is
+      the only acceptable default for a question that widens what an
+      authenticated caller may reach.
+    */
+    agentNames = () => new Set<string>(),
+    onAgentTurnEnded,
   } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
@@ -641,6 +681,34 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   void hooks?.start({
     knowsSession: (entityId) => registry.sessionFor(entityId) !== undefined,
+    /*
+      The second register (HIVE-115), asked rather than captured: a definition
+      can be written while the app runs, so the set is read per call exactly as
+      `knowsSession` consults the live registry per call.
+    */
+    knowsAgent: (entityId) => agentNames().has(entityId),
+    /**
+     * An agent's hooks, and the end of the road for them (HIVE-115).
+     *
+     * Everything `onEvent` does below — the status tracker, `publishHookStatus`,
+     * the finish arming, the branch read, the history record — is about a pty,
+     * and an agent has none. So this handler does one thing and refuses to grow
+     * a second: `Stop` is what tells the run tracker a turn ended, and it is
+     * the only event a wake acts on today. The rest arrive so the receiver can
+     * answer them rather than 404 a run's own hooks, and are ignored until
+     * HIVE-116 has somewhere to draw them.
+     *
+     * `event.sessionUuid` rides along rather than being dropped. Without it a
+     * `Stop` is keyed by the agent's name alone, which every run that agent
+     * ever makes shares — so a late one could arm the stall watchdog against
+     * the *next* run and SIGTERM a healthy process. Forwarding the uuid is what
+     * lets the tracker refuse a `Stop` that is not about the run it is holding.
+     */
+    onAgentEvent: (event) => {
+      if (event.event === 'Stop') {
+        onAgentTurnEnded?.(event.entityId, event.sessionUuid);
+      }
+    },
     /*
       The declaration, recorded and nothing more (HIVE-93). Acting on it here
       would write `/exit` into a pty in the middle of the turn that is asking

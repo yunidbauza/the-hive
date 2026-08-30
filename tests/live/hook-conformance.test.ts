@@ -533,6 +533,10 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         onDone: () => {},
         onReady: () => {},
         knowsSession: (id) => id === 'sess-live',
+        // This scenario is a pty session, not an agent (HIVE-115): the second
+        // id space is closed so nothing here can be answered by mistake.
+        knowsAgent: () => false,
+        onAgentEvent: () => {},
         onMetrics: () => {},
         onEvent: (e) => {
           const derived = statusTracker.apply({
