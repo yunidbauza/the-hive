@@ -60,9 +60,10 @@ import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
  *    afterwards, not only while it was live.
  * 4. `agents.json` gained a `sessionUuid` and a run summary with a `costUsd`,
  *    both read off the `result` event the CLI actually emitted.
- * 5. The **second** wake's argv carries `--resume <that same uuid>`, and the run
- *    it starts does not fail — which is the only proof the uuid the first run
- *    reported is one the binary will accept back.
+ * 5. The **second** wake's argv carries `--resume <that same uuid>`, the run it
+ *    starts does not fail, and it reports **the same uuid back** — which is the
+ *    only proof the uuid the first run reported is one the binary will accept,
+ *    and will keep, rather than replacing with a fresh one on resume.
  * 6. The run log holds at least one `ink` line: the agent actually spoke, and
  *    `foldRunLog` read a real `stream-json` stream rather than a hand-written
  *    one.
@@ -91,6 +92,14 @@ import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
 
 const LIVE = process.env['HIVE_LIVE_AGENT_PROOF'] === '1';
 
+/**
+ * How long teardown waits for a signalled child to actually be gone.
+ *
+ * Comfortably past `AGENT_KILL_GRACE_MS`, so the SIGTERM → SIGKILL escalation
+ * gets its full chance before this gives up on a process it cannot reach.
+ */
+const TEARDOWN_WAIT_MS = 10_000;
+
 /** The agent this suite creates, wakes twice, and throws away. */
 const NAME = 'probe-agent';
 
@@ -110,7 +119,8 @@ the single sentence "probe agent reporting in" and end your turn.
 `;
 
 describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
-  let dir: string;
+  /** `undefined` until `beforeAll` gets past its prerequisite check. */
+  let dir: string | undefined;
   let hiveDir: string;
   let userDataPath: string;
   let previousConfigPath: string | undefined;
@@ -284,18 +294,43 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       now: () => Date.now(),
       newRunId: () => randomUUID(),
     });
-  }, 120_000);
+  }, 180_000);
 
   afterAll(async () => {
+    /*
+      Awaited, not fired and forgotten. `killAll` sends SIGTERM and arms an
+      **unref'd** SIGKILL three seconds later, so nothing holds the Vitest
+      worker open while the child winds down — the worker can exit first and
+      leave a real `claude` running with nobody left to signal it. Polling
+      `live()` is what turns "we asked it to stop" into "it stopped", and the
+      bound means a child that will not go still ends the suite rather than
+      hanging it.
+    */
     runs?.killAll('suite ended');
-    agentState?.close();
+
+    const deadline = Date.now() + TEARDOWN_WAIT_MS;
+
+    while ((runs?.live().length ?? 0) > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    // `dispose`, not `flush`: the directory the write would land in is deleted
+    // three lines below.
+    agentState?.dispose();
     await receiver?.stop();
 
     if (previousConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
     else process.env[CONFIG_PATH_ENV] = previousConfigPath;
 
-    await rm(dir, { recursive: true, force: true });
-  });
+    /*
+      Guarded, because `dir` is assigned *after* `beforeAll`'s prerequisite
+      check. A missing `out/main/mcp-host.js` throws before the `mkdtemp`, and
+      an unguarded `rm(undefined)` would then raise ERR_INVALID_ARG_TYPE on top
+      of it — burying the one error that says what to run. Everything else here
+      is already `?.`-guarded for the same reason.
+    */
+    if (dir !== undefined) await rm(dir, { recursive: true, force: true });
+  }, TEARDOWN_WAIT_MS + 30_000);
 
   /** Wake the agent and resolve when the tracker has finalized the run. */
   const wake = (trigger: string): Promise<void> =>
@@ -419,5 +454,23 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(second.runs).toHaveLength(2);
     expect(second.runs[1]?.outcome).not.toBe('failed');
     expect(second.runs[1]?.costUsd).toBeTypeOf('number');
+
+    /*
+      And the uuid survived the resume unchanged.
+
+      `finalizeRun` writes `sessionUuid` from the `result` event of the run
+      that just ended, so this is the CLI reporting its own id back: measured
+      at 2.1.251, `--session-id <uuid>` reports that uuid, and a following
+      `--resume <uuid>` reports the same one again.
+
+      It is worth an assertion of its own because a *quiet* change here would
+      not fail anything else. `noteTurnEnded(name, sessionUuid)` correlates a
+      Stop hook to the live run by uuid, and ignores a Stop whose uuid does not
+      match. If a resume ever minted a fresh id, every Stop after the first
+      wake would be discarded as stale — the stall watchdog would arm on first
+      runs only, and nothing would say so. This is the one place that would go
+      red instead.
+    */
+    expect(second.sessionUuid).toBe(uuid);
   }, 300_000);
 });
