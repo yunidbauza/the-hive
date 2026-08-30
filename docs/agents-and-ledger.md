@@ -660,9 +660,13 @@ failure mode that makes a cap look like a bug in the agent.
 `rotate_after` is unaffected and worth stating plainly: every wake is
 `claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
 the feature — it is how an agent remembers it already answered a thread — and
-the cost is a transcript that only grows. Rotation writes a handoff to the
-ledger and starts the next run on a fresh session id carrying it. Deliberate
-forgetting, with a note left behind.
+the cost is a transcript that only grows. Rotation is what bounds it: once
+`runsSinceRotate` reaches `rotate_after`, `wake-command.ts` drops the stored
+uuid and the next wake mints a fresh one with `--session-id` instead of
+resuming. Deliberate forgetting — and as it ships today, forgetting with no
+note left behind. `handoff` is a real `LedgerKind` and nothing writes one yet;
+the summary a rotating agent should leave itself is a later story's, and until
+it lands a rotation is a clean break rather than a handover.
 
 ### A run ends exactly once, and quitting is one of the ways
 
