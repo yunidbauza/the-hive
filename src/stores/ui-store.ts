@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { Effort, Model } from '@/types/entity';
+import type { SettingsSection } from '@/types/settings';
 
 import type { FsSearchMode } from '@shared/fs-contract';
 
@@ -99,6 +100,8 @@ interface UiState {
    */
   pickerTicket: string | null;
   settings: boolean; // full-stage settings overlay open (story 101)
+  /** The pane `openSettings` was asked for, or `null` for the default. */
+  settingsSection: SettingsSection | null;
   newModel: Model;
   newEffort: Effort;
   showActivityRail: boolean;
@@ -158,7 +161,7 @@ interface UiState {
   openPicker: (ticketKey?: string) => void;
   closePicker: () => void;
   revealStage: () => void;
-  openSettings: () => void;
+  openSettings: (section?: SettingsSection) => void;
   closeSettings: () => void;
   setPickerQuery: (query: string) => void;
   setNewModel: (model: Model) => void;
@@ -184,6 +187,13 @@ const initialUiState = {
   pickerQuery: '',
   pickerTicket: null as string | null,
   settings: false,
+  /**
+   * Which pane the *next* open should land on, or `null` for the default.
+   *
+   * Set by `openSettings('agents')` and cleared by a bare `openSettings()`,
+   * so the rule below still holds for every route that does not name a pane.
+   */
+  settingsSection: null as SettingsSection | null,
   newModel: 'opus' as Model,
   newEffort: 'high' as Effort,
   showActivityRail: true,
@@ -295,7 +305,8 @@ export const useUiStore = create<UiState>()((set) => ({
    * picker, this never touches `activeTab`: closing settings has to return the
    * user to the terminal they were watching.
    */
-  openSettings: () => set({ settings: true, picker: false }),
+  openSettings: (section) =>
+    set({ settings: true, picker: false, settingsSection: section ?? null }),
   closeSettings: () => set({ settings: false }),
   setPickerQuery: (query) => set({ pickerQuery: query }),
 
@@ -455,6 +466,16 @@ export const useSettingsOpen = () => useUiStore((state) => state.settings);
 /** Settings actions, referentially stable across unrelated state changes. */
 export const useSettingsActions = () =>
   useUiStore(useShallow(settingsActionsSelector));
+
+/**
+ * The pane the overlay should open on, or `null` for the default.
+ *
+ * Read once by `SettingsOverlay` as its initial section, never subscribed to
+ * for changes: the overlay is mounted only while settings are open, so the
+ * value it wants is the one that was set on the way in.
+ */
+export const useSettingsSection = (): SettingsSection | null =>
+  useUiStore((state) => state.settingsSection);
 
 /** New-session picker state and actions. */
 export const usePickerState = () => useUiStore(useShallow(pickerStateSelector));

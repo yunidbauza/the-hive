@@ -231,7 +231,9 @@ export function Header() {
         */}
         <button
           type="button"
-          onClick={openSettings}
+          // Wrapped: `openSettings` now takes an optional pane, and a bare
+          // handler would hand it the click event as one (HIVE-116).
+          onClick={() => openSettings()}
           aria-label="Settings"
           className="flex size-[34px] shrink-0 items-center justify-center rounded-full border border-border text-muted hover:bg-hover hover:text-ink [-webkit-app-region:no-drag]"
         >

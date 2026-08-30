@@ -332,3 +332,57 @@ describe('revealRailTab (HIVE-93)', () => {
     expect(useUiStore.getState().showActivityRail).toBe(true);
   });
 });
+
+/**
+ * Which pane settings opens on (HIVE-116).
+ *
+ * The overlay's rule — always land on Projects — was written for the route
+ * that dominates: the picker discovering there are no projects. A caller that
+ * *names* a pane is answering a question the user just asked, and the rule has
+ * to make room for it without losing the default.
+ */
+describe('openSettings and its pane', () => {
+  beforeEach(() => {
+    useUiStore.getState().reset();
+  });
+
+  it('records the pane a caller asked for', () => {
+    useUiStore.getState().openSettings('agents');
+
+    expect(useUiStore.getState().settings).toBe(true);
+    expect(useUiStore.getState().settingsSection).toBe('agents');
+  });
+
+  it('asks for nothing when called bare, so the default still wins', () => {
+    useUiStore.getState().openSettings();
+
+    expect(useUiStore.getState().settings).toBe(true);
+    expect(useUiStore.getState().settingsSection).toBeNull();
+  });
+
+  it('does not strand the next bare open on the last pane asked for', () => {
+    // The bug this guards: `+ New agent…` opens Agents, the user closes, then
+    // the header's gear opens — and lands on Agents with no idea why.
+    useUiStore.getState().openSettings('agents');
+    useUiStore.getState().closeSettings();
+    useUiStore.getState().openSettings();
+
+    expect(useUiStore.getState().settingsSection).toBeNull();
+  });
+
+  it('still dismisses the picker when a pane is named', () => {
+    useUiStore.getState().openPicker();
+
+    useUiStore.getState().openSettings('agents');
+
+    expect(useUiStore.getState().picker).toBe(false);
+  });
+
+  it('is cleared by reset', () => {
+    useUiStore.getState().openSettings('agents');
+
+    useUiStore.getState().reset();
+
+    expect(useUiStore.getState().settingsSection).toBeNull();
+  });
+});

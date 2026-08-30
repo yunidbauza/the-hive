@@ -209,7 +209,9 @@ export function NewSessionPicker() {
             </p>
             <button
               type="button"
-              onClick={openSettings}
+              // Wrapped: `openSettings` takes an optional pane, and a bare
+              // handler would hand it the click event as one (HIVE-116).
+              onClick={() => openSettings()}
               className="rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover"
             >
               Add project

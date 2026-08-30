@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentsPanel } from '@features/agents/components/agents-panel';
+import type { AgentSummary } from '@shared/agent-contract';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
@@ -16,6 +17,18 @@ const FIXTURE_AGENTS = [
 
 const agentRow = (id: string) =>
   screen.getByRole('button', { name: new RegExp(`^${id}`) });
+
+/**
+ * Every row, and never the `+ New agent…` footer (HIVE-116).
+ *
+ * The footer is a button in the same panel, so a bare `getAllByRole('button')`
+ * counts it as a tenant. Filtering by name here keeps these assertions exact
+ * rather than loosening them to "one more than the rows".
+ */
+const agentRows = () =>
+  screen
+    .getAllByRole('button')
+    .filter((button) => !button.textContent?.startsWith('+ New agent'));
 
 describe('AgentsPanel', () => {
   beforeEach(() => {
@@ -46,9 +59,9 @@ describe('AgentsPanel', () => {
   it('renders every seeded agent, in agentOrder', () => {
     render(<AgentsPanel />);
 
-    const ids = screen
-      .getAllByRole('button')
-      .map((row) => row.textContent?.match(/^[a-z-]+/)?.[0]);
+    const ids = agentRows().map(
+      (row) => row.textContent?.match(/^[a-z-]+/)?.[0],
+    );
 
     expect(ids).toEqual(FIXTURE_AGENTS.map(([id]) => id));
   });
@@ -63,9 +76,7 @@ describe('AgentsPanel', () => {
   it('gives each agent its own icon', () => {
     render(<AgentsPanel />);
 
-    const glyphs = screen
-      .getAllByRole('button')
-      .map((row) => row.querySelector('svg')?.innerHTML);
+    const glyphs = agentRows().map((row) => row.querySelector('svg')?.innerHTML);
 
     expect(new Set(glyphs).size).toBe(3);
     expect(glyphs.every(Boolean)).toBe(true);
@@ -172,7 +183,7 @@ describe('AgentsPanel', () => {
 
     render(<AgentsPanel />);
 
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(agentRows()).toHaveLength(1);
     expect(agentRow('slack-agent')).toBeInTheDocument();
   });
 
@@ -183,6 +194,83 @@ describe('AgentsPanel', () => {
 
     render(<AgentsPanel />);
 
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(agentRows()).toHaveLength(1);
+  });
+
+  /**
+   * Grouping by state (HIVE-116).
+   *
+   * A rail is read to answer "what needs me", not "what do I have", which is
+   * what the groups put first. The ordering rules themselves are
+   * `useAgentsByGroup`'s and are tested there; these are about the panel
+   * drawing what it is handed.
+   */
+  describe('grouped by state', () => {
+    const summary = (name: string, status: AgentSummary['status']) => ({
+      name,
+      description: `${name} watches things`,
+      icon: 'ph-robot',
+      status,
+      wake: { on: [] },
+      rotateAfter: 50,
+      runs: [],
+    });
+
+    it('draws a header and a count for every non-empty group', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateAgents([
+            summary('asker', 'asking'),
+            summary('busy', 'working'),
+            summary('held', 'paused'),
+          ]);
+      });
+
+      render(<AgentsPanel />);
+
+      expect(screen.getByText('Awake')).toBeInTheDocument();
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+      // Two awake, one paused — the counts sit beside their headers.
+      expect(screen.getByText('2')).toBeInTheDocument();
+    });
+
+    it('omits a group with nothing in it, rather than a header reading zero', () => {
+      act(() => {
+        useHiveStore.getState().hydrateAgents([summary('sleeper', 'sleeping')]);
+      });
+
+      render(<AgentsPanel />);
+
+      expect(screen.getByText('Sleeping')).toBeInTheDocument();
+      expect(screen.queryByText('Awake')).not.toBeInTheDocument();
+      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('the way to make another one', () => {
+    it('opens Settings › Agents, because that is where authoring lives', async () => {
+      render(<AgentsPanel />);
+
+      await userEvent.click(
+        screen.getByRole('button', { name: /New agent/i }),
+      );
+
+      expect(useUiStore.getState().settings).toBe(true);
+      expect(useUiStore.getState().settingsSection).toBe('agents');
+    });
+
+    it('is absent while the empty state is up, which names the pane itself', () => {
+      useHiveStore.getState().reset();
+
+      render(<AgentsPanel />);
+
+      expect(
+        screen.queryByRole('button', { name: /New agent/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/create one in Settings › Agents/i),
+      ).toBeInTheDocument();
+    });
   });
 });

@@ -2,8 +2,13 @@ import { cn } from '@/lib/utils';
 import { isAgent } from '@/types/entity';
 
 import { Icon } from '@components/ui/icon';
-import { STATUS_FILL, STATUS_LABEL } from '@components/ui/status-dot';
-import { useEntity, useOpenEntity } from '@stores/hive-store';
+import {
+  STATUS_FILL,
+  STATUS_LABEL,
+  STATUS_TEXT,
+} from '@components/ui/status-dot';
+import { describeNextRun } from '@lib/agents';
+import { useAgentAskRef, useEntity, useOpenEntity } from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
 interface AgentRowProps {
@@ -11,21 +16,48 @@ interface AgentRowProps {
 }
 
 /**
- * One background agent: avatar tile, id, and what it watches.
+ * One background agent: avatar tile, id, what it watches, and where it stands.
  *
  * Renders nothing for an id that is not an agent, matching the session rows in
  * 031/032 — panels stay defensive about a store that other stories mutate
  * underneath them.
+ *
+ * ## The right-hand meta answers "should I look?"
+ *
+ * The row used to carry its status in an `sr-only` span alone, because the
+ * only state an agent could be in was `sleeping` and saying so on screen would
+ * have been noise. Now that a rail can hold four states at once (HIVE-116),
+ * the word is visible and the detail beneath it is whatever makes that word
+ * actionable: the open ask's ref, the cost so far, the next wake, or nothing.
+ *
+ * The status word being on screen is also what lets the dot be decoration: it
+ * stays `aria-hidden`, and the state is never carried by colour alone.
  */
 export function AgentRow({ id }: AgentRowProps) {
   const entity = useEntity(id);
   const activeTab = useActiveTab();
   const openEntity = useOpenEntity();
+  const askRef = useAgentAskRef(id);
 
   if (!entity || !isAgent(entity)) return null;
 
   const active = activeTab === id;
   const broken = entity.invalid !== undefined;
+
+  /**
+   * The second line of the meta — the fact that makes the status actionable.
+   *
+   * `working` shows the run's cost so far rather than a turn count, because
+   * cost is the number a person actually decides on. An empty string for
+   * `asking` and `failed`: the ref is already beside the word, and a failure's
+   * reason belongs in the view, not squeezed into a rail row.
+   */
+  const detail =
+    entity.status === 'working'
+      ? (entity.cost ?? '')
+      : entity.status === 'sleeping'
+        ? `next ${describeNextRun(entity)}`
+        : '';
 
   return (
     <button
@@ -55,6 +87,8 @@ export function AgentRow({ id }: AgentRowProps) {
           className={cn(
             'absolute -right-0.5 -bottom-0.5 size-[9px] rounded-full border-2 border-panel',
             broken ? 'bg-amber' : STATUS_FILL[entity.status],
+            // The same pulse the atom derives, for the one state that earns it.
+            entity.status === 'working' && !broken && 'animate-ccpulse',
           )}
         />
       </span>
@@ -74,14 +108,21 @@ export function AgentRow({ id }: AgentRowProps) {
         >
           {broken ? entity.invalid : entity.sub}
         </span>
-        {/*
-          Last, so the row announces "slack-watcher … sleeping" rather than
-          leading with its status — and present at all because the state may
-          never be carried by the dot's colour alone.
-        */}
-        <span className="sr-only">
+      </span>
+
+      <span className="shrink-0 text-right text-[10.5px] leading-tight">
+        <span
+          className={cn(
+            'block',
+            broken ? 'text-amber' : STATUS_TEXT[entity.status],
+          )}
+        >
           {broken ? 'invalid' : STATUS_LABEL[entity.status]}
+          {askRef === undefined || broken ? null : ` ${askRef}`}
         </span>
+        {detail === '' ? null : (
+          <span className="block text-subtle">{detail}</span>
+        )}
       </span>
     </button>
   );

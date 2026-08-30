@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -209,6 +209,50 @@ describe('SettingsOverlay', () => {
 
     // Closing settings returns the user to the terminal they were watching.
     expect(useUiStore.getState().activeTab).toBe('hero-refresh');
+  });
+
+  /**
+   * A caller may name the pane (HIVE-116).
+   *
+   * The always-Projects rule above is about the route that dominates — the
+   * picker with nothing to offer. `+ New agent…` in the rail is the other
+   * kind: it is answering a question the user just asked, and Projects would
+   * lose it.
+   */
+  it('opens on the pane the caller asked for', () => {
+    useUiStore.getState().openSettings('agents');
+
+    render(<SettingsOverlay />);
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+
+    expect(within(nav).getByRole('button', { name: 'Agents' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(
+      within(nav).getByRole('button', { name: 'Projects' }),
+    ).not.toHaveAttribute('aria-current');
+  });
+
+  it('does not yank the pane away from someone who has since navigated', async () => {
+    // The request is an *initial* value, not a subscription: a later
+    // `openSettings('agents')` firing while the user is reading Appearance
+    // must not throw them back.
+    const user = userEvent.setup();
+    useUiStore.getState().openSettings('agents');
+    render(<SettingsOverlay />);
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    await user.click(within(nav).getByRole('button', { name: 'Appearance' }));
+
+    act(() => {
+      useUiStore.getState().openSettings('agents');
+    });
+
+    expect(
+      within(nav).getByRole('button', { name: 'Appearance' }),
+    ).toHaveAttribute('aria-current', 'page');
   });
 });
 

@@ -4,7 +4,7 @@ import { TabBar, tabId, type Tab } from '@components/ui/tab-bar';
 import { AgentsPanel } from '@features/agents/components/agents-panel';
 import { ProjectsPanel } from '@features/projects/components/projects-panel';
 import { WorkPanel } from '@features/work/components/work-panel';
-import { useTicketCount } from '@stores/hive-store';
+import { useAgentAskCount, useTicketCount } from '@stores/hive-store';
 import { useLeftTab, useSetLeftTab, type LeftTab } from '@stores/ui-store';
 
 /**
@@ -36,6 +36,7 @@ export function LeftRail() {
   const leftTab = useLeftTab();
   const setLeftTab = useSetLeftTab();
   const ticketCount = useTicketCount();
+  const askCount = useAgentAskCount();
 
   const tabs: Tab<LeftTab>[] = [
     { id: 'projects', label: 'Projects' },
@@ -45,7 +46,18 @@ export function LeftRail() {
       badgeCount: ticketCount,
       badgeLabel: 'work items',
     },
-    { id: 'agents', label: 'Agents' },
+    {
+      /*
+        Open asks *from agents* — not the Inbox's unread count and not
+        `useOpenAskCount`, which counts a session's asks too (HIVE-116). Three
+        badges on this screen, three genuinely different numbers; this one
+        answers "how many of my tenants are stuck on me?".
+      */
+      id: 'agents',
+      label: 'Agents',
+      badgeCount: askCount,
+      badgeLabel: 'agents waiting on an answer',
+    },
   ];
 
   const Panel = PANELS[leftTab];
