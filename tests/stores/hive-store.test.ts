@@ -30,6 +30,7 @@ import {
   useAgentFacts,
   useAgentRuns,
   useAgentsByGroup,
+  useAgentThread,
   useDisplayName,
   useEndedSessions,
   currentRowFor,
@@ -3771,6 +3772,57 @@ describe('the agent view selectors', () => {
       const { result } = renderHook(() => useAgentAskCount());
 
       expect(result.current).toBe(0);
+    });
+  });
+
+  describe('useAgentThread', () => {
+    const entry = (over: Partial<LedgerEntry>): LedgerEntry => ({
+      id: '20260830-140000-0001',
+      ts: Date.now(),
+      from: 'overmind',
+      kind: 'post',
+      body: 'something',
+      ...over,
+    });
+
+    it('keeps what the agent said and what it was told', () => {
+      useHiveStore
+        .getState()
+        .hydrateLedger([
+          entry({ id: '1', from: 'watcher', to: 'overmind', body: 'mine' }),
+          entry({ id: '2', from: 'overmind', to: 'watcher', body: 'yours' }),
+          entry({ id: '3', from: 'sess-01', to: 'overmind', body: 'neither' }),
+        ]);
+
+      const { result } = renderHook(() => useAgentThread('watcher'));
+
+      expect(result.current.map((found) => found.body)).toEqual([
+        'mine',
+        'yours',
+      ]);
+    });
+
+    it('leaves out a broadcast from somebody else', () => {
+      // `matches` counts an undirected entry as addressed to everyone, which
+      // is right for an inbox and wrong for a thread: this column answers
+      // "what passed between us", and an announcement to the hive did not.
+      useHiveStore
+        .getState()
+        .hydrateLedger([entry({ id: '1', from: 'sess-01', body: 'all hands' })]);
+
+      const { result } = renderHook(() => useAgentThread('watcher'));
+
+      expect(result.current).toEqual([]);
+    });
+
+    it('keeps the agent’s own broadcast, which it did say', () => {
+      useHiveStore
+        .getState()
+        .hydrateLedger([entry({ id: '1', from: 'watcher', body: 'all hands' })]);
+
+      const { result } = renderHook(() => useAgentThread('watcher'));
+
+      expect(result.current).toHaveLength(1);
     });
   });
 

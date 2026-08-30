@@ -4454,6 +4454,28 @@ export const useAgentAskCount = (): number => {
   }, [ledger, order]);
 };
 
+/**
+ * One agent's side of the log — what it said, and what it was told.
+ *
+ * A selector rather than two `useLedgerEntries` calls merged in a component,
+ * because it is a *union* and `LedgerReadQuery` cannot express one: `matches`
+ * ands its fields, so `{ from, to }` would mean "from this agent AND addressed
+ * to it", which is nothing.
+ *
+ * A broadcast from some other party is excluded on purpose. `matches` counts
+ * an undirected entry as addressed to everyone, which is right for an inbox
+ * and wrong for a thread — this column answers "what passed between us", and
+ * an announcement to the whole hive did not.
+ */
+export const useAgentThread = (name: string): LedgerEntry[] => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(
+    () => entries.filter((entry) => entry.from === name || entry.to === name),
+    [entries, name],
+  );
+};
+
 /** The open ask one agent is waiting on — the `a71` in its row meta. */
 export const useAgentAskRef = (name: string): string | undefined => {
   const ledger = useHiveStore((state) => state.ledger);
