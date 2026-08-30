@@ -276,7 +276,7 @@ export const FIELD_HELP: Record<string, string> = {
   */
   'limits.budget_usd':
     'Empty means unlimited. A number caps one wake, priced at list rates — so it stops a run on a subscription too, wherever the run happens to be.',
-  'limits.rotate_after': `Runs before it starts a fresh session, carrying a written handoff. Every wake resumes the last one, so this is what stops the transcript growing forever. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
+  'limits.rotate_after': `Runs before it starts a fresh session. Every wake resumes the last one, so this is what stops the transcript growing forever. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
 };
 
 /**
