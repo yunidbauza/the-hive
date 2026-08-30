@@ -1,6 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/types/entity';
 
@@ -299,6 +299,37 @@ describe('SessionTable', () => {
     // keyboard and the mouse disagree about where "here" is.
     expect(useUiStore.getState().activeTab).toBe('webhooks');
     expect(useUiStore.getState().selId).toBe('webhooks');
+  });
+
+  /**
+   * Plumbing only, and that is the honest limit of it.
+   *
+   * happy-dom performs no layout, so nothing here can say whether a row was
+   * *out of view* to begin with — that half is
+   * `tests/e2e/electron/fleet-scroll.spec.ts`'s, in a real browser with a real
+   * scroll box. What is assertable is that moving the caret asks the browser to
+   * bring the row in, and that it asks for the **minimum** — `nearest` is what
+   * makes this a no-op for a row already on screen, and so what keeps a fresh
+   * launch from scrolling itself the moment the caret defaults to the first row.
+   */
+  it('brings the row the caret moved to into view', () => {
+    const scrollIntoView = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {});
+
+    try {
+      render(<SessionTable />);
+      // The caret starts resolved to the first row, whose own effect has
+      // already run by now. This is about the *move*.
+      scrollIntoView.mockClear();
+
+      act(() => useUiStore.getState().setSelId('webhooks'));
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    } finally {
+      scrollIntoView.mockRestore();
+    }
   });
 
   describe('a terminated session (story 108)', () => {

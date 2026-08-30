@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+
 import { useLastUsed } from '@/hooks/use-relative-time';
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import { cn } from '@/lib/utils';
@@ -275,10 +277,32 @@ export function SessionTable() {
    */
   const reserveAction = useHasResumable();
 
+  /*
+    The table's own box is `min-h-0`, and emphatically **not** `shrink-0`.
+
+    This is a scroll container that grows with its content, and those two facts
+    only coexist while the content is short. `shrink-0` made this row's
+    hypothetical height its *content* height and forbade the flex line from
+    taking any of it back, so a fleet of forty sessions produced a 1,100px box
+    inside a 500px column: `overflow-y-auto` never fired — the scroll box was
+    exactly as tall as what was inside it, so there was nothing to scroll — and
+    the overflow was paid by everything **below**. The transcript was squeezed
+    to two lines and the console prompt was laid out past the foot of the
+    window, where the stage's `overflow-hidden` clipped it. The table could not
+    be scrolled and the one control on the screen was gone.
+
+    `min-h-0` is the other half of the same fact: a flex item's automatic
+    minimum size is its content, so without it this box refuses to shrink for
+    the same reason under a different name. With both, the line hands this row
+    whatever is left once the transcript has its floor (`center-stage.tsx`) and
+    the console has its two rows, and `overflow-y-auto` finally has an overflow
+    to scroll. `tests/e2e/electron/fleet-scroll.spec.ts` is the proof —
+    happy-dom performs no layout, so no unit test can make it.
+  */
   return (
     <div
       data-testid="session-table"
-      className="shrink-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]"
+      className="min-h-0 overflow-y-auto bg-term-bg px-[18px] pt-4 font-mono text-[12.5px]"
     >
       <div className="flex items-center gap-2.5 px-2 pb-1.5 text-[11px] tracking-[0.06em] text-term-head">
         <span className={COL.caret} />
@@ -449,8 +473,6 @@ function SessionTableRow({
   const usedAt = entity && isSession(entity) ? recencyOf(entity) : 0;
   const lastUsed = useLastUsed(usedAt);
 
-  if (!entity || !isSession(entity)) return null;
-
   /*
     Compared by id, not by position. `useNavOrder` is sorted by recency, so a
     row's index changes whenever any session spawns or ends — the caret used to
@@ -461,8 +483,32 @@ function SessionTableRow({
     `navOrder` is still read, for one case only: `effectiveSelId` resolves an
     unset caret to the first row, which is what the index-based selection did by
     defaulting to `0` and what makes `→` work on a fresh launch.
+
+    Resolved above the guard rather than below it, alongside the two hooks that
+    had to move for the same reason: the effect underneath depends on it.
   */
   const selected = id === effectiveSelId(selId, navOrder);
+  /**
+   * The caret drags the scroll box after it.
+   *
+   * Only meaningful since the table became a real scroll container: while it
+   * grew to its content height every row was laid out, so `↑↓` off the bottom
+   * of the window moved a caret nobody could see — and the console's own
+   * `↑↓ select` legend was a promise the screen did not keep. `nearest` is
+   * deliberate: it scrolls the minimum needed and does nothing at all when the
+   * row is already in view, so an ordinary launch — caret on the first row —
+   * moves nothing.
+   *
+   * Every row runs this and only the selected one acts, which is the same shape
+   * the caret glyph already has and costs one comparison per row per selection.
+   */
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selected) return;
+    row.current?.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
+
+  if (!entity || !isSession(entity)) return null;
   /**
    * An ended row still reads, still selects, and does not open (story 108).
    *
@@ -519,6 +565,7 @@ function SessionTableRow({
       the very same fixed columns.
     */
     <div
+      ref={row}
       data-testid="session-row"
       className={cn(
         'flex w-full items-center gap-2.5 rounded px-2',

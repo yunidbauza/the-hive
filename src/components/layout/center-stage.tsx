@@ -333,7 +333,29 @@ export function CenterStage() {
             things on screen that say which session it is.
           */
           ref={terminalRegion}
-          className="relative flex min-h-0 flex-1 flex-col"
+          /*
+            A **floor** on the transcript, in the one view where something else
+            competes for its height.
+
+            The fleet table can shrink and scroll now, and a flex item with
+            `flex-1` (basis `0`) absorbs none of a negative free space — so all
+            of the shrinking lands on the table, and without a floor here it
+            would keep taking until the transcript was gone. The overmind is a
+            table *and* a conversation; either at zero height is a broken
+            screen.
+
+            Conditional rather than unconditional, because the floor is not free
+            everywhere. In a split the terminal column is `flex: 0 0 <ratio>%`
+            and `MIN_SPLIT_RATIO` is 20%, which at the minimum window height is
+            under ten rem — a floor there would overflow the column and draw
+            over the handle instead of yielding. An entity view needs no floor
+            at all: this region is the only flexible thing in the column, so
+            `min-h-0` is what it has always effectively had.
+          */
+          className={cn(
+            'relative flex flex-1 flex-col',
+            view === 'orchestrator' && !splitting ? 'min-h-40' : 'min-h-0',
+          )}
           onClick={focusMessageInput}
         >
           <TerminalHost
