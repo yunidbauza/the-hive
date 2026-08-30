@@ -1,0 +1,86 @@
+# Keep the README's download count honest.
+#
+# The obvious badge — `img.shields.io/github/downloads/<owner>/<repo>/total` —
+# sums **every asset of every release**, and the updater's own traffic swamps
+# the humans. `latest-mac.yml` is fetched on every check (each launch, then
+# every `UPDATE_CHECK_INTERVAL_MS`), so it outruns the installer by better than
+# 13:1: at v0.7.1 the badge read 165, of which 121 were manifest polls.
+#
+# Only the `.dmg` is unambiguously a person. On macOS electron-updater stages
+# from the `-mac.zip` and never touches the `.dmg`, so every `.dmg` hit is
+# someone who chose to install. That undercounts anyone who takes the zip by
+# hand — which is the right way to be wrong. A floor, not a guess.
+#
+# Shields cannot work this out on its own: it matches asset names **exactly**,
+# with no globbing, and electron-builder puts the version in every filename. So
+# there is no static shields URL that sums `.dmg` across releases, and the sum
+# is computed here instead and parked in a gist that shields reads back as an
+# endpoint badge.
+#
+# A gist rather than a file in this repo, deliberately: this runs daily, and a
+# committed counter would interleave bot commits with real history on `main`
+# forever. The cost is the one thing a workflow cannot mint for itself — a PAT
+# with `gist` scope, stored as the `GIST_TOKEN` secret.
+
+name: Download count
+
+on:
+  schedule:
+    # Daily. Nothing waits on this, so the hour is arbitrary — but not `:00`,
+    # where every cron on GitHub queues up at once.
+    - cron: '17 6 * * *'
+  # For a number worth having before tomorrow.
+  workflow_dispatch:
+
+# It reads public release metadata and writes to a gist. Neither wants anything
+# from this repository, which is also why there is no checkout step.
+permissions: {}
+
+jobs:
+  count:
+    name: Count the installers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Sum the .dmg downloads and update the gist
+        env:
+          # The PAT does both halves. `GITHUB_TOKEN` cannot write a gist at any
+          # permission level, and a `gist`-scoped PAT can already read a public
+          # repository's releases — so one token is enough, and two would only
+          # be two things to rotate.
+          GH_TOKEN: ${{ secrets.GIST_TOKEN }}
+          # Not a secret — the same id sits in the README's badge URL. It is a
+          # variable rather than a literal so that this file is never carrying a
+          # placeholder that looks like a real id.
+          GIST_ID: ${{ vars.DOWNLOADS_GIST_ID }}
+        run: |
+          set -euo pipefail
+
+          # Fail loudly and early. Without this the PATCH below would 404 with
+          # nothing to say about which of the two setup steps was missed.
+          if [ -z "${GIST_ID:-}" ]; then
+            echo "DOWNLOADS_GIST_ID is not set. Create the gist, then:"
+            echo "  gh variable set DOWNLOADS_GIST_ID --body <gist-id>"
+            exit 1
+          fi
+
+          count=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '[.[].assets[] | select(.name | endswith(".dmg")) | .download_count] | add // 0')
+
+          # `add` on an empty list is null, hence the `// 0` above: a repo with
+          # no releases yet should read 0, not crash the badge.
+          echo "Counted ${count} .dmg downloads across all releases."
+
+          # The shape shields' endpoint badge expects. The colour is the same
+          # `334fa9` the release and downloads badges already use.
+          payload=$(jq -n --arg m "$count" \
+            '{schemaVersion: 1, label: "downloads", message: $m, color: "334fa9"}')
+
+          # The gist file is written whole — PATCH replaces the named file's
+          # content, and there is only ever one file in it.
+          jq -n --arg c "$payload" \
+            '{files: {"the-hive-downloads.json": {content: $c}}}' \
+            | gh api "gists/${GIST_ID}" -X PATCH --input - >/dev/null
+
+          echo "Recorded **${count}** \`.dmg\` downloads." >> "$GITHUB_STEP_SUMMARY"

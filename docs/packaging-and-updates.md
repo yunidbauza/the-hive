@@ -31,6 +31,35 @@ publishes three assets to a GitHub Release:
 re-cutting a release under the same tag fails the integrity check on any client
 that is mid-download. `workflow_dispatch` exists for rebuilds.
 
+### The download badge counts dmgs, and only dmgs
+
+That table is also why the README's badge is not the obvious one. GitHub counts
+an asset download on **every** GET, including the updater's own — and the
+updater fetches `latest-mac.yml` on each check. Shields'
+`github/downloads/<owner>/<repo>/total` sums every asset of every release, so it
+reports mostly robot traffic: at v0.7.1 it read **165**, of which **121** were
+manifest polls and only **9** were installers.
+
+The dmg is the one asset with no machine reason to be fetched — Squirrel swaps a
+zip and never touches it — so counting dmgs alone gives a number that means
+something. It undercounts anyone who takes the zip by hand, which is the right
+way to be wrong: a floor, not a guess.
+
+Shields cannot compute that itself. It matches asset names **exactly**, with no
+globbing, and electron-builder puts the version in every filename — so there is
+no static shields URL that sums dmgs across releases.
+`.github/workflows/downloads-badge.yml` does the sum daily and parks it in a
+gist that shields reads as an endpoint badge. It needs two things it cannot
+create for itself, both one-time:
+
+| Setting | Value |
+| --- | --- |
+| `DOWNLOADS_GIST_ID` (repo variable) | the gist's id, also visible in the README's badge URL |
+| `GIST_TOKEN` (repo secret) | a PAT with `gist` scope — `GITHUB_TOKEN` cannot write a gist at any permission level |
+
+A gist rather than a file in this repo, deliberately: the job runs daily, and a
+committed counter would interleave bot commits with real history on `main`.
+
 ### Who publishes the release, and why it is not electron-builder
 
 **electron-builder runs two publishers concurrently, and each does a
