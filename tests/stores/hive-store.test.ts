@@ -2079,6 +2079,44 @@ describe('hive-store', () => {
       expect(useHiveStore.getState().entities['sess-01']).toBe(before);
     });
 
+    it('never lets appended run lines overwrite a session', () => {
+      // The same guard `setAgentStatus` carries, pinned at its second call
+      // site: a definition may legally be named `sess-01`, and a defence
+      // proven at one of two entrances is not proven.
+      const before = useHiveStore.getState().entities['sess-01'];
+
+      useHiveStore.getState().appendAgentLines({
+        name: 'sess-01',
+        lines: [{ text: 'from an agent', color: 'ink' }],
+      });
+
+      expect(useHiveStore.getState().entities['sess-01']).toBe(before);
+    });
+
+    it('keeps the last run cost across a re-hydrate', () => {
+      seedAgent();
+      useHiveStore
+        .getState()
+        .setAgentStatus({ name: 'slack-watcher', status: 'sleeping', cost: '$0.02' });
+
+      // `agents:list` reads the cost back out of `agents.json`, so a folder
+      // change — any saved `AGENT.md`, for any agent — must not blank the row.
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'slack-watcher',
+          description: 'Watches #incorp-dev.',
+          icon: 'ph-robot',
+          status: 'sleeping',
+          wake: { on: ['ledger'] },
+          cost: '$0.02',
+        },
+      ]);
+
+      expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({
+        cost: '$0.02',
+      });
+    });
+
     it('appends run lines and keeps them across a re-hydrate', () => {
       seedAgent();
       useHiveStore.getState().appendAgentLines({

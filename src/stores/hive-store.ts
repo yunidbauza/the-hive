@@ -2170,6 +2170,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             ? {}
             : { nextRunAt: summary.nextRunAt }),
           ...(summary.invalid === undefined ? {} : { invalid: summary.invalid }),
+          // Run state, not definition, and carried for the same reason
+          // `lastRunAt` is: `agents:list` reads it back out of `agents.json`,
+          // so a folder change must not blank the cost the live push put in
+          // this row until whenever the agent happens to run again.
+          ...(summary.cost === undefined ? {} : { cost: summary.cost }),
           task: summary.description,
           // Run output, not definition — re-reading the file is no reason to
           // forget what the agent said.
