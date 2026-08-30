@@ -153,6 +153,24 @@ And one for the same reason on the way out: `Ledger.answer` addresses its entry
 answer with no addressee would publish the overmind's reply to one session's
 private question to every other session.
 
+### A live run stays a party even while its file is broken
+
+`knowsParty` answers out of `knownAgents` — a `Set` in `ipc/index.ts`, because
+`Ledger.append` is synchronous and cannot await a folder listing. It is rebuilt
+from the registry on every `agents.onChange`, keeping only definitions that
+currently parse, **plus every name in `runs.live()`**.
+
+That last clause is not defensive coding, it is the epic's own premise: an
+agent is meant to be edited in a text editor while it works, and a save
+mid-edit routinely lands a file that does not parse. Without it the name leaves
+the set the instant that file is saved, and everything the running child does
+next is refused as an unknown party — its hooks 404, its `ledger_*` tool calls
+come back refused, and at close the tracker's own `run.ended` append is
+rejected, leaving a `run.started` with no end in a log that is supposed to be
+the record of what happened. A refused append from the tracker is therefore
+also logged rather than discarded, because that failure is otherwise completely
+silent.
+
 ## Delivery
 
 The ledger records; it does not tell anyone. `electron/main/ledger/deliver.ts`
@@ -447,15 +465,19 @@ frontmatter over a markdown body, sitting beside `config.json`, `skills/` and
 `ledger/` for the reason all of those do — a definition is a document the person
 is invited to open, `grep` and back up, not an app-private artifact.
 
-Nothing *runs* one yet. HIVE-114 defines the file, teaches main to read,
-validate and watch a folder of them, and gives Settings a place to author them;
-the waker is HIVE-115. Every agent is therefore `sleeping`.
+HIVE-114 defines the file, teaches main to read, validate and watch a folder of
+them, and gives Settings a place to author them. HIVE-115 added the **waker**:
+one headless `claude -p` child per wake (`electron/main/agents/waker.ts` spells
+the argv, `runs.ts` tracks the process), its `stream-json` stdout folded into
+run-log lines by `run-log.ts`, the run closed on the child's `'close'` event,
+and the session uuid, cost, turn count and outcome persisted to
+`~/.hive/ledger/agents.json` by `state.ts`.
 
-That matters for how the pane is worded. A field describing runtime behaviour
-that has no implementation — and, in the case of `--max-turns` below, no
-mechanism in the CLI to implement it with — is worse than a field that says "not
-yet", so the sections below record what is enforced, what is merely declared,
-and what is waiting on the waker.
+There is still no *view* of a run. The row carries a status and the last run's
+cost; nothing draws the log the fold produces, and nothing schedules a wake —
+`wake.every` and `wake.at` are still declaration only. So the sections below
+record what the command line actually enforces, what is merely declared, and
+what is still waiting.
 
 ### One table, three requirements
 
@@ -502,8 +524,9 @@ event name and is not one.
 
 `ledger` is the one worth understanding before turning it off, because its
 *absence* is easy to misread. Off does not mean "nobody can reach this agent" —
-`run <agent>` still wakes it by hand. It means a question addressed to it sits
-unread until the next scheduled wake, and if there is no schedule, until
+a manual wake still does, over `CH.agentsRun` (HIVE-115 built the channel; no
+verb or button calls it yet). It means a question addressed to it sits unread
+until the next scheduled wake, and if there is no schedule, until
 `LEDGER_ASK_TTL_MS` retires it. The asker gets silence and then an expiry. The
 form says so under the field.
 
@@ -529,10 +552,20 @@ different way.
 behalf — Claude Code holds the user's Slack OAuth in the Keychain, so the agent
 posts **as them**, not as a bot. `tools` decides which of the tools that exist
 may run unattended, and it is worth wording as *without asking* rather than
-*allowed*: a wake is headless, so there is nobody to prompt, and the fallback is
-refusal. Naming a system while granting none of its tools is a legitimate state
-(it can reach nothing until each call is approved); so is granting a tool whose
-system was never named (it does not exist).
+*allowed*. Naming a system while granting none of its tools is a legitimate
+state (it can reach nothing until each call is approved); so is granting a tool
+whose system was never named (it does not exist).
+
+**HIVE-115 measured what `--allowedTools` actually does, and it is a grant, not
+a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model
+used Bash — with `--setting-sources ""`, and under `--permission-mode dontAsk`
+too. There is no default-deny in `-p`, so a tool left out of `tools` is not
+refused; it merely does not get the free pass. The fence is HIVE-119's
+`--permission-prompt-tool`, which is the mechanism built for the question. That
+also sets the trap the live suite has to avoid: an ungranted tool a wake reaches
+for hits a prompt with no tty to answer it and hangs until the timeout, which is
+why `tests/live/agent-conformance.test.ts` names every tool its probe could
+plausibly touch.
 
 **`skills` is a declaration, not a sandbox.** This is the honest framing and it
 was arrived at the hard way. It was validated against `~/.hive/skills` alone,
@@ -551,8 +584,12 @@ editor; what it cannot do is stop a skill the machine has.
 
 Making it a real sandbox would mean `--restricted`, which ignores the user's
 settings sources entirely — and would therefore cut off exactly the external
-skills the widening exists to allow. That trade is recorded here rather than
-made silently; the waker (HIVE-115) is where it would be taken.
+skills the widening exists to allow. HIVE-115 declined that trade: the wake
+command carries `--setting-sources ""` instead, which stops the user's own
+`settings.json` (and the `permissions.defaultMode: "auto"` a developer machine
+routinely carries) from leaking into an unattended turn, while `--settings`
+still applies alongside it so the Hive's own hooks keep firing. The skills stay
+reachable and the field stays a declaration.
 
 Two details worth knowing before changing `available.ts`:
 
@@ -566,18 +603,21 @@ Two details worth knowing before changing `available.ts`:
   unrelated repository can sit first, and the user-scoped root is the one an
   agent's process would load.
 
-**Left open, for HIVE-115:** the app's own generated plugin (`<userData>/hive/plugin`,
-carrying the `done` skill as `hive:done`) is *not* among the three roots, so a
-definition naming it is refused. Whether it should be depends on a decision this
-story does not own — whether an agent is handed that plugin directory at all, and
-whether `/done`, which marks a *terminal session* finished, means anything to a
-background agent. Guessing either way here would bake an answer into the
-validator before the waker has one.
+**Half-answered by HIVE-115:** the app's own generated plugin
+(`<userData>/hive/plugin`, carrying the `done` skill as `hive:done`) is *not*
+among the three roots, so a definition naming it is still refused. The waker
+settled the first half of that question — every wake carries `--plugin-dir
+<that directory>`, so the plugin *is* loaded — and left the second half where
+it was: `/done` marks a *terminal session* finished, and it has no meaning for
+a headless agent that has no pty to close. Widening `available.ts` before that
+has an answer would let a definition name a skill whose effect on an agent is
+undefined.
 
-### Two limits the CLI can enforce, and one it cannot
+### The two limits, and the flags that enforce them
 
-Verified against `claude` 2.1.251 rather than assumed, because the epic's waker
-command names a flag that does not exist.
+Verified against `claude` 2.1.251 by running it, not by reading `--help`:
+**both** flags are hidden from the help output, so the help output is evidence
+of nothing here.
 
 **`--max-budget-usd` fires under subscription auth.** A run capped at `$0.0001`
 comes back `"terminal_reason": "budget_exhausted"`, `"subtype":
@@ -596,15 +636,26 @@ wake pays for. A real wake carries a larger prompt than that (the body, the
 ledger preamble, the MCP schemas) before doing any work, so `$0.50` would have
 guaranteed the failure it was meant to prevent.
 
-**`--max-turns` does not exist.** It is an Agent SDK option, not a CLI flag;
-2.1.251's flag set has `--max-budget-usd` and no turn cap. So `limits.turns`
-cannot be handed to the binary, and the pane was drawing a control for a limit
-nothing could apply. `electron/shared/agent-turns.ts` is the answer: the waker
-already reads `--output-format stream-json` off the child's stdout to build the
-run log, so it can count `assistant` events there and terminate the child past
-the limit. It is a fold rather than a function over lines because a pipe splits
-where it likes — a chunk boundary inside an event would otherwise undercount,
-which is the direction that makes a limit useless rather than merely wrong.
+**`--max-turns` exists, and is merely undocumented.** It is absent from
+`--help`, which is how it was first written up here as an Agent-SDK-only option
+with no CLI counterpart — and why `electron/shared/agent-turns.ts` briefly
+existed to count `assistant` events off the child's stdout and kill the process
+past the limit. Measured at 2.1.251 the flag is real and the binary enforces it:
+a run that hits the cap ends `{"subtype": "error_max_turns"}` and **exits 1**.
+
+So `limits.turns` goes straight onto the argv (`waker.ts`), and the counter is
+deleted. Do not re-add it, and do not "fix" the argv by dropping the flag
+because `--help` does not list it: a second enforcement of a limit the binary
+already applies is one that can only ever disagree with the binary.
+
+**The exit code is the part that bites.** A capped run is not a crashed one,
+but it leaves the same non-zero code a crash does — and so does
+`--max-budget-usd`. `close()` in `runs.ts` therefore reads the terminal
+`subtype` **before** the exit code: `error_max_turns` records the run `turns`,
+a subtype naming a budget records it `budget`, and only a run with no
+recognised subtype falls through to `failed` on a non-zero exit. Reverse that
+ordering and every capped run in `agents.json` reads as a crash, which is the
+failure mode that makes a cap look like a bug in the agent.
 
 `rotate_after` is unaffected and worth stating plainly: every wake is
 `claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
@@ -612,6 +663,32 @@ the feature — it is how an agent remembers it already answered a thread — an
 the cost is a transcript that only grows. Rotation writes a handoff to the
 ledger and starts the next run on a fresh session id carrying it. Deliberate
 forgetting, with a note left behind.
+
+### A run ends exactly once, and quitting is one of the ways
+
+`runs.ts` finalizes on the child's **`'close'`**, not on `'exit'`. `'exit'` can
+fire before stdio has drained, and the `result` JSON is the last thing `claude`
+writes — precisely the bytes still in flight. Finalizing early would record a
+healthy run as `failed` with no cost, no turns and no session uuid, which
+silently breaks `--resume` on the next wake. `'exit'` still arms a 500 ms
+backstop for the case where a grandchild inherits a pipe and `'close'` never
+comes, and a `closed` flag makes whichever arrives first the only one that
+counts.
+
+Which leaves one path where no event can arrive at all: **quit**. `runShutdown`
+awaits a synchronous hook, so a SIGTERM sent there is never followed by a
+`'close'` this process is alive to see. Signalling alone would therefore leave
+a `run.started` with no `run.ended` forever, no summary in `runs[]`, and a
+`runsSinceRotate` that quietly under-counts until rotation drifts. So the
+tracker has `closeAll(reason)` — signal, then finalize each live run in place,
+without waiting — and the shutdown hook calls that rather than `killAll`,
+before `agentState.flush()` writes the result synchronously. The escalation to
+SIGKILL is not available on this path and is not missed: it is an `unref`'d
+timer, and the event loop it would need is already going away.
+
+`killAll` is still the right call where the process keeps running — the test
+teardown in `resetIpcHandlers`, which drops the whole tracker rather than
+recording anything.
 
 ### The form edits the file, not a model
 
