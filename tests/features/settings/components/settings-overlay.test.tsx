@@ -235,12 +235,13 @@ describe('SettingsOverlay', () => {
     ).not.toHaveAttribute('aria-current');
   });
 
-  it('does not yank the pane away from someone who has since navigated', async () => {
-    // The request is an *initial* value, not a subscription: a later
-    // `openSettings('agents')` firing while the user is reading Appearance
-    // must not throw them back.
+  /**
+   * The overlay is `modal={false}` so the rails stay clickable underneath it,
+   * which means `+ New agent…` can fire while Settings is already open. Reading
+   * the request only at mount made that click do visibly nothing.
+   */
+  it('navigates on a request that arrives while it is already open', async () => {
     const user = userEvent.setup();
-    useUiStore.getState().openSettings('agents');
     render(<SettingsOverlay />);
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
@@ -248,6 +249,28 @@ describe('SettingsOverlay', () => {
 
     act(() => {
       useUiStore.getState().openSettings('agents');
+    });
+
+    expect(within(nav).getByRole('button', { name: 'Agents' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('consumes the request, so it cannot re-apply after the user moves on', async () => {
+    // The other half of the same rule: a request acts exactly once. Left set,
+    // any later re-render would drag the reader back to that pane.
+    const user = userEvent.setup();
+    useUiStore.getState().openSettings('agents');
+    render(<SettingsOverlay />);
+
+    expect(useUiStore.getState().settingsSection).toBeNull();
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    await user.click(within(nav).getByRole('button', { name: 'Appearance' }));
+
+    act(() => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
     });
 
     expect(

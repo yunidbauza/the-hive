@@ -33,14 +33,22 @@ interface AgentRunLogProps {
  * user's terminal type scale (10px to 18px) that decides how many characters
  * fit on a line.
  *
- * ## Why the buffer is not chopped into runs
+ * ## Why the buffer is not chopped into runs, and why a live run has no id
  *
  * Lines arrive as a flat stream with no run id on them, so the only way to
  * partition the buffer would be to sniff the closing line's colour — brittle,
- * and wrong the moment the fold gains a second cyan line. Instead the header
- * names a run only while one is **live**, which is the case where the buffer
- * genuinely is that run's output. Once it ends, every run becomes a receipt
- * and the buffer is labelled for what it is: the last thing this agent said.
+ * and wrong the moment the fold gains a second cyan line.
+ *
+ * A live run has no identity here either, and that is a fact about the data
+ * rather than a shortcut. `runs` is appended by `recordRun` when a run
+ * *finalizes*, while `status: 'working'` is patched at spawn — so while an
+ * agent is running, `runs[last]` is the run **before** this one. Drawing it as
+ * the live header showed the wrong id, trigger and start time, and hid the
+ * previous run's own receipt; on a first run there was no header at all.
+ *
+ * So every finished run is a receipt, always, and a live run is announced by a
+ * banner that claims nothing it cannot know. Main would have to carry a
+ * descriptor for the in-flight run for this to say more.
  *
  * Receipts do not expand, and they have no chevron promising that they might.
  * Their lines were never kept — `agents:lines` is a live push and nothing
@@ -53,10 +61,6 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
   const foot = useRef<HTMLDivElement>(null);
 
   const live = status === 'working';
-  const latest = runs[runs.length - 1];
-  // While a run is live it owns the buffer and its receipt would duplicate the
-  // header above it; once it ends it joins the others.
-  const receipts = live ? runs.slice(0, -1) : runs;
 
   useEffect(() => {
     // Follow the output while it is being written, as the terminal does. Not
@@ -71,12 +75,17 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
       style={{ fontFamily, fontSize }}
       data-region="run-log"
     >
-      {receipts.map((run) => (
+      {runs.map((run) => (
         <RunHeader key={run.run} run={run} dim={palette.dim} brand={palette.blue} />
       ))}
 
-      {live && latest !== undefined ? (
-        <RunHeader run={latest} dim={palette.dim} brand={palette.blue} live />
+      {live ? (
+        <div
+          className="border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
+          style={{ color: palette.dim }}
+        >
+          Running now — this run is recorded when it ends.
+        </div>
       ) : null}
 
       {lines.length === 0 ? (
@@ -121,11 +130,15 @@ interface RunHeaderProps {
   run: RunSummary;
   dim: string;
   brand: string;
-  live?: boolean;
 }
 
-/** `Run #r17 · ledger · 14:32` on the left, what it cost on the right. */
-function RunHeader({ run, dim, brand, live = false }: RunHeaderProps) {
+/**
+ * `Run #r17 · ledger · 14:32` on the left, how it went on the right.
+ *
+ * Only ever drawn for a **finished** run — a live one has no summary to draw
+ * from. See the note on the component above.
+ */
+function RunHeader({ run, dim, brand }: RunHeaderProps) {
   const at = new Date(run.startedAt).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -135,7 +148,7 @@ function RunHeader({ run, dim, brand, live = false }: RunHeaderProps) {
 
   const right = [
     run.turns === undefined ? null : `${run.turns} turns`,
-    live ? null : `${seconds}s`,
+    `${seconds}s`,
     cost,
     // `reason` is the only place a failure says what actually happened —
     // killed, stalled, app-closed — and the outcome word alone does not.
@@ -153,7 +166,7 @@ function RunHeader({ run, dim, brand, live = false }: RunHeaderProps) {
         <span style={{ color: brand }}>Run #{run.run}</span>
         {` · ${run.trigger} · ${at}`}
       </span>
-      <span className="shrink-0">{live ? 'running…' : `${run.outcome} · ${right}`}</span>
+      <span className="shrink-0">{`${run.outcome} · ${right}`}</span>
     </div>
   );
 }

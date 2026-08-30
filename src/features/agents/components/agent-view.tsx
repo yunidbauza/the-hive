@@ -49,27 +49,67 @@ export function AgentView({ entity }: AgentViewProps) {
   const facts = useAgentFacts(entity.id);
   const { openSettings } = useSettingsActions();
   const [draft, setDraft] = useState('');
+  /**
+   * The last refusal from a control on this surface, or `null`.
+   *
+   * Both verbs answer with a **value** rather than throwing — `AgentRunResult`
+   * carries `refused: 'working' | 'unknown' | 'invalid'` and `LedgerResult` a
+   * status and a reason — and both contracts say in as many words that they
+   * are values so the renderer can draw the reason. Discarding them made a
+   * refused Run now look like a dead button, and a rejected post silently eat
+   * what the user typed.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const runNow = () => {
+    setNotice(null);
+
+    void window.hive?.agents.run({ name: entity.id }).then((result) => {
+      if (result.started) return;
+
+      setNotice(
+        result.reason ??
+          (result.refused === 'working'
+            ? 'Already running — one run at a time.'
+            : result.refused === 'invalid'
+              ? 'Its definition could not be read. Edit it to fix that.'
+              : 'The agent runtime is not up.'),
+      );
+    });
+  };
 
   const submit = () => {
     const input = parseAgentInput(draft);
 
     if (input.kind === 'empty') return;
 
-    setDraft('');
+    setNotice(null);
 
-    if (input.kind === 'answer') {
-      void window.hive?.ledger.answer({
-        thread: input.thread,
-        body: input.body,
-      });
+    const written =
+      input.kind === 'answer'
+        ? window.hive?.ledger.answer({ thread: input.thread, body: input.body })
+        : window.hive?.ledger.post({
+            to: entity.id,
+            kind: 'ask',
+            body: input.body,
+          });
 
-      return;
-    }
+    /*
+      The draft is cleared **on success**, never before the write is known.
 
-    void window.hive?.ledger.post({
-      to: entity.id,
-      kind: 'ask',
-      body: input.body,
+      A body over the ledger's cap, an unresolvable ref, or a failed disk write
+      all come back as a refusal — and clearing first destroyed the message on
+      its way out, which is the exact failure `agent-input.ts` tightened its
+      thread matching to avoid.
+    */
+    void written?.then((result) => {
+      if (result.ok) {
+        setDraft('');
+
+        return;
+      }
+
+      setNotice(result.reason);
     });
   };
 
@@ -81,7 +121,10 @@ export function AgentView({ entity }: AgentViewProps) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2" data-view="agent">
+    <div
+      className="@container flex min-h-0 flex-1 flex-col gap-2"
+      data-view="agent"
+    >
       <header className="flex items-center gap-2.5 px-0.5">
         <span className="relative flex size-7 shrink-0 items-center justify-center rounded-lg bg-chip">
           <Icon name={entity.icon} size={15} className="text-brand" />
@@ -95,7 +138,7 @@ export function AgentView({ entity }: AgentViewProps) {
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <button
             type="button"
-            onClick={() => void window.hive?.agents.run({ name: entity.id })}
+            onClick={runNow}
             className="rounded-md border border-brand px-2 py-1 text-[11px] text-brand hover:bg-hover"
           >
             ▶ Run now
@@ -126,7 +169,16 @@ export function AgentView({ entity }: AgentViewProps) {
       </header>
 
       {facts === null ? null : (
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+        <div
+          /*
+            A container query, not `sm:`. The tiles live on the stage, and the
+            stage is not the viewport: with both rails dragged wide a 1100px
+            window leaves ~560px here, where `sm:` (a 640px *viewport*) still
+            fires and truncates `Session` and `Today` into five ~105px columns.
+            The same box this grid sits in is what knows.
+          */
+          className="grid grid-cols-2 gap-1.5 @min-[720px]:grid-cols-5"
+        >
           <Fact label="Status" tone={STATUS_TEXT[facts.status]}>
             {STATUS_LABEL[facts.status]}
             {facts.askRef === undefined ? '' : ` ${facts.askRef}`}
@@ -148,7 +200,7 @@ export function AgentView({ entity }: AgentViewProps) {
         </div>
       )}
 
-      <div className="@container min-h-0 flex-1">
+      <div className="min-h-0 flex-1">
         <div className="grid h-full min-h-0 gap-2 [grid-template-columns:minmax(0,1fr)_clamp(280px,22%,380px)] @max-[800px]:[grid-template-columns:minmax(0,1fr)]">
           <AgentRunLog name={entity.id} status={entity.status} />
           <AgentLedger name={entity.id} />
@@ -176,10 +228,16 @@ export function AgentView({ entity }: AgentViewProps) {
           anyone else — and saying "as you" would describe an identity that
           does not exist in the log.
         */}
-        <p className="px-1 pt-1 text-[10px] text-subtle">
-          Enter posts to the ledger as the overmind. This is not a terminal —
-          nothing here reaches a process.
-        </p>
+        {notice === null ? (
+          <p className="px-1 pt-1 text-[10px] text-subtle">
+            Enter posts to the ledger as the overmind. This is not a terminal —
+            nothing here reaches a process.
+          </p>
+        ) : (
+          <p role="status" className="px-1 pt-1 text-[10px] text-amber">
+            {notice}
+          </p>
+        )}
       </div>
     </div>
   );

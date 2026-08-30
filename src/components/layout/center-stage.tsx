@@ -119,6 +119,20 @@ export function CenterStage() {
    * top of thirteen live terminals.
    */
   const showingOverlay = showingPicker || view === 'settings';
+  /**
+   * The agent view owns the whole column, so the terminal region stands down.
+   *
+   * Both are `flex-1` children of one column, so leaving the region mounted
+   * and visible split the stage in half and left the bottom of it blank —
+   * agents build no transport, so there was nothing down there to draw. The
+   * orchestrator does not have this problem because `SessionTable` is
+   * content-sized rather than `flex-1`.
+   *
+   * Hidden rather than unmounted, exactly as `showingOverlay` does it:
+   * `TerminalHost` holds every session's live instance, and unmounting it to
+   * look at an agent would cost each of them its scrollback.
+   */
+  const showingAgent = view === 'agent';
 
   /*
     Agents are not in this list any more (HIVE-116).
@@ -377,6 +391,7 @@ export function CenterStage() {
           className={cn(
             'relative flex flex-1 flex-col',
             view === 'orchestrator' && !splitting ? 'min-h-40' : 'min-h-0',
+            showingAgent && 'hidden',
           )}
           onClick={focusMessageInput}
         >
@@ -387,7 +402,9 @@ export function CenterStage() {
              * invisible, so closing it re-reveals the previous one and
              * triggers its refit through the machinery story 042 already has.
              */
-            activeId={showingOverlay || editorFull ? null : activeTab}
+            activeId={
+              showingOverlay || editorFull || showingAgent ? null : activeTab
+            }
             endedId={endedId}
             palette={terminalAppearance.palette}
             fontFamily={terminalAppearance.fontFamily}

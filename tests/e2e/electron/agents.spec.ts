@@ -141,6 +141,25 @@ test('opens the agent view — and no terminal — when the row is clicked', asy
     // Its own input, which says what it does.
     await expect(view.getByText(/as the overmind/i)).toBeVisible();
     await expect(view.getByText(/not a terminal/i)).toBeVisible();
+
+    /*
+      And it fills the stage.
+
+      The view and the (now empty) terminal region are siblings in one flex
+      column, both `flex-1`, so leaving the region visible split the height in
+      half and left the bottom of the stage blank. The first version of this
+      spec asserted the two regions' relative positions and never that the view
+      reached the bottom, which is exactly how that shipped past it.
+    */
+    const stage = page.getByRole('main');
+    const stageBox = await stage.boundingBox();
+    const viewBox = await view.boundingBox();
+
+    if (stageBox === null || viewBox === null) {
+      throw new Error('the stage did not lay out');
+    }
+
+    expect(viewBox.height).toBeGreaterThan(stageBox.height * 0.8);
   } finally {
     await app.close();
   }

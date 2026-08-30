@@ -5,7 +5,6 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ParsedCommand } from '@/types/command';
 import { USAGE } from '@/types/command';
 import type {
-  Agent,
   Effort,
   Entity,
   Model,
@@ -4315,33 +4314,65 @@ export interface AgentGroup {
  * `PAUSED 0` is a line of noise about nothing.
  */
 export const useAgentsByGroup = (): AgentGroup[] => {
-  const order = useHiveStore((state) => state.agentOrder);
-  const entities = useHiveStore((state) => state.entities);
+  /*
+    The three fields the grouping reads, and nothing else.
+
+    Subscribing to `state.entities` re-ran this on every write to *any* entity
+    — a line batch from a running agent, a session's status change — because
+    the map's identity changes each time, and the memo below then handed every
+    row a fresh object. `useShallow` over a flat tuple list means an unrelated
+    write compares equal and the rail does not re-render at all. This is the
+    rule `CLAUDE.md` states as keeping a picker keystroke from re-rendering
+    thirteen live terminals.
+  */
+  const rows = useHiveStore(
+    useShallow((state) =>
+      state.agentOrder.flatMap((id) => {
+        const entity = state.entities[id];
+
+        // `entities` holds both kinds and an agent name is a legal session id,
+        // so the same narrowing every other agent selector does.
+        if (entity === undefined || !isAgent(entity)) return [];
+
+        return [`${id}|${entity.status}|${entity.lastRunAt ?? 0}`];
+      }),
+    ),
+  );
 
   return useMemo(() => {
-    const bucket: Record<AgentGroup['key'], Agent[]> = {
+    /*
+      Encoded as strings, not tuples, and that is `useShallow`'s doing: it
+      compares the returned array's elements by identity, so an array of freshly
+      built tuples is never equal to the last one — every read looks like a
+      change, `useSyncExternalStore` re-renders, and React stops it with
+      "maximum update depth exceeded". Primitives compare by value and settle.
+
+      `|` is safe as a separator: `AGENT_NAME_PATTERN` admits lowercase letters,
+      digits and dashes only.
+    */
+    const parsed = rows.map((row) => {
+      const [id = '', status = '', lastRunAt = '0'] = row.split('|');
+
+      return { id, status, lastRunAt: Number(lastRunAt) };
+    });
+
+    const bucket: Record<AgentGroup['key'], (typeof parsed)[number][]> = {
       awake: [],
       sleeping: [],
       paused: [],
     };
 
-    for (const id of order) {
-      const entity = entities[id];
-
-      // `entities` holds both kinds and an agent name is a legal session id,
-      // so the same narrowing every other agent selector does.
-      if (entity === undefined || !isAgent(entity)) continue;
-
-      if (entity.status === 'paused') bucket.paused.push(entity);
-      else if (entity.status === 'sleeping') bucket.sleeping.push(entity);
-      else bucket.awake.push(entity);
+    for (const row of parsed) {
+      if (row.status === 'paused') bucket.paused.push(row);
+      else if (row.status === 'sleeping') bucket.sleeping.push(row);
+      else bucket.awake.push(row);
     }
 
     bucket.awake.sort((a, b) => {
       if (a.status === 'asking' && b.status !== 'asking') return -1;
       if (b.status === 'asking' && a.status !== 'asking') return 1;
 
-      return (b.lastRunAt ?? 0) - (a.lastRunAt ?? 0);
+      return b.lastRunAt - a.lastRunAt;
     });
 
     const labels: Record<AgentGroup['key'], string> = {
@@ -4355,12 +4386,12 @@ export const useAgentsByGroup = (): AgentGroup[] => {
       .map((key) => ({
         key,
         label: labels[key],
-        ids: bucket[key].map((agent) => agent.id),
+        ids: bucket[key].map((row) => row.id),
       }));
-  }, [order, entities]);
+  }, [rows]);
 };
 
-/** One agent's run summaries, oldest last as `agents.json` keeps them. */
+/** One agent's run summaries, **oldest first** — most recent last. */
 export const useAgentRuns = (name: string): RunSummary[] =>
   useHiveStore((state) => {
     const entity = state.entities[name];
@@ -4401,6 +4432,7 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
       (run) => new Date(run.startedAt).toDateString() === today,
     );
     const spend = todays.reduce((sum, run) => sum + (run.costUsd ?? 0), 0);
+    const spent = formatRunCost(spend);
     const open = openAsks(ledger, Date.now()).find((ask) => ask.from === name);
 
     return {
@@ -4420,7 +4452,22 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
         nothing happened. A day that did run, and cost less than a cent, still
         gets the four decimals for the original reason.
       */
-      todayCost: todays.length === 0 ? '$0.00' : (formatRunCost(spend) ?? '$0.00'),
+      /*
+        `$0.00` rather than a blank for a quiet day: the tile is a fact about
+        spend, and an empty cell reads as "not measured" instead of "nothing".
+
+        The no-runs case is spelled here rather than left to `formatRunCost`,
+        which answers `$0.0000` for zero. Four decimals is right for a *run* —
+        a wake routinely costs less than a cent, and `$0.00` for real work
+        reads as a bug — but it is false precision about a day on which
+        nothing happened. A day that did run, and cost less than a cent, still
+        gets the four decimals for the original reason.
+
+        Both conditions in one branch on purpose: `spent` is only `undefined`
+        for a non-finite input, which a sum of numbers is not, so a separate
+        `?? '$0.00'` would be a branch no test could ever reach.
+      */
+      todayCost: todays.length === 0 || spent === undefined ? '$0.00' : spent,
       ...(entity.sessionUuid === undefined
         ? {}
         : { sessionUuid: entity.sessionUuid }),

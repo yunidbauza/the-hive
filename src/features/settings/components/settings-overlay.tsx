@@ -1,6 +1,6 @@
 import { X } from '@phosphor-icons/react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { useState, type ComponentType } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { SettingsSection } from '@/types/settings';
@@ -130,7 +130,7 @@ export function escapeIsClaimed(target: EventTarget | null): boolean {
 }
 
 export function SettingsOverlay() {
-  const { closeSettings } = useSettingsActions();
+  const { closeSettings, clearSettingsSection } = useSettingsActions();
 
   /**
    * Component-local, deliberately not `ui-store`.
@@ -143,11 +143,22 @@ export function SettingsOverlay() {
    * (HIVE-116) — is a different case: it is answering a question the user just
    * asked, and landing them on Projects would lose it.
    *
-   * Read once, as an initial value: a *later* change to the request must not
-   * yank the pane out from under someone who has since navigated.
+   * The request is honoured on arrival, not only at mount. This overlay is
+   * `modal={false}` precisely so the rails stay live underneath it, so
+   * `openSettings('agents')` can fire while it is already open — and reading
+   * the request once made that click do visibly nothing. The effect below
+   * consumes each request exactly once, which is what keeps a stale value from
+   * yanking the pane back after the user has navigated on.
    */
   const requested = useSettingsSection();
   const [section, setSection] = useState<SectionId>(requested ?? 'projects');
+
+  useEffect(() => {
+    if (requested === null) return;
+
+    setSection(requested);
+    clearSettingsSection();
+  }, [requested, clearSettingsSection]);
   const Pane = PANES[section];
 
   return (

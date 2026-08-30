@@ -1,4 +1,4 @@
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PHRASES } from '@lib/swarm/phrases';
@@ -3641,6 +3641,50 @@ describe('the agent view selectors', () => {
       const { result } = renderHook(() => useAgentsByGroup());
 
       expect(result.current.map((group) => group.key)).toEqual(['sleeping']);
+    });
+
+    /**
+     * The rail must not rebuild on every unrelated store write.
+     *
+     * Subscribing to `state.entities` did exactly that: the map's identity
+     * changes on any write, so a line batch from a running agent re-derived the
+     * groups and handed every row a fresh object. This is the rule CLAUDE.md
+     * states as keeping a picker keystroke from re-rendering thirteen live
+     * terminals.
+     */
+    it('returns the same groups when an unrelated write lands', () => {
+      useHiveStore.getState().hydrateAgents([summary('watcher')]);
+
+      const { result } = renderHook(() => useAgentsByGroup());
+      const before = result.current;
+
+      act(() => {
+        useHiveStore.getState().appendAgentLines({
+          name: 'watcher',
+          lines: [{ text: 'a line', color: 'ink' }],
+        });
+      });
+
+      expect(result.current).toBe(before);
+    });
+
+    it('does rebuild when a status actually changes', () => {
+      useHiveStore.getState().hydrateAgents([summary('watcher')]);
+
+      const { result } = renderHook(() => useAgentsByGroup());
+      const before = result.current;
+
+      act(() => {
+        useHiveStore.getState().setAgentStatus({
+          name: 'watcher',
+          status: 'asking',
+          runs: [],
+          runsSinceRotate: 0,
+        });
+      });
+
+      expect(result.current).not.toBe(before);
+      expect(result.current[0]?.key).toBe('awake');
     });
 
     it('files a failed agent under Awake, because it is the loudest yes', () => {

@@ -138,6 +138,23 @@ describe('AgentView', () => {
       expect(run).toHaveBeenCalledWith({ name: 'watcher' });
     });
 
+    it('says why a run was refused rather than looking like a dead button', async () => {
+      // `AgentRunResult` is a value precisely so the renderer can draw the
+      // reason; discarding it made Run now on an invalid agent do nothing.
+      const run = vi
+        .fn()
+        .mockResolvedValue({ started: false, refused: 'working' });
+      vi.stubGlobal('hive', {
+        agents: { run },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
+
+      render(<AgentView entity={seed()} />);
+      await userEvent.click(screen.getByRole('button', { name: /Run now/i }));
+
+      expect(await screen.findByText(/Already running/)).toBeInTheDocument();
+    });
+
     it('renders Pause disabled until it has a channel', () => {
       render(<AgentView entity={seed()} />);
 
@@ -173,6 +190,30 @@ describe('AgentView', () => {
       expect(
         screen.queryByRole('button', { name: /Run #/i }),
       ).not.toBeInTheDocument();
+    });
+
+    /**
+     * `runs` is appended when a run *finalizes*, while `status: 'working'` is
+     * patched at spawn — so during a run `runs[last]` is the run before this
+     * one. Naming it as the live header showed the wrong id, trigger and start
+     * time, and hid the previous run's own receipt.
+     */
+    it('never labels a live run with the previous run’s identity', () => {
+      render(<AgentView entity={seed({ status: 'working' })} />);
+
+      // r17 is the last *finished* run, so it keeps its receipt…
+      expect(screen.getByText(/Run #r17/)).toBeInTheDocument();
+      expect(screen.getByText(/asking/)).toBeInTheDocument();
+      // …and the live run claims no identity it cannot know.
+      expect(screen.getByText(/Running now/)).toBeInTheDocument();
+      expect(screen.queryByText(/running…/)).not.toBeInTheDocument();
+    });
+
+    it('keeps every finished run’s receipt while another is live', () => {
+      render(<AgentView entity={seed({ status: 'working' })} />);
+
+      expect(screen.getByText(/Run #r16/)).toBeInTheDocument();
+      expect(screen.getByText(/Run #r17/)).toBeInTheDocument();
     });
 
     it('renders the streamed lines', () => {
@@ -299,6 +340,31 @@ describe('AgentView', () => {
 
       expect(post).not.toHaveBeenCalled();
       expect(answer).not.toHaveBeenCalled();
+    });
+
+    it('keeps the draft and says why when the write is refused', () => {
+      // Clearing before the write is known destroys the message on its way
+      // out — the exact failure `agent-input.ts` tightened its matching over.
+      const post = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 413,
+        reason: 'That is longer than the ledger accepts.',
+      });
+      vi.stubGlobal('hive', {
+        agents: { run: vi.fn() },
+        ledger: { post, answer: vi.fn() },
+      });
+
+      render(<AgentView entity={seed()} />);
+
+      return userEvent
+        .type(screen.getByRole('textbox'), 'check the deploy{Enter}')
+        .then(async () => {
+          expect(screen.getByRole('textbox')).toHaveValue('check the deploy');
+          expect(
+            await screen.findByText(/longer than the ledger accepts/),
+          ).toBeInTheDocument();
+        });
     });
 
     it('says it speaks as the overmind, which is what main enforces', () => {

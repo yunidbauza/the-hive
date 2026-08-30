@@ -28,7 +28,7 @@ interface AgentRowProps {
  * only state an agent could be in was `sleeping` and saying so on screen would
  * have been noise. Now that a rail can hold four states at once (HIVE-116),
  * the word is visible and the detail beneath it is whatever makes that word
- * actionable: the open ask's ref, the cost so far, the next wake, or nothing.
+ * actionable: the open ask's ref, the next wake and last spend, or nothing.
  *
  * The status word being on screen is also what lets the dot be decoration: it
  * stays `aria-hidden`, and the state is never carried by colour alone.
@@ -47,17 +47,23 @@ export function AgentRow({ id }: AgentRowProps) {
   /**
    * The second line of the meta — the fact that makes the status actionable.
    *
-   * `working` shows the run's cost so far rather than a turn count, because
-   * cost is the number a person actually decides on. An empty string for
-   * `asking` and `failed`: the ref is already beside the word, and a failure's
-   * reason belongs in the view, not squeezed into a rail row.
+   * `working` deliberately shows **no** cost. `entity.cost` is the *last
+   * finished* run's spend — `pushAgentStatus` reads `runs[last]`, and a run is
+   * only appended to `runs` when it finalizes — so drawing it beside a running
+   * agent presents the previous run's money as this one's. Nothing on the wire
+   * carries an in-flight cost, so the honest row says nothing.
+   *
+   * A resting row is where that number is unambiguous, so it rides there
+   * beside the next wake. `asking` and `failed` show nothing: the ref is
+   * already beside the word, and a failure's reason belongs in the view rather
+   * than squeezed into a rail row.
    */
   const detail =
-    entity.status === 'working'
-      ? (entity.cost ?? '')
-      : entity.status === 'sleeping'
-        ? `next ${describeNextRun(entity)}`
-        : '';
+    entity.status === 'sleeping'
+      ? [`next ${describeNextRun(entity)}`, entity.cost]
+          .filter((part) => part !== undefined)
+          .join(' · ')
+      : '';
 
   return (
     <button

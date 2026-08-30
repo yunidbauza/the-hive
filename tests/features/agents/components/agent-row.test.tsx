@@ -80,12 +80,26 @@ describe('AgentRow', () => {
     expect(screen.getByText(/asking a71/)).toBeInTheDocument();
   });
 
-  it('shows the run cost while working, which is the number you decide on', () => {
+  /**
+   * `entity.cost` is the *last finished* run's spend — `pushAgentStatus` reads
+   * `runs[last]`, and a run only joins `runs` when it finalizes. Drawing it
+   * beside a running agent presents the previous run's money as this one's,
+   * and nothing on the wire carries an in-flight cost.
+   */
+  it('does not show a cost while working — it would be the previous run’s', () => {
     hydrate({ status: 'working', cost: '$0.08' });
 
     render(<AgentRow id="watcher" />);
 
-    expect(screen.getByText('$0.08')).toBeInTheDocument();
+    expect(screen.queryByText(/\$0\.08/)).not.toBeInTheDocument();
+  });
+
+  it('shows the last run’s cost on a resting row, where it is unambiguous', () => {
+    hydrate({ status: 'sleeping', cost: '$0.08' });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.getByText(/next manual · \$0\.08/)).toBeInTheDocument();
   });
 
   it('shows when a sleeping agent wakes next', () => {
