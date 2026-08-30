@@ -1145,6 +1145,15 @@ export function registerIpcHandlers(): void {
       status: state.status,
       ...(state.lastRunAt === undefined ? {} : { lastRunAt: state.lastRunAt }),
       ...(state.nextRunAt === undefined ? {} : { nextRunAt: state.nextRunAt }),
+      /*
+        The history rides along (HIVE-116). The view's `Today` tile is a count
+        and a sum over the day's runs, and it has to move the moment a run
+        closes — the alternative was an `agents:changed` on every close, which
+        re-reads and re-parses every definition on disk to learn one number
+        this function already has in hand.
+      */
+      runs: state.runs,
+      runsSinceRotate: state.runsSinceRotate,
       ...(cost === undefined ? {} : { cost }),
     } satisfies AgentStatusPush);
   };

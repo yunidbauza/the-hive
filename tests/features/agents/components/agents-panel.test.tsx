@@ -131,6 +131,8 @@ describe('AgentsPanel', () => {
           icon: 'Warning',
           status: 'sleeping',
           wake: { on: [] },
+          rotateAfter: 50,
+          runs: [],
           invalid: 'nope: Unknown key. Remove it or fix the spelling.',
         },
       ]);
@@ -151,6 +153,8 @@ describe('AgentsPanel', () => {
           icon: 'Warning',
           status: 'sleeping',
           wake: { on: [] },
+          rotateAfter: 50,
+          runs: [],
           invalid: 'nope: Unknown key.',
         },
       ]);

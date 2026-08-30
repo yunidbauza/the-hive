@@ -15,6 +15,8 @@ const snapshot = (names: string[]): AgentsSnapshot => ({
     icon: 'Ghost',
     status: 'sleeping' as const,
     wake: { on: [] },
+    rotateAfter: 50,
+    runs: [],
   })),
   agentsRoot: '/root/agents',
 });

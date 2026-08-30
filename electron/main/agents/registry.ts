@@ -31,6 +31,7 @@ import { join } from 'node:path';
 
 import {
   AGENT_FILE,
+  AGENT_LIMIT_DEFAULTS,
   AGENT_NAME_PATTERN,
   KNOWN_AGENT_MCP,
   isReservedAgentName,
@@ -340,6 +341,14 @@ export function createAgentRegistry({
             icon: 'Warning',
             status: 'sleeping',
             wake: { on: [] },
+            /*
+              A definition that never parsed has no limits of its own, so the
+              rotation ceiling falls back to the default the form would have
+              shown it (HIVE-116). Zero would be a lie the `Session` tile
+              would then draw as `run 0/0`.
+            */
+            rotateAfter: AGENT_LIMIT_DEFAULTS.rotateAfter,
+            runs: [],
             invalid:
               'The folder name cannot be used. Rename it on disk to lowercase letters, digits and dashes.',
           });
@@ -362,6 +371,9 @@ export function createAgentRegistry({
             icon: def.icon,
             status: 'sleeping',
             wake: def.wake,
+            rotateAfter: def.limits.rotateAfter,
+            // The registry has never seen a run; `mergeRunState` fills this.
+            runs: [],
           });
           continue;
         }
@@ -375,6 +387,9 @@ export function createAgentRegistry({
           icon: 'Warning',
           status: 'sleeping',
           wake: { on: [] },
+          // As above: an unparsed definition falls back to the default ceiling.
+          rotateAfter: AGENT_LIMIT_DEFAULTS.rotateAfter,
+          runs: [],
           invalid:
             first === undefined || first.field === ''
               ? reason

@@ -235,6 +235,8 @@ const definition = (name: string) => ({
   icon: 'Robot',
   status: 'sleeping' as const,
   wake: { on: [] },
+  rotateAfter: 50,
+  runs: [],
 });
 
 beforeEach(async () => {
@@ -544,6 +546,23 @@ describe('what the tracker was handed (HIVE-115)', () => {
       status: 'asking',
       lastRunAt: 77,
       cost: '$0.0031',
+      /*
+        The history rides along since HIVE-116, so the agent view's `Today`
+        tile can move the moment a run closes. `cost` stays the *last* run's:
+        a row draws one number, a view draws the sum, and both are answered
+        from this one push rather than from a re-list.
+      */
+      runsSinceRotate: 1,
+      runs: [
+        {
+          run: 'r1',
+          trigger: 'manual',
+          startedAt: 1,
+          endedAt: 2,
+          outcome: 'asking',
+          costUsd: 0.0031,
+        },
+      ],
     });
     expect(destroyedSend).not.toHaveBeenCalled();
   });

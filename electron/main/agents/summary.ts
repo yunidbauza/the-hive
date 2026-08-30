@@ -55,6 +55,16 @@ function withRunState(
     ...agent,
     status: run.status,
     runsSinceRotate: run.runsSinceRotate,
+    /*
+      The whole history, not just `last` (HIVE-116). `cost` below is still the
+      most recent run's, because a row draws one number; the view's `Today`
+      tile draws a count and a sum, which no single summary can answer.
+
+      `rotateAfter` is deliberately absent from this list: it is the
+      definition's, the registry has already put it on `agent`, and the spread
+      above carries it through untouched.
+    */
+    runs: run.runs,
     ...(run.lastRunAt === undefined ? {} : { lastRunAt: run.lastRunAt }),
     ...(run.nextRunAt === undefined ? {} : { nextRunAt: run.nextRunAt }),
     ...(run.sessionUuid === undefined ? {} : { sessionUuid: run.sessionUuid }),

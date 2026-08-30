@@ -256,6 +256,30 @@ export interface AgentSummary {
   /** Present once the agent has run at least once (HIVE-115). */
   sessionUuid?: string;
   runsSinceRotate?: number;
+  /**
+   * The last {@link AGENT_RUN_HISTORY} runs, oldest first (HIVE-116).
+   *
+   * HIVE-115 shipped only the most recent run's `cost`, on the reasoning that a
+   * *row* draws one number. An agent view draws more than a row: its `Today`
+   * tile is a count and a sum over the day's runs, and neither is derivable
+   * from one cost.
+   *
+   * The array rather than a pre-computed `todayRuns` / `todayCost` pair,
+   * because "today" is a question only the renderer can answer — the user's
+   * calendar day, in the user's zone — and this codebase derives such things
+   * in selectors rather than storing two representations of one fact.
+   */
+  runs: RunSummary[];
+  /**
+   * `limits.rotateAfter` from the definition — the `/50` in `run 17/50`.
+   *
+   * Carried on the summary rather than looked up separately because the
+   * numerator (`runsSinceRotate`) already travels here, and a fraction whose
+   * halves arrive by different routes is a fraction that can be drawn
+   * inconsistent. A *definition* fact, so the registry fills it and
+   * {@link mergeRunState} never touches it.
+   */
+  rotateAfter: number;
   /** The most recent run's cost, pre-formatted for display. */
   cost?: string;
   /** Why this definition could not be parsed. Listed, never hidden. */
@@ -751,17 +775,29 @@ export type AgentRunResult =
 /**
  * A run started, ended, or otherwise changed what an agent's row should say.
  *
- * Carries the fields of {@link AgentRunState} the row renders and no others —
- * never the run history, and never `sessionUuid`. That uuid is Claude's own
- * conversation id, and `BRIDGE_SESSION_KEYS` records that the equivalent fact
- * for a *session* deliberately stays in main; an agent's has no better claim
- * to travel.
+ * Carries the fields of {@link AgentRunState} a row or a view renders, and no
+ * others. `sessionUuid` stays behind: that uuid is Claude's own conversation
+ * id, `BRIDGE_SESSION_KEYS` records that the equivalent fact for a *session*
+ * deliberately stays in main, and an agent's has no better claim to travel. It
+ * changes on a first run and on a rotation, and `agents:list` is soon enough
+ * for both.
+ *
+ * `runs` did not travel here either, until HIVE-116. The reasoning was that a
+ * row renders no history — true of a row, and false of the agent view, whose
+ * `Today` tile changes on every close. The alternative was to emit
+ * `agents:changed` on each run end and let the renderer re-list, which would
+ * re-read and re-parse every `AGENT.md` on disk to learn one number main
+ * already had in hand. Twenty summaries on a push that fires a few times an
+ * hour is the cheaper honesty.
  */
 export interface AgentStatusPush {
   name: string;
   status: AgentStatus;
   lastRunAt?: number;
   nextRunAt?: number;
+  /** As {@link AgentSummary.runs} — the last {@link AGENT_RUN_HISTORY}. */
+  runs: RunSummary[];
+  runsSinceRotate: number;
   /** The last run's cost, already formatted — see {@link formatRunCost}. */
   cost?: string;
 }

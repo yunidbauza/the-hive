@@ -22,6 +22,8 @@ const snapshot = (): AgentsSnapshot => ({
       icon: 'ChatCircleDots',
       status: 'sleeping',
       wake: { on: ['ledger'] },
+      rotateAfter: 50,
+      runs: [],
     },
     {
       name: 'never-run',
@@ -29,6 +31,8 @@ const snapshot = (): AgentsSnapshot => ({
       icon: 'Robot',
       status: 'sleeping',
       wake: { on: [] },
+      rotateAfter: 50,
+      runs: [],
     },
   ],
 });
@@ -69,6 +73,50 @@ describe('mergeRunState', () => {
       // Four decimals under a cent: `$0.00` for a real run reads as a bug.
       cost: '$0.0023',
     });
+  });
+
+  /**
+   * HIVE-116. The `Today` tile is a count and a sum over the day's runs, and
+   * the `Session` tile is `runsSinceRotate` over the definition's ceiling.
+   * Neither is derivable from the single `cost` HIVE-115 shipped, so the whole
+   * history crosses — capped at `AGENT_RUN_HISTORY`, so it is 20 rows at worst.
+   */
+  it('carries the whole run history, not just the last run’s cost', () => {
+    const runs = [
+      {
+        run: 'r1',
+        trigger: 'timer',
+        startedAt: 10,
+        endedAt: 20,
+        outcome: 'done' as const,
+        costUsd: 0.004,
+      },
+      {
+        run: 'r2',
+        trigger: 'ledger',
+        startedAt: 30,
+        endedAt: 40,
+        outcome: 'asking' as const,
+        costUsd: 0.041,
+      },
+    ];
+
+    const merged = mergeRunState(snapshot(), {
+      'slack-watcher': state({ runs }),
+    });
+
+    expect(merged.agents[0]?.runs).toEqual(runs);
+  });
+
+  it('leaves the rotation ceiling to the definition, never to run state', () => {
+    // `rotateAfter` is `limits.rotateAfter` — the registry's to fill, and this
+    // join must not invent or overwrite it.
+    const merged = mergeRunState(snapshot(), {
+      'slack-watcher': state({ runsSinceRotate: 17 }),
+    });
+
+    expect(merged.agents[0]?.rotateAfter).toBe(50);
+    expect(merged.agents[0]?.runsSinceRotate).toBe(17);
   });
 
   it('lets the state win on status, because only it has seen a process', () => {

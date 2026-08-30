@@ -24,6 +24,8 @@ const agent = (name: string, over: Partial<AgentSummary> = {}): AgentSummary => 
   icon: 'Ghost',
   status: 'sleeping',
   wake: { on: [] },
+  rotateAfter: 50,
+  runs: [],
   ...over,
 });
 

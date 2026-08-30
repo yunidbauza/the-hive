@@ -1943,6 +1943,8 @@ describe('hive-store', () => {
       icon: 'Ghost',
       status: 'sleeping',
       wake: { on: [] },
+      rotateAfter: 50,
+      runs: [],
       ...over,
     });
 
@@ -2041,6 +2043,8 @@ describe('hive-store', () => {
           icon: 'ph-robot',
           status: 'sleeping',
           wake: { on: ['ledger'] },
+          rotateAfter: 50,
+          runs: [],
         },
       ]);
 
@@ -2051,6 +2055,8 @@ describe('hive-store', () => {
         status: 'working',
         lastRunAt: 42,
         cost: '$0.02',
+        runs: [],
+        runsSinceRotate: 0,
       });
 
       const agent = useHiveStore.getState().entities['slack-watcher'];
@@ -2065,7 +2071,12 @@ describe('hive-store', () => {
 
     it('ignores a status for an agent it does not have', () => {
       expect(() =>
-        useHiveStore.getState().setAgentStatus({ name: 'ghost', status: 'working' }),
+        useHiveStore.getState().setAgentStatus({
+          name: 'ghost',
+          status: 'working',
+          runs: [],
+          runsSinceRotate: 0,
+        }),
       ).not.toThrow();
       expect(useHiveStore.getState().entities['ghost']).toBeUndefined();
     });
@@ -2074,7 +2085,12 @@ describe('hive-store', () => {
       // A definition may legally share a name with a live session id.
       const before = useHiveStore.getState().entities['sess-01'];
 
-      useHiveStore.getState().setAgentStatus({ name: 'sess-01', status: 'working' });
+      useHiveStore.getState().setAgentStatus({
+        name: 'sess-01',
+        status: 'working',
+        runs: [],
+        runsSinceRotate: 0,
+      });
 
       expect(useHiveStore.getState().entities['sess-01']).toBe(before);
     });
@@ -2097,7 +2113,13 @@ describe('hive-store', () => {
       seedAgent();
       useHiveStore
         .getState()
-        .setAgentStatus({ name: 'slack-watcher', status: 'sleeping', cost: '$0.02' });
+        .setAgentStatus({
+          name: 'slack-watcher',
+          status: 'sleeping',
+          cost: '$0.02',
+          runs: [],
+          runsSinceRotate: 0,
+        });
 
       // `agents:list` reads the cost back out of `agents.json`, so a folder
       // change — any saved `AGENT.md`, for any agent — must not blank the row.
@@ -2108,6 +2130,8 @@ describe('hive-store', () => {
           icon: 'ph-robot',
           status: 'sleeping',
           wake: { on: ['ledger'] },
+          rotateAfter: 50,
+          runs: [],
           cost: '$0.02',
         },
       ]);
