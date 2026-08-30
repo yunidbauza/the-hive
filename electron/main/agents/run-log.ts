@@ -63,7 +63,6 @@ const shortArgs = (input: unknown): string => {
 
 function readEvent(
   line: string,
-  state: LogFold,
 ): { lines: RunLine[]; result: RunResult | null } {
   const text = line.trim();
 
@@ -143,9 +142,18 @@ function readEvent(
     };
   }
 
-  // `system`, `rate_limit_event`, `user` (tool results) and anything the CLI
-  // adds later: not the agent speaking, so not the run log's business.
-  return { lines: [], result: state.result };
+  /*
+    `system`, `rate_limit_event`, `user` (tool results) and anything the CLI
+    adds later: not the agent speaking, so not the run log's business.
+
+    `null`, meaning "this line said nothing about the result" — not
+    `state.result`, which is the result as it was when the *chunk* arrived. The
+    accumulator in `foldRunLog` already starts there and only moves forward, so
+    returning it here made a `result` line followed by a `system` line **in one
+    chunk** revert to the earlier value — which is the ordering `claude` actually
+    produces at the end of a turn.
+  */
+  return { lines: [], result: null };
 }
 
 export function foldRunLog(
@@ -160,7 +168,7 @@ export function foldRunLog(
   let result = state.result;
 
   for (const part of parts) {
-    const read = readEvent(part, state);
+    const read = readEvent(part);
 
     lines.push(...read.lines);
     if (read.result !== null) result = read.result;

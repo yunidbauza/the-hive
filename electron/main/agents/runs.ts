@@ -1,4 +1,9 @@
-import { AGENT_KILL_GRACE_MS, type RunLine, type RunOutcome } from '@shared/agent-contract';
+import {
+  AGENT_KILL_GRACE_MS,
+  AGENT_STALL_GRACE_MS,
+  type RunLine,
+  type RunOutcome,
+} from '@shared/agent-contract';
 
 import { NO_LOG, foldRunLog, type LogFold, type RunResult } from './run-log';
 import type { AgentState } from './state';
@@ -28,9 +33,12 @@ import type { WakeCommand } from './waker';
  * The outcome depends on the exit code, and Stop does not carry one — closing
  * on Stop means guessing at a number that is seconds away. So Stop
  * ({@link RunTracker.noteTurnEnded}) arms a *different* watchdog: if the turn
- * has ended and the process has not gone within {@link AGENT_KILL_GRACE_MS},
+ * has ended and the process has not gone within {@link AGENT_STALL_GRACE_MS},
  * the run is killed by the same escalation `kill` uses and closes
- * `failed (stalled)`.
+ * `failed (stalled)`. That budget is its own constant and not the kill grace:
+ * one is how long a process told to die gets, the other is how long a healthy
+ * run gets to emit its `result` and reap its MCP child. See the two doc
+ * comments in `agent-contract.ts`.
  *
  * Because the Stop hook is keyed by agent name only, a Stop delivered late —
  * after this run exited and a new one started under the same name — could
@@ -86,6 +94,7 @@ export interface RunTrackerDeps {
   now: () => number;
   newRunId: () => string;
   killGraceMs?: number;
+  stallGraceMs?: number;
 }
 
 export interface ChildLike {
@@ -107,9 +116,12 @@ export interface RunTracker {
   /**
    * Signal every live run and leave it to close on its own `'close'` event.
    *
-   * For the paths where this process keeps running afterwards — the test
-   * teardown, which drops the whole tracker rather than recording anything.
-   * **Not** for quit: see {@link RunTracker.closeAll}.
+   * For a caller that stays alive to see the `'close'` land and wants the run
+   * recorded from it — the live suite's teardown, which awaits the exit.
+   * **Not** for quit, and not for `resetIpcHandlers`: in both of those the
+   * `'close'` arrives after the state has been torn down, so the finalizer it
+   * triggers arms a debounce timer against a disposed writer. Those two want
+   * {@link RunTracker.closeAll}.
    */
   killAll(reason: string): void;
   /**
@@ -152,10 +164,18 @@ interface FinalizeInfo {
   run: string;
   trigger: string;
   startedAt: number;
+  /**
+   * The conversation this run invoked — absent only when there was no process.
+   *
+   * Carried so that a run which ends without a `result` still persists it; see
+   * the comment on the `sessionUuid` line in {@link finalizeRun}.
+   */
+  sessionUuid?: string;
 }
 
 export function createRunTracker(deps: RunTrackerDeps): RunTracker {
   const grace = deps.killGraceMs ?? AGENT_KILL_GRACE_MS;
+  const stallGrace = deps.stallGraceMs ?? AGENT_STALL_GRACE_MS;
   const running = new Map<string, LiveRun>();
 
   const clearTimers = (live: LiveRun) => {
@@ -190,8 +210,28 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     result: RunResult | null,
     reason: string | null,
     reachedModel: boolean,
+    asking: boolean,
   ) => {
     const endedAt = deps.now();
+    /*
+      The uuid the run actually invoked, not only the one the `result` echoed
+      back.
+
+      It is known at spawn — `wake-command.ts` decides it, either by minting one
+      for `--session-id` or by choosing the one to `--resume` — and taking it
+      from `result` alone meant a first wake interrupted by a quit, a kill, a
+      stall or a crash persisted **nothing**. The next wake then minted a fresh
+      uuid and the whole conversation was orphaned, which is exactly what the
+      shutdown hook's "their `sessionUuid` is untouched, so the next wake resumes
+      the conversation" claims cannot happen.
+
+      `reachedModel` still gates it: a spawn that threw, or a child that raised
+      `'error'`, never started a conversation for `--resume` to find, and
+      persisting a uuid no session file backs would fail the *next* wake instead
+      of this one.
+    */
+    const sessionUuid =
+      result?.sessionUuid ?? (reachedModel ? info.sessionUuid : undefined);
 
     deps.state.recordRun(name, {
       run: info.run,
@@ -207,14 +247,21 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     const current = deps.state.read(name);
 
     deps.state.patch(name, {
-      status: outcome === 'asking' ? 'asking' : 'sleeping',
+      /*
+        An unanswered ask outranks the outcome for the *status*.
+
+        A run killed or stalled with a question still open is recorded `failed`
+        — that is the honest outcome, and the reason rides with it — but the
+        agent is still waiting on the user, and a row reading `sleeping` hides
+        the question rather than the failure. Status is about what the user must
+        do next; the outcome is about what happened.
+      */
+      status: outcome === 'asking' || asking ? 'asking' : 'sleeping',
       lastRunAt: endedAt,
       // A run that never reached the model cost nothing and should not pull
       // session rotation forward.
       ...(reachedModel ? { runsSinceRotate: current.runsSinceRotate + 1 } : {}),
-      ...(result?.sessionUuid === undefined
-        ? {}
-        : { sessionUuid: result.sessionUuid }),
+      ...(sessionUuid === undefined ? {} : { sessionUuid }),
     });
 
     deps.appendLedger({
@@ -233,6 +280,27 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     live.closed = true;
     clearTimers(live);
     running.delete(name);
+
+    /*
+      Fold whatever is left in `partial` before reading the result.
+
+      The fold only reads a line once a `\n` terminates it, and no `\n` is ever
+      coming now. The bytes at risk are precisely the ones that matter: `result`
+      is the LAST thing `claude` writes, so a SIGKILL mid-write — or the flush
+      window firing with a tail still buffered — leaves it sitting here
+      unterminated. Dropping it records a healthy run `failed`, with no cost, no
+      turns and no uuid, which is the exact failure `'close'`-over-`'exit'` was
+      chosen to prevent.
+
+      The lines it yields are pushed like any others; `live.closed` is already
+      set, so the stdout handler cannot race this.
+    */
+    if (live.fold.partial !== '') {
+      const step = foldRunLog(live.fold, '\n');
+
+      live.fold = step.state;
+      if (step.lines.length > 0) deps.pushLines(name, step.lines);
+    }
 
     const result = live.fold.result;
     const asking = deps.openAsksFor(name, live.run);
@@ -258,7 +326,15 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       outcome = 'done';
     }
 
-    finalizeRun(name, live, outcome, result, live.reason, live.reachedModel);
+    finalizeRun(
+      name,
+      live,
+      outcome,
+      result,
+      live.reason,
+      live.reachedModel,
+      asking,
+    );
   };
 
   return {
@@ -306,7 +382,15 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         */
         const message = error instanceof Error ? error.message : String(error);
 
-        finalizeRun(name, { run, trigger, startedAt }, 'failed', null, message, false);
+        finalizeRun(
+          name,
+          { run, trigger, startedAt },
+          'failed',
+          null,
+          message,
+          false,
+          false,
+        );
 
         return { started: false, refused: 'invalid', reason: message };
       }
@@ -330,7 +414,21 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       deps.state.patch(name, { status: 'working' });
       deps.pushStatus(name);
 
+      /*
+        Both handlers are inert once the run has closed, and that guard is not
+        belt-and-braces.
+
+        `close()` deletes the run from `running` but cannot remove these
+        listeners — the child object outlives them, and a grandchild holding the
+        pipe (the case `FLUSH_WINDOW_MS` exists for) goes on writing. Without
+        the guard that output folds into a run that is already finalized, and
+        then reaches the renderer interleaved with the NEXT run's lines, because
+        `appendAgentLines` keys on the agent name alone and cannot tell them
+        apart.
+      */
       child.stdout.on('data', (chunk: Buffer) => {
+        if (live.closed) return;
+
         const step = foldRunLog(live.fold, chunk.toString('utf8'));
 
         live.fold = step.state;
@@ -338,6 +436,8 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
+        if (live.closed) return;
+
         const text = chunk.toString('utf8').trim();
 
         if (text !== '') deps.pushLines(name, [{ text, color: 'dim' }]);
@@ -384,7 +484,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
       const timer = setTimeout(() => {
         if (!live.closed) escalate(live, 'stalled');
-      }, grace);
+      }, stallGrace);
 
       timer.unref?.();
       live.watchdog = timer;

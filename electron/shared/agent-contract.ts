@@ -625,17 +625,38 @@ export function patchFrontmatter(
 }
 
 /**
- * How long a run gets to exit before it is killed (HIVE-115).
+ * How long a run that has been **asked to stop** gets, before SIGKILL
+ * (HIVE-115).
  *
- * Used twice, deliberately: by `agents:kill` between SIGTERM and SIGKILL, and
- * by the Stop-hook watchdog, which starts it when the turn ends and the
- * process has not yet gone. One constant and one escalation path rather than
- * two that could drift.
+ * The gap between SIGTERM and SIGKILL, and nothing else. The user pressed stop,
+ * or the app is quitting; either way somebody is waiting, and three seconds is
+ * already longer than a headless child needs to unwind.
  *
  * SIGTERM, not the pty path's SIGHUP: `KILL_GRACE_MS` exists because an
  * interactive shell ignores SIGTERM. A headless child is not one.
  */
 export const AGENT_KILL_GRACE_MS = 3_000;
+
+/**
+ * How long a run gets **after its turn has ended** before it is called stalled
+ * and killed (HIVE-115).
+ *
+ * Deliberately longer than {@link AGENT_KILL_GRACE_MS}, and the two are
+ * separate constants because they answer different questions. That one is "how
+ * long does a process that was told to die get?" — nobody wants it back. This
+ * one is "how long does a *healthy* run get to finish saying what it did?", and
+ * the answer has real work in it: after `Stop` fires, `claude` still has to emit
+ * the `result` event — the only carrier of the cost, the turn count and the
+ * session uuid — and tear down its MCP stdio child, which is a second process
+ * with its own exit to wait on.
+ *
+ * Firing early is not a harmless timeout: the watchdog kills the run, so the
+ * `result` never lands, and the run is recorded `failed (stalled)` with no cost,
+ * no turns and no uuid persisted — which is exactly the loss that made `'close'`
+ * rather than `'exit'` the finalizer. Three seconds was measurably tight for
+ * that; fifteen is not, and a genuinely wedged run is still bounded.
+ */
+export const AGENT_STALL_GRACE_MS = 15_000;
 
 /**
  * The colours a run-log line may carry.

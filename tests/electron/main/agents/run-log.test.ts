@@ -115,4 +115,44 @@ describe('foldRunLog', () => {
       ),
     ).toEqual([]);
   });
+
+  /**
+   * Noise **after** the result, in the same chunk.
+   *
+   * A pipe decides where chunks split, so `result` and whatever the CLI writes
+   * next routinely arrive together — and a non-event line that answered with
+   * the result "as it was when this chunk started" reverted the accumulator,
+   * losing the cost, the turns and the session uuid of a run that had reported
+   * all three.
+   */
+  it('keeps a result reported earlier in the same chunk as trailing noise', () => {
+    const chunk =
+      `${JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        num_turns: 3,
+        total_cost_usd: 0.02,
+        session_id: 'uuid-1',
+      })}\n` +
+      `${JSON.stringify({ type: 'system', subtype: 'thinking_tokens' })}\n`;
+
+    expect(foldRunLog(NO_LOG, chunk).state.result).toMatchObject({
+      subtype: 'success',
+      sessionUuid: 'uuid-1',
+    });
+  });
+
+  it('keeps a result from an earlier chunk when a later one is only noise', () => {
+    const afterResult = foldRunLog(
+      NO_LOG,
+      `${JSON.stringify({ type: 'result', subtype: 'success' })}\n`,
+    ).state;
+
+    expect(
+      foldRunLog(
+        afterResult,
+        `${JSON.stringify({ type: 'system', subtype: 'x' })}\n`,
+      ).state.result,
+    ).toEqual({ subtype: 'success' });
+  });
 });

@@ -8,7 +8,10 @@ import {
 } from '../../../../__mocks__/child-process';
 import { createAgentState } from '../../../../electron/main/agents/state';
 import { createRunTracker } from '../../../../electron/main/agents/runs';
-import { AGENT_KILL_GRACE_MS } from '../../../../electron/shared/agent-contract';
+import {
+  AGENT_KILL_GRACE_MS,
+  AGENT_STALL_GRACE_MS,
+} from '../../../../electron/shared/agent-contract';
 
 const resultLine = (over: Record<string, unknown> = {}) =>
   `${JSON.stringify({
@@ -299,7 +302,7 @@ describe('createRunTracker', () => {
     const runsAfterClose = state.read('a').runs.length;
 
     tracker.noteTurnEnded('a');
-    vi.advanceTimersByTime(AGENT_KILL_GRACE_MS * 2);
+    vi.advanceTimersByTime(AGENT_STALL_GRACE_MS * 2);
 
     expect(state.read('a').runs).toHaveLength(runsAfterClose);
   });
@@ -334,11 +337,100 @@ describe('createRunTracker', () => {
     expect(childInstances[0]?.killSignals).toEqual([]);
   });
 
+  /**
+   * The uuid is known at spawn, so a run that ends without a `result` must
+   * still persist it. Without this the first wake of an agent — interrupted by
+   * a quit, a kill, a stall or a crash — left `agents.json` with no uuid, the
+   * next wake minted a fresh one, and the conversation was orphaned.
+   */
+  it('persists the session uuid it invoked even when no result ever arrived', () => {
+    tracker.run('a', 'ledger');
+    tracker.kill('a');
+    childInstances[0]?.emitClose(null, 'SIGTERM');
+
+    expect(state.read('a').sessionUuid).toBe('sess-1');
+  });
+
+  it('prefers the uuid the result reported over the one it invoked', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').sessionUuid).toBe('uuid-from-result');
+  });
+
+  it('persists no uuid for a run that never reached the model', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitError(new Error('spawn ENOENT'));
+
+    // Nothing started a conversation, so `--resume` would have nothing to find
+    // and the next wake must mint its own.
+    expect(state.read('a').sessionUuid).toBeUndefined();
+  });
+
+  /**
+   * `result` is the LAST thing `claude` writes, which makes it the line most
+   * likely to be sitting in `partial` with no `\n` behind it when the process
+   * dies. Dropping it recorded a healthy run `failed`, with no cost and no
+   * uuid — the exact loss `'close'`-over-`'exit'` was chosen to prevent.
+   */
+  it('folds an unterminated final line before reading the result', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine().trimEnd());
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').runs.at(-1)).toMatchObject({
+      outcome: 'done',
+      costUsd: 0.02,
+    });
+    expect(state.read('a').sessionUuid).toBe('uuid-from-result');
+  });
+
+  /**
+   * `close()` cannot remove the listeners — the child object outlives it — so a
+   * grandchild holding the pipe would otherwise fold output into a finalized
+   * run, and the renderer would see it interleaved with the next run's lines.
+   */
+  it('ignores stdout and stderr that arrive after the run has closed', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    const pushedByTheRun = lines.length;
+
+    childInstances[0]?.emitStdout(
+      `${JSON.stringify({
+        type: 'assistant',
+        message: { id: 'm2', content: [{ type: 'text', text: 'still here' }] },
+      })}\n`,
+    );
+    childInstances[0]?.emitStderr('a grandchild still holds the pipe\n');
+
+    expect(lines).toHaveLength(pushedByTheRun);
+  });
+
+  /**
+   * The outcome stays honest — the run *was* killed — but the status is about
+   * what the user has to do next, and an unanswered question is that.
+   */
+  it('reports asking when a killed run left a question open, without softening the outcome', () => {
+    openAsks = true;
+    tracker.run('a', 'ledger');
+    tracker.kill('a');
+    childInstances[0]?.emitClose(null, 'SIGTERM');
+
+    expect(state.read('a').runs.at(-1)).toMatchObject({
+      outcome: 'failed',
+      reason: 'killed',
+    });
+    expect(state.read('a').status).toBe('asking');
+  });
+
   it('kills a stalled run when Stop arrives and the process does not exit', () => {
     tracker.run('a', 'ledger');
     tracker.noteTurnEnded('a', 'sess-1');
 
-    vi.advanceTimersByTime(AGENT_KILL_GRACE_MS);
+    vi.advanceTimersByTime(AGENT_STALL_GRACE_MS);
 
     expect(childInstances[0]?.killSignals).toContain('SIGTERM');
 
@@ -350,6 +442,26 @@ describe('createRunTracker', () => {
     });
   });
 
+  /**
+   * The two graces are separate constants, and this is the assertion that
+   * keeps them from quietly becoming one again. A healthy run gets longer
+   * after `Stop` than a run that was told to die: it still has to emit
+   * `result` — the only carrier of cost, turns and uuid — and reap its MCP
+   * child.
+   */
+  it('gives a stalling run longer than the kill grace before SIGTERM', () => {
+    tracker.run('a', 'ledger');
+    tracker.noteTurnEnded('a', 'sess-1');
+
+    vi.advanceTimersByTime(AGENT_KILL_GRACE_MS);
+
+    expect(childInstances[0]?.killSignals).toEqual([]);
+
+    vi.advanceTimersByTime(AGENT_STALL_GRACE_MS - AGENT_KILL_GRACE_MS);
+
+    expect(childInstances[0]?.killSignals).toContain('SIGTERM');
+  });
+
   it("ignores a Stop whose session uuid belongs to a prior, already-closed run of the same agent", () => {
     tracker.run('a', 'ledger'); // run 1, sess-1
     childInstances[0]?.emitStdout(resultLine());
@@ -358,7 +470,7 @@ describe('createRunTracker', () => {
     tracker.run('a', 'ledger'); // run 2, sess-2 — a fresh, healthy run
 
     tracker.noteTurnEnded('a', 'sess-1'); // stale Stop for run 1, arriving late
-    vi.advanceTimersByTime(AGENT_KILL_GRACE_MS);
+    vi.advanceTimersByTime(AGENT_STALL_GRACE_MS);
 
     expect(childInstances[1]?.killSignals).toEqual([]);
   });
