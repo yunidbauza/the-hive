@@ -23,14 +23,19 @@ describe('StatusDot', () => {
      */
     ['terminated', 'bg-muted'],
     /*
-      The agent states, all on idle's grey until HIVE-116 gives them a palette
-      (HIVE-114). Asserted rather than skipped: a Record that compiles proves
-      the key exists, not that the dot renders anything.
+      The agent states (HIVE-116). Each takes the utility of the session state
+      it mirrors, so one word means one colour across the app: `asking` is a
+      `waiting` ("something needs you"), `working` is a `working`, `sleeping`
+      is an `idle`, and `paused` is the agent-side `terminated`.
+
+      `failed` is the one with no session counterpart — nothing in that
+      vocabulary is red — and it needs a case here at all, which the grey
+      placeholder let it avoid.
     */
     ['sleeping', 'bg-subtle'],
-    ['asking', 'bg-subtle'],
-    ['paused', 'bg-subtle'],
-    ['failed', 'bg-subtle'],
+    ['asking', 'bg-amber'],
+    ['paused', 'bg-muted'],
+    ['failed', 'bg-red'],
   ] as const)('paints %s with %s', (status, expected) => {
     const { container } = render(<StatusDot status={status} />);
 
@@ -161,6 +166,34 @@ describe('StatusDot', () => {
     // An agent's own vocabulary — 'online' described a socket and is gone.
     expect(STATUS_LABEL.sleeping).toBe('sleeping');
     expect(STATUS_LABEL.asking).toBe('asking');
+  });
+
+  /**
+   * HIVE-116. The dot and its label must not drift to different colours —
+   * the pairing this file exists to enforce, extended to the agent states now
+   * that they have colours to drift between.
+   */
+  it('pairs every agent state’s text colour with its fill', () => {
+    expect(STATUS_TEXT.sleeping).toBe('text-subtle');
+    expect(STATUS_TEXT.asking).toBe('text-amber');
+    expect(STATUS_TEXT.paused).toBe('text-muted');
+    expect(STATUS_TEXT.failed).toBe('text-red');
+  });
+
+  /**
+   * `paused` is solid, and that is a decision rather than an omission.
+   *
+   * The ring is gated to `idle` with a detail — "hollow means something is
+   * still running" — and widening it to mean "deliberately stopped" as well
+   * would give one shape two meanings. The visible status word carries the
+   * distinction from `sleeping` instead.
+   */
+  it('never draws a hollow dot for a paused agent', () => {
+    const { container } = render(<StatusDot status="paused" />);
+    const dot = container.firstElementChild as HTMLElement;
+
+    expect(dot).toHaveClass('bg-muted');
+    expect(dot.className).not.toContain('border-');
   });
 
   /**

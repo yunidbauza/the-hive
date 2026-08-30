@@ -15,9 +15,11 @@ import type { IdleDetail } from '@shared/hook-contract';
  * `'online'` is gone with it. It described a socket, and an agent is not one:
  * between two wakes there is no process to be connected to.
  *
- * The four new members all take `idle`'s grey for now. That is deliberate and
- * temporary — HIVE-116 owns the agent palette — and grey is the honest
- * placeholder because every agent in this story *is* asleep.
+ * The four agent-only members took `idle`'s grey until HIVE-116, which had to
+ * tell them apart on a rail. Each now takes the utility of the session state
+ * it mirrors — `asking`/`waiting`, `sleeping`/`idle`, `paused`/`terminated` —
+ * so that one word means one colour wherever it is drawn, and only `failed`
+ * needed a hue the session vocabulary does not have.
  */
 export type DotStatus = SessionStatus | AgentStatus;
 
@@ -45,11 +47,21 @@ export const STATUS_FILL: Record<DotStatus, string> = {
   idle: 'bg-subtle',
   done: 'bg-brand',
   terminated: 'bg-muted',
-  // Agent states, all grey until HIVE-116 gives them a palette.
+  /*
+    Agent states (HIVE-116). Each takes the utility of the session state it
+    mirrors, so one word means one colour across the app: `asking` is a
+    `waiting`, `working` is a `working`, `sleeping` is an `idle`, and `paused`
+    is the agent-side `terminated` — quiet, and not coming back on its own.
+
+    `failed` is the only one with no counterpart. Nothing in the session
+    vocabulary is red, because a session that ends badly is `terminated` and
+    the reason lives in its row; an agent's failure is a state it sits in
+    until someone looks.
+  */
   sleeping: 'bg-subtle',
-  asking: 'bg-subtle',
-  paused: 'bg-subtle',
-  failed: 'bg-subtle',
+  asking: 'bg-amber',
+  paused: 'bg-muted',
+  failed: 'bg-red',
 };
 
 /**
@@ -66,9 +78,9 @@ export const STATUS_TEXT: Record<DotStatus, string> = {
   done: 'text-brand',
   terminated: 'text-muted',
   sleeping: 'text-subtle',
-  asking: 'text-subtle',
-  paused: 'text-subtle',
-  failed: 'text-subtle',
+  asking: 'text-amber',
+  paused: 'text-muted',
+  failed: 'text-red',
 };
 
 /**
