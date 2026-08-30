@@ -2,9 +2,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 
 import type {
+  AgentLinesPush,
   AgentNameRequest,
   AgentRenameRequest,
+  AgentRunRequest,
+  AgentRunResult,
   AgentsSnapshot,
+  AgentStatusPush,
   AgentWriteRequest,
   AgentWriteResult,
 } from '@shared/agent-contract';
@@ -335,6 +339,21 @@ const bridge: HiveBridge = {
       subscribe<undefined>(CH.agentsChanged, () => {
         callback();
       }),
+    /*
+      HIVE-115's two verbs, and the first in this namespace that start and stop
+      a process rather than move bytes. Both take a name and nothing else — no
+      argv, no flags, no environment — so the whole of what the page can
+      express here is *which* agent. `BRIDGE_AGENTS_KEYS` carries the argument;
+      `parseAgentRunRequest` is what refuses a payload that tries to say more.
+    */
+    run: (request: AgentRunRequest): Promise<AgentRunResult> =>
+      ipcRenderer.invoke(CH.agentsRun, request),
+    kill: (request: AgentNameRequest): Promise<boolean> =>
+      ipcRenderer.invoke(CH.agentsKill, request),
+    onStatus: (callback: (push: AgentStatusPush) => void) =>
+      subscribe<AgentStatusPush>(CH.agentsStatus, callback),
+    onLines: (callback: (push: AgentLinesPush) => void) =>
+      subscribe<AgentLinesPush>(CH.agentsLines, callback),
   },
   // Story 106. `status` takes no argument — see the contract for why that is
   // the security design and not an oversight.

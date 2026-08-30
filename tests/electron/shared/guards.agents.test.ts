@@ -6,6 +6,7 @@ import {
   IpcValidationError,
   parseAgentNameRequest,
   parseAgentRenameRequest,
+  parseAgentRunRequest,
   parseAgentWriteRequest,
 } from '../../../electron/shared/guards';
 
@@ -105,5 +106,46 @@ describe('parseAgentNameRequest and parseAgentRenameRequest', () => {
     expect(() => parseAgentRenameRequest({ from: 'a' })).toThrow(
       IpcValidationError,
     );
+  });
+});
+
+/**
+ * HIVE-115. The one guard in this file that stands in front of a **process**,
+ * so what it refuses matters more than what it accepts.
+ */
+describe('parseAgentRunRequest', () => {
+  it('accepts a name', () => {
+    expect(parseAgentRunRequest({ name: 'slack-watcher' })).toEqual({
+      name: 'slack-watcher',
+    });
+  });
+
+  it('is bounded by the same grammar as the five verbs before it', () => {
+    expect(() => parseAgentRunRequest({ name: '../../claude' })).toThrow(
+      IpcValidationError,
+    );
+    expect(() => parseAgentRunRequest({ name: 'Slack Watcher' })).toThrow(
+      IpcValidationError,
+    );
+    expect(() => parseAgentRunRequest({ name: 'overmind' })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  it('refuses a payload trying to say anything about the command line', () => {
+    // The closed key set is the assertion: an extra field is *refused*, not
+    // ignored, so a renderer that starts sending one fails at the boundary
+    // rather than developing a belief that main is reading it.
+    expect(() =>
+      parseAgentRunRequest({ name: 'a', trigger: 'ledger' }),
+    ).toThrow(IpcValidationError);
+    expect(() =>
+      parseAgentRunRequest({ name: 'a', env: { PATH: '/tmp' } }),
+    ).toThrow(IpcValidationError);
+  });
+
+  it('refuses a request with no name at all', () => {
+    expect(() => parseAgentRunRequest({})).toThrow(IpcValidationError);
+    expect(() => parseAgentRunRequest(null)).toThrow(IpcValidationError);
   });
 });

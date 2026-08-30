@@ -18,9 +18,13 @@
  */
 
 import type {
+  AgentLinesPush,
   AgentNameRequest,
   AgentRenameRequest,
+  AgentRunRequest,
+  AgentRunResult,
   AgentsSnapshot,
+  AgentStatusPush,
   AgentWriteRequest,
   AgentWriteResult,
 } from './agent-contract';
@@ -663,6 +667,26 @@ export const CH = {
   agentsRename: 'agents:rename',
   /** The folder changed — on disk or through this pane. Carries no payload. */
   agentsChanged: 'agents:changed',
+  /**
+   * Wake an agent now, and stop one that is running (HIVE-115).
+   *
+   * The first two verbs in this group that make the machine *do* something
+   * rather than read or write a file, which is why `BRIDGE_AGENTS_KEYS` argues
+   * for each one. `run` is bounded the same way the five before it are: it
+   * names an agent, never a command line, and main builds the argv from a
+   * definition it read itself. Nothing the renderer sends reaches a shell —
+   * there is no shell.
+   *
+   * `kill` exists because a run that has stopped making progress is otherwise
+   * unstoppable short of quitting the app: one run per agent at a time means a
+   * stuck run blocks every future wake of that agent.
+   */
+  agentsRun: 'agents:run',
+  agentsKill: 'agents:kill',
+  /** A run started, ended, or changed the agent's status. */
+  agentsStatus: 'agents:status',
+  /** A batch of run-log lines. */
+  agentsLines: 'agents:lines',
   appInfo: 'app:info',
   /**
    * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
@@ -745,6 +769,8 @@ export const EVENT_CHANNELS = [
   CH.fsChanged,
   CH.ledgerChanged,
   CH.agentsChanged,
+  CH.agentsStatus,
+  CH.agentsLines,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -1500,6 +1526,22 @@ export interface HiveBridge {
     rename(request: AgentRenameRequest): Promise<AgentWriteResult>;
     /** The folder changed; re-`list` to see how. */
     onChanged(callback: () => void): () => void;
+    /**
+     * Wake this agent now (HIVE-115).
+     *
+     * Answers with a value either way — see {@link AgentRunResult} for why a
+     * refusal is not a rejection.
+     */
+    run(request: AgentRunRequest): Promise<AgentRunResult>;
+    /**
+     * Stop the run in progress. `false` when there was none, which is not an
+     * error: the run may have ended between the row rendering and the click.
+     */
+    kill(request: AgentNameRequest): Promise<boolean>;
+    /** A run started, ended, or changed this agent's status. */
+    onStatus(callback: (push: AgentStatusPush) => void): () => void;
+    /** Run-log lines, as the process writes them. */
+    onLines(callback: (push: AgentLinesPush) => void): () => void;
   };
   /**
    * The app's newer self.
@@ -1764,6 +1806,51 @@ export const BRIDGE_SKILLS_KEYS = [
  * HIVE-115 appends `run`, HIVE-117 `pause`/`resume`. Each of those is a change
  * to what the renderer may make the machine *do*, rather than to what it may
  * read or write, and should be argued for here before it is written.
+ *
+ * ## The argument for `run` (HIVE-115)
+ *
+ * This is the first key in the namespace that starts a **process**, so it is
+ * the first that has to answer a question the five above never faced: what can
+ * a compromised renderer make this machine execute?
+ *
+ * The answer is *nothing it could not already write to disk*, and the reason is
+ * that the payload is {@link AgentRunRequest} — one name, through
+ * `assertAgentName`, the identical guard `read` and `remove` pass. No path, no
+ * argv, no flag, no environment, and no trigger string: main writes `manual`
+ * itself, because a person pressing a button is the only trigger this channel
+ * could honestly report. Main then reads the definition off a folder it chose,
+ * resolves `claudeCommand` from *its own* config, and builds the argv as an
+ * array handed straight to `spawn`. There is no shell anywhere on that path —
+ * `claude-path.ts` refuses a command carrying arguments rather than splitting
+ * one — so there is no quoting to get wrong and no alias to inherit.
+ *
+ * What `run` therefore widens is **timing, not reach**. A renderer that can
+ * call it can already call `write`, and `write` is the verb that decides what
+ * an agent *is*; `run` only decides when the definition the user already
+ * approved gets its turn. A page that could write an agent and not run it
+ * would be a page that has to wait for HIVE-121's timer to fire — the same
+ * process, a few minutes later.
+ *
+ * ## The argument for `kill`
+ *
+ * Narrower than `run` by construction: it takes the same validated name and
+ * can only ever reach a process **this app started and is still tracking** —
+ * the tracker holds the child handle, and an unknown name answers `false`
+ * rather than signalling anything. It cannot name a pid.
+ *
+ * It has to exist. One run per agent at a time (§5) means a run that has
+ * stopped making progress blocks every future wake of that agent, and the only
+ * other way out is quitting the app — which takes the other twelve sessions
+ * with it.
+ *
+ * ## `onStatus` and `onLines` widen nothing
+ *
+ * Listeners, like `onChanged`, and the same test applies: can either carry
+ * something `list` would not already hand over? `onStatus` carries a subset of
+ * what `agents:list` returns for that agent — deliberately *less*, since
+ * {@link AgentStatusPush} omits `sessionUuid`. `onLines` carries the agent's
+ * own stdout, which is the one genuinely new fact, and it is the fact the
+ * feature exists to show: a run nobody can read is a run nobody can trust.
  */
 export const BRIDGE_AGENTS_KEYS = [
   'list',
@@ -1772,6 +1859,10 @@ export const BRIDGE_AGENTS_KEYS = [
   'remove',
   'rename',
   'onChanged',
+  'run',
+  'kill',
+  'onStatus',
+  'onLines',
 ] as const;
 
 /** The exact key set of `window.hive.session`. */

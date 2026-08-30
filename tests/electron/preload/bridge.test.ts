@@ -178,6 +178,70 @@ describe('exposed surface', () => {
     expect(EVENT_CHANNELS).toContain(CH.ledgerChanged);
   });
 
+  /**
+   * HIVE-115. The two verbs that make the machine *do* something, spelled out
+   * in order rather than only counted — `BRIDGE_AGENTS_KEYS` carries the
+   * argument each of them had to make, and this is what stops a tenth key
+   * arriving without one.
+   */
+  it('exposes run, kill and the two listeners on the agents bridge', () => {
+    expect([...BRIDGE_AGENTS_KEYS]).toEqual([
+      'list',
+      'read',
+      'write',
+      'remove',
+      'rename',
+      'onChanged',
+      'run',
+      'kill',
+      'onStatus',
+      'onLines',
+    ]);
+  });
+
+  it('carries the four HIVE-115 agent channels', () => {
+    expect(CH.agentsRun).toBe('agents:run');
+    expect(CH.agentsKill).toBe('agents:kill');
+    expect(EVENT_CHANNELS).toContain(CH.agentsStatus);
+    expect(EVENT_CHANNELS).toContain(CH.agentsLines);
+    // The two verbs are invoke channels and must never be pushable: a main
+    // process that could `send` on them would be talking to a listener the
+    // preload never registers, and the allowlist is what says so.
+    expect(EVENT_CHANNELS).not.toContain(CH.agentsRun);
+    expect(EVENT_CHANNELS).not.toContain(CH.agentsKill);
+  });
+
+  it('sends a run through the run channel and a kill through the kill channel', () => {
+    void agents().run?.({ name: 'slack-watcher' });
+    void agents().kill?.({ name: 'slack-watcher' });
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.agentsRun, {
+      name: 'slack-watcher',
+    });
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.agentsKill, {
+      name: 'slack-watcher',
+    });
+  });
+
+  it('delivers a status push and a lines push to their subscribers', () => {
+    const status = vi.fn();
+    const lines = vi.fn();
+
+    agents().onStatus?.(status);
+    agents().onLines?.(lines);
+
+    const push = { name: 'slack-watcher', status: 'working' };
+    const batch = { name: 'slack-watcher', lines: [{ text: 'hi', color: 'ink' }] };
+
+    listeners.get(CH.agentsStatus)?.[0]?.({}, push);
+    listeners.get(CH.agentsLines)?.[0]?.({}, batch);
+
+    // The payload, not the event — every listener in this bridge strips the
+    // `IpcRendererEvent` before the page ever sees it.
+    expect(status).toHaveBeenCalledWith(push);
+    expect(lines).toHaveBeenCalledWith(batch);
+  });
+
   /** HIVE-80. Two verbs, neither taking a destination path from the renderer. */
   it('exposes exactly the theme verbs', () => {
     expect(Object.keys(theme()).sort()).toEqual([...BRIDGE_THEME_KEYS].sort());

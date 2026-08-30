@@ -645,3 +645,80 @@ export interface AgentRunState {
 
 /** How many run summaries an agent keeps. */
 export const AGENT_RUN_HISTORY = 20;
+
+/**
+ * `agents:run` — wake this agent now (HIVE-115).
+ *
+ * One name and nothing else, and the omission is the point: the only trigger
+ * this channel could honestly report is that a person pressed a button, so
+ * main writes `manual` itself rather than accepting a word the page chose.
+ * Every other trigger — a timer, a ledger entry, a Slack mention — originates
+ * in main and never crosses this boundary at all.
+ *
+ * It lives here beside {@link AgentNameRequest} rather than in
+ * `ipc-contract.ts` because every other `agents:*` payload does; the channel
+ * *names* are the contract's, the shapes are this file's.
+ */
+export interface AgentRunRequest {
+  name: string;
+}
+
+/**
+ * What a wake answered.
+ *
+ * A refusal is a **value**, not a throw, for the reason `LedgerResult` is one:
+ * the renderer draws the reason beside the agent, and a rejected promise would
+ * reach it as an IPC error string with the refusal buried inside it.
+ *
+ * Wider than `RunStart` in `main/agents/runs.ts` by exactly one case, and
+ * deliberately: `unknown` is what the channel answers when the runtime is not
+ * up at all, which the tracker cannot say because there is no tracker to say
+ * it. Every value the tracker *can* return is one of these, and the
+ * `agents:run` handler's declared return type is what keeps that true.
+ */
+export type AgentRunResult =
+  | { started: true; run: string }
+  | {
+      started: false;
+      refused: 'working' | 'unknown' | 'invalid';
+      reason?: string;
+    };
+
+/**
+ * A run started, ended, or otherwise changed what an agent's row should say.
+ *
+ * Carries the fields of {@link AgentRunState} the row renders and no others —
+ * never the run history, and never `sessionUuid`. That uuid is Claude's own
+ * conversation id, and `BRIDGE_SESSION_KEYS` records that the equivalent fact
+ * for a *session* deliberately stays in main; an agent's has no better claim
+ * to travel.
+ */
+export interface AgentStatusPush {
+  name: string;
+  status: AgentStatus;
+  lastRunAt?: number;
+  nextRunAt?: number;
+  /** The last run's cost, already formatted — see {@link formatRunCost}. */
+  cost?: string;
+}
+
+/** A batch of run-log lines, in the order the process wrote them. */
+export interface AgentLinesPush {
+  name: string;
+  lines: RunLine[];
+}
+
+/**
+ * A run's cost as a row shows it, or `undefined` when there is none.
+ *
+ * Formatted **once**, in main, rather than in the renderer: `agents:list` and
+ * `agents:status` both carry this number and are read by the same row, so two
+ * formatters would be two chances for the list and the live push to disagree
+ * about one run. Four decimals under a cent, because an agent wake routinely
+ * costs less than that and `$0.00` for a real run reads as a bug.
+ */
+export function formatRunCost(usd: number | undefined): string | undefined {
+  if (usd === undefined || !Number.isFinite(usd)) return undefined;
+
+  return `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
+}
