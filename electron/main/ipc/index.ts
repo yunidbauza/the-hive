@@ -323,6 +323,16 @@ const knownAgents = new Set<string>();
  *
  * A folder listed as `invalid` is left out. It cannot be woken, so nothing can
  * legitimately write to the ledger as that name.
+ *
+ * A **live run** is the exception, and it is the epic's own premise rather than
+ * a defensive edge case: an agent is meant to be edited in a text editor while
+ * it works, and a save mid-edit routinely lands a file that does not parse. The
+ * watcher fires, the rebuild drops the name, and everything the running child
+ * does next is refused as an unknown party — its hooks 404, its `ledger_*` tool
+ * calls come back refused, and at close the tracker's own `run.ended` append is
+ * rejected, leaving a `run.started` with no end in the log that is supposed to
+ * be the record of what happened. A run that is already going was authorised
+ * when it started, so it keeps its name until it ends.
  */
 function refreshKnownAgents(): void {
   void agents
@@ -333,6 +343,8 @@ function refreshKnownAgents(): void {
       for (const agent of snapshot.agents) {
         if (agent.invalid === undefined) knownAgents.add(agent.name);
       }
+
+      for (const name of runs?.live() ?? []) knownAgents.add(name);
     })
     .catch(() => {
       // Keep whatever we already knew.
@@ -1163,7 +1175,21 @@ export function registerIpcHandlers(): void {
       the renderer may only ever speak as the coordinator.
     */
     appendLedger: (entry) => {
-      ledger.append(entry);
+      const result = ledger.append(entry);
+
+      /*
+        Logged, never discarded. The only way this refuses is a party rule —
+        an agent whose name is no longer in `knownAgents` — and the entry it
+        drops is a `run.started` or a `run.ended`, so the symptom is a log with
+        a beginning and no end and no visible cause. Loud here is cheap;
+        silence here costs whoever reads that log an afternoon.
+      */
+      if (!result.ok) {
+        console.warn(
+          `[hive] ledger refused ${entry.body} for ${entry.from} (${result.status}):`,
+          result.reason,
+        );
+      }
     },
     openAsksFor,
     pushStatus: pushAgentStatus,
@@ -1288,21 +1314,18 @@ export function registerIpcHandlers(): void {
      * `child_process.spawn`, and if nobody kills it here it outlives the app
      * that started it, still writing to a ledger nobody is reading.
      *
-     * The status patch is what the *next* launch sees. `killAll` sends SIGTERM
-     * and the run closes on the child's `close`, which will not arrive before
-     * the process is gone — so without this, `agents.json` would keep saying
-     * `working` about a process that no longer exists, and the row would come
-     * back to a fleet of agents that all appear to be mid-run. Their
-     * `sessionUuid` is untouched, so the next wake resumes the conversation.
+     * `closeAll` rather than `killAll`, because this hook is synchronous and
+     * the run's own finalizer is not reachable from it. A run closes on the
+     * child's `'close'` event, which cannot arrive before this process is
+     * gone — so signalling alone would leave `agents.json` saying `working`
+     * about a process that no longer exists, a `run.started` with no matching
+     * `run.ended` in the log forever, no summary in `runs[]`, and a
+     * `runsSinceRotate` that under-counts until session rotation drifts.
+     * `closeAll` records each live run `failed (app-closed)` on the spot, which
+     * is what `flush()` on the next line then writes. Their `sessionUuid` is
+     * untouched, so the next wake resumes the conversation.
      */
-    if (runs !== null && agentState !== null) {
-      runs.killAll('app-closed');
-
-      for (const name of runs.live()) {
-        agentState.patch(name, { status: 'sleeping' });
-      }
-    }
-
+    runs?.closeAll('app-closed');
     agentState?.flush();
   });
 
@@ -2277,13 +2300,18 @@ export function resetIpcHandlers(): void {
     registry holds an `fs.watch` handle and a debounce timer that would
     otherwise fire into the next test's handlers.
 
-    `agentState` is dropped **without** flushing, exactly as `history` is and
-    for the same reason — a test's state file points at whatever `configPath`
-    was stubbed to return, and writing there on teardown is how a unit test
-    comes to leave a file behind.
+    `agentState` is **disposed**, exactly as `history` is and for the same
+    reason — a test's state file points at whatever `configPath` was stubbed to
+    return, and writing there on teardown is how a unit test comes to leave a
+    file behind. `dispose()` rather than dropping the reference, and rather
+    than `flush()`: the debounce timer closes over the write directly, so an
+    unreferenced state still fires one last `writeFileSync` at that stubbed
+    path 400 ms later, into a directory the test that owned it has finished
+    with.
   */
   runs?.killAll('reset');
   runs = null;
+  agentState?.dispose();
   agentState = null;
   agents?.close();
   agents = null;

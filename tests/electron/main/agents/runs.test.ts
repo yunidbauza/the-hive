@@ -163,7 +163,14 @@ describe('createRunTracker', () => {
 
     const start = throwing.run('a', 'ledger');
 
-    expect(start).toEqual({ started: true, run: 'run-1' });
+    // Refused, not started: there is no process, so a renderer told `started`
+    // would draw a working row and a stop button for nothing.
+    expect(start).toEqual({
+      started: false,
+      refused: 'invalid',
+      reason: 'EMFILE: too many open files',
+    });
+    // The run is still recorded, because `run.started` is already written.
     expect(ledger).toHaveLength(2);
     expect(ledger[0]).toMatchObject({ body: 'run.started — ledger' });
     expect(ledger[1]).toMatchObject({
@@ -399,6 +406,48 @@ describe('createRunTracker', () => {
       outcome: 'failed',
       reason: 'app-closed',
     });
+  });
+
+  it('records every live run on closeAll, with no close event at all', () => {
+    tracker.run('a', 'ledger');
+    tracker.run('b', 'ledger');
+
+    tracker.closeAll('app-closed');
+
+    /*
+      Deliberately no `emitClose()`. The quit path awaits a synchronous hook, so
+      the child's 'close' cannot arrive before the process is gone — a test that
+      hand-fires it (as the `killAll` case above does) is proving something the
+      real path never gets to do.
+    */
+    for (const name of ['a', 'b']) {
+      expect(state.read(name).runs.at(-1)).toMatchObject({
+        outcome: 'failed',
+        reason: 'app-closed',
+      });
+      expect(state.read(name).status).toBe('sleeping');
+      // Rotation must not drift: a run that reached the model counts.
+      expect(state.read(name).runsSinceRotate).toBe(1);
+    }
+
+    // Both ends of both runs are in the log — no orphaned `run.started`.
+    expect(
+      ledger.filter((entry) => entry.body === 'run.ended — failed'),
+    ).toHaveLength(2);
+    expect(childInstances[0]?.killSignals).toEqual(['SIGTERM']);
+    expect(childInstances[1]?.killSignals).toEqual(['SIGTERM']);
+    expect(tracker.live()).toEqual([]);
+  });
+
+  it('ignores a close that arrives after closeAll already recorded the run', () => {
+    tracker.run('a', 'ledger');
+    tracker.closeAll('app-closed');
+    childInstances[0]?.emitClose(0, null);
+
+    expect(state.read('a').runs).toHaveLength(1);
+    expect(
+      ledger.filter((entry) => entry.body?.startsWith('run.ended')),
+    ).toHaveLength(1);
   });
 
   it('closes failed when the spawn itself errors, and does not bump runsSinceRotate', () => {

@@ -1,4 +1,4 @@
-import type { RunLine } from '@shared/agent-contract';
+import { formatRunCost, type RunLine } from '@shared/agent-contract';
 
 /**
  * Folding a child's `stream-json` stdout into run-log lines (HIVE-115).
@@ -60,8 +60,6 @@ const shortArgs = (input: unknown): string => {
 
   return '';
 };
-
-const money = (usd: number): string => `$${usd.toFixed(4)}`;
 
 function readEvent(
   line: string,
@@ -133,7 +131,11 @@ function readEvent(
       ...(sessionUuid === undefined ? {} : { sessionUuid }),
     };
 
-    const cost = costUsd === undefined ? '' : ` · ${money(costUsd)}`;
+    // The contract's formatter, not a second one: this line and the agent
+    // row both show one run's cost, and two spellings of it on one screen is a
+    // bug the reader has to reconcile.
+    const formatted = formatRunCost(costUsd);
+    const cost = formatted === undefined ? '' : ` · ${formatted}`;
 
     return {
       lines: [{ text: `● turn ended — ${subtype}${cost}`, color: 'cyan' }],

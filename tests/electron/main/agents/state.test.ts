@@ -66,6 +66,20 @@ describe('createAgentState', () => {
     expect(written['a'].status).toBe('working');
   });
 
+  it('cancels a pending write on dispose, leaving nothing on disk', async () => {
+    const state = createAgentState({ path, debounceMs: 400 });
+
+    state.patch('a', { status: 'working' });
+    state.dispose();
+
+    // The whole point: the debounce timer closes over the write, so dropping
+    // the reference alone would still fire one `writeFileSync` at a path a
+    // test stubbed and has since finished with.
+    vi.advanceTimersByTime(400);
+
+    await expect(readFile(path, 'utf8')).rejects.toThrow();
+  });
+
   it('seeds from an existing file', async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(

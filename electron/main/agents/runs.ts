@@ -104,7 +104,31 @@ export interface RunTracker {
    * for a run that has already ended must not touch whatever runs next.
    */
   noteTurnEnded(name: string, sessionUuid?: string): void;
+  /**
+   * Signal every live run and leave it to close on its own `'close'` event.
+   *
+   * For the paths where this process keeps running afterwards — the test
+   * teardown, which drops the whole tracker rather than recording anything.
+   * **Not** for quit: see {@link RunTracker.closeAll}.
+   */
   killAll(reason: string): void;
+  /**
+   * Signal every live run and finalize it **now**, without waiting for an
+   * event that cannot arrive.
+   *
+   * `runShutdown` awaits a synchronous hook, so a SIGTERM sent from there is
+   * never followed by a `'close'` this process is alive to observe. Signalling
+   * alone therefore leaves a `run.started` with no `run.ended` forever, no
+   * summary in `runs[]`, and a `runsSinceRotate` that under-counts until
+   * session rotation drifts. This records the run against the reason it is
+   * ending, so `agentState.flush()` on the next line has something true to
+   * write.
+   *
+   * The SIGKILL escalation is armed and then cleared, which costs nothing: it
+   * is an `unref`'d timer, and the event loop it would need to fire on is
+   * already going away.
+   */
+  closeAll(reason: string): void;
   live(): string[];
 }
 
@@ -266,14 +290,25 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (error) {
-        // A synchronous throw never produced a process — the run never
-        // reached the model, and it must not be left as a run.started
-        // ledger entry with no run.ended.
+        /*
+          A synchronous throw never produced a process. Two things follow, and
+          they point in opposite directions:
+
+          The run is finalized, because the `run.started` entry above is
+          already written and a log that records a beginning with no end is
+          worse than no record at all.
+
+          But the caller is told the run did **not** start. `agents:run`
+          answers a renderer that is about to draw a row as working and offer a
+          stop button for a child that does not exist — and `{ started: false,
+          refused: 'invalid' }` is already the contract's word for "the command
+          could not be run", which is exactly what happened.
+        */
         const message = error instanceof Error ? error.message : String(error);
 
         finalizeRun(name, { run, trigger, startedAt }, 'failed', null, message, false);
 
-        return { started: true, run };
+        return { started: false, refused: 'invalid', reason: message };
       }
 
       const live: LiveRun = {
@@ -357,6 +392,14 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
     killAll(reason) {
       for (const live of running.values()) escalate(live, reason);
+    },
+
+    closeAll(reason) {
+      // A copy, because `close` deletes from the map it is iterating.
+      for (const [name, live] of [...running]) {
+        escalate(live, reason);
+        close(name, live, null);
+      }
     },
 
     live: () => [...running.keys()],

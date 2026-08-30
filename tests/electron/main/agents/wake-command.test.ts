@@ -69,7 +69,7 @@ const state = (): AgentState => ({
   },
   recordRun: vi.fn(),
   flush: vi.fn(),
-  close: vi.fn(),
+  dispose: vi.fn(),
 });
 
 const build = (over: Partial<WakeCommandDeps> = {}) =>

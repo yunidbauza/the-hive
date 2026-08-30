@@ -43,7 +43,18 @@ export interface AgentState {
   recordRun(name: string, summary: RunSummary): void;
   /** Write now, synchronously. For shutdown. */
   flush(): void;
-  close(): void;
+  /**
+   * Drop a pending write **without** performing it.
+   *
+   * The opposite of {@link AgentState.flush}, and the reason it exists is the
+   * same one `SessionHistory.dispose` exists for: the debounce timer closes
+   * over the write directly, so letting go of the reference does not let go of
+   * the timer. A spec that drives a run and then tears the handlers down would
+   * otherwise leave a 400 ms fuse that fires afterwards and writes
+   * `agents.json` at whatever `configPath()` was stubbed to — a test leaving a
+   * file behind, in a directory that may by then belong to another test.
+   */
+  dispose(): void;
 }
 
 function seed(path: string): Record<string, AgentRunState> {
@@ -127,8 +138,10 @@ export function createAgentState(options: AgentStateOptions): AgentState {
 
     flush: write,
 
-    close() {
-      write();
+    dispose() {
+      if (timer === null) return;
+      clearTimeout(timer);
+      timer = null;
     },
   };
 

@@ -88,7 +88,22 @@ describe('foldRunLog', () => {
       sessionUuid: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
     });
     expect(step.lines).toEqual([
-      { text: '● turn ended — success · $0.0241', color: 'cyan' },
+      { text: '● turn ended — success · $0.02', color: 'cyan' },
+    ]);
+  });
+
+  it('spells the cost with the contract formatter, not a second one', () => {
+    // `formatRunCost` is the one formatter: two decimals above a cent, four
+    // below it, so a sub-cent wake does not read as `$0.00`. The row and this
+    // line show the same run's cost and must not disagree about it.
+    const cheap = `${JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0.0009,
+    })}\n`;
+
+    expect(foldRunLog(NO_LOG, cheap).lines).toEqual([
+      { text: '● turn ended — success · $0.0009', color: 'cyan' },
     ]);
   });
 

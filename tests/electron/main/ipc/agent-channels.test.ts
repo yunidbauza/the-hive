@@ -138,6 +138,7 @@ const statePatch = vi.fn((name: string, change: Partial<AgentRunState>) => {
   return next as AgentRunState;
 });
 const stateFlush = vi.fn();
+const stateDispose = vi.fn();
 
 vi.mock('../../../../electron/main/agents/state', () => ({
   createAgentState: () => ({
@@ -147,7 +148,7 @@ vi.mock('../../../../electron/main/agents/state', () => ({
     patch: statePatch,
     recordRun: vi.fn(),
     flush: stateFlush,
-    close: vi.fn(),
+    dispose: stateDispose,
   }),
 }));
 
@@ -165,6 +166,7 @@ let trackerDeps: TrackerDeps | undefined;
 const trackerRun = vi.fn(() => ({ started: true as const, run: 'run-1' }));
 const trackerKill = vi.fn(() => true);
 const trackerKillAll = vi.fn();
+const trackerCloseAll = vi.fn();
 let liveRuns: string[] = [];
 
 vi.mock('../../../../electron/main/agents/runs', () => ({
@@ -175,6 +177,7 @@ vi.mock('../../../../electron/main/agents/runs', () => ({
       kill: trackerKill,
       noteTurnEnded: vi.fn(),
       killAll: trackerKillAll,
+      closeAll: trackerCloseAll,
       live: () => liveRuns,
     };
   },
@@ -357,6 +360,32 @@ describe('the ledger accepts an agent as a party (HIVE-115)', () => {
     expect(capturedKnowsParty?.('broken')).toBe(false);
   });
 
+  it('keeps a live run a party while its definition is being edited', async () => {
+    /*
+      The epic's own premise, not an edge case: an agent is meant to be edited
+      in a text editor while it works, and a save mid-edit routinely lands a
+      file that does not parse. A rebuild that dropped the name would refuse
+      the running child's hooks, its `ledger_*` calls, and — silently — the
+      `run.ended` its own tracker appends at close.
+    */
+    liveRuns = ['slack-watcher'];
+    listed = {
+      agents: [{ ...definition('slack-watcher'), invalid: 'model: Unknown.' }],
+      agentsRoot: '/tmp/.hive/agents',
+    };
+    onAgentsChanged?.();
+    await settle();
+
+    expect(capturedKnowsParty?.('slack-watcher')).toBe(true);
+
+    // And it leaves again once the run has ended.
+    liveRuns = [];
+    onAgentsChanged?.();
+    await settle();
+
+    expect(capturedKnowsParty?.('slack-watcher')).toBe(false);
+  });
+
   it('accepts an agent the moment a command was built for it, listing or not', () => {
     listed = { agents: [], agentsRoot: '/tmp/.hive/agents' };
 
@@ -382,6 +411,35 @@ describe('what the tracker was handed (HIVE-115)', () => {
     expect(ledgerAppend).toHaveBeenCalledWith(
       expect.objectContaining({ from: 'slack-watcher' }),
     );
+  });
+
+  it('logs a refused append instead of discarding it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    ledgerAppend.mockReturnValueOnce({
+      ok: false,
+      status: 404,
+      reason: 'unknown party',
+    } as never);
+
+    trackerDeps?.appendLedger({
+      from: 'slack-watcher',
+      kind: 'event',
+      body: 'run.ended — done',
+      meta: { run: 'run-1' },
+    });
+
+    /*
+      The result was being dropped on the floor, which made a refused
+      `run.ended` invisible: the log simply grew a `run.started` with no end
+      and nothing anywhere said why.
+    */
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('slack-watcher'),
+      'unknown party',
+    );
+
+    warn.mockRestore();
   });
 
   it('counts an ask posted after this run started', () => {
@@ -509,24 +567,27 @@ describe('what the tracker was handed (HIVE-115)', () => {
 });
 
 describe('quitting with a run in flight (HIVE-115)', () => {
-  it('kills every live run, records it sleeping, and flushes the state file', () => {
+  it('closes every live run rather than only signalling it, then flushes', () => {
     liveRuns = ['slack-watcher'];
 
     for (const hook of shutdownHooks) hook();
 
-    expect(trackerKillAll).toHaveBeenCalledWith('app-closed');
-    // A row that came back saying `working` about a process that died with the
-    // app is the failure this exists to prevent.
-    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
-      status: 'sleeping',
-    });
+    /*
+      `closeAll`, not `killAll`. This hook is synchronous, so the child's
+      'close' — which is what records the summary, the `run.ended` entry and
+      the `sleeping` status — cannot arrive before the process is gone. Only a
+      finalizer that does not wait for an event can leave `agents.json` and the
+      log truthful, and the flush below is what writes it.
+    */
+    expect(trackerCloseAll).toHaveBeenCalledWith('app-closed');
+    expect(trackerKillAll).not.toHaveBeenCalled();
     expect(stateFlush).toHaveBeenCalled();
   });
 
   it('flushes even when nothing was running', () => {
     for (const hook of shutdownHooks) hook();
 
-    expect(statePatch).not.toHaveBeenCalled();
+    expect(trackerCloseAll).toHaveBeenCalledWith('app-closed');
     expect(stateFlush).toHaveBeenCalled();
   });
 });
