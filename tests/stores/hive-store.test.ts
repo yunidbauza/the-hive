@@ -4,9 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PHRASES } from '@lib/swarm/phrases';
 import { isAgent, isSession } from '@/types/entity';
 import type { SessionStatus } from '@/types/entity';
-import { statusLabel } from '@components/ui/status-dot';
+import {
+  STATUS_FILL,
+  STATUS_LABEL,
+  statusLabel,
+} from '@components/ui/status-dot';
 import type { IdleDetail } from '@shared/hook-contract';
-import type { AgentSummary, RunSummary } from '@shared/agent-contract';
+import { AGENT_STATUSES } from '@shared/agent-contract';
+import type {
+  AgentRunResult,
+  AgentStatus,
+  AgentSummary,
+  RunSummary,
+} from '@shared/agent-contract';
 import { LEDGER_MEMORY_CAP, type LedgerEntry } from '@shared/ledger-contract';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
@@ -25,6 +35,8 @@ import {
   AGENT_LINE_CAP,
   openOrResume,
   statusWord,
+  agentStatusWord,
+  agentStatusColor,
   useActiveSessions,
   useAgentAskCount,
   useAgentFacts,
@@ -1550,6 +1562,344 @@ describe('hive-store', () => {
       const lines = useHiveStore.getState().orchLines;
       expect(lines).toHaveLength(200);
       expect(lines.map((l) => l.text).join('\n')).not.toContain('maestro v0.4.2');
+    });
+
+    /**
+     * The five agent verbs (HIVE-117).
+     *
+     * Every one of them is desktop-only, and the browser refusal is asserted
+     * per verb rather than once: they are five separate `case` arms, and a
+     * guard is only present in the arms that have one.
+     */
+    describe('agent verbs', () => {
+      const summary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
+        name: 'slack-watcher',
+        description: 'Watches the channel.',
+        icon: 'Robot',
+        status: 'sleeping',
+        wake: { on: ['slack.mention'], everyMs: 300_000 },
+        rotateAfter: 50,
+        runs: [],
+        ...over,
+      });
+
+      const bridge = {
+        run: vi.fn<() => Promise<AgentRunResult>>(() =>
+          Promise.resolve({ started: true, run: 'run-7' }),
+        ),
+        kill: vi.fn(() => Promise.resolve(true)),
+        pause: vi.fn<() => Promise<AgentStatus>>(() =>
+          Promise.resolve('paused'),
+        ),
+        resume: vi.fn<() => Promise<AgentStatus>>(() =>
+          Promise.resolve('sleeping'),
+        ),
+      };
+
+      beforeEach(() => {
+        vi.mocked(isDesktop).mockReturnValue(true);
+        bridge.run.mockResolvedValue({ started: true, run: 'run-7' });
+        bridge.kill.mockResolvedValue(true);
+        bridge.pause.mockResolvedValue('paused');
+        bridge.resume.mockResolvedValue('sleeping');
+        window.hive = { agents: bridge } as unknown as Window['hive'];
+      });
+
+      afterEach(() => {
+        delete window.hive;
+      });
+
+      describe('agents', () => {
+        it('prints one row per agent, with its status word, wake and today', () => {
+          useHiveStore.getState().hydrateAgents([
+            summary({
+              status: 'asking',
+              runs: [
+                {
+                  run: 'r1',
+                  trigger: 'manual',
+                  startedAt: Date.now(),
+                  endedAt: Date.now(),
+                  outcome: 'asking',
+                  costUsd: 0.0031,
+                },
+              ],
+            }),
+          ]);
+
+          run('agents');
+
+          const row = lastLine();
+          expect(row?.text).toContain('slack-watcher');
+          expect(row?.text).toContain('asking');
+          expect(row?.text).toContain('every 5m · slack.mention');
+          expect(row?.text).toContain('1 run');
+          // Four decimals below a cent — `formatRunCost`'s rule, and a wake
+          // routinely costs less than one.
+          expect(row?.text).toContain('$0.0031');
+          // Whole-row colour by status, the way `status` paints a session.
+          expect(row?.color).toBe('amber');
+        });
+
+        /*
+          Today, not ever. A run from yesterday is still in `runs` — the history
+          is capped by count, not by age — so a table that summed the array
+          would report a number that never went back down.
+        */
+        it('counts only runs from today', () => {
+          const yesterday = Date.now() - 36 * 60 * 60 * 1000;
+          useHiveStore.getState().hydrateAgents([
+            summary({
+              runs: [
+                {
+                  run: 'r0',
+                  trigger: 'manual',
+                  startedAt: yesterday,
+                  endedAt: yesterday,
+                  outcome: 'done',
+                  costUsd: 9.99,
+                },
+              ],
+            }),
+          ]);
+
+          run('agents');
+
+          expect(lastLine()?.text).toContain('0 runs');
+          expect(lastLine()?.text).toContain('$0.00');
+          expect(lastLine()?.text).not.toContain('9.99');
+        });
+
+        it('names the open ask beside an asking agent', () => {
+          useHiveStore.getState().hydrateAgents([summary({ status: 'asking' })]);
+          useHiveStore.getState().hydrateLedger([
+            {
+              id: '20260830-120000-0001',
+              ts: Date.now(),
+              from: 'slack-watcher',
+              kind: 'ask',
+              ref: 'a71',
+              body: 'ship it?',
+            },
+          ]);
+
+          run('agents');
+
+          expect(lastLine()?.text).toContain('asking (a71)');
+        });
+
+        it('says so when there are no agents at all', () => {
+          // The demo fleet seeds three; this verb's empty case needs saying.
+          useHiveStore.getState().hydrateAgents([]);
+
+          run('agents');
+
+          expect(lastLine()?.text).toContain('no agents');
+        });
+
+        it('is refused in the browser', () => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run('agents');
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining('desktop app'),
+            color: 'red',
+          });
+        });
+      });
+
+      describe('run', () => {
+        beforeEach(() => {
+          useHiveStore.getState().hydrateAgents([summary()]);
+        });
+
+        it('wakes the agent and prints the run it started', async () => {
+          run('run slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.run).toHaveBeenCalledWith({ name: 'slack-watcher' });
+          expect(lastLine()?.text).toContain('woke slack-watcher (run-7)');
+        });
+
+        /*
+          The refusal wordings are this story's whole contract with the user:
+          each one names the thing they have to do next.
+        */
+        it.each([
+          ['working', 'is working'],
+          ['paused', 'is paused — resume it first'],
+        ] as const)('prints main’s %s refusal', async (refused, text) => {
+          bridge.run.mockResolvedValue({ started: false, refused });
+
+          run('run slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining(text),
+            color: 'red',
+          });
+        });
+
+        it('prints main’s own reason when it supplies one', async () => {
+          bridge.run.mockResolvedValue({
+            started: false,
+            refused: 'invalid',
+            reason: 'wake: `every` must be at least 60s',
+          });
+
+          run('run slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain('every` must be at least 60s');
+        });
+
+        it('refuses a name that is not an agent', () => {
+          run('run nope');
+
+          expect(lastLine()?.text).toContain('no such agent: nope');
+          expect(bridge.run).not.toHaveBeenCalled();
+        });
+
+        /*
+          A session id resolves — `entities` holds both kinds — so without the
+          kind check `run sess-01` would reach the bridge and be refused by
+          main's name guard, with a message about agent names rather than about
+          what the user actually did.
+        */
+        it('refuses a session, naming the verb that would have worked', () => {
+          seedDemoFleet();
+          const session = useHiveStore.getState().order[0];
+
+          run(`run ${String(session)}`);
+
+          expect(lastLine()?.text).toContain('not an agent');
+          expect(bridge.run).not.toHaveBeenCalled();
+        });
+
+        it('is refused in the browser', () => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run('run slack-watcher');
+
+          expect(lastLine()?.color).toBe('red');
+          expect(bridge.run).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('pause and resume', () => {
+        beforeEach(() => {
+          useHiveStore.getState().hydrateAgents([summary()]);
+        });
+
+        it('pauses, and says what the status now is', async () => {
+          run('pause slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.pause).toHaveBeenCalledWith({ name: 'slack-watcher' });
+          expect(lastLine()?.text).toContain('paused slack-watcher');
+        });
+
+        /*
+          Resume prints the status main computed rather than the word "resumed".
+          The two answers differ in the one case the user most needs to see: an
+          agent that asked something while it was paused comes back `asking`,
+          and a line saying only "resumed" would bury the question.
+        */
+        it('resumes to sleeping, and says so', async () => {
+          run('resume slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.resume).toHaveBeenCalledWith({ name: 'slack-watcher' });
+          expect(lastLine()?.text).toContain('resumed slack-watcher — sleeping');
+        });
+
+        it('resumes to asking when a question was waiting', async () => {
+          bridge.resume.mockResolvedValue('asking');
+
+          run('resume slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain('resumed slack-watcher — asking');
+        });
+
+        it.each(['pause', 'resume'])('refuses %s on a non-agent', (verb) => {
+          run(`${verb} nope`);
+
+          expect(lastLine()?.text).toContain('no such agent: nope');
+        });
+
+        it.each(['pause', 'resume'])('refuses %s in the browser', (verb) => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run(`${verb} slack-watcher`);
+
+          expect(lastLine()?.color).toBe('red');
+        });
+      });
+
+      describe('kill', () => {
+        beforeEach(() => {
+          useHiveStore.getState().hydrateAgents([summary()]);
+        });
+
+        it('stops the run and says so', async () => {
+          run('kill slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.kill).toHaveBeenCalledWith({ name: 'slack-watcher' });
+          expect(lastLine()?.text).toContain("killed slack-watcher's run");
+        });
+
+        /*
+          `false` is not an error — the run can end between reading the table
+          and pressing return — so it prints in the ordinary colour.
+        */
+        it('says nothing was running, without calling it a failure', async () => {
+          bridge.kill.mockResolvedValue(false);
+
+          run('kill slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining('nothing running'),
+            color: 'dim',
+          });
+        });
+      });
+
+      /**
+       * `send` to an agent is refused, and this is a **deletion** as much as an
+       * addition: the verb used to fall through to the demo branch, echoing the
+       * message into the agent's own transcript and scheduling a fake ack. It
+       * looked exactly like a delivery and was not one.
+       */
+      describe('send to an agent', () => {
+        it('refuses, and names the verb that would have worked', () => {
+          useHiveStore.getState().hydrateAgents([summary()]);
+          const before = useHiveStore.getState().ledger.length;
+
+          run('send slack-watcher hello');
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining(
+              'agents are asked, not sent: try ask slack-watcher hello',
+            ),
+            color: 'red',
+          });
+          // Nothing was written down, either — the refusal is total.
+          expect(useHiveStore.getState().ledger).toHaveLength(before);
+        });
+      });
+
+      it('lists all five in help', () => {
+        run('help');
+
+        const printed = transcript();
+        for (const verb of ['agents', 'run', 'pause', 'resume', 'kill']) {
+          expect(printed).toContain(`  ${verb}`);
+        }
+      });
     });
   });
 
@@ -3299,6 +3649,40 @@ describe('statusWord agrees with statusLabel', () => {
     ),
   )('says the same thing for %s / %s', (status, detail) => {
     expect(statusWord(status, detail)).toBe(statusLabel(status, detail));
+  });
+
+  /**
+   * The same guard for the agent half (HIVE-117).
+   *
+   * `agentStatusWord` is a fifth hand-written mapping of the same vocabulary,
+   * built because `stores/` may not import `components/`. That constraint is
+   * real and this is the only thing that keeps the two tables in step — the
+   * session pair above exists because a comment saying "the words must match"
+   * had already failed to make them match.
+   */
+  it.each(AGENT_STATUSES)('says the same thing for an agent’s %s', (status) => {
+    expect(agentStatusWord(status)).toBe(STATUS_LABEL[status]);
+  });
+
+  /**
+   * And paints it the colour the dot is painted.
+   *
+   * Asserted as a *pairing* rather than by re-listing the hexes: the console
+   * speaks `TermColor` and `status-dot.tsx` speaks Tailwind, so the two can
+   * only be checked against a stated correspondence. `sleeping` and `paused`
+   * share `dim` on purpose — `bg-subtle` and `bg-muted` are both "nothing is
+   * happening here", the distinction is carried by the word, and `STATUS_COLOR`
+   * already collapses `idle` and `terminated` the same way.
+   */
+  it.each([
+    ['asking', 'bg-amber', 'amber'],
+    ['working', 'bg-green', 'green'],
+    ['sleeping', 'bg-subtle', 'dim'],
+    ['paused', 'bg-muted', 'dim'],
+    ['failed', 'bg-red', 'red'],
+  ] as const)('paints %s the way its dot is painted', (status, fill, term) => {
+    expect(STATUS_FILL[status]).toBe(fill);
+    expect(agentStatusColor(status)).toBe(term);
   });
 
   /**

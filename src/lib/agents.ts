@@ -1,8 +1,10 @@
 import {
+  formatRunCost,
   readFrontmatter,
   type AgentStatus,
   type AgentsSnapshot,
   type AgentWriteResult,
+  type RunSummary,
   type WakeSpec,
 } from '@shared/agent-contract';
 
@@ -62,6 +64,51 @@ export function describeNextRun(agent: {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/**
+ * What this agent has cost you today — `31 runs · $2.14` (HIVE-116, HIVE-117).
+ *
+ * Beside {@link describeWake} for its reason, and with a second one of its own:
+ * two surfaces now show this pair — the agent view's `Today` tile and the
+ * console's `agents` table — and they sit on the same screen. Two spellings of
+ * one number is a contradiction the reader has to resolve, so both read this.
+ *
+ * "Today" is the **user's** calendar day, compared with `toDateString()` rather
+ * than against a UTC boundary: it is the person's day, and there is no server
+ * to have another one. Derived on read rather than stored, so it cannot be
+ * wrong the moment the clock passes midnight.
+ */
+export function runsToday(
+  runs: readonly RunSummary[],
+  now: number = Date.now(),
+): { count: number; cost: string } {
+  const today = new Date(now).toDateString();
+  const todays = runs.filter(
+    (run) => new Date(run.startedAt).toDateString() === today,
+  );
+  const spent = formatRunCost(
+    todays.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
+  );
+
+  /*
+    `$0.00` rather than a blank for a quiet day: this is a fact about spend, and
+    an empty cell reads as "not measured" instead of "nothing".
+
+    The no-runs case is spelled here rather than left to `formatRunCost`, which
+    answers `$0.0000` for zero. Four decimals is right for a *run* — a wake
+    routinely costs less than a cent, and `$0.00` for real work reads as a bug —
+    but it is false precision about a day on which nothing happened. A day that
+    did run, and cost less than a cent, still gets the four decimals.
+
+    Both conditions in one branch on purpose: `spent` is only `undefined` for a
+    non-finite input, which a sum of numbers is not, so a separate `?? '$0.00'`
+    would be a branch no test could reach.
+  */
+  return {
+    count: todays.length,
+    cost: todays.length === 0 || spent === undefined ? '$0.00' : spent,
+  };
 }
 
 /**

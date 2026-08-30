@@ -13,7 +13,17 @@
  */
 
 /** Commands whose failure is a *shape* problem the parser can see by itself. */
-export type UsageCommand = 'open' | 'send' | 'spawn' | 'ledger' | 'ask' | 'answer';
+export type UsageCommand =
+  | 'open'
+  | 'send'
+  | 'spawn'
+  | 'ledger'
+  | 'ask'
+  | 'answer'
+  | 'run'
+  | 'pause'
+  | 'resume'
+  | 'kill';
 
 /**
  * How many entries `ledger` prints when `-n` is not given (HIVE-113).
@@ -66,6 +76,24 @@ export type ParsedCommand =
    * in main accepts either and always stores the canonical id.
    */
   | { kind: 'answer'; raw: string; thread: string; message: string }
+  /**
+   * The five agent verbs (HIVE-117).
+   *
+   * `run` carries a target and **no task**, unlike every other acting verb
+   * here. That is the grammar recording a decision made in the contract rather
+   * than an oversight: `AgentRunRequest` is `{ name }` with a closed key set,
+   * so a task could only travel by widening what the renderer may make the
+   * machine execute — and `ask <agent> <message>` already reaches an agent
+   * with prose, through the ledger, where a task belongs.
+   *
+   * All four targeted verbs take a bare name, so they share `open`'s shape
+   * rather than `send`'s. `agents` takes nothing at all.
+   */
+  | { kind: 'agents'; raw: string }
+  | { kind: 'run'; raw: string; target: string }
+  | { kind: 'pause'; raw: string; target: string }
+  | { kind: 'resume'; raw: string; target: string }
+  | { kind: 'kill'; raw: string; target: string }
   /** Right verb, wrong arguments. */
   | { kind: 'usage'; raw: string; command: UsageCommand }
   /** No such verb. */
@@ -84,6 +112,15 @@ export const USAGE: Record<UsageCommand, string> = {
   ledger: 'usage: ledger [--open] [--events] [--from <party>] [--to <party>] [-n <count>]',
   ask: 'usage: ask <session> <message>',
   answer: 'usage: answer <id> <text>',
+  /*
+    `<agent>`, not `<session>`, on all four. The word is what tells a reader
+    that `send` is not the verb for these and that a session id will not do —
+    the console's only other cue is the refusal they get after guessing wrong.
+  */
+  run: 'usage: run <agent>',
+  pause: 'usage: pause <agent>',
+  resume: 'usage: resume <agent>',
+  kill: 'usage: kill <agent>',
 };
 
 /**
@@ -113,5 +150,17 @@ export const CONSOLE_VERBS = [
   'ask',
   'answer',
   'spawn',
+  /*
+    The agent verbs sit after the session ones and before `clear`, keeping the
+    file's "read, then act" order within a second group rather than
+    interleaving the two vocabularies: `agents` lists, and the four that follow
+    act on one. A reader scanning the footer meets the whole fleet first and
+    the tenants second, which is the order the stage itself is in.
+  */
+  'agents',
+  'run',
+  'pause',
+  'resume',
+  'kill',
   'clear',
 ] as const satisfies readonly ParsedCommand['kind'][];

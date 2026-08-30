@@ -29,7 +29,7 @@ import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
 import { isDesktop } from '@config/runtime';
-import { describeNextRun, describeWake } from '@lib/agents';
+import { describeNextRun, describeWake, runsToday } from '@lib/agents';
 import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
@@ -44,8 +44,8 @@ import { pickPhrase } from '@lib/swarm/phrases';
 import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import {
-  formatRunCost,
   type AgentLinesPush,
+  type AgentRunResult,
   type AgentStatus,
   type AgentStatusPush,
   type AgentSummary,
@@ -714,6 +714,16 @@ const capAgentLines = (lines: TermLine[]) =>
 const LEDGER_REQUIRES_DESKTOP =
   'the ledger needs the desktop app — this is the browser preview';
 
+/**
+ * The same refusal for the agent verbs (HIVE-117).
+ *
+ * A second string rather than a reuse of the one above, because it is a
+ * different subject and the sentence names it: a browser has no `~/.hive/agents`
+ * to read and no process to wake, which is a fuller absence than the ledger's.
+ */
+const AGENTS_REQUIRE_DESKTOP =
+  'agents need the desktop app — this is the browser preview';
+
 /** The `help` output — one row per command in the grammar. */
 const HELP_LINES = [
   '  help                       show this list',
@@ -724,6 +734,11 @@ const HELP_LINES = [
   '  ask <session> <message>    ask a session a question',
   '  answer <id> <text>         answer an open ask',
   '  spawn <project> <task>     start a new session on a project',
+  '  agents                     one line per agent',
+  '  run <agent>                wake an agent now',
+  '  pause <agent>              stop an agent waking',
+  '  resume <agent>             let it wake again',
+  '  kill <agent>               stop the run in progress',
   '  clear                      empty this transcript',
   /*
     One trailing line rather than a fourth column, because it is a footnote and
@@ -810,6 +825,90 @@ function statusColor(
 ): TermLine['color'] {
   if (status === 'idle' && detail !== undefined) return STATUS_COLOR.working;
   return STATUS_COLOR[status];
+}
+
+/**
+ * The same two mappings for an agent (HIVE-117).
+ *
+ * A third and fourth hand-written table, for the reason the two above are
+ * hand-written: `stores/` may not import `components/`, so `STATUS_FILL` and
+ * `STATUS_TEXT` in `status-dot.tsx` are unreachable from here — and they are
+ * Tailwind classes in any case, where these are `TermColor` names the ANSI
+ * colorizer resolves. `tests/stores/hive-store.test.ts` asserts the words
+ * against `STATUS_LABEL` the way it already does for sessions, which is the
+ * only thing that keeps two tables in step once a comment has failed to.
+ *
+ * The colours mirror the session state each agent state mirrors in
+ * `STATUS_FILL`, so one word means one colour on both surfaces:
+ *
+ * | agent | mirrors | `STATUS_FILL` | here |
+ * | `asking` | `waiting` | `bg-amber` | `amber` |
+ * | `working` | `working` | `bg-green` | `green` |
+ * | `sleeping` | `idle` | `bg-subtle` | `dim` |
+ * | `paused` | `terminated` | `bg-muted` | `dim` |
+ * | `failed` | — | `bg-red` | `red` |
+ *
+ * `sleeping` and `paused` land on the same `dim`, and that is not a
+ * compromise forced by a narrow palette: `STATUS_COLOR` already paints `idle`
+ * and `terminated` both `dim` for exactly the reason it records there — dim is
+ * this palette's "nothing is happening here", and the *word* beside it carries
+ * which kind of nothing. `TermColor` has no `subtle`/`muted` distinction to
+ * spend, and inventing one would ripple through `ansi.ts` and every transcript
+ * consumer to restate what the row already says in letters.
+ */
+const AGENT_STATUS_WORD: Record<AgentStatus, string> = {
+  sleeping: 'sleeping',
+  working: 'working',
+  asking: 'asking',
+  paused: 'paused',
+  failed: 'failed',
+};
+
+const AGENT_STATUS_COLOR: Record<AgentStatus, TermLine['color']> = {
+  sleeping: 'dim',
+  working: 'green',
+  asking: 'amber',
+  paused: 'dim',
+  failed: 'red',
+};
+
+export function agentStatusWord(status: AgentStatus): string {
+  return AGENT_STATUS_WORD[status];
+}
+
+export function agentStatusColor(status: AgentStatus): TermLine['color'] {
+  return AGENT_STATUS_COLOR[status];
+}
+
+/**
+ * Why a wake did not happen, in the user's terms (HIVE-117).
+ *
+ * Main's `reason` is printed verbatim where it has one — an `invalid` refusal
+ * names the field of the definition that is wrong, and no wording here could
+ * reproduce that. What this adds is the two cases main has no words for,
+ * because they are not faults: the agent is busy, or the user themselves
+ * stopped it. Both lines end in the thing to do next.
+ *
+ * `working` says "try again when it sleeps" rather than promising a queue.
+ * HIVE-120 is what makes a run wait for the next wake; until it lands, saying
+ * "your run is queued" would describe a feature that does not exist.
+ */
+function refusalText(
+  name: string,
+  outcome: Extract<AgentRunResult, { started: false }>,
+): string {
+  if (outcome.reason !== undefined) return outcome.reason;
+
+  switch (outcome.refused) {
+    case 'working':
+      return `${name} is working — try again when it sleeps`;
+    case 'paused':
+      return `${name} is paused — resume it first`;
+    case 'unknown':
+      return 'the agent runtime is not running';
+    default:
+      return `${name} could not be woken`;
+  }
 }
 
 let spawnCounter = 0;
@@ -1795,6 +1894,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         if (match === null) return;
 
         /**
+         * An agent is **asked**, never sent to (HIVE-117).
+         *
+         * This arm is a deletion as much as an addition. `sendToEntity` branches
+         * on `isDesktop() && isSession(entity)`, so an agent target fell through
+         * to the demo branch: it echoed `❯ [overmind] <message>` into the
+         * agent's own transcript and scheduled a fake ack on a timer. Nothing
+         * was delivered and nothing was written down, but the console said it
+         * had been — which is the one failure mode a router must not have.
+         *
+         * The refusal names the verb that works rather than only the one that
+         * does not: `ask` is a real channel to an agent, it takes the same two
+         * arguments, and a user who typed `send` wanted exactly that.
+         */
+        const target = get().entities[match.id];
+        if (target !== undefined && isAgent(target)) {
+          pushOrch(
+            `  agents are asked, not sent: try ask ${match.label} ${command.message}`,
+            'red',
+          );
+          return;
+        }
+
+        /**
          * An ended session is refused **before** `sendToEntity`, and this is a
          * correctness gate rather than a nicety (HIVE-93).
          *
@@ -2006,6 +2128,161 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         // No confirmation line here: `spawnSession` writes it, so both this
         // command and the picker log exactly once.
         get().spawnSession(target, command.task);
+        return;
+      }
+
+      /**
+       * The fleet's tenants, one row each (HIVE-117).
+       *
+       * Read from the store's own mirror rather than over IPC, for `ledger`'s
+       * reason: `runOrchCommand` is synchronous and `use-agents-sync.ts`
+       * already keeps this slice hydrated and pushed.
+       *
+       * Desktop-gated even though it only reads: in a browser `agentOrder` is
+       * empty forever, so the honest answer is "not here", and printing
+       * `no agents` would read as "you have none" — a different and wrong
+       * claim.
+       */
+      case 'agents': {
+        if (!isDesktop()) {
+          pushOrch(`  ${AGENTS_REQUIRE_DESKTOP}`, 'red');
+          return;
+        }
+
+        const state = get();
+        const now = Date.now();
+        const open = openAsks(state.ledger, now);
+        const rows = state.agentOrder.flatMap((id) => {
+          const entity = state.entities[id];
+
+          // `entities` holds both kinds and an agent name is a legal session
+          // id — the same narrowing every other agent reader does.
+          return entity !== undefined && isAgent(entity) ? [entity] : [];
+        });
+
+        if (rows.length === 0) {
+          pushOrch('  no agents — add one in Settings › Agents', 'dim');
+          return;
+        }
+
+        for (const agent of rows) {
+          const ref = open.find((ask) => ask.from === agent.id)?.ref;
+          const word =
+            ref === undefined
+              ? agentStatusWord(agent.status)
+              : `${agentStatusWord(agent.status)} (${ref})`;
+          const today = runsToday(agent.runs, now);
+
+          /*
+            One colour per line, not per column — `status`'s rule, and for its
+            reason: `TermLine` carries a single colour, and a wall of amber is
+            still "these need you" at a glance.
+
+            The widths are `status`'s too, widened where this table's values are
+            longer: 16 for the name, then 14 for a status word carrying a ref
+            (`sleeping` is 8 and `asking (a71)` is 12), then 26 for the wake
+            description — which is the one column with no upper bound, since
+            `describeWake` will happily print five weekday names. A `padEnd`
+            that is short does not truncate, it stops aligning, so the columns
+            after a long wake give way rather than the wake being cut.
+          */
+          pushOrch(
+            `  ${agent.id.padEnd(16)}${word.padEnd(14)}${describeWake(agent.wake).padEnd(26)}${String(today.count)} ${today.count === 1 ? 'run' : 'runs'} · ${today.cost}`,
+            agentStatusColor(agent.status),
+          );
+        }
+        return;
+      }
+
+      case 'run':
+      case 'pause':
+      case 'resume':
+      case 'kill': {
+        if (!isDesktop()) {
+          pushOrch(`  ${AGENTS_REQUIRE_DESKTOP}`, 'red');
+          return;
+        }
+
+        /**
+         * Resolved here rather than through `resolve()` (HIVE-117).
+         *
+         * `resolve` speaks about *sessions* — "no such session", "use a session
+         * id" — and its ended-gate is a session's. These four verbs name an
+         * agent, so a miss has to say so in the noun the user typed, and a hit
+         * that turns out to be a session has to be refused rather than sent to
+         * main: `entities` holds both kinds under one map, so `run sess-01`
+         * resolves perfectly well and would come back rejected by main's name
+         * guard, with a message about legal agent names rather than about what
+         * the user actually did.
+         */
+        const entity = get().entities[command.target];
+        if (entity === undefined) {
+          pushOrch(`  no such agent: ${command.target}`, 'red');
+          return;
+        }
+        if (!isAgent(entity)) {
+          pushOrch(
+            `  ${command.target} is a session, not an agent — try open or send`,
+            'red',
+          );
+          return;
+        }
+
+        const name = entity.id;
+        const agents = window.hive?.agents;
+        if (agents === undefined) return;
+
+        if (command.kind === 'run') {
+          void agents.run({ name }).then((outcome) => {
+            if (outcome.started) {
+              pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
+              return;
+            }
+            /*
+              Main's reason wins where it has one — an `invalid` refusal names
+              the field of the definition that is wrong, which no wording here
+              could reproduce. The two refusals the console can say better than
+              main are the two that name the user's next move.
+            */
+            pushOrch(`  ${refusalText(name, outcome)}`, 'red');
+          });
+          return;
+        }
+
+        if (command.kind === 'kill') {
+          void agents.kill({ name }).then((stopped) => {
+            /*
+              `false` is not an error: a run can end between the table being
+              read and the command being typed, and colouring that red would
+              teach the user to distrust a verb that did exactly what they
+              wanted.
+            */
+            pushOrch(
+              stopped ? `  killed ${name}'s run` : `  nothing running`,
+              'dim',
+            );
+          });
+          return;
+        }
+
+        if (command.kind === 'pause') {
+          void agents.pause({ name }).then(() => {
+            pushOrch(`  paused ${name}`, 'dim');
+          });
+          return;
+        }
+
+        /*
+          Resume prints the status main computed, not the word "resumed".
+
+          The two differ in the case that matters most: an agent that asked
+          something while it was paused comes back `asking`, not `sleeping`, and
+          a line saying only "resumed" would bury the question it came back
+          holding.
+        */
+        void agents.resume({ name }).then((status) => {
+          pushOrch(`  resumed ${name} — ${agentStatusWord(status)}`, 'dim');
+        });
         return;
       }
 
@@ -4415,10 +4692,9 @@ export interface AgentFacts {
 /**
  * The agent view's five fact tiles, derived on read (HIVE-116).
  *
- * "Today" is the **user's** calendar day, compared with `toDateString()` rather
- * than against a UTC boundary — the same reason the ledger files itself by
- * local day: it is the person's day, and there is no server to have another
- * one. Storing the pair instead would make it wrong every midnight.
+ * The `Today` pair comes from {@link runsToday} rather than being computed here
+ * (HIVE-117): the console's `agents` table prints the same two numbers, and the
+ * two surfaces can share a screen. One spelling, one source.
  */
 export const useAgentFacts = (name: string): AgentFacts | null => {
   const entity = useHiveStore((state) => state.entities[name]);
@@ -4427,12 +4703,7 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
   return useMemo(() => {
     if (entity === undefined || !isAgent(entity)) return null;
 
-    const today = new Date().toDateString();
-    const todays = entity.runs.filter(
-      (run) => new Date(run.startedAt).toDateString() === today,
-    );
-    const spend = todays.reduce((sum, run) => sum + (run.costUsd ?? 0), 0);
-    const spent = formatRunCost(spend);
+    const today = runsToday(entity.runs);
     const open = openAsks(ledger, Date.now()).find((ask) => ask.from === name);
 
     return {
@@ -4440,34 +4711,8 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
       ...(open?.ref === undefined ? {} : { askRef: open.ref }),
       wake: describeWake(entity.wake),
       next: describeNextRun(entity),
-      todayRuns: todays.length,
-      /*
-        `$0.00` rather than a blank for a quiet day: the tile is a fact about
-        spend, and an empty cell reads as "not measured" instead of "nothing".
-
-        The no-runs case is spelled here rather than left to `formatRunCost`,
-        which answers `$0.0000` for zero. Four decimals is right for a *run* —
-        a wake routinely costs less than a cent, and `$0.00` for real work
-        reads as a bug — but it is false precision about a day on which
-        nothing happened. A day that did run, and cost less than a cent, still
-        gets the four decimals for the original reason.
-      */
-      /*
-        `$0.00` rather than a blank for a quiet day: the tile is a fact about
-        spend, and an empty cell reads as "not measured" instead of "nothing".
-
-        The no-runs case is spelled here rather than left to `formatRunCost`,
-        which answers `$0.0000` for zero. Four decimals is right for a *run* —
-        a wake routinely costs less than a cent, and `$0.00` for real work
-        reads as a bug — but it is false precision about a day on which
-        nothing happened. A day that did run, and cost less than a cent, still
-        gets the four decimals for the original reason.
-
-        Both conditions in one branch on purpose: `spent` is only `undefined`
-        for a non-finite input, which a sum of numbers is not, so a separate
-        `?? '$0.00'` would be a branch no test could ever reach.
-      */
-      todayCost: todays.length === 0 || spent === undefined ? '$0.00' : spent,
+      todayRuns: today.count,
+      todayCost: today.cost,
       ...(entity.sessionUuid === undefined
         ? {}
         : { sessionUuid: entity.sessionUuid }),

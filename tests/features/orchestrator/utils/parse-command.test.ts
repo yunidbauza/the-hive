@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
+import { CONSOLE_VERBS, USAGE } from '@/types/command';
 
 /**
  * The command grammar is the highest-value unit-test target in the app
@@ -338,6 +339,72 @@ describe('parseCommand', () => {
 
     it.each(['answer', 'answer a12'])('reports usage for %s', (input) => {
       expect(parseCommand(input)).toEqual({ kind: 'usage', raw: input, command: 'answer' });
+    });
+  });
+
+  /**
+   * The five agent verbs (HIVE-117).
+   *
+   * `run` takes a bare name and no task, which is a decision rather than an
+   * omission: `AgentRunRequest` shipped with a closed key set, so a task could
+   * only reach the agent by widening what the renderer may make the machine
+   * execute. `ask <agent> <message>` is the channel for that, and it already
+   * exists.
+   */
+  describe('agent verbs (HIVE-117)', () => {
+    it('parses agents as a bare verb', () => {
+      expect(parseCommand('agents')).toEqual({ kind: 'agents', raw: 'agents' });
+    });
+
+    it.each([
+      ['run', 'run slack-watcher'],
+      ['pause', 'pause slack-watcher'],
+      ['resume', 'resume slack-watcher'],
+      ['kill', 'kill slack-watcher'],
+    ] as const)('parses %s with its target', (kind, input) => {
+      expect(parseCommand(input)).toEqual({
+        kind,
+        raw: input,
+        target: 'slack-watcher',
+      });
+    });
+
+    it.each(['run', 'pause', 'resume', 'kill'])(
+      'reports usage for a bare %s',
+      (input) => {
+        expect(parseCommand(input)).toEqual({
+          kind: 'usage',
+          raw: input,
+          command: input,
+        });
+      },
+    );
+
+    /*
+      The one place `run` differs from `open`, and the reason it is asserted
+      rather than assumed: a trailing task is *ignored*, not an error. The verb
+      is `run <agent>`, so anything after the name is surplus — and refusing it
+      would teach the user that a task is nearly supported.
+    */
+    it('takes the agent name and ignores a trailing task', () => {
+      expect(parseCommand('run slack-watcher check the PRs')).toEqual({
+        kind: 'run',
+        raw: 'run slack-watcher check the PRs',
+        target: 'slack-watcher',
+      });
+    });
+
+    it('lists all five in CONSOLE_VERBS', () => {
+      for (const verb of ['agents', 'run', 'pause', 'resume', 'kill']) {
+        expect(CONSOLE_VERBS).toContain(verb);
+      }
+    });
+
+    it('gives the four that take a target a usage line', () => {
+      expect(USAGE.run).toBe('usage: run <agent>');
+      expect(USAGE.pause).toBe('usage: pause <agent>');
+      expect(USAGE.resume).toBe('usage: resume <agent>');
+      expect(USAGE.kill).toBe('usage: kill <agent>');
     });
   });
 

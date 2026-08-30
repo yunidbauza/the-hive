@@ -248,6 +248,31 @@ export function parseCommand(raw: string): ParsedCommand {
       return { kind: 'answer', raw: input, thread, message };
     }
 
+    case 'agents':
+      return { kind: 'agents', raw: input };
+
+    /*
+      `open`'s shape, not `send`'s — a bare target, and anything after it is
+      surplus rather than an error (HIVE-117).
+
+      That surplus is the one thing worth spelling out. `run <agent> <task>` is
+      what the ticket originally asked for and what a user who has read the
+      other verbs will type, and it parses here as a plain `run` with the task
+      dropped on the floor. Refusing it instead would be worse in both
+      directions: it would teach that a task is nearly supported, and it would
+      turn a request the console *can* honour — wake this agent — into nothing
+      at all. The store prints the run it started; the ledger is where prose
+      reaches an agent, through `ask`.
+    */
+    case 'run':
+    case 'pause':
+    case 'resume':
+    case 'kill': {
+      const [target] = takeWord(rest);
+      if (!target) return { kind: 'usage', raw: input, command: verb };
+      return { kind: verb, raw: input, target };
+    }
+
     default:
       return { kind: 'unknown', raw: input, command: verb };
   }
