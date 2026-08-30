@@ -40,7 +40,25 @@ import type {
 
 export interface ParseContext {
   folder: string;
+  /**
+   * Every skill name this machine can offer — Hive, personal, and plugin.
+   *
+   * What `skills:` is checked against. As wide as the runtime, because an agent
+   * is a `claude -p` process that loads all of these whether or not the file
+   * names them.
+   */
   skillNames: readonly string[];
+  /**
+   * The subset The Hive itself manages, for the *name* clash alone.
+   *
+   * Deliberately narrower than `skillNames`, and the two must not be merged.
+   * An agent may not take the name of a skill The Hive manages because those
+   * two share a namespace — but checking the wide set instead reserved every
+   * name in the user's own `~/.claude/skills`, so a machine with a personal
+   * `graphify` skill could not have an agent called `graphify`, refused on
+   * account of a folder The Hive neither manages nor mentions.
+   */
+  hiveSkillNames: readonly string[];
   integrations: readonly string[];
 }
 
@@ -165,7 +183,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
         field: 'name',
         reason: `Must match the folder name, ${ctx.folder}.`,
       });
-    } else if (ctx.skillNames.includes(name)) {
+    } else if (ctx.hiveSkillNames.includes(name)) {
       problems.push({ field: 'name', reason: 'A skill already uses this name.' });
     }
   }

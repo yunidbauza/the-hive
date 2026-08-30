@@ -38,6 +38,12 @@ You are the Slack watcher for Yunid. On every wake, read your ledger inbox first
 const BASE = {
   folder: 'slack-watcher',
   skillNames: ['jira-writer', 'release-notes'],
+  /*
+    The Hive-owned subset, which only the *name* clash consults. Same list here
+    because these fixtures predate the split; the specs that care about the
+    difference set them apart deliberately.
+  */
+  hiveSkillNames: ['jira-writer', 'release-notes'],
   integrations: ['slack'],
 };
 
@@ -174,9 +180,17 @@ describe('parseAgent — refusals', () => {
     });
   });
 
-  it('refuses a name that is also a skill', () => {
+  /*
+    `hiveSkillNames`, not `skillNames`. The rule is about the namespace The Hive
+    manages — see the pair of specs at the end of this file for why the wider
+    set must not stand in for it.
+  */
+  it('refuses a name that is also a hive skill', () => {
     expect(
-      problems(GOOD, { skillNames: ['slack-watcher', 'jira-writer', 'release-notes'] }),
+      problems(GOOD, {
+        skillNames: ['slack-watcher', 'jira-writer', 'release-notes'],
+        hiveSkillNames: ['slack-watcher', 'jira-writer', 'release-notes'],
+      }),
     ).toContainEqual({ field: 'name', reason: 'A skill already uses this name.' });
   });
 
@@ -196,6 +210,40 @@ describe('parseAgent — refusals', () => {
     and on the fresh install where that folder is empty it refused every name
     there is.
   */
+  /*
+    The name clash consults the Hive-owned set alone, and must keep doing so.
+    Widening `skillNames` to the whole machine silently widened this refusal
+    with it: a user with a personal `~/.claude/skills/graphify` could no longer
+    have an agent called `graphify`, refused on account of a folder The Hive
+    neither manages nor mentions.
+  */
+  it('lets an agent take the name of a skill the hive does not own', () => {
+    const source = GOOD.replace('name: slack-watcher', 'name: graphify')
+      .replace('Must match', 'x');
+
+    expect(
+      definition(source, {
+        folder: 'graphify',
+        skillNames: ['graphify', 'jira-writer', 'release-notes'],
+        hiveSkillNames: ['jira-writer', 'release-notes'],
+      }).name,
+    ).toBe('graphify');
+  });
+
+  it('still refuses the name of a skill the hive does own', () => {
+    const source = GOOD.replace('name: slack-watcher', 'name: release-notes');
+
+    expect(
+      problems(source, {
+        folder: 'release-notes',
+        hiveSkillNames: ['release-notes'],
+      }),
+    ).toContainEqual({
+      field: 'name',
+      reason: 'A skill already uses this name.',
+    });
+  });
+
   it('accepts a name from outside the hive, including a plugin skill', () => {
     const source = GOOD.replace(
       'skills: [jira-writer, release-notes]',
@@ -278,7 +326,7 @@ icon: Ghost
 Wait to be asked.
 `;
 
-  const alone = { folder: 'quiet-one', skillNames: [] };
+  const alone = { folder: 'quiet-one', skillNames: [], hiveSkillNames: [] };
 
   it('saves with no every and no on, as manual-only', () => {
     const def = definition(MINIMAL, alone);

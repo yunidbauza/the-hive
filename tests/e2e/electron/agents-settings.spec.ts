@@ -39,6 +39,21 @@ async function launchWithConfig(outputPath: (name: string) => string): Promise<{
   const app = await launchHive({
     userDataDir: outputPath('user-data'),
     configPath,
+    /*
+      Point the *skill* roots at scratch too, not only the config.
+
+      `skillNames` now reads `~/.claude/skills` and the user's installed
+      plugins, so without this these specs validate against whatever happens to
+      be installed on the machine running them: an agent or skill name that
+      collides locally and not on CI passes here and fails there, with nothing
+      in the spec to explain why. `CLAUDE_CONFIG_DIR` is Claude Code's own
+      override and `claudeRoot()` honours it.
+
+      Set here rather than in `launchHive` on purpose. Other specs in this
+      project spawn a **real** `claude`, and relocating that binary's config
+      directory out from under them is not this file's business.
+    */
+    env: { CLAUDE_CONFIG_DIR: outputPath('claude-config') },
   });
   const page = await app.firstWindow();
 

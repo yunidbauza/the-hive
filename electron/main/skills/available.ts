@@ -1,5 +1,7 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
+import { isSkillFolder } from './read';
 
 /**
  * Every skill name an agent definition may name.
@@ -48,6 +50,21 @@ export interface SkillRoots {
  * and an agent must stay editable on a machine that has none of them. Failing
  * closed here would make the editor refuse every skill name on precisely the
  * machines where the user has the fewest ways to work out why.
+ *
+ * Two details that look incidental and are not:
+ *
+ * `isSkillFolder` rather than `entry.isDirectory()`. `readdir` reports `lstat`
+ * semantics, so a **symlinked** skill folder answers `false` — and three of the
+ * five entries under this machine's own `~/.claude/skills` are symlinks into a
+ * dotfile repo, which is where personal skills usually live. Reading them as
+ * "not a skill" would refuse `pretty-mermaid` with "no skill called
+ * pretty-mermaid", the exact false refusal this module exists to end.
+ *
+ * `access` rather than `readFile`. This runs once per `list()`, which re-runs
+ * on every watcher event, and it now walks every installed plugin as well as
+ * two skill folders — a hundred-odd files on this machine. Reading each one
+ * into memory to prove it exists and then discarding it is a cost paid on every
+ * keystroke-triggered save for information `access` already gives.
  */
 async function skillsUnder(root: string): Promise<string[]> {
   let entries;
@@ -61,11 +78,11 @@ async function skillsUnder(root: string): Promise<string[]> {
   const names: string[] = [];
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!(await isSkillFolder(root, entry))) continue;
 
     try {
       // The literal, as `read.ts`, `index.ts` and `plugin.ts` all spell it.
-      await readFile(join(root, entry.name, 'SKILL.md'), 'utf8');
+      await access(join(root, entry.name, 'SKILL.md'));
       names.push(entry.name);
     } catch {
       // A directory with no SKILL.md is not a skill — it is somebody's notes,
@@ -86,6 +103,13 @@ async function skillsUnder(root: string): Promise<string[]> {
  * disk at once (this machine has three of `workstream`), and this file is what
  * says which one is actually installed, which is why the versioned directories
  * are not globbed directly.
+ *
+ * A **user**-scoped install wins over the rest rather than the array's first
+ * entry winning. That array is not ordered by relevance: `plugin-dev` on this
+ * machine lists a `project`-scoped install belonging to an unrelated repository
+ * *before* the user-scoped one, and it is the user-scoped root an agent's
+ * process would actually load. Falling back to the first usable entry keeps a
+ * plugin that is only ever project-scoped from disappearing.
  */
 function installPaths(json: string): Map<string, string> {
   const paths = new Map<string, string>();
@@ -104,12 +128,14 @@ function installPaths(json: string): Map<string, string> {
   for (const [key, installs] of Object.entries(plugins)) {
     if (!Array.isArray(installs)) continue;
 
-    const first = installs.find(
-      (install: unknown): install is { installPath: string } =>
+    const usable = installs.filter(
+      (install: unknown): install is { installPath: string; scope?: unknown } =>
         typeof install === 'object' &&
         install !== null &&
         typeof (install as { installPath?: unknown }).installPath === 'string',
     );
+    const first =
+      usable.find((install) => install.scope === 'user') ?? usable[0];
 
     if (first === undefined) continue;
 
@@ -150,15 +176,35 @@ async function pluginSkills(file: string): Promise<string[]> {
   return names;
 }
 
+/**
+ * The names an agent may reference, and the subset The Hive itself owns.
+ *
+ * Two sets rather than one, because `parseAgent` asks two different questions
+ * of them. `all` answers *may this definition name this skill*, and has to be
+ * as wide as the machine. `hive` answers *may an agent take this name*, and
+ * must not be — that rule exists because an agent and a skill The Hive manages
+ * share one namespace, and widening it silently reserved every name in the
+ * user's personal skills folder: with `~/.claude/skills/graphify` present, no
+ * agent could be called `graphify`, refused on account of a folder The Hive
+ * neither manages nor mentions.
+ */
+export interface AvailableSkills {
+  all: string[];
+  hive: string[];
+}
+
 /** Every name, deduplicated and sorted so the set has one representation. */
 export async function readAvailableSkillNames(
   roots: SkillRoots,
-): Promise<string[]> {
+): Promise<AvailableSkills> {
   const [hive, user, plugins] = await Promise.all([
     skillsUnder(roots.hive),
     skillsUnder(roots.user),
     pluginSkills(roots.installedPlugins),
   ]);
 
-  return [...new Set([...hive, ...user, ...plugins])].sort();
+  return {
+    all: [...new Set([...hive, ...user, ...plugins])].sort(),
+    hive: [...hive].sort(),
+  };
 }

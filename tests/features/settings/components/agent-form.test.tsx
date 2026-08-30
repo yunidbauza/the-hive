@@ -654,6 +654,35 @@ describe('AgentForm', () => {
       );
     });
 
+    /*
+      `parseList` does not dedupe and the parser accepts a repeat, so without a
+      guard two identical chips render on one React key and toggling either
+      filters out both — leaving a pair that cannot be removed from the form.
+      `parseTimes` documents this exact trap; `wake.on` was one click away from
+      it.
+    */
+    it('does not add a channel the list already names', async () => {
+      const onChange = setup({
+        source: SOURCE.replace(
+          'on: [ledger]',
+          'on: [ledger, slack.channel:#incorp-dev]',
+        ),
+      });
+
+      await userEvent.click(screen.getByRole('button', { name: '+ channel' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'channel' }),
+        '#incorp-dev{Enter}',
+      );
+
+      expect(patched(onChange, 'wake.on')).toBe(
+        '[ledger, slack.channel:#incorp-dev]',
+      );
+      expect(
+        screen.getAllByRole('button', { name: 'slack.channel:#incorp-dev' }),
+      ).toHaveLength(1);
+    });
+
     it('refuses a channel name that is not one', async () => {
       const onChange = setup();
 

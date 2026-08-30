@@ -76,7 +76,14 @@ export const watchFolder: WatchFactory = (root, onEvent) => {
 
 export interface RegistryOptions {
   root: string;
-  skillNames: () => Promise<readonly string[]>;
+  /**
+   * The skill names an agent may reference, and the subset The Hive owns.
+   *
+   * A function rather than a snapshot: skills can be written while the app
+   * runs, and an agent naming one added a minute ago must validate against the
+   * folders as they are now.
+   */
+  skillNames: () => Promise<{ all: readonly string[]; hive: readonly string[] }>;
   watch?: WatchFactory;
 }
 
@@ -159,10 +166,26 @@ export function createAgentRegistry({
     watcher = makeWatcher(root, announce);
   };
 
-  const parse = async (folder: string, source: string) =>
+  /*
+    Resolved once per call and passed down, never fetched per folder.
+
+    `skillNames()` now walks `~/.hive/skills`, `~/.claude/skills` and every
+    installed plugin. `list()` calls `parse` once per agent folder and re-runs
+    on every debounced watcher event — and a single save fires the watcher
+    twice, for the temp write and the rename. Fetching inside `parse` therefore
+    multiplied a whole-machine scan by the size of the fleet, on every
+    keystroke-triggered save. It was invisible before this widening only
+    because the one folder it scanned is usually empty.
+  */
+  const parse = (
+    folder: string,
+    source: string,
+    skills: { all: readonly string[]; hive: readonly string[] },
+  ) =>
     parseAgent(source, {
       folder,
-      skillNames: await skillNames(),
+      skillNames: skills.all,
+      hiveSkillNames: skills.hive,
       integrations: KNOWN_AGENT_MCP,
     });
 
@@ -184,7 +207,7 @@ export function createAgentRegistry({
       return { ok: false, problems: [{ field: 'name', reason: 'Bad name.' }] };
     }
 
-    const result = await parse(name, source);
+    const result = parse(name, source, await skillNames());
 
     if ('problems' in result) return { ok: false, problems: result.problems };
 
@@ -250,6 +273,8 @@ export function createAgentRegistry({
       }
 
       const agents: AgentSummary[] = [];
+      // One whole-machine scan for the whole listing, not one per agent.
+      const skills = await skillNames();
 
       for (const folder of folders) {
         /*
@@ -280,7 +305,7 @@ export function createAgentRegistry({
         // A folder with no AGENT.md is not an agent — it is somebody's notes.
         if (source === null) continue;
 
-        const result = await parse(folder, source);
+        const result = parse(folder, source, skills);
 
         if ('def' in result) {
           const { def } = result;

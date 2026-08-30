@@ -28,39 +28,66 @@ export interface TurnCount {
   turns: number;
   /** Bytes after the last `\n`, carried into the next chunk. */
   partial: string;
+  /**
+   * The `message.id` of the most recent turn counted.
+   *
+   * One model turn can arrive as **several** `assistant` events — a `thinking`
+   * block and a `tool_use` block are two events sharing one `message.id`.
+   * Captured from a real run: four `assistant` events, three distinct ids, and
+   * the binary's own `result.num_turns` of 3. Counting events would therefore
+   * have cut a tool-using agent off at three quarters of its stated limit, and
+   * the more tools it used the worse the error — silently killing healthy runs,
+   * which is a worse failure than the undercount the partial-line handling
+   * guards against.
+   *
+   * Only the *last* id is kept rather than a set: the events of one message
+   * arrive together, so a duplicate is always adjacent, and a set would grow
+   * without bound across a long run for no extra correctness.
+   */
+  lastId: string | null;
 }
 
-export const NO_TURNS: TurnCount = { turns: 0, partial: '' };
+export const NO_TURNS: TurnCount = { turns: 0, partial: '', lastId: null };
 
 /**
- * Is this line one assistant turn?
+ * The `message.id` of an assistant event, or `null` when the line is not one.
  *
- * A turn is one `{"type":"assistant"}` event — the model speaking, whether or
- * not it calls a tool. `system`, `user` and the trailing `result` are not turns:
- * counting `user` would double every step, since each tool result comes back as
- * one.
+ * A turn is the model speaking, whether or not it calls a tool. `system`,
+ * `user`, `rate_limit_event` and the trailing `result` are not turns: counting
+ * `user` would double every step, since each tool result comes back as one.
  *
- * Anything that is not parseable JSON with a `type` is *not a turn*, silently.
- * The stream carries a final `result` line and can carry warnings on the same
- * pipe, and a run must not be cut short because something unexpected shared the
- * channel — nor may a malformed line throw, since this runs inside a stdout
- * handler where a throw would take the run's log down with it.
+ * Anything that is not parseable JSON naming an assistant message is `null`,
+ * silently. The stream carries a final `result` line, hook events and warnings
+ * on the same pipe, and a run must not be cut short because something
+ * unexpected shared the channel — nor may a malformed line throw, since this
+ * runs inside a stdout handler where a throw would take the run's log with it.
+ *
+ * An assistant event with **no** id still counts, as the sentinel below: it is
+ * a turn that cannot be deduplicated, and dropping it would undercount.
  */
-function isAssistantTurn(line: string): boolean {
+const NO_ID = '';
+
+function assistantMessageId(line: string): string | null {
   const text = line.trim();
 
-  if (text === '') return false;
+  if (text === '') return null;
 
   try {
     const event: unknown = JSON.parse(text);
 
-    return (
-      typeof event === 'object' &&
-      event !== null &&
-      (event as { type?: unknown }).type === 'assistant'
-    );
+    if (
+      typeof event !== 'object' ||
+      event === null ||
+      (event as { type?: unknown }).type !== 'assistant'
+    ) {
+      return null;
+    }
+
+    const id = (event as { message?: { id?: unknown } }).message?.id;
+
+    return typeof id === 'string' && id !== '' ? id : NO_ID;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -86,10 +113,20 @@ export function countAssistantTurns(
   // when the chunk ended cleanly, and an unfinished event when it did not.
   const partial = lines.pop() ?? '';
   let turns = state.turns;
+  let lastId = state.lastId;
 
   for (const line of lines) {
-    if (isAssistantTurn(line)) turns += 1;
+    const id = assistantMessageId(line);
+
+    if (id === null) continue;
+
+    // A second event of the message already counted is the same turn. An
+    // unidentified event (`NO_ID`) always counts — see `assistantMessageId`.
+    if (id !== NO_ID && id === lastId) continue;
+
+    turns += 1;
+    lastId = id;
   }
 
-  return { turns, partial };
+  return { turns, partial, lastId };
 }

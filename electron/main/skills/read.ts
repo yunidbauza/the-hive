@@ -89,8 +89,16 @@ function frontmatter(body: string): Record<string, string> | null {
   return null;
 }
 
-/** Is this entry a directory, following one level of symlink? */
-async function isSkillFolder(root: string, entry: Dirent): Promise<boolean> {
+/**
+ * Is this entry a directory, following one level of symlink?
+ *
+ * Exported for `available.ts`, which asks the same question of three roots and
+ * must answer it the same way. A second copy would be a second chance to
+ * reintroduce the bug documented below — and `~/.claude/skills` is *more*
+ * likely to be symlinked than `~/.hive/skills`, since dotfile repos are where
+ * personal skills usually live.
+ */
+export async function isSkillFolder(root: string, entry: Dirent): Promise<boolean> {
   if (entry.isDirectory()) return true;
   // Not a link either — a loose `README.md` beside the folders.
   if (!entry.isSymbolicLink()) return false;

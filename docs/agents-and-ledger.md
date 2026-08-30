@@ -554,6 +554,26 @@ settings sources entirely — and would therefore cut off exactly the external
 skills the widening exists to allow. That trade is recorded here rather than
 made silently; the waker (HIVE-115) is where it would be taken.
 
+Two details worth knowing before changing `available.ts`:
+
+- **`isSkillFolder`, not `entry.isDirectory()`.** `readdir` reports `lstat`
+  semantics, so a symlinked skill folder answers `false` — and a personal skills
+  folder is *more* likely to be symlinked than the Hive's, because that is how
+  dotfile repos carry skills. `read.ts` fixed this once and the helper is shared
+  rather than copied, so it cannot be fixed twice and broken a third time.
+- **A user-scoped install beats the array order.** `installed_plugins.json` lists
+  installs per plugin unordered by relevance; a `project`-scoped entry for an
+  unrelated repository can sit first, and the user-scoped root is the one an
+  agent's process would load.
+
+**Left open, for HIVE-115:** the app's own generated plugin (`<userData>/hive/plugin`,
+carrying the `done` skill as `hive:done`) is *not* among the three roots, so a
+definition naming it is refused. Whether it should be depends on a decision this
+story does not own — whether an agent is handed that plugin directory at all, and
+whether `/done`, which marks a *terminal session* finished, means anything to a
+background agent. Guessing either way here would bake an answer into the
+validator before the waker has one.
+
 ### Two limits the CLI can enforce, and one it cannot
 
 Verified against `claude` 2.1.251 rather than assumed, because the epic's waker

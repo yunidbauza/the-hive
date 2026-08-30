@@ -36,7 +36,7 @@ const named = (name: string) => GOOD.replace('slack-watcher', name);
 const registry = () => {
   const made = createAgentRegistry({
     root,
-    skillNames: async () => ['jira-writer'],
+    skillNames: async () => ({ all: ['jira-writer'], hive: ['jira-writer'] }),
   });
 
   open.push(made);
@@ -305,7 +305,7 @@ describe('the watcher', () => {
     const closed = vi.fn();
     const reg = createAgentRegistry({
       root,
-      skillNames: async () => [],
+      skillNames: async () => ({ all: [], hive: [] }),
       watch: (_root, onEvent) => {
         fire = onEvent;
 
@@ -381,7 +381,7 @@ describe('the watcher', () => {
     const made: Array<{ close: () => void }> = [];
     const reg = createAgentRegistry({
       root,
-      skillNames: async () => [],
+      skillNames: async () => ({ all: [], hive: [] }),
       watch: () => {
         const handle = { close: vi.fn() };
 
@@ -414,7 +414,7 @@ describe('the watcher', () => {
   it('tolerates a platform that cannot watch', async () => {
     const reg = createAgentRegistry({
       root,
-      skillNames: async () => [],
+      skillNames: async () => ({ all: [], hive: [] }),
       watch: () => null,
     });
 

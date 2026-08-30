@@ -350,7 +350,7 @@ function Adder({
     a page that steals the caret on load. This input does not exist until the
     user clicks `+ …`, so moving focus into it *is* the request being honoured;
     landing the click on a button and leaving the caret behind would be the
-    surprising behaviour. An effect with no dependencies fires exactly once,
+    surprising behaviour. Keying the effect to `open` fires it once per opening,
     which an inline callback ref would not: this component re-renders on every
     keystroke, and a ref that refocused on each would fight anyone tabbing away.
   */
@@ -581,14 +581,24 @@ export function AgentForm({
    * here as `[]`, which is a value the parser accepts and which means the same
    * thing as absence in both fields that use this. Writing `[]` would leave a
    * line saying nothing; deleting it says nothing more quietly.
+   *
+   * **Deduplicated here rather than at each caller.** `parseTimes` dedupes and
+   * its docstring records why it must: the form draws one chip per value, so a
+   * repeat renders two buttons on one React key and toggling either filters out
+   * both — leaving a pair that cannot be removed from the form. `parseList`,
+   * which backs `wake.on` and `mcp`, does *not* dedupe and the parser accepts a
+   * repeat, so the same trap was one `+ channel` click away, and reachable by
+   * hand-editing the file besides.
    */
   const setList = (path: string, values: readonly string[]) => {
-    if (values.length === 0) {
+    const unique = [...new Set(values)];
+
+    if (unique.length === 0) {
       onChange(clear(path));
       return;
     }
 
-    set(path, `[${values.join(', ')}]`);
+    set(path, `[${unique.join(', ')}]`);
   };
 
   const wakeOn = parseList(at('wake.on')) ?? [];

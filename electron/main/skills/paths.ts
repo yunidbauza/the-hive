@@ -48,9 +48,14 @@ export const PLUGIN_DIR = join('hive', 'plugin');
  * them.
  *
  * `CLAUDE_CONFIG_DIR` is Claude Code's own override and is honoured for the
- * reason `configPath()` honours `HIVE_CONFIG_PATH`: without it every e2e run
- * would read the developer's real `~/.claude`, and a spec's expectations would
- * depend on which plugins happened to be installed that week.
+ * reason `configPath()` honours `HIVE_CONFIG_PATH`: a spec that does not set it
+ * reads the developer's real `~/.claude`, and its expectations then depend on
+ * which plugins happened to be installed that week.
+ *
+ * `agents-settings.spec.ts` sets it per launch rather than the shared fixture
+ * doing so for everyone: other specs in that project spawn a **real** `claude`,
+ * and relocating that binary's own configuration directory is not something to
+ * do to them in passing.
  */
 export const claudeRoot = (): string =>
   process.env['CLAUDE_CONFIG_DIR'] ?? join(homedir(), '.claude');
