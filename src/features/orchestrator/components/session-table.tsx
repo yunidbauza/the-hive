@@ -2,11 +2,13 @@ import { useEffect, useRef } from 'react';
 
 import { useLastUsed } from '@/hooks/use-relative-time';
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
+import { describeWake } from '@/lib/agents';
 import { cn } from '@/lib/utils';
 import {
   branchLabel,
   endedReason,
   entityLabel,
+  isAgent,
   isEnded,
   isSession,
   recencyOf,
@@ -18,8 +20,12 @@ import { effectiveSelId } from '@features/orchestrator/utils/selection';
 import { prStateText } from '@features/shared/pr-presentation';
 import {
   useActiveSessions,
+  useAgentAskRef,
+  useAgentCounts,
+  useAgentPr,
   useEndedSessions,
   useEntity,
+  useFleetAgents,
   useHasResumable,
   useNavOrder,
   useOpenEntity,
@@ -226,6 +232,21 @@ const COL = {
   lastUsed: 'w-[80px] shrink-0 whitespace-nowrap',
   pr: 'w-[34px] shrink-0',
   action: 'w-[52px] shrink-0',
+  /**
+   * `PROJECT` and `BRANCH` as one cell, for an agent's wake (HIVE-117).
+   *
+   * An agent has neither of those things — it is not checked out anywhere — so
+   * the two cells are spent on the fact that answers the same question for it:
+   * when does this run without me. `every 5m · slack.mention` does not fit in
+   * `PROJECT`'s 64px and would be an ellipsis in it.
+   *
+   * The basis is the two it replaces plus the 10px gap between them
+   * (`gap-2.5`), and the grow factor is their sum, so every column to the right
+   * of it — `LAST USED`, `PR`, the action slot — sits exactly where the header
+   * puts it. That is the only property this cell has to preserve, and the one
+   * a hand-picked width would quietly break at some window size nobody tested.
+   */
+  wake: 'flex-[3_1_150px] truncate',
 } as const;
 
 /**
@@ -262,6 +283,16 @@ export function SessionTable() {
    */
   const active = useActiveSessions();
   const ended = useEndedSessions();
+  const agents = useFleetAgents();
+  const agentCounts = useAgentCounts();
+  /*
+    Agents are deliberately **not** part of `empty` (HIVE-117).
+
+    The empty state says "No sessions running — start one with New session", and
+    a fleet of nothing but agents is exactly the state that sentence is for: the
+    tenants are listed below it, and the advice is still the right advice. Folding
+    them in would replace it with a bare table and no next step.
+  */
   const empty = active.length === 0 && ended.length === 0;
   /**
    * Drawn unconditionally, though only rendered when the table is empty: a hook
@@ -414,6 +445,39 @@ export function SessionTable() {
         quit spent the next launch filed under a heading called PREVIOUS RUN,
         below rows that had ended days earlier.
       */}
+      {/*
+        The tenants, between the fleet and its dead (HIVE-117).
+
+        Between rather than below, because the ordering of this table is by how
+        likely a row is to want something from you, and an agent that is
+        `asking` wants exactly as much as a session that is `waiting`. Below
+        `ENDED` would file the live half of the app under the finished half.
+
+        The heading carries a count where `ACTIVE` and `ENDED` do not, and that
+        asymmetry is deliberate rather than an oversight: those two are lists
+        the user is already reading row by row, while the agents are a
+        *standing* population — mostly asleep, mostly not worth reading — and
+        the only number that earns attention is how many of them are waiting.
+      */}
+      {agents.length > 0 ? (
+        <>
+          <div className="flex items-center gap-2 px-2 pt-3.5 pb-1.5">
+            <span className="shrink-0 text-[11px] tracking-[0.06em] text-term-head">
+              AGENTS · {agentCounts.agents}
+            </span>
+            {agentCounts.asking > 0 ? (
+              <span className="shrink-0 text-[11px] tracking-[0.06em] text-amber">
+                {agentCounts.asking} asking
+              </span>
+            ) : null}
+            <span className="flex-1 border-t border-border" />
+          </div>
+          {agents.map((id) => (
+            <AgentTableRow key={id} id={id} reserveAction={reserveAction} />
+          ))}
+        </>
+      ) : null}
+
       {ended.length > 0 ? (
         <>
           <div className="flex items-center gap-2 px-2 pt-3.5 pb-1.5">
@@ -747,6 +811,193 @@ function SessionTableRow({
         ) : null}
       </span>
     ) : null}
+    </div>
+  );
+}
+
+/**
+ * One agent (HIVE-117).
+ *
+ * A second row component rather than a branch inside `SessionTableRow`, and the
+ * split is not stylistic: that component's whole body is about a session's
+ * pty — whether it ended, why it ended, whether it can be resumed, which
+ * terminal a click reaches. An agent has none of those. Sharing the code would
+ * mean five `isAgent` guards through a hundred-line render, each of them a place
+ * for a session's rule to leak onto a row that is not one.
+ *
+ * What the two must share is the **columns**, and they do: `COL` is the single
+ * definition the header and both rows read.
+ */
+function AgentTableRow({
+  id,
+  reserveAction,
+}: {
+  id: string;
+  reserveAction: boolean;
+}) {
+  const entity = useEntity(id);
+  const navOrder = useNavOrder();
+  const selId = useSelId();
+  const setSelId = useSetSelId();
+  const openEntity = useOpenEntity();
+  const activeTab = useActiveTab();
+  const askRef = useAgentAskRef(id);
+  const pr = useAgentPr(id);
+  /*
+    Hooks before the guard, for `SessionTableRow`'s reason: a hook cannot sit
+    behind an early return. `lastRunAt` is absent until the first wake, and `0`
+    lands on the same "nobody knows" the cell already renders for a session that
+    has never been used.
+  */
+  const lastRunAt =
+    entity !== undefined && isAgent(entity) ? (entity.lastRunAt ?? 0) : 0;
+  const lastUsed = useLastUsed(lastRunAt);
+  const selected = id === effectiveSelId(selId, navOrder);
+
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selected) return;
+    row.current?.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
+
+  if (!entity || !isAgent(entity)) return null;
+
+  /*
+    The status word carries the open ask's handle, which is the one thing on
+    this row a user might have to *type* — `answer a71 yes`. It rides in the
+    word rather than in a column of its own because it exists only while the
+    agent is `asking`, and a column empty on four rows in five is a column this
+    table cannot afford.
+  */
+  const word =
+    askRef === undefined
+      ? statusLabel(entity.status)
+      : `${statusLabel(entity.status)} (${askRef})`;
+
+  return (
+    <div
+      ref={row}
+      data-testid="agent-row"
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded px-2',
+        selected ? 'bg-term-row-active' : 'hover:bg-term-row-hover',
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setSelId(id);
+          openEntity(id);
+        }}
+        aria-current={activeTab === id ? 'true' : undefined}
+        className="flex min-w-0 flex-1 items-center gap-2.5 py-[3px] text-left"
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            COL.caret,
+            'text-green',
+            selected ? 'visible' : 'invisible',
+          )}
+        >
+          ▸
+        </span>
+        {/*
+          `data-col` is a handle, not a style hook — the convention the header's
+          `status`, `last-used` and `pr` cells already follow. Here it is what
+          lets a test read the name out of a row whose cells run together in
+          `textContent`.
+        */}
+        <span className={cn(COL.session, 'text-ink')} data-col="session" title={id}>
+          {id}
+        </span>
+        {/*
+          The word alone, coloured — no dot, unlike the rail.
+
+          Deliberate, and the reason is the column rather than the vocabulary: a
+          9px dot and its gap would push the status word ~14px right on agent
+          rows only, so `STATUS` would stop lining up between this group and the
+          two around it. In a monospace table that misalignment is the first
+          thing the eye finds. The colour comes from the same `STATUS_TEXT` the
+          dot is filled from, so the two surfaces still agree about what the
+          state *means*; only the glyph is spent differently.
+        */}
+        <span
+          className={cn(COL.status, statusText(entity.status))}
+          data-col="status"
+        >
+          {word}
+        </span>
+        {/*
+          `PROJECT` and `BRANCH`, spent on the wake — see `COL.wake`. `title`
+          for the reason every truncating cell carries one: `describeWake` has
+          no upper bound, since a calendar agent can name five weekdays.
+        */}
+        <span
+          className={cn(COL.wake, 'text-subtle')}
+          data-col="wake"
+          title={describeWake(entity.wake)}
+        >
+          {describeWake(entity.wake)}
+        </span>
+        <span
+          className={cn(COL.lastUsed, 'text-subtle')}
+          data-col="last-used"
+          title={
+            lastRunAt > 0 ? new Date(lastRunAt).toLocaleString() : undefined
+          }
+        >
+          {lastRunAt > 0 ? (
+            lastUsed
+          ) : (
+            <span title="has never run">
+              —<span className="sr-only"> has never run</span>
+            </span>
+          )}
+        </span>
+      </button>
+      {/*
+        Outside the button for `SessionTableRow`'s reason: `#123` is an anchor,
+        and an anchor nested in a button is invalid markup a browser resolves by
+        dropping one of the two.
+
+        No `prStateText` here, unlike a session's. Those colours assert something
+        current about GitHub — green is "alive and not yet landed" — and this
+        number came out of a `done` the agent wrote down, which the PR sweep has
+        never been asked about. `text-subtle` is what a session's *remembered*
+        PR gets, for the identical reason: this cell knows a number and nothing
+        else about it.
+      */}
+      <span className={COL.pr} data-col="pr">
+        {pr === undefined ? (
+          <span className="text-subtle" title="no pull request">
+            —<span className="sr-only"> no pull request</span>
+          </span>
+        ) : (
+          <a
+            href={`https://github.com/search?q=${String(pr)}&type=pullrequests`}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              'text-subtle underline underline-offset-2',
+              'hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+            )}
+            title={`#${String(pr)} · last reported by ${id} — open on GitHub`}
+            aria-label={`#${String(pr)}, last reported by ${id} — open on GitHub`}
+          >
+            #{pr}
+          </a>
+        )}
+      </span>
+      {/*
+        The Resume slot, held open and empty. An agent is never resumed — it has
+        no conversation of the user's to pick back up — but the column has to
+        keep its width or every row above and below it stops lining up with this
+        one.
+      */}
+      {reserveAction ? (
+        <span className={COL.action} data-col="action" aria-hidden="true" />
+      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Session } from '@/types/entity';
+import type { AgentSummary } from '@shared/agent-contract';
 
 import {
   emptySnapshot,
@@ -16,8 +17,11 @@ import {
 import {
   useActiveEntity,
   useActiveSessions,
+  useAgentCounts,
   useAgentOrder,
+  useAgentPr,
   useCounts,
+  useFleetAgents,
   useEntity,
   useHasResumable,
   useHiveStore,
@@ -1525,6 +1529,226 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => useHasResumable());
 
       expect(result.current).toBe(false);
+    });
+  });
+
+  /**
+   * The fleet table's AGENTS group (HIVE-117).
+   *
+   * A second ordering beside `useAgentsByGroup`, because that one *groups* into
+   * three headings the eye scans between and this one has a single list — so the
+   * order has to carry the whole priority by itself.
+   */
+  describe('useFleetAgents', () => {
+    const agent = (over: Partial<AgentSummary> = {}): AgentSummary => ({
+      name: 'slack-watcher',
+      description: 'Watches.',
+      icon: 'Robot',
+      status: 'sleeping',
+      wake: { on: [] },
+      rotateAfter: 50,
+      runs: [],
+      ...over,
+    });
+
+    it('ranks asking, working, failed, sleeping, then paused', () => {
+      act(() => {
+        useHiveStore.getState().hydrateAgents([
+          agent({ name: 'e-paused', status: 'paused' }),
+          agent({ name: 'd-sleeping', status: 'sleeping' }),
+          agent({ name: 'c-failed', status: 'failed' }),
+          agent({ name: 'b-working', status: 'working' }),
+          agent({ name: 'a-asking', status: 'asking' }),
+        ]);
+      });
+
+      const { result } = renderHook(() => useFleetAgents());
+
+      /*
+        `failed` sits above `sleeping` and below `working`: it is not doing
+        anything, but it is the one resting state that wants a person to look.
+      */
+      expect(result.current).toEqual([
+        'a-asking',
+        'b-working',
+        'c-failed',
+        'd-sleeping',
+        'e-paused',
+      ]);
+    });
+
+    it('breaks a tie within sleeping by the wake that comes soonest', () => {
+      const now = Date.now();
+      act(() => {
+        useHiveStore.getState().hydrateAgents([
+          agent({ name: 'later', nextRunAt: now + 600_000 }),
+          agent({ name: 'sooner', nextRunAt: now + 60_000 }),
+        ]);
+      });
+
+      const { result } = renderHook(() => useFleetAgents());
+
+      expect(result.current).toEqual(['sooner', 'later']);
+    });
+
+    /*
+      A manual agent has no `nextRunAt`. It reaches the comparator as `0`, which
+      is earlier than every real time — so without the guard the one agent that
+      will never wake on its own sorts ahead of the one about to.
+    */
+    it('puts an agent with no scheduled wake last among the sleeping', () => {
+      act(() => {
+        useHiveStore.getState().hydrateAgents([
+          agent({ name: 'manual' }),
+          agent({ name: 'timed', nextRunAt: Date.now() + 60_000 }),
+        ]);
+      });
+
+      const { result } = renderHook(() => useFleetAgents());
+
+      expect(result.current).toEqual(['timed', 'manual']);
+    });
+
+    it('is stable by name when nothing else separates two rows', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateAgents([agent({ name: 'zulu' }), agent({ name: 'alpha' })]);
+      });
+
+      const { result } = renderHook(() => useFleetAgents());
+
+      expect(result.current).toEqual(['alpha', 'zulu']);
+    });
+
+    it('ignores a session sharing the map', () => {
+      act(() => {
+        useHiveStore.getState().hydrateAgents([agent()]);
+      });
+
+      const { result } = renderHook(() => useFleetAgents());
+
+      expect(result.current).toEqual(['slack-watcher']);
+    });
+  });
+
+  describe('useAgentCounts', () => {
+    const agent = (over: Partial<AgentSummary> = {}): AgentSummary => ({
+      name: 'slack-watcher',
+      description: 'Watches.',
+      icon: 'Robot',
+      status: 'sleeping',
+      wake: { on: [] },
+      rotateAfter: 50,
+      runs: [],
+      ...over,
+    });
+
+    it('counts the agents, and the ones waiting on you', () => {
+      act(() => {
+        useHiveStore.getState().hydrateAgents([
+          agent({ name: 'a', status: 'asking' }),
+          agent({ name: 'b', status: 'asking' }),
+          agent({ name: 'c', status: 'working' }),
+        ]);
+      });
+
+      const { result } = renderHook(() => useAgentCounts());
+
+      expect(result.current).toEqual({ agents: 3, asking: 2 });
+    });
+
+    /*
+      A separate selector rather than widening `useCounts()`, whose
+      `Record<SessionStatus, number>` is what makes a sixth *session* status a
+      compile error — the property HIVE-83 records paying for.
+    */
+    it('leaves the session counts alone', () => {
+      act(() => {
+        useHiveStore.getState().hydrateAgents([agent({ status: 'asking' })]);
+      });
+
+      const { result } = renderHook(() => useCounts());
+
+      expect(result.current).not.toHaveProperty('asking');
+    });
+  });
+
+  /**
+   * An agent's pull request comes from the **ledger**, not from a run summary:
+   * a `RunSummary` records what a wake cost and how it ended, never what it
+   * produced. A `done` entry's `meta.pr` is what the agent wrote down.
+   */
+  describe('useAgentPr', () => {
+    const done = (over: Record<string, unknown>) => ({
+      id: '20260830-100000-0001',
+      ts: 1,
+      from: 'slack-watcher',
+      kind: 'done' as const,
+      body: 'finished',
+      ...over,
+    });
+
+    it('answers the most recent done that named one', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateLedger([
+            done({ id: '20260830-100000-0001', meta: { pr: 141 } }),
+            done({ id: '20260830-110000-0001', meta: { pr: 152 } }),
+          ]);
+      });
+
+      const { result } = renderHook(() => useAgentPr('slack-watcher'));
+
+      expect(result.current).toBe(152);
+    });
+
+    /*
+      `meta` is whatever the agent handed `ledger_post`, so `#12` and `"12"` are
+      both things a model will write and neither should reach the table as NaN.
+    */
+    it.each([
+      [152, 152],
+      ['152', 152],
+      ['#152', 152],
+      ['not-a-pr', undefined],
+      [0, undefined],
+      [-4, undefined],
+      [1.5, undefined],
+    ])('reads %s as %s', (written, expected) => {
+      act(() => {
+        useHiveStore.getState().hydrateLedger([done({ meta: { pr: written } })]);
+      });
+
+      const { result } = renderHook(() => useAgentPr('slack-watcher'));
+
+      expect(result.current).toBe(expected);
+    });
+
+    it('ignores another party’s done, and a done with no pr', () => {
+      act(() => {
+        useHiveStore.getState().hydrateLedger([
+          done({ id: '20260830-100000-0001', from: 'sess-01', meta: { pr: 141 } }),
+          done({ id: '20260830-110000-0001', meta: { ticket: 'HIVE-9' } }),
+        ]);
+      });
+
+      const { result } = renderHook(() => useAgentPr('slack-watcher'));
+
+      expect(result.current).toBeUndefined();
+    });
+
+    it('ignores an ask that happens to carry one', () => {
+      act(() => {
+        useHiveStore
+          .getState()
+          .hydrateLedger([done({ kind: 'ask', meta: { pr: 141 } })]);
+      });
+
+      const { result } = renderHook(() => useAgentPr('slack-watcher'));
+
+      expect(result.current).toBeUndefined();
     });
   });
 });

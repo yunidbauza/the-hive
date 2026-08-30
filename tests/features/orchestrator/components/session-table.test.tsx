@@ -3,13 +3,25 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/types/entity';
+import type { AgentSummary } from '@shared/agent-contract';
 
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
-const rows = () => screen.getAllByRole('button');
+/**
+ * The **session** rows, one entry per row.
+ *
+ * Scoped to `session-row` since HIVE-117: the table grew a third group whose
+ * rows are agents, and `getAllByRole('button')` collected those too — so every
+ * count and every `[0]` in this file silently started meaning something else.
+ * Agents have their own helper in their own block.
+ */
+const rows = () =>
+  screen
+    .getAllByTestId('session-row')
+    .map((shell) => within(shell).getAllByRole('button')[0] as HTMLElement);
 
 /**
  * The whole row, not just the button inside it.
@@ -607,11 +619,18 @@ describe('SessionTable', () => {
 
         The count also says the slot is on rows that will never draw a button:
         `restore()` adds one resumable row to a demo fleet of ten that are not,
-        so exactly one Resume exists and eleven rows reserve room for it. A slot
-        drawn per-*control* rather than per-*table* would leave those ten
-        disagreeing with the eleventh about where `PR` starts.
+        so exactly one Resume exists and every other row reserves room for it. A
+        slot drawn per-*control* rather than per-*table* would leave those rows
+        disagreeing with that one about where `PR` starts.
+
+        Agent rows are counted too (HIVE-117). An agent is never resumable — it
+        has no conversation of the user's to pick back up — which makes it the
+        strongest case for the rule: the slot is held open by a row that can
+        never fill it, because the alternative is a column that moves.
       */
-      const rows = screen.getAllByTestId('session-row').length;
+      const rows =
+        screen.getAllByTestId('session-row').length +
+        screen.queryAllByTestId('agent-row').length;
       expect(document.querySelectorAll('[data-col="action"]')).toHaveLength(
         rows + 1,
       );
@@ -775,6 +794,263 @@ describe('SessionTable', () => {
 
       expect(lastUsedOf('webhooks')).toHaveTextContent('—');
       expect(lastUsedOf('webhooks')).not.toHaveTextContent('ago');
+    });
+  });
+
+  /**
+   * The AGENTS group (HIVE-117).
+   *
+   * The third group in the table, and the first whose rows are not sessions.
+   * What it must get right is that the columns are the *same* columns — a
+   * reader scans down `STATUS` across all three groups — while the two a
+   * checked-out session spends on `PROJECT` and `BRANCH` are spent here on the
+   * one fact that answers the same question for an agent.
+   */
+  describe('the agents group', () => {
+    const agent = (over: Partial<AgentSummary> = {}): AgentSummary => ({
+      name: 'slack-watcher',
+      description: 'Watches the channel.',
+      icon: 'Robot',
+      status: 'sleeping',
+      wake: { on: ['slack.mention'], everyMs: 300_000 },
+      rotateAfter: 50,
+      runs: [],
+      ...over,
+    });
+
+    const agentRows = () =>
+      screen
+        .queryAllByTestId('agent-row')
+        .map((row) => row.textContent ?? '');
+
+    /*
+      The names alone, in the order the group draws them. Read from the SESSION
+      cell rather than sliced out of `textContent`: the cells run together
+      there, so `c-asking` and its status arrive as `c-askingasking`.
+    */
+    const agentNames = () =>
+      screen
+        .queryAllByTestId('agent-row')
+        .map(
+          (row) =>
+            row.querySelector('[data-col="session"]')?.textContent ?? '',
+        );
+
+    beforeEach(() => {
+      useHiveStore.getState().reset();
+      seedDemoFleet();
+    });
+
+    it('lists the agents under their own heading, with a count', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([agent(), agent({ name: 'pr-reviewer' })]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByText(/AGENTS · 2/)).toBeInTheDocument();
+      expect(agentRows()).toHaveLength(2);
+    });
+
+    it('counts the ones waiting on you, and only when there are any', () => {
+      useHiveStore.getState().hydrateAgents([agent()]);
+      const { unmount } = render(<SessionTable />);
+
+      expect(screen.queryByText(/asking/)).not.toBeInTheDocument();
+      unmount();
+
+      useHiveStore.getState().hydrateAgents([agent({ status: 'asking' })]);
+      render(<SessionTable />);
+
+      expect(screen.getByText('1 asking')).toBeInTheDocument();
+    });
+
+    /**
+     * The order carries the whole priority, because this group has one heading
+     * where the rail has three: whoever is waiting on you first, then whatever
+     * is running, then what wakes soonest, then what will not wake at all.
+     */
+    it('sorts asking, working, soonest wake, then paused', () => {
+      const soon = Date.now() + 60_000;
+      const later = Date.now() + 600_000;
+      useHiveStore.getState().hydrateAgents([
+        agent({ name: 'a-paused', status: 'paused' }),
+        agent({ name: 'b-later', status: 'sleeping', nextRunAt: later }),
+        agent({ name: 'c-asking', status: 'asking' }),
+        agent({ name: 'd-soon', status: 'sleeping', nextRunAt: soon }),
+        agent({ name: 'e-working', status: 'working' }),
+      ]);
+
+      render(<SessionTable />);
+
+      expect(agentNames()).toEqual([
+        'c-asking',
+        'e-working',
+        'd-soon',
+        'b-later',
+        'a-paused',
+      ]);
+    });
+
+    /*
+      A manual agent has no `nextRunAt`, which arrives as `0` — and would sort
+      to the very front of the sleeping run if it were compared as a time.
+    */
+    it('files a manual agent behind one that is actually due', () => {
+      useHiveStore.getState().hydrateAgents([
+        agent({ name: 'manual-one', wake: { on: [] } }),
+        agent({ name: 'timed-one', nextRunAt: Date.now() + 60_000 }),
+      ]);
+
+      render(<SessionTable />);
+
+      expect(agentNames()).toEqual(['timed-one', 'manual-one']);
+    });
+
+    it('spends PROJECT and BRANCH on the wake description', () => {
+      useHiveStore.getState().hydrateAgents([agent()]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('agent-row')).toHaveTextContent(
+        'every 5m · slack.mention',
+      );
+    });
+
+    it('says manual for an agent nothing will wake', () => {
+      useHiveStore.getState().hydrateAgents([agent({ wake: { on: [] } })]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('agent-row')).toHaveTextContent('manual');
+    });
+
+    it('names the open ask beside the status word', () => {
+      useHiveStore.getState().hydrateAgents([agent({ status: 'asking' })]);
+      useHiveStore.getState().hydrateLedger([
+        {
+          id: '20260830-120000-0001',
+          ts: Date.now(),
+          from: 'slack-watcher',
+          kind: 'ask',
+          ref: 'a71',
+          body: 'ship it?',
+        },
+      ]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('agent-row')).toHaveTextContent('asking (a71)');
+    });
+
+    it('ages a row from its last run, and says so when there was none', () => {
+      useHiveStore.getState().hydrateAgents([
+        agent({ name: 'has-run', lastRunAt: Date.now() - 2 * 60 * 60 * 1000 }),
+        agent({ name: 'never-run' }),
+      ]);
+
+      render(<SessionTable />);
+
+      // By name, not by position: the group is sorted, not in hydrate order.
+      const rowFor = (name: string) =>
+        agentRows()[agentNames().indexOf(name)] ?? '';
+
+      expect(rowFor('has-run')).toContain('2 hr ago');
+      expect(rowFor('never-run')).toContain('—');
+      expect(rowFor('never-run')).not.toContain('ago');
+    });
+
+    /**
+     * The PR comes from the **ledger**, not from a run summary: a `RunSummary`
+     * records what a wake cost and how it ended, never what it produced.
+     */
+    it('shows the pull request the agent last reported done', () => {
+      useHiveStore.getState().hydrateAgents([agent()]);
+      useHiveStore.getState().hydrateLedger([
+        {
+          id: '20260830-100000-0001',
+          ts: 1,
+          from: 'slack-watcher',
+          kind: 'done',
+          body: 'opened one',
+          meta: { pr: 141 },
+        },
+        {
+          id: '20260830-110000-0001',
+          ts: 2,
+          from: 'slack-watcher',
+          kind: 'done',
+          body: 'opened another',
+          meta: { pr: 152 },
+        },
+      ]);
+
+      render(<SessionTable />);
+
+      // The most recent wins — the row has space for the current one.
+      const link = screen.getByRole('link', { name: /#152/ });
+      expect(link).toHaveTextContent('#152');
+    });
+
+    it('ignores a done from somebody else, and a meta with no pr', () => {
+      useHiveStore.getState().hydrateAgents([agent()]);
+      useHiveStore.getState().hydrateLedger([
+        {
+          id: '20260830-100000-0001',
+          ts: 1,
+          from: 'sess-01',
+          kind: 'done',
+          body: 'not mine',
+          meta: { pr: 141 },
+        },
+        {
+          id: '20260830-110000-0001',
+          ts: 2,
+          from: 'slack-watcher',
+          kind: 'done',
+          body: 'no pr',
+          meta: { ticket: 'HIVE-9' },
+        },
+      ]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('agent-row')).toHaveTextContent('—');
+      expect(screen.queryByRole('link', { name: /#141/ })).not.toBeInTheDocument();
+    });
+
+    it('opens the agent when its row is clicked', async () => {
+      useHiveStore.getState().hydrateAgents([agent()]);
+      render(<SessionTable />);
+
+      await userEvent.click(
+        within(screen.getByTestId('agent-row')).getByRole('button'),
+      );
+
+      expect(useUiStore.getState().activeTab).toBe('slack-watcher');
+    });
+
+    /*
+      An agent-only fleet is still a fleet with no sessions in it, and the empty
+      state's advice — start one — is still the right advice.
+    */
+    it('keeps the empty state when the only rows are agents', () => {
+      useHiveStore.getState().reset();
+      useHiveStore.getState().hydrateAgents([agent()]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('session-table-empty')).toBeInTheDocument();
+      expect(screen.getByTestId('agent-row')).toBeInTheDocument();
+    });
+
+    it('draws no heading at all when there are no agents', () => {
+      // The demo fleet seeds three of them; this is the case where none exist.
+      useHiveStore.getState().hydrateAgents([]);
+
+      render(<SessionTable />);
+
+      expect(screen.queryByText(/AGENTS/)).not.toBeInTheDocument();
     });
   });
 });

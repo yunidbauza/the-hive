@@ -236,6 +236,28 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *   the agent's own stdout, the one genuinely new fact, and it is the fact
    *   the feature exists to show: a run nobody can read is a run nobody can
    *   trust.
+   *
+   * ## `agents` grows to twelve (HIVE-117)
+   *
+   * `pause` and `resume` are the narrowest verbs in the namespace and the first
+   * that make the machine do *less*. Neither starts a process, stops one, or
+   * reads a file: each takes the same validated `AgentNameRequest` the four
+   * verbs above take and writes a single field — `status` — to `agents.json`,
+   * which main already rewrites on every run.
+   *
+   * Against the question `run` had to answer, the answer here is **strictly
+   * less than before**. `pause` can only subtract: a paused agent refuses every
+   * trigger, including the ones no renderer can reach (HIVE-120's ledger wakes,
+   * HIVE-121's timer). `resume` can only put an agent back into the state it
+   * was in before someone paused it — it cannot create one, change what one is,
+   * or wake one, and a renderer that wants a run still has to call `run` and be
+   * obeyed or refused on `run`'s own terms.
+   *
+   * The one widening worth naming is availability: a page that can call `pause`
+   * can stop an agent the user is relying on. That is the same reach `kill`
+   * already has, on a verb that recovers with one `resume` where `kill` costs a
+   * turn — and, unlike `kill`, it is plainly visible, because the row reads
+   * `paused` until somebody changes it.
    */
   expect(surface.top).toEqual([
     'agents',
@@ -268,9 +290,11 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'onChanged',
     'onLines',
     'onStatus',
+    'pause',
     'read',
     'remove',
     'rename',
+    'resume',
     'run',
     'write',
   ]);

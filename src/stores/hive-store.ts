@@ -4778,6 +4778,123 @@ export const useAgentAskRef = (name: string): string | undefined => {
   );
 };
 
+/**
+ * The agents, ordered for the fleet table's AGENTS group (HIVE-117).
+ *
+ * A second ordering rather than a reuse of {@link useAgentsByGroup}, because
+ * the two surfaces are answering different questions. The rail *groups* —
+ * Awake, Sleeping, Paused, three headings the eye scans between. The fleet
+ * table has one heading and one list, so the order has to carry the whole
+ * priority by itself: `asking` (someone is waiting on you), then `working`,
+ * then `sleeping` by the wake that comes soonest, then `paused` last because
+ * nothing will move it until you say so.
+ *
+ * Encoded as strings for `useShallow`'s reason, which `useAgentsByGroup`
+ * records at length: an array of freshly built tuples is never equal to the
+ * last one, so every read looks like a change and React stops it with
+ * "maximum update depth exceeded".
+ */
+const AGENT_RANK: Record<AgentStatus, number> = {
+  asking: 0,
+  working: 1,
+  failed: 2,
+  sleeping: 3,
+  paused: 4,
+};
+
+export const useFleetAgents = (): string[] => {
+  const rows = useHiveStore(
+    useShallow((state) =>
+      state.agentOrder.flatMap((id) => {
+        const entity = state.entities[id];
+
+        if (entity === undefined || !isAgent(entity)) return [];
+
+        return [`${id}|${entity.status}|${entity.nextRunAt ?? 0}`];
+      }),
+    ),
+  );
+
+  return useMemo(() => {
+    const parsed = rows.map((row) => {
+      const [id = '', status = 'sleeping', next = '0'] = row.split('|');
+
+      return { id, status: status as AgentStatus, next: Number(next) };
+    });
+
+    return parsed
+      .sort((a, b) => {
+        const rank = AGENT_RANK[a.status] - AGENT_RANK[b.status];
+        if (rank !== 0) return rank;
+        /*
+          Soonest wake first *within* `sleeping`, and a manual agent last:
+          `nextRunAt` is absent for one, which arrives here as `0` and would
+          otherwise sort it to the front — ahead of an agent that really is
+          about to run.
+        */
+        if (a.next === b.next) return a.id.localeCompare(b.id);
+        if (a.next === 0) return 1;
+        if (b.next === 0) return -1;
+
+        return a.next - b.next;
+      })
+      .map((row) => row.id);
+  }, [rows]);
+};
+
+/** How many agents there are, and how many are waiting on you (HIVE-117). */
+export const useAgentCounts = (): { agents: number; asking: number } =>
+  useHiveStore(
+    useShallow((state) => {
+      let agents = 0;
+      let asking = 0;
+      for (const id of state.agentOrder) {
+        const entity = state.entities[id];
+        if (entity === undefined || !isAgent(entity)) continue;
+        agents += 1;
+        if (entity.status === 'asking') asking += 1;
+      }
+
+      return { agents, asking };
+    }),
+  );
+
+/**
+ * The pull request this agent last finished, if it named one (HIVE-117).
+ *
+ * Read from the **ledger**, not from `runs`: a `RunSummary` records what a wake
+ * cost and how it ended, and deliberately nothing about what it did. What an
+ * agent *produced* is what it wrote down — a `done` entry whose `meta` carries
+ * a `pr`, which `LedgerEntry.meta` names as one of its riders. That is also the
+ * only version of this fact a session could have written for itself.
+ *
+ * The last one wins: an agent that opens a PR a day accumulates `done` entries,
+ * and the row has space for the current one.
+ */
+export const useAgentPr = (name: string): number | undefined => {
+  const ledger = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => {
+    for (let i = ledger.length - 1; i >= 0; i -= 1) {
+      const entry = ledger[i];
+      if (entry === undefined || entry.from !== name || entry.kind !== 'done') {
+        continue;
+      }
+      const pr = entry.meta?.['pr'];
+      /*
+        A number, or a string that is one. Main writes `meta` from whatever the
+        agent handed `ledger_post`, so this is renderer-side input in every
+        sense that matters — `#12` and `"12"` are both things a model will
+        write, and neither should put `NaN` in the table.
+      */
+      const n = typeof pr === 'number' ? pr : Number(String(pr).replace(/^#/, ''));
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+
+    return undefined;
+  }, [ledger, name]);
+};
+
 /** Create a session on a project (stories 041, 044). */
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
 
