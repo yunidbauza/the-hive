@@ -44,6 +44,22 @@ export function resolveClaude(
 
   if (trimmed === '') return { problem: 'No claude command is configured.' };
 
+  /*
+    The disk gets asked before the whitespace rule does, and the order matters.
+
+    A space in an absolute path is not an argument, it is a space:
+    `/Users/me/Application Support/bin/claude` is an ordinary macOS path, and
+    refusing it told the user to "set Settings › Runtime to a plain path" —
+    which is exactly what they had done. Asking `isExecutable` first settles it
+    with the only authority that can: if a file is there and runnable, the whole
+    string was one path and there was never an argument to split.
+
+    The refusal below still stands for everything that fails that test, which is
+    where `claude --tel` lands. See the module comment for why it is a refusal
+    rather than an attempt at shell word-splitting.
+  */
+  if (isAbsolute(trimmed) && isExecutable(trimmed)) return { path: trimmed };
+
   if (/\s/.test(trimmed)) {
     return {
       problem:
@@ -54,9 +70,7 @@ export function resolveClaude(
   }
 
   if (isAbsolute(trimmed)) {
-    return isExecutable(trimmed)
-      ? { path: trimmed }
-      : { problem: `\`${trimmed}\` is not an executable file.` };
+    return { problem: `\`${trimmed}\` is not an executable file.` };
   }
 
   if (pathVar === undefined || pathVar === '') {

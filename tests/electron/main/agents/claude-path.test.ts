@@ -28,6 +28,23 @@ describe('resolveClaude', () => {
     ).toEqual({ path: '/b/claude' });
   });
 
+  /**
+   * A space in an absolute path is not an argument. Refusing this one told the
+   * user to "set Settings › Runtime to a plain path" — which is exactly what
+   * they had done, on a perfectly ordinary macOS path.
+   */
+  it('accepts an absolute path containing a space when the file is really there', () => {
+    const path = '/Users/me/Application Support/bin/claude';
+
+    expect(resolveClaude(path, undefined, executable(path))).toEqual({ path });
+  });
+
+  it('still refuses an absolute-looking command with arguments, which no file backs', () => {
+    const result = resolveClaude('/opt/bin/claude --tel', undefined, executable());
+
+    expect(result).toEqual({ problem: expect.stringContaining('arguments') });
+  });
+
   it('refuses a command carrying arguments rather than splitting it', () => {
     const result = resolveClaude('claude --tel', '/a', executable('/a/claude'));
 
