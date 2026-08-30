@@ -93,6 +93,8 @@ export function createAgentState(options: AgentStateOptions): AgentState {
   const schedule = () => {
     if (timer !== null) return;
     timer = setTimeout(write, debounceMs);
+    // Never hold the process open for a pending run-state write.
+    timer.unref?.();
   };
 
   const state: AgentState = {
