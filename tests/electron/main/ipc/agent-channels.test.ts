@@ -114,19 +114,26 @@ let onAgentsChanged: (() => void) | undefined;
 const registryClose = vi.fn();
 
 vi.mock('../../../../electron/main/agents', () => ({
-  createAgentsRuntime: () => ({
-    list: () => Promise.resolve(listed),
-    read: vi.fn(),
-    write: vi.fn(),
-    remove: vi.fn(),
-    rename: vi.fn(),
-    onChange: (fn: () => void) => {
-      onAgentsChanged = fn;
-      return () => {};
-    },
-    close: registryClose,
-  }),
+  createAgentsRuntime: (options: { runFiles?: unknown }) => {
+    runtimeOptions = options;
+
+    return {
+      list: () => Promise.resolve(listed),
+      read: vi.fn(),
+      write: vi.fn(),
+      remove: vi.fn(),
+      rename: vi.fn(),
+      onChange: (fn: () => void) => {
+        onAgentsChanged = fn;
+        return () => {};
+      },
+      close: registryClose,
+    };
+  },
 }));
+
+/** What `ipc/index.ts` handed `createAgentsRuntime`. */
+let runtimeOptions: { runFiles?: unknown } | undefined;
 
 let stored: Record<string, AgentRunState> = {};
 const statePatch = vi.fn((name: string, change: Partial<AgentRunState>) => {
@@ -147,6 +154,8 @@ vi.mock('../../../../electron/main/agents/state', () => ({
       stored[name] ?? { status: 'sleeping', runsSinceRotate: 0, runs: [] },
     patch: statePatch,
     recordRun: vi.fn(),
+    forget: vi.fn(),
+    carry: vi.fn(),
     flush: stateFlush,
     dispose: stateDispose,
   }),
@@ -241,6 +250,7 @@ beforeEach(async () => {
     agentsRoot: '/tmp/.hive/agents',
   };
   trackerDeps = undefined;
+  runtimeOptions = undefined;
   capturedKnowsParty = undefined;
   onAgentsChanged = undefined;
   vi.clearAllMocks();
@@ -589,5 +599,54 @@ describe('quitting with a run in flight (HIVE-115)', () => {
 
     expect(trackerCloseAll).toHaveBeenCalledWith('app-closed');
     expect(stateFlush).toHaveBeenCalled();
+  });
+});
+
+describe('tearing the handlers down (HIVE-115)', () => {
+  /**
+   * `killAll` only *signals*. The `'close'` events land afterwards, run the
+   * finalizer, and `recordRun` arms a fresh 400 ms debounce against a state
+   * that has already been disposed — writing `agents.json` at whatever
+   * `configPath()` a spec stubbed, which is precisely the leak `dispose()`
+   * exists to cancel, and pushing status into a torn-down IPC layer on the way.
+   * `closeAll` finalizes synchronously, so everything it schedules is scheduled
+   * before the dispose that cancels it.
+   */
+  it('closes every run before disposing the state, never merely signalling', () => {
+    liveRuns = ['slack-watcher'];
+
+    resetIpcHandlers();
+
+    expect(trackerCloseAll).toHaveBeenCalledWith('reset');
+    expect(trackerKillAll).not.toHaveBeenCalled();
+    expect(stateDispose).toHaveBeenCalled();
+    expect(trackerCloseAll.mock.invocationCallOrder[0]).toBeLessThan(
+      stateDispose.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  /**
+   * The channel is declared `Promise<boolean>`, and "the runtime is not
+   * running" is the same news to the renderer as "there was nothing to stop".
+   * `undefined` is neither.
+   */
+  it('agents:kill still answers a boolean once the runtime is gone', async () => {
+    resetIpcHandlers();
+
+    await expect(invoke(CH.agentsKill, { name: 'slack-watcher' })).resolves.toBe(
+      false,
+    );
+  });
+});
+
+describe('what the registry was handed (HIVE-115)', () => {
+  /**
+   * A delete or a rename has to reach `agents.json` and `~/.hive/work/<name>`,
+   * and only this composition knows both. Without them a name freed by a delete
+   * is reused with the previous agent's session uuid still attached, so its
+   * first wake resumes a conversation that belonged to something else.
+   */
+  it('gives it a way to move the run bookkeeping a folder does not hold', () => {
+    expect(runtimeOptions?.runFiles).toBeDefined();
   });
 });

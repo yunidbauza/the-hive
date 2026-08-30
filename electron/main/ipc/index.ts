@@ -123,6 +123,7 @@ import {
   agentWorkdir,
   agentsRoot,
 } from '../agents/paths';
+import { createAgentRunFiles } from '../agents/run-files';
 import {
   createRunTracker,
   type ChildLike,
@@ -1004,7 +1005,18 @@ export function registerIpcHandlers(): void {
     doneUrl: () => hooks.doneUrl(),
   });
 
-  agents = createAgentsRuntime();
+  /*
+    HIVE-115. `agents.json` is opened a few dozen lines below, which is why the
+    state is reached through a closure rather than handed over as a value: a
+    delete or a rename can only happen once the app is up, by which time
+    `agentState` is set.
+  */
+  agents = createAgentsRuntime({
+    runFiles: createAgentRunFiles({
+      state: () => agentState,
+      workdir: agentWorkdir,
+    }),
+  });
 
   /*
     The folder changed — on disk, or through the pane. Broadcast to every live
@@ -2059,8 +2071,11 @@ export function registerIpcHandlers(): void {
    * button and the click arriving, and reporting that as a failure would teach
    * the user to distrust a button that did exactly what they wanted.
    */
-  handle(CH.agentsKill, (_event, payload) =>
-    runs?.kill(parseAgentNameRequest(payload).name),
+  handle(CH.agentsKill, (_event, payload): boolean =>
+    // `?? false`, because the channel's declared answer is a boolean and "the
+    // runtime is not running" is the same news to the renderer as "there was
+    // nothing to stop" — an `undefined` on a `Promise<boolean>` is neither.
+    runs?.kill(parseAgentNameRequest(payload).name) ?? false,
   );
 
   /**
@@ -2300,6 +2315,15 @@ export function resetIpcHandlers(): void {
     registry holds an `fs.watch` handle and a debounce timer that would
     otherwise fire into the next test's handlers.
 
+    `closeAll`, not `killAll`, and the ordering with `dispose()` on the next
+    line is the whole reason. `killAll` only signals: the `'close'` events land
+    afterwards, run `finalizeRun` → `recordRun` → `schedule()`, and arm a *new*
+    400 ms timer against a state that has already been disposed — writing
+    `agents.json` at whatever `configPath()` was stubbed to, which is precisely
+    the leak `dispose()` exists to cancel, and pushing status into a torn-down
+    IPC layer on the way. `closeAll` finalizes each run synchronously, so
+    everything it schedules is scheduled *before* the dispose that cancels it.
+
     `agentState` is **disposed**, exactly as `history` is and for the same
     reason — a test's state file points at whatever `configPath` was stubbed to
     return, and writing there on teardown is how a unit test comes to leave a
@@ -2309,7 +2333,7 @@ export function resetIpcHandlers(): void {
     path 400 ms later, into a directory the test that owned it has finished
     with.
   */
-  runs?.killAll('reset');
+  runs?.closeAll('reset');
   runs = null;
   agentState?.dispose();
   agentState = null;
