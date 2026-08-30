@@ -22,6 +22,7 @@ import { sendToSession } from '@lib/terminal/session-input';
 import { useAppearanceStore } from '@stores/appearance-store';
 import {
   ACK_DELAY_MS,
+  AGENT_LINE_CAP,
   openOrResume,
   statusWord,
   useActiveSessions,
@@ -2028,6 +2029,83 @@ describe('hive-store', () => {
       store.hydrateAgents([]);
 
       expect(useHiveStore.getState().agentOrder).toEqual([]);
+    });
+  });
+
+  describe('agent runs', () => {
+    const seedAgent = () =>
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'slack-watcher',
+          description: 'Watches #incorp-dev.',
+          icon: 'ph-robot',
+          status: 'sleeping',
+          wake: { on: ['ledger'] },
+        },
+      ]);
+
+    it('sets an agent status without disturbing its definition fields', () => {
+      seedAgent();
+      useHiveStore.getState().setAgentStatus({
+        name: 'slack-watcher',
+        status: 'working',
+        lastRunAt: 42,
+        cost: '$0.02',
+      });
+
+      const agent = useHiveStore.getState().entities['slack-watcher'];
+
+      expect(agent).toMatchObject({
+        status: 'working',
+        lastRunAt: 42,
+        cost: '$0.02',
+        sub: 'Watches #incorp-dev.',
+      });
+    });
+
+    it('ignores a status for an agent it does not have', () => {
+      expect(() =>
+        useHiveStore.getState().setAgentStatus({ name: 'ghost', status: 'working' }),
+      ).not.toThrow();
+      expect(useHiveStore.getState().entities['ghost']).toBeUndefined();
+    });
+
+    it('never lets an agent status overwrite a session', () => {
+      // A definition may legally share a name with a live session id.
+      const before = useHiveStore.getState().entities['sess-01'];
+
+      useHiveStore.getState().setAgentStatus({ name: 'sess-01', status: 'working' });
+
+      expect(useHiveStore.getState().entities['sess-01']).toBe(before);
+    });
+
+    it('appends run lines and keeps them across a re-hydrate', () => {
+      seedAgent();
+      useHiveStore.getState().appendAgentLines({
+        name: 'slack-watcher',
+        lines: [{ text: 'hello', color: 'ink' }],
+      });
+      seedAgent();
+
+      expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({
+        lines: [{ text: 'hello', color: 'ink' }],
+      });
+    });
+
+    it('caps the lines it keeps', () => {
+      seedAgent();
+
+      for (let i = 0; i < AGENT_LINE_CAP + 50; i += 1) {
+        useHiveStore.getState().appendAgentLines({
+          name: 'slack-watcher',
+          lines: [{ text: `line ${i}`, color: 'ink' }],
+        });
+      }
+
+      const agent = useHiveStore.getState().entities['slack-watcher'];
+
+      expect(agent?.lines).toHaveLength(AGENT_LINE_CAP);
+      expect(agent?.lines.at(-1)?.text).toBe(`line ${AGENT_LINE_CAP + 49}`);
     });
   });
 

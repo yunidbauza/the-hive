@@ -2,7 +2,11 @@ import { useEffect } from 'react';
 
 import { agentsSnapshot, loadAgents, subscribeAgents } from '@/lib/agents';
 
-import { useHydrateAgents } from '@stores/hive-store';
+import {
+  useAppendAgentLines,
+  useHydrateAgents,
+  useSetAgentStatus,
+} from '@stores/hive-store';
 
 /**
  * Keep the fleet's agents in step with `~/.hive/agents` (HIVE-114).
@@ -32,6 +36,8 @@ import { useHydrateAgents } from '@stores/hive-store';
  */
 export function useAgentsSync(): void {
   const hydrate = useHydrateAgents();
+  const setStatus = useSetAgentStatus();
+  const appendLines = useAppendAgentLines();
 
   useEffect(() => {
     const agents = window.hive?.agents;
@@ -48,12 +54,18 @@ export function useAgentsSync(): void {
     const stopMirror = subscribeAgents(() => {
       hydrate(agentsSnapshot()?.agents ?? []);
     });
+    // A run's status and its log lines arrive on their own channels — not a
+    // folder change, so `pull`/`subscribeAgents` never see them.
+    const stopStatus = agents.onStatus(setStatus);
+    const stopLines = agents.onLines(appendLines);
 
     pull();
 
     return () => {
       stopPush();
       stopMirror();
+      stopStatus();
+      stopLines();
     };
-  }, [hydrate]);
+  }, [hydrate, setStatus, appendLines]);
 }

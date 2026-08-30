@@ -41,7 +41,12 @@ describe('useAgentsSync', () => {
     });
 
     (window as unknown as { hive?: unknown }).hive = {
-      agents: { list, onChanged },
+      agents: {
+        list,
+        onChanged,
+        onStatus: vi.fn(() => () => {}),
+        onLines: vi.fn(() => () => {}),
+      },
     };
 
     renderHook(() => useAgentsSync());
@@ -55,6 +60,8 @@ describe('useAgentsSync', () => {
       agents: {
         list: vi.fn(async () => snapshot(['zulu', 'alpha'])),
         onChanged: vi.fn(() => () => {}),
+        onStatus: vi.fn(() => () => {}),
+        onLines: vi.fn(() => () => {}),
       },
     };
 
@@ -76,6 +83,8 @@ describe('useAgentsSync', () => {
           poke = fn;
           return () => {};
         }),
+        onStatus: vi.fn(() => () => {}),
+        onLines: vi.fn(() => () => {}),
       },
     };
 
@@ -98,6 +107,8 @@ describe('useAgentsSync', () => {
           poke = fn;
           return () => {};
         }),
+        onStatus: vi.fn(() => () => {}),
+        onLines: vi.fn(() => () => {}),
       },
     };
 
@@ -116,10 +127,17 @@ describe('useAgentsSync', () => {
 
   it('unsubscribes from both the push and the mirror on unmount', async () => {
     const stopPush = vi.fn();
+    const stopStatus = vi.fn();
+    const stopLines = vi.fn();
     const list = vi.fn(async () => snapshot(['alpha']));
 
     (window as unknown as { hive?: unknown }).hive = {
-      agents: { list, onChanged: vi.fn(() => stopPush) },
+      agents: {
+        list,
+        onChanged: vi.fn(() => stopPush),
+        onStatus: vi.fn(() => stopStatus),
+        onLines: vi.fn(() => stopLines),
+      },
     };
 
     const { unmount } = renderHook(() => useAgentsSync());
@@ -128,6 +146,49 @@ describe('useAgentsSync', () => {
     unmount();
 
     expect(stopPush).toHaveBeenCalled();
+    expect(stopStatus).toHaveBeenCalled();
+    expect(stopLines).toHaveBeenCalled();
+  });
+
+  it('applies a status push and a line-batch push (HIVE-115)', async () => {
+    let sendStatus: (push: {
+      name: string;
+      status: 'working';
+    }) => void = () => {};
+    let sendLines: (push: {
+      name: string;
+      lines: { text: string; color: 'ink' }[];
+    }) => void = () => {};
+
+    (window as unknown as { hive?: unknown }).hive = {
+      agents: {
+        list: vi.fn(async () => snapshot(['alpha'])),
+        onChanged: vi.fn(() => () => {}),
+        onStatus: vi.fn((fn: typeof sendStatus) => {
+          sendStatus = fn;
+          return () => {};
+        }),
+        onLines: vi.fn((fn: typeof sendLines) => {
+          sendLines = fn;
+          return () => {};
+        }),
+      },
+    };
+
+    renderHook(() => useAgentsSync());
+    await waitFor(() =>
+      expect(useHiveStore.getState().agentOrder).toEqual(['alpha']),
+    );
+
+    sendStatus({ name: 'alpha', status: 'working' });
+    sendLines({ name: 'alpha', lines: [{ text: 'hi', color: 'ink' }] });
+
+    const agent = useHiveStore.getState().entities.alpha;
+
+    expect(agent).toMatchObject({
+      status: 'working',
+      lines: [{ text: 'hi', color: 'ink' }],
+    });
   });
 
   it('does nothing without a bridge, which is the browser demo', () => {

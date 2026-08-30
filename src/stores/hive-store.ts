@@ -42,7 +42,11 @@ import { noteSessionPr, noteSessionTicket } from '@lib/session-history';
 import { pickPhrase } from '@lib/swarm/phrases';
 import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
-import type { AgentSummary } from '@shared/agent-contract';
+import type {
+  AgentLinesPush,
+  AgentStatusPush,
+  AgentSummary,
+} from '@shared/agent-contract';
 import type { PrRecord } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 import type { SessionNameReport } from '@shared/ipc-contract';
@@ -416,6 +420,23 @@ interface HiveState {
    */
   hydrateAgents: (summaries: AgentSummary[]) => void;
   /**
+   * A run started, ended, or otherwise changed what an agent's row shows
+   * (HIVE-115).
+   *
+   * Shares `hydrateAgents`' never-write-over-a-session guard: an agent name
+   * is a legal session id, and a push for a name that currently names a
+   * session must be dropped rather than clobber it.
+   */
+  setAgentStatus: (push: AgentStatusPush) => void;
+  /**
+   * A batch of run-log lines, in the order the process wrote them
+   * (HIVE-115).
+   *
+   * Capped at {@link AGENT_LINE_CAP} the way `capLines` bounds the console
+   * transcript, and guarded the same way `setAgentStatus` is.
+   */
+  appendAgentLines: (push: AgentLinesPush) => void;
+  /**
    * Apply read-state the hub decided, without writing it back (HIVE-75).
    *
    * Separate from {@link markRead} precisely because it must **not** write
@@ -544,6 +565,27 @@ const NOTIF_CAP = NOTIFICATION_CAP;
 const ORCH_LINE_CAP = 200;
 
 /**
+ * Run-log cap, per agent (HIVE-115).
+ *
+ * `ORCH_LINE_CAP`'s neighbour, and module-private the same way — except this
+ * one is exported. The test that pins it (`tests/stores/hive-store.test.ts`)
+ * has to name the real number to prove the cap actually held; hard-coding
+ * `2000` there would let the test and the implementation drift apart
+ * silently, which a shared constant cannot.
+ */
+export const AGENT_LINE_CAP = 2_000;
+
+/**
+ * The answer for an agent with no run log yet.
+ *
+ * A module-level frozen constant rather than a literal `[]` in the selector
+ * below — a fresh array is a new reference on every call, and a Zustand
+ * selector that returns one re-renders its subscriber on every store change
+ * whether or not this agent's lines actually changed.
+ */
+const EMPTY_LINES = Object.freeze([]) as unknown as TermLine[];
+
+/**
  * How many cleared sessions the ENDED group keeps (per fleet, not per terminal).
  *
  * A terminal cleared every twenty minutes for a working day is twenty rows of
@@ -653,6 +695,9 @@ function currentSessionIn(state: HiveState, terminalId: string): string {
 
 const capLines = (lines: TermLine[]) =>
   lines.length > ORCH_LINE_CAP ? lines.slice(lines.length - ORCH_LINE_CAP) : lines;
+
+const capAgentLines = (lines: TermLine[]) =>
+  lines.length > AGENT_LINE_CAP ? lines.slice(lines.length - AGENT_LINE_CAP) : lines;
 
 /**
  * Why the ledger verbs cannot run in the browser preview (HIVE-113).
@@ -2137,6 +2182,46 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         agentOrder: summaries
           .map((summary) => summary.name)
           .sort((a, b) => a.localeCompare(b)),
+      };
+    }),
+
+  setAgentStatus: (push) =>
+    set((state) => {
+      const previous = state.entities[push.name];
+
+      // Never write over a session — see the guard in `hydrateAgents`: an
+      // agent name is a legal session id, and this map holds both kinds.
+      if (previous === undefined || !isAgent(previous)) return state;
+
+      return {
+        entities: {
+          ...state.entities,
+          [push.name]: {
+            ...previous,
+            status: push.status,
+            ...(push.lastRunAt === undefined ? {} : { lastRunAt: push.lastRunAt }),
+            ...(push.nextRunAt === undefined ? {} : { nextRunAt: push.nextRunAt }),
+            ...(push.cost === undefined ? {} : { cost: push.cost }),
+          },
+        },
+      };
+    }),
+
+  appendAgentLines: (push) =>
+    set((state) => {
+      const previous = state.entities[push.name];
+
+      // Same guard as `setAgentStatus` and `hydrateAgents`.
+      if (previous === undefined || !isAgent(previous)) return state;
+
+      return {
+        entities: {
+          ...state.entities,
+          [push.name]: {
+            ...previous,
+            lines: capAgentLines([...previous.lines, ...push.lines]),
+          },
+        },
       };
     }),
 
@@ -4160,6 +4245,20 @@ export const useAgent = (name: string) =>
     return entity !== undefined && isAgent(entity) ? entity : null;
   });
 
+/**
+ * One agent's run log.
+ *
+ * A selector rather than `useAgent(name).lines` so a line batch re-renders the
+ * run view and nothing else — the same reason every other consumer here goes
+ * through a named hook.
+ */
+export const useAgentLines = (name: string): TermLine[] =>
+  useHiveStore((state) => {
+    const entity = state.entities[name];
+
+    return entity !== undefined && isAgent(entity) ? entity.lines : EMPTY_LINES;
+  });
+
 /** Create a session on a project (stories 041, 044). */
 export const useSpawnSession = () => useHiveStore((state) => state.spawnSession);
 
@@ -4994,6 +5093,13 @@ export const useHydrateLedger = () => useHiveStore((state) => state.hydrateLedge
 /** Mirror `~/.hive/agents` into the fleet (HIVE-114). */
 export const useHydrateAgents = () => useHiveStore((state) => state.hydrateAgents);
 export const useLedgerAppend = () => useHiveStore((state) => state.ledgerAppend);
+
+/** A run started, ended, or changed an agent's status (HIVE-115). */
+export const useSetAgentStatus = () => useHiveStore((state) => state.setAgentStatus);
+
+/** Run-log lines, as the process writes them (HIVE-115). */
+export const useAppendAgentLines = () =>
+  useHiveStore((state) => state.appendAgentLines);
 
 /**
  * The ledger tail, optionally filtered.
