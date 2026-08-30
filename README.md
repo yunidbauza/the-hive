@@ -1,7 +1,7 @@
 <img src="docs/assets/splash.webp" alt="The Hive, overmind and swarm awakening" width="100%">
 
 [![Latest release](https://img.shields.io/github/v/release/yunidbauza/the-hive?style=flat-square&labelColor=141a33&color=334fa9&label=release)](https://github.com/yunidbauza/the-hive/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/yunidbauza/the-hive/total?style=flat-square&labelColor=141a33&color=334fa9&label=downloads)](https://github.com/yunidbauza/the-hive/releases)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fyunidbauza%2F404ec74f87cbfb9939bb78482eff9719%2Fraw%2Fthe-hive-downloads.json&style=flat-square&labelColor=141a33)](https://github.com/yunidbauza/the-hive/releases)
 [![Open issues](https://img.shields.io/github/issues/yunidbauza/the-hive?style=flat-square&labelColor=141a33&color=ffac47&label=open%20issues)](https://github.com/yunidbauza/the-hive/issues)
 [![License](https://img.shields.io/github/license/yunidbauza/the-hive?style=flat-square&labelColor=141a33&color=74b79c)](LICENSE)
 
