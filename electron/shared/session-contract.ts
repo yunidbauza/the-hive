@@ -639,9 +639,6 @@ export const BOOTSTRAP_FALLBACK_MS = 5_000;
  */
 export const SUBMIT_DELAY_MS = 300;
 
-/** How long every session's process group gets to exit on quit. */
-export const QUIT_GRACE_MS = 3_000;
-
 /**
  * Why a session could not start.
  *
