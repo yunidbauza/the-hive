@@ -32,14 +32,13 @@ describe('AgentsPanel', () => {
    * Nothing creates a background agent yet, so the panel says that instead of
    * listing three that do not exist.
    */
-  it('says why it is empty when no agents are running', () => {
+  it('points at the pane that creates one when empty', () => {
     useHiveStore.getState().reset();
 
     render(<AgentsPanel />);
 
-    expect(screen.getByText(/No agents running/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Background agents are not available yet/i),
+      screen.getByText(/No agents yet — create one in Settings › Agents/i),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
@@ -109,11 +108,57 @@ describe('AgentsPanel', () => {
     }
   });
 
-  /** Agents are always online in this phase, but never by colour alone. */
-  it('marks every agent online in words as well as colour', () => {
+  /** State is never carried by the dot's colour alone (HIVE-114). */
+  it('names each state in words as well as colour', () => {
     render(<AgentsPanel />);
 
-    expect(screen.getAllByText('online')).toHaveLength(3);
+    expect(screen.getAllByText('sleeping')).toHaveLength(3);
+  });
+
+  /**
+   * A definition that failed to parse is *listed*, not hidden (HIVE-114).
+   *
+   * The row shows the reason where a working agent shows its description,
+   * because a broken file has no description to show and the reason is the one
+   * thing that helps the user fix it.
+   */
+  it('shows a broken definition with its reason', () => {
+    act(() => {
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'broken',
+          description: '',
+          icon: 'Warning',
+          status: 'sleeping',
+          wake: { on: [] },
+          invalid: 'nope: Unknown key. Remove it or fix the spelling.',
+        },
+      ]);
+    });
+
+    render(<AgentsPanel />);
+
+    expect(screen.getByText(/Unknown key/)).toBeInTheDocument();
+    expect(screen.getByText('invalid')).toBeInTheDocument();
+  });
+
+  it('still lets a broken definition be opened, so it can be fixed', () => {
+    act(() => {
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'broken',
+          description: '',
+          icon: 'Warning',
+          status: 'sleeping',
+          wake: { on: [] },
+          invalid: 'nope: Unknown key.',
+        },
+      ]);
+    });
+
+    render(<AgentsPanel />);
+
+    expect(agentRow('broken')).toBeEnabled();
   });
 
   it('skips an id that is not an agent', () => {

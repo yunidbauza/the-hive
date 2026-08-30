@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
+import { StringDecoder } from 'node:string_decoder';
 
+import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
   HOOK_HEADER_SESSION,
@@ -17,6 +19,15 @@ import {
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
+import {
+  LEDGER_POST_PATH,
+  LEDGER_READ_PATH,
+  type LedgerPostRequest,
+  type LedgerReadQuery,
+  type LedgerResult,
+  type LedgerSnapshot,
+} from '@shared/ledger-contract';
+import { keepNewest } from '@shared/ledger-derive';
 import {
   METRICS_MAX_BODY_BYTES,
   METRICS_PATH,
@@ -43,17 +54,29 @@ import { ticketKeyFromPrompt } from './ticket-intent';
  * are true of this one and are enforced below rather than documented:
  *
  * 1. It binds **`127.0.0.1`**, never `0.0.0.0` — unreachable from the network.
- * 2. It requires a **per-launch token**, generated at start and never written
- *    anywhere but the settings file the app itself wrote and the environment of
- *    the PTYs it spawned. A token that leaks dies with the app.
- * 3. It answers a **closed set of two paths** and reads a **capped body** on
- *    each, so nothing about it is a general-purpose server. The second path
- *    (HIVE-79) takes Claude Code's status line payload; it shares the token and
- *    the session header, and carries a cap four times smaller.
+ * 2. It requires a **per-session token**, keyed off a per-launch secret that
+ *    is generated at start and never leaves this file — not on the
+ *    {@link Receiver} interface, not in an environment variable, not in the
+ *    generated config, not in a log line. What a session is handed, and what
+ *    the settings file and the environment of the PTYs it spawned carry, is
+ *    {@link tokenFor} applied to that one session's own id (HIVE-112) — so a
+ *    session that leaks its token hands over only its own identity, not
+ *    every other session's.
+ * 3. It answers a **closed set of six paths** — the hook event, the status
+ *    line's metrics (HIVE-79), `/done`, the boot-ready signal, and, since
+ *    HIVE-111, a ledger post and a ledger read — and reads a **capped body**
+ *    on each, so nothing about it is a general-purpose server. Every path
+ *    checks the token against the session header it was issued for; several
+ *    carry a smaller cap than the hook path.
  *
- * It also has no authority: the only thing a valid POST can do is move a status
- * dot, or record usage percentages, for a session id that is already known.
- * There is no command surface here to reach.
+ * Its authority is correspondingly wider than it once was: a valid POST can
+ * still move a status dot or record usage percentages, but the ledger paths
+ * let a known session id append to the shared log — post, ask, answer, claim,
+ * release, done, failed, event, handoff — and read it back. `from` is always
+ * the caller's own session header, never a value the body supplies, and
+ * `Ledger.append` (`electron/main/ledger/index.ts`) is the one place that
+ * decides what a party may write; this file only authenticates the caller and
+ * forwards. There is still no command surface here to reach.
  *
  * ## Why a failure to bind is not an error
  *
@@ -116,6 +139,23 @@ export interface ReceiverOptions {
    * idempotent — a session that is already up cannot become more up.
    */
   onReady: (entityId: string) => void;
+  /**
+   * A party asked to read the ledger (HIVE-111).
+   *
+   * `caller` is the session id off `x-hive-session`, never the body — the same
+   * discipline `onLedgerPost` follows and for the same reason.
+   */
+  onLedgerRead: (caller: string, query: LedgerReadQuery) => LedgerSnapshot;
+  /**
+   * A party asked to append to the ledger (HIVE-111).
+   *
+   * `request` has already had any `from` in the body stripped by
+   * {@link parseLedgerPostBody} — the caller supplies it from the header.
+   */
+  onLedgerPost: (
+    caller: string,
+    request: Omit<LedgerPostRequest, 'from'>,
+  ) => LedgerResult;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
   /** Overridable for tests; `0` asks the OS for any free port. */
@@ -129,8 +169,19 @@ export interface Receiver {
    * Never rejects: see the note above on why a failure here is not fatal.
    */
   start(): Promise<string | null>;
-  /** The per-launch shared secret. Stable for the lifetime of the receiver. */
-  readonly token: string;
+  /**
+   * The token a session named `entityId` must present (HIVE-112).
+   *
+   * A keyed derivation — `HMAC-SHA256(launchSecret, entityId)`, hex — of a
+   * secret that is minted once per receiver and never leaves this module: it
+   * is not a field here, not an environment variable, not written to the
+   * generated config, not logged. Two calls with the same `entityId` on the
+   * same receiver always agree, which is what lets `reject` recompute the
+   * expected token from a request's own session header instead of looking one
+   * up in a map — there is no map, so there is nothing to grow or evict as
+   * sessions come and go.
+   */
+  tokenFor(entityId: string): string;
   /** The URL hooks should POST to, or `null` before a successful start. */
   readonly url: string | null;
   /**
@@ -159,6 +210,24 @@ export interface Receiver {
    * discover one.
    */
   readonly readyUrl: string | null;
+  /**
+   * The scheme and authority alone, or `null` before a successful start
+   * (HIVE-112).
+   *
+   * Every other URL on this interface is a *path* — `url` is `origin +
+   * HOOK_PATH`, and the same shape holds for `metricsUrl`, `doneUrl` and
+   * `readyUrl` — because each names one fixed route this receiver serves and
+   * the caller that reads it never appends anything of its own.
+   *
+   * The MCP host is different: it is handed a base and builds its own
+   * request paths from `@shared/ledger-contract` (`LEDGER_POST_PATH`,
+   * `LEDGER_READ_PATH`), because a single client speaks to more than one
+   * route. Handing it `url` instead would have it POST to
+   * `…/hook/ledger/read`, a path this server never registers — so this is a
+   * distinct field rather than a reuse of `url` with the last segment
+   * trimmed off by a caller.
+   */
+  readonly origin: string | null;
   stop(): Promise<void>;
 }
 
@@ -244,6 +313,50 @@ function liveBackgroundShellIds(
   return ids;
 }
 
+/**
+ * What a handler may answer with.
+ *
+ * Every route before HIVE-111 replied with a bare status and nothing else, so
+ * a `number` stays the whole answer for those. The ledger routes have to hand
+ * back a snapshot, and a refusal has to hand back a reason a *model* can read —
+ * so they return a body, and the union is what lets both shapes share one
+ * dispatch.
+ */
+type Reply = number | { status: number; json: unknown };
+
+interface Route {
+  readonly path: string;
+  /** Bytes buffered before the body is drained; see the `data` handler. */
+  readonly cap: number;
+  readonly handle: (
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ) => Reply;
+}
+
+const describeCause = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+/**
+ * Whether `caller` may see this ledger entry (HIVE-111 review finding 3).
+ *
+ * Applied to the *result* of `onLedgerRead`, independent of whatever the query
+ * asked for — `to` stays usable as an ordinary filter a caller can narrow its
+ * own view with, but naming another party in it must never widen what comes
+ * back. `entry.to === undefined` is a broadcast; `entry.from === caller`
+ * covers the asker reading its own thread, whose entries are addressed
+ * `to: overmind` rather than to itself, so forcing `to === caller` upstream
+ * would hide a party's own questions from it.
+ *
+ * Lives here, in the receiver, rather than in whatever implements
+ * `onLedgerRead` — the caller's identity is known at this layer regardless of
+ * how the ledger is wired in, so the guarantee holds no matter what the next
+ * task does on the other side of that callback.
+ */
+const visibleTo = (caller: string, entry: { from: string; to?: string }): boolean =>
+  entry.to === caller || entry.to === undefined || entry.from === caller;
+
 export function createReceiver(options: ReceiverOptions): Receiver {
   const {
     onEvent,
@@ -252,6 +365,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onMetrics,
     onDone,
     onReady,
+    onLedgerRead,
+    onLedgerPost,
     knowsSession,
     port = 0,
   } = options;
@@ -276,7 +391,18 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     );
   };
 
-  const token = randomUUID();
+  /**
+   * Minted once per receiver and never returned from this function — see the
+   * {@link tokenFor} doc on {@link Receiver} for why. `randomUUID` is used here
+   * only as a convenient source of high-entropy randomness, not because the
+   * result is ever compared as a uuid.
+   */
+  const launchSecret = randomUUID();
+
+  /** HMAC-SHA256(launchSecret, entityId), hex — see {@link Receiver.tokenFor}. */
+  const tokenFor = (entityId: string): string =>
+    createHmac('sha256', launchSecret).update(entityId).digest('hex');
+
   let server: Server | null = null;
   let url: string | null = null;
   /**
@@ -352,17 +478,21 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function reject(
     headers: Record<string, string | string[] | undefined>,
   ): number | null {
-    /**
-     * Compared before anything else is read.
-     *
-     * Not a timing-safe comparison, and deliberately not: the secret is a v4
-     * uuid on a loopback socket, where an attacker able to time it is already
-     * running as this user and has no need of it.
-     */
-    if (headers[HOOK_HEADER_TOKEN] !== token) return 403;
-
     const entityId = headers[HOOK_HEADER_SESSION];
     if (typeof entityId !== 'string' || entityId === '') return 400;
+
+    /**
+     * The presented token must be the one derived for *this* session id, not
+     * merely a token this receiver minted for someone else (HIVE-112).
+     *
+     * Not a timing-safe comparison, and deliberately not: this is a derived
+     * secret on a loopback socket, where an attacker able to time the
+     * comparison is already running as this user and has no need to — the
+     * thing being protected is one session's isolation from another's ledger
+     * entries, not the socket as a whole, and timing leaks nothing an
+     * on-machine attacker does not already have.
+     */
+    if (headers[HOOK_HEADER_TOKEN] !== tokenFor(entityId)) return 403;
 
     /**
      * An unknown session is refused rather than remembered.
@@ -406,6 +536,99 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
     onMetrics(headers[HOOK_HEADER_SESSION] as string, metrics);
     return 204;
+  }
+
+  /**
+   * A party read the log (HIVE-111).
+   *
+   * POST, not GET, and that is not an accident of taste: this server has never
+   * parsed a query string and every route on it is POST-only. A read whose
+   * arguments arrive as a JSON body needs no method routing and no parser, and
+   * `LedgerReadQuery` crosses the wire as itself.
+   */
+  function handleLedgerRead(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): Reply {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    // Same discipline as the write route's own check, and the same reason:
+    // the caller reading this is a model, and "413, over the transport cap"
+    // is something it can act on. "400, unexpected end of JSON input" is not.
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${HOOK_MAX_BODY_BYTES} bytes` } };
+    }
+
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+    let query: LedgerReadQuery;
+    try {
+      query = parseLedgerReadQuery(body === '' ? {} : JSON.parse(body));
+    } catch (cause) {
+      return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    /*
+      Queried with no limit, so nothing is trimmed before the caller's
+      visibility is known. `onLedgerRead` (via `Ledger.read`) would otherwise
+      take the newest `limit` entries over the *whole* ledger and hand back a
+      set `visibleTo` then narrows — which can discard an entry addressed to
+      this caller in favour of ones addressed elsewhere, with nothing to
+      signal the truncation. The limit is applied below, after filtering,
+      against what the caller can actually see.
+    */
+    const { limit, ...unbounded } = query;
+    const snapshot = onLedgerRead(caller, unbounded);
+    const visible: LedgerSnapshot = {
+      // Identity-locked here rather than trusted from `onLedgerRead`, so a
+      // query's own `to` can never widen what a caller is shown — see
+      // `visibleTo`.
+      entries: keepNewest(
+        snapshot.entries.filter((entry) => visibleTo(caller, entry)),
+        limit,
+      ),
+      openAsks: snapshot.openAsks.filter((entry) => visibleTo(caller, entry)),
+      claims: snapshot.claims,
+    };
+    return { status: 200, json: visible };
+  }
+
+  /**
+   * A party wrote to the log (HIVE-111).
+   *
+   * `from` is taken from the header and the body's is discarded by the guard —
+   * a party cannot post as another party.
+   */
+  function handleLedgerPost(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): Reply {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    /*
+      Refused, not drained. The hook path drains an oversized body because
+      losing a `waiting` flag is worse than a silent truncation; here the
+      caller is a tool waiting on a result, and a write it believes succeeded
+      but that was quietly cut in half is the worse failure.
+    */
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${HOOK_MAX_BODY_BYTES} bytes` } };
+    }
+
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+    let request: Omit<LedgerPostRequest, 'from'>;
+    try {
+      request = parseLedgerPostBody(JSON.parse(body));
+    } catch (cause) {
+      return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    const result = onLedgerPost(caller, request);
+    if (!result.ok) return { status: result.status, json: { reason: result.reason } };
+    return { status: 200, json: { id: result.id, ref: result.ref } };
   }
 
   /**
@@ -612,10 +835,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   }
 
   return {
-    token,
+    tokenFor,
 
     get url() {
       return url;
+    },
+
+    get origin() {
+      return origin;
     },
 
     get metricsUrl() {
@@ -632,49 +859,64 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
     start() {
       return new Promise<string | null>((resolve) => {
-        const created = createServer((req, res) => {
+        /*
+          Six paths now, and still nothing resembling a general-purpose server:
+          the set is closed, every one of them is POST-only, and each has its
+          own body cap sized to the document it expects. A request that is none
+          of them is 404 without reading a byte.
+        */
+        const routes: readonly Route[] = [
+          { path: HOOK_PATH, cap: HOOK_MAX_BODY_BYTES, handle },
+          { path: METRICS_PATH, cap: METRICS_MAX_BODY_BYTES, handle: handleMetrics },
           /*
-            Three paths now, and still nothing resembling a general-purpose
-            server: the set is closed, all three are POST-only, and each has its
-            own body cap sized to the document it expects. A request that is
-            none of them is 404 without reading a byte.
+            `/done` and `/ready` expect no body at all, so their cap is zero:
+            the first byte of one marks the request truncated and every byte
+            after it is dropped on the floor. Neither handler reads it, so a
+            caller that sends something anyway is answered normally rather than
+            refused — the same "drain, do not refuse" discipline the hook path
+            takes, for the same reason. Nothing a session sends here should be
+            able to produce a red line in the user's terminal.
           */
-          const path = req.url ?? '';
-          const isMetrics = path === METRICS_PATH;
-          const isDone = path === DONE_PATH;
-          const isReady = path === READY_PATH;
-          if (
-            req.method !== 'POST' ||
-            (path !== HOOK_PATH && !isMetrics && !isDone && !isReady)
-          ) {
+          { path: DONE_PATH, cap: 0, handle: (headers) => handleDone(headers) },
+          { path: READY_PATH, cap: 0, handle: (headers) => handleReady(headers) },
+          { path: LEDGER_POST_PATH, cap: HOOK_MAX_BODY_BYTES, handle: handleLedgerPost },
+          { path: LEDGER_READ_PATH, cap: HOOK_MAX_BODY_BYTES, handle: handleLedgerRead },
+        ];
+
+        const created = createServer((req, res) => {
+          const route = routes.find((candidate) => candidate.path === (req.url ?? ''));
+          if (req.method !== 'POST' || route === undefined) {
             res.writeHead(404).end();
             return;
           }
-
-          /*
-            `/done` expects no body at all, so its cap is zero: the first byte
-            of one marks the request truncated and every byte after it is
-            dropped on the floor. `handleDone` reads neither, so a caller that
-            sends something anyway is answered normally rather than refused —
-            the same "drain, do not refuse" discipline the hook path takes, for
-            the same reason. Nothing a session sends here should be able to
-            produce a red line in the user's terminal.
-          */
-          const cap =
-            isDone || isReady
-              ? 0
-              : isMetrics
-                ? METRICS_MAX_BODY_BYTES
-                : HOOK_MAX_BODY_BYTES;
+          const cap = route.cap;
 
           let body = '';
           let bytes = 0;
           let truncated = false;
+          /**
+           * One decoder for the whole request, not `chunk.toString('utf8')`
+           * per chunk.
+           *
+           * A TCP chunk boundary falls wherever the kernel put it, which can
+           * be in the middle of a multi-byte character. Decoding each chunk on
+           * its own turns that one character into two replacement characters,
+           * one at the end of a chunk and one at the start of the next. That
+           * was survivable while the only field ever read here was an ASCII
+           * `hook_event_name` in the first few hundred bytes; a ledger body is
+           * up to 16 KB of agent-written markdown that is appended to a file
+           * nothing ever edits, so the corruption would be permanent.
+           * `StringDecoder` holds the partial sequence back until the bytes
+           * that complete it arrive.
+           */
+          const decoder = new StringDecoder('utf8');
 
           req.on('data', (chunk: Buffer) => {
             bytes += chunk.length;
             /**
-             * Past the cap the body is **drained, not refused**.
+             * Past the cap the body is **drained, not refused** — on every
+             * route but the ledger's write, which refuses instead; see
+             * `handleLedgerPost`.
              *
              * Refusing with 413 was wrong in the one case that matters most.
              * A `PermissionRequest` carries `tool_input`, which for a Write or
@@ -692,19 +934,17 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               truncated = true;
               return;
             }
-            body += chunk.toString('utf8');
+            body += decoder.write(chunk);
           });
 
           req.on('end', () => {
-            let status: number;
+            // Flushes a trailing incomplete sequence, if the body ended
+            // mid-character, as a single replacement character rather than
+            // dropping it.
+            body += decoder.end();
+            let reply: Reply;
             try {
-              status = isDone
-                ? handleDone(req.headers)
-                : isReady
-                  ? handleReady(req.headers)
-                  : isMetrics
-                    ? handleMetrics(req.headers, body, truncated)
-                    : handle(req.headers, body, truncated);
+              reply = route.handle(req.headers, body, truncated);
             } catch {
               /**
                * A throw here must not take the app down. An uncaught exception
@@ -712,9 +952,15 @@ export function createReceiver(options: ReceiverOptions): Receiver {
                * process, which would turn a malformed hook into a crashed
                * desktop app.
                */
-              status = 500;
+              reply = 500;
             }
-            res.writeHead(status).end();
+            if (typeof reply === 'number') {
+              res.writeHead(reply).end();
+              return;
+            }
+            res
+              .writeHead(reply.status, { 'content-type': 'application/json' })
+              .end(JSON.stringify(reply.json));
           });
         });
 

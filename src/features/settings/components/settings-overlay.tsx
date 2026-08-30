@@ -5,6 +5,7 @@ import { useState, type ComponentType } from 'react';
 import { cn } from '@/lib/utils';
 
 import { AdvancedSection } from '@features/settings/components/advanced-section';
+import { AgentsSection } from '@features/settings/components/agents-section';
 import { AppearanceSection } from '@features/settings/components/appearance-section';
 import { EditorSection } from '@features/settings/components/editor-section';
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
@@ -64,6 +65,7 @@ const SECTIONS = [
   { id: 'projects', label: 'Projects' },
   { id: 'runtime', label: 'Runtime' },
   { id: 'skills', label: 'Skills' },
+  { id: 'agents', label: 'Agents' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'editor', label: 'Editor' },
   { id: 'integrations', label: 'Integrations' },
@@ -83,6 +85,7 @@ const PANES: Record<SectionId, ComponentType> = {
   projects: ProjectsSection,
   runtime: RuntimeSection,
   skills: SkillsSection,
+  agents: AgentsSection,
   appearance: AppearanceSection,
   editor: EditorSection,
   integrations: IntegrationsSection,

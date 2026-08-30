@@ -150,9 +150,16 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
             dedicated agent
           </Chip>
 
-          <Chip className={STATUS_TEXT.online}>
-            <StatusDot status="online" />
-            {STATUS_LABEL.online}
+          {/*
+            The agent's real state, not a hardcoded "online" (HIVE-114).
+
+            This chip used to say `online` unconditionally, which was true of a
+            fixture and is not true of anything else: an agent is a definition
+            on disk, and between two wakes there is no process to be online.
+          */}
+          <Chip className={STATUS_TEXT[entity.status]}>
+            <StatusDot status={entity.status} />
+            {STATUS_LABEL[entity.status]}
           </Chip>
         </>
       )}

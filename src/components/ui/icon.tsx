@@ -1,14 +1,26 @@
 import {
+  Alarm,
   ArrowDown,
   ArrowUp,
   ArrowsClockwise,
   ArrowsInSimple,
+  Bell,
+  Binoculars,
+  Broadcast,
+  Bug,
   CalendarCheck,
   CaretDown,
   CaretRight,
+  ChartLine,
   ChatCircleDots,
   CheckCircle,
+  Clock,
   Cube,
+  Database,
+  Detective,
+  Envelope,
+  Eye,
+  Fire,
   DownloadSimple,
   File,
   FileCode,
@@ -27,24 +39,34 @@ import {
   FloppyDisk,
   Folder,
   FolderOpen,
+  Funnel,
   Gear,
+  GitBranch,
   GitPullRequest,
+  GithubLogo,
   GlobeHemisphereWest,
+  Graph,
   HandPalm,
+  Hourglass,
   Keyboard,
   Lightning,
+  Megaphone,
   Moon,
+  Package,
   PaperPlaneTilt,
   PlusCircle,
   ArrowCircleUp,
   ArrowClockwise,
   Question,
+  Pulse,
   Repeat,
   RepeatOnce,
   Robot,
+  ShieldCheck,
   SlackLogo,
   Stack,
   Swatches,
+  Target,
   Terminal,
   UsersThree,
   Warning,
@@ -154,7 +176,47 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   'ph-arrow-down': ArrowDown,
   'ph-repeat': Repeat,
   'ph-repeat-once': RepeatOnce,
+
+  /*
+    The agent icon roster (HIVE-114 follow-up). An agent's glyph used to be
+    free text, so most of what the field accepted drew the fallback; the picker
+    that replaced it offers exactly these, grouped by the kind of thing an agent
+    tends to be. Twenty-two of the thirty-six were new here.
+  */
+  'ph-eye': Eye,
+  'ph-binoculars': Binoculars,
+  'ph-detective': Detective,
+  'ph-broadcast': Broadcast,
+  'ph-pulse': Pulse,
+  'ph-target': Target,
+  'ph-envelope': Envelope,
+  'ph-megaphone': Megaphone,
+  'ph-bell': Bell,
+  'ph-github-logo': GithubLogo,
+  'ph-git-branch': GitBranch,
+  'ph-bug': Bug,
+  'ph-clock': Clock,
+  'ph-alarm': Alarm,
+  'ph-hourglass': Hourglass,
+  'ph-database': Database,
+  'ph-chart-line': ChartLine,
+  'ph-graph': Graph,
+  'ph-package': Package,
+  'ph-funnel': Funnel,
+  'ph-shield-check': ShieldCheck,
+  'ph-fire': Fire,
 };
+
+/**
+ * Every name {@link Icon} can actually draw, in registration order.
+ *
+ * Exported so a picker can offer *only* names that resolve. The icon field in
+ * Settings › Agents was free text, and a value that missed `GLYPHS` rendered
+ * the fallback question mark on the agent's row with nothing anywhere to say
+ * why — which is what `icon: Robot` in the pane's own new-agent template did.
+ * A control built from this list cannot produce that state.
+ */
+export const ICON_NAMES: readonly string[] = Object.keys(GLYPHS);
 
 interface IconProps {
   /** A phosphor name as the fixtures spell it, e.g. `'ph-slack-logo'`. */

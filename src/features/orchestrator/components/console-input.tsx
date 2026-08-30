@@ -12,6 +12,20 @@ import {
 } from '@stores/hive-store';
 import { useSelId, useSetSelId } from '@stores/ui-store';
 
+/**
+ * A curated subset, not the whole grammar — `open` and `clear` have never been
+ * here, and the ledger verbs are not either (HIVE-113).
+ *
+ * **This string has a hard length budget**, which is why it is not simply the
+ * verb list. It is the placeholder of a textarea that auto-grows to its
+ * content, so a string long enough to wrap makes the *empty* console two rows
+ * tall — and that row takes its height out of the terminal above it.
+ * `console-growth.spec.ts` measures exactly that, and adding one more verb here
+ * is what pushed it over.
+ *
+ * The grammar stays discoverable without it: the hint bar below lists every
+ * verb from `CONSOLE_VERBS`, and `help` prints each with its arguments.
+ */
 const PLACEHOLDER = 'help · status · send <session> <message> · spawn <project> <task>';
 const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
 

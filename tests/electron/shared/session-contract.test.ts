@@ -141,8 +141,8 @@ describe('hiveNameFromTitle', () => {
        * A hyphenated single token that a command line would accept is one of
        * ours, or a slug a user typed. Re-deriving it is what broke idempotence:
        * a second pass cannot tell the hyphens this function inserted from the
-       * ones that were always there. Without it a ledger entry for `sess-01`
-       * also came back as `SESS-01` — a row shouting its own id.
+       * ones that were always there. Without it a session-history entry for
+       * `sess-01` also came back as `SESS-01` — a row shouting its own id.
        */
       expect(hiveNameFromTitle('sess-01')).toBe('sess-01');
       expect(hiveNameFromTitle('HIVE-73')).toBe('HIVE-73');

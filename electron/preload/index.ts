@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 
 import type {
+  AgentNameRequest,
+  AgentRenameRequest,
+  AgentsSnapshot,
+  AgentWriteRequest,
+  AgentWriteResult,
+} from '@shared/agent-contract';
+import type {
   AddProjectRequest,
   CloneDoneEvent,
   CloneRequest,
@@ -75,6 +82,14 @@ import type {
   JiraStatus,
   JiraTransition,
 } from '@shared/jira-contract';
+import type {
+  LedgerAnswerRequest,
+  LedgerEntry,
+  LedgerPostRequest,
+  LedgerReadQuery,
+  LedgerResult,
+  LedgerSnapshot,
+} from '@shared/ledger-contract';
 import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import type {
   HiveNotification,
@@ -296,6 +311,31 @@ const bridge: HiveBridge = {
     rename: (request: SkillRenameRequest): Promise<SkillsSnapshot> =>
       ipcRenderer.invoke(CH.skillsRename, request),
   },
+  /*
+    HIVE-114. The same five path-free verbs as `skills`, plus `onChanged` —
+    which skills deliberately lack. The difference is that main is a second
+    writer here: an AGENT.md is a file the user is invited to edit outside the
+    app, so the pane cannot learn about every change from its own responses.
+
+    `onChanged` carries no payload. The renderer is poked and re-`list`s, which
+    keeps this listener incapable of leaking anything `list` would not already
+    have handed over.
+  */
+  agents: {
+    list: (): Promise<AgentsSnapshot> => ipcRenderer.invoke(CH.agentsList),
+    read: (request: AgentNameRequest): Promise<string | null> =>
+      ipcRenderer.invoke(CH.agentsRead, request),
+    write: (request: AgentWriteRequest): Promise<AgentWriteResult> =>
+      ipcRenderer.invoke(CH.agentsWrite, request),
+    remove: (request: AgentNameRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.agentsRemove, request),
+    rename: (request: AgentRenameRequest): Promise<AgentWriteResult> =>
+      ipcRenderer.invoke(CH.agentsRename, request),
+    onChanged: (callback: () => void) =>
+      subscribe<undefined>(CH.agentsChanged, () => {
+        callback();
+      }),
+  },
   // Story 106. `status` takes no argument — see the contract for why that is
   // the security design and not an oversight.
   integrations: {
@@ -395,6 +435,20 @@ const bridge: HiveBridge = {
     /** Hand a clicked row's action back to main to carry out. */
     act: (action: NotificationAction): Promise<void> =>
       ipcRenderer.invoke(CH.notificationsAct, action) as Promise<void>,
+  },
+  ledger: {
+    /** The log main holds. Hydration on mount. */
+    list: (query?: LedgerReadQuery): Promise<LedgerSnapshot> =>
+      ipcRenderer.invoke(CH.ledgerList, query ?? {}) as Promise<LedgerSnapshot>,
+    /** The overmind writes; main supplies `from`. */
+    post: (request: Omit<LedgerPostRequest, 'from'>): Promise<LedgerResult> =>
+      ipcRenderer.invoke(CH.ledgerPost, request) as Promise<LedgerResult>,
+    /** Close a thread, by canonical id or short ref. */
+    answer: (request: LedgerAnswerRequest): Promise<LedgerResult> =>
+      ipcRenderer.invoke(CH.ledgerAnswer, request) as Promise<LedgerResult>,
+    /** One entry landed, from any party. */
+    onChanged: (callback: (entry: LedgerEntry) => void) =>
+      subscribe<LedgerEntry>(CH.ledgerChanged, callback),
   },
   updates: {
     status: (): Promise<UpdateStatus> =>

@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, and that an unnamed session titles itself (~2½ min) |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), and the ledger MCP tools |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -59,6 +59,7 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 | Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
 | Simulation script and the fake clock | [`docs/simulation.md`](docs/simulation.md) |
+| The ledger, parties, asks and claims; agent definitions | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
 | Any UI task — tokens and type scale, then atoms and props | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) · [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
 The visual source of truth is [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md):
@@ -84,13 +85,13 @@ one still fires.
 | `src/**`, `electron/**` | `tests/**` (test scaffolding never ships) |
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
-| **`electron/pty-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
-| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**` |
+| **`electron/pty-host/**`, `electron/mcp-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
+| `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**`, `electron/mcp-host/**` |
 
-`electron/shared/**` is the **only** module both processes may import, and it is
-types and constants only — no runtime imports, no Node APIs, no DOM APIs. The
-renderer reaches it through `@shared`; anything with behaviour behind it must be
-imported **type-only**, or main-process code lands in the renderer bundle. That
+`electron/shared/**` is the **only** module both processes may import, and it is types,
+constants, and pure dependency-free logic only — no runtime imports, no Node APIs, no
+DOM APIs. The renderer reaches it through `@shared`; anything with behaviour behind it
+must be imported **type-only**, or main-process code lands in the renderer bundle. That
 is what makes the IPC contract a compile-time artifact rather than a convention.
 
 `src/components/layout/` is the **composition root** and is exempt from the
@@ -121,8 +122,7 @@ silently becomes importable from everywhere.
 **The single most important invariant in the codebase.**
 
 `src/components/terminal/` speaks only `TerminalTransport`. It may not import from
-`features/`, `data/`, or `stores/` — and cannot, because the lint zone fails the
-build.
+`features/`, `data/`, or `stores/` — and cannot, because the lint zone fails the build.
 
 In this phase the transport is a static/scripted fake; later it becomes IPC to a
 local PTY daemon **with no changes to the component tree**. That is the whole
@@ -144,7 +144,8 @@ Four stores: what the system *knows*, what the user is *looking at*, what they
 have *chosen*, and what they have *open*. Not cosmetic — it keeps a picker
 keystroke from re-rendering thirteen live terminals.
 
-- `hive-store.ts` — domain: entities, tickets, PRs, notifications, transcript.
+- `hive-store.ts` — domain: entities, tickets, PRs, notifications, transcript,
+  and the ledger tail (a capped mirror of main's log; it merges, never replaces).
 - `ui-store.ts` — view state: tabs, selection, picker, rails, tree expansion.
 - `appearance-store.ts` — theme, terminal and editor typography, density.
 - `editor-store.ts` — open file buffers: text, dirty, stale, conflict.
@@ -158,9 +159,8 @@ Every consumer goes through a named selector hook exported next to the store
 (`useCounts()`, `useEntity(id)`, `useUnreadCount()`, …). This is what keeps a
 status change from re-rendering the whole shell.
 
-Derived values are computed **in selectors, never stored** — one source of truth
-per number on screen. Cross-store effects call the other store's action
-explicitly; no store subscribes to another.
+Derived values are computed **in selectors, never stored** — one truth per number
+on screen. Cross-store effects call the other store's action; none subscribes.
 
 Fixtures (`src/data/`) are **store-only**, seed only `notifs`, and never gain a
 slice back; boot data is last run's ended sessions. Tests: `tests/support/`.

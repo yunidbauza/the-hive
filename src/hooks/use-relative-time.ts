@@ -65,7 +65,7 @@ export function formatRelativeTime(createdAt: number, now: number): string {
  *
  * Every value here has to fit `COL.lastUsed`, which is 80px — ten characters in
  * this face at 12.5px, measured against `59 min ago` and `6 days ago`. Plain
- * day-counting has no ceiling: a ledger row from last spring reads
+ * day-counting has no ceiling: a session-history row from last spring reads
  * `412 days ago`, overflows the column, and takes the table's alignment with
  * it. Weeks and then months cap the longest string instead of letting the
  * oldest row decide it.

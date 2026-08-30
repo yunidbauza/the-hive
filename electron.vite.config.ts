@@ -57,6 +57,25 @@ export default defineConfig({
            * the chunk they both import.
            */
           'session-manager': 'electron/pty-host/session-manager.ts',
+          /**
+           * A fourth input: the MCP server every session is given (HIVE-112).
+           *
+           * On the `main` target rather than a target of its own for the reason
+           * the pty host is: `defineConfig` takes `main`, `preload` and
+           * `renderer` and no fourth. It emits `out/main/mcp-host.js`, beside
+           * `index.js`, which is what lets main resolve the path it writes into
+           * the generated config with `import.meta.dirname`.
+           *
+           * It has no `dependencies` — `externalizeDepsPlugin` has nothing to
+           * externalise here — but it is not self-contained: it imports
+           * `@shared/*`, and rollup emits that as its own
+           * `out/main/chunks/mcp-contract-*.js`, alongside `mcp-host.js`
+           * rather than inlined into it. It still needs no `asarUnpack` entry,
+           * because that chunk ships inside `out/` like every other build
+           * output and is read through Electron's asar-aware `fs`, the same
+           * as `index.js` reading its own chunks.
+           */
+          'mcp-host': 'electron/mcp-host/index.ts',
         },
       },
     },

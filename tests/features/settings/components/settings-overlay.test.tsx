@@ -60,6 +60,7 @@ describe('SettingsOverlay', () => {
       'Projects',
       'Runtime',
       'Skills',
+      'Agents',
       'Appearance',
       'Integrations',
       'Advanced',
@@ -82,6 +83,24 @@ describe('SettingsOverlay', () => {
       .map((button) => button.textContent);
 
     expect(labels.indexOf('Skills')).toBe(labels.indexOf('Runtime') + 1);
+  });
+
+  it('puts Agents between Skills and Appearance (HIVE-114)', () => {
+    /*
+      It belongs with the session-shaped sections rather than the app-shaped
+      ones: a skill is a command a session comes with, and an agent is a
+      correspondent that runs sessions of its own. Appearance onwards is about
+      the app.
+    */
+    render(<SettingsOverlay />);
+
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const labels = within(nav)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+
+    expect(labels.indexOf('Agents')).toBe(labels.indexOf('Skills') + 1);
+    expect(labels.indexOf('Appearance')).toBe(labels.indexOf('Agents') + 1);
   });
 
   it('switches to Advanced (story 107)', async () => {

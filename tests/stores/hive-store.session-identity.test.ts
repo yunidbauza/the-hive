@@ -335,7 +335,7 @@ describe('setSessionTicket', () => {
    *
    * A mid-session rename is the app's own: Claude is never told, so it never
    * comes back on the title stream, so `readTitle` — main's only other source
-   * of names — never sees it. Left unsent, the ledger kept `sess-01` for a row
+   * of names — never sees it. Left unsent, the session history kept `sess-01` for a row
    * the user had been reading as `HIVE-73`, and the next launch restored the
    * id. And `ticketSessionName` de-duplicates against the whole fleet, so the
    * name is not something main could derive from the key either.
@@ -372,8 +372,8 @@ describe('setSessionTicket', () => {
    *
    * The note used to be a second call in `use-session-status.ts`, made whether
    * or not this action accepted the association — so a refusal still wrote the
-   * ticket into the ledger, and next launch restored a row carrying a key the
-   * store had declined to give it.
+   * ticket into the session history, and next launch restored a row carrying
+   * a key the store had declined to give it.
    */
   it('says nothing to main when it refuses the association', () => {
     const id = spawn();

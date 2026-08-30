@@ -237,6 +237,110 @@ describe('parseCommand', () => {
     });
   });
 
+  /**
+   * The ledger verbs (HIVE-113).
+   *
+   * `ledger` is the only verb in the grammar with flags, so it is the only one
+   * whose *shape* errors go beyond "an argument is missing" — `-n abc` is a
+   * malformed value, and this file's standing split puts that here rather than
+   * in the store.
+   */
+  describe('ledger', () => {
+    it('defaults to a 20-entry tail with no filters', () => {
+      expect(parseCommand('ledger')).toEqual({
+        kind: 'ledger',
+        raw: 'ledger',
+        open: false,
+        events: false,
+        limit: 20,
+      });
+    });
+
+    it('reads --open and --events as flags', () => {
+      expect(parseCommand('ledger --open --events')).toMatchObject({
+        kind: 'ledger',
+        open: true,
+        events: true,
+      });
+    });
+
+    it('reads --from, --to and -n as valued flags in any order', () => {
+      expect(parseCommand('ledger -n 5 --from sess-a --to overmind')).toEqual({
+        kind: 'ledger',
+        raw: 'ledger -n 5 --from sess-a --to overmind',
+        open: false,
+        events: false,
+        from: 'sess-a',
+        to: 'overmind',
+        limit: 5,
+      });
+    });
+
+    it('omits from and to entirely when not given', () => {
+      /*
+        Absent rather than `undefined`: a key that is present but undefined
+        reaches `matches()` as a filter that matches nothing, which is the
+        opposite of "no filter".
+      */
+      const parsed = parseCommand('ledger');
+      expect(parsed).not.toHaveProperty('from');
+      expect(parsed).not.toHaveProperty('to');
+    });
+
+    it.each(['ledger -n', 'ledger -n abc', 'ledger -n 0', 'ledger --from', 'ledger --nope'])(
+      'reports usage for %s',
+      (input) => {
+        expect(parseCommand(input)).toEqual({
+          kind: 'usage',
+          raw: input,
+          command: 'ledger',
+        });
+      },
+    );
+  });
+
+  describe('ask', () => {
+    it('splits the target from the message', () => {
+      expect(parseCommand('ask sess-a which branch?')).toEqual({
+        kind: 'ask',
+        raw: 'ask sess-a which branch?',
+        target: 'sess-a',
+        message: 'which branch?',
+      });
+    });
+
+    it('collapses interior whitespace in the message', () => {
+      expect(parseCommand('ask sess-a  yes   go')).toMatchObject({ message: 'yes go' });
+    });
+
+    it.each(['ask', 'ask sess-a'])('reports usage for %s', (input) => {
+      expect(parseCommand(input)).toEqual({ kind: 'usage', raw: input, command: 'ask' });
+    });
+  });
+
+  describe('answer', () => {
+    it('splits the thread from the text', () => {
+      expect(parseCommand('answer a12 main')).toEqual({
+        kind: 'answer',
+        raw: 'answer a12 main',
+        thread: 'a12',
+        message: 'main',
+      });
+    });
+
+    it('accepts a canonical id as readily as a short ref', () => {
+      // The parser cannot know which exist; `resolveRef` in main takes either.
+      expect(parseCommand('answer 20260829-120000-0001 yes')).toMatchObject({
+        kind: 'answer',
+        thread: '20260829-120000-0001',
+      });
+    });
+
+    it.each(['answer', 'answer a12'])('reports usage for %s', (input) => {
+      expect(parseCommand(input)).toEqual({ kind: 'usage', raw: input, command: 'answer' });
+    });
+  });
+
   it('never touches anything outside its argument', () => {
     // Purity is the contract that makes every row above testable without a
     // store, a timer, or a render.

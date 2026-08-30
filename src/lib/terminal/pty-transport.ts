@@ -342,8 +342,8 @@ export interface SpawnOptions {
    *
    * Set by `resolve-transport.ts` for a row restored under PREVIOUS RUN, which
    * is the one surface whose first mount should continue a session rather
-   * than start one. Main decides whether it *can* — the ledger has to name a
-   * uuid for the id — and a request it cannot honour becomes the plain spawn
+   * than start one. Main decides whether it *can* — the session history has to
+   * name a uuid for the id — and a request it cannot honour becomes the plain spawn
    * it would otherwise have been, so this module never has to know the answer.
    */
   resume?: boolean;

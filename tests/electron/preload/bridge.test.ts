@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  BRIDGE_AGENTS_KEYS,
   BRIDGE_CONFIG_KEYS,
   BRIDGE_INTEGRATIONS_KEYS,
   BRIDGE_JIRA_KEYS,
@@ -9,6 +10,7 @@ import {
   BRIDGE_FS_KEYS,
   BRIDGE_GITHUB_KEYS,
   BRIDGE_KEYS,
+  BRIDGE_LEDGER_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
   BRIDGE_SESSION_KEYS,
@@ -16,6 +18,7 @@ import {
   BRIDGE_THEME_KEYS,
   BRIDGE_UI_KEYS,
   CH,
+  EVENT_CHANNELS,
 } from '../../../electron/shared/ipc-contract';
 
 /**
@@ -86,6 +89,10 @@ const ui = () =>
 
 const session = () =>
   exposed.session as Record<string, (...args: unknown[]) => unknown>;
+const ledger = () =>
+  exposed.ledger as Record<string, (...args: unknown[]) => unknown>;
+const agents = () =>
+  exposed.agents as Record<string, (...args: unknown[]) => unknown>;
 
 describe('exposed surface', () => {
   it('exposes exactly the documented verbs — widening this is the alarm', () => {
@@ -108,6 +115,18 @@ describe('exposed surface', () => {
       is not that a fifth verb is wrong, it is that one cannot arrive quietly.
     */
     expect(Object.keys(skills()).sort()).toEqual([...BRIDGE_SKILLS_KEYS].sort());
+    /*
+      HIVE-114, written with the namespace rather than after the reminder —
+      the habit the notes below spent five namespaces trying to establish.
+
+      `agents` is the third namespace that writes to the user's disk, and the
+      first with six keys. The sixth is `onChanged`, a listener rather than a
+      verb, and `BRIDGE_AGENTS_KEYS` carries the argument for why it widens
+      nothing. A seventh — HIVE-115's `run` — is a change to what the renderer
+      may make the machine *do*, and this line is what stops it arriving
+      quietly.
+    */
+    expect(Object.keys(agents()).sort()).toEqual([...BRIDGE_AGENTS_KEYS].sort());
     /**
      * `github` shipped without this assertion, and `BRIDGE_GITHUB_KEYS` sat
      * unimported — a constant whose docblock claims it makes a second verb
@@ -142,6 +161,21 @@ describe('exposed surface', () => {
     expect(Object.keys(session()).sort()).toEqual([
       ...BRIDGE_SESSION_KEYS,
     ].sort());
+    /**
+     * HIVE-111's namespace, checked the same way: the constant is only an
+     * alarm if something reads it against the object the preload actually
+     * exposes.
+     */
+    expect(Object.keys(ledger()).sort()).toEqual([...BRIDGE_LEDGER_KEYS].sort());
+  });
+
+  /** HIVE-111. `post` and `answer` take no `from` — see the contract. */
+  it('names every key of the ledger bridge', () => {
+    expect([...BRIDGE_LEDGER_KEYS]).toEqual(['list', 'post', 'answer', 'onChanged']);
+  });
+
+  it('carries the ledger push channel in EVENT_CHANNELS', () => {
+    expect(EVENT_CHANNELS).toContain(CH.ledgerChanged);
   });
 
   /** HIVE-80. Two verbs, neither taking a destination path from the renderer. */

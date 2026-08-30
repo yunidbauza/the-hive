@@ -13,11 +13,11 @@ import type { SessionEffort, SessionModel } from './session-contract';
  * reads it once at boot over `session:history`.
  */
 
-/** The ledger's filename, under `app.getPath('userData')`. */
+/** The session history's filename, under `app.getPath('userData')`. */
 export const SESSION_HISTORY_FILE = 'sessions.json';
 
 /**
- * How many **ended** records the ledger keeps.
+ * How many **ended** records the session history keeps.
  *
  * The same bet `DONE_CAP` makes in the store, and deliberately the same number:
  * enough to answer "what was I doing yesterday?", few enough that restored rows
@@ -51,7 +51,7 @@ export interface SessionPrRecord {
  *
  * - `lines` — the transcript is Claude Code's own file
  *   (`~/.claude/projects/<escaped-cwd>/<uuid>.jsonl`). Copying it here would
- *   grow the ledger without bound to duplicate something already on disk.
+ *   grow the session history without bound to duplicate something already on disk.
  * - `cost` — a dead field on `Session`, only ever the literals `'$0.02'` and
  *   `'$0.00'`; nothing has ever updated it, and `SessionMetrics` carries no
  *   cost at all. Persisting it would persist a placeholder as though it were a
@@ -84,7 +84,7 @@ export interface SessionRecord {
    * (HIVE-107).
    *
    * Set only by a `session:note` that carried a name, which is the one moment
-   * the store pins one. While it is set the ledger refuses names off the title
+   * the store pins one. While it is set the session history refuses names off the title
    * stream, exactly as `renameSession` does in the store and against the same
    * writer — `readTitle` records every title it reads, so without this the row
    * on screen stayed `HIVE-104` while the file underneath it went back to
@@ -192,13 +192,14 @@ export interface SessionRecord {
  * What `session:history` actually answers with (HIVE-88).
  *
  * A record, plus one fact the file cannot hold because it is only true of a
- * moment: whether main has a process behind this id **right now**. The ledger
- * records every session begun this run as well as last run's, and a renderer
- * can start while main keeps running — close the window on macOS and reopen it
- * from the dock, reload it, survive a crash — so the list it reads back holds
- * rows that are not history at all. Without the mark, every one of those was
- * restored as `closed` under PREVIOUS RUN, its own hooks then wrote `working`
- * into it, and one agent occupied two rows.
+ * moment: whether main has a process behind this id **right now**. The
+ * session history records every session begun this run as well as last
+ * run's, and a renderer can start while main keeps running — close the
+ * window on macOS and reopen it from the dock, reload it, survive a crash —
+ * so the list it reads back holds rows that are not history at all. Without
+ * the mark, every one of those was restored as `closed` under PREVIOUS RUN,
+ * its own hooks then wrote `working` into it, and one agent occupied two
+ * rows.
  *
  * Absent means not live, so a list written by an older main reads as all
  * history — which is what it was when only a fresh launch could read it.
@@ -209,7 +210,7 @@ export interface SessionHistoryEntry extends SessionRecord {
    * This row's conversation can be reopened with `claude --resume` (HIVE-93).
    *
    * The second fact the file cannot hold, and for the same reason `live` cannot:
-   * it is only true of a moment. `ledger.resumable()` answers `undefined` for an
+   * it is only true of a moment. `history.resumable()` answers `undefined` for an
    * id **this run started**, because that id's uuid names a conversation that is
    * already open — resuming it would be a second `claude` against one transcript.
    *

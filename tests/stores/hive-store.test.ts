@@ -2,10 +2,12 @@ import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PHRASES } from '@lib/swarm/phrases';
-import { isSession } from '@/types/entity';
+import { isAgent, isSession } from '@/types/entity';
 import type { SessionStatus } from '@/types/entity';
 import { statusLabel } from '@components/ui/status-dot';
 import type { IdleDetail } from '@shared/hook-contract';
+import type { AgentSummary } from '@shared/agent-contract';
+import { LEDGER_MEMORY_CAP, type LedgerEntry } from '@shared/ledger-contract';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
 import {
@@ -27,8 +29,11 @@ import {
   useEndedSessions,
   currentRowFor,
   useHiveStore,
+  useLedgerEntries,
   useNavOrder,
+  useOpenAskCount,
   useSessionNameReports,
+  useThread,
 } from '@stores/hive-store';
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { useUiStore } from '@stores/ui-store';
@@ -223,8 +228,9 @@ describe('hive-store', () => {
       /*
         The name rides along since HIVE-108. Main used to learn it from the
         `--name` on this session's own command line, and there is no longer one —
-        a note carrying a name is what pins it in the ledger, so without it the
-        next launch would restore the agent's title with the key stripped off.
+        a note carrying a name is what pins it in the session history, so
+        without it the next launch would restore the agent's title with the
+        key stripped off.
       */
       await vi.waitFor(() => {
         expect(noteSessionTicket).toHaveBeenCalledWith({
@@ -522,9 +528,30 @@ describe('hive-store', () => {
         run('help');
         const text = transcript();
 
-        for (const command of ['help', 'status', 'open', 'send', 'spawn', 'clear']) {
+        for (const command of [
+          'help',
+          'status',
+          'ledger',
+          'open',
+          'send',
+          'ask',
+          'answer',
+          'spawn',
+          'clear',
+        ]) {
           expect(text).toContain(command);
         }
+      });
+
+      it('spells out the ledger verbs’ arguments (HIVE-113)', () => {
+        // `help` is where a user goes to find out a verb takes arguments at
+        // all, so the row has to carry the shape, not just the word.
+        run('help');
+        const text = transcript();
+
+        expect(text).toContain('ledger [--open]');
+        expect(text).toContain('ask <session> <message>');
+        expect(text).toContain('answer <id> <text>');
       });
     });
 
@@ -1307,6 +1334,200 @@ describe('hive-store', () => {
       });
     });
 
+    /**
+     * The ledger verbs (HIVE-113).
+     *
+     * `ledger` reads the store's own mirror, so it needs no bridge at all —
+     * only `isDesktop`. `ask` and `answer` write, so they are the only console
+     * verbs that reach `window.hive` directly, and they resolve asynchronously
+     * inside a synchronous action.
+     */
+    describe('ledger verbs', () => {
+      const post = vi.fn();
+      const answer = vi.fn();
+
+      beforeEach(() => {
+        post.mockReset().mockResolvedValue({ ok: true, id: 'id-1', ref: 'a14' });
+        answer.mockReset().mockResolvedValue({ ok: true, id: 'id-2' });
+        vi.mocked(isDesktop).mockReturnValue(true);
+        Object.defineProperty(window, 'hive', {
+          configurable: true,
+          value: { ledger: { post, answer } },
+        });
+      });
+
+      afterEach(() => {
+        Reflect.deleteProperty(window, 'hive');
+      });
+
+      const ask = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
+        id: '20260829-120000-0001',
+        ts: Date.now(),
+        from: 'sess-a',
+        to: 'overmind',
+        kind: 'ask',
+        ref: 'a12',
+        body: 'which branch?',
+        ...over,
+      });
+
+      it('prints the tail from the store mirror', () => {
+        useHiveStore.getState().hydrateLedger([ask()]);
+        run('ledger');
+
+        expect(transcript()).toContain('a12');
+        expect(transcript()).toContain('which branch?');
+      });
+
+      it('prints only open asks for --open', () => {
+        useHiveStore.getState().hydrateLedger([
+          ask(),
+          ask({ id: '20260829-120000-0002', kind: 'post', ref: undefined, body: 'a note' }),
+        ]);
+        run('ledger --open');
+
+        expect(transcript()).toContain('which branch?');
+        expect(transcript()).not.toContain('a note');
+      });
+
+      /**
+       * Open-ness is derived from the whole log, then filtered.
+       *
+       * An answer is addressed back to the *asker*, so filtering first strips
+       * the answers while keeping the asks — and every already-answered
+       * question would be reported as still open.
+       */
+      it('does not call an answered ask open just because a filter hid the answer', () => {
+        useHiveStore.getState().hydrateLedger([
+          ask({ id: '20260829-120000-0001', from: 'overmind', to: 'sess-a', ref: 'a12' }),
+          ask({
+            id: '20260829-120000-0002',
+            from: 'sess-a',
+            to: 'overmind',
+            kind: 'answer',
+            ref: undefined,
+            thread: '20260829-120000-0001',
+            body: 'the answer',
+          }),
+        ]);
+
+        run('ledger --open --to sess-a');
+
+        expect(lastLine()).toMatchObject({ text: '  no entries', color: 'dim' });
+      });
+
+      it('filters by party', () => {
+        useHiveStore.getState().hydrateLedger([
+          ask({ body: 'from a' }),
+          ask({ id: '20260829-120000-0002', from: 'sess-b', ref: 'a13', body: 'from b' }),
+        ]);
+        run('ledger --from sess-b');
+
+        expect(transcript()).toContain('from b');
+        expect(transcript()).not.toContain('from a');
+      });
+
+      it('says so when the log is empty', () => {
+        run('ledger');
+        expect(lastLine()).toMatchObject({ text: '  no entries', color: 'dim' });
+      });
+
+      it('asks a live session and prints the ref it got back', async () => {
+        seedDemoFleet();
+        const id = Object.keys(useHiveStore.getState().entities)[0];
+
+        run(`ask ${id} post a summary`);
+
+        await vi.waitFor(() => expect(post).toHaveBeenCalled());
+        expect(post).toHaveBeenCalledWith({
+          to: id,
+          kind: 'ask',
+          body: 'post a summary',
+        });
+        await vi.waitFor(() => expect(transcript()).toContain('(a14)'));
+        expect(transcript()).toContain('asked');
+      });
+
+      /**
+       * Addressed by terminal, not by row id.
+       *
+       * Main's registry — and therefore `deliver`'s notion of who is live — is
+       * keyed by `terminalOf(session)`. The two ids agree until a row is
+       * cleared, and the successor is exactly where posting the wrong one
+       * either addresses a party main has never heard of or names a terminal
+       * that now belongs to somebody else.
+       */
+      it('addresses the terminal, so a cleared row’s successor is reachable', async () => {
+        seedDemoFleet();
+        const state = useHiveStore.getState();
+        const id = Object.keys(state.entities)[0];
+        const entity = state.entities[id];
+        if (entity === undefined || entity.kind !== 'session') throw new Error('no session');
+
+        // A successor minted by `/clear`: a fresh row id over the old terminal.
+        useHiveStore.setState({
+          entities: {
+            ...state.entities,
+            'sess-successor': { ...entity, id: 'sess-successor', terminalId: id },
+          },
+          order: [...state.order, 'sess-successor'],
+        });
+
+        run('ask sess-successor hello');
+
+        await vi.waitFor(() => expect(post).toHaveBeenCalled());
+        expect(post).toHaveBeenCalledWith({ to: id, kind: 'ask', body: 'hello' });
+      });
+
+      it('refuses a name that matches no session, the way open does', () => {
+        run('ask nosuch hello');
+
+        expect(lastLine()).toMatchObject({
+          text: '  no such session: nosuch',
+          color: 'red',
+        });
+        expect(post).not.toHaveBeenCalled();
+      });
+
+      it('prints main’s reason when a post is refused', async () => {
+        seedDemoFleet();
+        const id = Object.keys(useHiveStore.getState().entities)[0];
+        post.mockResolvedValue({ ok: false, status: 404, reason: 'unknown party: sess-z' });
+
+        run(`ask ${id} hello`);
+
+        await vi.waitFor(() => expect(transcript()).toContain('unknown party: sess-z'));
+      });
+
+      it('answers an open ask', async () => {
+        run('answer a12 main');
+
+        await vi.waitFor(() => expect(answer).toHaveBeenCalled());
+        expect(answer).toHaveBeenCalledWith({ thread: 'a12', body: 'main' });
+        await vi.waitFor(() => expect(transcript()).toContain('answered a12'));
+      });
+
+      it('prints the reason when a thread is not open', async () => {
+        answer.mockResolvedValue({ ok: false, status: 400, reason: 'a12 is not an open ask' });
+
+        run('answer a12 main');
+
+        await vi.waitFor(() => expect(transcript()).toContain('a12 is not an open ask'));
+      });
+
+      it.each(['ledger', 'ask sess-a hi', 'answer a12 hi'])(
+        'refuses %s on the browser target',
+        (input) => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run(input);
+
+          expect(lastLine()?.text).toContain('needs the desktop app');
+          expect(lastLine()?.color).toBe('red');
+        },
+      );
+    });
+
     it('reports an unknown command and points at help', () => {
       run('frobnicate');
       expect(lastLine()).toMatchObject({
@@ -1510,7 +1731,7 @@ describe('hive-store', () => {
         .appendEntityLines('slack-agent', [{ text: 'ping', color: 'ink' }]);
 
       const entity = useHiveStore.getState().entities['slack-agent'];
-      expect(entity.status).toBe('online');
+      expect(entity.status).toBe('sleeping');
       expect(entity.lines.at(-1)?.text).toBe('ping');
     });
 
@@ -1704,13 +1925,112 @@ describe('hive-store', () => {
   });
 
   /**
-   * Restoring the fleet from the ledger (HIVE-87).
+   * Restoring the fleet from the session history (HIVE-87).
    *
    * The first time this store receives data at boot, which `emptySeeds()`
    * argues against at length — so most of these are about the restored rows
    * staying *inert*: they may not overwrite anything live, may not claim to be
    * running, and may not hand out an id a future spawn would collide with.
    */
+  describe('hydrateAgents', () => {
+    const summary = (
+      name: string,
+      over: Partial<AgentSummary> = {},
+    ): AgentSummary => ({
+      name,
+      description: `${name} does things`,
+      icon: 'Ghost',
+      status: 'sleeping',
+      wake: { on: [] },
+      ...over,
+    });
+
+    const agentAt = (id: string) => {
+      const entity = useHiveStore.getState().entities[id];
+      return entity !== undefined && isAgent(entity) ? entity : undefined;
+    };
+
+    it('fills entities and agentOrder alphabetically', () => {
+      useHiveStore.getState().hydrateAgents([summary('zulu'), summary('alpha')]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual(['alpha', 'zulu']);
+      expect(agentAt('alpha')).toMatchObject({
+        kind: 'agent',
+        id: 'alpha',
+        sub: 'alpha does things',
+        status: 'sleeping',
+      });
+    });
+
+    it('replaces, so a removed agent leaves both entities and order', () => {
+      // A definitions folder is a *set*, unlike the append-only ledger: a
+      // folder deleted in Finder must leave the list, which a merge could
+      // never express.
+      const store = useHiveStore.getState();
+      store.hydrateAgents([summary('alpha'), summary('zulu')]);
+      store.hydrateAgents([summary('alpha')]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual(['alpha']);
+      expect(useHiveStore.getState().entities.zulu).toBeUndefined();
+    });
+
+    it('keeps a rehydrated agent transcript, which is run output not definition', () => {
+      const store = useHiveStore.getState();
+      store.hydrateAgents([summary('alpha')]);
+      store.appendEntityLines('alpha', [{ text: 'hello', color: 'ink' }]);
+      store.hydrateAgents([summary('alpha', { description: 'now different' })]);
+
+      expect(agentAt('alpha')?.lines).toHaveLength(1);
+      expect(agentAt('alpha')?.sub).toBe('now different');
+    });
+
+    it('never writes over a session that shares an agent name', () => {
+      /*
+        `entities` is one map for both kinds and an agent name is a legal
+        session id, so a definition called after a live session used to replace
+        its entity and orphan it from `order`. The clear loop guarded this; the
+        write did not.
+      */
+      const store = useHiveStore.getState();
+      const id = useHiveStore.getState().order[0];
+
+      expect(id).toBeDefined();
+
+      store.hydrateAgents([summary(id as string)]);
+
+      const entity = useHiveStore.getState().entities[id as string];
+
+      expect(entity && isSession(entity)).toBe(true);
+      expect(useHiveStore.getState().order).toContain(id);
+    });
+
+    it('carries an invalid reason through', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([summary('broken', { invalid: 'nope: Unknown key.' })]);
+
+      expect(agentAt('broken')?.invalid).toBe('nope: Unknown key.');
+    });
+
+    it('leaves sessions untouched', () => {
+      const store = useHiveStore.getState();
+      store.spawnSession('nova-web');
+      const before = useHiveStore.getState().order;
+
+      store.hydrateAgents([summary('alpha')]);
+
+      expect(useHiveStore.getState().order).toEqual(before);
+    });
+
+    it('is empty-safe', () => {
+      const store = useHiveStore.getState();
+      store.hydrateAgents([summary('alpha')]);
+      store.hydrateAgents([]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual([]);
+    });
+  });
+
   describe('hydrateSessions', () => {
     const record = (over: Partial<SessionHistoryEntry> = {}): SessionHistoryEntry => ({
       id: 'sess-01',
@@ -1790,8 +2110,8 @@ describe('hive-store', () => {
 
     it('never clobbers a live row', () => {
       // A restart reuses entity ids, so this collision is the ordinary case
-      // rather than a corner: the ledger holds `sess-01` from last time and
-      // this run has just spawned one.
+      // rather than a corner: the session history holds `sess-01` from last
+      // time and this run has just spawned one.
       useHiveStore.getState().spawnSession('the-hive');
       const live = useHiveStore.getState().order.at(-1)!;
 
@@ -1894,7 +2214,7 @@ describe('hive-store', () => {
     });
 
     it('drops a model or effort the closed lists do not contain', () => {
-      // `ledger.ts` casts these on the way in and points here for validation.
+      // `history.ts` casts these on the way in and points here for validation.
       // A hand-edited file must not put an arbitrary string into a union.
       useHiveStore.getState().hydrateSessions([
         record({
@@ -1924,8 +2244,8 @@ describe('hive-store', () => {
     it('seeds the counter from an id it skipped as a collision', () => {
       /**
        * The narrow race the counter has to survive: a spawn lands between boot
-       * and the unawaited hydrate, taking `sess-01`. The ledger's own `sess-01`
-       * is then skipped — and if the counter never heard of it, the next spawn
+       * and the unawaited hydrate, taking `sess-01`. The session history's
+       * own `sess-01` is then skipped — and if the counter never heard of it, the next spawn
        * takes `sess-02`, the id of another record still waiting to be restored.
        */
       useHiveStore.getState().reset();
@@ -1946,8 +2266,8 @@ describe('hive-store', () => {
       /**
        * The renderer is not always the first of its run (HIVE-88). Close the
        * window on macOS and reopen it from the dock, reload it, crash it: a
-       * fresh store hydrates in front of the same running ptys, and the ledger
-       * lists them. Main marks those `live`, and a live row is this run's fleet
+       * fresh store hydrates in front of the same running ptys, and the
+       * session history lists them. Main marks those `live`, and a live row is this run's fleet
        * — not restored, not closed, and reading whatever it was last doing.
        */
       useHiveStore.getState().hydrateSessions([
@@ -1974,7 +2294,7 @@ describe('hive-store', () => {
       expect(statusOf('x')).toBe('done');
     });
 
-    it('is a no-op for an empty ledger', () => {
+    it('is a no-op for an empty history', () => {
       const before = [...useHiveStore.getState().order];
 
       useHiveStore.getState().hydrateSessions([]);
@@ -2432,8 +2752,8 @@ describe('hive-store', () => {
 
     it('never restores a second row for an id this run already runs', () => {
       // The identity that survives a restart is the entity id: a reopened row
-      // spawns under its own id, and the ledger is keyed by it. The collision
-      // guard is therefore the dedup, and it has to hold with the live row
+      // spawns under its own id, and the session history is keyed by it. The
+      // collision guard is therefore the dedup, and it has to hold with the live row
       // under any status.
       useHiveStore.getState().spawnSession('the-hive');
       const live = useHiveStore.getState().order.at(-1)!;
@@ -2727,8 +3047,8 @@ describe('lifecycle timestamps', () => {
       expect(sessionAt('old-05').resumedAt).toBe(
         Date.parse('2026-08-26T11:00:00Z'),
       );
-      // `createdAt` is untouched: it is when the session began, and the ledger's
-      // retention sorts on it.
+      // `createdAt` is untouched: it is when the session began, and the
+      // session history's retention sorts on it.
       expect(sessionAt('old-05').createdAt).toBe(
         Date.parse('2026-08-26T06:00:00Z'),
       );
@@ -2742,7 +3062,7 @@ describe('lifecycle timestamps', () => {
     /**
      * The times the row really had, not the moment it was restored — otherwise
      * every launch would file last week's endings as though they had all just
-     * happened, in whatever order the ledger listed them.
+     * happened, in whatever order the session history listed them.
      */
     it('restores the times a record carried rather than stamping at hydrate', () => {
       useHiveStore.getState().hydrateSessions([
@@ -2991,5 +3311,115 @@ describe('session names for the world outside the rail', () => {
 
       expect(result.current).toBe(before);
     });
+  });
+});
+
+describe('the ledger slice', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+  });
+
+  const entry = (over: Partial<LedgerEntry> & Pick<LedgerEntry, 'id'>): LedgerEntry => ({
+    ts: 1,
+    from: 'sess-a',
+    kind: 'post',
+    body: '',
+    ...over,
+  });
+
+  it('hydrates from a snapshot', () => {
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' }), entry({ id: '2' })]);
+
+    expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2']);
+  });
+
+  it('appends one entry to the tail', () => {
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' })]);
+    useHiveStore.getState().ledgerAppend(entry({ id: '2' }));
+
+    expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2']);
+  });
+
+  /**
+   * The hydrate/push race (HIVE-111 final review, finding 3).
+   *
+   * `useLedgerSync` arms the push channel while `list()` is still in flight,
+   * so an entry appended after main took its snapshot reaches the store first
+   * and is absent from the snapshot that follows. A replacing hydrate would
+   * discard it for good — the hook mounts once and never remounts.
+   */
+  it('keeps an entry that the snapshot it hydrates from does not contain', () => {
+    useHiveStore.getState().ledgerAppend(entry({ id: '3' }));
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' }), entry({ id: '2' })]);
+
+    expect(useHiveStore.getState().ledger.map((found) => found.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('does not duplicate an entry that arrived on both paths', () => {
+    useHiveStore.getState().ledgerAppend(entry({ id: '2', body: 'from the channel' }));
+    useHiveStore.getState().hydrateLedger([entry({ id: '1' }), entry({ id: '2' })]);
+
+    const kept = useHiveStore.getState().ledger;
+    expect(kept.map((found) => found.id)).toEqual(['1', '2']);
+    // The copy already in the mirror wins; both are the same immutable entry.
+    expect(kept[1].body).toBe('from the channel');
+  });
+
+  it('keeps the newest when the cap is passed', () => {
+    const many = Array.from({ length: LEDGER_MEMORY_CAP + 10 }, (_, index) =>
+      entry({ id: String(index).padStart(5, '0') }),
+    );
+    useHiveStore.getState().hydrateLedger(many);
+
+    const kept = useHiveStore.getState().ledger;
+    expect(kept).toHaveLength(LEDGER_MEMORY_CAP);
+    expect(kept[kept.length - 1].id).toBe(many[many.length - 1].id);
+    expect(kept[0].id).toBe(many[10].id);
+  });
+
+  it('drops the oldest when an append passes the cap', () => {
+    useHiveStore.getState().hydrateLedger(
+      Array.from({ length: LEDGER_MEMORY_CAP }, (_, index) =>
+        entry({ id: String(index).padStart(5, '0') }),
+      ),
+    );
+    useHiveStore.getState().ledgerAppend(entry({ id: 'zzzzz' }));
+
+    const kept = useHiveStore.getState().ledger;
+    expect(kept).toHaveLength(LEDGER_MEMORY_CAP);
+    expect(kept[kept.length - 1].id).toBe('zzzzz');
+    expect(kept[0].id).toBe('00001');
+  });
+
+  it('counts open asks', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', kind: 'ask', ts: Date.now() }),
+      entry({ id: '2', kind: 'ask', ts: Date.now() }),
+      entry({ id: '3', kind: 'answer', thread: '1', ts: Date.now() }),
+    ]);
+
+    const { result } = renderHook(() => useOpenAskCount());
+    expect(result.current).toBe(1);
+  });
+
+  it('filters entries through the shared query rules', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', from: 'sess-a' }),
+      entry({ id: '2', from: 'sess-b' }),
+    ]);
+
+    const { result } = renderHook(() => useLedgerEntries({ from: 'sess-b' }));
+    expect(result.current.map((found) => found.id)).toEqual(['2']);
+  });
+
+  it('returns a thread in order', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', kind: 'ask' }),
+      entry({ id: '2', kind: 'post' }),
+      entry({ id: '3', kind: 'answer', thread: '1' }),
+    ]);
+
+    const { result } = renderHook(() => useThread('1'));
+    expect(result.current.map((found) => found.id)).toEqual(['1', '3']);
   });
 });

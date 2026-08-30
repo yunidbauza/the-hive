@@ -1,3 +1,4 @@
+import { LEDGER_TAIL_DEFAULT } from '@/types/command';
 import type { ParsedCommand } from '@/types/command';
 
 /**
@@ -149,6 +150,102 @@ export function parseCommand(raw: string): ParsedCommand {
         return { kind: 'usage', raw: input, command: 'spawn' };
       }
       return { kind: 'spawn', raw: input, project, task };
+    }
+
+    /**
+     * The only verb in the grammar with flags.
+     *
+     * A loop over {@link takeWord} rather than a tokenise-and-scan, for the
+     * reason `takeWord` exists at all: the tail of a command is prose, and
+     * splitting the whole string to find a flag is the newline-flattening step
+     * this parser was rewritten to avoid.
+     *
+     * Every malformed flag is a `usage` outcome rather than a runtime failure,
+     * which is this file's standing split: shape errors here, existence errors
+     * in the store. `-n abc` is a shape the parser can reject by itself.
+     */
+    case 'ledger': {
+      let open = false;
+      let events = false;
+      let from: string | undefined;
+      let to: string | undefined;
+      let limit = LEDGER_TAIL_DEFAULT;
+      let cursor = rest;
+
+      while (cursor !== '') {
+        const [token, tail] = takeWord(cursor);
+
+        if (token === '--open') {
+          open = true;
+          cursor = tail;
+          continue;
+        }
+
+        if (token === '--events') {
+          events = true;
+          cursor = tail;
+          continue;
+        }
+
+        if (token === '--from' || token === '--to' || token === '-n') {
+          const [value, next] = takeWord(tail);
+          if (!value) return { kind: 'usage', raw: input, command: 'ledger' };
+
+          if (token === '--from') {
+            from = value;
+          } else if (token === '--to') {
+            to = value;
+          } else {
+            // A tail of "not a number" or "nothing" is not a tail that could be
+            // printed, so it is a shape error rather than an empty result.
+            if (!/^\d+$/u.test(value)) {
+              return { kind: 'usage', raw: input, command: 'ledger' };
+            }
+            const count = Number.parseInt(value, 10);
+            if (count < 1) return { kind: 'usage', raw: input, command: 'ledger' };
+            limit = count;
+          }
+
+          cursor = next;
+          continue;
+        }
+
+        return { kind: 'usage', raw: input, command: 'ledger' };
+      }
+
+      /*
+        The optional halves are spread rather than assigned, so an absent filter
+        leaves no key at all. A `from: undefined` would reach `matches()` as a
+        filter that is present but matches nothing — the opposite of no filter.
+      */
+      return {
+        kind: 'ledger',
+        raw: input,
+        open,
+        events,
+        ...(from === undefined ? {} : { from }),
+        ...(to === undefined ? {} : { to }),
+        limit,
+      };
+    }
+
+    /** `send`'s shape exactly — a target, then prose. */
+    case 'ask': {
+      const [target, tail] = takeWord(rest);
+      const message = normalize(tail);
+      if (!target || message === '') {
+        return { kind: 'usage', raw: input, command: 'ask' };
+      }
+      return { kind: 'ask', raw: input, target, message };
+    }
+
+    case 'answer': {
+      const [thread, tail] = takeWord(rest);
+      const message = normalize(tail);
+      if (!thread || message === '') {
+        return { kind: 'usage', raw: input, command: 'answer' };
+      }
+      return { kind: 'answer', raw: input, thread, message };
     }
 
     default:

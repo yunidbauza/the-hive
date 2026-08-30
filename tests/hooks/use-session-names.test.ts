@@ -15,7 +15,7 @@ import { seedDemoFleet } from '@tests/support/demo-fleet';
  *
  * The two properties that matter are opposite in shape. It has to report
  * **everything** on mount — main's map is per-process and empty at launch, so a
- * session restored from the ledger is otherwise a name main will never learn —
+ * session restored from the session history is otherwise a name main will never learn —
  * and **only the delta** afterwards, or a fleet of ten sends ten messages every
  * time one of them is titled.
  */

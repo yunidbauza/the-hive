@@ -22,7 +22,15 @@ describe('StatusDot', () => {
      * when deciding whether to go and look.
      */
     ['terminated', 'bg-muted'],
-    ['online', 'bg-green'],
+    /*
+      The agent states, all on idle's grey until HIVE-116 gives them a palette
+      (HIVE-114). Asserted rather than skipped: a Record that compiles proves
+      the key exists, not that the dot renders anything.
+    */
+    ['sleeping', 'bg-subtle'],
+    ['asking', 'bg-subtle'],
+    ['paused', 'bg-subtle'],
+    ['failed', 'bg-subtle'],
   ] as const)('paints %s with %s', (status, expected) => {
     const { container } = render(<StatusDot status={status} />);
 
@@ -38,7 +46,10 @@ describe('StatusDot', () => {
       'idle',
       'done',
       'terminated',
-      'online',
+      'sleeping',
+      'asking',
+      'paused',
+      'failed',
     ] as const) {
       rerender(<StatusDot status={status} />);
       expect(container.firstChild).not.toHaveClass('animate-ccpulse');
@@ -125,7 +136,10 @@ describe('StatusDot', () => {
       'idle',
       'done',
       'terminated',
-      'online',
+      'sleeping',
+      'asking',
+      'paused',
+      'failed',
     ] as const) {
       const { container } = render(<StatusDot status={status} />);
       const fill = [...container.firstElementChild!.classList].find((c) =>
@@ -144,7 +158,9 @@ describe('StatusDot', () => {
     // Its own word, and the reason the state exists: `done` is a claim about
     // the work, `terminated` an observation about the process (story 108).
     expect(STATUS_LABEL.terminated).toBe('terminated');
-    expect(STATUS_LABEL.online).toBe('online');
+    // An agent's own vocabulary — 'online' described a socket and is gone.
+    expect(STATUS_LABEL.sleeping).toBe('sleeping');
+    expect(STATUS_LABEL.asking).toBe('asking');
   });
 
   /**

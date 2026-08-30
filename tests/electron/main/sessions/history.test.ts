@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HISTORY_CAP } from '../../../../electron/shared/session-history-contract';
 import {
-  createSessionLedger,
-  readLedger,
-} from '../../../../electron/main/sessions/ledger';
+  createSessionHistory,
+  readHistory,
+} from '../../../../electron/main/sessions/history';
 
 /**
- * The ledger (HIVE-87).
+ * The session history (HIVE-87).
  *
  * These tests use a **real temporary directory** rather than a mocked `fs`, for
  * the reason `tests/electron/main/config/index.test.ts` gives: nothing is
@@ -20,16 +20,16 @@ import {
  * calling `app.getPath` itself, so no Electron mock is needed either.
  *
  * The posture under test is **lenient**, deliberately, and half of these cases
- * exist to pin that: a ledger that could throw on a corrupt file would be a
- * ledger that can stop the app from opening, which is a far worse bug than
- * losing a page of history.
+ * exist to pin that: a module that could throw on a corrupt file would be one
+ * that can stop the app from opening, which is a far worse bug than losing a
+ * page of history.
  */
-describe('session ledger', () => {
+describe('session history', () => {
   let dir: string;
   let file: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'hive-ledger-'));
+    dir = mkdtempSync(join(tmpdir(), 'hive-history-'));
     file = join(dir, 'sessions.json');
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -41,15 +41,15 @@ describe('session ledger', () => {
 
   describe('writing', () => {
     it('round-trips a record', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', {
         project: 'the-hive',
         task: '',
         status: 'working',
       });
-      ledger.flush();
+      history.flush();
 
-      expect(readLedger(file)).toEqual([
+      expect(readHistory(file)).toEqual([
         {
           id: 'sess-01',
           project: 'the-hive',
@@ -63,17 +63,17 @@ describe('session ledger', () => {
     it('merges a patch into the existing record rather than appending', () => {
       // Every call site sends a fragment — spawn knows the uuid, publishBranch
       // knows the branch, settleExit knows the ending. One row, four writers.
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', {
         project: 'the-hive',
         task: '',
         status: 'working',
       });
-      ledger.record('sess-01', { branch: 'feat/x', cwd: '/tmp/x' });
-      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
-      ledger.flush();
+      history.record('sess-01', { branch: 'feat/x', cwd: '/tmp/x' });
+      history.record('sess-01', { status: 'terminated', endedAt: 2000 });
+      history.flush();
 
-      const records = readLedger(file);
+      const records = readHistory(file);
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         id: 'sess-01',
@@ -87,24 +87,24 @@ describe('session ledger', () => {
 
     it('keeps createdAt from the first write, not the last', () => {
       let clock = 1000;
-      const ledger = createSessionLedger(file, () => clock);
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => clock);
+      history.record('sess-01', {
         project: 'p',
         task: '',
         status: 'working',
       });
       clock = 9999;
-      ledger.record('sess-01', { branch: 'main' });
-      ledger.flush();
+      history.record('sess-01', { branch: 'main' });
+      history.flush();
 
-      expect(readLedger(file)[0]?.createdAt).toBe(1000);
+      expect(readHistory(file)[0]?.createdAt).toBe(1000);
     });
 
     it('exposes what it holds without going through the file', () => {
-      const ledger = createSessionLedger(file, () => 1);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'idle' });
+      const history = createSessionHistory(file, () => 1);
+      history.record('sess-01', { project: 'p', task: '', status: 'idle' });
 
-      expect(ledger.all().map((record) => record.id)).toEqual(['sess-01']);
+      expect(history.all().map((record) => record.id)).toEqual(['sess-01']);
     });
 
     /**
@@ -123,12 +123,12 @@ describe('session ledger', () => {
         repo: 'the-hive',
         url: 'https://github.com/demo/the-hive/pull/118',
       };
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'the-hive', task: '', status: 'working' });
-      ledger.record('sess-01', { pr });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'the-hive', task: '', status: 'working' });
+      history.record('sess-01', { pr });
+      history.flush();
 
-      const reopened = createSessionLedger(file, () => 2000);
+      const reopened = createSessionHistory(file, () => 2000);
       expect(reopened.all()[0]).toMatchObject({ id: 'sess-01', pr });
     });
 
@@ -141,12 +141,12 @@ describe('session ledger', () => {
      * — the id — several times a second, and an unpinned row takes it.
      */
     it('round-trips a pinned name', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      history.flush();
 
-      expect(createSessionLedger(file, () => 2000).all()[0]).toMatchObject({
+      expect(createSessionHistory(file, () => 2000).all()[0]).toMatchObject({
         name: 'HIVE-104',
         namePinned: true,
       });
@@ -163,13 +163,13 @@ describe('session ledger', () => {
      * next repaint, and the file is what the next launch reads.
      */
     it('refuses a title-stream name while one is pinned without a ticket', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
-      ledger.record('sess-01', { name: 'sess-01' });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      history.record('sess-01', { name: 'sess-01' });
+      history.flush();
 
-      expect(readLedger(file)[0]?.name).toBe('HIVE-104');
+      expect(readHistory(file)[0]?.name).toBe('HIVE-104');
     });
 
     /**
@@ -179,66 +179,66 @@ describe('session ledger', () => {
      * disagree.
      */
     it('keeps a pinned key in front of a title-stream name', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', {
         ticket: 'HIVE-104',
         name: 'HIVE-104',
         namePinned: true,
       });
-      ledger.record('sess-01', { name: 'back key interception' });
-      ledger.flush();
+      history.record('sess-01', { name: 'back key interception' });
+      history.flush();
 
-      expect(readLedger(file)[0]?.name).toBe('HIVE-104-back-key-interception');
+      expect(readHistory(file)[0]?.name).toBe('HIVE-104-back-key-interception');
     });
 
     it('does not lengthen a pinned name on every repaint', () => {
       // The compounding failure, guarded here as well as in the store: the
       // prefix is the ticket, never the name the last repaint produced.
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', {
         ticket: 'HIVE-104',
         name: 'HIVE-104',
         namePinned: true,
       });
       for (let i = 0; i < 5; i += 1) {
-        ledger.record('sess-01', { name: 'back key interception' });
+        history.record('sess-01', { name: 'back key interception' });
       }
-      ledger.flush();
+      history.flush();
 
-      expect(readLedger(file)[0]?.name).toBe('HIVE-104-back-key-interception');
+      expect(readHistory(file)[0]?.name).toBe('HIVE-104-back-key-interception');
     });
 
     it('spells an unpinned title-stream name in the rail’s register', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { name: 'Mutex explanation' });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { name: 'Mutex explanation' });
+      history.flush();
 
-      expect(readLedger(file)[0]?.name).toBe('mutex-explanation');
+      expect(readHistory(file)[0]?.name).toBe('mutex-explanation');
     });
 
     it('lets the app repin over its own name', () => {
       // The pin outranks the agent, not the app: a note that carries a name is
       // the store saying so, and it is the only thing that may replace one.
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
-      ledger.record('sess-01', { name: 'HIVE-104-2', namePinned: true });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      history.record('sess-01', { name: 'HIVE-104-2', namePinned: true });
+      history.flush();
 
-      expect(readLedger(file)[0]?.name).toBe('HIVE-104-2');
+      expect(readHistory(file)[0]?.name).toBe('HIVE-104-2');
     });
 
     it('still takes a title-stream name on a row nobody pinned', () => {
       // HIVE-61's behaviour, unchanged for every session the app has not named.
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { name: 'troubleshooting-crawling' });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { name: 'troubleshooting-crawling' });
+      history.flush();
 
-      expect(readLedger(file)[0]?.name).toBe('troubleshooting-crawling');
+      expect(readHistory(file)[0]?.name).toBe('troubleshooting-crawling');
     });
 
     /**
@@ -248,12 +248,12 @@ describe('session ledger', () => {
      * make a brand-new session refuse its own name.
      */
     it('drops the pin when a fresh session takes the id', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { name: 'HIVE-104', namePinned: true });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { name: 'HIVE-104', namePinned: true });
+      history.flush();
 
-      const reopened = createSessionLedger(file, () => 2000);
+      const reopened = createSessionHistory(file, () => 2000);
       reopened.begin('sess-01', { project: 'p', status: 'working' });
       reopened.record('sess-01', { name: 'sess-01' });
 
@@ -267,17 +267,17 @@ describe('session ledger', () => {
      * which is what the 34px column can show.
      */
     it('replaces a remembered pull request rather than merging into it', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', {
         pr: { number: 1, repo: 'p', url: 'https://github.com/demo/p/pull/1' },
       });
-      ledger.record('sess-01', {
+      history.record('sess-01', {
         pr: { number: 2, repo: 'p', url: 'https://github.com/demo/p/pull/2' },
       });
-      ledger.flush();
+      history.flush();
 
-      expect(readLedger(file)[0]?.pr).toEqual({
+      expect(readHistory(file)[0]?.pr).toEqual({
         number: 2,
         repo: 'p',
         url: 'https://github.com/demo/p/pull/2',
@@ -305,7 +305,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      const records = readLedger(file);
+      const records = readHistory(file);
       expect(records).toHaveLength(1);
       expect(records[0]).not.toHaveProperty('pr');
     });
@@ -314,17 +314,17 @@ describe('session ledger', () => {
   /**
    * The second launch — the case every other test here was blind to.
    *
-   * Each of them builds a fresh ledger over a fresh temp file, which is the one
-   * arrangement where "the ledger does not load the file" cannot be observed.
+   * Each of them builds a fresh history over a fresh temp file, which is the one
+   * arrangement where "the history does not load the file" cannot be observed.
    * The first draft of this module did exactly that, and the cost was not
-   * merely a missing feature: an unseeded ledger answers `session:history` with
+   * merely a missing feature: an unseeded history answers `session:history` with
    * nothing and then writes that nothing back, so the *second* launch after any
    * session erased the first launch's history. `session-history.spec.ts` caught
    * it by quitting a real app; these are the unit tests that should have.
    */
-  describe('reopening an existing ledger', () => {
+  describe('reopening an existing history', () => {
     const seed = () => {
-      const first = createSessionLedger(file, () => 1000);
+      const first = createSessionHistory(file, () => 1000);
       first.begin('sess-01', {
         project: 'the-hive',
         task: '',
@@ -336,7 +336,7 @@ describe('session ledger', () => {
     it('starts holding what the file already held', () => {
       seed();
 
-      expect(createSessionLedger(file, () => 2000).all()).toEqual([
+      expect(createSessionHistory(file, () => 2000).all()).toEqual([
         {
           id: 'sess-01',
           project: 'the-hive',
@@ -361,19 +361,19 @@ describe('session ledger', () => {
       // previous launch's history exactly where it was.
       seed();
 
-      createSessionLedger(file, () => 2000).flush();
+      createSessionHistory(file, () => 2000).flush();
 
-      expect(readLedger(file).map((record) => record.id)).toEqual(['sess-01']);
+      expect(readHistory(file).map((record) => record.id)).toEqual(['sess-01']);
     });
 
     it('merges a new run into the old records rather than replacing them', () => {
       seed();
 
-      const second = createSessionLedger(file, () => 2000);
+      const second = createSessionHistory(file, () => 2000);
       second.record('sess-02', { project: 'p', task: '', status: 'working' });
       second.flush();
 
-      expect(readLedger(file).map((record) => record.id).sort()).toEqual([
+      expect(readHistory(file).map((record) => record.id).sort()).toEqual([
         'sess-01',
         'sess-02',
       ]);
@@ -382,11 +382,11 @@ describe('session ledger', () => {
     it('keeps the original createdAt when an old record is patched again', () => {
       seed();
 
-      const second = createSessionLedger(file, () => 2000);
+      const second = createSessionHistory(file, () => 2000);
       second.record('sess-01', { status: 'terminated', endedAt: 3000 });
       second.flush();
 
-      expect(readLedger(file)[0]).toMatchObject({
+      expect(readHistory(file)[0]).toMatchObject({
         createdAt: 1000,
         endedAt: 3000,
         status: 'terminated',
@@ -415,7 +415,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      const [record] = createSessionLedger(file, () => 9000).all();
+      const [record] = createSessionHistory(file, () => 9000).all();
       // Stamped at load, not at spawn — see the next test for why that matters.
       expect(record?.endedAt).toBe(9000);
       // The status is untouched: the renderer needs to see `working` to infer
@@ -448,10 +448,10 @@ describe('session ledger', () => {
       }));
       writeFileSync(file, JSON.stringify([openedEarly, ...throwaways]), 'utf8');
 
-      const ledger = createSessionLedger(file, () => 9000);
-      ledger.flush();
+      const history = createSessionHistory(file, () => 9000);
+      history.flush();
 
-      const ids = readLedger(file).map((record) => record.id);
+      const ids = readHistory(file).map((record) => record.id);
       expect(ids).toContain('worked-in-all-day');
       expect(ids).toHaveLength(HISTORY_CAP);
     });
@@ -472,7 +472,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      expect(createSessionLedger(file, () => 9000).all()[0]?.endedAt).toBe(700);
+      expect(createSessionHistory(file, () => 9000).all()[0]?.endedAt).toBe(700);
     });
 
     it('caps records the previous run left claiming to be live', () => {
@@ -486,10 +486,10 @@ describe('session ledger', () => {
       }));
       writeFileSync(file, JSON.stringify(stale), 'utf8');
 
-      const ledger = createSessionLedger(file, () => 9000);
-      ledger.flush();
+      const history = createSessionHistory(file, () => 9000);
+      history.flush();
 
-      expect(readLedger(file)).toHaveLength(HISTORY_CAP);
+      expect(readHistory(file)).toHaveLength(HISTORY_CAP);
     });
 
     it('leaves liveness to begin — a patch only adds what it carries', () => {
@@ -504,25 +504,25 @@ describe('session ledger', () => {
        * re-creating the "exempt from the cap forever" growth the stamp exists to
        * prevent. One verb decides liveness.
        */
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.begin('sess-01', { project: 'p', task: '' });
-      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
+      const history = createSessionHistory(file, () => 1000);
+      history.begin('sess-01', { project: 'p', task: '' });
+      history.record('sess-01', { status: 'terminated', endedAt: 2000 });
 
-      ledger.record('sess-01', { status: 'working' });
-      ledger.flush();
+      history.record('sess-01', { status: 'working' });
+      history.flush();
 
-      const [record] = readLedger(file);
+      const [record] = readHistory(file);
       expect(record?.status).toBe('working');
       expect(record?.endedAt).toBe(2000);
     });
 
     it('keeps an ending the caller states explicitly alongside a status', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
-      ledger.record('sess-01', { status: 'done', endedAt: 4000 });
-      ledger.flush();
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { status: 'done', endedAt: 4000 });
+      history.flush();
 
-      expect(readLedger(file)[0]?.endedAt).toBe(4000);
+      expect(readHistory(file)[0]?.endedAt).toBe(4000);
     });
   });
 
@@ -558,15 +558,15 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      const ledger = createSessionLedger(file, () => 5000);
-      ledger.begin('sess-01', {
+      const history = createSessionHistory(file, () => 5000);
+      history.begin('sess-01', {
         project: 'new-project',
         task: '',
         sessionUuid: 'new-uuid',
       });
-      ledger.flush();
+      history.flush();
 
-      const [record] = readLedger(file);
+      const [record] = readHistory(file);
       expect(record).toMatchObject({
         project: 'new-project',
         sessionUuid: 'new-uuid',
@@ -603,17 +603,17 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      const ledger = createSessionLedger(file, () => 5000);
-      expect(ledger.resumable('sess-01')).toBe('old-uuid');
+      const history = createSessionHistory(file, () => 5000);
+      expect(history.resumable('sess-01')).toBe('old-uuid');
 
-      ledger.begin(
+      history.begin(
         'sess-01',
         { project: 'p', task: '', sessionUuid: 'old-uuid' },
         { resume: true },
       );
-      ledger.flush();
+      history.flush();
 
-      expect(readLedger(file)[0]).toMatchObject({
+      expect(readHistory(file)[0]).toMatchObject({
         branch: 'feat/old',
         cwd: '/old',
         ticket: 'HIVE-1',
@@ -622,7 +622,7 @@ describe('session ledger', () => {
         status: 'working',
         createdAt: 100,
       });
-      expect(readLedger(file)[0]?.endedAt).toBeUndefined();
+      expect(readHistory(file)[0]?.endedAt).toBeUndefined();
     });
 
     it('forgets a uuid a patch withdraws, so a cleared terminal cannot resume', () => {
@@ -633,14 +633,14 @@ describe('session ledger', () => {
         ]),
         'utf8',
       );
-      const ledger = createSessionLedger(file, () => 5000);
-      expect(ledger.resumable('sess-01')).toBe('old');
+      const history = createSessionHistory(file, () => 5000);
+      expect(history.resumable('sess-01')).toBe('old');
 
-      ledger.record('sess-01', { sessionUuid: undefined });
-      ledger.flush();
+      history.record('sess-01', { sessionUuid: undefined });
+      history.flush();
 
-      expect(ledger.resumable('sess-01')).toBeUndefined();
-      expect(readLedger(file)[0]).not.toHaveProperty('sessionUuid');
+      expect(history.resumable('sess-01')).toBeUndefined();
+      expect(readHistory(file)[0]).not.toHaveProperty('sessionUuid');
     });
 
     it('resumes a session this run began once it has ended (HIVE-93)', () => {
@@ -652,15 +652,15 @@ describe('session ledger', () => {
         closed, its uuid still names it, and offering to reopen it is the whole
         point of the feature.
       */
-      const ledger = createSessionLedger(file, () => 5000);
-      ledger.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
+      const history = createSessionHistory(file, () => 5000);
+      history.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
 
       // While it runs, still refused.
-      expect(ledger.resumable('mine')).toBeUndefined();
+      expect(history.resumable('mine')).toBeUndefined();
 
-      ledger.record('mine', { status: 'done', endedAt: 6000 });
+      history.record('mine', { status: 'done', endedAt: 6000 });
 
-      expect(ledger.resumable('mine')).toBe('fresh');
+      expect(history.resumable('mine')).toBe('fresh');
     });
 
     it('has nothing to resume for a record without a uuid, or one this run began', () => {
@@ -671,22 +671,22 @@ describe('session ledger', () => {
         ]),
         'utf8',
       );
-      const ledger = createSessionLedger(file, () => 5000);
-      ledger.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
+      const history = createSessionHistory(file, () => 5000);
+      history.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
 
-      expect(ledger.resumable('no-uuid')).toBeUndefined();
-      expect(ledger.resumable('mine')).toBeUndefined();
-      expect(ledger.resumable('never-heard')).toBeUndefined();
+      expect(history.resumable('no-uuid')).toBeUndefined();
+      expect(history.resumable('mine')).toBeUndefined();
+      expect(history.resumable('never-heard')).toBeUndefined();
 
       // `resume` on a record with nothing to resume starts over, as any reused
       // id does.
-      ledger.begin(
+      history.begin(
         'no-uuid',
         { project: 'q', task: '', sessionUuid: 'new' },
         { resume: true },
       );
-      ledger.flush();
-      expect(readLedger(file).find((r) => r.id === 'no-uuid')).toMatchObject({
+      history.flush();
+      expect(readHistory(file).find((r) => r.id === 'no-uuid')).toMatchObject({
         project: 'q',
         sessionUuid: 'new',
         createdAt: 5000,
@@ -696,20 +696,20 @@ describe('session ledger', () => {
     it('keeps what a restart has already learned this run', () => {
       // Same session, new process. Its ticket and branch did not change because
       // the agent was restarted.
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.begin('sess-01', { project: 'p', task: '', sessionUuid: 'first' });
-      ledger.record('sess-01', {
+      const history = createSessionHistory(file, () => 1000);
+      history.begin('sess-01', { project: 'p', task: '', sessionUuid: 'first' });
+      history.record('sess-01', {
         branch: 'feat/x',
         cwd: '/repo',
         ticket: 'HIVE-87',
         name: 'worker',
       });
-      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
+      history.record('sess-01', { status: 'terminated', endedAt: 2000 });
 
-      ledger.begin('sess-01', { project: 'p', task: '', sessionUuid: 'second' });
-      ledger.flush();
+      history.begin('sess-01', { project: 'p', task: '', sessionUuid: 'second' });
+      history.flush();
 
-      expect(readLedger(file)[0]).toMatchObject({
+      expect(readHistory(file)[0]).toMatchObject({
         branch: 'feat/x',
         cwd: '/repo',
         ticket: 'HIVE-87',
@@ -718,14 +718,14 @@ describe('session ledger', () => {
         status: 'working',
         createdAt: 1000,
       });
-      expect(readLedger(file)[0]?.endedAt).toBeUndefined();
+      expect(readHistory(file)[0]?.endedAt).toBeUndefined();
     });
 
     it('clears the previous generation ending so a restart is not prunable', () => {
-      const ledger = createSessionLedger(file, () => 1000);
-      ledger.begin('sess-01', { project: 'p', task: '' });
-      ledger.record('sess-01', { status: 'terminated', endedAt: 2000 });
-      ledger.begin('sess-01', { project: 'p', task: '' });
+      const history = createSessionHistory(file, () => 1000);
+      history.begin('sess-01', { project: 'p', task: '' });
+      history.record('sess-01', { status: 'terminated', endedAt: 2000 });
+      history.begin('sess-01', { project: 'p', task: '' });
 
       /**
        * The fillers end **after** the stale timestamp, and that is the whole
@@ -739,63 +739,63 @@ describe('session ledger', () => {
        * first evicted, so only actually clearing the ending keeps it.
        */
       for (let i = 0; i < HISTORY_CAP + 5; i += 1) {
-        ledger.record(`ended-${i}`, {
+        history.record(`ended-${i}`, {
           project: 'p',
           task: '',
           status: 'done',
           endedAt: 3000 + i,
         });
       }
-      ledger.flush();
+      history.flush();
 
-      expect(readLedger(file).map((r) => r.id)).toContain('sess-01');
+      expect(readHistory(file).map((r) => r.id)).toContain('sess-01');
     });
   });
 
   describe('dispose', () => {
     it('drops a pending write instead of performing it', () => {
       // Nulling the reference is not enough: the debounce closes over the write
-      // directly, so an unreferenced ledger still fires one last writeFileSync
+      // directly, so an unreferenced history still fires one last writeFileSync
       // at whatever path it was built with.
       vi.useFakeTimers();
       try {
-        const ledger = createSessionLedger(file, () => 1);
-        ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+        const history = createSessionHistory(file, () => 1);
+        history.record('sess-01', { project: 'p', task: '', status: 'working' });
 
-        ledger.dispose();
+        history.dispose();
         vi.advanceTimersByTime(1000);
 
-        expect(readLedger(file)).toEqual([]);
+        expect(readHistory(file)).toEqual([]);
       } finally {
         vi.useRealTimers();
       }
     });
 
     it('is safe with nothing pending', () => {
-      expect(() => createSessionLedger(file, () => 1).dispose()).not.toThrow();
+      expect(() => createSessionHistory(file, () => 1).dispose()).not.toThrow();
     });
   });
 
   describe('reading', () => {
     it('reads an absent file as empty', () => {
-      expect(readLedger(join(dir, 'nothing-here.json'))).toEqual([]);
+      expect(readHistory(join(dir, 'nothing-here.json'))).toEqual([]);
     });
 
     it('reads unparseable json as empty rather than throwing', () => {
       writeFileSync(file, '{ not json at all', 'utf8');
-      expect(() => readLedger(file)).not.toThrow();
-      expect(readLedger(file)).toEqual([]);
+      expect(() => readHistory(file)).not.toThrow();
+      expect(readHistory(file)).toEqual([]);
     });
 
     it('reads a truncated file as empty', () => {
       // What a write interrupted by a power loss actually leaves behind.
       writeFileSync(file, '[{"id":"sess-01","proj', 'utf8');
-      expect(readLedger(file)).toEqual([]);
+      expect(readHistory(file)).toEqual([]);
     });
 
     it('reads a json document that is not an array as empty', () => {
       writeFileSync(file, JSON.stringify({ sessions: [] }), 'utf8');
-      expect(readLedger(file)).toEqual([]);
+      expect(readHistory(file)).toEqual([]);
     });
 
     it('drops an individual malformed record and keeps the rest', () => {
@@ -814,7 +814,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      expect(readLedger(file).map((record) => record.id)).toEqual([
+      expect(readHistory(file).map((record) => record.id)).toEqual([
         'keeps',
         'also-keeps',
       ]);
@@ -837,7 +837,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      const [record] = readLedger(file);
+      const [record] = readHistory(file);
       expect(record?.id).toBe('sess-01');
       expect(record?.branch).toBeUndefined();
       expect(record?.sessionUuid).toBeUndefined();
@@ -847,7 +847,7 @@ describe('session ledger', () => {
      * A name is re-cleaned with today's rule, not the one that wrote it.
      *
      * `title.ts` has twice been wrong about which glyphs Claude puts in front
-     * of a name, and the ledger is where a wrong answer outlives the fix: these
+     * of a name, and the history is where a wrong answer outlives the fix: these
      * are the records PREVIOUS RUN shows at launch, so a `◐` written by
      * yesterday's build would still be on screen after the reader stopped
      * producing them, until it aged out of a 40-record history.
@@ -868,7 +868,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      expect(readLedger(file)[0]?.name).toBe('sess-0c');
+      expect(readHistory(file)[0]?.name).toBe('sess-0c');
     });
 
     it('leaves a name a fixed build wrote exactly as it is', () => {
@@ -889,7 +889,7 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      expect(readLedger(file)[0]?.name).toBe('fix "login" & logout');
+      expect(readHistory(file)[0]?.name).toBe('fix "login" & logout');
     });
 
     it('reads a stored default title as no name at all', () => {
@@ -910,24 +910,24 @@ describe('session ledger', () => {
         'utf8',
       );
 
-      expect(readLedger(file)[0]?.name).toBeUndefined();
+      expect(readHistory(file)[0]?.name).toBeUndefined();
     });
   });
 
   describe('retention', () => {
     it('caps ended records oldest-first', () => {
-      const ledger = createSessionLedger(file, () => 1);
+      const history = createSessionHistory(file, () => 1);
       for (let i = 0; i < HISTORY_CAP + 5; i += 1) {
-        ledger.record(`ended-${i}`, {
+        history.record(`ended-${i}`, {
           project: 'p',
           task: '',
           status: 'done',
           endedAt: i,
         });
       }
-      ledger.flush();
+      history.flush();
 
-      const ids = readLedger(file).map((record) => record.id);
+      const ids = readHistory(file).map((record) => record.id);
       expect(ids).toHaveLength(HISTORY_CAP);
       expect(ids).not.toContain('ended-0');
       expect(ids).not.toContain('ended-4');
@@ -938,46 +938,46 @@ describe('session ledger', () => {
     it('never prunes a live record, however full the history is', () => {
       // A live record is a process that still exists. Forgetting one is a
       // different and much worse bug than forgetting one that has ended.
-      const ledger = createSessionLedger(file, () => 1);
-      ledger.record('still-running', {
+      const history = createSessionHistory(file, () => 1);
+      history.record('still-running', {
         project: 'p',
         task: '',
         status: 'working',
       });
       for (let i = 0; i < HISTORY_CAP + 10; i += 1) {
-        ledger.record(`ended-${i}`, {
+        history.record(`ended-${i}`, {
           project: 'p',
           task: '',
           status: 'done',
           endedAt: i,
         });
       }
-      ledger.flush();
+      history.flush();
 
-      const ids = readLedger(file).map((record) => record.id);
+      const ids = readHistory(file).map((record) => record.id);
       expect(ids).toContain('still-running');
       expect(ids).toHaveLength(HISTORY_CAP + 1);
     });
 
     it('sorts by createdAt when a record ended without a timestamp', () => {
-      const ledger = createSessionLedger(file, () => 1);
-      ledger.record('oldest', {
+      const history = createSessionHistory(file, () => 1);
+      history.record('oldest', {
         project: 'p',
         task: '',
         status: 'done',
         createdAt: 1,
       });
       for (let i = 0; i < HISTORY_CAP; i += 1) {
-        ledger.record(`newer-${i}`, {
+        history.record(`newer-${i}`, {
           project: 'p',
           task: '',
           status: 'done',
           endedAt: 100 + i,
         });
       }
-      ledger.flush();
+      history.flush();
 
-      expect(readLedger(file).map((record) => record.id)).not.toContain('oldest');
+      expect(readHistory(file).map((record) => record.id)).not.toContain('oldest');
     });
   });
 
@@ -985,12 +985,12 @@ describe('session ledger', () => {
     it('does not write until flushed or the debounce elapses', () => {
       vi.useFakeTimers();
       try {
-        const ledger = createSessionLedger(file, () => 1);
-        ledger.record('sess-01', { project: 'p', task: '', status: 'idle' });
-        expect(readLedger(file)).toEqual([]);
+        const history = createSessionHistory(file, () => 1);
+        history.record('sess-01', { project: 'p', task: '', status: 'idle' });
+        expect(readHistory(file)).toEqual([]);
 
         vi.advanceTimersByTime(500);
-        expect(readLedger(file).map((record) => record.id)).toEqual(['sess-01']);
+        expect(readHistory(file).map((record) => record.id)).toEqual(['sess-01']);
       } finally {
         vi.useRealTimers();
       }
@@ -999,9 +999,9 @@ describe('session ledger', () => {
     it('collapses a burst of writes into one', () => {
       vi.useFakeTimers();
       try {
-        const ledger = createSessionLedger(file, () => 1);
+        const history = createSessionHistory(file, () => 1);
         for (let i = 0; i < 10; i += 1) {
-          ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+          history.record('sess-01', { project: 'p', task: '', status: 'working' });
         }
         vi.advanceTimersByTime(500);
 
@@ -1012,15 +1012,15 @@ describe('session ledger', () => {
     });
 
     it('survives an unwritable path without throwing', () => {
-      // The whole posture in one case: the ledger must never be the reason the
+      // The whole posture in one case: the history must never be the reason the
       // app fails to start or quit.
-      const ledger = createSessionLedger(
+      const history = createSessionHistory(
         join(dir, 'no-such-directory', 'sessions.json'),
         () => 1,
       );
-      ledger.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
 
-      expect(() => ledger.flush()).not.toThrow();
+      expect(() => history.flush()).not.toThrow();
     });
   });
 });

@@ -18,6 +18,13 @@
  */
 
 import type {
+  AgentNameRequest,
+  AgentRenameRequest,
+  AgentsSnapshot,
+  AgentWriteRequest,
+  AgentWriteResult,
+} from './agent-contract';
+import type {
   AddProjectRequest,
   CloneDoneEvent,
   CloneRequest,
@@ -72,6 +79,14 @@ import type {
   JiraStatus,
   JiraTransition,
 } from './jira-contract';
+import type {
+  LedgerAnswerRequest,
+  LedgerEntry,
+  LedgerPostRequest,
+  LedgerReadQuery,
+  LedgerResult,
+  LedgerSnapshot,
+} from './ledger-contract';
 import type { SessionMetricsEvent } from './metrics-contract';
 import type {
   HiveNotification,
@@ -384,6 +399,23 @@ export const CH = {
    * carrying free text is `url`, which `isSafeExternalUrl` already gates.
    */
   notificationsAct: 'notifications:act',
+  /**
+   * The ledger's four channels (HIVE-111).
+   *
+   * The renderer is the overmind's only mouth: `ledgerPost` and `ledgerAnswer`
+   * carry no `from`, because main supplies {@link OVERMIND} and would overwrite
+   * anything sent. A session's own writes arrive on the receiver routes
+   * instead, where the `x-hive-session` header names the writer.
+   *
+   * Read the log — hydration on mount, and any filtered view.
+   */
+  ledgerList: 'ledger:list',
+  /** The overmind writes. `from` is forced to OVERMIND in main. */
+  ledgerPost: 'ledger:post',
+  /** Close a thread, by canonical id or by short ref. */
+  ledgerAnswer: 'ledger:answer',
+  /** Push: one entry landed, from any party. main → renderer. */
+  ledgerChanged: 'ledger:changed',
   /** What the app knows about a newer version of itself. */
   updatesStatus: 'updates:status',
   /**
@@ -608,6 +640,29 @@ export const CH = {
   skillsWrite: 'skills:write',
   skillsRemove: 'skills:remove',
   skillsRename: 'skills:rename',
+  /**
+   * Agent definitions — the same five verbs as `skills`, and one more thing
+   * (HIVE-114).
+   *
+   * The bound is identical: every verb names an **agent**, never a path, and
+   * main already knows the one directory agents live in, so traversal is
+   * unrepresentable rather than filtered. `agent-contract.ts` carries the
+   * grammar those names are checked against.
+   *
+   * Unlike skills, this block **has** an event channel. Skills have none
+   * because the Settings pane is their only writer; an `AGENT.md` is a file
+   * the user is invited to write by hand, and the story requires a folder
+   * deleted in Finder to leave the list without a restart. That makes main a
+   * second writer, and a second writer is exactly what an event channel is
+   * for.
+   */
+  agentsList: 'agents:list',
+  agentsRead: 'agents:read',
+  agentsWrite: 'agents:write',
+  agentsRemove: 'agents:remove',
+  agentsRename: 'agents:rename',
+  /** The folder changed — on disk or through this pane. Carries no payload. */
+  agentsChanged: 'agents:changed',
   appInfo: 'app:info',
   /**
    * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
@@ -688,6 +743,8 @@ export const EVENT_CHANNELS = [
   CH.configCloneDone,
   CH.notificationsActivate,
   CH.fsChanged,
+  CH.ledgerChanged,
+  CH.agentsChanged,
 ] as const;
 export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
@@ -737,13 +794,14 @@ export interface SpawnRequest {
    *
    * Set by the renderer for exactly one spawn: a row restored under PREVIOUS
    * RUN that the user opens. Main then starts `claude --resume` with the uuid
-   * its ledger kept for that id, and the row carries on as the session it
-   * was rather than as a blank one wearing its name.
+   * its session history kept for that id, and the row carries on as the
+   * session it was rather than as a blank one wearing its name.
    *
-   * The renderer says so **explicitly**; main never infers it from "the ledger
-   * knows this id". A fresh spawn can take an id last run used — the ledger's
-   * own `begin` exists for that case — and inferring would hand that new
-   * session a conversation it was never part of.
+   * The renderer says so **explicitly**; main never infers it from "the
+   * session history knows this id". A fresh spawn can take an id last run
+   * used — the session history's own `begin` exists for that case — and
+   * inferring would hand that new session a conversation it was never part
+   * of.
    */
   resume?: boolean;
 }
@@ -1411,6 +1469,39 @@ export interface HiveBridge {
     act(action: NotificationAction): Promise<void>;
   };
   /**
+   * The ledger (HIVE-111).
+   *
+   * The renderer is the **overmind's** mouth and nothing else's: `post` and
+   * `answer` carry no `from`, because main supplies {@link OVERMIND} and would
+   * overwrite anything sent. A session's own writes arrive on the receiver
+   * routes instead, where the header names the writer.
+   */
+  ledger: {
+    list: (query?: LedgerReadQuery) => Promise<LedgerSnapshot>;
+    post: (request: Omit<LedgerPostRequest, 'from'>) => Promise<LedgerResult>;
+    answer: (request: LedgerAnswerRequest) => Promise<LedgerResult>;
+    onChanged: (callback: (entry: LedgerEntry) => void) => () => void;
+  };
+  /**
+   * Agent definitions on disk (HIVE-114).
+   *
+   * `write` answers with a {@link AgentWriteResult} rather than the fresh
+   * snapshot the skills verbs return, because a refusal here has *structure* —
+   * a list of problems, each naming the field it belongs to — and the editor
+   * renders each one beside the control it names. A snapshot could only say
+   * that nothing changed.
+   */
+  agents: {
+    list(): Promise<AgentsSnapshot>;
+    /** The raw file, or `null` when there is no such agent. */
+    read(request: AgentNameRequest): Promise<string | null>;
+    write(request: AgentWriteRequest): Promise<AgentWriteResult>;
+    remove(request: AgentNameRequest): Promise<void>;
+    rename(request: AgentRenameRequest): Promise<AgentWriteResult>;
+    /** The folder changed; re-`list` to see how. */
+    onChanged(callback: () => void): () => void;
+  };
+  /**
    * The app's newer self.
    *
    * A namespace of its own rather than fields on `appInfo`, because `appInfo`
@@ -1591,14 +1682,23 @@ export const RESIZE_THROTTLE_MS = 50;
  * where it may reach: `rename` names two skills under the same rule, and the
  * argument for it is recorded on {@link BRIDGE_SKILLS_KEYS} rather than here,
  * because it is a change to one namespace and not to the surface.
+ *
+ * HIVE-111 adds `ledger`. What a web page can now do that it could not before:
+ * read the whole correspondence log between every session and the overmind,
+ * append to it, and close an open ask — but always **as the overmind**. `post`
+ * and `answer` take no `from`; main supplies {@link OVERMIND} and would
+ * overwrite anything a caller sent, so this namespace cannot be used to forge
+ * another party's words the way a compromised page could try.
  */
 export const BRIDGE_KEYS = [
+  'agents',
   'appInfo',
   'config',
   'fs',
   'github',
   'integrations',
   'jira',
+  'ledger',
   'notifications',
   'pty',
   'session',
@@ -1646,6 +1746,34 @@ export const BRIDGE_SKILLS_KEYS = [
   'rename',
 ] as const;
 
+/**
+ * The exact key set of `window.hive.agents` (HIVE-114).
+ *
+ * Five verbs matching {@link BRIDGE_SKILLS_KEYS} one for one, and the same
+ * security story: two readers and three writers, all bounded to one directory
+ * by the shape of what they accept rather than by a check they perform.
+ * `assertAgentName` is what makes that true, and it refuses the reserved names
+ * as well as any name that could be a path.
+ *
+ * The sixth is `onChanged`, and it widens nothing — it is a *listener*, not a
+ * verb. It carries no payload at all (the renderer re-`list`s on being poked),
+ * so it cannot leak the contents of a definition the renderer could not
+ * already have asked for. It exists because main became a second writer the
+ * moment the folder was declared hand-editable; see `CH.agentsChanged`.
+ *
+ * HIVE-115 appends `run`, HIVE-117 `pause`/`resume`. Each of those is a change
+ * to what the renderer may make the machine *do*, rather than to what it may
+ * read or write, and should be argued for here before it is written.
+ */
+export const BRIDGE_AGENTS_KEYS = [
+  'list',
+  'read',
+  'write',
+  'remove',
+  'rename',
+  'onChanged',
+] as const;
+
 /** The exact key set of `window.hive.session`. */
 export const BRIDGE_SESSION_KEYS = [
   'onStatus',
@@ -1670,8 +1798,8 @@ export const BRIDGE_SESSION_KEYS = [
    * What it exposes to the page is a timing fact about a session the page
    * already has the id of. What it deliberately does *not* carry is the thing
    * its source has and this bridge has never passed: the `SessionStart` hook
-   * knows Claude's own session uuid, and that stays in main, where the ledger
-   * is the only thing that reads it.
+   * knows Claude's own session uuid, and that stays in main, where the
+   * session history is the only thing that reads it.
    */
   'onReady',
   /**
@@ -1908,6 +2036,23 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   // The router for everything a row cannot carry out itself — see
   // `CH.notificationsAct`.
   'act',
+] as const;
+
+/** The exact key set of `window.hive.ledger` (HIVE-111). */
+export const BRIDGE_LEDGER_KEYS = [
+  // Hydration on mount, and any filtered view. `to` is added by main, never
+  // by this call — see the contract.
+  'list',
+  /**
+   * The overmind writes; the two verbs worth watching here. Neither takes a
+   * `from` — widening either signature to accept one would be the change this
+   * list exists to catch, because it would let a compromised page speak as
+   * any party rather than only as the overmind.
+   */
+  'post',
+  'answer',
+  // One entry landed, from any party — see `CH.ledgerChanged`.
+  'onChanged',
 ] as const;
 
 /** The exact key set of `window.hive.updates`. */

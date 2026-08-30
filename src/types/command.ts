@@ -13,7 +13,16 @@
  */
 
 /** Commands whose failure is a *shape* problem the parser can see by itself. */
-export type UsageCommand = 'open' | 'send' | 'spawn';
+export type UsageCommand = 'open' | 'send' | 'spawn' | 'ledger' | 'ask' | 'answer';
+
+/**
+ * How many entries `ledger` prints when `-n` is not given (HIVE-113).
+ *
+ * Here rather than in the store because this file is already "the command
+ * grammar, as data": the parser resolves the flag into `limit`, so the store
+ * never has to know there was a default at all.
+ */
+export const LEDGER_TAIL_DEFAULT = 20;
 
 export type ParsedCommand =
   /** Whitespace only. Execution is a no-op — not an error. */
@@ -33,6 +42,30 @@ export type ParsedCommand =
    * spawns into any directory a PTY can take as a `cwd`.
    */
   | { kind: 'spawn'; raw: string; project: string; task: string }
+  /**
+   * The ledger tail (HIVE-113).
+   *
+   * `from` and `to` are *party* filters rather than dates — they map straight
+   * onto `LedgerReadQuery`, which is what keeps the console and main agreeing
+   * about what a filter means. `limit` is resolved by the parser rather than
+   * left optional, so there is exactly one copy of the default.
+   */
+  | {
+      kind: 'ledger';
+      raw: string;
+      open: boolean;
+      events: boolean;
+      from?: string;
+      to?: string;
+      limit: number;
+    }
+  | { kind: 'ask'; raw: string; target: string; message: string }
+  /**
+   * `thread` is whatever the user typed — a short ref (`a12`) or a canonical
+   * id. The parser cannot know which exist, so it does not try: `resolveRef`
+   * in main accepts either and always stores the canonical id.
+   */
+  | { kind: 'answer'; raw: string; thread: string; message: string }
   /** Right verb, wrong arguments. */
   | { kind: 'usage'; raw: string; command: UsageCommand }
   /** No such verb. */
@@ -48,6 +81,9 @@ export const USAGE: Record<UsageCommand, string> = {
   open: 'usage: open <session>',
   send: 'usage: send <session> <message>',
   spawn: 'usage: spawn <project> <task>',
+  ledger: 'usage: ledger [--open] [--events] [--from <party>] [--to <party>] [-n <count>]',
+  ask: 'usage: ask <session> <message>',
+  answer: 'usage: answer <id> <text>',
 };
 
 /**
@@ -71,8 +107,11 @@ export const USAGE: Record<UsageCommand, string> = {
 export const CONSOLE_VERBS = [
   'help',
   'status',
+  'ledger',
   'open',
   'send',
+  'ask',
+  'answer',
   'spawn',
   'clear',
 ] as const satisfies readonly ParsedCommand['kind'][];

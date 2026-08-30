@@ -5,7 +5,7 @@ import type {
 } from '@shared/session-history-contract';
 
 /**
- * The renderer's half of the ledger (HIVE-87).
+ * The renderer's half of the session history (HIVE-87).
  *
  * Deliberately thin, and deliberately free of the store: main owns the file,
  * the record shape and the retention rule, so everything here is one read at

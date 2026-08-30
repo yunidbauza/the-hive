@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * handler is only callable by Electron, so `ipcMain.handle` is recorded. The
  * session layer is the real one with `entities()` replaced, because the fact
  * under test is the seam — that the handler consults the registry rather than
- * the ledger's own idea of which records are this run's — and the ledger is a
- * fake so the records are a literal rather than a file.
+ * the session history's own idea of which records are this run's — and the
+ * session history is a fake so the records are a literal rather than a file.
  */
 const handlers = new Map<
   string,
@@ -96,16 +96,17 @@ const RECORDS = [
 ];
 
 /**
- * One spy across every ledger the module builds, so `session:pr` can be
- * asserted on what it *wrote* rather than on what it returned — the handler
- * returns nothing, which is the whole shape of a fire-and-forget note.
+ * One spy across every session history the module builds, so `session:pr`
+ * can be asserted on what it *wrote* rather than on what it returned — the
+ * handler returns nothing, which is the whole shape of a fire-and-forget
+ * note.
  */
-const ledgerRecord = vi.fn();
+const historyRecord = vi.fn();
 
-vi.mock('../../../../electron/main/sessions/ledger', () => ({
-  createSessionLedger: () => ({
+vi.mock('../../../../electron/main/sessions/history', () => ({
+  createSessionHistory: () => ({
     begin: vi.fn(),
-    record: ledgerRecord,
+    record: historyRecord,
     resumable: () => undefined,
     all: () => RECORDS.map((record) => ({ ...record })),
     flush: vi.fn(),
@@ -172,7 +173,7 @@ describe('session:history (HIVE-88)', () => {
     for (const record of answer) expect(record).not.toHaveProperty('live');
   });
 
-  it('hands back copies, not the ledger records themselves', async () => {
+  it('hands back copies, not the history records themselves', async () => {
     liveIds = ['live-01'];
 
     const answer = await history();
@@ -205,7 +206,7 @@ describe('session:pr', () => {
   it('records the pull request against a session main knows about', () => {
     send({ entityId: 'old-01', pr });
 
-    expect(ledgerRecord).toHaveBeenCalledWith('old-01', { pr });
+    expect(historyRecord).toHaveBeenCalledWith('old-01', { pr });
   });
 
   /**
@@ -217,7 +218,7 @@ describe('session:pr', () => {
   it('refuses a note for an entity it has no record of', () => {
     send({ entityId: 'never-ran', pr });
 
-    expect(ledgerRecord).not.toHaveBeenCalled();
+    expect(historyRecord).not.toHaveBeenCalled();
   });
 
   it('rejects a payload that is not a pull request', () => {
@@ -227,7 +228,7 @@ describe('session:pr', () => {
     ).toThrow();
     expect(() => send({ entityId: 'old-01', pr: { ...pr, number: 0 } })).toThrow();
     expect(() => send({ entityId: 'old-01' })).toThrow();
-    expect(ledgerRecord).not.toHaveBeenCalled();
+    expect(historyRecord).not.toHaveBeenCalled();
   });
 });
 
@@ -236,9 +237,9 @@ describe('session:pr', () => {
  *
  * A ticket named *mid-session* renames its row, and that name is the app's own
  * — Claude never hears about it, so it never comes back on the title stream and
- * main had no other way to learn it. The ledger therefore kept `sess-0i` for a
- * row the user had been reading as `HIVE-104` all afternoon, and the next
- * launch restored the id.
+ * main had no other way to learn it. The session history therefore kept
+ * `sess-0i` for a row the user had been reading as `HIVE-104` all afternoon,
+ * and the next launch restored the id.
  *
  * A name on this note is by construction a pinned one: the only sender is the
  * moment the store pins it.
@@ -249,16 +250,16 @@ describe('session:note', () => {
 
   it('records the ticket alone when the name was never the app’s to choose', () => {
     // A session spawned *from* a ticket card carries the key as `--name`, so
-    // the agent reports it back and the ledger already has it.
+    // the agent reports it back and the session history already has it.
     send({ entityId: 'old-01', ticket: 'HIVE-104' });
 
-    expect(ledgerRecord).toHaveBeenCalledWith('old-01', { ticket: 'HIVE-104' });
+    expect(historyRecord).toHaveBeenCalledWith('old-01', { ticket: 'HIVE-104' });
   });
 
   it('records a name that came with it, and pins it', () => {
     send({ entityId: 'old-01', ticket: 'HIVE-104', name: 'HIVE-104-2' });
 
-    expect(ledgerRecord).toHaveBeenCalledWith('old-01', {
+    expect(historyRecord).toHaveBeenCalledWith('old-01', {
       ticket: 'HIVE-104',
       name: 'HIVE-104-2',
       namePinned: true,
@@ -268,7 +269,7 @@ describe('session:note', () => {
   it('refuses a note for an entity it has no record of', () => {
     send({ entityId: 'never-ran', ticket: 'HIVE-104', name: 'HIVE-104' });
 
-    expect(ledgerRecord).not.toHaveBeenCalled();
+    expect(historyRecord).not.toHaveBeenCalled();
   });
 
   it('rejects a malformed name rather than storing one', () => {
@@ -277,6 +278,6 @@ describe('session:note', () => {
     expect(() =>
       send({ entityId: 'old-01', ticket: 'HIVE-104', name: 'x'.repeat(200) }),
     ).toThrow();
-    expect(ledgerRecord).not.toHaveBeenCalled();
+    expect(historyRecord).not.toHaveBeenCalled();
   });
 });

@@ -184,6 +184,9 @@ test('the agents tab is empty and says why', async ({ page }) => {
   });
   await rail.getByRole('tab', { name: /^Agents/ }).click();
 
-  await expect(page.getByText(/No agents running/i)).toBeVisible();
-  await expect(page.getByText(/not available yet/i)).toBeVisible();
+  // Since HIVE-114 there is somewhere to point: the copy names the pane that
+  // creates one, rather than reporting that the feature does not exist.
+  await expect(
+    page.getByText(/No agents yet — create one in Settings › Agents/i),
+  ).toBeVisible();
 });

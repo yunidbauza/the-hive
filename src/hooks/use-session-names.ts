@@ -29,9 +29,10 @@ import { useSessionNameReports } from '@stores/hive-store';
  *
  * The first run reports **every** session it can see, and that is the point
  * rather than an accident: main's map is per-process and starts empty, so a
- * session restored from the ledger — named before this process existed — is
- * otherwise a name main will never learn. That is the case that produced
- * `sess-11` in a toast about a session the rail was calling something else.
+ * session restored from the session history — named before this process
+ * existed — is otherwise a name main will never learn. That is the case that
+ * produced `sess-11` in a toast about a session the rail was calling
+ * something else.
  *
  * Mounted once, at the composition root, like `useSessionStatus`,
  * `useForegroundSession` and `useNotificationStream`. The report is a property

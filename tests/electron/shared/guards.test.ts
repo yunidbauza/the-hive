@@ -8,6 +8,9 @@ import {
   parseAddProjectRequest,
   parseCloneRequest,
   parseKillRequest,
+  parseLedgerAnswerRequest,
+  parseLedgerPostBody,
+  parseLedgerReadQuery,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
   parseReorderProjectsRequest,
@@ -796,8 +799,8 @@ describe('parseSetProjectKeyRequest', () => {
  * produced.
  *
  * The interesting field is `url`, and it is the only one on this bridge that
- * later becomes an `href`: the renderer reads it back out of its own ledger and
- * puts it on a link, which is the shape of a stored-XSS carrier. `assertText`
+ * later becomes an `href`: the renderer reads it back out of its own session
+ * history and puts it on a link, which is the shape of a stored-XSS carrier. `assertText`
  * would let `javascript:` straight through, so the scheme is checked here — and
  * *only* the scheme, because the host is GitHub's business and pinning it would
  * break the moment somebody points the app at an enterprise instance.
@@ -867,5 +870,74 @@ describe('parseSessionPrRequest', () => {
         ),
       ),
     ).toThrow(IpcValidationError);
+  });
+});
+
+describe('parseLedgerReadQuery', () => {
+  it('accepts an empty query', () => {
+    expect(parseLedgerReadQuery({})).toEqual({});
+  });
+
+  it('keeps only the fields it knows', () => {
+    expect(
+      parseLedgerReadQuery({ to: 'sess-a', kind: 'ask', limit: 5, bogus: 'x' }),
+    ).toEqual({ to: 'sess-a', kind: 'ask', limit: 5 });
+  });
+
+  it('refuses a kind that is not in the vocabulary', () => {
+    expect(() => parseLedgerReadQuery({ kind: 'nonsense' })).toThrow();
+  });
+
+  it('refuses a non-object', () => {
+    expect(() => parseLedgerReadQuery(null)).toThrow();
+    expect(() => parseLedgerReadQuery('all')).toThrow();
+  });
+});
+
+describe('parseLedgerPostBody', () => {
+  it('accepts a minimal post', () => {
+    expect(parseLedgerPostBody({ kind: 'post', body: 'hi' })).toEqual({
+      kind: 'post',
+      body: 'hi',
+    });
+  });
+
+  it('drops a `from` in the body — the header decides who is speaking', () => {
+    expect(parseLedgerPostBody({ from: 'someone-else', kind: 'post', body: 'hi' })).toEqual({
+      kind: 'post',
+      body: 'hi',
+    });
+  });
+
+  it('refuses a missing body or an unknown kind', () => {
+    expect(() => parseLedgerPostBody({ kind: 'post' })).toThrow();
+    expect(() => parseLedgerPostBody({ kind: 'nonsense', body: 'hi' })).toThrow();
+  });
+
+  /**
+   * `meta` is written to disk verbatim by `ledger/index.ts` — a `__proto__`
+   * own key surviving this guard would survive to persistence, not just to
+   * one process's `Object.prototype`. `JSON.parse` is what produces the own
+   * property, the same trick `parseSessionPrRequest`'s equivalent test uses.
+   */
+  it('refuses a forbidden key in meta rather than persisting it', () => {
+    expect(() =>
+      parseLedgerPostBody(
+        JSON.parse('{"kind":"post","body":"hi","meta":{"__proto__":{"x":1}}}'),
+      ),
+    ).toThrow();
+  });
+});
+
+describe('parseLedgerAnswerRequest', () => {
+  it('accepts a thread and a body', () => {
+    expect(parseLedgerAnswerRequest({ thread: 'a1', body: 'yes' })).toEqual({
+      thread: 'a1',
+      body: 'yes',
+    });
+  });
+
+  it('refuses a missing thread', () => {
+    expect(() => parseLedgerAnswerRequest({ body: 'yes' })).toThrow();
   });
 });

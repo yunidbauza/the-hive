@@ -94,7 +94,9 @@ test('opens every panel on an empty state, not on sample data', async ({ page })
   await expect(page.getByText('Settings → Projects')).toBeVisible();
 
   await rail.getByRole('tab', { name: /^Agents/ }).click();
-  await expect(page.getByText(/No agents running/i)).toBeVisible();
+  await expect(
+    page.getByText(/No agents yet — create one in Settings › Agents/i),
+  ).toBeVisible();
 });
 
 /**

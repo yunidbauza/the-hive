@@ -14,6 +14,12 @@ import {
 } from '../../electron/shared/hook-contract';
 import type { SessionMetrics } from '../../electron/shared/metrics-contract';
 
+/** Not exercised by this suite — the status line path, not the ledger. */
+const noLedger = {
+  onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
+  onLedgerPost: () => ({ ok: false as const, status: 503, reason: 'not exercised by this test' }),
+};
+
 /**
  * Run the script with a payload on stdin and collect everything it emitted.
  *
@@ -102,6 +108,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onDone: () => {},
       onReady: () => {},
       knowsSession: (entityId) => entityId === 'sess-live',
+      ...noLedger,
     });
 
     const started = await receiver.start();
@@ -119,7 +126,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
         {
           ...process.env,
           [HOOK_ENV_SESSION]: 'sess-live',
-          [HOOK_ENV_TOKEN]: receiver.token,
+          [HOOK_ENV_TOKEN]: receiver.tokenFor('sess-live'),
         },
         JSON.stringify(PAYLOAD),
       );
@@ -171,6 +178,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onDone: () => {},
       onReady: () => {},
       knowsSession: () => true,
+      ...noLedger,
     });
     await receiver.start();
     const url = receiver.metricsUrl as string;
@@ -185,7 +193,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       {
         ...process.env,
         [HOOK_ENV_SESSION]: 'sess-live',
-        [HOOK_ENV_TOKEN]: receiver.token,
+        [HOOK_ENV_TOKEN]: receiver.tokenFor('sess-live'),
       },
       JSON.stringify(PAYLOAD),
     );
@@ -209,6 +217,7 @@ describe.skipIf(!enabled)('status line conformance', () => {
       onDone: () => {},
       onReady: () => {},
       knowsSession: () => true,
+      ...noLedger,
     });
     await receiver.start();
 

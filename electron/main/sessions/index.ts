@@ -35,13 +35,14 @@ import type { HookRuntime } from '../hooks';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
+import type { McpRuntime } from '../mcp';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import type { SkillsRuntime } from '../skills';
 
 import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createBranchReader, resolveGit, type BranchReaderOptions } from './git';
-import type { SessionLedger } from './ledger';
+import type { SessionHistory } from './history';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
 
@@ -87,6 +88,13 @@ export interface SessionsOptions {
    */
   skills?: SkillsRuntime;
   /**
+   * The generated MCP config, when the app has one (HIVE-112).
+   *
+   * Optional for the reason `skills` is: absent is supported, not degraded. A
+   * session without it is an ordinary `claude` that cannot reach the ledger.
+   */
+  mcp?: McpRuntime;
+  /**
    * The uuid pinned as `--session-id` on a spawn (HIVE-61).
    *
    * Injected for the same reason `send` and `config` are: a random value
@@ -108,15 +116,38 @@ export interface SessionsOptions {
    * Optional in the same spirit as `hooks`: absent is a supported state rather
    * than a degraded one. The browser build has no main process at all, and a
    * unit test that does not care about history passes nothing — every call site
-   * below is `ledger?.record(…)`, so "no ledger" costs exactly the history and
-   * nothing else.
+   * below is `history?.record(…)`, so passing nothing costs exactly that
+   * tracking and nothing else.
    *
    * Injected rather than constructed in here for the reason `newSessionUuid`
    * and `branchReader` are: the real one writes a file in the user's
    * `userData`, and a unit test that did so would leave state behind and answer
    * differently on the second run.
    */
-  ledger?: SessionLedger;
+  history?: SessionHistory;
+  /**
+   * A session reached an empty prompt with nothing running behind it
+   * (HIVE-113).
+   *
+   * Optional in the same spirit as `hooks` — absent is a supported state rather
+   * than a degraded one; the browser build has no main process at all.
+   *
+   * **Fired on every qualifying event, not only on the edge.** The hook tracker
+   * recomputes a snapshot per event and has no notion of a *transition*, so
+   * building one here would mean a second copy of the status this file already
+   * publishes, kept in step by hand. The one consumer — the ledger's delivery
+   * rule — is idempotent, because a nudge that was written has a receipt in the
+   * log, so a repeat costs a read rather than a second line in a terminal.
+   */
+  onIdle?: (entityId: string) => void;
+  /**
+   * A session's agent came up, including after a resume (HIVE-113).
+   *
+   * The same event `CH.sessionReady` reports to the renderer, offered to main's
+   * own callers so delivery does not have to round-trip through the renderer to
+   * learn a held nudge can now be written.
+   */
+  onReady?: (entityId: string) => void;
 }
 
 export interface OpenRequest {
@@ -159,9 +190,9 @@ export interface OpenRequest {
   /**
    * Continue the conversation a previous run left under this id (HIVE-88).
    *
-   * Honoured only when the ledger can name that conversation —
-   * `SessionLedger.resumable` — and ignored otherwise, so a restored row whose
-   * record predates uuids, or a build with no ledger at all, gets the ordinary
+   * Honoured only when the history can name that conversation —
+   * `SessionHistory.resumable` — and ignored otherwise, so a restored row whose
+   * record predates uuids, or a build with no history at all, gets the ordinary
    * spawn. Never set on `restart`: a restart is a new process for a session
    * this run already owns, and its record is kept by `begin` regardless.
    */
@@ -217,7 +248,16 @@ export interface Sessions {
    * loss, or a failure to start arrives first.
    */
   openCommand(request: OpenCommandRequest): void;
-  write(entityId: string, data: string): void;
+  /**
+   * Type into a session's pty.
+   *
+   * Returns whether the data actually reached one: `false` when no live session
+   * holds this id, and `false` while the bootstrap is still pending, where it
+   * is queued rather than written (HIVE-113). Callers that record having sent
+   * something — the ledger's delivery receipt — must gate on this, or they
+   * record a write that never happened and never retry it.
+   */
+  write(entityId: string, data: string): boolean;
   resize(entityId: string, cols: number, rows: number): void;
   ack(entityId: string, seq: number): void;
   kill(entityId: string): void;
@@ -225,6 +265,21 @@ export interface Sessions {
   restart(request: OpenRequest): Promise<void>;
   /** Live entity ids, for diagnostics and the session cap. */
   entities(): string[];
+  /**
+   * Is this session live and at an empty prompt right now? (HIVE-113)
+   *
+   * Answered from the status this module last **published**, because
+   * `StatusTracker` exposes `apply`, `reset`, `forget` and `held` — and no
+   * reader. Retaining what was already sent is not new knowledge, and it is the
+   * only point-in-time answer available to a caller that did not witness the
+   * event itself.
+   *
+   * `bgShells` participates for the same reason it gates {@link
+   * SessionsOptions.onIdle}: a turn that has ended while a backgrounded shell
+   * is still running derives `idle`, and writing into that prompt is still
+   * writing into a session that is doing something.
+   */
+  isIdle(entityId: string): boolean;
   /**
    * The working directory this session was last observed in, or `undefined`.
    *
@@ -273,9 +328,12 @@ export function createSessions(options: SessionsOptions): Sessions {
     maxSessions = MAX_SESSIONS,
     hooks,
     skills,
+    mcp,
     newSessionUuid = randomUUID,
     branchReader,
-    ledger,
+    history,
+    onIdle,
+    onReady,
   } = options;
 
   const registry: SessionRegistry = createSessionRegistry();
@@ -415,6 +473,20 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   const hookDriven = new Set<string>();
 
+  /**
+   * What this module last told the renderer each session was doing (HIVE-113).
+   *
+   * Written in {@link publishStatus} rather than in the hook handler, so every
+   * path that reports a status — hooks *and* the activity inference — keeps it
+   * true. A copy maintained only on the hook path would answer `idle` for a
+   * session the inference had since moved on.
+   *
+   * Dropped in `settleExit` with the rest of the session's record: an entity id
+   * is reused when a terminal's successor takes it, and inheriting a stale
+   * `idle` would let a nudge be written into a prompt that is mid-turn.
+   */
+  const lastStatus = new Map<string, ObservedStatus>();
+
   /** One OSC-0 reader per session — a partial sequence is per-stream state. */
   const titles = new Map<string, TitleReader>();
 
@@ -475,7 +547,7 @@ export function createSessions(options: SessionsOptions): Sessions {
    * wrong file.
    *
    * Bounded by the number of sessions opened in one run, which is the same
-   * bound the ledger already carries, and each entry is one short string.
+   * bound the history already carries, and each entry is one short string.
    */
   const lastCwd = new Map<string, string>();
 
@@ -616,6 +688,7 @@ export function createSessions(options: SessionsOptions): Sessions {
         derived.detail,
         event.toolName,
       );
+
       /**
        * `/done`'s two turning points, both of them events on this stream
        * (HIVE-93).
@@ -684,12 +757,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        *
        * `/clear` starts a new one under a new id, and the only hook that
        * carries that id — `SessionStart` — never reaches the receiver (see
-       * `hook-contract.ts`). So the ledger cannot learn it, and keeping the
+       * `hook-contract.ts`). So the history cannot learn it, and keeping the
        * old one would let a later `--resume` reopen the conversation the user
        * deliberately ended. Dropped, so a restored row for this terminal opens
        * as a fresh session instead.
        */
-      ledger?.record(entityId, { sessionUuid: undefined });
+      history?.record(entityId, { sessionUuid: undefined });
       /**
        * The branch dedupe is primed for a row that no longer exists.
        *
@@ -789,7 +862,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     toolName?: string,
   ): void {
     /**
-     * The ledger's `status` is documented as the *last known* one, and until
+     * The history's `status` is documented as the *last known* one, and until
      * HIVE-88 it was the first: `begin` wrote `working` and nothing touched it
      * again before `settleExit`. That was enough for a fresh launch, which
      * rewrites every live status to `closed` anyway. It is not enough for a
@@ -800,7 +873,32 @@ export function createSessions(options: SessionsOptions): Sessions {
      * makes it sortable, and retention sorts on `endedAt`. `done` never reaches
      * this function at all — a declared finish leaves on its own channel.
      */
-    if (status !== 'terminated') ledger?.record(entityId, { status });
+    if (status !== 'terminated') history?.record(entityId, { status });
+
+    // Retained so `isIdle` has a point-in-time answer (HIVE-113). Set for every
+    // publisher, not just the hook path — see the note on `lastStatus`.
+    lastStatus.set(entityId, status);
+
+    /**
+     * The prompt is empty and nothing is running behind it (HIVE-113).
+     *
+     * Fired **here**, at the one place every status reaches the renderer,
+     * rather than from the hook handler alone. A session spawned before
+     * `hooks.start()` resolves runs on the activity inference and produces no
+     * hook events at all — so a nudge held while it was busy would have waited
+     * for an idle signal that never came. This is the only point both
+     * publishers pass through.
+     *
+     * Both halves of the condition are load-bearing. A session showing a
+     * permission prompt reports `waiting`, not `idle`, so it is excluded —
+     * which is the whole of the rule that nothing is written mid-turn. And a
+     * turn that ended while a backgrounded shell is still running *does* report
+     * `idle`, with `detail: 'script'`, so the status alone would say yes to a
+     * session that is still working.
+     */
+    if (status === 'idle' && statusTracker.held(entityId).bgShells === 0) {
+      onIdle?.(entityId);
+    }
 
     send(CH.sessionStatus, {
       entityId,
@@ -850,18 +948,24 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   function publishReady(entityId: string): void {
     send(CH.sessionReady, { entityId } satisfies SessionReadyEvent);
+    /*
+      Main's own callers get the same event (HIVE-113). The repeat `/clear`
+      produces is harmless to the one consumer: a nudge already written has a
+      receipt in the ledger, so the second call finds nothing to do.
+    */
+    onReady?.(entityId);
   }
 
   function publishFinished(entityId: string): void {
     /*
-      Asked rather than assumed. `ledger.resumable` is the only thing that knows
+      Asked rather than assumed. `history.resumable` is the only thing that knows
       whether a uuid still names this terminal's conversation — a `/clear`
       withdraws it, and nothing can recover the successor's — so a finish after
       a clear is honestly not resumable even though every other finish is.
     */
     send(CH.sessionFinished, {
       entityId,
-      resumable: ledger?.resumable(entityId) !== undefined,
+      resumable: history?.resumable(entityId) !== undefined,
     } satisfies SessionFinishedEvent);
   }
 
@@ -1050,10 +1154,10 @@ export function createSessions(options: SessionsOptions): Sessions {
       HIVE-87. The same fact the renderer is about to be told, kept where it
       survives a quit. `branch` is nullable here and the record's is optional,
       so a `null` omits the key rather than storing "known to be nothing" — the
-      store renders an em dash for both, and the ledger should not invent a
+      store renders an em dash for both, and the history should not invent a
       distinction the app does not draw.
     */
-    ledger?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
+    history?.record(entityId, { ...(branch === null ? {} : { branch }), cwd });
     send(CH.sessionBranch, { entityId, branch, cwd } satisfies SessionBranchEvent);
 
     /**
@@ -1155,7 +1259,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (name.length > SESSION_NAME_DISPLAY_MAX) continue;
       // HIVE-87. A restored row should read as whatever the agent last called
       // itself, not as the `sess-07` it was born as.
-      ledger?.record(entityId, { name });
+      history?.record(entityId, { name });
       send(CH.sessionName, { entityId, name } satisfies SessionNameEvent);
     }
   }
@@ -1180,6 +1284,14 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     titles.delete(entityId);
     hookDriven.delete(entityId);
+    /*
+      Per-generation for the same reason (HIVE-113). A restart reuses the entity
+      id, and a retained `idle` would let the ledger write a nudge into the new
+      generation's prompt on the strength of what the dead one was doing. It is
+      dropped here rather than beside `statusTracker.forget` above, where the
+      `terminated` status published moments later put it straight back.
+    */
+    lastStatus.delete(entityId);
     /**
      * Per-generation too, and for a sharper reason than the other two: a
      * restarted session reuses the entity id, and a retained entry would make
@@ -1211,12 +1323,12 @@ export function createSessions(options: SessionsOptions): Sessions {
        *
        * **Before `activity.exited`, and that ordering is load-bearing**
        * (HIVE-93). `exited()` publishes synchronously, so for a declared finish
-       * it reaches `publishFinished` — which asks the ledger whether this
+       * it reaches `publishFinished` — which asks the history whether this
        * conversation can be resumed — inside this very statement. Recorded
        * second, that question arrived at a record still claiming to be live and
        * carrying no `endedAt`, so `resumable` answered "no" for **every** `/done`
        * and the Resume control never appeared on the rows the feature exists
-       * for. The ledger has to know the session is over before anything asks it
+       * for. The history has to know the session is over before anything asks it
        * what that means.
        */
       /**
@@ -1229,7 +1341,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        * after `/done`, and a kill are indistinguishable by the time they get
        * here, so the only honest input is whether a declaration was on file.
        */
-      ledger?.record(
+      history?.record(
         entityId,
         declaredDone(entityId)
           ? { status: 'done', endedBy: 'finished', endedAt: Date.now() }
@@ -1484,24 +1596,31 @@ export function createSessions(options: SessionsOptions): Sessions {
     const pluginDir = skills?.pluginDirPath() ?? null;
 
     /**
+     * The ledger tools (HIVE-112). Resolved here for the same reason
+     * `pluginDir` is: it is main's own path, chosen at spawn, and it never
+     * crosses IPC.
+     */
+    const mcpConfig = mcp?.configPathFor() ?? null;
+
+    /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
      *
-     * It has to reach two places now — the command line, and the ledger — and
+     * It has to reach two places now — the command line, and the history — and
      * calling `newSessionUuid()` twice would put a different uuid in each. The
-     * ledger's copy would then name a transcript that does not exist, which is
+     * history's copy would then name a transcript that does not exist, which is
      * precisely the thing recording it is meant to make possible.
      */
     /**
      * A resumed conversation keeps the uuid it already has (HIVE-88): that is
      * the transcript `--resume` opens, and minting a new one here would name
-     * a session that was never started. `undefined` from the ledger means
-     * there is nothing to pick up — no ledger, no record, no uuid, or an id
+     * a session that was never started. `undefined` from the history means
+     * there is nothing to pick up — no history, no record, no uuid, or an id
      * this run began — and the request degrades to the plain spawn it would
      * otherwise have been. The renderer asked to resume; main decides whether
      * it can.
      */
     const resumeUuid =
-      request.resume === true ? ledger?.resumable(request.entityId) : undefined;
+      request.resume === true ? history?.resumable(request.entityId) : undefined;
     const resume = resumeUuid !== undefined;
     const sessionUuid = resumeUuid ?? newSessionUuid();
 
@@ -1514,7 +1633,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      * retroactively to a session that has already started, so the only moment
      * it can be captured is this one.
      */
-    ledger?.begin(
+    history?.begin(
       request.entityId,
       {
         project: request.projectId,
@@ -1618,6 +1737,12 @@ export function createSessions(options: SessionsOptions): Sessions {
         */
         ...(pluginDir == null ? {} : { pluginDir }),
         /*
+          The ledger tools (HIVE-112). Resolved here for the same reason
+          `pluginDir` is: it is main's own path, chosen at spawn, and it never
+          crosses IPC.
+        */
+        ...(mcpConfig == null ? {} : { mcpConfig }),
+        /*
           Belt *and* braces, deliberately. `stripEnv` above covers the ambient
           environment and a project's own `env` block; this covers the login
           shell's profile, which re-exports whatever the user put in `~/.zshrc`
@@ -1637,7 +1762,7 @@ export function createSessions(options: SessionsOptions): Sessions {
          */
         /*
           Not on a resume (HIVE-88): the conversation being picked up has
-          already heard its opening instruction, and a ledger record carries
+          already heard its opening instruction, and a history record carries
           the task precisely so the row can display it — not so it can be
           said twice.
         */
@@ -1705,7 +1830,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
     write(entityId, data) {
       const sessionId = registry.sessionFor(entityId);
-      if (sessionId === undefined) return;
+      if (sessionId === undefined) return false;
 
       /**
        * Held, not dropped and not delivered early. See {@link heldInput}.
@@ -1713,15 +1838,23 @@ export function createSessions(options: SessionsOptions): Sessions {
        * Keystrokes typed directly into the terminal take this path too, which
        * is the right behaviour for the same reason: anything typed while
        * `claude` is still starting would otherwise be eaten by the shell.
+       *
+       * **Reported as *not* written** (HIVE-113). Held is not delivered: the
+       * queue is dropped by `settleExit` if the bootstrap never completes, so a
+       * caller that records "sent" on the strength of it can be recording
+       * something that never happens. The one caller that cares — the ledger's
+       * nudge — retries on the next idle, which is the correct outcome for a
+       * session that was still starting.
        */
       if (bootstrap.isPending(entityId)) {
         const held = heldInput.get(entityId) ?? [];
         held.push(data);
         heldInput.set(entityId, held);
-        return;
+        return false;
       }
 
       ptyIpc.write(sessionId, data);
+      return true;
     },
 
     resize(entityId, cols, rows) {
@@ -1772,6 +1905,11 @@ export function createSessions(options: SessionsOptions): Sessions {
     },
 
     entities: () => registry.entities(),
+
+    isIdle: (entityId) =>
+      registry.sessionFor(entityId) !== undefined &&
+      lastStatus.get(entityId) === 'idle' &&
+      statusTracker.held(entityId).bgShells === 0,
     observedCwd: (entityId) => lastCwd.get(entityId),
     diagnostics: () => ptyIpc.diagnostics(),
 

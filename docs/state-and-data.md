@@ -12,7 +12,8 @@ the picker from re-rendering thirteen live terminals.
 
 - `src/stores/hive-store.ts` — domain state and the actions that mimic the future
   orchestrator daemon: `spawnSession`, `sendToEntity`, `runOrchCommand`,
-  `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`.
+  `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`. It also holds the
+  **ledger** slice — see below.
 - `src/stores/ui-store.ts` — view state: `activeTab`, `selId`, `leftTab`,
   `railTab`, `collapsed`, picker fields, `showActivityRail`,
   `explorerExpanded`, `explorerProjectId`.
@@ -40,6 +41,50 @@ recording because folding it into `hive-store` is the obvious first answer:
 What *is* split off it, on purpose: **where** a file renders is
 `appearance-store`'s `editorPlacement`, and which folders the tree has open is
 `ui-store`'s `explorerExpanded` — a fact about a panel, not about a file.
+
+### The ledger slice is a mirror, not a source (HIVE-111)
+
+`hive-store.state.ledger` is a `LedgerEntry[]` — the tail of the append-only log
+that main owns on disk under `~/.hive/ledger/`. It is the one slice in this store
+whose authority lives in the other process, and that shapes both of its actions:
+
+- **`hydrateLedger(entries)` merges by `id`; it does not replace.**
+  `useLedgerSync` arms the `ledger:changed` push channel while `list()` is still
+  in flight, so an entry appended after main took its snapshot reaches the mirror
+  first and is missing from the snapshot that follows. A replace would drop it
+  permanently — the hook mounts once at the composition root and never remounts,
+  so there is no second hydrate to recover it. Entries are kept sorted by `id`,
+  which is fixed-width and sorts as a string in write order.
+- **`ledgerAppend(entry)`** is the push channel's only entry point. Nothing in
+  the renderer writes to this slice directly; a write goes out over IPC and comes
+  back on the channel, so the mirror can only ever hold what the log holds.
+
+Its selectors — `useLedgerEntries(filter?)`, `useOpenAsks()`, `useOpenAskCount()`
+and `useThread(id)` — apply the rule the whole store follows: *nothing* about
+openness or claims is stored. They call the same pure functions in
+`electron/shared/ledger-derive.ts` that main calls against the authoritative
+log, which is what stops "what counts as an open ask" from having two
+definitions.
+
+**The rule cannot drift; the input can, and does.** `useLedgerSync` throws
+away the `openAsks` main computed over the *whole* log and keeps only
+`snapshot.entries`, and both `hydrateLedger` and `ledgerAppend` then trim the
+mirror to the newest `LEDGER_MEMORY_CAP` (500) entries. So an ask that is
+genuinely still open — unanswered, and inside its 24h TTL — but older than the
+500 newest entries has been evicted from the mirror, and `useOpenAsks` /
+`useOpenAskCount` simply will not see it. `useThread(id)` loses an evicted ask
+the same way and shows the replies without the question. On a quiet machine 500
+entries is days of correspondence and the mirror and the log agree; on a busy
+one the renderer's view is **capped and best-effort**, and the authoritative
+answer is the one main gives — `window.hive.ledger.list()` with a query, which
+reads the real log.
+
+Storing `openAsks` would not fix it and is not the trade on offer: derived
+values are computed in selectors, never stored, everywhere in this codebase, and
+a stored copy would go stale the moment an answer landed. A consumer that must
+be right about an old ask asks main.
+
+The deep-dive is [`docs/agents-and-ledger.md`](agents-and-ledger.md).
 
 ### The freshness rule
 
@@ -118,7 +163,7 @@ crash gives a fresh store in front of the same running ptys — so
 `session:history` marks records whose id main still runs as `live`, and those
 hydrate as this run's fleet (their last status, no `restored` flag) rather than
 as history. Second, a restored row **opens**: Resume asks main to `--resume` the
-conversation the ledger kept, and the first live status the new process reports
+conversation the session history kept, and the first live status the new process reports
 clears `restored` (`reviveIfLive`), which is what moves the row up to ACTIVE.
 
 `restored` therefore no longer partitions anything — it records provenance, and
@@ -156,6 +201,9 @@ Components never read a store object directly and never call `getState()`.
 | `useMarkRead()` | mark one notification read, by index |
 | `usePushNotif()` | push a notification — the simulation's entry point |
 | `useActiveEntity()` | the entity behind `activeTab`, or `null` |
+| `useLedgerEntries(filter?)` | the ledger tail, by the shared query rules (HIVE-111) |
+| `useOpenAsks()` / `useOpenAskCount()` | asks unanswered and not yet TTL-retired |
+| `useThread(id)` | one conversation: the ask, and everything that named it |
 
 Derived values are computed in selectors and **never stored** — one source of
 truth for every number on screen.
@@ -168,6 +216,11 @@ end:
 - **`notifs` at 8** (`NOTIF_CAP`) — `pushNotif` does the same. Eight is what fits
   the rail without scrolling on a laptop, and an inbox that grows forever stops
   being an inbox.
+- **`ledger` at 500** (`LEDGER_MEMORY_CAP`, in `electron/shared/ledger-contract.ts`)
+  — the newest are kept, by both `hydrateLedger` and `ledgerAppend`. Unlike the
+  inbox this cap loses nothing: the log on disk is complete, and an older entry is
+  asked for rather than remembered. 500 is what a day of a busy fleet fits in, so
+  the console and the inbox render without a round trip.
 
 Panels render whatever they are handed; neither adds a second cap, because a
 second place to get the number right is a second place to get it wrong.
@@ -201,7 +254,8 @@ pre-populated now start empty in both targets, because each has a real producer:
 
 | Slice | Comes from |
 | --- | --- |
-| `entities`, `order`, `agentOrder` | sessions the user starts (PTYs) |
+| `entities`, `order` | sessions the user starts (PTYs) |
+| `agentOrder` | `AGENT.md` definitions under `~/.hive/agents`, mirrored by `use-agents-sync.ts` (HIVE-114) |
 | `projects` | the config file, read through `useProjects()` |
 | `tickets` | Jira, via `refreshTickets()` |
 | `orchLines` | what the orchestrator actually does |
@@ -337,11 +391,12 @@ Claude repaints its terminal title several times a second, so without the pin a
 store-side rename survives about one frame. `renameSession` checks it first.
 
 It is **persisted**, and it is the one field on `Session` that had to become one
-later: the ledger left it out on the grounds that an ended row has no title
-stream to defend against, which resume made false. Reopening a restored row
-starts a real `claude`, which repaints the only name it knows — the id — so an
-unpinned row lost the `ABC-123` it came back with. `hydrateSessions` restores
-it, and the ledger enforces the same precedence on its own copy.
+later: the session history left it out on the grounds that an ended row has no
+title stream to defend against, which resume made false. Reopening a restored
+row starts a real `claude`, which repaints the only name it knows — the id —
+so an unpinned row lost the `ABC-123` it came back with. `hydrateSessions`
+restores it, and the session history enforces the same precedence on its own
+copy.
 
 Two rules follow, and both are load-bearing:
 

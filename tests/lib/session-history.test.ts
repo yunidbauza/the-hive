@@ -7,7 +7,7 @@ import {
 } from '@lib/session-history';
 
 /**
- * The renderer's half of the ledger (HIVE-87).
+ * The renderer's half of the session history (HIVE-87).
  *
  * Every case here is about *not* making a fuss. This module reads a
  * convenience, not a source of truth: no bridge, a failed channel and an empty

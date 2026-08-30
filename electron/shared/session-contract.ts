@@ -513,7 +513,7 @@ export interface SessionFinishedEvent {
    * would offer Resume on exactly that row and start a **brand-new**
    * conversation under the promise of continuing the old one.
    *
-   * So the ledger is asked, here, where it can be. See `Session.resumable` in
+   * So the session history is asked, here, where it can be. See `Session.resumable` in
    * `src/types/entity.ts`, whose own contract says this must not be derived.
    */
   resumable: boolean;
