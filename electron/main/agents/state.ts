@@ -1,0 +1,134 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+import {
+  AGENT_RUN_HISTORY,
+  type AgentRunState,
+  type RunSummary,
+} from '@shared/agent-contract';
+
+/**
+ * `~/.hive/ledger/agents.json` — the only rewritten file this epic owns
+ * (HIVE-115).
+ *
+ * One debounced writer, following `sessions/history.ts`. Every other file in
+ * `~/.hive` is either append-only (the ledger) or user-authored (definitions);
+ * this one is main's own bookkeeping, and a run that ends writes three fields.
+ * Coalescing them is what keeps a chatty agent from rewriting the file on
+ * every event.
+ *
+ * Deliberately lenient: `writeFileSync` straight over the path, with none of
+ * `config/write.ts`'s temp-file/fsync/rename. Losing the last few seconds of
+ * bookkeeping to a crash costs an agent one duplicated wake; it cannot corrupt
+ * a definition or a ledger entry, because it owns neither.
+ */
+
+const PERSIST_DEBOUNCE_MS = 400;
+
+const EMPTY: AgentRunState = {
+  status: 'sleeping',
+  runsSinceRotate: 0,
+  runs: [],
+};
+
+export interface AgentStateOptions {
+  path: string;
+  debounceMs?: number;
+}
+
+export interface AgentState {
+  all(): Record<string, AgentRunState>;
+  read(name: string): AgentRunState;
+  patch(name: string, change: Partial<AgentRunState>): AgentRunState;
+  recordRun(name: string, summary: RunSummary): void;
+  /** Write now, synchronously. For shutdown. */
+  flush(): void;
+  close(): void;
+}
+
+function seed(path: string): Record<string, AgentRunState> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return parsed as Record<string, AgentRunState>;
+  } catch {
+    /*
+      A missing file is the fresh-install case and a corrupt one is a
+      hand-edit gone wrong. Neither is a reason to refuse to start: this file
+      is derived bookkeeping, and starting empty costs one extra wake per
+      agent, where refusing to start costs the whole app.
+    */
+    return {};
+  }
+}
+
+export function createAgentState(options: AgentStateOptions): AgentState {
+  const debounceMs = options.debounceMs ?? PERSIST_DEBOUNCE_MS;
+  const agents = seed(options.path);
+  let timer: NodeJS.Timeout | null = null;
+
+  const write = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+
+    try {
+      mkdirSync(dirname(options.path), { recursive: true });
+      writeFileSync(
+        options.path,
+        `${JSON.stringify(agents, null, 2)}\n`,
+        'utf8',
+      );
+    } catch {
+      // A failed write is the next write's problem. Throwing here would take
+      // down a run that has otherwise succeeded.
+    }
+  };
+
+  const schedule = () => {
+    if (timer !== null) return;
+    timer = setTimeout(write, debounceMs);
+  };
+
+  const state: AgentState = {
+    all: () => ({ ...agents }),
+
+    read: (name) => agents[name] ?? { ...EMPTY, runs: [] },
+
+    patch(name, change) {
+      const next = { ...(agents[name] ?? { ...EMPTY, runs: [] }), ...change };
+
+      agents[name] = next;
+      schedule();
+
+      return next;
+    },
+
+    recordRun(name, summary) {
+      const current = agents[name] ?? { ...EMPTY, runs: [] };
+      const runs = [...current.runs, summary];
+
+      agents[name] = {
+        ...current,
+        runs:
+          runs.length > AGENT_RUN_HISTORY
+            ? runs.slice(runs.length - AGENT_RUN_HISTORY)
+            : runs,
+      };
+      schedule();
+    },
+
+    flush: write,
+
+    close() {
+      write();
+    },
+  };
+
+  return state;
+}
