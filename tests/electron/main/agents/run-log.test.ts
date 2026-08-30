@@ -1,0 +1,103 @@
+import { describe, expect, it } from 'vitest';
+
+import type { RunLine } from '../../../../electron/shared/agent-contract';
+import {
+  NO_LOG,
+  foldRunLog,
+} from '../../../../electron/main/agents/run-log';
+
+/** Fold every chunk in order and return the lines they produced. */
+const foldAll = (...chunks: string[]): RunLine[] => {
+  let state = NO_LOG;
+  const lines: RunLine[] = [];
+
+  for (const chunk of chunks) {
+    const step = foldRunLog(state, chunk);
+
+    state = step.state;
+    lines.push(...step.lines);
+  }
+
+  return lines;
+};
+
+const assistant = (text: string) =>
+  `${JSON.stringify({
+    type: 'assistant',
+    message: { id: 'msg_1', content: [{ type: 'text', text }] },
+  })}\n`;
+
+const toolUse = (name: string, input: Record<string, unknown>) =>
+  `${JSON.stringify({
+    type: 'assistant',
+    message: { id: 'msg_2', content: [{ type: 'tool_use', name, input }] },
+  })}\n`;
+
+describe('foldRunLog', () => {
+  it('renders assistant text as ink', () => {
+    expect(foldAll(assistant('hello'))).toEqual([
+      { text: 'hello', color: 'ink' },
+    ]);
+  });
+
+  it('renders a tool call as a dim name and short argument', () => {
+    expect(foldAll(toolUse('Bash', { command: 'echo hi' }))).toEqual([
+      { text: 'Bash echo hi', color: 'dim' },
+    ]);
+  });
+
+  it('renders a ledger ask in amber', () => {
+    expect(
+      foldAll(toolUse('mcp__hive__ledger_ask', { body: 'which repo?' })),
+    ).toEqual([{ text: 'mcp__hive__ledger_ask which repo?', color: 'amber' }]);
+  });
+
+  it('reassembles an object split across two chunks', () => {
+    const whole = assistant('split me');
+    const at = 20;
+
+    expect(foldAll(whole.slice(0, at), whole.slice(at))).toEqual([
+      { text: 'split me', color: 'ink' },
+    ]);
+  });
+
+  it('ignores a malformed line rather than throwing', () => {
+    expect(() => foldAll('not json at all\n')).not.toThrow();
+    expect(foldAll('not json at all\n')).toEqual([]);
+  });
+
+  it('leaves an unterminated final line uncounted', () => {
+    expect(foldAll(assistant('kept').trimEnd())).toEqual([]);
+  });
+
+  it('captures the result event and renders it in cyan', () => {
+    const result = `${JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      num_turns: 3,
+      total_cost_usd: 0.0241,
+      session_id: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
+    })}\n`;
+
+    const step = foldRunLog(NO_LOG, result);
+
+    expect(step.state.result).toEqual({
+      subtype: 'success',
+      costUsd: 0.0241,
+      turns: 3,
+      sessionUuid: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
+    });
+    expect(step.lines).toEqual([
+      { text: '● turn ended — success · $0.0241', color: 'cyan' },
+    ]);
+  });
+
+  it('skips system and rate-limit noise', () => {
+    expect(
+      foldAll(
+        `${JSON.stringify({ type: 'system', subtype: 'thinking_tokens' })}\n`,
+        `${JSON.stringify({ type: 'rate_limit_event' })}\n`,
+      ),
+    ).toEqual([]);
+  });
+});

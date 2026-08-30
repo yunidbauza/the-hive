@@ -210,6 +210,11 @@ export interface AgentSummary {
   wake: WakeSpec;
   lastRunAt?: number;
   nextRunAt?: number;
+  /** Present once the agent has run at least once (HIVE-115). */
+  sessionUuid?: string;
+  runsSinceRotate?: number;
+  /** The most recent run's cost, pre-formatted for display. */
+  cost?: string;
   /** Why this definition could not be parsed. Listed, never hidden. */
   invalid?: string;
 }
@@ -575,3 +580,68 @@ export function patchFrontmatter(
 
   return lines.join('\n');
 }
+
+/**
+ * How long a run gets to exit before it is killed (HIVE-115).
+ *
+ * Used twice, deliberately: by `agents:kill` between SIGTERM and SIGKILL, and
+ * by the Stop-hook watchdog, which starts it when the turn ends and the
+ * process has not yet gone. One constant and one escalation path rather than
+ * two that could drift.
+ *
+ * SIGTERM, not the pty path's SIGHUP: `KILL_GRACE_MS` exists because an
+ * interactive shell ignores SIGTERM. A headless child is not one.
+ */
+export const AGENT_KILL_GRACE_MS = 3_000;
+
+/**
+ * The colours a run-log line may carry.
+ *
+ * A strict subset of the renderer's `TermColor` (`src/types/terminal.ts`).
+ * Main may not import that file — it is renderer code — so the relationship is
+ * held by this union being narrower, which makes `RunLine[]` assignable to
+ * `TermLine[]` with no mapping step. A test asserts the assignability.
+ */
+export type RunLineColor = 'ink' | 'dim' | 'amber' | 'cyan';
+
+export interface RunLine {
+  text: string;
+  color: RunLineColor;
+}
+
+/**
+ * How a run ended.
+ *
+ * `turns` is not in the story's original list: it exists because `--max-turns`
+ * ends a run with `subtype: 'error_max_turns'` and **no `result` text at all**,
+ * which is neither a failure nor a completion and should not be reported as
+ * either.
+ */
+export type RunOutcome = 'done' | 'asking' | 'budget' | 'turns' | 'failed';
+
+export interface RunSummary {
+  run: string;
+  trigger: string;
+  startedAt: number;
+  endedAt: number;
+  outcome: RunOutcome;
+  costUsd?: number;
+  turns?: number;
+  /** Why it ended that way, when the outcome alone does not say. */
+  reason?: string;
+}
+
+/** What `~/.hive/ledger/agents.json` holds per agent. */
+export interface AgentRunState {
+  sessionUuid?: string;
+  status: AgentStatus;
+  lastRunAt?: number;
+  /** Stored and pushed here; computed by HIVE-121's scheduler. */
+  nextRunAt?: number;
+  runsSinceRotate: number;
+  /** Most recent last, capped at {@link AGENT_RUN_HISTORY}. */
+  runs: RunSummary[];
+}
+
+/** How many run summaries an agent keeps. */
+export const AGENT_RUN_HISTORY = 20;
