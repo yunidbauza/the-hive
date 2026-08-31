@@ -11,7 +11,7 @@ import type { SessionMetrics } from '@shared/metrics-contract';
 import type { Ledger } from '../ledger';
 
 import { createReceiver, type Receiver } from './receiver';
-import { writeHookSettings } from './settings';
+import { writeAgentSettings, writeHookSettings } from './settings';
 
 /**
  * The hook pipeline, as one thing the session layer can hold (HIVE-62).
@@ -117,6 +117,17 @@ export interface HookRuntime {
    */
   settingsPathFor(): string | null;
   /**
+   * The `--settings` argument for an agent's headless turn (HIVE-119).
+   *
+   * {@link settingsPathFor}'s agent-space twin, `null` on the same terms —
+   * hooks unavailable, or the write itself failing. Kept separate rather than
+   * a parameter on `settingsPathFor` because the two files answer different
+   * questions: a session asks "what am I handed", an agent's wake asks
+   * "what fences every tool call", and conflating them would let a future edit
+   * hand a session the agent's `permissions` block by accident.
+   */
+  agentSettingsPathFor(): string | null;
+  /**
    * The environment a session's pty needs for its hooks to be attributable.
    *
    * Empty when hooks are unavailable, which is what keeps the caller from
@@ -147,10 +158,15 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
+  let agentSettingsPath: string | null = null;
 
   return {
     settingsPathFor() {
       return settingsPath;
+    },
+
+    agentSettingsPathFor() {
+      return agentSettingsPath;
     },
 
     async start({
@@ -225,6 +241,18 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           */
           created.readyUrl ?? undefined,
         );
+        /*
+          Written right after its sibling, with the same `url`/`readyUrl` — the
+          only two values an agent's turn needs from this bind, since it gets no
+          status line (HIVE-119). Unlike `settingsPath`, this file's content is
+          fixed once the receiver is up: no wake ever calls this again, so
+          there is nothing here to keep in sync on a later re-bind.
+        */
+        agentSettingsPath = await writeAgentSettings(
+          userDataPath,
+          url,
+          created.readyUrl ?? undefined,
+        );
         receiver = created;
       } catch (cause) {
         /**
@@ -280,6 +308,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       const running = receiver;
       receiver = null;
       settingsPath = null;
+      agentSettingsPath = null;
       if (running !== null) await running.stop();
     },
   };

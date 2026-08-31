@@ -16,10 +16,13 @@ import {
 } from '../../../../electron/shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '../../../../electron/shared/metrics-contract';
 import {
+  AGENT_SETTINGS_FILE,
+  agentSettings,
   CLAUDE_THEME,
   hookSettings,
   metricsScript,
   statusLineSettings,
+  writeAgentSettings,
   writeHookSettings,
 } from '../../../../electron/main/hooks/settings';
 import { doneSkill } from '../../../../electron/main/skills/done-skill';
@@ -210,6 +213,41 @@ describe('the settings file grants no permissions', () => {
     expect(doneSkill('http://127.0.0.1:51234/done')).toContain(
       `allowed-tools: 'Bash(${command})'`,
     );
+  });
+});
+
+/**
+ * The agent-only settings file (HIVE-119).
+ *
+ * `hookSettings` must never carry a `permissions` block — HIVE-93, reasserted
+ * above — but an agent's headless turn has no tty to answer a prompt at, so
+ * its fence lives in a sibling file instead.
+ */
+describe('agentSettings', () => {
+  it('fences an agent with a blanket ask rule', () => {
+    const settings = agentSettings('http://127.0.0.1:1/hook');
+    expect(settings.permissions).toEqual({ ask: ['*'] });
+  });
+
+  it('gives an agent the same hooks a session gets', () => {
+    const url = 'http://127.0.0.1:1/hook';
+    expect(agentSettings(url).hooks).toEqual(hookSettings(url).hooks);
+  });
+
+  it('leaves the shared settings file without any permissions block', () => {
+    expect(hookSettings('http://127.0.0.1:1/hook')).not.toHaveProperty(
+      'permissions',
+    );
+  });
+
+  it('writes the agent file beside the shared one', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+    const path = await writeAgentSettings(dir, 'http://127.0.0.1:1/hook');
+    expect(path).toBe(join(dir, AGENT_SETTINGS_FILE));
+    const written: unknown = JSON.parse(await readFile(path, 'utf8'));
+    expect((written as { permissions: unknown }).permissions).toEqual({
+      ask: ['*'],
+    });
   });
 });
 

@@ -77,6 +77,26 @@ export const HOOK_SETTINGS_FILE = join(
 /** The status line script, beside the settings files that name it. */
 export const METRICS_SCRIPT_FILE = join(HOOK_SETTINGS_DIR, 'statusline.sh');
 
+/**
+ * The agent variant, which differs from the session file in exactly one key.
+ *
+ * A second file rather than a key on the first, because the first merges above
+ * the user's own scope and HIVE-93 rules out putting `permissions` there: a
+ * grant written into a session's settings is one the user can neither see among
+ * their own nor revoke. An agent is not a session — it has no tty, no way to
+ * answer a prompt, and a definition that already states what it may use — so
+ * the fence belongs on this side of the line and nowhere near an interactive
+ * session.
+ *
+ * The content never varies: the policy is in `hive_approve`, and this file only
+ * says "route everything to it". So it is written once at startup like its
+ * sibling, and no wake ever rewrites it.
+ */
+export const AGENT_SETTINGS_FILE = join(
+  HOOK_SETTINGS_DIR,
+  'claude-agent.settings.json',
+);
+
 export interface HookSettings {
   hooks: Record<string, unknown[]>;
   statusLine?: {
@@ -234,6 +254,52 @@ export function hookSettings(url: string, readyUrl?: string): HookSettings {
       lines above the command it authorises, in a file they can read.
     */
   };
+}
+
+/**
+ * The agent-only counterpart to {@link hookSettings} (HIVE-119).
+ *
+ * Same hooks, same theme, same disabled agent view — an agent's headless turn
+ * is still a `claude` process reporting through the same receiver — plus the
+ * one key {@link AGENT_SETTINGS_FILE}'s doc explains why `hookSettings` may
+ * never carry: `permissions.ask`. No `statusLine`: that mechanism is Claude
+ * Code's interactive footer, which does not run under `-p`, so writing one
+ * here would promise a UI that never renders.
+ */
+export function agentSettings(
+  url: string,
+  readyUrl?: string,
+): HookSettings & { permissions: { ask: string[] } } {
+  return {
+    ...hookSettings(url, readyUrl),
+    /*
+      Measured against claude 2.1.251: `permissions.ask` is the only thing that
+      makes a permission check fire under `-p`, and `*` is valid there (it is
+      skipped with a warning in `allow`). It routes every call to the tool named
+      by `--permission-prompt-tool`, which decides against the agent's grants.
+    */
+    permissions: { ask: ['*'] },
+  };
+}
+
+/**
+ * Write the agent settings file, mirroring {@link writeHookSettings}'s shape
+ * for the one file this runtime writes once and never rewrites — see
+ * {@link AGENT_SETTINGS_FILE}.
+ */
+export async function writeAgentSettings(
+  userDataPath: string,
+  url: string,
+  readyUrl?: string,
+): Promise<string> {
+  await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
+  const path = join(userDataPath, AGENT_SETTINGS_FILE);
+  await writeFile(
+    path,
+    `${JSON.stringify(agentSettings(url, readyUrl), null, 2)}\n`,
+    'utf8',
+  );
+  return path;
 }
 
 /**
