@@ -173,6 +173,7 @@ import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
 import { createLedger } from '../ledger';
 import { createDeliver } from '../ledger/deliver';
+import { createLedgerNotifier } from '../ledger/notify';
 import { createMcpRuntime } from '../mcp';
 import {
   createNotificationHub,
@@ -761,6 +762,26 @@ export function registerIpcHandlers(): void {
 
   const notifier = createNotifier({ hub, isForeground });
 
+  /**
+   * Ledger entries into inbox cards (HIVE-118).
+   *
+   * Constructed here, alongside the hub, rather than down at `ledger.onChange`
+   * — the ledger itself does not exist yet at this point in registration, but
+   * the notifier needs none of it: it is pure policy over an entry, called
+   * from inside the one listener below.
+   *
+   * `isAgent` reads `knownAgents`, the same cache `agents:list` fills and
+   * `knowsParty` already consults a few lines below — a party id names an
+   * agent if that cache has it, and nothing here keeps a second opinion about
+   * who is an agent.
+   */
+  const notifyLedgerEntry = createLedgerNotifier({
+    raise: (input) => hub.raise(input),
+    markRead: (id) => hub.markRead(id),
+    dismiss: (id) => hub.dismiss(id),
+    isAgent: (id) => knownAgents.has(id),
+  });
+
   // The re-arm (HIVE-81): whatever is still blocked when the user looks away
   // gets its row promoted back to unread. Through the exported subscriber
   // rather than the set it wraps — one way in, so the set stays private and
@@ -936,10 +957,11 @@ export function registerIpcHandlers(): void {
    * (HIVE-75): straight to every window rather than through `send`, because
    * there is nothing here for a tap to loop back into.
    *
-   * One subscription, both jobs (HIVE-113). The renderer's mirror and the
-   * terminal nudge read the same entry in the same order; two subscribers could
-   * not be made to disagree today, but they are two places to remember when a
-   * third consumer arrives.
+   * One subscription, three jobs (HIVE-113, HIVE-118). The renderer's mirror,
+   * the terminal nudge and the inbox notifier read the same entry in the same
+   * order; separate subscribers could not be made to disagree about that order
+   * today, but registration order is an accident and this states it in code
+   * instead — the broadcast lands first, then delivery, then the notifier.
    */
   ledger.onChange((entry) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -947,7 +969,7 @@ export function registerIpcHandlers(): void {
       window.webContents.send(CH.ledgerChanged, entry);
     }
     /**
-     * Delivery cannot fail the write that triggered it.
+     * Neither delivery nor the notifier may fail the write that triggered them.
      *
      * This listener runs *inside* `Ledger.append`'s own try/catch, so a throw
      * from the pty on the way to a terminal would be reported to the party who
@@ -960,6 +982,11 @@ export function registerIpcHandlers(): void {
       deliver.onEntry(entry);
     } catch (cause) {
       console.warn(`[ledger] could not deliver ${entry.id}:`, cause);
+    }
+    try {
+      notifyLedgerEntry(entry);
+    } catch (cause) {
+      console.warn(`[ledger] could not notify on ${entry.id}:`, cause);
     }
   });
 
