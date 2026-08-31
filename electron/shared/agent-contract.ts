@@ -125,6 +125,22 @@ export const WAKE_EVERY_FLOOR_MS = 60_000;
 export const WAKE_EVERY_DEFAULT_MS = 300_000;
 
 /**
+ * Whether a scheduled tick has to justify itself (HIVE-121).
+ *
+ * `onchange` is the default because the interval a person actually writes is
+ * five minutes, and five minutes of nothing is 288 turns a day spent proving
+ * an empty inbox is still empty. `always` is for an agent whose work arrives
+ * somewhere this process cannot see — a Slack search, a PR sweep — where "has
+ * anything changed?" has no local answer and the wake *is* the check.
+ *
+ * Interval mode only. A fixed time is a promise to run then, so `parseAgent`
+ * refuses `check:` alongside `at:` rather than letting a 09:00 standup agent
+ * silently skip the one morning its ledger happened to be quiet.
+ */
+export const WAKE_CHECKS = ['onchange', 'always'] as const;
+export type WakeCheck = (typeof WAKE_CHECKS)[number];
+
+/**
  * Limits that have a default. **`budgetUsd` is deliberately not among them.**
  *
  * A cap is unlimited unless the author sets one, which is absence — the same
@@ -224,6 +240,15 @@ export interface WakeSpec {
   at?: string[];
   /** Which days `at` fires on. Absent alongside `at` means every day. */
   days?: WakeDay[];
+  /**
+   * Materialised at parse in interval mode, and absent in the other two.
+   *
+   * Filled in by the parser rather than defaulted at the point of use, the way
+   * `limits` is: a scheduler reading a value cannot disagree with a form
+   * reading the same value, and a default applied in two places is a default
+   * that eventually drifts.
+   */
+  check?: WakeCheck;
   on: WakeOn[];
   /** Local `HH:MM`. No scheduled wakes inside the window; events still wake. */
   quiet?: { from: string; to: string };
@@ -240,8 +265,18 @@ export interface AgentDefinition {
   mcp: string[];
   tools: string[];
   autonomy: Autonomy;
-  /** `budgetUsd` absent means unlimited — no `--max-budget-usd` on the wake. */
-  limits: { turns: number; budgetUsd?: number; rotateAfter: number };
+  /**
+   * `budgetUsd` absent means unlimited — no `--max-budget-usd` on the wake.
+   *
+   * `dailyUsd` absent means no daily ceiling, and it is a **scheduler** limit
+   * rather than a flag: the binary caps one run and knows nothing about days.
+   */
+  limits: {
+    turns: number;
+    budgetUsd?: number;
+    dailyUsd?: number;
+    rotateAfter: number;
+  };
   body: string;
 }
 
@@ -360,12 +395,14 @@ export const AGENT_FIELDS: readonly FieldSpec[] = [
   { path: 'wake.days', kind: 'day-list', required: false },
   { path: 'wake.on', kind: 'list', required: false },
   { path: 'wake.quiet', kind: 'time-range', required: false },
+  { path: 'wake.check', kind: 'enum', required: false, values: WAKE_CHECKS },
   { path: 'skills', kind: 'list', required: false },
   { path: 'mcp', kind: 'list', required: false },
   { path: 'tools', kind: 'list', required: false },
   { path: 'autonomy', kind: 'enum', required: false, values: AUTONOMIES },
   { path: 'limits.turns', kind: 'number', required: false },
   { path: 'limits.budget_usd', kind: 'number', required: false },
+  { path: 'limits.daily_usd', kind: 'number', required: false },
   { path: 'limits.rotate_after', kind: 'number', required: false },
 ];
 
@@ -856,6 +893,25 @@ export interface AgentLinesPush {
  * about one run. Four decimals under a cent, because an agent wake routinely
  * costs less than that and `$0.00` for a real run reads as a bug.
  */
+/**
+ * The local calendar day, as `YYYY-MM-DD` (HIVE-121).
+ *
+ * Here rather than in either process, because both read it: main decides
+ * whether an agent's daily ceiling has reset, and the renderer decides whether
+ * the `Today` tile is showing today. Two spellings of one boundary would put
+ * the tile and the ceiling a day apart at exactly the hour that matters.
+ *
+ * Local parts rather than `toISOString().slice(0, 10)`, which answers the
+ * *previous* day for any evening east of UTC. Not `toDateString()` either:
+ * that is locale-shaped, and this string is persisted to `agents.json`.
+ */
+export function dayKey(at: number): string {
+  const date = new Date(at);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export function formatRunCost(usd: number | undefined): string | undefined {
   if (usd === undefined || !Number.isFinite(usd)) return undefined;
 
