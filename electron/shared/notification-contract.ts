@@ -150,17 +150,6 @@ export type NotificationAction =
   /** Open this URL in the user's browser. */
   | { type: 'url'; url: string }
   /**
-   * Start downloading the update this notification announced.
-   *
-   * Carries no version. The updater already knows which release it found, and a
-   * version on the action would be a second copy of that fact that could
-   * disagree with it — a stale row clicked an hour later would ask for a
-   * download of something the updater has since moved past.
-   */
-  | { type: 'update.download' }
-  /** Quit and swap in the update that has finished downloading. */
-  | { type: 'update.install' }
-  /**
    * Answer this ask in place (HIVE-118).
    *
    * Carries the thread and **nothing else** — not the options, not the body.
@@ -177,7 +166,18 @@ export type NotificationAction =
    * `currentRowFor`, which means "the row this **terminal** id names now". An
    * agent has no terminal, so reusing it would work by accident.
    */
-  | { type: 'agent'; name: string };
+  | { type: 'agent'; name: string }
+  /**
+   * Start downloading the update this notification announced.
+   *
+   * Carries no version. The updater already knows which release it found, and a
+   * version on the action would be a second copy of that fact that could
+   * disagree with it — a stale row clicked an hour later would ask for a
+   * download of something the updater has since moved past.
+   */
+  | { type: 'update.download' }
+  /** Quit and swap in the update that has finished downloading. */
+  | { type: 'update.install' };
 
 /** One thing that wants the user's attention. */
 export interface HiveNotification {
