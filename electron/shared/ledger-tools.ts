@@ -188,3 +188,35 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
 export const LEDGER_TOOL_NAMES: readonly string[] = LEDGER_TOOLS.map(
   (tool) => tool.name,
 );
+
+/**
+ * Claude Code's permission handler — served beside the ledger tools, and not
+ * one of them (HIVE-119).
+ *
+ * Deliberately outside {@link LEDGER_TOOLS}: that list is the ledger vocabulary
+ * the agent preamble teaches, and this is a tool the model is never supposed to
+ * call. The CLI reaches it by name through `--permission-prompt-tool`.
+ */
+export const APPROVE_TOOL: McpToolDefinition = {
+  name: 'approve',
+  description:
+    "Claude Code's permission handler. You do not call this — the CLI does, on your behalf, when you reach for a tool your definition does not grant. It asks the overmind and denies the call, so a denial here means wait for an answer, not try another way.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tool_name: {
+        type: 'string',
+        description: 'The tool the model is asking to use.',
+      },
+      input: {
+        type: 'object',
+        description: "That tool's arguments, as the model supplied them.",
+      },
+      tool_use_id: {
+        type: 'string',
+        description: 'The id of the tool use being decided.',
+      },
+    },
+    required: ['tool_name', 'input'],
+  },
+};

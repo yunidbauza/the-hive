@@ -17,7 +17,7 @@ const textOf = (result: { content: { text: string }[] }): string =>
   result.content.map((part) => part.text).join('');
 
 describe('createToolHandlers — listing', () => {
-  it('lists the eight shared definitions unchanged', () => {
+  it('lists the nine shared definitions unchanged', () => {
     const handlers = createToolHandlers(stub());
     expect(handlers.listTools().map((tool) => tool.name)).toEqual([
       'ledger_read',
@@ -28,6 +28,7 @@ describe('createToolHandlers — listing', () => {
       'ledger_release',
       'ledger_done',
       'ledger_failed',
+      'approve',
     ]);
   });
 

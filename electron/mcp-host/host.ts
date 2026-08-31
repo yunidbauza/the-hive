@@ -1,9 +1,10 @@
 import {
+  HOOK_ENV_GRANTS,
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
 } from '@shared/hook-contract';
-import { LEDGER_TOOLS } from '@shared/ledger-tools';
+import { APPROVE_TOOL, LEDGER_TOOLS } from '@shared/ledger-tools';
 import type { CallToolResult } from '@shared/mcp-contract';
 
 import { createReceiverClient } from './client';
@@ -61,6 +62,20 @@ export function readEnvironment(env: NodeJS.ProcessEnv): HostEnvironment | null 
   return { session, token, url };
 }
 
+/** `HIVE_GRANTS`, or an empty list — which fences everything, never nothing. */
+export function readGrants(env: NodeJS.ProcessEnv): string[] {
+  const raw = env[HOOK_ENV_GRANTS];
+  if (raw === undefined || raw === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((rule): rule is string => typeof rule === 'string' && rule !== '')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 const unreachable = (text: string): CallToolResult => ({
   content: [{ type: 'text', text }],
   isError: true,
@@ -85,7 +100,7 @@ export function createHandlers(
 
   if (environment === null) {
     return {
-      listTools: () => LEDGER_TOOLS,
+      listTools: () => [...LEDGER_TOOLS, APPROVE_TOOL],
       callTool: async () =>
         unreachable(
           'The ledger is not reachable: this process was started outside The Hive, or the app is not running. Nothing was written.',
@@ -100,5 +115,6 @@ export function createHandlers(
       token: environment.token,
       fetch: fetchImpl,
     }),
+    readGrants(env),
   );
 }

@@ -290,6 +290,15 @@ export const HOOK_HEADER_TOKEN = 'x-hive-token';
 export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 
 /**
+ * The environment variable carrying a session's grants, as a JSON array of
+ * rule strings the `approve` tool matches calls against (HIVE-119).
+ *
+ * Missing or unparseable is read as an empty list, never as "allow" —
+ * default-deny is the whole point of the fence.
+ */
+export const HOOK_ENV_GRANTS = 'HIVE_GRANTS';
+
+/**
  * The environment variable carrying a session's own token into the hook.
  *
  * A derivation of the receiver's launch secret and this one session's id
