@@ -219,8 +219,9 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       if (to === undefined) return;
       // The overmind's copy is an inbox card (HIVE-118), not a terminal line.
       if (to === OVERMIND) return;
-      // An agent is HIVE-120; an unknown party has nowhere to write to. A live
-      // session mid-turn is caught here too, and flushed by `onIdle`.
+      // An agent is woken by the scheduler (HIVE-120), not written to — it has
+      // no terminal to nudge. An unknown party has nowhere to write to either.
+      // A live session mid-turn is caught here too, and flushed by `onIdle`.
       if (!isLive(to) || !isIdle(to)) return;
 
       deliverOne(to, entry);

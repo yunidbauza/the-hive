@@ -5,7 +5,10 @@ import type {
   AgentRunState,
   AgentsSnapshot,
 } from '../../../../electron/shared/agent-contract';
-import type { LedgerEntry } from '../../../../electron/shared/ledger-contract';
+import {
+  OVERMIND,
+  type LedgerEntry,
+} from '../../../../electron/shared/ledger-contract';
 
 /**
  * The agent runtime's channel wiring (HIVE-115) — what `ipc/index.ts` *does
@@ -195,6 +198,7 @@ vi.mock('../../../../electron/main/agents/runs', () => ({
 let ledgerEntries: LedgerEntry[] = [];
 let ledgerOpenAsks: LedgerEntry[] = [];
 let capturedKnowsParty: ((id: string) => boolean) | undefined;
+let capturedOnChange: ((entry: LedgerEntry) => void) | undefined;
 const ledgerAppend = vi.fn(() => ({ ok: true as const, id: 'entry-1' }));
 
 vi.mock('../../../../electron/main/ledger', () => ({
@@ -210,7 +214,17 @@ vi.mock('../../../../electron/main/ledger', () => ({
       }),
       append: ledgerAppend,
       answer: vi.fn(),
-      onChange: () => () => {},
+      /*
+        Captured rather than discarded (HIVE-120): the scheduler is a consumer
+        of this listener, and driving it is the only way to assert from outside
+        that an entry addressed to an agent becomes a wake.
+      */
+      onChange: (listener: (entry: LedgerEntry) => void) => {
+        capturedOnChange = listener;
+        return () => {
+          capturedOnChange = undefined;
+        };
+      },
     };
   },
 }));
@@ -553,6 +567,81 @@ describe('agents:list merges run state (R2)', () => {
     const result = (await invoke(CH.agentsList)) as AgentsSnapshot;
 
     expect(result.agents[0]).toEqual(definition('slack-watcher'));
+  });
+});
+
+/**
+ * The scheduler's three seams, from outside (HIVE-120).
+ *
+ * What is asserted here is the *composition* — that main subscribed the
+ * scheduler to the ledger, handed the tracker an `onRunClosed`, and told it
+ * about a resume. The rules themselves belong to `scheduler.test.ts`.
+ */
+describe('ledger-addressed wakes reach the tracker (HIVE-120)', () => {
+  const addressed = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
+    id: 'a1',
+    ts: 0,
+    from: OVERMIND,
+    to: 'slack-watcher',
+    kind: 'ask',
+    body: 'take a look?',
+    ...over,
+  });
+
+  it('wakes the agent an entry names, with the ledger trigger', () => {
+    capturedOnChange?.(addressed());
+
+    expect(trackerRun).toHaveBeenCalledWith(
+      'slack-watcher',
+      'ledger',
+      'ask a1 from overmind',
+    );
+  });
+
+  it('leaves an entry addressed to a session alone', () => {
+    capturedOnChange?.(addressed({ to: 'sess-1' }));
+
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+
+  it('leaves a broadcast alone', () => {
+    capturedOnChange?.(addressed({ to: undefined }));
+
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+
+  it('flushes what a run was holding when the tracker reports it closed', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      pendingWake: [{ kind: 'answer', id: 'a4', from: OVERMIND }],
+    };
+
+    trackerDeps?.onRunClosed?.('slack-watcher');
+
+    expect(trackerRun).toHaveBeenCalledWith(
+      'slack-watcher',
+      'ledger',
+      'answer a4 from overmind',
+    );
+  });
+
+  it('flushes what a pause was holding when the agent resumes', async () => {
+    stored['slack-watcher'] = {
+      status: 'paused',
+      runsSinceRotate: 0,
+      runs: [],
+      pendingWake: [{ kind: 'ask', id: 'a5', from: OVERMIND }],
+    };
+
+    await invoke(CH.agentsResume, { name: 'slack-watcher' });
+
+    expect(trackerRun).toHaveBeenCalledWith(
+      'slack-watcher',
+      'ledger',
+      'ask a5 from overmind',
+    );
   });
 });
 

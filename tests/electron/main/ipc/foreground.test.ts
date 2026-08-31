@@ -203,6 +203,16 @@ beforeEach(() => {
   registerIpcHandlers();
 });
 
+/*
+  The cases below advance the clock by a millisecond rather than running the
+  timers to exhaustion (HIVE-120).
+
+  `scheduleForegroundChange` is a 0 ms `setTimeout`, so a single tick is all it
+  ever needed. `vi.runAllTimers()` additionally required that the composition
+  own no *repeating* timer — and since the ledger sweep, it owns one, so
+  exhaustion is no longer a state this registration can reach.
+*/
+
 afterEach(() => {
   resetIpcHandlers();
   vi.useRealTimers();
@@ -358,13 +368,13 @@ describe('window focus drives the re-arm', () => {
     windows = [fakeWindow(false), fakeWindow(true)];
     emitAppEvent('browser-window-blur');
     emitAppEvent('browser-window-focus');
-    vi.runAllTimers();
+    vi.advanceTimersByTime(1);
     listener.mockClear();
 
     // Switch to another application. Only About had focus to lose.
     windows = [fakeWindow(false), fakeWindow(false)];
     emitAppEvent('browser-window-blur');
-    vi.runAllTimers();
+    vi.advanceTimersByTime(1);
 
     expect(listener).toHaveBeenCalled();
     expect(isForeground('term-1')).toBe(false);
@@ -390,7 +400,7 @@ describe('window focus drives the re-arm', () => {
     // ...and only then does About take it.
     windows = [fakeWindow(false), fakeWindow(true)];
     emitAppEvent('browser-window-focus');
-    vi.runAllTimers();
+    vi.advanceTimersByTime(1);
 
     // One evaluation, and it read the settled state: still foreground.
     expect(seen).toEqual([true]);
@@ -404,7 +414,7 @@ describe('window focus drives the re-arm', () => {
     emitAppEvent('browser-window-focus');
     emitAppEvent('browser-window-blur');
     emitAppEvent('browser-window-focus');
-    vi.runAllTimers();
+    vi.advanceTimersByTime(1);
 
     expect(listener).toHaveBeenCalledTimes(1);
   });
@@ -426,7 +436,7 @@ describe('window focus drives the re-arm', () => {
 
     emitAppEvent('browser-window-blur');
     resetIpcHandlers();
-    vi.runAllTimers();
+    vi.advanceTimersByTime(1);
 
     expect(listener).not.toHaveBeenCalled();
   });

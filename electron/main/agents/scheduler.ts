@@ -249,6 +249,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
 
       sweeping = setIntervalFn(sweep, LEDGER_SWEEP_MS);
+      // Never a reason to hold the process open — the app's windows do that.
+      // Optional because a test's injected timer is a plain handle.
+      sweeping.unref?.();
     },
 
     stop() {

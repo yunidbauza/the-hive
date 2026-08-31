@@ -212,8 +212,71 @@ log, so without the gate each receipt would re-enter it and it would feed
 itself.
 
 An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
-line; one addressed to an agent is a wake (HIVE-120); a broadcast wakes nobody,
+line; one addressed to an agent is a wake (see below); a broadcast wakes nobody,
 because parties read those on their own schedule.
+
+### Wakes
+
+`electron/main/agents/scheduler.ts` is the third consumer of that same
+`ledger.onChange` — an agent has no terminal to nudge, so an entry addressed to
+one starts a run instead. The decision itself is a pure function in
+`scheduler-rules.ts`, so every state × kind pair is a test rather than a
+scenario:
+
+| Agent status | An addressed entry |
+| --- | --- |
+| `sleeping`, `asking`, `failed` | wakes it now |
+| `working` | queues on `pendingWake`; flushed when the run closes |
+| `paused` | held on `pendingWake`; flushed on resume |
+
+The waking kinds are `ask`, `answer`, `done`, `failed` and `post`. `done` and
+`failed` are there because they are how an asker takes its question back, so an
+agent waiting on a thread learns it was abandoned. `event` is excluded, and the
+exclusion is the same loop guard `deliver.ts` applies: the scheduler appends to
+the log it subscribes to, and every wake writes a `run.started` and a
+`run.ended`.
+
+Wakes go through `RunTracker.run`, never the waker directly. That method is the
+one door every trigger passes and it is where a paused agent is refused; a
+second entrance would let a ledger entry start an agent the user had just
+stopped.
+
+**A run that closes into `paused` keeps its queue.** HIVE-117 lets a pause land
+mid-run — the turn finishes and `finalizeRun` holds `paused` — so an entry
+queued while the agent was `working` can face a paused agent by the time the run
+closes. `onRunClosed` therefore re-reads the status from `agents.json` rather
+than trusting what the queue was filed under: flushing there would reach
+`refused: 'paused'` and drop entries whose asks are still open. `onResume`
+delivers them instead.
+
+The queue is persisted rather than held in memory, because the failure it
+prevents is silent — a quit drops an in-memory queue and nothing would ever
+bring the agent back. That makes one more flush necessary: `agents.json` is read
+at boot through `wakeFromWorking`, which rewrites `working` to `sleeping`, so a
+queue left by a crashed run has no run to close and no resume coming.
+`scheduler.start()` is what delivers it. Every flush clears the queue **before**
+waking, so a synchronous spawn failure re-entering `onRunClosed` finds nothing
+rather than looping.
+
+### Expiry
+
+An ask nobody answers dies on a timer. `LEDGER_ASK_TTL_MS` is a day, and an ask
+may shorten its own deadline with `meta.ttlMs` — never lengthen it, or an entry
+could keep the inbox from ever emptying. `ttlOf` in `ledger-derive.ts` is the
+one answer both `openAsks` and the sweep read, so the inbox and the sweep cannot
+disagree about when a question stops being one.
+
+The sweep runs once a minute and reads `expiredAsks`, **not** `openAsks` —
+`openAsks` drops an ask the instant it crosses the ttl, so the entries the sweep
+is looking for are precisely the ones that function hides. For each it appends
+`event { from: 'overmind', to: <asker>, thread: <ask>, meta: { expired } }` and,
+if the asker is an agent, wakes it directly rather than routing that event back
+through `onEntry` — which would mean waking on events.
+
+The event does not close the ask; `expiredAsks` dedupes on the event's own
+presence, which is what makes the sweep idempotent across restarts while keeping
+no state of its own. The card is dismissed rather than marked expired in place:
+the thread is closed, so `Ledger.append` refuses every button the card offers.
 
 ### Notifications
 
@@ -231,6 +294,7 @@ there is no lookup table to keep in sync.
 | `kind === 'done'` or `kind === 'failed'` with a thread | the ask's card is dismissed — and `openAsks` closes the ask itself, so the two agree |
 | `kind === 'done'` from an agent | raise `agent.done` |
 | `kind === 'failed'` from an agent | raise `agent.failed`, and that agent is recorded as having spoken |
+| `kind === 'event'` carrying `meta.expired` | the expired ask's card is dismissed — ahead of the row below, because this one comes from the overmind |
 | `kind === 'event'` from an agent whose `meta.outcome` is `failed`, `budget` or `turns` | raise `agent.failed`, unless that agent already spoke |
 
 `run.ended — done` and `run.ended — asking` mint nothing. `done` is covered by
