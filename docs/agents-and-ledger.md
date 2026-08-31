@@ -215,6 +215,31 @@ An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
 line; one addressed to an agent is a wake (HIVE-120); a broadcast wakes nobody,
 because parties read those on their own schedule.
 
+### Notifications
+
+`electron/main/ledger/notify.ts` is `deliver.ts`'s counterpart for the
+overmind's own copy: one function, `entry => void`, wired to the same
+`ledger.onChange`, deciding what — if anything — becomes an inbox card. The
+notification's id **is** the ask's entry id, which is what makes answering
+cheap: an `answer` names its thread, the thread *is* the notification, and
+there is no lookup table to keep in sync.
+
+| Entry | Effect |
+| --- | --- |
+| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id |
+| `kind === 'answer'` with a thread | the ask's card is marked read |
+| `kind === 'done'` with a thread | the ask's card is dismissed |
+| `kind === 'done'` from an agent | raise `agent.done` |
+| `kind === 'failed'` from an agent | raise `agent.failed`, and that run is recorded as having spoken |
+| `kind === 'event'` whose `meta.outcome` is `failed`, `budget` or `turns` | raise `agent.failed`, unless that run already spoke |
+
+`run.ended — done` and `run.ended — asking` mint nothing. `done` is covered by
+the agent's own report rather than the run's receipt — an agent's report is
+news because it chose to make it, and the receipt only speaks when the agent
+could not (a turn cap, a budget cap, a kill, a stall) — and `asking` is already
+the ask card raised above; a second notification for the same fact would be
+noise, not news.
+
 `ledger_ask` takes two optional arguments that together turn a bare question
 into a draft awaiting approval: `options`, the closed set of answers offered
 as buttons, and `quote` (HIVE-118), the draft itself — the exact text the
@@ -872,8 +897,13 @@ word already carries.
 The Agents tab's badge is `useAgentAskCount` — open asks whose `from` is an
 agent. It is neither of the other two on that screen: not `useOpenAskCount`,
 which counts a session's asks as well, and not the Inbox's `useUnreadCount`,
-which counts notifications. They converge only once HIVE-118 turns an ask into
-an inbox card.
+which counts notifications. The three stay three different numbers — an agent
+ask, a session ask and a raw notification count are never the same count — but
+they converge on one *event* now that HIVE-118 turns an ask into an inbox
+card: the moment an agent's ask lands, it is simultaneously counted by
+`useAgentAskCount` and, as a card, by `useUnreadCount` — one write, read by
+both badges, rather than a badge with nothing behind it until the user opens
+the Inbox and finds the ask some other way.
 
 The agent filter lives in the renderer rather than in `openAsks`, which main
 also calls and which has no notion of which parties are agents. `OpenAsk`
