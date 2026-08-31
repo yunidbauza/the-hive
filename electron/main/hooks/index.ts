@@ -222,8 +222,19 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           what this runtime offers or neither. `metricsUrl` is non-null here by
           construction — the bind succeeded — but it is read rather than rebuilt
           so the path lives in exactly one place.
+
+          Both writes land in **local** variables first, and `settingsPath` /
+          `agentSettingsPath` are assigned only once both have resolved — see
+          the doc comment above this type: "two moving parts that are useless
+          apart… start together, fail together". Assigning `settingsPath`
+          straight from the first `await` (as this once did) let a failure in
+          the second write strand a real, correctly-written session file with
+          no receiver behind it — `settingsPathFor()` would answer a path that
+          looked valid while every hook POST it named went nowhere. Holding
+          both in locals until the second `await` resolves is what keeps that
+          window from opening.
         */
-        settingsPath = await writeHookSettings(
+        const newSettingsPath = await writeHookSettings(
           userDataPath,
           url,
           /*
@@ -248,19 +259,26 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           fixed once the receiver is up: no wake ever calls this again, so
           there is nothing here to keep in sync on a later re-bind.
         */
-        agentSettingsPath = await writeAgentSettings(
+        const newAgentSettingsPath = await writeAgentSettings(
           userDataPath,
           url,
           created.readyUrl ?? undefined,
         );
+        settingsPath = newSettingsPath;
+        agentSettingsPath = newAgentSettingsPath;
         receiver = created;
       } catch (cause) {
         /**
          * A receiver nobody can be told about is worse than none: it holds a
          * port for the life of the app and reports nothing. So the failure to
-         * write the file takes the socket down with it.
+         * write either file takes the socket down with it — and resets both
+         * paths to `null`, in case the first write had already resolved before
+         * the second one threw. Neither is ever left pointing at a file that
+         * is, in fact, real and correctly written, with no receiver behind it.
          */
         await created.stop();
+        settingsPath = null;
+        agentSettingsPath = null;
         console.info(
           `[hive] hook settings could not be written — session status falls back to pty activity (${String(cause)})`,
         );
