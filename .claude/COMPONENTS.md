@@ -34,7 +34,7 @@ to be. Two adaptations are in place and should be preserved on regeneration:
 - Icons come from `@phosphor-icons/react`, not `lucide-react`. The app ships one
   icon library.
 - `dialog.tsx`'s footer close control is a plain styled `DialogPrimitive.Close`
-  rather than the shadcn `button` primitive, which is not installed.
+  rather than `ui/button.tsx`'s `Button` atom, which postdates it.
 
 ## Terminal
 
@@ -136,6 +136,7 @@ contract for their owning story, not existing code.
 | `KeyHint` | `ui/key-hint.tsx` | 041 (also 043) | `keys: string[]`, `label: string` | planned |
 | `SecretField` | `ui/secret-field.tsx` | **HIVE-67** | `label: string`, `value: string`, `onChange(value: string): void`, `onCommit?(): void`, `placeholder?: string`, `hint?: string`, `className?: string` | **built** |
 | `SplitHandle` | `ui/split-handle.tsx` | **explorer** | `axis: 'horizontal' \| 'vertical'`, `containerRef: RefObject<HTMLElement>`, `ratio: number`, `onRatio(ratio: number): void` | **built** |
+| `Button` | `ui/button.tsx` | **HIVE-118** | `variant?: 'primary' \| 'secondary' \| 'danger' \| 'ghost'`, `size?: 'sm' \| 'md'`, plus `ButtonHTMLAttributes<HTMLButtonElement>` | **built** |
 
 `Badge` moved from story 030 to 021: the header's bell needs an unread count,
 and 021 lands first. 030's tab-bar badges reuse it rather than building a second.
@@ -215,6 +216,18 @@ Contracts worth knowing before reusing them:
 - **`STATUS_TEXT` pairs with `STATUS_FILL`** in `ui/status-dot.tsx`: the dot's
   `bg-*` and its label's `text-*` come from the same module, because a dot and
   its label drifting to different colours is the bug that file exists to prevent.
+- **`Button` defaults to `variant="secondary"`, `size="md"`, `type="button"`.**
+  The default type matters: a bare `<button>` inside a `<form>` submits it,
+  which is never what a card's option row means; pass `type="submit"`
+  explicitly on the rare button that really should. Its four variants are
+  `primary`, `secondary`, `danger` and `ghost`; `primary` is the class string
+  already hand-copied into eleven settings panes (`agent-editor.tsx`,
+  `projects-section.tsx`, `skill-editor.tsx`, `skills-section.tsx`,
+  `env-editor.tsx`, `theme-gallery.tsx`, `clone-repo-view.tsx` ×2,
+  `agents-section.tsx`, `new-session-picker.tsx`), lifted unchanged. **Landing
+  the atom does not sweep those eleven call sites** — that is separate
+  follow-up work, not an endorsement to keep hand-rolling the same string
+  elsewhere.
 
 ## Layout
 
