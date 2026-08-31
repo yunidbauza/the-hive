@@ -86,6 +86,24 @@ describe('rungsFor', () => {
     expect(rungs.map((rung) => rung.id)).toEqual(['allow-once', 'allow-tool']);
   });
 
+  it('drops the family rung rather than widen a grant through a wildcard', () => {
+    const rungs = rungsFor('Bash', { command: '*rm -rf /' });
+    expect(rungs.map((rung) => rung.id)).toEqual(['allow-once', 'allow-tool']);
+  });
+
+  it('drops the family rung for a wildcard in a host or a path', () => {
+    expect(rungsFor('WebFetch', { url: 'https://*.evil.test/x' }).map((r) => r.id)).toEqual(
+      ['allow-once', 'allow-tool'],
+    );
+    expect(rungsFor('Read', { file_path: '/repo/*/a.ts' }).map((r) => r.id)).toEqual(
+      ['allow-once', 'allow-tool'],
+    );
+  });
+
+  it('still offers the family rung for an ordinary command', () => {
+    expect(rungsFor('Bash', { command: 'git push origin main' })[1]?.rule).toBe('Bash(git *)');
+  });
+
   it('gives every rung a caption', () => {
     for (const rung of rungsFor('Bash', { command: 'git push' })) {
       expect(rung.caption.length).toBeGreaterThan(0);

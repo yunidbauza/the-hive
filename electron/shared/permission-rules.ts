@@ -116,6 +116,25 @@ export function matches(
   return text === undefined ? false : globToRegExp(pattern).test(text);
 }
 
+/**
+ * Whether a piece of text derived from the call is safe to compose into a
+ * generated rule.
+ *
+ * Two characters are load-bearing in the `tools:` DSL: `,` separates rules
+ * with no escaping, and `*` is the wildcard `matches` expands. `matches`
+ * must keep reading `*` as a deliberate wildcard in a rule a *user* typed by
+ * hand — that is not this guard's business. But the text here (a Bash
+ * command's head, a fetched URL's host, a file path's directory) comes from
+ * the model's own tool call, and this module is the one composing it into a
+ * rule string. `Bash(*rm *)` does not read as "the *rm command" once
+ * composed — `globToRegExp` turns it into `/^.*rm .*$/`, which also grants
+ * `sudo rm -rf /etc`. A model that wants a wide-open grant only has to put a
+ * `*` in the command it asks to run. Refusing to compose is the safe
+ * failure, same as the comma case: the rung is dropped and the ladder
+ * degrades to `once` / `all <Tool>`.
+ */
+const isSafeToCompose = (text: string): boolean => !text.includes(',') && !text.includes('*');
+
 /** The family rule for a call, or `undefined` when the tool has no specifier. */
 const familyRuleFor = (
   toolName: string,
@@ -124,7 +143,7 @@ const familyRuleFor = (
   if (toolName === 'Bash') {
     const command = str(input, 'command');
     const head = command?.trim().split(/\s+/)[0];
-    if (head === undefined || head === '') return undefined;
+    if (head === undefined || head === '' || !isSafeToCompose(head)) return undefined;
     return {
       rule: `Bash(${head} *)`,
       label: `${head} *`,
@@ -135,7 +154,7 @@ const familyRuleFor = (
   if (toolName === 'WebFetch') {
     const url = str(input, 'url');
     const host = url === undefined ? undefined : hostOf(url);
-    if (host === undefined) return undefined;
+    if (host === undefined || !isSafeToCompose(host)) return undefined;
     return {
       rule: `WebFetch(domain:${host})`,
       label: host,
@@ -153,6 +172,7 @@ const familyRuleFor = (
   // silently drops the path's last character instead of yielding "no dir".
   if (slash <= 0) return undefined;
   const dir = path.slice(0, slash);
+  if (!isSafeToCompose(dir)) return undefined;
   return {
     rule: `${toolName}(${dir}/**)`,
     label: `${dir}/**`,
@@ -172,17 +192,16 @@ export function rungsFor(
     },
   ];
 
+  // familyRuleFor already validated its derived text with isSafeToCompose
+  // before building the rule string, so nothing further to check here.
   const family = familyRuleFor(toolName, input);
-  /*
-    A comma would split one rule into two tools when `parseList` reads the
-    file back, and nothing downstream would notice. Dropping the rung is the
-    safe failure: you still get `once` and the whole tool.
-  */
-  if (family !== undefined && !family.rule.includes(',')) {
+  if (family !== undefined) {
     rungs.push({ id: 'allow-family', ...family });
   }
 
-  if (!toolName.includes(',')) {
+  // toolName is not model-controlled today (a `*` in a CLI tool name isn't
+  // reachable), but the guard should not depend on that staying true.
+  if (isSafeToCompose(toolName)) {
     rungs.push({
       id: 'allow-tool',
       label: `all ${toolName}`,
