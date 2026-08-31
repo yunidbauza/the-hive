@@ -243,14 +243,20 @@ describe('createWakeCommand', () => {
   });
 
   it("carries this wake's one-shot grants into the command", () => {
-    const built = build({ pendingGrants: () => ['Bash'] })(
+    // `WebFetch`, not `Bash` — the fixture's own `tools: [Read, Bash]`
+    // (`AGENT_MD` above) already grants `Bash`, so asserting that would pass
+    // even with `grants: deps.pendingGrants(name)` deleted from the
+    // `wakeCommand` call. A tool the definition does not list is the only
+    // choice that actually discriminates the wiring this test exists to
+    // prove.
+    const built = build({ pendingGrants: () => ['WebFetch'] })(
       'slack-watcher',
       'manual',
     );
 
     if ('problem' in built) throw new Error('expected a command');
 
-    expect(JSON.parse(built.env['HIVE_GRANTS']!)).toContain('Bash');
+    expect(JSON.parse(built.env['HIVE_GRANTS']!)).toContain('WebFetch');
   });
 
   it('refuses when the MCP config has not been written', () => {

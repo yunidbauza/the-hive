@@ -207,15 +207,44 @@ describe('wakeCommand', () => {
 
   it('grants the ledger tools and the definition to the fence', () => {
     const { env } = build({ def: def({ tools: ['Read', 'Grep'] }) });
-    expect(JSON.parse(env['HIVE_GRANTS']!)).toEqual(['mcp__hive__*', 'Read', 'Grep']);
+    expect(JSON.parse(env['HIVE_GRANTS']!)).toEqual([
+      'mcp__hive__*',
+      'ToolSearch',
+      'Read',
+      'Grep',
+    ]);
   });
 
   it('adds a one-shot grant for this wake only', () => {
     const withOnce = build({ def: def({ tools: ['Read'] }), grants: ['Bash'] });
-    expect(JSON.parse(withOnce.env['HIVE_GRANTS']!)).toEqual(['mcp__hive__*', 'Read', 'Bash']);
+    expect(JSON.parse(withOnce.env['HIVE_GRANTS']!)).toEqual([
+      'mcp__hive__*',
+      'ToolSearch',
+      'Read',
+      'Bash',
+    ]);
 
     const next = build({ def: def({ tools: ['Read'] }) });
-    expect(JSON.parse(next.env['HIVE_GRANTS']!)).toEqual(['mcp__hive__*', 'Read']);
+    expect(JSON.parse(next.env['HIVE_GRANTS']!)).toEqual([
+      'mcp__hive__*',
+      'ToolSearch',
+      'Read',
+    ]);
+  });
+
+  /**
+   * Found only by a real `claude` (`pnpm test:agent`), never by this suite on
+   * its own: MCP tool schemas are deferred, so the model must call the
+   * built-in `ToolSearch` to load `mcp__hive__ledger_read`'s schema before it
+   * can call the tool itself. No `def.tools` ever names a built-in, so
+   * without an unconditional grant here the fence denied the very first thing
+   * every agent's preamble tells it to do, and no agent could ever read its
+   * inbox. Pinned here so the next reader who wants to "tidy" this list finds
+   * out why before removing it.
+   */
+  it('grants ToolSearch unconditionally, for a definition that never lists it', () => {
+    const { env } = build({ def: def({ tools: ['Read'] }) });
+    expect(JSON.parse(env['HIVE_GRANTS']!)).toContain('ToolSearch');
   });
 });
 

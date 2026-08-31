@@ -175,9 +175,23 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     `ledger_read` cannot read the inbox that would tell it why it was woken,
     and would deadlock on its own fence. `input.grants` is a one-shot
     `allow-once` for this wake only — never merged into `def.tools`.
+
+    `ToolSearch` sits beside it, unconditional for the same reason and found
+    the same way — a live run, not a unit test. MCP tool schemas are
+    deferred: the model sees `mcp__hive__ledger_read` by name in its tool
+    list, but must call the *built-in* `ToolSearch` to fetch that schema
+    before it can invoke it. `ToolSearch` never appears in any `def.tools` —
+    nobody would think to grant a built-in — so without this the fence denies
+    the very first thing an agent's preamble tells it to do: read its ledger
+    inbox. Granting `mcp__hive__*` is worthless if nothing can load the
+    schema to call it. This grants no *capability*: `ToolSearch` only reveals
+    tool schemas, and every tool it surfaces is still checked by the fence
+    the moment it is actually called — so widening this list widens nothing
+    an agent can do, only what it can find out it could ask to do.
   */
   merged[HOOK_ENV_GRANTS] = JSON.stringify([
     'mcp__hive__*',
+    'ToolSearch',
     ...def.tools,
     ...(input.grants ?? []),
   ]);
