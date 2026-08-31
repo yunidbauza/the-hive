@@ -246,6 +246,20 @@ describe('wakeCommand', () => {
     const { env } = build({ def: def({ tools: ['Read'] }) });
     expect(JSON.parse(env['HIVE_GRANTS']!)).toContain('ToolSearch');
   });
+
+  it('carries a last-turn prompt onto the command line', () => {
+    const command = build({ lastTurn: true });
+
+    expect(command.args.at(-1)).toContain(
+      'This is your last turn on this session.',
+    );
+  });
+
+  it('carries a handoff prefix onto the command line', () => {
+    const command = build({ handoff: 'I watch #ops.' });
+
+    expect(command.args.at(-1)).toContain('I watch #ops.');
+  });
 });
 
 describe('wakePrompt', () => {
@@ -257,6 +271,35 @@ describe('wakePrompt', () => {
     expect(wakePrompt('ledger', 'an answer arrived')).toContain(
       'You woke because: ledger — an answer arrived',
     );
+  });
+
+  it('asks for a handoff on a last turn', () => {
+    const prompt = wakePrompt('schedule', undefined, { lastTurn: true });
+
+    expect(prompt).toContain('This is your last turn on this session.');
+    expect(prompt).toContain('ledger_handoff');
+    // The normal instruction is replaced, not appended to.
+    expect(prompt).not.toContain('You woke because');
+  });
+
+  it('opens a fresh session with the previous one’s handoff', () => {
+    const prompt = wakePrompt('schedule', undefined, {
+      handoff: 'I watch #ops.',
+    });
+
+    expect(prompt).toContain(
+      'You are continuing from a previous session of yourself.',
+    );
+    expect(prompt).toContain('I watch #ops.');
+    // …and then the ordinary wake instruction still follows it.
+    expect(prompt).toContain('You woke because: schedule.');
+    expect(prompt.indexOf('I watch #ops.')).toBeLessThan(
+      prompt.indexOf('You woke because'),
+    );
+  });
+
+  it('is unchanged when neither is asked for', () => {
+    expect(wakePrompt('manual')).toBe(wakePrompt('manual', undefined, {}));
   });
 });
 
