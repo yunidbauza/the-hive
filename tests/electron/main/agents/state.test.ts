@@ -266,4 +266,31 @@ describe('createAgentState', () => {
       });
     });
   });
+
+  it('round-trips the rotation fields', () => {
+    const state = createAgentState({ path });
+
+    state.patch('drone', {
+      pendingSession: { uuid: 'b2e1-new', handoff: 'I watch #ops.' },
+      rotateFailures: 2,
+      forceRotate: true,
+    });
+    state.flush();
+
+    const reread = createAgentState({ path }).read('drone');
+    expect(reread.pendingSession).toEqual({ uuid: 'b2e1-new', handoff: 'I watch #ops.' });
+    expect(reread.rotateFailures).toBe(2);
+    expect(reread.forceRotate).toBe(true);
+  });
+
+  it('keeps the session uuid a run ran on', () => {
+    const state = createAgentState({ path });
+
+    state.recordRun('drone', {
+      run: 'r1', trigger: 'manual', startedAt: 1, endedAt: 2,
+      outcome: 'done', sessionUuid: '9f3c1e2a',
+    }, 2);
+
+    expect(state.read('drone').runs[0]?.sessionUuid).toBe('9f3c1e2a');
+  });
 });

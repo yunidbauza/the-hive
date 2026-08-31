@@ -784,6 +784,15 @@ export interface RunSummary {
   turns?: number;
   /** Why it ended that way, when the outcome alone does not say. */
   reason?: string;
+  /**
+   * The Claude conversation this run was part of.
+   *
+   * Recorded on **every** run, not only the ones that rotate: the audit trail
+   * HIVE-122 needs — which uuid did the session that rotated away actually use
+   * — falls out of it, and so does the more general question of which
+   * conversation run 14 belonged to. Twenty of these is under a kilobyte.
+   */
+  sessionUuid?: string;
 }
 
 /** What `~/.hive/ledger/agents.json` holds per agent. */
@@ -832,6 +841,27 @@ export interface AgentRunState {
    * them. Oldest first, capped at {@link AGENT_PENDING_WAKE_MAX}.
    */
   pendingWake?: PendingWakeEntry[];
+  /**
+   * A rotation decided at a run's close and not yet started (HIVE-122).
+   *
+   * The uuid is minted when the handoff wake closes, and it deliberately does
+   * **not** overwrite {@link AgentRunState.sessionUuid}: until the next wake
+   * actually runs, the agent's conversation is still the old one, and a uuid
+   * no session file backs would fail `--resume` on the wake after next if the
+   * rotation were abandoned. The next wake consumes this, passes the uuid to
+   * `--session-id`, and prefixes `handoff` onto its prompt.
+   */
+  pendingSession?: { uuid: string; handoff: string };
+  /**
+   * Consecutive handoff wakes that ended without a handoff (HIVE-122).
+   *
+   * Reset by a rotation that succeeds. At exactly three, main posts the
+   * `agent.failed` card that asks a human to look; the counter keeps climbing
+   * after that, which is what stops the card repeating.
+   */
+  rotateFailures?: number;
+  /** A `rotate <agent>` asked for a handoff wake on the next run (HIVE-122). */
+  forceRotate?: boolean;
 }
 
 /** How many run summaries an agent keeps. */
@@ -909,11 +939,7 @@ export type AgentRunResult =
  * A run started, ended, or otherwise changed what an agent's row should say.
  *
  * Carries the fields of {@link AgentRunState} a row or a view renders, and no
- * others. `sessionUuid` stays behind: that uuid is Claude's own conversation
- * id, `BRIDGE_SESSION_KEYS` records that the equivalent fact for a *session*
- * deliberately stays in main, and an agent's has no better claim to travel. It
- * changes on a first run and on a rotation, and `agents:list` is soon enough
- * for both.
+ * others.
  *
  * `runs` did not travel here either, until HIVE-116. The reasoning was that a
  * row renders no history — true of a row, and false of the agent view, whose
@@ -931,6 +957,17 @@ export interface AgentStatusPush {
   /** As {@link AgentSummary.runs} — the last {@link AGENT_RUN_HISTORY}. */
   runs: RunSummary[];
   runsSinceRotate: number;
+  /**
+   * As {@link AgentSummary.sessionUuid}.
+   *
+   * It used to stay behind, on the reasoning that it changes only on a first
+   * run and on a rotation and that `agents:list` was soon enough for both.
+   * HIVE-122 is the story that made that false: `agents:changed` fires on
+   * AGENT.md writes and on nothing else, so after a rotation the Session fact
+   * would hold a dead uuid until an unrelated edit — which can be hours. This
+   * is the same journey `runs` made in HIVE-116, for the same reason.
+   */
+  sessionUuid?: string;
   /** As {@link AgentSummary.today} — the accumulator, not a sum over `runs`. */
   today?: { day: string; runs: number; usd: number; capped?: boolean };
   /** As {@link AgentSummary.skipsSinceRun}. */
