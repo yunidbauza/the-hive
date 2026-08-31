@@ -5182,6 +5182,28 @@ export function currentRowFor(id: string): string {
   return currentSessionIn(useHiveStore.getState(), id);
 }
 
+/**
+ * True when `id` currently names an agent, not a terminal (HIVE-118).
+ *
+ * `currentRowFor`'s callers all speak terminal ids **except** one: an OS
+ * notification about an agent carries the agent's own name, and an agent's
+ * entity id *is* its name — but `hydrateAgents`'s own guard above concedes
+ * "an agent name is a legal session id", so on a live machine an agent can
+ * end up sharing a name with some session's `terminalId`. `currentSessionIn`
+ * would then walk right past the direct `entities[id]` miss — an agent is
+ * never `isSession` — into the search loop that exists to follow a `/clear`,
+ * find that session, and hand back its row instead of the agent.
+ *
+ * A sibling to `currentRowFor` rather than a branch inside it: the two ids
+ * are never confusable in the other direction (a session id never means
+ * "check whether this is secretly an agent first"), so folding this in would
+ * have made the common case pay for a check only one caller needs.
+ */
+export function isAgentId(id: string): boolean {
+  const entity = useHiveStore.getState().entities[id];
+  return entity !== undefined && isAgent(entity);
+}
+
 export function terminalIdFor(id: string): string {
   const entity = useHiveStore.getState().entities[id];
   return entity !== undefined && isSession(entity) ? terminalOf(entity) : id;

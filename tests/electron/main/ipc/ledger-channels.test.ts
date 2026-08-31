@@ -322,16 +322,25 @@ describe('ledger:changed — the push channel (HIVE-111)', () => {
 
 /**
  * `notifications:act` routing an `ask` (HIVE-118) — the main-process half of
- * dispatch. `ask` is deliberately the only case with real behaviour to pin
- * here: main answers nothing on an ask's behalf (a desktop toast has no
- * option buttons), so the whole contract is "focus the window, touch nothing
- * else". `agent` is covered on the renderer side instead — `performAction`
- * in `notification-card.test.tsx` never reaches this handler for it at all,
- * and this file's fake `electron` module has no `shell` or `Notification` to
- * assert *against*, which is exactly the point: those must stay untouched.
+ * dispatch. `ask` is deliberately the only case with observable behaviour to
+ * characterize here: main answers nothing on an ask's behalf (a desktop
+ * toast has no option buttons), so the whole contract is "focus the window,
+ * touch nothing else". `agent` is covered on the renderer side instead —
+ * `performAction` in `notification-card.test.tsx` never reaches this handler
+ * for it at all, and this file's fake `electron` module has no `shell` or
+ * `Notification` to assert *against*, which is exactly the point: those must
+ * stay untouched.
+ *
+ * These are characterization tests, not regression tests for Step 5's
+ * `if (action.type === 'ask') return;` branch: the pre-change fallback
+ * (`if (action.type !== 'session') return;`) produced this exact same
+ * observable behaviour for `ask`, since it never fell into a case that does
+ * anything else either. What these lock in is the *contract* — this stays
+ * true even if a future reorder of the branches changes which line happens
+ * to satisfy it.
  */
 describe('notifications:act — an ask focuses the window and answers nothing (HIVE-118)', () => {
-  it('focuses every live window and neither throws nor opens anything external', () => {
+  it('characterizes the contract: focuses every live window, throws nothing, opens nothing external', () => {
     const focus = vi.fn();
     const restore = vi.fn();
     windows.push({
@@ -349,7 +358,7 @@ describe('notifications:act — an ask focuses the window and answers nothing (H
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it('restores a minimized window before focusing it, exactly as any other action does', () => {
+  it('characterizes the contract: restores a minimized window before focusing it, exactly as any other action does', () => {
     const focus = vi.fn();
     const restore = vi.fn();
     windows.push({
@@ -366,7 +375,7 @@ describe('notifications:act — an ask focuses the window and answers nothing (H
     expect(focus).toHaveBeenCalledTimes(1);
   });
 
-  it('skips a destroyed window rather than touching it', () => {
+  it('characterizes the contract: skips a destroyed window rather than touching it', () => {
     const isMinimized = vi.fn(() => false);
     const focus = vi.fn();
     windows.push({

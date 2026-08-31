@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { currentRowFor, useOpenEntity } from '@stores/hive-store';
+import { currentRowFor, isAgentId, useOpenEntity } from '@stores/hive-store';
 
 /**
  * Open the session a clicked notification was about (story 106).
@@ -40,9 +40,19 @@ export function useNotificationActivate(): void {
      * above correctly refuses — so a notification about work happening *right
      * now* would bounce the user to the orchestrator. The terminal is the same
      * one; only the row changed.
+     *
+     * Except when `entityId` names an **agent** (HIVE-118): an agent has no
+     * terminal, so there is nothing here for it to resolve. Worse, resolving
+     * it anyway can be actively wrong — `hydrateAgents` documents that an
+     * agent's name is a legal session id, so on a live machine an agent can
+     * come to share a name with some session's `terminalId`. `currentRowFor`
+     * would then walk its `/clear`-following search loop, find that session,
+     * and open it instead of the agent the toast was actually about. Checked
+     * with `isAgentId` first and opened directly when it is one — an agent's
+     * entity id already *is* the id `openEntity` wants.
      */
     return bridge.notifications.onActivate(({ entityId }) => {
-      openEntity(currentRowFor(entityId));
+      openEntity(isAgentId(entityId) ? entityId : currentRowFor(entityId));
     });
   }, [openEntity]);
 }

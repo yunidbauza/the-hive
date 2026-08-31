@@ -187,10 +187,12 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
      * the row it names now, translating around a `/clear`. An agent has no
      * terminal and is never cleared — its entity id **is** its name, fixed
      * for the entity's life (`hive-store.ts`'s `entities[summary.name]`) — so
-     * there is nothing for that translation to do. Calling it anyway would
-     * happen to work today (an id nothing has ever cleared passes through
-     * unchanged) and quietly break the day `currentRowFor` gains a rule that
-     * assumes its argument is always a terminal id.
+     * there is nothing for that translation to do, and calling it anyway is
+     * not merely redundant: `hydrateAgents` documents that an agent's name is
+     * a legal session id, so `currentRowFor`'s search loop can walk straight
+     * past this agent to a live session that happens to share its name and
+     * open that instead. See `isAgentId` and `useNotificationActivate`, which
+     * guard the toast path against exactly this collision.
      */
     if (notif.action.type === 'agent') {
       openEntity(notif.action.name);

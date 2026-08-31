@@ -767,10 +767,14 @@ export function registerIpcHandlers(): void {
        * `entityId` still means *terminal id* for a session — the reason
        * `useNotificationActivate` on the other end resolves it through
        * `currentRowFor`. An agent has no terminal, so there is no resolution
-       * to apply, but sending its name through unchanged costs nothing:
-       * `currentRowFor` on an id that was never a terminal's is the identity
-       * function (nothing has ever cleared it), so the renderer opens exactly
-       * the id this sent — the agent's own name.
+       * to apply here — but sending its name through unchanged is **not**
+       * always the identity function on the other side: `hydrateAgents`
+       * documents that an agent's name is a legal session id, so an agent can
+       * come to share a name with some session's `terminalId`, and
+       * `currentRowFor`'s search loop would then resolve straight past the
+       * agent to that session. The renderer is what closes this — it checks
+       * `isAgentId` before ever calling `currentRowFor`, so what this sends is
+       * still what gets opened even on a colliding name.
        */
       if (action.type === 'agent') {
         send(CH.notificationsActivate, {
