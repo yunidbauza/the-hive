@@ -3990,6 +3990,54 @@ describe('the ledger slice', () => {
   });
 });
 
+describe('answerAsk (HIVE-118)', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'hive');
+  });
+
+  it('posts the answer through the bridge and stores nothing', async () => {
+    const answer = vi.fn().mockResolvedValue({ ok: true });
+    Object.defineProperty(window, 'hive', {
+      configurable: true,
+      value: { ledger: { answer } },
+    });
+
+    const before = useHiveStore.getState().ledger;
+    await useHiveStore.getState().answerAsk('a41', 'yes');
+
+    expect(answer).toHaveBeenCalledWith({ thread: 'a41', body: 'yes' });
+    expect(useHiveStore.getState().ledger).toBe(before);
+  });
+
+  it('passes meta through when the card edited a draft', async () => {
+    const answer = vi.fn().mockResolvedValue({ ok: true });
+    Object.defineProperty(window, 'hive', {
+      configurable: true,
+      value: { ledger: { answer } },
+    });
+
+    await useHiveStore
+      .getState()
+      .answerAsk('a44', 'approve', { edited: 'the new text' });
+
+    expect(answer).toHaveBeenCalledWith({
+      thread: 'a44',
+      body: 'approve',
+      meta: { edited: 'the new text' },
+    });
+  });
+
+  it('is a no-op in the browser, where there is no bridge', async () => {
+    await expect(
+      useHiveStore.getState().answerAsk('a41', 'yes'),
+    ).resolves.toBeUndefined();
+  });
+});
+
 /**
  * HIVE-116. The rail groups by what an agent is doing, the view's facts are
  * derived from the run history the bridge now carries, and the tab's badge

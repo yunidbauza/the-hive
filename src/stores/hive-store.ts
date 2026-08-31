@@ -351,6 +351,21 @@ interface HiveState {
   /** Mark one notification read, by id (HIVE-75). */
   markRead: (id: string) => void;
   /**
+   * Answer an open ask (HIVE-118).
+   *
+   * Writes **nothing** locally. The answer comes back through
+   * `ledger:changed` like any other entry, and the card re-derives from
+   * `useThread` — so an answer typed here, one posted from the agent view and
+   * one written by another session all collapse the card the same way. An
+   * optimistic local append would be a second copy of the entry that main is
+   * about to send anyway.
+   */
+  answerAsk: (
+    thread: string,
+    body: string,
+    meta?: Record<string, unknown>,
+  ) => Promise<void>;
+  /**
    * Remove a notification the user has acted on (HIVE-93).
    *
    * Not the same gesture as {@link markRead}: read means "seen", dismissed means
@@ -2620,6 +2635,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   ledgerAppend: (entry) =>
     set((state) => ({ ledger: [...state.ledger, entry].slice(-LEDGER_MEMORY_CAP) })),
+
+  answerAsk: async (thread, body, meta) => {
+    await window.hive?.ledger.answer({
+      thread,
+      body,
+      ...(meta === undefined ? {} : { meta }),
+    });
+  },
 
   hydrateSessions: (records) =>
     set((state) => {
@@ -6046,6 +6069,9 @@ export const useClearPrSearchResults = () =>
 
 /** Mark one notification read, by its id (story 051, HIVE-75). */
 export const useMarkRead = () => useHiveStore((state) => state.markRead);
+
+/** {@link HiveState.answerAsk}, for a component that must not touch the store. */
+export const useAnswerAsk = () => useHiveStore((state) => state.answerAsk);
 
 /** Remove a notification the user has acted on (HIVE-93). */
 export const useDismissNotif = () =>
