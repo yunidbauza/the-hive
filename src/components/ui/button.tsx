@@ -22,9 +22,13 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  * `type="button"` by default, and overridable. A bare `<button>` inside a
  * `<form>` submits it, which is never what a card's option row means.
  */
+// `primary`'s border is transparent, not absent: the idiom it was lifted from
+// has none, but this atom sits primary beside bordered secondary/danger
+// buttons in one row, and a borderless primary would sit 2px shorter than its
+// neighbours.
 const VARIANT: Record<ButtonVariant, string> = {
   primary:
-    'bg-brand-fill text-on-brand hover:bg-brand-fill-hover border border-brand-fill',
+    'bg-brand-fill text-on-brand hover:bg-brand-fill-hover border border-transparent',
   secondary:
     'border border-border text-muted hover:bg-hover hover:text-ink',
   danger:
