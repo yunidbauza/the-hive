@@ -4,6 +4,7 @@ import {
   type RunLine,
   type RunOutcome,
 } from '@shared/agent-contract';
+import { OVERMIND } from '@shared/ledger-contract';
 
 import { NO_LOG, foldRunLog, type LogFold, type RunResult } from './run-log';
 import type { AgentState } from './state';
@@ -100,6 +101,17 @@ export interface RunTrackerDeps {
   }) => void;
   /** Did this run leave an ask nobody has answered? */
   openAsksFor: (name: string, run: string) => boolean;
+  /**
+   * The handoff this run posted, if it posted one (HIVE-122).
+   *
+   * Answered the way `openAsksFor` answers its question — by finding this run's
+   * own `run.started` event and taking the entries at or after it — because the
+   * ledger has no other notion of which run an entry belongs to. The last
+   * handoff wins if the agent wrote several.
+   */
+  handoffFor: (name: string, run: string) => string | undefined;
+  /** Mints the uuid a rotation's next session will start under. */
+  newUuid: () => string;
   pushStatus: (name: string) => void;
   pushLines: (name: string, lines: RunLine[]) => void;
   /**
@@ -180,6 +192,7 @@ interface LiveRun {
   reason: string | null;
   /** False only for a run that never reached the model: a spawn failure. */
   reachedModel: boolean;
+  lastTurn: boolean;
   escalation: NodeJS.Timeout | null;
   watchdog: NodeJS.Timeout | null;
   flush: NodeJS.Timeout | null;
@@ -189,6 +202,15 @@ interface FinalizeInfo {
   run: string;
   trigger: string;
   startedAt: number;
+  /**
+   * This wake asked the agent for a handoff, so its close may rotate (HIVE-122).
+   *
+   * Read off the **command** at spawn and carried, rather than re-derived from
+   * state at close: by then the state has moved on — a `pendingSession` written
+   * here, or a `forceRotate` consumed by the wake, would both answer the
+   * question differently from the way the prompt actually asked it.
+   */
+  lastTurn: boolean;
   /**
    * The conversation this run invoked — absent only when there was no process.
    *
@@ -267,6 +289,9 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       ...(result?.costUsd === undefined ? {} : { costUsd: result.costUsd }),
       ...(result?.turns === undefined ? {} : { turns: result.turns }),
       ...(reason === null ? {} : { reason }),
+      // Recorded on every run, not only the ones that rotate: "which
+      // conversation did run 14 belong to" is the audit trail HIVE-122 needs.
+      ...(sessionUuid === undefined ? {} : { sessionUuid }),
     },
     /*
       The run counts against the day it *ended*, not the one it started.
@@ -279,6 +304,16 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     endedAt);
 
     const current = deps.state.read(name);
+
+    /*
+      The rotation gate (HIVE-122). Only a handoff wake can rotate, and only if
+      the agent actually left a handoff: a run that was cut off by its turn cap,
+      or that simply ignored the instruction, must keep the conversation rather
+      than throw it away silently.
+    */
+    const handoff = info.lastTurn ? deps.handoffFor(name, info.run) : undefined;
+    const strike = info.lastTurn && handoff === undefined && reachedModel;
+    const failures = (current.rotateFailures ?? 0) + 1;
 
     deps.state.patch(name, {
       /*
@@ -305,9 +340,25 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
             ? 'asking'
             : 'sleeping',
       lastRunAt: endedAt,
-      // A run that never reached the model cost nothing and should not pull
-      // session rotation forward.
-      ...(reachedModel ? { runsSinceRotate: current.runsSinceRotate + 1 } : {}),
+      /*
+        A rotation zeroes the counter instead of advancing it — the run that
+        just closed belongs to the session being left behind. A run that never
+        reached the model cost nothing and should not pull rotation forward.
+
+        Keyed off `handoff !== undefined` rather than a `rotated` boolean:
+        TypeScript narrows the former and not the latter, and
+        `pendingSession.handoff` is a `string`.
+      */
+      ...(handoff !== undefined
+        ? {
+            runsSinceRotate: 0,
+            rotateFailures: 0,
+            pendingSession: { uuid: deps.newUuid(), handoff },
+          }
+        : reachedModel
+          ? { runsSinceRotate: current.runsSinceRotate + 1 }
+          : {}),
+      ...(strike ? { rotateFailures: failures } : {}),
       ...(sessionUuid === undefined ? {} : { sessionUuid }),
     });
 
@@ -317,6 +368,25 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       body: `run.ended — ${outcome}`,
       meta: { run: info.run, outcome, ...(reason === null ? {} : { reason }) },
     });
+
+    /*
+      Posted as the **overmind**, not as the agent, and gated on that at the
+      other end — the same rule the daily-cap card follows. `meta` is a rider any
+      party can write, so a card minted from an agent's own `from` is one any
+      agent could mint for itself. Main declined to rotate; main says so.
+
+      Fired at exactly three so it cannot repeat: the counter keeps climbing and
+      rotation keeps being attempted on every later wake. The ask here is that a
+      human look, not that the agent give up.
+    */
+    if (strike && failures === 3) {
+      deps.appendLedger({
+        from: OVERMIND,
+        kind: 'event',
+        body: `${name} could not rotate — three handoff wakes ended without a handoff.`,
+        meta: { rotateFailed: 3, agent: name },
+      });
+    }
 
     deps.pushStatus(name);
     deps.onRunClosed?.(name);
@@ -449,7 +519,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
         finalizeRun(
           name,
-          { run, trigger, startedAt },
+          { run, trigger, startedAt, lastTurn: command.lastTurn },
           'failed',
           null,
           message,
@@ -470,6 +540,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         closed: false,
         reason: null,
         reachedModel: true,
+        lastTurn: command.lastTurn,
         escalation: null,
         watchdog: null,
         flush: null,

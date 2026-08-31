@@ -489,6 +489,10 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
     agentState = createAgentState({ path: agentStateFile() });
 
+    // One generator for both the wake builder and the tracker's rotation, as
+    // the real composition does it (HIVE-122).
+    const newUuid = (): string => randomUUID();
+
     const buildWakeCommand = createWakeCommand({
       agentsRoot,
       workdir: agentWorkdir,
@@ -511,7 +515,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       subscriptionAuth: () => false,
       state: agentState,
       env: () => process.env,
-      newUuid: () => randomUUID(),
+      newUuid,
       // Composed with the real `permissions` runtime (HIVE-119): a one-shot
       // `allow-once` this suite never exercises would otherwise have nowhere
       // to come from, and `grantsFor` is a no-op for every other agent here,
@@ -548,6 +552,21 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
           (ask) => ask.from === name && (started === undefined || ask.id >= started.id),
         );
       },
+      // The real reader, so a live run that rotates is decided the way the app
+      // decides it (HIVE-122).
+      handoffFor: (name, run) => {
+        const { entries } = ledger.read({ from: name });
+        const started = entries.find(
+          (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
+        );
+
+        return entries.findLast(
+          (entry) =>
+            entry.kind === 'handoff' &&
+            (started === undefined || entry.id >= started.id),
+        )?.body;
+      },
+      newUuid,
       pushStatus: (name) => {
         if (agentState.read(name).status === 'working') return;
 

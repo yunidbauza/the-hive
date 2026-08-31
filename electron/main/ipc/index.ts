@@ -1305,6 +1305,14 @@ export function registerIpcHandlers(): void {
   */
   const agentRunState = agentState;
 
+  /*
+    One generator, two readers. `createWakeCommand` mints the uuid a *first*
+    wake starts under; `createRunTracker` mints the one a rotation's next
+    session will start under. A second function here would be a second place to
+    change if uuids ever stop being `randomUUID()`.
+  */
+  const newUuid = (): string => randomUUID();
+
   const buildWakeCommand = createWakeCommand({
     agentsRoot,
     workdir: agentWorkdir,
@@ -1323,7 +1331,7 @@ export function registerIpcHandlers(): void {
     subscriptionAuth: () => getConfig().subscriptionAuth,
     state: agentState,
     env: () => process.env,
-    newUuid: () => randomUUID(),
+    newUuid,
     // `permissions` is armed later, alongside `scheduler` — read through the
     // module binding for the same reason `hooks`/`mcp` are read through
     // getters here rather than closed over as values.
@@ -1356,6 +1364,28 @@ export function registerIpcHandlers(): void {
       (ask) =>
         ask.from === name && (started === undefined || ask.id >= started.id),
     );
+  };
+
+  /**
+   * What did this run hand over, if anything (HIVE-122)?
+   *
+   * The same `run.started` id comparison `openAsksFor` uses, for the same
+   * reason: the ledger has no notion of which run an entry belongs to, and a
+   * clock comparison would be a worse answer to the same question. The **last**
+   * handoff wins if the agent wrote several — a second one is a correction of
+   * the first, not a competitor to it.
+   */
+  const handoffFor = (name: string, run: string): string | undefined => {
+    const { entries } = ledger.read({ from: name });
+    const started = entries.find(
+      (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
+    );
+
+    return entries.findLast(
+      (entry) =>
+        entry.kind === 'handoff' &&
+        (started === undefined || entry.id >= started.id),
+    )?.body;
   };
 
   /**
@@ -1433,10 +1463,15 @@ export function registerIpcHandlers(): void {
     },
     state: agentState,
     /*
-      The tracker's ledger writes are `from` the **agent**, never the overmind:
-      a run is the agent's own activity and the log is read back by name. That
-      is the same rule `ledger:post` enforces from the other direction, where
-      the renderer may only ever speak as the coordinator.
+      A run's own entries are `from` the **agent**: a run is the agent's
+      activity and the log is read back by name. That is the same rule
+      `ledger:post` enforces from the other direction, where the renderer may
+      only ever speak as the coordinator.
+
+      The one exception is main's own verdict — the failed-rotation event
+      (HIVE-122), which is `from` the overmind precisely because it is a claim
+      *about* the agent that the agent must not be able to make about itself.
+      The tracker picks the `from`; this only carries it.
     */
     appendLedger: (entry) => {
       const result = ledger.append(entry);
@@ -1456,6 +1491,8 @@ export function registerIpcHandlers(): void {
       }
     },
     openAsksFor,
+    handoffFor,
+    newUuid,
     pushStatus: pushAgentStatus,
     pushLines: (name, lines) => {
       /*
