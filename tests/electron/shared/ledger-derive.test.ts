@@ -7,12 +7,14 @@ import {
 } from '../../../electron/shared/ledger-contract';
 import {
   claims,
+  expiredAsks,
   keepNewest,
   matches,
   nextRef,
   openAsks,
   resolveRef,
   thread,
+  ttlOf,
 } from '../../../electron/shared/ledger-derive';
 
 const NOW = 1_800_000_000_000;
@@ -256,5 +258,70 @@ describe('nextRef', () => {
 
   it('ignores entries with no ref', () => {
     expect(nextRef([entry({ id: '1', kind: 'post' })])).toBe('a1');
+  });
+});
+
+describe('ttlOf', () => {
+  it('is the constant when no meta.ttlMs is given', () => {
+    expect(ttlOf({})).toBe(LEDGER_ASK_TTL_MS);
+    expect(ttlOf({ meta: {} })).toBe(LEDGER_ASK_TTL_MS);
+  });
+
+  it('honours a shorter meta.ttlMs', () => {
+    expect(ttlOf({ meta: { ttlMs: 60_000 } })).toBe(60_000);
+  });
+
+  it('clamps a longer one to the constant', () => {
+    // An agent may shorten its own ask; it may not outlive the log's own rule.
+    expect(ttlOf({ meta: { ttlMs: LEDGER_ASK_TTL_MS * 2 } })).toBe(LEDGER_ASK_TTL_MS);
+  });
+
+  it('ignores a ttlMs that is not a positive finite number', () => {
+    const bad: unknown[] = [0, -1, Number.NaN, Number.POSITIVE_INFINITY, '5m', null];
+
+    for (const ttlMs of bad) {
+      expect(ttlOf({ meta: { ttlMs } })).toBe(LEDGER_ASK_TTL_MS);
+    }
+  });
+});
+
+describe('expiredAsks', () => {
+  const ask = (over: Partial<LedgerEntry> = {}): LedgerEntry =>
+    entry({ id: 'a1', kind: 'ask', ts: 0, from: 'pr-reviewer', to: 'overmind', ...over });
+
+  it('is empty while the ask is inside its ttl', () => {
+    expect(expiredAsks([ask()], LEDGER_ASK_TTL_MS - 1)).toEqual([]);
+  });
+
+  it('names an ask that has crossed its ttl', () => {
+    expect(expiredAsks([ask()], LEDGER_ASK_TTL_MS).map((found) => found.id)).toEqual([
+      'a1',
+    ]);
+  });
+
+  it('uses the ask own meta.ttlMs', () => {
+    expect(expiredAsks([ask({ meta: { ttlMs: 1_000 } })], 1_000)).toHaveLength(1);
+  });
+
+  it('ignores an ask something already closed', () => {
+    const answer = entry({ id: 'x1', ts: 5, kind: 'answer', thread: 'a1' });
+
+    expect(expiredAsks([ask(), answer], LEDGER_ASK_TTL_MS)).toEqual([]);
+  });
+
+  it('ignores an ask that already has its expiry event — the sweep is idempotent', () => {
+    const expiry = entry({
+      id: 'e1',
+      ts: 5,
+      kind: 'event',
+      thread: 'a1',
+      meta: { expired: 'a1' },
+    });
+
+    expect(expiredAsks([ask(), expiry], LEDGER_ASK_TTL_MS)).toEqual([]);
+  });
+
+  it('ignores kinds that are not asks', () => {
+    expect(expiredAsks([ask({ kind: 'post' })], LEDGER_ASK_TTL_MS)).toEqual([]);
   });
 });

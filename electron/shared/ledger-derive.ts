@@ -51,11 +51,78 @@ export const taskOf = (entry: Pick<LedgerEntry, 'meta'>): string | undefined => 
 const CLOSING_KINDS = new Set(['answer', 'done', 'failed']);
 
 /**
+ * How long this ask lives before time retires it.
+ *
+ * `meta.ttlMs` lets an asker say its question is only worth asking for the next
+ * ten minutes. It may **shorten, never lengthen**: {@link LEDGER_ASK_TTL_MS} is
+ * the log's own rule about when an unanswered question stops being one, and an
+ * entry able to raise its own ceiling would keep the inbox from ever emptying —
+ * exactly what the ttl exists to prevent.
+ *
+ * Read by {@link openAsks} and by main's expiry sweep both, for the reason this
+ * module exists at all: two readings of when an ask dies would let the sweep
+ * retire a thread the inbox still draws as open.
+ */
+export function ttlOf(entry: Pick<LedgerEntry, 'meta'>): number {
+  const ttlMs = entry.meta?.ttlMs;
+
+  if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs) || ttlMs <= 0) {
+    return LEDGER_ASK_TTL_MS;
+  }
+
+  return Math.min(ttlMs, LEDGER_ASK_TTL_MS);
+}
+
+/**
+ * Asks that have just died and have not been told so yet (HIVE-120).
+ *
+ * The counterpart to {@link openAsks} rather than a filter over it, and it has
+ * to be: `openAsks` drops an ask the moment it crosses its ttl, so a sweep
+ * reading that function could never see a newly expired one — the entries this
+ * is looking for are precisely the ones it hides.
+ *
+ * The "no expiry event yet" clause is what makes the sweep idempotent across
+ * restarts while keeping no state of its own: the log itself remembers which
+ * asks have been retired. Closure cannot serve as that dedup, because the
+ * expiry event deliberately does not close the ask — {@link CLOSING_KINDS} is
+ * `answer`/`done`/`failed`, and an expiry is none of the three: nobody
+ * answered, and nobody took the question back.
+ */
+export function expiredAsks(
+  entries: readonly LedgerEntry[],
+  now: number,
+): LedgerEntry[] {
+  const closed = new Set<string>();
+  const told = new Set<string>();
+
+  for (const entry of entries) {
+    if (entry.thread !== undefined && CLOSING_KINDS.has(entry.kind)) {
+      closed.add(entry.thread);
+    }
+
+    const expired = entry.meta?.expired;
+    if (typeof expired === 'string') told.add(expired);
+  }
+
+  return entries.filter(
+    (entry) =>
+      entry.kind === 'ask' &&
+      !closed.has(entry.id) &&
+      !told.has(entry.id) &&
+      now - entry.ts >= ttlOf(entry),
+  );
+}
+
+/**
  * Asks nobody has closed and time has not retired.
  *
  * Both conditions matter. Without the TTL an ask whose asker died stays open
  * forever and the inbox never empties; without the {@link CLOSING_KINDS} check
  * a thread closes on a timer while someone is still owed a reply.
+ *
+ * The deadline is {@link ttlOf}, not the constant directly, so an ask carrying
+ * its own shorter `meta.ttlMs` retires here at the same instant main's sweep
+ * retires it.
  */
 export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[] {
   const closed = new Set<string>();
@@ -69,7 +136,7 @@ export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[
     if (entry.kind !== 'ask') continue;
     if (closed.has(entry.id)) continue;
     const ageMs = now - entry.ts;
-    if (ageMs >= LEDGER_ASK_TTL_MS) continue;
+    if (ageMs >= ttlOf(entry)) continue;
     open.push({ ...entry, kind: 'ask', open: true, ageMs });
   }
   return open;
