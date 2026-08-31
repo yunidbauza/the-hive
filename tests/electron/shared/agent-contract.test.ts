@@ -9,9 +9,11 @@ import {
   AGENT_PENDING_WAKE_MAX,
   KNOWN_AGENT_MCP,
   RESERVED_AGENT_NAMES,
+  WAKE_CHECKS,
   WAKE_EVERY_FLOOR_MS,
   WAKE_ON_EVENTS,
   type AgentRunState,
+  dayKey,
   formatRunCost,
   isReservedAgentName,
   isWakeOn,
@@ -126,15 +128,27 @@ describe('agent-contract', () => {
       'wake.days',
       'wake.on',
       'wake.quiet',
+      'wake.check',
       'skills',
       'mcp',
       'tools',
       'autonomy',
       'limits.turns',
       'limits.budget_usd',
+      'limits.daily_usd',
       'limits.rotate_after',
     ]);
     expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it('offers exactly two check modes', () => {
+    expect(WAKE_CHECKS).toEqual(['onchange', 'always']);
+  });
+
+  it('declares check as an enum over those two', () => {
+    expect(
+      AGENT_FIELDS.find((field) => field.path === 'wake.check')?.values,
+    ).toEqual(WAKE_CHECKS);
   });
 
   it('marks exactly name, description and icon required', () => {
@@ -189,5 +203,20 @@ describe('pendingWake', () => {
     const state: AgentRunState = { status: 'sleeping', runsSinceRotate: 0, runs: [] };
 
     expect(state.pendingWake).toBeUndefined();
+  });
+});
+
+describe('dayKey', () => {
+  it('is the local calendar day, zero-padded', () => {
+    expect(dayKey(new Date(2026, 8, 2, 0, 1).getTime())).toBe('2026-09-02');
+  });
+
+  /*
+    Local parts rather than `toISOString`, which would answer the *previous*
+    day for any evening east of UTC — and this key is what decides whether a
+    daily cap has reset.
+  */
+  it('does not roll over before local midnight', () => {
+    expect(dayKey(new Date(2026, 7, 31, 23, 59).getTime())).toBe('2026-08-31');
   });
 });

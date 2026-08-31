@@ -30,6 +30,7 @@ import {
   type AgentProblem,
   type Autonomy,
   type FieldSpec,
+  type WakeCheck,
   type WakeDay,
   type WakeOn,
 } from '@shared/agent-contract';
@@ -37,6 +38,8 @@ import type {
   SessionEffort,
   SessionModel,
 } from '@shared/session-contract';
+
+import { inQuiet, minutesOf } from './wake-schedule';
 
 export interface ParseContext {
   folder: string;
@@ -227,6 +230,53 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
   }
 
   /*
+    `check:` modifies an interval and nothing else (HIVE-121).
+
+    A fixed time is a promise to run then. An agent set to `at: [09:00]` whose
+    ledger happened to be quiet overnight would, under `onchange`, silently
+    skip the morning — which is exactly the failure the fixed time was written
+    to prevent. Refused rather than ignored, for the reason `every:` with `at:`
+    is refused: a key the file names and the scheduler drops is a lie the
+    author has no way to see.
+  */
+  const check = shaped('wake.check');
+
+  if (check !== undefined && at !== undefined) {
+    problems.push({
+      field: 'wake.check',
+      reason: 'Only applies to every: — a fixed time always runs.',
+    });
+  }
+
+  /*
+    A scheduled time inside the hours the same file calls quiet.
+
+    The author has asked for two things that cannot both hold. Suppressing the
+    wake silently drops a schedule they explicitly set; honouring it makes
+    quiet hours a lie. Refusing surfaces the contradiction at the one moment
+    the author is still around to resolve it — and it is *why* the scheduler's
+    quiet-hours branch never has to consider calendar mode at all.
+
+    The window is half-open, so a time exactly on its end is outside it:
+    `at: [07:00]` with `quiet: 23:00-07:00` is the ordinary first-thing-in-the
+    -morning schedule, not a contradiction.
+  */
+  const quietText = shaped('wake.quiet');
+  const quietWindow = quietText === undefined ? null : parseRange(quietText);
+
+  if (at !== undefined && quietWindow !== null) {
+    for (const time of parseTimes(at) ?? []) {
+      if (!inQuiet(minutesOf(time), quietWindow)) continue;
+
+      problems.push({
+        field: 'wake.at',
+        reason: `${time} falls inside quiet hours. Move the time, or the window.`,
+      });
+      break;
+    }
+  }
+
+  /*
     Every string in `wake.on` must be one The Hive knows how to act on.
 
     This was the one list in the grammar with no check at all — the parsed
@@ -292,6 +342,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
   const model = shaped('model');
   const effort = shaped('effort');
   const budget = shaped('limits.budget_usd');
+  const daily = shaped('limits.daily_usd');
   const limit = (path: string, fallback: number): number => {
     const value = shaped(path);
 
@@ -309,6 +360,14 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
         ...(everyMs === undefined || everyMs === null ? {} : { everyMs }),
         ...(at === undefined ? {} : { at: parseTimes(at) as string[] }),
         ...(days === undefined ? {} : { days: parseDays(days) as WakeDay[] }),
+        /*
+          Materialised here, and only in interval mode. A calendar agent and a
+          manual-only one have nothing for it to modify, so the scheduler
+          reading `check` never has to ask which mode it is in first.
+        */
+        ...(everyMs === undefined || everyMs === null
+          ? {}
+          : { check: (check ?? 'onchange') as WakeCheck }),
         on: (parseList(shaped('wake.on') ?? '[]') ?? []) as WakeOn[],
         ...(quiet === undefined ? {} : { quiet: parseRange(quiet) as { from: string; to: string } }),
       },
@@ -329,6 +388,12 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
           not a subscription is actually billed for it.
         */
         ...(budget === undefined ? {} : { budgetUsd: Number(budget) }),
+        /*
+          Absent stays absent here too, for the reason above — and for one of
+          its own: a daily ceiling is a decision about how much unattended work
+          this agent is worth in a day, and nobody but its author can guess it.
+        */
+        ...(daily === undefined ? {} : { dailyUsd: Number(daily) }),
         rotateAfter: limit('limits.rotate_after', AGENT_LIMIT_DEFAULTS.rotateAfter),
       },
       body,

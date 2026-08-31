@@ -555,3 +555,73 @@ describe('parseAgent — the calendar wake mode', () => {
     expect(def.wake.days).toBeUndefined();
   });
 });
+
+describe('parseAgent — check, and the daily cap', () => {
+  it('materialises onchange as the default in interval mode', () => {
+    expect(definition(GOOD).wake.check).toBe('onchange');
+  });
+
+  it('reads an explicit always', () => {
+    expect(
+      definition(GOOD.replace('every: 5m', 'every: 5m\n  check: always')).wake.check,
+    ).toBe('always');
+  });
+
+  /*
+    Absent in the other two modes rather than defaulted, because a fixed time
+    and a manual-only agent have nothing for it to modify. A scheduler reading
+    `check` therefore never has to ask which mode it is in first.
+  */
+  it('leaves check unset on a schedule, where it has no meaning', () => {
+    expect(definition(GOOD.replace('every: 5m', 'at: [09:00]')).wake.check).toBeUndefined();
+  });
+
+  it('refuses check alongside at:, rather than silently dropping it', () => {
+    expect(
+      problems(GOOD.replace('every: 5m', 'at: [09:00]\n  check: onchange')),
+    ).toEqual([
+      {
+        field: 'wake.check',
+        reason: 'Only applies to every: — a fixed time always runs.',
+      },
+    ]);
+  });
+
+  it('refuses a scheduled time inside quiet hours, naming the time', () => {
+    // GOOD already carries `quiet: 23:00-07:00`.
+    expect(problems(GOOD.replace('every: 5m', 'at: [23:30]'))).toEqual([
+      {
+        field: 'wake.at',
+        reason: '23:30 falls inside quiet hours. Move the time, or the window.',
+      },
+    ]);
+  });
+
+  it('accepts a scheduled time outside the quiet window', () => {
+    expect(definition(GOOD.replace('every: 5m', 'at: [09:00]')).wake.at).toEqual([
+      '09:00',
+    ]);
+  });
+
+  /*
+    The window's end is not inside it. `07:00` against `23:00-07:00` is the
+    boundary a half-open reading has to get right, and getting it wrong would
+    refuse the commonest schedule there is — first thing in the morning.
+  */
+  it('accepts a time exactly on the end of the quiet window', () => {
+    expect(definition(GOOD.replace('every: 5m', 'at: [07:00]')).wake.at).toEqual([
+      '07:00',
+    ]);
+  });
+
+  it('leaves the daily cap unset when the file names none', () => {
+    expect(definition(GOOD).limits.dailyUsd).toBeUndefined();
+  });
+
+  it('reads a daily cap the file does name', () => {
+    expect(
+      definition(GOOD.replace('budget_usd: 0.50', 'budget_usd: 0.50\n  daily_usd: 2.50'))
+        .limits.dailyUsd,
+    ).toBe(2.5);
+  });
+});
