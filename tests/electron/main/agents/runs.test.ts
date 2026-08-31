@@ -30,6 +30,8 @@ describe('createRunTracker', () => {
   let openAsks: boolean;
   let commandCalls: number;
   let commandArgs: { name: string; trigger: string; extra?: string }[];
+  let closed: string[];
+  let statusWhenClosed: string | undefined;
   let tracker: ReturnType<typeof createRunTracker>;
   let state: ReturnType<typeof createAgentState>;
 
@@ -42,6 +44,8 @@ describe('createRunTracker', () => {
     openAsks = false;
     commandCalls = 0;
     commandArgs = [];
+    closed = [];
+    statusWhenClosed = undefined;
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
 
     tracker = createRunTracker({
@@ -63,6 +67,10 @@ describe('createRunTracker', () => {
       openAsksFor: () => openAsks,
       pushStatus: (name) => statuses.push(name),
       pushLines: (name, pushed) => lines.push({ name, count: pushed.length }),
+      onRunClosed: (name) => {
+        closed.push(name);
+        statusWhenClosed = state.read(name).status;
+      },
       now: () => 1_000,
       newRunId: () => 'run-1',
     });
@@ -234,6 +242,61 @@ describe('createRunTracker', () => {
       costUsd: 0.02,
     });
     expect(statuses).toEqual(['a', 'a']);
+  });
+
+  it('reports a closed run, after the status is on disk', () => {
+    // The scheduler reads the status back inside this callback to decide
+    // whether to flush its queue, so it has to run after the patch.
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(closed).toEqual(['a']);
+    expect(statusWhenClosed).toBe('sleeping');
+  });
+
+  it('reports a run that closed into paused, so the scheduler can hold', () => {
+    /*
+      HIVE-117 lets a pause land mid-run and `finalizeRun` holds it. The
+      callback still fires — the scheduler is what decides that a paused agent
+      keeps its queue, and it cannot decide that without being told.
+    */
+    tracker.run('a', 'ledger');
+    state.patch('a', { status: 'paused' });
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(closed).toEqual(['a']);
+    expect(statusWhenClosed).toBe('paused');
+  });
+
+  it('reports a run that never reached a process', () => {
+    // The spawn-failure path finalizes too, and a queue filed against that
+    // agent would otherwise wait for a close that is never coming.
+    const throwing = createRunTracker({
+      spawn: () => {
+        throw new Error('EMFILE: too many open files');
+      },
+      command: () => ({
+        file: '/opt/bin/claude',
+        args: [],
+        env: {},
+        cwd: '/tmp/work',
+        sessionUuid: 'sess-1',
+      }),
+      state,
+      appendLedger: (entry) => ledger.push(entry),
+      openAsksFor: () => false,
+      pushStatus: () => {},
+      pushLines: () => {},
+      onRunClosed: (name) => closed.push(name),
+      now: () => 1_000,
+      newRunId: () => 'run-1',
+    });
+
+    throwing.run('a', 'ledger');
+
+    expect(closed).toEqual(['a']);
   });
 
   it('a result that arrives after exit but before close still counts (close is authoritative)', () => {

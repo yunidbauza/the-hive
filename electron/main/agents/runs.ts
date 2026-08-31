@@ -95,6 +95,20 @@ export interface RunTrackerDeps {
   openAsksFor: (name: string, run: string) => boolean;
   pushStatus: (name: string) => void;
   pushLines: (name: string, lines: RunLine[]) => void;
+  /**
+   * This agent's run is over and its status is on disk (HIVE-120).
+   *
+   * Called **last**, after the patch and the push, because the one thing its
+   * caller needs is the status *after* finalization: the scheduler decides
+   * whether to flush its queue by reading it, and a run that closed into
+   * `paused` must leave the queue standing. The status the scheduler
+   * remembered when it filed the entry says `working`, which by then is a lie.
+   *
+   * Fires on every ending, the spawn-failure path included — a queue filed
+   * against an agent whose process never started would otherwise wait for a
+   * close that is never coming.
+   */
+  onRunClosed?: (name: string) => void;
   now: () => number;
   newRunId: () => string;
   killGraceMs?: number;
@@ -289,6 +303,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     });
 
     deps.pushStatus(name);
+    deps.onRunClosed?.(name);
   };
 
   const close = (name: string, live: LiveRun, code: number | null) => {
