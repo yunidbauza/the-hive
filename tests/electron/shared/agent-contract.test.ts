@@ -6,10 +6,12 @@ import {
   AGENT_LIMIT_DEFAULTS,
   AGENT_NAME_PATTERN,
   AGENT_PARENT_KEYS,
+  AGENT_PENDING_WAKE_MAX,
   KNOWN_AGENT_MCP,
   RESERVED_AGENT_NAMES,
   WAKE_EVERY_FLOOR_MS,
   WAKE_ON_EVENTS,
+  type AgentRunState,
   formatRunCost,
   isReservedAgentName,
   isWakeOn,
@@ -175,5 +177,17 @@ describe('formatRunCost', () => {
     expect(formatRunCost(undefined)).toBeUndefined();
     expect(formatRunCost(Number.NaN)).toBeUndefined();
     expect(formatRunCost(Number.POSITIVE_INFINITY)).toBeUndefined();
+  });
+});
+
+describe('pendingWake', () => {
+  it('caps at a number a wake prompt can actually name', () => {
+    expect(AGENT_PENDING_WAKE_MAX).toBe(20);
+  });
+
+  it('is optional, so an agents.json written before HIVE-120 still parses', () => {
+    const state: AgentRunState = { status: 'sleeping', runsSinceRotate: 0, runs: [] };
+
+    expect(state.pendingWake).toBeUndefined();
   });
 });

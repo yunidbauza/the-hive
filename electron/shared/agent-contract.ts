@@ -729,10 +729,44 @@ export interface AgentRunState {
   runsSinceRotate: number;
   /** Most recent last, capped at {@link AGENT_RUN_HISTORY}. */
   runs: RunSummary[];
+  /**
+   * Entries that arrived while this agent could not take them (HIVE-120).
+   *
+   * Persisted rather than held in the scheduler's memory because the failure it
+   * prevents is a silent one: a quit with the queue in memory drops entries
+   * whose asks are still open, and nothing would ever bring the agent back to
+   * them. Oldest first, capped at {@link AGENT_PENDING_WAKE_MAX}.
+   */
+  pendingWake?: PendingWakeEntry[];
 }
 
 /** How many run summaries an agent keeps. */
 export const AGENT_RUN_HISTORY = 20;
+
+/**
+ * One entry an agent has not been woken for yet (HIVE-120).
+ *
+ * The three fields the wake prompt needs to name it — `<kind> <id> from <from>`
+ * — and nothing more. The body is deliberately absent: `extra` is a *hint*, and
+ * the preamble already tells an agent to `ledger_read` its inbox first, so the
+ * entry itself is read on the wake it caused. Carrying bodies here would put a
+ * copy of the log inside `agents.json`, ageing separately from the log.
+ */
+export interface PendingWakeEntry {
+  kind: string;
+  id: string;
+  from: string;
+}
+
+/**
+ * How many queued entries an agent keeps.
+ *
+ * The **earliest** are kept and later ones refused, which is the safe
+ * direction: the entries most at risk of being forgotten are the ones that have
+ * waited longest. Nothing is truly lost either way — the queue's job is to
+ * cause one wake, and the agent reads its own inbox on that wake.
+ */
+export const AGENT_PENDING_WAKE_MAX = 20;
 
 /**
  * `agents:run` — wake this agent now (HIVE-115).
