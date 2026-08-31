@@ -28,7 +28,11 @@ import { writeAgentSettings } from '../../electron/main/hooks/settings';
 import { createLedger, type Ledger } from '../../electron/main/ledger';
 import { mcpConfig } from '../../electron/main/mcp/config';
 import { createSkillsRuntime } from '../../electron/main/skills';
-import type { AgentRunState, RunLine } from '../../electron/shared/agent-contract';
+import type {
+  AgentRunState,
+  RunLine,
+  WakeSpec,
+} from '../../electron/shared/agent-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -156,7 +160,18 @@ const FENCE = 'probe-fence';
 const SESSION = 'sess-live-probe';
 
 /** Every party the ledger and the receiver accept in this suite. */
-const AGENTS = [NAME, ASKER, RESPONDER, FENCE];
+/**
+ * The agent the **clock** wakes, twice (HIVE-121).
+ *
+ * Its own definition rather than a fifth body for {@link NAME}, because it is
+ * the only one here whose runs nothing in this file calls `runs.run` for: both
+ * come out of `scheduler.tickSchedules`, which is the whole assertion. It
+ * declares `check: always` so the tick has nothing to decide — an `onchange`
+ * agent with an empty inbox would correctly skip, and prove nothing.
+ */
+const INTERVAL = 'probe-interval';
+
+const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL];
 
 const AGENT_MD = `---
 name: ${NAME}
@@ -171,6 +186,24 @@ limits:
 This is a conformance probe. Do not read files, search the disk, or run
 commands — there is nothing here to find. After your ledger inbox, reply with
 the single sentence "probe agent reporting in" and end your turn.
+`;
+
+const INTERVAL_MD = `---
+name: ${INTERVAL}
+description: Proves the scheduler's clock starts a real run.
+icon: Ghost
+model: haiku
+wake:
+  every: 1m
+  check: always
+tools: [Read, Glob, Grep, TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find. After your ledger inbox, reply with
+the single sentence "interval probe reporting in" and end your turn.
 `;
 
 /**
@@ -313,6 +346,13 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    * which agent to listen for before the entry that wakes it is appended.
    */
   const settlers = new Map<string, () => void>();
+  /** What `scheduleFor` answers, filled by the interval scenario alone. */
+  const schedules = new Map<
+    string,
+    { wake: WakeSpec; dailyUsd?: number }
+  >();
+  /** The scheduler's tick, captured off its injected interval. */
+  let fireTick: (() => void) | undefined;
 
   beforeAll(async () => {
     /*
@@ -355,6 +395,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [ASKER, ASKER_MD],
       [RESPONDER, RESPONDER_MD],
       [FENCE, fenceMd(marker)],
+      [INTERVAL, INTERVAL_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -537,18 +578,37 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       // `ledgerAgents`. Only `NAME` does not.
       wakesOnLedger: (id) => id === ASKER || id === RESPONDER || id === FENCE,
       /*
-        No scheduled wakes in these scenarios. Every one of them drives a wake
-        from a ledger entry or by hand, and an interval firing mid-scenario
-        would spend real model minutes on a run nothing is asserting about.
+        Empty until the interval scenario fills it (HIVE-121). Every other
+        scenario drives its wake from a ledger entry or by hand, and a schedule
+        left standing would spend real model minutes on a run nothing is
+        asserting about.
       */
-      scheduleFor: () => undefined,
+      scheduleFor: (name) => schedules.get(name),
       pushStatus: () => {},
       ledger: {
         read: () => ledger.read({}),
         append: (request) => ledger.append(request),
       },
       now: () => Date.now(),
+      /*
+        Captured rather than armed. The tick's period is sixty seconds and its
+        floor is one minute, so letting it run on real time would add two
+        minutes of waiting to a suite that already spends real model time — and
+        would buy nothing: what is under test is that `tickSchedules` starts a
+        real `claude`, not that `setInterval` counts.
+      */
+      setIntervalFn: ((handler: () => void) => {
+        fireTick = handler;
+        return 0 as unknown as ReturnType<typeof setInterval>;
+      }) as unknown as typeof setInterval,
+      clearIntervalFn: (() => {
+        fireTick = undefined;
+      }) as unknown as typeof clearInterval,
     });
+
+    // Arms the captured tick. The immediate tick inside `start()` finds no
+    // schedules and does nothing.
+    scheduler.start();
 
     /*
       Reproduces `ipc/index.ts`'s own sequencing (HIVE-119), not the plain
@@ -1037,5 +1097,92 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(closed.runs).toHaveLength(2);
     expect(closed.runs[1]?.outcome).not.toBe('asking');
     expect(closed.runs[1]?.outcome).not.toBe('failed');
+  }, 300_000);
+
+  /**
+   * The clock starts a real run, twice, on one conversation (HIVE-121).
+   *
+   * Nothing in this test calls `runs.run`. Both wakes come out of
+   * `tickSchedules`, which is the entire assertion — every other proof of the
+   * tick is a unit test against a recording `run` dep, and every one of them
+   * would pass just as happily on a build whose scheduled wake could never
+   * actually spawn anything.
+   *
+   * What only a real process can show here:
+   *
+   * 1. A tick that finds an overdue `nextRunAt` reaches `RunTracker.run` and a
+   *    `claude` really starts — with `interval` as the trigger word, which is
+   *    what the model reads in its own wake prompt.
+   * 2. The **second** tick resumes the first run's uuid. A scheduled wake is
+   *    not a special case of the resume path; it is the same path, and this is
+   *    what says so.
+   * 3. `today` counted both runs. That accumulator is what the daily ceiling is
+   *    compared against, and no unit test can prove it is fed by a real run's
+   *    real cost rather than by a fixture.
+   *
+   * The tick is fired by hand rather than waited for. Its period is sixty
+   * seconds and the grammar's floor is one minute, so real time would add two
+   * minutes to a suite that already spends real model minutes — and would
+   * prove only that `setInterval` counts.
+   */
+  it('wakes an agent twice on its own schedule, resuming the same session', async () => {
+    const spec: WakeSpec = { everyMs: 60_000, check: 'always', on: [] };
+
+    schedules.set(INTERVAL, { wake: spec });
+
+    /*
+      Due now. The tick seeds `nextRunAt` for an agent that has never been
+      scheduled rather than firing — saving a definition starts a schedule, it
+      does not owe a wake dated from the epoch — so the first tick would only
+      arm it.
+    */
+    agentState.patch(INTERVAL, { nextRunAt: Date.now() - 1 });
+
+    const first = settled(INTERVAL);
+
+    fireTick?.();
+    await first;
+
+    const after = await persisted(INTERVAL);
+
+    expect(after.runs).toHaveLength(1);
+    expect(after.runs[0]?.trigger).toBe('interval');
+    expect(after.runs[0]?.outcome).not.toBe('failed');
+
+    const uuid = after.sessionUuid ?? '';
+
+    expect(uuid).not.toBe('');
+
+    // Armed forward by the tick itself, off the clock rather than off a timer.
+    expect(after.nextRunAt).toBeGreaterThan(Date.now());
+
+    // Due again, without touching anything else.
+    agentState.patch(INTERVAL, { nextRunAt: Date.now() - 1 });
+
+    const second = settled(INTERVAL);
+
+    fireTick?.();
+    await second;
+
+    const twice = await persisted(INTERVAL);
+
+    expect(twice.runs).toHaveLength(2);
+    expect(twice.runs[1]?.outcome).not.toBe('failed');
+
+    // Same conversation: a scheduled wake takes the resume path like any other.
+    const args = spawns.at(-1)?.args ?? [];
+
+    expect(args).toContain('--resume');
+    expect(args[args.indexOf('--resume') + 1]).toBe(uuid);
+    expect(twice.sessionUuid).toBe(uuid);
+
+    /*
+      And the day's accumulator counted both. This is the number
+      `limits.daily_usd` is compared against and the number the `Today` tile
+      draws — fed here by two real runs reporting real costs, which is the one
+      thing a fixture cannot stand in for.
+    */
+    expect(twice.today?.runs).toBe(2);
+    expect(twice.today?.usd).toBeGreaterThan(0);
   }, 300_000);
 });

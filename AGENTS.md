@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` · `:agent` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), the ledger MCP tools, and the headless agent runs — hooks, `--resume`, and the two-wake ledger conversation (~1 min, after a `desktop:build`) |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` · `:agent` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), the ledger MCP tools, and the headless agent runs — hooks, `--resume`, the two-wake ledger conversation, the permission fence, and the scheduler's own clock (~1 min, after a `desktop:build`) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
