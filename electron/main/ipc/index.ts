@@ -2526,6 +2526,9 @@ export function registerIpcHandlers(): void {
    * explains. `BRIDGE_AGENTS_KEYS` claims these two verbs cannot create an
    * agent; this is what makes that true of its run state as well.
    *
+   * HIVE-122's `rotate` is the third caller, for exactly this reason: it too
+   * patches state before anything reads a definition.
+   *
    * `run` needs no equivalent: it reaches `deps.command`, which reads the
    * definition off disk and refuses `invalid` when there is none.
    */
@@ -2538,6 +2541,51 @@ export function registerIpcHandlers(): void {
 
     return name;
   };
+
+  /**
+   * Force a handoff wake now (HIVE-122).
+   *
+   * `agents:run` with one field armed first, and the ordering is the point: the
+   * flag is written to **state**, then the run goes through the ordinary door.
+   * If the agent is busy or paused the run is refused exactly as `agents:run`
+   * would refuse it — and the flag stays armed, so the wake that does happen is
+   * the handoff wake. A rotation the user asked for is never silently dropped.
+   *
+   * `requireAgent` for `pause`'s reason and not `run`'s: this writes to
+   * `agents.json` before it reaches anything that reads a definition, so
+   * without the check a typo would leave `{"ghost": {"forceRotate": true}}` on
+   * disk permanently — and an agent later created under that name would be
+   * born owing a handoff for a conversation it never had.
+   *
+   * `agentState`, not the tracker, is what carries the flag, so arming a
+   * rotation works on an agent that has never run: there is no tracker entry to
+   * arm. `wake-command.ts` gives that case an ordinary first wake rather than a
+   * last turn on a session that does not exist yet.
+   *
+   * The same two awaits as `run`, for the same two reasons, since this reaches
+   * the same spawn: `PATH` may still be the pre-repair one, and `hive.mcp.json`
+   * may not have been written yet.
+   */
+  handle(CH.agentsRotate, async (_event, payload): Promise<AgentRunResult> => {
+    const name = await requireAgent(parseAgentNameRequest(payload).name);
+
+    if (agentState === null) {
+      throw new Error('The agent runtime is not running.');
+    }
+
+    agentState.patch(name, { forceRotate: true });
+
+    await loginEnvStatus();
+    await mcp.start();
+
+    return (
+      runs?.run(name, 'manual') ?? {
+        started: false,
+        refused: 'unknown',
+        reason: 'The agent runtime is not running.',
+      }
+    );
+  });
 
   handle(CH.agentsPause, async (_event, payload): Promise<AgentStatus> =>
     // No `kill`. A pause lets the turn in flight finish — see the contract, and

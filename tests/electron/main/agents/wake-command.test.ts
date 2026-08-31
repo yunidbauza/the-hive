@@ -418,6 +418,36 @@ describe('the handoff wake', () => {
     expect(stored['slack-watcher']?.forceRotate).toBeUndefined();
   });
 
+  /*
+    A forced rotation on an agent that has never run degrades to an ordinary
+    first wake (HIVE-122).
+
+    Only a run sets `sessionUuid`, so the counter path can never reach this —
+    but the console's `rotate` verb can, on an agent installed five minutes ago.
+    Without the `sessionUuid` term the wake would be a *last turn* on a brand
+    new `--session-id` session: an agent asked to summarise a conversation that
+    has not happened yet, and a handoff that could only be fiction.
+  */
+  it('degrades a forced rotation on a never-run agent to a first wake', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      forceRotate: true,
+    };
+
+    const result = build()('slack-watcher', 'manual');
+
+    if ('problem' in result) throw new Error(result.problem);
+
+    expect(result.lastTurn).toBe(false);
+    expect(result.args).toContain('--session-id');
+    expect(result.args).not.toContain('--resume');
+    // Consumed all the same: the fresh session the user asked for is the one
+    // this wake starts, so leaving the flag armed would rotate again next time.
+    expect(stored['slack-watcher']?.forceRotate).toBeUndefined();
+  });
+
   it('keeps the pending session when preparing the run fails', () => {
     stored['slack-watcher'] = {
       status: 'sleeping',

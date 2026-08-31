@@ -23,7 +23,8 @@ export type UsageCommand =
   | 'run'
   | 'pause'
   | 'resume'
-  | 'kill';
+  | 'kill'
+  | 'rotate';
 
 /**
  * How many entries `ledger` prints when `-n` is not given (HIVE-113).
@@ -94,6 +95,15 @@ export type ParsedCommand =
   | { kind: 'pause'; raw: string; target: string }
   | { kind: 'resume'; raw: string; target: string }
   | { kind: 'kill'; raw: string; target: string }
+  /**
+   * The sixth (HIVE-122).
+   *
+   * A bare name like the four above, and for the same reason: the payload it
+   * becomes is an `AgentNameRequest`. What it means is "end this session after
+   * a handoff" — the rotation `rotate-after` performs unattended, brought
+   * forward by hand.
+   */
+  | { kind: 'rotate'; raw: string; target: string }
   /** Right verb, wrong arguments. */
   | { kind: 'usage'; raw: string; command: UsageCommand }
   /** No such verb. */
@@ -121,6 +131,14 @@ export const USAGE: Record<UsageCommand, string> = {
   pause: 'usage: pause <agent>',
   resume: 'usage: resume <agent>',
   kill: 'usage: kill <agent>',
+  /*
+    The one usage line here that explains rather than only spells. `rotate` is
+    the only verb whose name does not say what happens — a user who reads
+    "rotate" guesses log rotation — and the half that matters is the half a
+    bare `rotate <agent>` would hide: the agent is asked to hand off first, so
+    nothing is thrown away.
+  */
+  rotate: 'usage: rotate <agent> — end this agent’s session after a handoff',
 };
 
 /**
@@ -153,14 +171,19 @@ export const CONSOLE_VERBS = [
   /*
     The agent verbs sit after the session ones and before `clear`, keeping the
     file's "read, then act" order within a second group rather than
-    interleaving the two vocabularies: `agents` lists, and the four that follow
+    interleaving the two vocabularies: `agents` lists, and the five that follow
     act on one. A reader scanning the footer meets the whole fleet first and
     the tenants second, which is the order the stage itself is in.
+
+    `rotate` goes last of the five (HIVE-122): it is the rarest — most
+    rotations happen on the counter, unattended — and the only one whose
+    consequence outlives the run it starts.
   */
   'agents',
   'run',
   'pause',
   'resume',
   'kill',
+  'rotate',
   'clear',
 ] as const satisfies readonly ParsedCommand['kind'][];

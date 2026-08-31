@@ -284,6 +284,22 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'ui',
     'updates',
   ]);
+  /**
+   * ## `agents` grows to thirteen (HIVE-122)
+   *
+   * `rotate` is `run` with one field armed first, and every sentence written
+   * for `run` above holds unchanged: one validated agent name, no path, no
+   * argv, no flag, no environment, and a trigger main writes as `manual`
+   * itself. It deliberately takes an `AgentNameRequest` rather than a widened
+   * `AgentRunRequest`, so the closed key set that refuses a renderer-chosen
+   * trigger stays closed.
+   *
+   * The one new thing it can do is set `forceRotate`, whose whole consequence
+   * is a wake that asks the agent to summarise itself before its session is
+   * replaced — which `rotate-after` already does unattended every N runs. It
+   * cannot create an agent: `requireAgent` refuses a name no definition
+   * answers to, for the reason `pause` does.
+   */
   expect(surface.agents).toEqual([
     'kill',
     'list',
@@ -295,6 +311,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'remove',
     'rename',
     'resume',
+    'rotate',
     'run',
     'write',
   ]);

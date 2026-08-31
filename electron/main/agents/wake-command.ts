@@ -270,10 +270,21 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
 
       `pendingSession` is the other side: a rotation the close already decided,
       waiting for a wake to start it.
+
+      The `sessionUuid` term is what keeps a *forced* rotation coherent
+      (HIVE-122). Only a run sets that field, so the counter can never reach
+      this arm with it missing — but the console's `rotate` verb can, on an
+      agent installed a minute ago. Without the term that wake would be a last
+      turn on a brand-new `--session-id` session: an agent asked to summarise a
+      conversation that has never happened, and a handoff that could only be
+      invention. With it, a forced rotation on a never-run agent degrades to
+      the ordinary first wake, which is already the fresh session the user was
+      asking for.
     */
     const pending = previous.pendingSession;
     const lastTurn =
       pending === undefined &&
+      previous.sessionUuid !== undefined &&
       (previous.forceRotate === true ||
         previous.runsSinceRotate >= def.limits.rotateAfter);
     const workdir = deps.workdir(name);

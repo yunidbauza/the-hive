@@ -196,9 +196,30 @@ describe('exposed surface', () => {
       'kill',
       'pause',
       'resume',
+      'rotate',
       'onStatus',
       'onLines',
     ]);
+  });
+
+  /**
+   * HIVE-122's verb, held to the same rule: an invoke channel, never pushable.
+   *
+   * It takes an `AgentNameRequest` rather than widening `AgentRunRequest` —
+   * the closed key set that refuses a renderer-chosen trigger stays closed, and
+   * the new reach is one boolean on state that main itself writes.
+   */
+  it('carries the HIVE-122 rotate channel, and it is not pushable', () => {
+    expect(CH.agentsRotate).toBe('agents:rotate');
+    expect(EVENT_CHANNELS).not.toContain(CH.agentsRotate);
+  });
+
+  it('sends a rotate through the rotate channel', () => {
+    void agents().rotate?.({ name: 'slack-watcher' });
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.agentsRotate, {
+      name: 'slack-watcher',
+    });
   });
 
   it('carries the four HIVE-115 agent channels', () => {

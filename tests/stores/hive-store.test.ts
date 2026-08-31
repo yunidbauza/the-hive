@@ -1596,6 +1596,9 @@ describe('hive-store', () => {
         resume: vi.fn<() => Promise<AgentStatus>>(() =>
           Promise.resolve('sleeping'),
         ),
+        rotate: vi.fn<() => Promise<AgentRunResult>>(() =>
+          Promise.resolve({ started: true, run: 'run-7' }),
+        ),
       };
 
       beforeEach(() => {
@@ -1604,6 +1607,7 @@ describe('hive-store', () => {
         bridge.kill.mockResolvedValue(true);
         bridge.pause.mockResolvedValue('paused');
         bridge.resume.mockResolvedValue('sleeping');
+        bridge.rotate.mockResolvedValue({ started: true, run: 'run-7' });
         window.hive = { agents: bridge } as unknown as Window['hive'];
       });
 
@@ -1860,6 +1864,82 @@ describe('hive-store', () => {
             text: expect.stringContaining('nothing running'),
             color: 'dim',
           });
+        });
+      });
+
+      /**
+       * The manual rotation (HIVE-122).
+       *
+       * The same shape as `run` — it *is* a run, with `forceRotate` armed
+       * first — so it is asserted against `run`'s contract rather than a new
+       * one: the refusals are main's, worded by `agentRunRefusal`, and the
+       * not-an-agent guard is the group's.
+       */
+      describe('rotate', () => {
+        beforeEach(() => {
+          useHiveStore.getState().hydrateAgents([summary()]);
+        });
+
+        it('rotates the agent and prints the run it started', async () => {
+          run('rotate slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.rotate).toHaveBeenCalledWith({ name: 'slack-watcher' });
+          expect(lastLine()?.text).toContain(
+            'woke slack-watcher for a handoff (run-7)',
+          );
+        });
+
+        /*
+          A busy agent refuses the run, and main leaves the flag armed — so the
+          console says only what `run` would say. The rotation is not lost; it
+          happens on the wake that does land.
+        */
+        it('prints main’s refusal when the agent is busy', async () => {
+          bridge.rotate.mockResolvedValue({
+            started: false,
+            refused: 'working',
+          });
+
+          run('rotate slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining('is working'),
+            color: 'red',
+          });
+        });
+
+        it('refuses to rotate something that is not an agent', () => {
+          seedDemoFleet();
+          const session = useHiveStore.getState().order[0];
+
+          run(`rotate ${String(session)}`);
+
+          expect(lastLine()?.text).toContain('not an agent');
+          expect(bridge.rotate).not.toHaveBeenCalled();
+        });
+
+        it('refuses a name nothing answers to', () => {
+          run('rotate nope');
+
+          expect(lastLine()?.text).toContain('no such agent: nope');
+          expect(bridge.rotate).not.toHaveBeenCalled();
+        });
+
+        it('is refused in the browser', () => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run('rotate slack-watcher');
+
+          expect(lastLine()?.color).toBe('red');
+          expect(bridge.rotate).not.toHaveBeenCalled();
+        });
+
+        it('is listed in help', () => {
+          run('help');
+
+          expect(transcript()).toContain('  rotate <agent>');
         });
       });
 

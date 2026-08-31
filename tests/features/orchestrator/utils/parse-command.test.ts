@@ -408,6 +408,39 @@ describe('parseCommand', () => {
     });
   });
 
+  /**
+   * The sixth agent verb (HIVE-122).
+   *
+   * Grammatically identical to the four above — a bare agent name — which is
+   * why it joins their `case` group rather than earning one of its own. What
+   * it does is arm `forceRotate`, so the next wake asks for a handoff instead
+   * of simply carrying on; the parser has no opinion about that.
+   */
+  describe('rotate (HIVE-122)', () => {
+    it('parses rotate with a target', () => {
+      expect(parseCommand('rotate drone')).toEqual({
+        kind: 'rotate',
+        raw: 'rotate drone',
+        target: 'drone',
+      });
+    });
+
+    it('asks for usage when rotate names nobody', () => {
+      expect(parseCommand('rotate')).toEqual({
+        kind: 'usage',
+        raw: 'rotate',
+        command: 'rotate',
+      });
+    });
+
+    it('is listed in CONSOLE_VERBS and has a usage line', () => {
+      expect(CONSOLE_VERBS).toContain('rotate');
+      expect(USAGE.rotate).toBe(
+        'usage: rotate <agent> — end this agent’s session after a handoff',
+      );
+    });
+  });
+
   it('never touches anything outside its argument', () => {
     // Purity is the contract that makes every row above testable without a
     // store, a timer, or a render.

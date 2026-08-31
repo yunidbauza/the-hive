@@ -320,6 +320,72 @@ describe('agents:kill (HIVE-115)', () => {
   });
 });
 
+/**
+ * The manual rotation (HIVE-122).
+ *
+ * Two facts, and the second is the one worth a channel of its own: the flag is
+ * armed **on state**, and the run then goes through the ordinary door. A
+ * refused run therefore leaves the flag armed, so the wake that does happen is
+ * the handoff wake — a rotation the user asked for is never silently dropped.
+ */
+describe('agents:rotate (HIVE-122)', () => {
+  it('arms the rotation and wakes the agent through the ordinary path', async () => {
+    await expect(
+      invoke(CH.agentsRotate, { name: 'slack-watcher' }),
+    ).resolves.toEqual({ started: true, run: 'run-1' });
+
+    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
+      forceRotate: true,
+    });
+    expect(trackerRun).toHaveBeenCalledWith('slack-watcher', 'manual');
+  });
+
+  it('leaves the flag armed when the run is refused', async () => {
+    trackerRun.mockReturnValueOnce({
+      started: false,
+      refused: 'working',
+    } as never);
+
+    await expect(
+      invoke(CH.agentsRotate, { name: 'slack-watcher' }),
+    ).resolves.toMatchObject({ started: false });
+
+    expect(stored['slack-watcher']?.forceRotate).toBe(true);
+  });
+
+  it('refuses a name that could reach anything but an agent folder', async () => {
+    await expect(
+      invoke(CH.agentsRotate, { name: '../../claude' }),
+    ).rejects.toThrow();
+
+    expect(statePatch).not.toHaveBeenCalled();
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+
+  it('refuses a payload that tries to name its own trigger', async () => {
+    await expect(
+      invoke(CH.agentsRotate, { name: 'slack-watcher', trigger: 'ledger' }),
+    ).rejects.toThrow();
+
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+
+  /*
+    `pause`'s guard, needed here for `pause`'s reason: this writes to state
+    before anything reads a definition, so a name nothing answers to would
+    leave `{"ghost": {"forceRotate": true}}` in `agents.json` permanently — and
+    an agent later created under that name would be born owing a handoff.
+  */
+  it('refuses a name that is not an agent, writing nothing', async () => {
+    await expect(invoke(CH.agentsRotate, { name: 'ghost' })).rejects.toThrow(
+      'No such agent: ghost',
+    );
+
+    expect(statePatch).not.toHaveBeenCalled();
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+});
+
 describe('agents:pause and agents:resume (HIVE-117)', () => {
   /** A live window, so the status push has somewhere to land. */
   const watchWindow = () => {

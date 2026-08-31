@@ -263,10 +263,16 @@ export function parseCommand(raw: string): ParsedCommand {
       turn a request the console *can* honour — wake this agent — into nothing
       at all. The store prints the run it started; the ledger is where prose
       reaches an agent, through `ask`.
+
+      `rotate` joined the group in HIVE-122 rather than earning a case of its
+      own: it is grammatically indistinguishable from the four beside it — an
+      agent name, and nothing the renderer may say about how — and its payload
+      is the same `AgentNameRequest` theirs is.
     */
     case 'run':
     case 'pause':
     case 'resume':
+    case 'rotate':
     case 'kill': {
       const [target] = takeWord(rest);
       if (!target) return { kind: 'usage', raw: input, command: verb };

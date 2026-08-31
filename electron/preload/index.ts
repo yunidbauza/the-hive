@@ -361,6 +361,15 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.agentsPause, request),
     resume: (request: AgentNameRequest): Promise<AgentStatus> =>
       ipcRenderer.invoke(CH.agentsResume, request),
+    /*
+      HIVE-122's, and `run`'s twin: a name, no argv, no flags. It answers an
+      `AgentRunResult` because it *is* a run — one field armed first, then the
+      ordinary path — and it takes an `AgentNameRequest` rather than a widened
+      `AgentRunRequest`, so the closed key set that refuses a renderer-chosen
+      trigger stays closed. `BRIDGE_AGENTS_KEYS` carries the argument.
+    */
+    rotate: (request: AgentNameRequest): Promise<AgentRunResult> =>
+      ipcRenderer.invoke(CH.agentsRotate, request),
     onStatus: (callback: (push: AgentStatusPush) => void) =>
       subscribe<AgentStatusPush>(CH.agentsStatus, callback),
     onLines: (callback: (push: AgentLinesPush) => void) =>
