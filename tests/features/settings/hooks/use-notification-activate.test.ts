@@ -85,6 +85,7 @@ describe('useNotificationActivate', () => {
       wake: { on: [] },
       runsSinceRotate: 0,
       rotateAfter: 50,
+      skipsSinceRun: 0,
       runs: [],
       lines: [],
     };

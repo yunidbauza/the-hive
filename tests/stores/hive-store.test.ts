@@ -1580,6 +1580,7 @@ describe('hive-store', () => {
         status: 'sleeping',
         wake: { on: ['slack.mention'], everyMs: 300_000 },
         rotateAfter: 50,
+        skipsSinceRun: 0,
         runs: [],
         ...over,
       });
@@ -2337,6 +2338,7 @@ describe('hive-store', () => {
       status: 'sleeping',
       wake: { on: [] },
       rotateAfter: 50,
+      skipsSinceRun: 0,
       runs: [],
       ...over,
     });
@@ -2437,6 +2439,7 @@ describe('hive-store', () => {
           status: 'sleeping',
           wake: { on: ['ledger'] },
           rotateAfter: 50,
+          skipsSinceRun: 0,
           runs: [],
         },
       ]);
@@ -2459,6 +2462,50 @@ describe('hive-store', () => {
         lastRunAt: 42,
         cost: '$0.02',
         sub: 'Watches #incorp-dev.',
+      });
+    });
+
+    /*
+      The two the scheduler's tick moves with no run attached (HIVE-121). It
+      pushes on a skip and on a new next-run time precisely because nothing
+      else would — which is what keeps `next 18:20 · skipped 3` live on an
+      agent that is deliberately not running.
+    */
+    it("takes today's totals and the skip count from a push", () => {
+      seedAgent();
+      useHiveStore.getState().setAgentStatus({
+        name: 'slack-watcher',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 0,
+        today: { day: '2026-08-31', runs: 12, usd: 0.84 },
+        skipsSinceRun: 3,
+      });
+
+      expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({
+        today: { day: '2026-08-31', runs: 12, usd: 0.84 },
+        skipsSinceRun: 3,
+      });
+    });
+
+    it('reads an absent skip count as none, not as last render’s', () => {
+      seedAgent();
+      useHiveStore.getState().setAgentStatus({
+        name: 'slack-watcher',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 0,
+        skipsSinceRun: 3,
+      });
+      useHiveStore.getState().setAgentStatus({
+        name: 'slack-watcher',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 0,
+      });
+
+      expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({
+        skipsSinceRun: 0,
       });
     });
 
@@ -2524,6 +2571,7 @@ describe('hive-store', () => {
           status: 'sleeping',
           wake: { on: ['ledger'] },
           rotateAfter: 50,
+          skipsSinceRun: 0,
           runs: [],
           cost: '$0.02',
         },
@@ -4020,6 +4068,7 @@ describe('the ledger slice', () => {
             wake: { on: [] },
             runsSinceRotate: 0,
             rotateAfter: 50,
+            skipsSinceRun: 0,
             runs: [],
             lines: [],
           },
@@ -4119,6 +4168,7 @@ describe('the agent view selectors', () => {
     status: 'sleeping',
     wake: { on: [] },
     rotateAfter: 50,
+    skipsSinceRun: 0,
     runs: [],
     ...over,
   });

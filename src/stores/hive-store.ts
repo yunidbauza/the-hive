@@ -2557,6 +2557,15 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             reading of "nothing has run yet".
           */
           runsSinceRotate: summary.runsSinceRotate ?? 0,
+          /*
+            Run state too (HIVE-121). `today` stays absent when main has none —
+            a fresh agent has spent nothing, and an empty accumulator would be
+            indistinguishable from one belonging to a day that has ended. Zero
+            skips is the honest reading of "nothing has skipped yet", as with
+            `runsSinceRotate` above.
+          */
+          ...(summary.today === undefined ? {} : { today: summary.today }),
+          skipsSinceRun: summary.skipsSinceRun ?? 0,
           rotateAfter: summary.rotateAfter,
           runs: summary.runs,
           ...(summary.sessionUuid === undefined
@@ -2601,6 +2610,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             */
             runs: push.runs,
             runsSinceRotate: push.runsSinceRotate,
+            /*
+              The scheduler pushes on a skip and on a new next-run time, with
+              no run attached — so these two move on rows that are not running,
+              which is exactly when a reader is looking at them (HIVE-121).
+            */
+            ...(push.today === undefined ? {} : { today: push.today }),
+            skipsSinceRun: push.skipsSinceRun ?? 0,
           },
         },
       };

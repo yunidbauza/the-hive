@@ -405,6 +405,27 @@ export interface Agent {
    * calendar day, and a stored count would be wrong by morning.
    */
   runs: RunSummary[];
+  /**
+   * Today's runs and spend, accumulated in main rather than summed here.
+   *
+   * The comment on `runs` above says a stored count would be wrong by morning.
+   * It would — which is why this carries the *day* it belongs to, and why the
+   * selector still compares that day against now. What it buys is a number
+   * that is still right after the twentieth run of the day, which `runs`
+   * cannot give: it holds only the last `AGENT_RUN_HISTORY`, and a five-minute
+   * agent takes 288 wakes between midnights.
+   *
+   * It is also the number the scheduler's daily ceiling is compared against,
+   * so a tile deriving its own would be a second opinion about one fact.
+   */
+  today?: { day: string; runs: number; usd: number; capped?: boolean };
+  /**
+   * Scheduled ticks skipped since the last run — the `· skipped 3` on `Next`.
+   *
+   * Zero for an agent that has never skipped, which is most of them. A skip is
+   * not a run, so `runs` above cannot count these.
+   */
+  skipsSinceRun: number;
   lines: TermLine[];
 }
 

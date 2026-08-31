@@ -40,6 +40,8 @@ describe('createScheduler', () => {
   let schedules: Map<string, { wake: WakeSpec; dailyUsd?: number }>;
   /** Makes `run` answer a refusal, as `RunTracker` does for a working agent. */
   let refuse: boolean;
+  /** Names pushed to the renderer, in order. */
+  let pushed: string[];
 
   /** Fire every armed interval once — the sweep and the schedule tick. */
   const tick = (): void => {
@@ -58,6 +60,7 @@ describe('createScheduler', () => {
       isAgent: (id) => id === AGENT,
       wakesOnLedger: () => wakesOnLedger,
       scheduleFor: (name) => schedules.get(name),
+      pushStatus: (name) => pushed.push(name),
       ledger: {
         read: () => ({ entries }),
         append: (request) => {
@@ -88,6 +91,7 @@ describe('createScheduler', () => {
     appendOk = true;
     schedules = new Map();
     refuse = false;
+    pushed = [];
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
     state.patch(AGENT, { status: 'sleeping' });
 
@@ -219,6 +223,7 @@ describe('createScheduler', () => {
       wakesOnLedger: () => true,
       // This spec drives `onEntry` only; the tick has nothing to read.
       scheduleFor: () => undefined,
+      pushStatus: () => {},
       ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
       now: () => clock,
     });
@@ -291,6 +296,7 @@ describe('createScheduler', () => {
         wakesOnLedger: () => true,
       // This spec drives `onEntry` only; the tick has nothing to read.
       scheduleFor: () => undefined,
+      pushStatus: () => {},
         ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
         now: () => clock,
       });
@@ -348,6 +354,7 @@ describe('createScheduler', () => {
         wakesOnLedger: () => true,
       // This spec drives `onEntry` only; the tick has nothing to read.
       scheduleFor: () => undefined,
+      pushStatus: () => {},
         ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
         now: () => clock,
       });
@@ -674,6 +681,33 @@ describe('createScheduler', () => {
       tick();
 
       expect(woke).toEqual([]);
+    });
+
+    /*
+      A skip changes a row and starts no run, so nothing else would tell the
+      renderer. Without this push `next 18:20 · skipped 3` goes stale on
+      precisely the agent somebody is staring at the row to diagnose: one that
+      is deliberately not running.
+    */
+    it('pushes the row when a skip changes it', () => {
+      state.patch(AGENT, { nextRunAt: NOON, lastRunAt: NOON - 600_000 });
+      schedules.set(AGENT, {
+        wake: { everyMs: 300_000, check: 'onchange', on: [] },
+      });
+
+      tick();
+
+      expect(state.read(AGENT).skipsSinceRun).toBe(1);
+      expect(pushed).toEqual([AGENT]);
+    });
+
+    it('pushes nothing on a tick that changes nothing', () => {
+      state.patch(AGENT, { nextRunAt: NOON + 60_000 });
+      schedules.set(AGENT, { wake: every5m });
+
+      tick();
+
+      expect(pushed).toEqual([]);
     });
 
     it('names the calendar trigger for a fixed-time agent', () => {

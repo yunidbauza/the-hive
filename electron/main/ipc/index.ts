@@ -1372,6 +1372,15 @@ export function registerIpcHandlers(): void {
       */
       runs: state.runs,
       runsSinceRotate: state.runsSinceRotate,
+      /*
+        And the two numbers `runs` cannot answer (HIVE-121): the day's totals,
+        which outlive the twenty-run history, and the skip count, which counts
+        wakes that deliberately produced no run at all.
+      */
+      ...(state.today === undefined ? {} : { today: state.today }),
+      ...(state.skipsSinceRun === undefined
+        ? {}
+        : { skipsSinceRun: state.skipsSinceRun }),
       ...(cost === undefined ? {} : { cost }),
     } satisfies AgentStatusPush);
   };
@@ -1487,6 +1496,12 @@ export function registerIpcHandlers(): void {
       before the minute is out.
     */
     scheduleFor: (name) => agentSchedules.get(name),
+    /*
+      The same push `RunTracker` uses. The tick changes rows with no run
+      attached — a new `nextRunAt`, a skip, a day that hit its ceiling — and
+      those are the changes a person watching the row is waiting to see.
+    */
+    pushStatus: pushAgentStatus,
     ledger: {
       // The whole log, unfiltered: `expiredAsks` needs the closing entries and
       // the expiry events as well as the asks to decide which asks are new.

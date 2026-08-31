@@ -542,6 +542,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
         would spend real model minutes on a run nothing is asserting about.
       */
       scheduleFor: () => undefined,
+      pushStatus: () => {},
       ledger: {
         read: () => ledger.read({}),
         append: (request) => ledger.append(request),

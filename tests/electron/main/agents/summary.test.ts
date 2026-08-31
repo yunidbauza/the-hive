@@ -204,4 +204,31 @@ describe('mergeRunState', () => {
 
     expect(merged.agents[0]).not.toHaveProperty('cost');
   });
+
+  /*
+    The two the `Today` and `Next` tiles read (HIVE-121). Both are run state,
+    so they travel this route rather than the registry's — and `today` is the
+    accumulator rather than a sum over `runs`, which the tile used to compute
+    and which stops growing after twenty runs in a day.
+  */
+  it("carries today's totals and the skip count", () => {
+    const merged = mergeRunState(snapshot(), {
+      'slack-watcher': state({
+        today: { day: '2026-08-31', runs: 12, usd: 0.84 },
+        skipsSinceRun: 3,
+      }),
+    });
+
+    expect(merged.agents[0]).toMatchObject({
+      today: { day: '2026-08-31', runs: 12, usd: 0.84 },
+      skipsSinceRun: 3,
+    });
+  });
+
+  it('omits both for an agent that has run but never skipped or spent', () => {
+    const merged = mergeRunState(snapshot(), { 'slack-watcher': state() });
+
+    expect(merged.agents[0]).not.toHaveProperty('today');
+    expect(merged.agents[0]).not.toHaveProperty('skipsSinceRun');
+  });
 });

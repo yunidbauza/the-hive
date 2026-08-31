@@ -306,6 +306,23 @@ export interface AgentSummary {
    */
   runs: RunSummary[];
   /**
+   * What today cost, accumulated in main (HIVE-121).
+   *
+   * This is the departure from the paragraph above, and it is deliberate.
+   * `runs` is the last {@link AGENT_RUN_HISTORY} and a five-minute agent takes
+   * 288 wakes a day, so a `Today` tile derived from that array under-reports
+   * the moment an agent is busy. The same number is what the scheduler's daily
+   * ceiling is compared against — and a ceiling and a tile that disagree are
+   * worse than either alone.
+   *
+   * So "today" is still derived on read, from {@link dayKey}, which both
+   * processes share: what is stored is the day it belongs to, not the claim
+   * that it is today.
+   */
+  today?: { day: string; runs: number; usd: number; capped?: boolean };
+  /** Scheduled ticks skipped since the last run — the `· skipped 3` on `Next`. */
+  skipsSinceRun?: number;
+  /**
    * `limits.rotateAfter` from the definition — the `/50` in `run 17/50`.
    *
    * Carried on the summary rather than looked up separately because the
@@ -914,6 +931,10 @@ export interface AgentStatusPush {
   /** As {@link AgentSummary.runs} — the last {@link AGENT_RUN_HISTORY}. */
   runs: RunSummary[];
   runsSinceRotate: number;
+  /** As {@link AgentSummary.today} — the accumulator, not a sum over `runs`. */
+  today?: { day: string; runs: number; usd: number; capped?: boolean };
+  /** As {@link AgentSummary.skipsSinceRun}. */
+  skipsSinceRun?: number;
   /** The last run's cost, already formatted — see {@link formatRunCost}. */
   cost?: string;
 }

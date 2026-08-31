@@ -65,6 +65,16 @@ function withRunState(
       above carries it through untouched.
     */
     runs: run.runs,
+    /*
+      Run state, and the two the `Today` tile and the `Next` tile read
+      (HIVE-121). `today` is the accumulator main keeps rather than a sum over
+      `runs` above, which is capped at the last twenty and so stops growing
+      part-way through a busy agent's day.
+    */
+    ...(run.today === undefined ? {} : { today: run.today }),
+    ...(run.skipsSinceRun === undefined
+      ? {}
+      : { skipsSinceRun: run.skipsSinceRun }),
     ...(run.lastRunAt === undefined ? {} : { lastRunAt: run.lastRunAt }),
     ...(run.nextRunAt === undefined ? {} : { nextRunAt: run.nextRunAt }),
     ...(run.sessionUuid === undefined ? {} : { sessionUuid: run.sessionUuid }),

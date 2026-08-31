@@ -101,6 +101,17 @@ export interface SchedulerDeps {
    */
   scheduleFor: (name: string) => { wake: WakeSpec; dailyUsd?: number } | undefined;
   /**
+   * Tell the renderer this agent's row changed.
+   *
+   * `RunTracker` pushes when a run starts and when it ends, which covers every
+   * change the ledger half of this module causes. The tick causes changes with
+   * *no* run attached — a new `nextRunAt`, an incremented skip count, a day
+   * that hit its ceiling — and those are exactly the ones a person is looking
+   * at the row to see. Without this, `next 18:20 · skipped 3` would go stale
+   * on precisely the agent being diagnosed: one that is not running.
+   */
+  pushStatus: (name: string) => void;
+  /**
    * The log, narrowed to the two things the sweep does with it.
    *
    * `read` rather than a snapshot handed in, because the sweep runs on a timer
@@ -300,6 +311,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (stopped) return;
 
     const now = deps.now();
+    /*
+      Every write the tick makes is one a row is showing, so it is pushed.
+      Only the branches that actually change something call this — a tick that
+      finds nothing due writes nothing and pushes nothing.
+    */
+    const patch = (name: string, change: Partial<AgentRunState>): void => {
+      deps.state.patch(name, change);
+      deps.pushStatus(name);
+    };
 
     for (const [name, agent] of Object.entries(deps.state.all())) {
       /*
@@ -322,7 +342,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // No schedule — and clear a time left behind by one there used to be.
       if (schedule === undefined || next === undefined) {
         if (agent.nextRunAt !== undefined) {
-          deps.state.patch(name, { nextRunAt: undefined });
+          patch(name, { nextRunAt: undefined });
         }
         continue;
       }
@@ -330,7 +350,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // Never scheduled: arm it, do not fire it. Saving a definition starts a
       // schedule now; it does not owe a wake dated from the epoch.
       if (agent.nextRunAt === undefined) {
-        deps.state.patch(name, { nextRunAt: next });
+        patch(name, { nextRunAt: next });
         continue;
       }
 
@@ -352,7 +372,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         outside it by construction.
       */
       if (wake.quiet !== undefined && inQuiet(minuteOfDay(now), wake.quiet)) {
-        deps.state.patch(name, { nextRunAt: quietEndAfter(now, wake.quiet) });
+        patch(name, { nextRunAt: quietEndAfter(now, wake.quiet) });
         continue;
       }
 
@@ -372,7 +392,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const today = agent.today?.day === dayKey(now) ? agent.today : undefined;
 
       if (schedule.dailyUsd !== undefined && (today?.usd ?? 0) >= schedule.dailyUsd) {
-        deps.state.patch(name, {
+        patch(name, {
           nextRunAt: nextMidnightAfter(now),
           today: {
             ...(today ?? { day: dayKey(now), runs: 0, usd: 0 }),
@@ -394,7 +414,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
 
       if (wake.check === 'onchange' && !hasChanged(name, agent)) {
-        deps.state.patch(name, {
+        patch(name, {
           nextRunAt: next,
           skipsSinceRun: (agent.skipsSinceRun ?? 0) + 1,
         });
@@ -410,7 +430,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         agent `working` and the other is refused. A refused tick is not a quiet
         one either, so it leaves the skip count where it is.
       */
-      deps.state.patch(name, { nextRunAt: next });
+      patch(name, { nextRunAt: next });
       deps.run(name, wake.everyMs === undefined ? CALENDAR_TRIGGER : INTERVAL_TRIGGER);
     }
   };
