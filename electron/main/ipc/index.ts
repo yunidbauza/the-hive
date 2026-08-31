@@ -749,15 +749,30 @@ export function registerIpcHandlers(): void {
       }
 
       /**
-       * An `ask` answers nothing from here (HIVE-118).
+       * An `ask` answers nothing from here (HIVE-118) — it *reveals* the card.
        *
-       * A desktop toast is a title, a body and one click — there is no room on
+       * A desktop toast is a title, a body and one click; there is no room on
        * it for the options an ask card offers, so the only honest thing a
-       * click on one can do is bring the user to where the card lives. The
-       * focus loop above has already done that; nothing further crosses the
-       * process boundary; the row itself is what the user reads and answers.
+       * click on one can do is bring the user to where the card lives. That is
+       * the whole reason an ask toast, alone among the kinds, does **not**
+       * dismiss its row on click.
+       *
+       * The focus loop above is not enough to keep that promise. It restores
+       * and focuses the window and stops there, and the card lives on one of
+       * three right-rail tabs on a rail the user can collapse. A user sitting
+       * on `explorer` clicked a question and got a file tree — the window
+       * forward, and no card and no signal anywhere on it.
+       *
+       * Main cannot fix that itself: only the renderer may touch the rail. So
+       * this says *what happened* and lets the other side decide where that
+       * goes, the same split `session` and `agent` already use.
        */
-      if (action.type === 'ask') return;
+      if (action.type === 'ask') {
+        send(CH.notificationsActivate, {
+          type: 'ask',
+        } satisfies NotificationActivateEvent);
+        return;
+      }
 
       /**
        * An `agent` reaches the renderer exactly the way `session` does
@@ -778,6 +793,7 @@ export function registerIpcHandlers(): void {
        */
       if (action.type === 'agent') {
         send(CH.notificationsActivate, {
+          type: 'entity',
           entityId: action.name,
         } satisfies NotificationActivateEvent);
         return;
@@ -786,6 +802,7 @@ export function registerIpcHandlers(): void {
       if (action.type !== 'session') return;
 
       send(CH.notificationsActivate, {
+        type: 'entity',
         entityId: action.entityId,
       } satisfies NotificationActivateEvent);
     },

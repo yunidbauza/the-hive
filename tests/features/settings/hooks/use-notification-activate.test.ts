@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, Session } from '@/types/entity';
 
 import { useNotificationActivate } from '@features/settings/hooks/use-notification-activate';
+import type { NotificationActivateEvent } from '@shared/ipc-contract';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
@@ -15,7 +16,7 @@ import { useUiStore } from '@stores/ui-store';
  * listener per app lifetime rather than per component.
  */
 
-type Listener = (event: { entityId: string }) => void;
+type Listener = (event: NotificationActivateEvent) => void;
 
 let listeners: Listener[] = [];
 const unsubscribe = vi.fn();
@@ -45,7 +46,7 @@ describe('useNotificationActivate', () => {
     (window as { hive?: unknown }).hive = bridge;
     renderHook(() => useNotificationActivate());
 
-    listeners[0]?.({ entityId: 'nova-web' });
+    listeners[0]?.({ type: 'entity', entityId: 'nova-web' });
 
     expect(useUiStore.getState().activeTab).toBe('nova-web');
   });
@@ -109,9 +110,44 @@ describe('useNotificationActivate', () => {
     (window as { hive?: unknown }).hive = bridge;
     renderHook(() => useNotificationActivate());
 
-    listeners[0]?.({ entityId: 'drone' });
+    listeners[0]?.({ type: 'entity', entityId: 'drone' });
 
     expect(useUiStore.getState().activeTab).toBe('drone');
     expect(useUiStore.getState().activeTab).not.toBe('sess-successor');
+  });
+
+  /**
+   * The finding this closes (HIVE-118 self-review): an ask toast focused the
+   * window and stopped. Main returned early, the renderer heard nothing, and
+   * the rail stayed exactly where it was — which, for a user parked on the
+   * explorer with the rail collapsed, meant clicking a question and landing on
+   * a file tree with no card and no signal on it.
+   *
+   * Both halves are asserted, because the rail has two independent ways to
+   * hide the inbox: the wrong tab, and no rail at all. The starting state is
+   * deliberately the worst one.
+   */
+  it('reveals the inbox when an ask is activated, opening the rail if it was hidden', () => {
+    useUiStore.setState({ railTab: 'explorer', showActivityRail: false });
+
+    (window as { hive?: unknown }).hive = bridge;
+    renderHook(() => useNotificationActivate());
+
+    listeners[0]?.({ type: 'ask' });
+
+    expect(useUiStore.getState().railTab).toBe('inbox');
+    expect(useUiStore.getState().showActivityRail).toBe(true);
+  });
+
+  /** An ask is answered where it is: nothing opens on the centre stage. */
+  it('opens no tab for an ask', () => {
+    useUiStore.getState().openTab('orch');
+
+    (window as { hive?: unknown }).hive = bridge;
+    renderHook(() => useNotificationActivate());
+
+    listeners[0]?.({ type: 'ask' });
+
+    expect(useUiStore.getState().activeTab).toBe('orch');
   });
 });

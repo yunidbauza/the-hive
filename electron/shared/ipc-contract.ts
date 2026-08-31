@@ -1029,11 +1029,43 @@ export interface IntegrationsStatus {
   notificationsSupported: boolean;
 }
 
-/** A clicked notification, naming the session it was about (story 106). */
-export interface NotificationActivateEvent {
-  /** The *entity* id, matching {@link SessionStatusEvent}. */
-  entityId: string;
-}
+/**
+ * A clicked notification (story 106), and where the renderer should take the
+ * user for it.
+ *
+ * A union rather than the bare `{ entityId }` it started as, for the reason
+ * {@link NotificationAction} gives for being one itself: not every row points
+ * at an entity. An **ask** is answered in place, on a card in the inbox — there
+ * is no tab to open — and before HIVE-118 main answered that by returning
+ * early and sending nothing at all. The window came forward on a rail that
+ * might be sitting on the explorer, or collapsed, with the card the click was
+ * *for* nowhere on screen.
+ *
+ * ## Why this widened rather than gaining a second channel
+ *
+ * One user gesture — a notification was clicked — stays one event. A second
+ * channel would give the renderer two subscriptions to the same gesture, each
+ * free to drift on what it does about focus and ordering, and would add a name
+ * to {@link EVENT_CHANNELS} for no new fact. The discriminant carries the
+ * difference, and `satisfies` at both send sites makes an unhandled member a
+ * compile error rather than a silent no-op.
+ *
+ * ## Why main names the cause, not the cure
+ *
+ * `ask` says *what was clicked*, not "reveal the inbox". Main may not touch
+ * the rail — it does not know the rail exists — so the destination is the
+ * renderer's to decide, exactly as "what opening a session means" already is.
+ */
+export type NotificationActivateEvent =
+  /**
+   * Open the row this id names.
+   *
+   * A **terminal** id for a session — see `currentRowFor` — and an agent's own
+   * name for an agent, which the renderer tells apart with `isAgentId`.
+   */
+  | { type: 'entity'; entityId: string }
+  /** An ask was clicked (HIVE-118). Its card lives in the inbox. */
+  | { type: 'ask' };
 
 /** Answer to {@link CH.appInfo} — proves the bridge round-trips. */
 export interface AppInfo {

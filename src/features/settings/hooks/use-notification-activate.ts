@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 
 import { currentRowFor, isAgentId, useOpenEntity } from '@stores/hive-store';
+import { useRevealRailTab } from '@stores/ui-store';
 
 /**
  * Open the session a clicked notification was about (story 106).
@@ -18,6 +19,7 @@ import { currentRowFor, isAgentId, useOpenEntity } from '@stores/hive-store';
  */
 export function useNotificationActivate(): void {
   const openEntity = useOpenEntity();
+  const revealRailTab = useRevealRailTab();
 
   useEffect(() => {
     // No bridge is the browser demo, where there is no OS to notify.
@@ -51,8 +53,29 @@ export function useNotificationActivate(): void {
      * with `isAgentId` first and opened directly when it is one — an agent's
      * entity id already *is* the id `openEntity` wants.
      */
-    return bridge.notifications.onActivate(({ entityId }) => {
-      openEntity(isAgentId(entityId) ? entityId : currentRowFor(entityId));
+    return bridge.notifications.onActivate((event) => {
+      /**
+       * An ask is answered where it is, so the destination is the card
+       * (HIVE-118).
+       *
+       * `revealRailTab`, never `setRailTab`: the rail has three tabs and can
+       * be collapsed outright, and a click that raises the window onto a
+       * hidden rail — or onto the explorer — has delivered the user to a
+       * screen with no card and no signal on it. That is the whole promise an
+       * ask toast makes by *not* dismissing its own row: the click is what
+       * takes you to the row.
+       *
+       * Idempotent, so an ask clicked while the inbox is already up leaves it
+       * exactly as it was rather than flipping the rail shut.
+       */
+      if (event.type === 'ask') {
+        revealRailTab('inbox');
+        return;
+      }
+
+      openEntity(
+        isAgentId(event.entityId) ? event.entityId : currentRowFor(event.entityId),
+      );
     });
-  }, [openEntity]);
+  }, [openEntity, revealRailTab]);
 }
