@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-08-17T13:59:35.563Z",
         "reason": "Mirrors splash.html: the GIF fallback ships hidden with no src and is assigned in about.ts, so it is preloaded but revealed only if the keyed video never paints. Not a placeholder."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/features/inbox/components/ask-card.tsx"
+        ],
+        "createdAt": "2026-08-31T02:58:24.574Z",
+        "reason": "user confirmed: chose Variant B from three browser-rendered mockups (artifact 28b5c0f6) where the 2px tone rule replaces the leading icon and is the variant's defining feature; A and C were the no-rule alternatives and were rejected"
       }
     ]
   }
