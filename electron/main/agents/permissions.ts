@@ -1,4 +1,4 @@
-import { parseList } from '@shared/agent-contract';
+import { parseList, readFrontmatter } from '@shared/agent-contract';
 import type { AgentWriteResult } from '@shared/agent-contract';
 import type { LedgerEntry, LedgerPostRequest } from '@shared/ledger-contract';
 import type { Rung } from '@shared/permission-rules';
@@ -99,7 +99,9 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         */
         deps.append({
           from: 'overmind',
+          to: ask.from,
           kind: 'event',
+          thread: ask.id,
           body: `granted ${tool} to ${name} for one wake`,
           meta: { granted: ask.id, rule: tool },
         });
@@ -114,30 +116,81 @@ export function createPermissions(deps: PermissionDeps): Permissions {
       const ask = askFor(entry.thread);
       if (ask === undefined) return;
 
-      const rung = rungsOf(ask).find((candidate) => candidate.id === entry.body);
-      // `allow-once` carries no rule and `deny` is no rung at all. A body that
-      // names neither is a stale or forged card, and must not widen anything.
-      if (rung?.rule === undefined) return;
-
       const name = ask.from;
+
+      /*
+        `deny` is not a rung at all — the approve tool always appends it to
+        an ask's `meta.options` after the real rungs (`mcp-host/tools.ts`),
+        so it never appears in `meta.rungs` by design. Nothing widens, and
+        the `answer` entry itself is already the ledger's record of the
+        refusal, so there is nothing further to append here.
+      */
+      if (entry.body === 'deny') return;
+
+      const rawRungs = ask.meta?.['rungs'];
+      const rung = rungsOf(ask).find((candidate) => candidate.id === entry.body);
+
+      if (rung === undefined) {
+        /*
+          A stale or forged card — the body names an option this ask never
+          offered — or an ask whose own `meta.rungs` could not be read at
+          all. `Ledger.append` only lets an `answer` target an *open* ask, so
+          this one has already closed its thread: without an event here, this
+          is on replay indistinguishable from an ask nobody ever answered.
+          Nothing widens, but the refusal is still recorded — and the two
+          causes are told apart so a reader can tell a wrong option from an
+          unreadable ask.
+        */
+        const reason = Array.isArray(rawRungs)
+          ? `no such option "${entry.body}"`
+          : `ask's rungs are unreadable`;
+
+        deps.append({
+          from: 'overmind',
+          to: ask.from,
+          kind: 'event',
+          thread: ask.id,
+          body: `could not grant to ${name}: ${reason}`,
+          meta: { grantFailed: ask.id, reason },
+        });
+        return;
+      }
+
+      // `allow-once` carries no rule — its one-shot grant is handed out by
+      // `grantsFor`, read back at the wake it triggers, not written here.
+      if (rung.rule === undefined) return;
+
       const source = await deps.read(name);
       if (source === null) {
         deps.append({
           from: 'overmind',
+          to: ask.from,
           kind: 'event',
+          thread: ask.id,
           body: `could not grant ${rung.rule} to ${name}: no definition`,
           meta: { grantFailed: ask.id, reason: `no definition for ${name}` },
         });
         return;
       }
 
-      const line = /^tools:(.*)$/m.exec(source)?.[1]?.trim() ?? '[]';
-      const current = parseList(line) ?? [];
+      /*
+        `readFrontmatter`, not a hand-rolled regex — `patchFrontmatter` (the
+        function this reads through before writing) already parses via
+        `readFrontmatter`, and a reader that disagrees with the writer is
+        exactly how a comment on the `tools:` line (a documented, supported
+        pattern — see `stripComment`) used to make the regex see `null`,
+        `current` fall back to `[]`, and the write silently discard every
+        tool the user had already granted.
+      */
+      const toolsField = readFrontmatter(source)?.fields.get('tools');
+      const current = (toolsField === undefined ? null : parseList(toolsField.value)) ?? [];
 
       if (current.includes(rung.rule)) {
         deps.append({
           from: 'overmind',
+          to: ask.from,
           kind: 'event',
+          thread: ask.id,
           // The rule was already there — the answer is still acted on and
           // recorded, the file just already said so.
           body: `granted ${rung.rule} to ${name}`,
@@ -156,7 +209,9 @@ export function createPermissions(deps: PermissionDeps): Permissions {
 
       deps.append({
         from: 'overmind',
+        to: ask.from,
         kind: 'event',
+        thread: ask.id,
         body: result.ok
           ? `granted ${rung.rule} to ${name}`
           : `could not grant ${rung.rule} to ${name}: ${result.problems.map((p) => p.reason).join('; ')}`,

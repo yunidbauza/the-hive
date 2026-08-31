@@ -38,7 +38,12 @@ describe('grantsFor', () => {
     const d = deps([ask('a1', 'drone', RUNGS), answer('n1', 'a1', 'allow-once')]);
     expect(createPermissions(d).grantsFor('drone')).toEqual(['Bash']);
     expect(d.append).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'event', meta: expect.objectContaining({ granted: 'a1' }) }),
+      expect.objectContaining({
+        kind: 'event',
+        to: 'drone',
+        thread: 'a1',
+        meta: expect.objectContaining({ granted: 'a1' }),
+      }),
     );
   });
 
@@ -75,6 +80,8 @@ describe('onAnswer', () => {
     expect(d.write.mock.calls[0]![1]).toContain('Read');
     expect(d.append).toHaveBeenCalledWith(
       expect.objectContaining({
+        to: 'drone',
+        thread: 'a1',
         body: 'granted Bash(git *) to drone',
         meta: expect.objectContaining({ granted: 'a1', rule: 'Bash(git *)' }),
       }),
@@ -102,7 +109,11 @@ describe('onAnswer', () => {
     await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
     expect(d.write).not.toHaveBeenCalled();
     expect(d.append).toHaveBeenCalledWith(
-      expect.objectContaining({ meta: expect.objectContaining({ granted: 'a1' }) }),
+      expect.objectContaining({
+        to: 'drone',
+        thread: 'a1',
+        meta: expect.objectContaining({ granted: 'a1' }),
+      }),
     );
   });
 
@@ -113,15 +124,65 @@ describe('onAnswer', () => {
     await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
     expect(d.append).toHaveBeenCalledWith(
       expect.objectContaining({
+        to: 'drone',
+        thread: 'a1',
         body: 'could not grant Bash(git *) to drone: bad',
         meta: expect.objectContaining({ grantFailed: 'a1' }),
       }),
     );
   });
 
-  it('refuses a rung the ask never offered', async () => {
+  it('records a refusal, with to/thread, when there is no definition on disk', async () => {
+    const d = deps([ask('a1', 'drone', RUNGS)], {
+      read: vi.fn(async () => null),
+    });
+    await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
+    expect(d.write).not.toHaveBeenCalled();
+    expect(d.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'drone',
+        thread: 'a1',
+        body: 'could not grant Bash(git *) to drone: no definition',
+        meta: expect.objectContaining({ grantFailed: 'a1' }),
+      }),
+    );
+  });
+
+  it('refuses a rung the ask never offered, and records the refusal', async () => {
     const d = deps([ask('a1', 'drone', RUNGS)]);
     await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-everything') as never);
     expect(d.write).not.toHaveBeenCalled();
+    expect(d.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'drone',
+        thread: 'a1',
+        meta: expect.objectContaining({ grantFailed: 'a1' }),
+      }),
+    );
+  });
+
+  it('refuses when the ask\'s own rungs are unreadable, and records the refusal', async () => {
+    const d = deps([ask('a1', 'drone', 'not-an-array')]);
+    await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
+    expect(d.write).not.toHaveBeenCalled();
+    expect(d.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'drone',
+        thread: 'a1',
+        meta: expect.objectContaining({ grantFailed: 'a1' }),
+      }),
+    );
+  });
+
+  it('preserves existing tools when the source has a trailing comment on tools:', async () => {
+    const d = deps([ask('a1', 'drone', RUNGS)], {
+      read: vi.fn(async () => '---\nname: drone\ntools: [Read, Grep]        # narrow set\n---\n\nBody.\n'),
+    });
+    await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
+
+    const written = d.write.mock.calls[0]![1];
+    expect(written).toContain('Read');
+    expect(written).toContain('Grep');
+    expect(written).toContain('Bash(git *)');
   });
 });
