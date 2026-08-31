@@ -465,6 +465,74 @@ describe('presentation', () => {
     // dealt with.
     expect(raise({ id: 'a' })).toBeNull();
   });
+
+  /**
+   * The critical finding from the HIVE-118 whole-branch review: an `ask`
+   * toast used to dismiss on click exactly like every other kind, which threw
+   * away the row that is the ask's only control. The ledger entry stayed an
+   * open ask forever, and the agent stayed blocked with nothing left to
+   * answer it.
+   */
+  describe('an ask toast', () => {
+    const raiseAsk = () =>
+      hub.raise({
+        kind: 'agent.ask',
+        title: 'asked a question',
+        action: { type: 'ask', thread: 'ask-1' },
+      });
+
+    it('does not dismiss the row when its toast is clicked', () => {
+      const raised = raiseAsk();
+
+      present.mock.calls[0][0].onClick();
+
+      expect(hub.list().map((n) => n.id)).toEqual([raised?.id]);
+      expect(announceDismissed).not.toHaveBeenCalled();
+    });
+
+    it('does not mark the row read when its toast is clicked', () => {
+      const raised = raiseAsk();
+      expect(hub.list()[0]?.unread).toBe(true);
+
+      present.mock.calls[0][0].onClick();
+
+      expect(hub.list().find((n) => n.id === raised?.id)?.unread).toBe(true);
+      expect(announceRead).not.toHaveBeenCalled();
+    });
+
+    it('still activates — focuses the app on the row that answers it', () => {
+      raiseAsk();
+
+      present.mock.calls[0][0].onClick();
+
+      expect(activate).toHaveBeenCalledWith({ type: 'ask', thread: 'ask-1' });
+    });
+
+    it('keeps the row in the unread count after its toast is clicked', () => {
+      raiseAsk();
+      const before = lastUnread();
+
+      present.mock.calls[0][0].onClick();
+
+      expect(lastUnread()).toBe(before);
+    });
+  });
+
+  /**
+   * The other half of the same finding: every non-`ask` kind's toast-click
+   * behaviour must stay byte-identical. `session` is the kind the existing
+   * suite already exercises above; this pins it beside the `ask` exception so
+   * a future edit cannot narrow the dismiss branch to `ask` and accidentally
+   * widen "no dismiss" to everything else.
+   */
+  it('a session toast still dismisses on click, unlike an ask', () => {
+    raise({ id: 'sess-row', action: { type: 'session', entityId: 'term-1' } });
+
+    present.mock.calls[0][0].onClick();
+
+    expect(hub.list()).toHaveLength(0);
+    expect(announceDismissed).toHaveBeenCalledWith('sess-row');
+  });
 });
 
 describe('read-state reaches the renderer', () => {

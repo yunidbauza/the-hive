@@ -56,11 +56,37 @@ const str = (value: unknown): string | undefined =>
  * chose to make it; the run receipt speaks only when the agent could not — a
  * turn cap, a budget cap, a kill, a stall. That is also what keeps a
  * three-hourly watcher that found nothing from filing a green card every wake.
+ *
+ * ## Why `spokenFor` is keyed on the party, not the run (whole-branch review,
+ * finding 2)
+ *
+ * It used to be keyed on `meta.run`, which only `finalizeRun` ever stamps —
+ * the run receipt itself. An agent's own `ledger_failed` goes through
+ * `mcp-host/tools.ts`, whose schema (`ledger-tools.ts`) has no run field and
+ * whose `AGENT_PREAMBLE` never tells an agent its own run id, so the
+ * agent-posted `failed` this dedup exists to notice never carried one. The
+ * dedup could not fire in production, and the old test proved nothing because
+ * it hand-built a `meta.run` shape nothing real produces.
+ *
+ * The party is what both entries agree on: an agent's `failed` and the
+ * `run.ended` receipt for the run that just ended are both entries `from` that
+ * same agent, and one agent has at most one run in flight. That is a fact
+ * this module can already ask `isAgent` about, with no run-tracking to keep in
+ * step with `runs.ts`.
  */
 export function createLedgerNotifier(
   deps: LedgerNotifierDeps,
 ): (entry: LedgerEntry) => void {
-  /** Runs whose agent already reported a failure, so the receipt stays quiet. */
+  /**
+   * Agents whose own `ledger_failed` has already been turned into a card, so
+   * the run receipt that follows stays quiet.
+   *
+   * A run's `event` — the receipt below — is what **consumes** an entry here,
+   * on *any* outcome, not only the ones that would otherwise raise a second
+   * card. An agent that posts `ledger_failed` and then has that same run end
+   * `done` must not leave the flag standing: the next run's genuine failure
+   * would silently find it already set and go unreported.
+   */
   const spokenFor = new Set<string>();
 
   return (entry) => {
@@ -106,8 +132,7 @@ export function createLedgerNotifier(
     }
 
     if (entry.kind === 'failed' && deps.isAgent(entry.from)) {
-      const run = str(meta.run);
-      if (run !== undefined) spokenFor.add(run);
+      spokenFor.add(entry.from);
       const [first, rest] = split(entry.body);
       deps.raise({
         kind: 'agent.failed',
@@ -123,10 +148,16 @@ export function createLedgerNotifier(
     if (entry.kind !== 'event' || !deps.isAgent(entry.from)) return;
 
     const outcome = str(meta.outcome);
-    if (outcome === undefined || !CUT_OFF.has(outcome)) return;
+    if (outcome === undefined) return;
 
-    const run = str(meta.run);
-    if (run !== undefined && spokenFor.has(run)) return;
+    /*
+      Consumed here, on any outcome — this is the run that `spokenFor` was
+      remembering, whatever it ended as. `Set.delete` answers whether the
+      party was in fact spoken for, which is exactly the dedup check: only
+      suppress the receipt when the agent's own report got there first.
+    */
+    const alreadyReported = spokenFor.delete(entry.from);
+    if (!CUT_OFF.has(outcome) || alreadyReported) return;
 
     deps.raise({
       kind: 'agent.failed',

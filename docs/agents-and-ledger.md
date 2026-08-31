@@ -230,8 +230,8 @@ there is no lookup table to keep in sync.
 | `kind === 'answer'` with a thread | the ask's card is marked read |
 | `kind === 'done'` with a thread | the ask's card is dismissed |
 | `kind === 'done'` from an agent | raise `agent.done` |
-| `kind === 'failed'` from an agent | raise `agent.failed`, and that run is recorded as having spoken |
-| `kind === 'event'` whose `meta.outcome` is `failed`, `budget` or `turns` | raise `agent.failed`, unless that run already spoke |
+| `kind === 'failed'` from an agent | raise `agent.failed`, and that agent is recorded as having spoken |
+| `kind === 'event'` from an agent whose `meta.outcome` is `failed`, `budget` or `turns` | raise `agent.failed`, unless that agent already spoke |
 
 `run.ended — done` and `run.ended — asking` mint nothing. `done` is covered by
 the agent's own report rather than the run's receipt — an agent's report is
@@ -248,11 +248,14 @@ same way (`Array.isArray` for `options`, `typeof === 'string'` for `quote`) so
 a malformed argument is dropped rather than written through. The inbox card
 (`ask-card.tsx`) reads `meta.quote` to decide whether to render a plain
 question or a quoted block above the buttons, and titles the card "Send this
-reply?" instead of the asker's own title (`notify.ts`). Approving the draft unedited answers with the clicked option's own text;
-clicking whichever option name starts with "edit" (case-insensitive) instead
-opens the quote in a text field seeded from it, and sending that answers
-`approve` with `meta.edited` carrying what the overmind changed it to — so the
-agent that reads its answer back can tell a rubber stamp from a rewrite.
+reply?" instead of the asker's own title (`notify.ts`). Approving the draft
+unedited answers with the clicked option's own text; clicking the option
+named exactly `edit` (case-insensitive — not merely one that starts with
+those letters, which would hijack a model's own more descriptive copy)
+instead opens the quote in a text field seeded from it, and sending that
+answers `approve` with `meta.edited` carrying what the overmind changed it
+to — so the agent that reads its answer back can tell a rubber stamp from a
+rewrite.
 
 ## The console verbs
 

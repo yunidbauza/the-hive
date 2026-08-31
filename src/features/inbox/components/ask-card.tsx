@@ -5,7 +5,7 @@ import type { HiveNotification } from '@/types/notification';
 
 import { Button } from '@components/ui/button';
 import { useRelativeTime } from '@hooks/use-relative-time';
-import { useAnswerAsk, useDisplayName, useThread } from '@stores/hive-store';
+import { isAgentId, useAnswerAsk, useDisplayName, useThread } from '@stores/hive-store';
 
 interface AskCardProps {
   notif: HiveNotification;
@@ -15,8 +15,18 @@ interface AskCardProps {
 
 /** An option that closes the ask badly, and should not look like the safe one. */
 const NEGATIVE = /^(reject|deny|no)$/i;
-/** An option that opens the draft rather than answering with its own id. */
-const EDIT = /^edit/i;
+/**
+ * The one option that opens the draft rather than answering with its own id.
+ *
+ * Anchored at both ends (whole-branch review, finding 5). `AGENT_PREAMBLE`
+ * mandates the literal option `'edit'` — see `electron/main/agents/preamble.ts`
+ * — and the button renders that string verbatim, with no "Edit…" copy layer
+ * anywhere in this codebase to reuse. A prefix match therefore hijacks any
+ * option that merely *starts* with those four letters — `editorial pass` — into
+ * opening the draft textarea instead of sending the answer the model actually
+ * offered.
+ */
+const EDIT = /^edit$/i;
 
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
@@ -57,18 +67,53 @@ export function AskCard({ notif, thread }: AskCardProps) {
   const ask = entries.find((entry) => entry.id === thread);
   const answer = entries.find((entry) => entry.kind === 'answer');
 
-  const asker = useDisplayName(ask?.from ?? '');
+  /**
+   * The asker's name, without resolving an agent through session lookup
+   * (whole-branch review, finding 6).
+   *
+   * `ask.from` is a **party** id — a session or an agent — but `useDisplayName`
+   * is documented as taking a **terminal** id and runs `currentSessionIn`
+   * internally. Handing it an agent's name is benign only by accident: an
+   * agent's entity id *is* its name, fixed for its life, but
+   * `hydrateAgents` documents that name as a legal session id too, so on a
+   * live machine an agent can come to share one with some session's
+   * `terminalId`. `currentSessionIn` would then walk past the direct
+   * `entities[id]` miss into the search loop that exists to follow a
+   * `/clear`, and resolve straight past the agent to that session — the same
+   * collision `isAgentId` and `useNotificationActivate` already close on the
+   * toast path.
+   *
+   * `useDisplayName` is still called on every render — hooks cannot be
+   * conditional — but only ever with the session id, never the agent's; when
+   * `from` names an agent, its own name is the display name outright, and
+   * `useDisplayName` is called with `''` so it stays a no-op read.
+   */
+  const from = ask?.from ?? '';
+  const fromIsAgent = isAgentId(from);
+  const sessionName = useDisplayName(fromIsAgent ? '' : from);
+  const asker = fromIsAgent ? from : sessionName;
   const age = useRelativeTime(ask?.ts ?? notif.createdAt);
 
   const [draft, setDraft] = useState<string | null>(null);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
+  /**
+   * The refusal's reason, shown inline (whole-branch review, finding 3).
+   *
+   * `Ledger.answer` refuses as a **value**, not a throw, once a thread is no
+   * longer an open ask — `LEDGER_ASK_TTL_MS` is 24 hours, so on an app meant
+   * to stay open for days this is routine, not exotic. Cleared at the start
+   * of every attempt: a retry that succeeds must not leave the previous
+   * failure's words sitting under buttons that just worked.
+   */
+  const [refusal, setRefusal] = useState<string | null>(null);
 
   const options = strings(ask?.meta?.options);
   const quote = text(ask?.meta?.quote);
 
   const send = async (body: string, meta?: Record<string, unknown>) => {
     setSending(true);
+    setRefusal(null);
     try {
       /*
         `meta` is left out of the call entirely rather than passed as an
@@ -76,11 +121,23 @@ export function AskCard({ notif, thread }: AskCardProps) {
         far as a spy can tell, and every plain-option answer would otherwise
         record a trailing `undefined` no caller asked for.
       */
-      if (meta === undefined) {
-        await answerAsk(thread, body);
-      } else {
-        await answerAsk(thread, body, meta);
-      }
+      const result =
+        meta === undefined ? await answerAsk(thread, body) : await answerAsk(thread, body, meta);
+      /*
+        `undefined` is the browser target, where there is no bridge and
+        therefore nothing that could have been refused — a different fact
+        from `{ ok: false }` and must not be rendered as one.
+      */
+      if (result !== undefined && !result.ok) setRefusal(result.reason);
+    } catch (cause) {
+      /*
+        A rejected bridge call, not a refusal — the IPC channel itself threw
+        rather than answering. Caught here rather than left to `void send(...)`
+        at the call sites: that discards the promise, which turns a genuine
+        rejection into an unhandled one, uncaught anywhere and invisible to
+        the user this message exists to inform.
+      */
+      setRefusal(cause instanceof Error ? cause.message : 'Could not send that.');
     } finally {
       setSending(false);
     }
@@ -189,7 +246,10 @@ export function AskCard({ notif, thread }: AskCardProps) {
         ) : options.length > 0 ? (
           options.map((option, index) => (
             <Button
-              key={option}
+              // Index-qualified (whole-branch review, finding 4): a model can
+              // supply duplicate options, and `option` alone would then give
+              // React two elements with the same key.
+              key={`${index}-${option}`}
               size="sm"
               variant={
                 NEGATIVE.test(option)
@@ -228,6 +288,19 @@ export function AskCard({ notif, thread }: AskCardProps) {
           </>
         )}
       </div>
+
+      {refusal === null ? null : (
+        /*
+          The buttons above stay enabled — `sending` has already returned to
+          `false` by the time this renders, so the failed attempt is not
+          mistaken for one still in flight. This is what a refusal actually
+          looks like: not a frozen card, not a silent no-op, but the reason
+          and another chance.
+        */
+        <p role="alert" className="text-[11px] text-red">
+          {refusal}
+        </p>
+      )}
     </>,
   );
 }

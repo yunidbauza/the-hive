@@ -4000,17 +4000,40 @@ describe('answerAsk (HIVE-118)', () => {
   });
 
   it('posts the answer through the bridge and stores nothing', async () => {
-    const answer = vi.fn().mockResolvedValue({ ok: true });
+    const answer = vi.fn().mockResolvedValue({ ok: true, id: 'a41' });
     Object.defineProperty(window, 'hive', {
       configurable: true,
       value: { ledger: { answer } },
     });
 
     const before = useHiveStore.getState().ledger;
-    await useHiveStore.getState().answerAsk('a41', 'yes');
+    const result = await useHiveStore.getState().answerAsk('a41', 'yes');
 
     expect(answer).toHaveBeenCalledWith({ thread: 'a41', body: 'yes' });
     expect(useHiveStore.getState().ledger).toBe(before);
+    expect(result).toEqual({ ok: true, id: 'a41' });
+  });
+
+  /**
+   * Whole-branch review, finding 3: the refusal used to be discarded here,
+   * which is what let it fail silently all the way up to the card. It is a
+   * value from `Ledger.answer`, not a throw, so the fix is to hand it back
+   * rather than to catch anything.
+   */
+  it('hands back a refusal instead of swallowing it', async () => {
+    const answer = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      reason: 'already answered',
+    });
+    Object.defineProperty(window, 'hive', {
+      configurable: true,
+      value: { ledger: { answer } },
+    });
+
+    const result = await useHiveStore.getState().answerAsk('a41', 'yes');
+
+    expect(result).toEqual({ ok: false, status: 409, reason: 'already answered' });
   });
 
   it('passes meta through when the card edited a draft', async () => {

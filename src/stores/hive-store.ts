@@ -59,6 +59,7 @@ import {
   LEDGER_MEMORY_CAP,
   type LedgerEntry,
   type LedgerReadQuery,
+  type LedgerResult,
   type OpenAsk,
 } from '@shared/ledger-contract';
 import { matches, openAsks, thread } from '@shared/ledger-derive';
@@ -359,12 +360,27 @@ interface HiveState {
    * one written by another session all collapse the card the same way. An
    * optimistic local append would be a second copy of the entry that main is
    * about to send anyway.
+   *
+   * ## The result is handed back, not discarded (whole-branch review, finding 3)
+   *
+   * `Ledger.answer` refuses as a **value**, not a throw, once a thread is no
+   * longer an open ask — which `LEDGER_ASK_TTL_MS` makes routine on an app
+   * meant to stay open for days: an ask raised Monday and answered Tuesday is
+   * refused, silently, if nothing reads what came back. This action still
+   * stores nothing — that part was always correct — but the caller needs the
+   * `LedgerResult` to tell a refusal from a success, which discarding it made
+   * impossible.
+   *
+   * `undefined` rather than a `LedgerResult` is what a caller gets in the
+   * browser target, where `window.hive` does not exist at all: there was no
+   * write attempted and therefore nothing to have been refused, which is a
+   * different fact from `{ ok: false }` and must not be rendered as one.
    */
   answerAsk: (
     thread: string,
     body: string,
     meta?: Record<string, unknown>,
-  ) => Promise<void>;
+  ) => Promise<LedgerResult | undefined>;
   /**
    * Remove a notification the user has acted on (HIVE-93).
    *
@@ -2636,13 +2652,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   ledgerAppend: (entry) =>
     set((state) => ({ ledger: [...state.ledger, entry].slice(-LEDGER_MEMORY_CAP) })),
 
-  answerAsk: async (thread, body, meta) => {
-    await window.hive?.ledger.answer({
+  answerAsk: async (thread, body, meta) =>
+    window.hive?.ledger.answer({
       thread,
       body,
       ...(meta === undefined ? {} : { meta }),
-    });
-  },
+    }),
 
   hydrateSessions: (records) =>
     set((state) => {

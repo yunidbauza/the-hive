@@ -138,11 +138,18 @@ describe('createLedgerNotifier', () => {
     expect(raise.mock.calls[0][0].body).toBe('stalled');
   });
 
+  /**
+   * Whole-branch review, finding 2. The shape production actually emits: an
+   * agent's own `ledger_failed` carries no `meta.run` at all — nothing in
+   * `mcp-host/tools.ts` stamps one — so the dedup this proves has to key off
+   * the party (`entry.from`), not a run id that never arrives.
+   */
   it('does not mint a second card when the agent already said it failed', () => {
     const { raise, onEntry } = harness();
-    onEntry(entry({ kind: 'failed', body: 'gave up', meta: { run: 'r-1' } }));
+    onEntry(entry({ from: 'drone', kind: 'failed', body: 'gave up' }));
     onEntry(
       entry({
+        from: 'drone',
         kind: 'event',
         body: 'run.ended — failed',
         meta: { run: 'r-1', outcome: 'failed' },
@@ -161,5 +168,52 @@ describe('createLedgerNotifier', () => {
       }),
     );
     expect(raise).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The stale-flag case the whole-branch review named directly: a `failed`
+   * report must be consumed by the very next `event` from that party, no
+   * matter how that run ended, or a later run's genuine failure would find
+   * the flag already set and be silently swallowed.
+   */
+  it('clears the flag on a run that ended done, so the next run can still fail loudly', () => {
+    const { raise, onEntry } = harness();
+    onEntry(entry({ from: 'drone', kind: 'failed', body: 'gave up' }));
+    onEntry(
+      entry({
+        from: 'drone',
+        kind: 'event',
+        body: 'run.ended — done',
+        meta: { run: 'r-1', outcome: 'done' },
+      }),
+    );
+    raise.mockClear();
+
+    onEntry(
+      entry({
+        from: 'drone',
+        kind: 'event',
+        body: 'run.ended — failed',
+        meta: { run: 'r-2', outcome: 'failed' },
+      }),
+    );
+
+    expect(raise).toHaveBeenCalledTimes(1);
+  });
+
+  /** Two different agents' own failures must not shadow one another. */
+  it('does not let one agent’s report suppress another agent’s receipt', () => {
+    const { raise, onEntry } = harness();
+    onEntry(entry({ from: 'drone', kind: 'failed', body: 'gave up' }));
+    onEntry(
+      entry({
+        from: 'other-drone',
+        kind: 'event',
+        body: 'run.ended — failed',
+        meta: { run: 'r-9', outcome: 'failed' },
+      }),
+    );
+
+    expect(raise).toHaveBeenCalledTimes(2);
   });
 });

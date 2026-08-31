@@ -478,6 +478,18 @@ export function createNotificationHub(
              *
              * The id stays in `seen`, so the very next duplicate event cannot
              * re-raise what the user just dealt with.
+             *
+             * No `ask`-shaped exception here, unlike `raise`'s own toast
+             * handler (HIVE-118 whole-branch review, finding 1). This path
+             * fires from `reevaluateForeground`, which only ever promotes an
+             * entry out of `pendingForeground` — and that map is filled
+             * exclusively by `sessionEvent` in `notifications/index.ts`,
+             * which mints only `session.blocked`, `session.input_needed` and
+             * `session.idle`. An `agent.ask` is raised straight through
+             * `hub.raise` and never gated in the first place, because
+             * `isForeground` answers `false` for every action that is not
+             * `session` — so it can never reach this handler. If that ever
+             * changes, this needs the same guard `raise` got.
              */
             dismiss(id);
             activate(entry.action);
@@ -675,21 +687,37 @@ export function createNotificationHub(
             title: toastTitle(notification),
             body: notification.body,
             /**
-             * Dismissed, not merely marked read (HIVE-81).
+             * Dismissed, not merely marked read (HIVE-81) — with one
+             * exception, `ask` (HIVE-118 whole-branch review, finding 1).
              *
-             * Clicking a desktop toast is a stronger gesture than opening the
-             * inbox and reading a row. The user was in another application,
-             * chose this notification over what they were doing, and it took
-             * them straight to the session — there is nothing left for the row
-             * to tell them. Leaving it behind turns the inbox into a list of
-             * things already dealt with, which is the state that makes people
-             * stop reading it.
+             * For every other kind, clicking a desktop toast is a stronger
+             * gesture than opening the inbox and reading a row: the user was
+             * in another application, chose this notification over what they
+             * were doing, and it took them straight to the thing — there is
+             * nothing left for the row to tell them. Leaving it behind turns
+             * the inbox into a list of things already dealt with, which is the
+             * state that makes people stop reading it.
              *
-             * The id stays in `seen`, so the very next duplicate event cannot
-             * re-raise what the user just dealt with.
+             * An `ask` breaks that premise. The click does not take the user
+             * to the answer — a toast has room for a title, a body and one
+             * click, none of which can hold the options an ask offers — it
+             * takes them to the *row*, which is the control. Dismissing on
+             * click would delete the very thing the click was supposed to
+             * reveal: the ledger entry stays an open ask, the agent stays
+             * blocked waiting for a reply, and nothing can ever bring the row
+             * back, because `seen` keeps its id forever. Marking it read would
+             * be nearly as wrong — an unanswered ask still needs the user, and
+             * a read badge that undercounts what is actually pending is a
+             * badge that lies in the one direction nobody notices until the
+             * agent has been stuck for a day. So an `ask` toast only
+             * activates: it focuses the app and leaves the row exactly as it
+             * was, unread and present, for the user to actually answer.
+             *
+             * The id stays in `seen` regardless, so the very next duplicate
+             * event cannot re-raise what is already sitting in the inbox.
              */
             onClick: () => {
-              dismiss(id);
+              if (notification.action.type !== 'ask') dismiss(id);
               activate(notification.action);
             },
           });
