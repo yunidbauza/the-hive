@@ -8,6 +8,7 @@ import {
 } from '@/types/notification';
 
 import { Icon } from '@components/ui/icon';
+import { AskCard } from '@features/inbox/components/ask-card';
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { useRelativeTime } from '@hooks/use-relative-time';
 import {
@@ -73,8 +74,38 @@ interface NotificationCardProps {
  * The glyph and its colour come from the kind's registry entry rather than from
  * the record, and the label comes from `createdAt` and ticks — so a row reading
  * "4m" is four minutes old, rather than having been four minutes old once.
+ *
+ * ## Why an `ask` forks to a different component (HIVE-118)
+ *
+ * An ask is not a row you click — it is a row you answer, and it must survive
+ * the click that answers it. It cannot be a branch *inside* the button below
+ * either: `AskCard` draws its own buttons, and a button nested inside a
+ * button is interactive content nested in interactive content — invalid
+ * HTML, and two targets no browser or screen reader can tell apart.
+ *
+ * The check has to live in *this* component, with no hooks of its own above
+ * or below it, and {@link NotificationButtonRow} has to hold every hook the
+ * button path needs. React's Rules of Hooks forbid an early return before a
+ * hook even when a branch condition provably never changes for one mounted
+ * instance (a notification's action never mutates after it is raised —
+ * dismissal unmounts the row rather than rewriting it) — the lint rule has
+ * no way to see that invariant, so the fork has to happen a component
+ * boundary up instead of as an early return inside a component that also
+ * calls hooks.
  */
 export function NotificationCard({ notif }: NotificationCardProps) {
+  if (notif.action.type === 'ask') {
+    return <AskCard notif={notif} thread={notif.action.thread} />;
+  }
+  return <NotificationButtonRow notif={notif} />;
+}
+
+/**
+ * The clickable row for every action other than `ask` — the original
+ * `NotificationCard` body, split out so its hooks run unconditionally. See
+ * {@link NotificationCard}'s doc comment for why the split exists at all.
+ */
+function NotificationButtonRow({ notif }: NotificationCardProps) {
   const openEntity = useOpenEntity();
   const dismissNotif = useDismissNotif();
   const reduced = useReducedMotion();
@@ -148,6 +179,21 @@ export function NotificationCard({ notif }: NotificationCardProps) {
        * comment below forbids.
        */
       openEntity(currentRowFor(notif.action.entityId));
+      return;
+    }
+
+    /**
+     * Not `currentRowFor` (HIVE-118): that helper resolves a *terminal* id to
+     * the row it names now, translating around a `/clear`. An agent has no
+     * terminal and is never cleared — its entity id **is** its name, fixed
+     * for the entity's life (`hive-store.ts`'s `entities[summary.name]`) — so
+     * there is nothing for that translation to do. Calling it anyway would
+     * happen to work today (an id nothing has ever cleared passes through
+     * unchanged) and quietly break the day `currentRowFor` gains a rule that
+     * assumes its argument is always a terminal id.
+     */
+    if (notif.action.type === 'agent') {
+      openEntity(notif.action.name);
       return;
     }
     if (notif.action.type === 'none') return;

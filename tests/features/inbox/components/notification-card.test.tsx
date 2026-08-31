@@ -10,6 +10,7 @@ import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
 import { seedDemoFleet } from '@tests/support/demo-fleet';
+import { seedLedger } from '@tests/support/ledger';
 
 import { notif, resetNotifIds } from '../../../support/notifications';
 
@@ -290,6 +291,71 @@ describe('NotificationCard', () => {
       // The successor, not the retired row — and emphatically not the fleet view.
       expect(useUiStore.getState().activeTab).toBe(successor);
       expect(useUiStore.getState().activeTab).not.toBe('hero-refresh');
+    });
+  });
+
+  /**
+   * The structural fact Step 3 exists for: an ask cannot be a branch inside
+   * the button, so an `ask` action forks the whole render onto `AskCard`
+   * (HIVE-118).
+   */
+  describe('dispatching an ask instead of drawing the button row', () => {
+    it('renders an AskCard for an ask action instead of the button row', () => {
+      seedLedger([
+        {
+          id: 'a41',
+          ts: Date.now(),
+          from: 'drone',
+          to: 'overmind',
+          kind: 'ask',
+          body: 'ship it?',
+        },
+      ]);
+
+      render(
+        <NotificationCard
+          notif={notif({
+            title: 'ship it?',
+            action: { type: 'ask', thread: 'a41' },
+          })}
+        />,
+      );
+
+      // No button anywhere named after the ask — the old button row is gone,
+      // not merely relabelled.
+      expect(
+        screen.queryByRole('button', { name: /ship it/ }),
+      ).not.toBeInTheDocument();
+      // `AskCard` renders an `<article>`, never a `<button>` (see its own
+      // doc comment on why the two cannot share a role).
+      expect(screen.getByRole('article')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * An agent's entity id *is* its name (`hive-store.ts`'s
+   * `entities[summary.name]`), so opening one from the row is a direct
+   * `openEntity` call — never `currentRowFor`, which exists to translate a
+   * *terminal* id and has nothing to translate here (HIVE-118).
+   */
+  describe('opening the agent it is about', () => {
+    it('opens the agent for an agent action, without going through currentRowFor', async () => {
+      const openEntity = vi.fn();
+      // The same direct-`setState` idiom `seedLedger` uses for `answerAsk`:
+      // this is the last test in the file to touch `openEntity`, so nothing
+      // downstream depends on `reset()` having restored the real action.
+      useHiveStore.setState({ openEntity });
+      const user = userEvent.setup();
+
+      render(
+        <NotificationCard
+          notif={notif({ action: { type: 'agent', name: 'drone' } })}
+        />,
+      );
+
+      await user.click(screen.getByRole('button'));
+
+      expect(openEntity).toHaveBeenCalledWith('drone');
     });
   });
 });

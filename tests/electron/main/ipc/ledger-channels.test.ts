@@ -27,6 +27,15 @@ let resumableIds: string[] = [];
 interface FakeWindow {
   isDestroyed: () => boolean;
   webContents: { send: ReturnType<typeof vi.fn> };
+  /**
+   * Only `notifications:act` (HIVE-118) needs these three — the focus
+   * sequence `hub.activate` runs before it looks at the action at all.
+   * Optional so every window built for the `ledger:changed` cases above
+   * keeps compiling unchanged.
+   */
+  isMinimized?: () => boolean;
+  restore?: () => void;
+  focus?: () => void;
 }
 const windows: FakeWindow[] = [];
 
@@ -182,6 +191,8 @@ const post = (payload: unknown) =>
   Promise.resolve().then(() => handlers.get(CH.ledgerPost)!(trustedEvent, payload));
 const answer = (payload: unknown) =>
   Promise.resolve().then(() => handlers.get(CH.ledgerAnswer)!(trustedEvent, payload));
+/** `notifications:act` (HIVE-118) — a clicked inbox row, or a clicked toast. */
+const act = (payload: unknown) => handlers.get(CH.notificationsAct)!(trustedEvent, payload);
 
 beforeEach(() => {
   handlers.clear();
@@ -306,5 +317,68 @@ describe('ledger:changed — the push channel (HIVE-111)', () => {
 
     expect(liveSend).toHaveBeenCalledWith(CH.ledgerChanged, entry);
     expect(destroyedSend).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `notifications:act` routing an `ask` (HIVE-118) — the main-process half of
+ * dispatch. `ask` is deliberately the only case with real behaviour to pin
+ * here: main answers nothing on an ask's behalf (a desktop toast has no
+ * option buttons), so the whole contract is "focus the window, touch nothing
+ * else". `agent` is covered on the renderer side instead — `performAction`
+ * in `notification-card.test.tsx` never reaches this handler for it at all,
+ * and this file's fake `electron` module has no `shell` or `Notification` to
+ * assert *against*, which is exactly the point: those must stay untouched.
+ */
+describe('notifications:act — an ask focuses the window and answers nothing (HIVE-118)', () => {
+  it('focuses every live window and neither throws nor opens anything external', () => {
+    const focus = vi.fn();
+    const restore = vi.fn();
+    windows.push({
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() },
+      isMinimized: () => false,
+      restore,
+      focus,
+    });
+
+    expect(() => act({ type: 'ask', thread: 'a41' })).not.toThrow();
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    // Nothing minimized, so nothing should have been asked to restore.
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it('restores a minimized window before focusing it, exactly as any other action does', () => {
+    const focus = vi.fn();
+    const restore = vi.fn();
+    windows.push({
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() },
+      isMinimized: () => true,
+      restore,
+      focus,
+    });
+
+    act({ type: 'ask', thread: 'a41' });
+
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a destroyed window rather than touching it', () => {
+    const isMinimized = vi.fn(() => false);
+    const focus = vi.fn();
+    windows.push({
+      isDestroyed: () => true,
+      webContents: { send: vi.fn() },
+      isMinimized,
+      focus,
+    });
+
+    expect(() => act({ type: 'ask', thread: 'a41' })).not.toThrow();
+
+    expect(isMinimized).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
   });
 });

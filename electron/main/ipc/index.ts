@@ -748,6 +748,37 @@ export function registerIpcHandlers(): void {
         return;
       }
 
+      /**
+       * An `ask` answers nothing from here (HIVE-118).
+       *
+       * A desktop toast is a title, a body and one click — there is no room on
+       * it for the options an ask card offers, so the only honest thing a
+       * click on one can do is bring the user to where the card lives. The
+       * focus loop above has already done that; nothing further crosses the
+       * process boundary; the row itself is what the user reads and answers.
+       */
+      if (action.type === 'ask') return;
+
+      /**
+       * An `agent` reaches the renderer exactly the way `session` does
+       * (HIVE-118): same channel, same event shape, because only the renderer
+       * knows what "open" means for either kind of row.
+       *
+       * `entityId` still means *terminal id* for a session — the reason
+       * `useNotificationActivate` on the other end resolves it through
+       * `currentRowFor`. An agent has no terminal, so there is no resolution
+       * to apply, but sending its name through unchanged costs nothing:
+       * `currentRowFor` on an id that was never a terminal's is the identity
+       * function (nothing has ever cleared it), so the renderer opens exactly
+       * the id this sent — the agent's own name.
+       */
+      if (action.type === 'agent') {
+        send(CH.notificationsActivate, {
+          entityId: action.name,
+        } satisfies NotificationActivateEvent);
+        return;
+      }
+
       if (action.type !== 'session') return;
 
       send(CH.notificationsActivate, {
