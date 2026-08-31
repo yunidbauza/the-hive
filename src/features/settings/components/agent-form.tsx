@@ -262,7 +262,7 @@ export const FIELD_HELP: Record<string, string> = {
     'Skills it may invoke, from ~/.hive/skills, your own ~/.claude/skills, or an installed plugin as plugin:skill. A declaration rather than a sandbox — it catches a name that does not exist; it cannot stop a skill this machine has.',
   mcp: 'Outside systems it may reach. Naming one does not connect it — signing in happens in Settings › Integrations, and the agent then acts as you, not as a bot.',
   tools:
-    'Tools it may call without stopping to ask, as [a, b]. The hive ledger tools are always granted. A wake has nobody to prompt, so a tool its body needs but this list omits is simply refused.',
+    'Tools it may call without stopping to ask, as [a, b]. The hive ledger tools are always granted. A tool this list omits is not refused outright — the agent’s turn ends and the attempt reaches your inbox, where you can allow it once or add it here for good.',
   autonomy:
     'ask first — it posts a question to the ledger and waits for an answer. act — it proceeds and reports afterwards. Neither changes the tool fence: act does not pre-allow permission prompts, so a tool outside "what it can do" still reaches your inbox.',
   model:
