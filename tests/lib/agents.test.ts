@@ -4,12 +4,14 @@ import {
   AGENT_NAME_POOL,
   agentsSnapshot,
   deleteAgent,
+  describeSkips,
   frontmatterName,
   loadAgents,
   nextAgentName,
   readAgent,
   renameAgent,
   resetAgents,
+  runsToday,
   saveAgent,
   subscribeAgents,
 } from '@/lib/agents';
@@ -249,5 +251,64 @@ describe('nextAgentName', () => {
   /* A pick of ~1 must not index past the end of the list. */
   it('stays in range at the top of the draw', () => {
     expect(AGENT_NAME_POOL).toContain(nextAgentName([], last));
+  });
+});
+
+describe('describeSkips', () => {
+  /*
+    Silent at zero on purpose. The count answers "why has this done nothing?",
+    so the suffix appearing *is* the signal — a permanent `skipped 0` beside
+    every healthy agent would be noise where the number should be news.
+  */
+  it('says nothing when nothing has been skipped', () => {
+    expect(describeSkips({ skipsSinceRun: 0 })).toBeUndefined();
+  });
+
+  it('names the count once there is one', () => {
+    expect(describeSkips({ skipsSinceRun: 3 })).toBe('skipped 3');
+  });
+});
+
+describe('runsToday', () => {
+  /** Local, because the day boundary this reads is the person's own. */
+  const noon = new Date(2026, 7, 31, 12).getTime();
+
+  it("reads the accumulator main pushed", () => {
+    expect(runsToday({ day: '2026-08-31', runs: 12, usd: 0.84 }, noon)).toEqual({
+      count: 12,
+      cost: '$0.84',
+    });
+  });
+
+  /*
+    A quiet day is `$0.00`, not blank: this is a fact about spend, and an empty
+    cell reads as "not measured" rather than "nothing".
+  */
+  it('reads a day with no runs as none, not as unmeasured', () => {
+    expect(runsToday(undefined, noon)).toEqual({ count: 0, cost: '$0.00' });
+  });
+
+  /*
+    Yesterday's total is not today's. Main replaces the accumulator on the
+    day's first run, so between local midnight and that run the stored key
+    names a day that is over — and showing its number would make the tile wrong
+    every morning.
+  */
+  it('ignores a total belonging to a previous day', () => {
+    expect(runsToday({ day: '2026-08-30', runs: 9, usd: 9 }, noon)).toEqual({
+      count: 0,
+      cost: '$0.00',
+    });
+  });
+
+  /*
+    Four decimals for a day that *did* run and cost less than a cent — a wake
+    routinely does, and `$0.00` for real work reads as a bug. The two-decimal
+    `$0.00` above is reserved for a day on which nothing happened.
+  */
+  it('keeps four decimals for a day that cost less than a cent', () => {
+    expect(runsToday({ day: '2026-08-31', runs: 1, usd: 0.004 }, noon).cost).toBe(
+      '$0.0040',
+    );
   });
 });

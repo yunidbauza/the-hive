@@ -29,7 +29,12 @@ import type { TermLine } from '@/types/terminal';
 import type { Ticket } from '@/types/ticket';
 
 import { isDesktop } from '@config/runtime';
-import { describeNextRun, describeWake, runsToday } from '@lib/agents';
+import {
+  describeNextRun,
+  describeSkips,
+  describeWake,
+  runsToday,
+} from '@lib/agents';
 import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
@@ -2214,7 +2219,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             ref === undefined
               ? agentStatusWord(agent.status)
               : `${agentStatusWord(agent.status)} (${ref})`;
-          const today = runsToday(agent.runs, now);
+          const today = runsToday(agent.today, now);
 
           /*
             One colour per line, not per column — `status`'s rule, and for its
@@ -4836,6 +4841,8 @@ export interface AgentFacts {
   askRef?: string;
   wake: string;
   next: string;
+  /** `skipped 3`, when there have been any. Absent is the common case. */
+  skips?: string;
   todayRuns: number;
   todayCost: string;
   sessionUuid?: string;
@@ -4857,7 +4864,7 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
   return useMemo(() => {
     if (entity === undefined || !isAgent(entity)) return null;
 
-    const today = runsToday(entity.runs);
+    const today = runsToday(entity.today);
     const open = openAsks(ledger, Date.now()).find((ask) => ask.from === name);
 
     return {
@@ -4865,6 +4872,14 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
       ...(open?.ref === undefined ? {} : { askRef: open.ref }),
       wake: describeWake(entity.wake),
       next: describeNextRun(entity),
+      /*
+        Separate from `next` rather than joined onto it, so the tile can draw
+        the hour in ink and the count beneath it in `text-subtle` — the rail
+        row joins the same two parts into one plain string.
+      */
+      ...(describeSkips(entity) === undefined
+        ? {}
+        : { skips: describeSkips(entity) as string }),
       todayRuns: today.count,
       todayCost: today.cost,
       ...(entity.sessionUuid === undefined

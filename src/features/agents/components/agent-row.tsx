@@ -7,7 +7,7 @@ import {
   STATUS_LABEL,
   STATUS_TEXT,
 } from '@components/ui/status-dot';
-import { describeNextRun } from '@lib/agents';
+import { describeNextRun, describeSkips } from '@lib/agents';
 import { useAgentAskRef, useEntity, useOpenEntity } from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
@@ -58,9 +58,18 @@ export function AgentRow({ id }: AgentRowProps) {
    * already beside the word, and a failure's reason belongs in the view rather
    * than squeezed into a rail row.
    */
+  /*
+    `skipped 3` sits between the next wake and the cost, and only when there
+    have been any (HIVE-121). The rail is where "why has this done nothing all
+    day?" actually gets asked, so this is where the answer belongs.
+
+    In the meta's own subtle colour rather than amber: the count reports the
+    scheduler working exactly as its definition asked, and a warning colour for
+    correct behaviour is a lie the reader has to spend time disproving.
+  */
   const detail =
     entity.status === 'sleeping'
-      ? [`next ${describeNextRun(entity)}`, entity.cost]
+      ? [`next ${describeNextRun(entity)}`, describeSkips(entity), entity.cost]
           .filter((part) => part !== undefined)
           .join(' · ')
       : '';

@@ -225,7 +225,21 @@ export function AgentView({ entity }: AgentViewProps) {
             {facts.askRef === undefined ? '' : ` ${facts.askRef}`}
           </Fact>
           <Fact label="Wake">{facts.wake}</Fact>
-          <Fact label="Next">{facts.next}</Fact>
+          {/*
+            The skip count dimmed, and drawn only when it is not zero
+            (HIVE-121). Zero draws nothing, so the tile keeps the width it has
+            at five columns and the suffix *arriving* is the signal — which is
+            what distinguishes a quiet agent from a broken one.
+
+            `Session`'s `· run 7/50` below is the same idiom: a value, then a
+            `·`-joined qualifier that is quieter than it.
+          */}
+          <Fact label="Next">
+            {facts.next}
+            {facts.skips === undefined ? null : (
+              <span className="text-subtle"> · {facts.skips}</span>
+            )}
+          </Fact>
           <Fact label="Today">{`${facts.todayRuns} runs · ${facts.todayCost}`}</Fact>
           {/*
             The rotation made visible *before* it happens: an agent resumes one

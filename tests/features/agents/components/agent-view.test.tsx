@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentView } from '@features/agents/components/agent-view';
-import type { AgentSummary } from '@shared/agent-contract';
+import { dayKey, type AgentSummary } from '@shared/agent-contract';
 import { isAgent, type Agent } from '@/types/entity';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
@@ -92,12 +92,47 @@ describe('AgentView', () => {
       expect(screen.getByText(/9f3c1e2a · run 17\/50/)).toBeInTheDocument();
     });
 
-    it('sums today’s spend rather than the last run’s', () => {
-      render(<AgentView entity={seed()} />);
+    /*
+      The day's total rather than the last run's, and read from the
+      accumulator main keeps rather than summed from `runs` (HIVE-121).
 
-      // 0.008 + 0.041, both today — and rounded to the cent, because the sum
-      // has cleared one. The four-decimal form is for a day that stayed under.
-      expect(screen.getByText('2 runs · $0.05')).toBeInTheDocument();
+      It used to sum that array, which is capped at the last twenty runs — so
+      the tile stopped growing part-way through any day a five-minute agent
+      actually worked. The number here is also the one the scheduler's daily
+      ceiling is compared against; a tile deriving its own would be a second
+      opinion about one fact.
+    */
+    it('shows today’s totals rather than the last run’s cost', () => {
+      render(
+        <AgentView
+          entity={seed({ today: { day: dayKey(Date.now()), runs: 31, usd: 2.14 } })}
+        />,
+      );
+
+      expect(screen.getByText('31 runs · $2.14')).toBeInTheDocument();
+    });
+
+    it('reads a quiet day as none rather than as unmeasured', () => {
+      render(<AgentView entity={seed({ today: undefined })} />);
+
+      expect(screen.getByText('0 runs · $0.00')).toBeInTheDocument();
+    });
+
+    /*
+      Zero draws nothing, so the tile keeps the width it has at five columns
+      and the suffix arriving is itself the signal — which is what makes a
+      quiet agent distinguishable from a broken one.
+    */
+    it('shows the skip count beside the next wake', () => {
+      render(<AgentView entity={seed({ status: 'sleeping', skipsSinceRun: 3 })} />);
+
+      expect(screen.getByText(/skipped 3/)).toBeInTheDocument();
+    });
+
+    it('draws no skip count when nothing has been skipped', () => {
+      render(<AgentView entity={seed({ status: 'sleeping', skipsSinceRun: 0 })} />);
+
+      expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
     });
 
     it('reads an em dash for an agent that has never run', () => {

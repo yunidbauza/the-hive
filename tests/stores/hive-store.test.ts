@@ -10,7 +10,7 @@ import {
   statusLabel,
 } from '@components/ui/status-dot';
 import type { IdleDetail } from '@shared/hook-contract';
-import { AGENT_STATUSES } from '@shared/agent-contract';
+import { AGENT_STATUSES, dayKey } from '@shared/agent-contract';
 import type {
   AgentRunResult,
   AgentStatus,
@@ -1616,16 +1616,9 @@ describe('hive-store', () => {
           useHiveStore.getState().hydrateAgents([
             summary({
               status: 'asking',
-              runs: [
-                {
-                  run: 'r1',
-                  trigger: 'manual',
-                  startedAt: Date.now(),
-                  endedAt: Date.now(),
-                  outcome: 'asking',
-                  costUsd: 0.0031,
-                },
-              ],
+              // The same accumulator the `Today` tile reads — one source, so
+              // the table and the tile cannot word one number two ways.
+              today: { day: dayKey(Date.now()), runs: 1, usd: 0.0031 },
             }),
           ]);
 
@@ -4286,34 +4279,59 @@ describe('the agent view selectors', () => {
   });
 
   describe('useAgentFacts', () => {
-    it("counts and sums only today's runs", () => {
-      const now = Date.now();
-      const yesterday = now - 36 * 60 * 60 * 1000;
-
+    /*
+      Read from the accumulator main keeps, not summed from `runs` (HIVE-121).
+      That array holds the last twenty runs and a five-minute agent takes 288 a
+      day, so the sum this used to compute stopped growing part-way through any
+      day the agent actually worked.
+    */
+    it("reads today's totals from the accumulator", () => {
       useHiveStore.getState().hydrateAgents([
         summary('a', {
           runsSinceRotate: 17,
           sessionUuid: '9f3c1e2a',
-          runs: [
-            run({
-              run: 'old',
-              startedAt: yesterday,
-              endedAt: yesterday,
-              costUsd: 9,
-            }),
-            run({ run: 'r1', costUsd: 0.5 }),
-            run({ run: 'r2', costUsd: 1.64 }),
-          ],
+          today: { day: dayKey(Date.now()), runs: 31, usd: 2.14 },
         }),
       ]);
 
       const { result } = renderHook(() => useAgentFacts('a'));
 
-      expect(result.current?.todayRuns).toBe(2);
+      expect(result.current?.todayRuns).toBe(31);
       expect(result.current?.todayCost).toBe('$2.14');
       expect(result.current?.runsSinceRotate).toBe(17);
       expect(result.current?.rotateAfter).toBe(50);
       expect(result.current?.sessionUuid).toBe('9f3c1e2a');
+    });
+
+    /*
+      Main replaces the accumulator on the day's first run, so between local
+      midnight and that run the stored key names a day that is over. Showing
+      its number would make the tile wrong every morning.
+    */
+    it("ignores a total belonging to a day that has ended", () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([
+          summary('a', { today: { day: '2020-01-01', runs: 9, usd: 9 } }),
+        ]);
+
+      const { result } = renderHook(() => useAgentFacts('a'));
+
+      expect(result.current?.todayRuns).toBe(0);
+      expect(result.current?.todayCost).toBe('$0.00');
+    });
+
+    it('surfaces the skip count, and only when there is one', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([summary('a', { skipsSinceRun: 3 }), summary('b')]);
+
+      expect(renderHook(() => useAgentFacts('a')).result.current?.skips).toBe(
+        'skipped 3',
+      );
+      expect(
+        renderHook(() => useAgentFacts('b')).result.current?.skips,
+      ).toBeUndefined();
     });
 
     it('reads $0.00 for a day with no runs, not a blank', () => {
@@ -4329,9 +4347,11 @@ describe('the agent view selectors', () => {
       // The reason `formatRunCost` has the rule at all: a wake routinely costs
       // less than a cent, and `$0.00` for real work reads as a bug. Only a day
       // with *no* runs gets the short form.
-      useHiveStore
-        .getState()
-        .hydrateAgents([summary('a', { runs: [run({ costUsd: 0.0031 })] })]);
+      useHiveStore.getState().hydrateAgents([
+        summary('a', {
+          today: { day: dayKey(Date.now()), runs: 1, usd: 0.0031 },
+        }),
+      ]);
 
       const { result } = renderHook(() => useAgentFacts('a'));
 

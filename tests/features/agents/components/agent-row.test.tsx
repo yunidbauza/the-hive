@@ -110,6 +110,28 @@ describe('AgentRow', () => {
     expect(screen.getByText(/next /)).toBeInTheDocument();
   });
 
+  /*
+    The rail is where "why has this done nothing all day?" gets asked, so it is
+    where the answer belongs (HIVE-121) — between the next wake and the cost,
+    and in the meta's own subtle colour rather than amber, because the count
+    reports the scheduler working exactly as asked.
+  */
+  it('names skipped ticks between the next wake and the cost', () => {
+    hydrate({ status: 'sleeping', skipsSinceRun: 3, cost: '$0.03' });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.getByText('next manual · skipped 3 · $0.03')).toBeInTheDocument();
+  });
+
+  it('leaves the meta as it was when nothing has been skipped', () => {
+    hydrate({ status: 'sleeping', skipsSinceRun: 0, cost: '$0.03' });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
+  });
+
   it('reads manual for a sleeping agent nothing schedules', () => {
     hydrate({ status: 'sleeping' });
 

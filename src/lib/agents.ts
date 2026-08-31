@@ -1,10 +1,10 @@
 import {
+  dayKey,
   formatRunCost,
   readFrontmatter,
   type AgentStatus,
   type AgentsSnapshot,
   type AgentWriteResult,
-  type RunSummary,
   type WakeSpec,
 } from '@shared/agent-contract';
 
@@ -74,29 +74,33 @@ export function describeNextRun(agent: {
 }
 
 /**
- * What this agent has cost you today — `31 runs · $2.14` (HIVE-116, HIVE-117).
+ * What this agent has cost you today — `31 runs · $2.14` (HIVE-116, HIVE-121).
  *
  * Beside {@link describeWake} for its reason, and with a second one of its own:
- * two surfaces now show this pair — the agent view's `Today` tile and the
- * console's `agents` table — and they sit on the same screen. Two spellings of
- * one number is a contradiction the reader has to resolve, so both read this.
+ * two surfaces show this pair — the agent view's `Today` tile and the console's
+ * `agents` table — and they sit on the same screen. Two spellings of one number
+ * is a contradiction the reader has to resolve, so both read this.
  *
- * "Today" is the **user's** calendar day, compared with `toDateString()` rather
- * than against a UTC boundary: it is the person's day, and there is no server
- * to have another one. Derived on read rather than stored, so it cannot be
- * wrong the moment the clock passes midnight.
+ * ## Why it stopped summing `runs`
+ *
+ * It used to filter and sum the run history. That history is capped at
+ * `AGENT_RUN_HISTORY` — twenty — and a five-minute agent takes 288 wakes
+ * between midnights, so the sum silently stopped growing part-way through any
+ * busy day. Main now accumulates the day's totals as it records each run, and
+ * the same number is what the scheduler's daily ceiling is compared against: a
+ * tile deriving its own would be a second opinion about one fact.
+ *
+ * "Today" is still the **user's** calendar day, and still decided on read.
+ * What is stored is the day the totals belong to, never the claim that it is
+ * today — so a tile rendered after midnight and before the day's first run
+ * reads `0 runs · $0.00` rather than yesterday's number.
  */
 export function runsToday(
-  runs: readonly RunSummary[],
+  today: { day: string; runs: number; usd: number } | undefined,
   now: number = Date.now(),
 ): { count: number; cost: string } {
-  const today = new Date(now).toDateString();
-  const todays = runs.filter(
-    (run) => new Date(run.startedAt).toDateString() === today,
-  );
-  const spent = formatRunCost(
-    todays.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
-  );
+  const current = today?.day === dayKey(now) ? today : undefined;
+  const spent = formatRunCost(current?.usd ?? 0);
 
   /*
     `$0.00` rather than a blank for a quiet day: this is a fact about spend, and
@@ -109,13 +113,33 @@ export function runsToday(
     did run, and cost less than a cent, still gets the four decimals.
 
     Both conditions in one branch on purpose: `spent` is only `undefined` for a
-    non-finite input, which a sum of numbers is not, so a separate `?? '$0.00'`
+    non-finite input, which a persisted total is not, so a separate `?? '$0.00'`
     would be a branch no test could reach.
   */
   return {
-    count: todays.length,
-    cost: todays.length === 0 || spent === undefined ? '$0.00' : spent,
+    count: current?.runs ?? 0,
+    cost: current === undefined || spent === undefined ? '$0.00' : spent,
   };
+}
+
+/**
+ * `skipped 3`, or nothing at all.
+ *
+ * Beside {@link describeNextRun} because the same two surfaces draw both — the
+ * rail row's meta and the agent view's `Next` tile — and they must not be able
+ * to disagree. Returned *separately* from the time rather than joined onto it,
+ * so the tile can dim this half against the hour while the row renders one
+ * plain string.
+ *
+ * Silent at zero, which is most of the time. The count answers "why has this
+ * done nothing all day?", so the suffix appearing is itself the signal; a
+ * permanent `skipped 0` beside every healthy agent would be noise where the
+ * number should be news.
+ */
+export function describeSkips(agent: {
+  skipsSinceRun: number;
+}): string | undefined {
+  return agent.skipsSinceRun > 0 ? `skipped ${agent.skipsSinceRun}` : undefined;
 }
 
 /**
