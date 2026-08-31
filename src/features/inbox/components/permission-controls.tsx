@@ -1,8 +1,7 @@
 import { useState } from 'react';
 
-import { cn } from '@/lib/utils';
-
 import { Button } from '@components/ui/button';
+import { SegmentedControl } from '@components/ui/segmented-control';
 import type { Rung, RungId } from '@shared/permission-rules';
 
 /**
@@ -21,6 +20,14 @@ import type { Rung, RungId } from '@shared/permission-rules';
  * The rungs arrive as **data** on the ask, computed once by the tool that
  * wrote it. This component does no rule logic, and could not: `@shared` may
  * only cross into the renderer as types.
+ *
+ * ## Fix round 1
+ *
+ * The scope segment used to be hand-rolled — every rung its own tab stop, no
+ * arrow keys, no roving tabindex. `SegmentedControl` already implements the
+ * radio-group keyboard pattern this codebase settled on (`option-stepper.tsx`
+ * and the appearance section both build on it), so this reuses that atom
+ * instead of a second, worse copy of the same behaviour.
  */
 
 interface PermissionControlsProps {
@@ -41,31 +48,13 @@ export function PermissionControls({
 
   return (
     <div className="mt-1.5 flex flex-col gap-1.5">
-      <div
-        role="radiogroup"
-        aria-label="How far this permission reaches"
-        className="flex overflow-hidden rounded-md border border-border"
-      >
-        {rungs.map((rung) => (
-          <button
-            key={rung.id}
-            type="button"
-            role="radio"
-            aria-checked={rung.id === scope}
-            aria-label={rung.label}
-            disabled={sending}
-            onClick={() => setScope(rung.id)}
-            className={cn(
-              'flex-1 border-r border-border px-1.5 py-1 text-[10px] last:border-r-0',
-              rung.id === scope
-                ? 'bg-brand-fill text-on-brand'
-                : 'text-muted hover:text-ink',
-            )}
-          >
-            {rung.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        label="How far this permission reaches"
+        options={rungs.map((rung) => ({ value: rung.id, label: rung.label }))}
+        value={scope}
+        onChange={setScope}
+        disabled={sending}
+      />
 
       {selected === undefined ? null : (
         <span className="text-[10px] text-subtle">{selected.caption}</span>

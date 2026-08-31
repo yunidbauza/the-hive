@@ -202,6 +202,50 @@ describe('AskCard', () => {
   });
 
   /**
+   * Fix round 1, finding 2: the only fixture covering the fall-through had
+   * `meta.rungs` **absent**, which trivially satisfies `!Array.isArray`.
+   * That proves nothing about a `meta.rungs` that is actually present but
+   * the wrong shape — a non-array value, here.
+   */
+  it('falls through to the generic options branch when meta.rungs is not an array', () => {
+    seedLedger([
+      {
+        ...ask,
+        meta: { kind: 'permission', tool: 'Bash', rungs: 'x', options: ['yes', 'no'] },
+      },
+    ]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByRole('button', { name: 'yes' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'no' })).toBeTruthy();
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+  });
+
+  /**
+   * Fix round 1, finding 2, second half: an array whose members do not have
+   * the `Rung` shape (missing `label`/`caption`) must be dropped entry by
+   * entry rather than crash the rail or render a broken segment.
+   */
+  it('falls through to the generic options branch when meta.rungs holds wrong-shaped entries', () => {
+    seedLedger([
+      {
+        ...ask,
+        meta: {
+          kind: 'permission',
+          tool: 'Bash',
+          rungs: [{ id: 'bogus' }],
+          options: ['yes', 'no'],
+        },
+      },
+    ]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByRole('button', { name: 'yes' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'no' })).toBeTruthy();
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+  });
+
+  /**
    * Whole-branch review, finding 5: `EDIT` used to be a prefix match
    * (`/^edit/i`), so an option that merely *starts* with those letters — a
    * model choosing more descriptive copy — hijacked the draft affordance

@@ -64,4 +64,21 @@ describe('PermissionControls', () => {
     expect(screen.getByRole('button', { name: 'Allow' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'Deny' })).toHaveProperty('disabled', true);
   });
+
+  /**
+   * Fix round 1, finding 1: the scope segment is `SegmentedControl`, not a
+   * hand-rolled radiogroup, specifically so arrow keys move between rungs.
+   * This proves the wiring actually works end to end, not just that the
+   * atom exists.
+   */
+  it('moves the scope with arrow keys, and Allow posts whatever arrow keys landed on', () => {
+    const { onAnswer } = setup();
+    fireEvent.keyDown(screen.getByRole('radio', { name: 'git *' }), { key: 'ArrowRight' });
+    expect(
+      screen.getByRole('radio', { name: 'all Bash' }).getAttribute('aria-checked'),
+    ).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
+    expect(onAnswer).toHaveBeenCalledWith('allow-tool');
+  });
 });
