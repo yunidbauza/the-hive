@@ -97,7 +97,10 @@ export const NOTIFICATION_KINDS = [
   'pr.merged',
   'pr.checks_failed',
   'pr.review_requested',
-  'agent.custom',
+  'agent.ask',
+  'agent.permission',
+  'agent.done',
+  'agent.failed',
   'app.update_available',
   'app.update_ready',
 ] as const;
@@ -156,7 +159,25 @@ export type NotificationAction =
    */
   | { type: 'update.download' }
   /** Quit and swap in the update that has finished downloading. */
-  | { type: 'update.install' };
+  | { type: 'update.install' }
+  /**
+   * Answer this ask in place (HIVE-118).
+   *
+   * Carries the thread and **nothing else** — not the options, not the body.
+   * The ledger entry already states them, and a copy here is a second version
+   * of the same fact that can disagree with the first: a card rebuilt from a
+   * stale action would draw buttons the ask no longer offers.
+   */
+  | { type: 'ask'; thread: string }
+  /**
+   * Open this agent's view on the centre stage (HIVE-118).
+   *
+   * Its own member rather than reusing `session`, even though an agent's
+   * entity id *is* its name: the `session` branch resolves through
+   * `currentRowFor`, which means "the row this **terminal** id names now". An
+   * agent has no terminal, so reusing it would work by accident.
+   */
+  | { type: 'agent'; name: string };
 
 /** One thing that wants the user's attention. */
 export interface HiveNotification {
@@ -405,13 +426,65 @@ export const NOTIFICATION_KIND_SPECS: Record<
      */
     defaultDelivery: 'both',
   },
-  'agent.custom': {
+  /**
+   * The one kind that is answered rather than opened (HIVE-118).
+   *
+   * `both`, because an ask is a party waiting on you: an agent that asked has
+   * ended its turn and is doing nothing until you answer, so a card the user
+   * only finds on their next glance at the rail is a stalled agent.
+   */
+  'agent.ask': {
     source: 'agent',
-    label: 'When a background agent raises something',
+    label: 'When an agent or session asks you something',
+    description: 'An agent or session is asking you something.',
+    icon: 'ph-chat-circle-dots',
+    tone: 'amber',
+    defaultDelivery: 'both',
+  },
+  /**
+   * An ask whose subject is a tool call (HIVE-119 produces these).
+   *
+   * Its own kind rather than a flavour of `agent.ask` so it can be silenced
+   * separately: a user who wants every question can still decide that
+   * permission prompts are the ones worth an OS notification, or the reverse.
+   */
+  'agent.permission': {
+    source: 'agent',
+    label: 'When an agent needs permission to use a tool',
+    description: 'An agent wants to use a tool its definition does not grant.',
+    icon: 'ph-hand-palm',
+    tone: 'amber',
+    defaultDelivery: 'both',
+  },
+  /**
+   * `inbox`, not `both`.
+   *
+   * A finished agent is good news and nothing is waiting on the user, so it
+   * belongs where they will find it rather than in front of what they were
+   * doing. This is the same reasoning `clone.done` uses.
+   */
+  'agent.done': {
+    source: 'agent',
+    label: 'When an agent finishes something',
+    description: 'An agent reported what it did. An uneventful wake says nothing.',
+    icon: 'ph-check-circle',
+    tone: 'green',
+    defaultDelivery: 'inbox',
+  },
+  /**
+   * `both`, and deliberately covering three different endings.
+   *
+   * A run stopped by `limits.turns` or `limits.budget` is a cap the user set
+   * and can raise; a `failed` is something going wrong. Both are things the
+   * user would otherwise learn only by noticing an agent had gone quiet.
+   */
+  'agent.failed': {
+    source: 'agent',
+    label: 'When an agent fails or hits a limit',
     description:
-      'Anything posted to the local notify endpoint that did not name a kind of its own.',
-    icon: 'ph-robot',
-    tone: 'brand',
+      'A run ended badly — it failed, ran out of turns, or spent its budget.',
+    icon: 'ph-warning',
+    tone: 'red',
     defaultDelivery: 'both',
   },
 };

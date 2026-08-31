@@ -6,7 +6,7 @@ import {
   NOTIFICATION_KIND_SPECS,
 } from '@shared/notification-contract';
 
-import { Icon } from '@components/ui/icon';
+import { Icon, ICON_NAMES } from '@components/ui/icon';
 
 const svg = (container: HTMLElement) => container.querySelector('svg');
 
@@ -107,4 +107,10 @@ describe('every notification kind has a real glyph', () => {
 
     expect(svg(named)?.innerHTML).not.toBe(svg(fallback)?.innerHTML);
   });
+});
+
+it('every notification kind names an icon the registry has (HIVE-114 regression)', () => {
+  for (const [kind, spec] of Object.entries(NOTIFICATION_KIND_SPECS)) {
+    expect(ICON_NAMES, `${kind} -> ${spec.icon}`).toContain(spec.icon);
+  }
 });

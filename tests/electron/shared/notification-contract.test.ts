@@ -206,3 +206,41 @@ describe('resolveNotificationPrefs', () => {
     expect(prefs['session.blocked']).toBe('both');
   });
 });
+
+describe('the agent kinds (HIVE-118)', () => {
+  it('replaces agent.custom with four kinds under the agent source', () => {
+    expect(NOTIFICATION_KINDS).not.toContain('agent.custom');
+    expect(kindsForSource('agent')).toEqual([
+      'agent.ask',
+      'agent.permission',
+      'agent.done',
+      'agent.failed',
+    ]);
+  });
+
+  it('gives each one the tone and delivery the design asks for', () => {
+    expect(NOTIFICATION_KIND_SPECS['agent.ask']).toMatchObject({
+      source: 'agent',
+      tone: 'amber',
+      defaultDelivery: 'both',
+    });
+    expect(NOTIFICATION_KIND_SPECS['agent.permission']).toMatchObject({
+      tone: 'amber',
+      defaultDelivery: 'both',
+    });
+    expect(NOTIFICATION_KIND_SPECS['agent.done']).toMatchObject({
+      tone: 'green',
+      defaultDelivery: 'inbox',
+    });
+    expect(NOTIFICATION_KIND_SPECS['agent.failed']).toMatchObject({
+      tone: 'red',
+      defaultDelivery: 'both',
+    });
+  });
+
+  it('ignores a preference naming the retired kind', () => {
+    const resolved = resolveNotificationPrefs({ 'agent.custom': 'off' });
+    expect(resolved).not.toHaveProperty('agent.custom');
+    expect(resolved['agent.ask']).toBe('both');
+  });
+});

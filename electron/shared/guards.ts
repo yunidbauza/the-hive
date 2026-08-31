@@ -907,6 +907,18 @@ export function parseNotificationAction(
       const { url } = input as { url?: unknown };
       return typeof url === 'string' && url !== '' ? { type: 'url', url } : null;
     }
+    case 'ask': {
+      const { thread } = input as { thread?: unknown };
+      return typeof thread === 'string' && thread !== ''
+        ? { type: 'ask', thread }
+        : null;
+    }
+    case 'agent': {
+      const { name } = input as { name?: unknown };
+      return typeof name === 'string' && name !== ''
+        ? { type: 'agent', name }
+        : null;
+    }
     default:
       return null;
   }

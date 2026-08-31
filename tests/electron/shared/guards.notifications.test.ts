@@ -172,3 +172,21 @@ describe('parseNotificationAction', () => {
     ).toEqual({ type: 'update.install' });
   });
 });
+
+describe('parseNotificationAction — the ask and agent actions (HIVE-118)', () => {
+  it('parses an ask action', () => {
+    expect(parseNotificationAction({ type: 'ask', thread: '20260830-101500-0001' }))
+      .toEqual({ type: 'ask', thread: '20260830-101500-0001' });
+  });
+
+  it('parses an agent action', () => {
+    expect(parseNotificationAction({ type: 'agent', name: 'drone' }))
+      .toEqual({ type: 'agent', name: 'drone' });
+  });
+
+  it('refuses an empty or non-string thread and name', () => {
+    expect(parseNotificationAction({ type: 'ask', thread: '' })).toBeNull();
+    expect(parseNotificationAction({ type: 'ask' })).toBeNull();
+    expect(parseNotificationAction({ type: 'agent', name: 42 })).toBeNull();
+  });
+});
