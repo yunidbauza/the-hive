@@ -60,6 +60,7 @@ describe('createRunTracker', () => {
           env: { HIVE_AGENT: '1' },
           cwd: '/tmp/work',
           sessionUuid: `sess-${commandCalls}`,
+          lastTurn: false,
         };
       },
       state,
@@ -185,6 +186,7 @@ describe('createRunTracker', () => {
         env: {},
         cwd: '/tmp/work',
         sessionUuid: 'sess-1',
+        lastTurn: false,
       }),
       state,
       appendLedger: (entry) => ledger.push(entry),
@@ -306,6 +308,7 @@ describe('createRunTracker', () => {
         env: {},
         cwd: '/tmp/work',
         sessionUuid: 'sess-1',
+        lastTurn: false,
       }),
       state,
       appendLedger: (entry) => ledger.push(entry),

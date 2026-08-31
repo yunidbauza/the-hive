@@ -70,6 +70,11 @@ export interface RunTrackerDeps {
    * The command for this agent, and the session uuid it invokes (minted or
    * resumed) — or why the command cannot be built.
    *
+   * `lastTurn` says this wake asked the agent for a handoff, which is the close's
+   * cue to consider rotating (HIVE-122). It has to travel from the builder
+   * because it cannot be re-derived here: the counter it was decided from is
+   * left untouched at wake time, on purpose.
+   *
    * It is handed the **trigger** as well as the name, because the trigger is
    * part of the command line rather than only a label for the log: `wakePrompt`
    * writes "You woke because: <trigger>[ — <extra>]" into the prompt the
@@ -83,7 +88,9 @@ export interface RunTrackerDeps {
     name: string,
     trigger: string,
     extra?: string,
-  ) => (WakeCommand & { sessionUuid: string }) | { problem: string };
+  ) =>
+    | (WakeCommand & { sessionUuid: string; lastTurn: boolean })
+    | { problem: string };
   state: AgentState;
   appendLedger: (entry: {
     from: string;
