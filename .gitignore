@@ -31,6 +31,13 @@ blob-report/
 .claude/worktrees/
 .tmp/
 
+# The impeccable hook's per-session cache — machine-generated, rewritten on
+# every edit, and keyed by session id with absolute paths inside. It has no
+# reader outside the tool that writes it, and tracking it meant a routine
+# `git add -A` swept it into a feature PR (#155). `.impeccable/config.json`
+# is real configuration and stays tracked.
+.impeccable/hook.cache.json
+
 # Brainstorming visual companion (superpowers)
 .superpowers/
 
