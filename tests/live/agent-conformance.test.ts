@@ -159,6 +159,8 @@ name: ${ASKER}
 description: Asks once, is answered, and reports done on the second wake.
 icon: Ghost
 model: haiku
+wake:
+  on: [ledger]
 tools: [TodoWrite]
 limits:
   turns: 8
@@ -189,6 +191,8 @@ name: ${RESPONDER}
 description: Answers the ask a session addressed to it.
 icon: Ghost
 model: haiku
+wake:
+  on: [ledger]
 tools: [TodoWrite]
 limits:
   turns: 8
@@ -411,6 +415,9 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       run: (name, trigger, extra) => runs.run(name, trigger, extra),
       state: agentState,
       isAgent: (id) => AGENTS.includes(id),
+      // The definitions below declare `wake.on: [ledger]`, which is the gate
+      // `ipc/index.ts` reads off the parsed definition into `ledgerAgents`.
+      wakesOnLedger: (id) => AGENTS.includes(id),
       ledger: {
         read: () => ledger.read({}),
         append: (request) => ledger.append(request),

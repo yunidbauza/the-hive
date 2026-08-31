@@ -236,6 +236,19 @@ exclusion is the same loop guard `deliver.ts` applies: the scheduler appends to
 the log it subscribes to, and every wake writes a `run.started` and a
 `run.ended`.
 
+**`wake.on: [ledger]` is a gate, and it is checked first.** Settings promises
+that unticking it means "a question addressed to it waits unread until then", so
+an agent without it is neither woken nor queued against. The subscribed names are
+cached in `ledgerAgents` beside `knownAgents`, because the scheduler is consulted
+synchronously from inside `Ledger.append`. Unlike `knownAgents`, a live run does
+not widen it: that exception exists to keep a running agent's writes accepted when
+its file stops parsing mid-edit, and says nothing about what its author asked for.
+
+Nothing stops two agents waking each other through `post` — A posting to B, which
+posts back to A, is bounded only by each run's `--max-turns` and
+`--max-budget-usd`. A cooldown is the obvious answer if it is ever seen in
+practice; it is not built.
+
 Wakes go through `RunTracker.run`, never the waker directly. That method is the
 one door every trigger passes and it is where a paused agent is refused; a
 second entrance would let a ledger entry start an agent the user had just
@@ -254,9 +267,23 @@ prevents is silent — a quit drops an in-memory queue and nothing would ever
 bring the agent back. That makes one more flush necessary: `agents.json` is read
 at boot through `wakeFromWorking`, which rewrites `working` to `sleeping`, so a
 queue left by a crashed run has no run to close and no resume coming.
-`scheduler.start()` is what delivers it. Every flush clears the queue **before**
-waking, so a synchronous spawn failure re-entering `onRunClosed` finds nothing
-rather than looping.
+`scheduler.start()` is what delivers it, and it is armed **behind**
+`mcp.start()` — a wake needs an argv, and `buildWakeCommand` refuses to build one
+until the MCP config is on disk, so arming it synchronously would put every
+restored queue through a refusal at the one moment that refusal is guaranteed.
+
+Every flush clears the queue **before** waking, so a synchronous spawn failure
+re-entering `onRunClosed` finds nothing rather than looping — and **puts it back
+when the wake is refused**, because `RunTracker.run` refuses `working`, `paused`
+and an unbuildable command without ever reaching `onRunClosed`. A refusal is a
+delivery deferred, not a question lost; an immediate wake that is refused queues
+for the same reason.
+
+`stop()` sets a flag that every entry point honours, not just the interval. Both
+teardowns call it **before** `RunTracker.closeAll`, which finalizes each live run
+synchronously and so re-enters `onRunClosed` — where a flush would spawn a fresh
+`claude` after `closeAll` had finished iterating, leaving an orphan with nobody
+left to signal it.
 
 ### Expiry
 
@@ -270,13 +297,24 @@ The sweep runs once a minute and reads `expiredAsks`, **not** `openAsks` —
 `openAsks` drops an ask the instant it crosses the ttl, so the entries the sweep
 is looking for are precisely the ones that function hides. For each it appends
 `event { from: 'overmind', to: <asker>, thread: <ask>, meta: { expired } }` and,
-if the asker is an agent, wakes it directly rather than routing that event back
-through `onEntry` — which would mean waking on events.
+if the asker is an agent, wakes it — through the same wake-or-queue path an
+arriving entry takes, rather than routing that event back through `onEntry`,
+which would mean waking on events. Going through the queue matters: the expiry
+event is on disk by then, so a wake refused because the asker was mid-run or
+paused would lose the news permanently.
+
+**The write is the dedup, so a failed append is not followed by a wake.**
+`Ledger.append` reports failure as a value; ignoring it would re-expire the same
+ask every sixty seconds for as long as the disk stayed unwritable.
 
 The event does not close the ask; `expiredAsks` dedupes on the event's own
 presence, which is what makes the sweep idempotent across restarts while keeping
-no state of its own. The card is dismissed rather than marked expired in place:
-the thread is closed, so `Ledger.append` refuses every button the card offers.
+no state of its own. Only an expiry **from the overmind** counts, in the derive
+and in the notifier alike: `meta` is a free-form rider any writer controls, so
+without that check a forged `meta.expired` would dismiss another party's card and
+permanently suppress the real expiry. The card is dismissed rather than marked
+expired in place: the thread is closed, so `Ledger.append` refuses every button
+the card offers.
 
 ### Notifications
 

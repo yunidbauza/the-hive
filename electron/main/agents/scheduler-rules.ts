@@ -52,6 +52,22 @@ export const WAKING_KINDS: ReadonlySet<string> = new Set([
  * The kind gate runs before the status is consulted, so a state that would
  * queue never queues an entry that could not have woken the agent anyway.
  */
+/**
+ * The status half of the rule, for news that is not an entry.
+ *
+ * The expiry sweep needs this: it has already decided the agent should hear
+ * something, and the only open question is whether the agent can take a wake
+ * right now. Routing that through {@link decide} would mean handing it a
+ * synthetic entry, and the nearest honest one — the agent's own ask — is
+ * self-addressed and would be ignored.
+ */
+export function decideForStatus(status: AgentStatus): WakeDecision {
+  if (status === 'working') return 'queue';
+  if (status === 'paused') return 'hold';
+
+  return 'wake';
+}
+
 export function decide(status: AgentStatus, entry: LedgerEntry): WakeDecision {
   // A broadcast wakes nobody — parties read those on their own schedule.
   if (entry.to === undefined) return 'ignore';
@@ -65,8 +81,5 @@ export function decide(status: AgentStatus, entry: LedgerEntry): WakeDecision {
   if (entry.from === entry.to) return 'ignore';
   if (!WAKING_KINDS.has(entry.kind)) return 'ignore';
 
-  if (status === 'working') return 'queue';
-  if (status === 'paused') return 'hold';
-
-  return 'wake';
+  return decideForStatus(status);
 }

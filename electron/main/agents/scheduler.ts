@@ -9,7 +9,7 @@ import {
 } from '@shared/ledger-contract';
 import { expiredAsks } from '@shared/ledger-derive';
 
-import { decide } from './scheduler-rules';
+import { decide, decideForStatus, type WakeDecision } from './scheduler-rules';
 import type { AgentState } from './state';
 
 /**
@@ -45,6 +45,15 @@ export interface SchedulerDeps {
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
   /**
+   * Whether this agent's definition asks to be woken by the log at all.
+   *
+   * `wake.on: [ledger]` is a **gate**, not a hint, and the Settings copy says so
+   * in as many words: "Without it, only the schedule wakes it, and a question
+   * addressed to it waits unread until then." An agent whose author unticked it
+   * must not spend turns and budget on entries they opted out of.
+   */
+  wakesOnLedger: (name: string) => boolean;
+  /**
    * The log, narrowed to the two things the sweep does with it.
    *
    * `read` rather than a snapshot handed in, because the sweep runs on a timer
@@ -53,7 +62,12 @@ export interface SchedulerDeps {
    */
   ledger: {
     read: () => { entries: readonly LedgerEntry[] };
-    append: (request: LedgerPostRequest) => unknown;
+    /**
+     * Reports rather than throws, like `Ledger.append` itself — and the report
+     * is read: a sweep that assumed its write landed would re-expire the same
+     * ask every minute forever.
+     */
+    append: (request: LedgerPostRequest) => { ok: boolean };
   };
   now: () => number;
   /** Injected by the unit test, as in `splash.ts`. */
@@ -99,6 +113,29 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   const clearIntervalFn = deps.clearIntervalFn ?? clearInterval;
 
   let sweeping: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Set by {@link Scheduler.stop}, and honoured by **every** entry point.
+   *
+   * Disarming the interval alone is not enough to stop this module. Shutdown
+   * calls `RunTracker.closeAll`, which finalizes each live run synchronously and
+   * so re-enters `onRunClosed` — where a flush would spawn a fresh `claude` that
+   * `closeAll` has already finished iterating past, leaving an orphan with
+   * nobody left to signal it. That is the exact process the quit hook exists to
+   * prevent, so the gate has to cover the callbacks and not just the timer.
+   */
+  let stopped = false;
+
+  /**
+   * One entry, as the wake prompt names it.
+   *
+   * Shared by the immediate path and the queue so a wake reads the same however
+   * it was reached.
+   */
+  const describeEntry = (entry: {
+    kind: string;
+    id: string;
+    from: string;
+  }): string => `${entry.kind} ${entry.id} from ${entry.from}`;
 
   /**
    * Retire the asks time has taken, once a minute.
@@ -115,10 +152,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * restarts while the sweep keeps no state of its own.
    */
   const sweep = (): void => {
+    if (stopped) return;
+
     const now = deps.now();
 
     for (const ask of expiredAsks(deps.ledger.read().entries, now)) {
-      deps.ledger.append({
+      const written = deps.ledger.append({
         from: OVERMIND,
         to: ask.from,
         kind: 'event',
@@ -128,6 +167,20 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       });
 
       /*
+        The write is the dedup, so a failed write must not be followed by a wake.
+
+        `Ledger.append` reports a failure as a value rather than throwing, and
+        without this the entry that would have retired this ask is missing while
+        the wake still fires — so a full disk or a moved `~/.hive` would spawn a
+        fresh headless run for every expired ask, every sixty seconds, for as
+        long as the condition lasts.
+      */
+      if (!written.ok) {
+        console.warn(`[hive] could not retire ${ask.id}; leaving it open`);
+        continue;
+      }
+
+      /*
         Woken here rather than by routing the event above back through
         `onEntry`.
 
@@ -135,9 +188,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         `WAKING_KINDS` — and every `run.started` and `run.ended` is an event, so
         each wake would cause the next one. The asker is known right here; there
         is nothing to gain by asking the log to tell us what we just wrote.
+
+        Through `route` rather than `run`, though: an asker that is mid-run or
+        paused would otherwise lose the news for good, because the expiry event
+        is on disk by now and this sweep will never look at that ask again.
       */
-      if (deps.isAgent(ask.from)) {
-        deps.run(ask.from, LEDGER_TRIGGER, `expired ${ask.id}`);
+      if (deps.isAgent(ask.from) && deps.wakesOnLedger(ask.from)) {
+        route(ask.from, decideForStatus(deps.state.read(ask.from).status), {
+          kind: 'expired',
+          id: ask.id,
+          from: OVERMIND,
+        });
       }
     }
   };
@@ -152,15 +213,44 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * is an unbounded loop; clearing first makes the second pass find nothing.
    */
   const flush = (name: string): void => {
+    if (stopped) return;
+
     const queued = deps.state.read(name).pendingWake ?? [];
 
     if (queued.length === 0) return;
 
     deps.state.patch(name, { pendingWake: [] });
-    deps.run(name, LEDGER_TRIGGER, describeEntries(queued));
+
+    const started = deps.run(name, LEDGER_TRIGGER, describeEntries(queued));
+
+    if (started.started) return;
+
+    /*
+      Put it back. A refusal is not a delivery.
+
+      `RunTracker.run` has three refusal paths that never reach `onRunClosed` —
+      `working`, `paused`, and a command that could not be built — and on every
+      one of them these entries would otherwise be gone with their asks still
+      open, which is the silent loss the on-disk queue exists to prevent. The
+      commonest case is not a race: at boot `mcp.start()` is still in flight, so
+      `wake-command` refuses for a config that is not written yet.
+
+      Restoring cannot loop. The one refusal that re-enters this function is a
+      synchronous spawn failure, and it finalizes — and so flushes — while the
+      queue is still empty, before this line puts anything back.
+
+      Anything that arrived while the wake was being refused is kept: the
+      restored entries go in front of it, oldest first, and the cap is applied
+      to the result so a refusal cannot grow the queue past it.
+    */
+    const since = deps.state.read(name).pendingWake ?? [];
+
+    deps.state.patch(name, {
+      pendingWake: [...queued, ...since].slice(0, AGENT_PENDING_WAKE_MAX),
+    });
   };
 
-  const enqueue = (name: string, entry: LedgerEntry): void => {
+  const enqueue = (name: string, entry: PendingWakeEntry): void => {
     const queued = deps.state.read(name).pendingWake ?? [];
 
     /*
@@ -179,26 +269,51 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     });
   };
 
+  /**
+   * Wake now, or queue for the first moment the agent can take it.
+   *
+   * The single path both callers use — an entry arriving, and the sweep
+   * retiring an ask — so an expiry cannot reach an agent by a route that skips
+   * the queue. It used to, and a `working` or `paused` asker lost the news
+   * permanently: the expiry event is already on disk by then, so the sweep's
+   * own dedup would never revisit it.
+   *
+   * **A refused wake is queued, not dropped.** `RunTracker.run` refuses without
+   * ever reaching `onRunClosed` when the agent is `working` or `paused`, or when
+   * the command cannot be built — which at boot is the ordinary case rather than
+   * an edge one, because `mcp.start()` is still in flight. Queueing there turns
+   * every one of those into a delivery deferred rather than a question lost.
+   */
+  const route = (name: string, decision: WakeDecision, item: PendingWakeEntry): void => {
+    if (decision === 'wake' && deps.run(name, LEDGER_TRIGGER, describeEntry(item)).started) {
+      return;
+    }
+
+    enqueue(name, item);
+  };
+
   return {
     onEntry(entry) {
+      if (stopped) return;
+
       const to = entry.to;
 
       if (to === undefined || !deps.isAgent(to)) return;
+      /*
+        The definition's own gate (`wake.on: [ledger]`).
+
+        Checked before the queue as well as before the wake: an agent that does
+        not take ledger wakes should not accumulate a queue of entries that
+        nothing will ever deliver, and whose only effect would be to fire on the
+        day its author ticks the box.
+      */
+      if (!deps.wakesOnLedger(to)) return;
 
       const decision = decide(deps.state.read(to).status, entry);
 
       if (decision === 'ignore') return;
 
-      if (decision === 'wake') {
-        deps.run(
-          to,
-          LEDGER_TRIGGER,
-          `${entry.kind} ${entry.id} from ${entry.from}`,
-        );
-        return;
-      }
-
-      enqueue(to, entry);
+      route(to, decision, { kind: entry.kind, id: entry.id, from: entry.from });
     },
 
     onRunClosed(name) {
@@ -220,6 +335,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         `pushAgentStatus` re-reads `agents.json` for this same reason, and its
         docblock records it.
       */
+      if (stopped) return;
       if (deps.state.read(name).status === 'paused') return;
 
       flush(name);
@@ -230,6 +346,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     start() {
+      // Arming twice would leak the first interval beyond any `stop()`.
+      if (sweeping !== undefined) return;
+
+      stopped = false;
+
       /*
         A queue can outlive the app that made it.
 
@@ -255,6 +376,18 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     stop() {
+      /*
+        The flag first, and it is the half that matters.
+
+        Shutdown calls `RunTracker.closeAll`, which finalizes every live run
+        synchronously and so re-enters `onRunClosed` from inside the teardown.
+        With only the interval disarmed, that flush would spawn a fresh `claude`
+        after `closeAll` had already finished iterating the runs it knew about —
+        an orphan with nobody left to signal it, which is precisely what the quit
+        hook exists to prevent.
+      */
+      stopped = true;
+
       if (sweeping === undefined) return;
 
       clearIntervalFn(sweeping);

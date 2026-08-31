@@ -188,6 +188,12 @@ export function createLedgerNotifier(
       that branch is gated on `isAgent(entry.from)` and this event comes from
       the **overmind**: main retires the question, whoever asked it.
 
+      And gated on that `from`, rather than merely documented as coming from it.
+      `meta` is a free-form rider the tool layer passes through verbatim, so
+      without the check any session or agent could post an event carrying
+      `meta.expired` and dismiss another party's card. `ledger-derive.ts` applies
+      the same rule to the sweep's dedup, and the two have to agree.
+
       Dismissed rather than left standing with an `expired` word on it. The
       thread is closed, so `Ledger.append` refuses every button the card
       offers — a live card bearing working-looking buttons over a dead thread
@@ -196,7 +202,7 @@ export function createLedgerNotifier(
     */
     const expired = str(meta.expired);
 
-    if (entry.kind === 'event' && expired !== undefined) {
+    if (entry.kind === 'event' && expired !== undefined && entry.from === OVERMIND) {
       deps.dismiss(expired);
       return;
     }

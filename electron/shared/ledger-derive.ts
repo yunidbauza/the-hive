@@ -10,6 +10,7 @@
 import {
   LEDGER_ASK_TTL_MS,
   LEDGER_REF_PREFIX,
+  OVERMIND,
   type LedgerEntry,
   type LedgerReadQuery,
   type OpenAsk,
@@ -100,8 +101,18 @@ export function expiredAsks(
       closed.add(entry.thread);
     }
 
+    /*
+      Only main's own marker counts.
+
+      `meta` is a free-form rider that `parseLedgerPostBody` passes through
+      verbatim, so any party that can write to the log could otherwise post
+      `{ kind: 'event', meta: { expired: '<someone else's ask>' } }` and put that
+      id in this set permanently — retiring a question nobody answered, from the
+      inbox and from the sweep at once, with no expiry ever written. Main writes
+      this event as the overmind and nothing else legitimately does.
+    */
     const expired = entry.meta?.expired;
-    if (typeof expired === 'string') told.add(expired);
+    if (typeof expired === 'string' && entry.from === OVERMIND) told.add(expired);
   }
 
   return entries.filter(

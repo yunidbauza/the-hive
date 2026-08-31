@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LEDGER_ASK_TTL_MS,
+  OVERMIND,
   type LedgerEntry,
 } from '../../../electron/shared/ledger-contract';
 import {
@@ -313,6 +314,7 @@ describe('expiredAsks', () => {
     const expiry = entry({
       id: 'e1',
       ts: 5,
+      from: OVERMIND,
       kind: 'event',
       thread: 'a1',
       meta: { expired: 'a1' },
@@ -323,5 +325,23 @@ describe('expiredAsks', () => {
 
   it('ignores kinds that are not asks', () => {
     expect(expiredAsks([ask({ kind: 'post' })], LEDGER_ASK_TTL_MS)).toEqual([]);
+  });
+
+  it('only lets the overmind retire an ask', () => {
+    /*
+      `meta` is a free-form rider any writer controls, so a forged marker would
+      otherwise put an id in the "already told" set permanently — retiring a
+      question nobody answered, with no expiry event ever written for it.
+    */
+    const forged = entry({
+      id: 'e2',
+      ts: 5,
+      from: 'sess-9',
+      kind: 'event',
+      thread: 'a1',
+      meta: { expired: 'a1' },
+    });
+
+    expect(expiredAsks([ask(), forged], LEDGER_ASK_TTL_MS)).toHaveLength(1);
   });
 });

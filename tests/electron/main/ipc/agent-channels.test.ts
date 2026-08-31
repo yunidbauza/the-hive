@@ -588,13 +588,40 @@ describe('ledger-addressed wakes reach the tracker (HIVE-120)', () => {
     ...over,
   });
 
-  it('wakes the agent an entry names, with the ledger trigger', () => {
+  /** The default fixture's `wake.on` is empty, which is now a gate. */
+  const subscribed = async (): Promise<void> => {
+    listed = {
+      agents: [{ ...definition('slack-watcher'), wake: { on: ['ledger'] } }],
+      agentsRoot: '/tmp/.hive/agents',
+    };
+    onAgentsChanged?.();
+    await settle();
+  };
+
+  it('wakes the agent an entry names, with the ledger trigger', async () => {
+    await subscribed();
+
     capturedOnChange?.(addressed());
 
     expect(trackerRun).toHaveBeenCalledWith(
       'slack-watcher',
       'ledger',
       'ask a1 from overmind',
+    );
+  });
+
+  it('leaves an agent whose definition omits ledger alone', () => {
+    /*
+      The default fixture has `wake: { on: [] }`. Settings promises that means
+      "a question addressed to it waits unread until then", so an entry must
+      neither wake it nor queue against it.
+    */
+    capturedOnChange?.(addressed());
+
+    expect(trackerRun).not.toHaveBeenCalled();
+    expect(statePatch).not.toHaveBeenCalledWith(
+      'slack-watcher',
+      expect.objectContaining({ pendingWake: expect.anything() }),
     );
   });
 

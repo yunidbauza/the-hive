@@ -325,6 +325,21 @@ let scheduler: Scheduler | null = null;
  * than a listing that may be a few hundred milliseconds old.
  */
 const knownAgents = new Set<string>();
+/**
+ * The subset of {@link knownAgents} whose definitions take ledger wakes.
+ *
+ * A second set rather than a lookup through the registry, for the reason
+ * `knownAgents` is a set at all: the scheduler is consulted synchronously from
+ * inside `Ledger.append`, and `agents.list()` is a promise that re-reads and
+ * re-parses every definition on disk.
+ *
+ * Deliberately **not** widened by a live run the way `knownAgents` is. That
+ * exception exists so a run already going keeps its right to write to the log
+ * when its file stops parsing mid-edit; it says nothing about whether its author
+ * asked for ledger wakes, and inferring one from the other would wake an agent
+ * on a setting nobody chose.
+ */
+const ledgerAgents = new Set<string>();
 
 /**
  * Re-read the folder into {@link knownAgents}.
@@ -353,9 +368,15 @@ function refreshKnownAgents(): void {
     ?.list()
     .then((snapshot) => {
       knownAgents.clear();
+      ledgerAgents.clear();
 
       for (const agent of snapshot.agents) {
-        if (agent.invalid === undefined) knownAgents.add(agent.name);
+        if (agent.invalid !== undefined) continue;
+
+        knownAgents.add(agent.name);
+        // The definition's own gate, cached beside the party register because
+        // the scheduler is asked synchronously, from inside `Ledger.append`.
+        if (agent.wake.on.includes('ledger')) ledgerAgents.add(agent.name);
       }
 
       for (const name of runs?.live() ?? []) knownAgents.add(name);
@@ -1364,6 +1385,7 @@ export function registerIpcHandlers(): void {
       runs?.run(name, trigger, extra) ?? { started: false },
     state: agentRunState,
     isAgent: (id) => knownAgents.has(id),
+    wakesOnLedger: (id) => ledgerAgents.has(id),
     ledger: {
       // The whole log, unfiltered: `expiredAsks` needs the closing entries and
       // the expiry events as well as the asks to decide which asks are new.
@@ -1373,7 +1395,28 @@ export function registerIpcHandlers(): void {
     now: () => Date.now(),
   });
 
-  scheduler.start();
+  /*
+    Started behind `mcp.start()`, not beside it.
+
+    `start()` flushes whatever a crash left queued, and a wake needs an argv —
+    which `buildWakeCommand` refuses to build until the MCP config file is on
+    disk, because an agent reads its inbox before anything else. That write is
+    in flight from the `void mcp.start()` above, so arming this synchronously
+    would put every restored queue through a refusal at the one moment it is
+    guaranteed to happen. The call is memoised, so this awaits the same write
+    rather than starting a second one.
+
+    A failure still arms the sweep: expiry does not spawn anything, and a queue
+    that cannot flush yet is safer standing than dropped.
+  */
+  void mcp
+    .start()
+    .catch(() => {
+      // Reported where it happens; a wake that cannot be built refuses itself.
+    })
+    .finally(() => {
+      scheduler?.start();
+    });
 
   sessions = createSessions({
     supervisor,
@@ -1491,6 +1534,16 @@ export function registerIpcHandlers(): void {
      * is what `flush()` on the next line then writes. Their `sessionUuid` is
      * untouched, so the next wake resumes the conversation.
      */
+    /*
+      Before `closeAll`, and that order is the whole point (HIVE-120).
+
+      `closeAll` finalizes each live run synchronously, and `finalizeRun` ends by
+      telling the scheduler the run closed — which would flush that agent's queue
+      into a brand-new `claude`, spawned after `closeAll` had finished iterating
+      the runs it knew about. Nothing would be left to signal it: the exact
+      orphan this hook exists to prevent.
+    */
+    scheduler?.stop();
     runs?.closeAll('app-closed');
     agentState?.flush();
   });
@@ -2352,7 +2405,8 @@ export function registerIpcHandlers(): void {
     }
 
     const asking = ledger.read({}).openAsks.some((ask) => ask.from === name);
-    const resumed = setAgentStatus(name, asking ? 'asking' : 'sleeping');
+
+    setAgentStatus(name, asking ? 'asking' : 'sleeping');
 
     /*
       What the pause was holding (HIVE-120): entries that arrived while this
@@ -2362,7 +2416,16 @@ export function registerIpcHandlers(): void {
     */
     scheduler?.onResume(name);
 
-    return resumed;
+    /*
+      Read back **after** the flush, not captured before it.
+
+      A queue standing at this moment starts a run inside `onResume`, which
+      patches the status to `working` and pushes it. Answering with the value
+      from before that would hand the renderer a `sleeping` the push it is about
+      to receive already contradicts — the same disagreement `pushAgentStatus`
+      re-reads the file to avoid.
+    */
+    return agentState.read(name).status;
   });
 
   /**
@@ -2620,21 +2683,27 @@ export function resetIpcHandlers(): void {
     path 400 ms later, into a directory the test that owned it has finished
     with.
   */
-  runs?.closeAll('reset');
-  runs = null;
   /*
     Disarmed for the same reason `agentState` is disposed (HIVE-120): the sweep
     is a live interval closing over this registration's ledger, and one left
     running would fire into a torn-down composition — and, in a test, at a path
     the case that owned it has finished with.
+
+    **Before `closeAll`**, which finalizes every live run synchronously and so
+    reaches `onRunClosed` from inside this teardown. A flush there would spawn a
+    real `claude` out of a unit test, and its finalizer would then write through
+    an `agentState` disposed a few lines below.
   */
   scheduler?.stop();
   scheduler = null;
+  runs?.closeAll('reset');
+  runs = null;
   agentState?.dispose();
   agentState = null;
   agents?.close();
   agents = null;
   knownAgents.clear();
+  ledgerAgents.clear();
   // HIVE-81. Test-only: a fresh registration starts with nothing on stage and
   // no listeners left over from a previous test — including the app-level
   // focus wiring and any tick it has already scheduled, which would otherwise

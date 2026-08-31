@@ -324,6 +324,26 @@ describe('createLedgerNotifier', () => {
     expect(dismiss).not.toHaveBeenCalled();
   });
 
+  it('refuses an expiry from anyone but the overmind', () => {
+    /*
+      `meta` is a free-form rider the tool layer passes through verbatim, so
+      without the `from` check any session or agent could dismiss another
+      party's card by posting an event that claims their ask expired.
+    */
+    const { dismiss, onEntry } = harness();
+    onEntry(
+      entry({
+        from: 'sess-9',
+        to: 'drone',
+        kind: 'event',
+        body: 'not mine to retire',
+        meta: { expired: '20260830-101500-0001' },
+      }),
+    );
+
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
   it('ignores an expired rider that is not an id', () => {
     const { dismiss, onEntry } = harness();
     onEntry(
