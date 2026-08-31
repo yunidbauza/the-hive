@@ -2,7 +2,12 @@ import {
   AGENT_PENDING_WAKE_MAX,
   type PendingWakeEntry,
 } from '@shared/agent-contract';
-import type { LedgerEntry } from '@shared/ledger-contract';
+import {
+  OVERMIND,
+  type LedgerEntry,
+  type LedgerPostRequest,
+} from '@shared/ledger-contract';
+import { expiredAsks } from '@shared/ledger-derive';
 
 import { decide } from './scheduler-rules';
 import type { AgentState } from './state';
@@ -15,6 +20,15 @@ import type { AgentState } from './state';
  * log.
  */
 const LEDGER_TRIGGER = 'ledger';
+
+/**
+ * How often main looks for asks that time has retired.
+ *
+ * A minute rather than anything finer because the deadline it enforces is
+ * measured in hours: {@link LEDGER_ASK_TTL_MS} is a day, and an ask that dies
+ * up to sixty seconds late has cost nobody anything.
+ */
+export const LEDGER_SWEEP_MS = 60_000;
 
 export interface SchedulerDeps {
   /**
@@ -30,6 +44,21 @@ export interface SchedulerDeps {
   state: Pick<AgentState, 'read' | 'patch' | 'all'>;
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
+  /**
+   * The log, narrowed to the two things the sweep does with it.
+   *
+   * `read` rather than a snapshot handed in, because the sweep runs on a timer
+   * and must see the log as it is at that moment, not as it was when this
+   * module was built.
+   */
+  ledger: {
+    read: () => { entries: readonly LedgerEntry[] };
+    append: (request: LedgerPostRequest) => unknown;
+  };
+  now: () => number;
+  /** Injected by the unit test, as in `splash.ts`. */
+  setIntervalFn?: typeof setInterval;
+  clearIntervalFn?: typeof clearInterval;
 }
 
 export interface Scheduler {
@@ -39,8 +68,10 @@ export interface Scheduler {
   onRunClosed(name: string): void;
   /** A paused agent was resumed. */
   onResume(name: string): void;
-  /** Boot: wake anything a crash left queued. */
+  /** Boot: wake anything a crash left queued, and arm the expiry sweep. */
   start(): void;
+  /** Shutdown: disarm the sweep. */
+  stop(): void;
 }
 
 /** `ask a12 from overmind` — how a wake says what it woke for. */
@@ -64,6 +95,53 @@ const describeEntries = (queued: readonly PendingWakeEntry[]): string =>
  * nothing left to bring the agent back to them.
  */
 export function createScheduler(deps: SchedulerDeps): Scheduler {
+  const setIntervalFn = deps.setIntervalFn ?? setInterval;
+  const clearIntervalFn = deps.clearIntervalFn ?? clearInterval;
+
+  let sweeping: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * Retire the asks time has taken, once a minute.
+   *
+   * Reads {@link expiredAsks} rather than `openAsks`, and has to: `openAsks`
+   * drops an ask the moment it crosses its ttl, so the entries this is looking
+   * for are precisely the ones that function hides.
+   *
+   * The event is appended `from` the overmind — main is retiring the question,
+   * not the party who asked it — and names the ask as its `thread`, which
+   * `Ledger.append` permits on any kind (only an `answer` must find its thread
+   * still open). It does not *close* the ask: `expiredAsks` dedupes on the
+   * event's own presence, and that is what makes this idempotent across
+   * restarts while the sweep keeps no state of its own.
+   */
+  const sweep = (): void => {
+    const now = deps.now();
+
+    for (const ask of expiredAsks(deps.ledger.read().entries, now)) {
+      deps.ledger.append({
+        from: OVERMIND,
+        to: ask.from,
+        kind: 'event',
+        thread: ask.id,
+        body: `ask ${ask.ref ?? ask.id} expired`,
+        meta: { expired: ask.id },
+      });
+
+      /*
+        Woken here rather than by routing the event above back through
+        `onEntry`.
+
+        Reaching the asker that way would mean putting `event` in
+        `WAKING_KINDS` — and every `run.started` and `run.ended` is an event, so
+        each wake would cause the next one. The asker is known right here; there
+        is nothing to gain by asking the log to tell us what we just wrote.
+      */
+      if (deps.isAgent(ask.from)) {
+        deps.run(ask.from, LEDGER_TRIGGER, `expired ${ask.id}`);
+      }
+    }
+  };
+
   /**
    * Take the queue and wake once for all of it.
    *
@@ -169,6 +247,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
         flush(name);
       }
+
+      sweeping = setIntervalFn(sweep, LEDGER_SWEEP_MS);
+    },
+
+    stop() {
+      if (sweeping === undefined) return;
+
+      clearIntervalFn(sweeping);
+      sweeping = undefined;
     },
   };
 }
