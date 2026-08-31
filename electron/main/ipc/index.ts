@@ -21,6 +21,7 @@ import {
   type AgentRunResult,
   type AgentStatus,
   type AgentStatusPush,
+  type WakeSpec,
 } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS } from '@shared/config-contract';
 import type {
@@ -352,6 +353,20 @@ const knownAgents = new Set<string>();
  * on a setting nobody chose.
  */
 const ledgerAgents = new Set<string>();
+/**
+ * Every valid agent's schedule, for the scheduler's tick (HIVE-121).
+ *
+ * A third cache beside the two above, filled in the same pass and for the same
+ * reason: the tick runs every sixty seconds and `agents.list()` is a promise
+ * that re-reads and re-parses every definition on disk. Doing that on a timer
+ * would put a folder walk between the clock and every wake.
+ *
+ * It being *rebuilt* on every folder change is what makes "a definition change
+ * re-arms the schedule" need no code: there is no armed timer to re-arm, only
+ * a map the next tick reads again. An `invalid` definition is left out, which
+ * is what keeps a broken file off the timer while it stays listed to be fixed.
+ */
+const agentSchedules = new Map<string, { wake: WakeSpec; dailyUsd?: number }>();
 
 /**
  * Re-read the folder into {@link knownAgents}.
@@ -381,6 +396,7 @@ function refreshKnownAgents(): void {
     .then((snapshot) => {
       knownAgents.clear();
       ledgerAgents.clear();
+      agentSchedules.clear();
 
       for (const agent of snapshot.agents) {
         if (agent.invalid !== undefined) continue;
@@ -389,6 +405,12 @@ function refreshKnownAgents(): void {
         // The definition's own gate, cached beside the party register because
         // the scheduler is asked synchronously, from inside `Ledger.append`.
         if (agent.wake.on.includes('ledger')) ledgerAgents.add(agent.name);
+        // And the schedule, for the tick — which is asked just as
+        // synchronously, sixty seconds at a time.
+        agentSchedules.set(agent.name, {
+          wake: agent.wake,
+          ...(agent.dailyUsd === undefined ? {} : { dailyUsd: agent.dailyUsd }),
+        });
       }
 
       for (const name of runs?.live() ?? []) knownAgents.add(name);
@@ -1450,6 +1472,21 @@ export function registerIpcHandlers(): void {
     state: agentRunState,
     isAgent: (id) => knownAgents.has(id),
     wakesOnLedger: (id) => ledgerAgents.has(id),
+    /*
+      The schedule, from the cache the folder watcher rebuilds (HIVE-121).
+
+      Not `agents.list()`: that is a promise which re-reads and re-parses every
+      definition on disk, and the tick is synchronous and runs every sixty
+      seconds. `agentSchedules` is refreshed by the same pass that maintains
+      `knownAgents`, so an edit in Settings or in a text editor reaches the
+      scheduler by the same route it already reaches the party register.
+
+      An agent missing from the map — a broken definition, or the moments
+      before the first listing resolves at boot — takes no scheduled wake. The
+      boot case costs at most one tick, since `refreshKnownAgents` runs well
+      before the minute is out.
+    */
+    scheduleFor: (name) => agentSchedules.get(name),
     ledger: {
       // The whole log, unfiltered: `expiredAsks` needs the closing entries and
       // the expiry events as well as the asks to decide which asks are new.

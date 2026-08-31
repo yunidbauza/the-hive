@@ -536,6 +536,12 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       // the gate `ipc/index.ts` reads off the parsed definition into
       // `ledgerAgents`. Only `NAME` does not.
       wakesOnLedger: (id) => id === ASKER || id === RESPONDER || id === FENCE,
+      /*
+        No scheduled wakes in these scenarios. Every one of them drives a wake
+        from a ledger entry or by hand, and an interval firing mid-scenario
+        would spend real model minutes on a run nothing is asserting about.
+      */
+      scheduleFor: () => undefined,
       ledger: {
         read: () => ledger.read({}),
         append: (request) => ledger.append(request),

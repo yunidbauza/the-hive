@@ -105,6 +105,33 @@ describe('list', () => {
     expect(agents[0]?.invalid).toContain('---');
   });
 
+  /*
+    The scheduler's day ceiling reaches it through the listing rather than by
+    re-parsing every AGENT.md once a minute (HIVE-121) — so it has to survive
+    the trip, the way `rotateAfter` already does.
+  */
+  it('carries a daily cap the definition names', async () => {
+    seed(
+      'capped',
+      GOOD.replace('slack-watcher', 'capped').replace(
+        'icon: ChatCircleDots',
+        'icon: ChatCircleDots\nlimits:\n  daily_usd: 0.50',
+      ),
+    );
+
+    const { agents } = await registry().list();
+
+    expect(agents[0]?.dailyUsd).toBe(0.5);
+  });
+
+  it('leaves the cap absent when the definition names none', async () => {
+    seed('slack-watcher', GOOD);
+
+    const { agents } = await registry().list();
+
+    expect(agents[0]?.dailyUsd).toBeUndefined();
+  });
+
   it('names the offending field in the invalid reason', async () => {
     seed('broken', GOOD.replace('slack-watcher', 'broken').replace('icon: ChatCircleDots', 'icon: ChatCircleDots\nnope: 1'));
 

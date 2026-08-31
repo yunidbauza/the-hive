@@ -372,6 +372,11 @@ export function createAgentRegistry({
             status: 'sleeping',
             wake: def.wake,
             rotateAfter: def.limits.rotateAfter,
+            // The other definition-side limit the scheduler needs (HIVE-121).
+            // Absent stays absent: there is no default daily ceiling.
+            ...(def.limits.dailyUsd === undefined
+              ? {}
+              : { dailyUsd: def.limits.dailyUsd }),
             // The registry has never seen a run; `mergeRunState` fills this.
             runs: [],
           });

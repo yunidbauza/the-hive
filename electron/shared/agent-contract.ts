@@ -315,6 +315,19 @@ export interface AgentSummary {
    * {@link mergeRunState} never touches it.
    */
   rotateAfter: number;
+  /**
+   * `limits.dailyUsd` from the definition — the scheduler's day ceiling.
+   *
+   * A *definition* fact like {@link AgentSummary.rotateAfter} beside it: the
+   * registry fills it and `mergeRunState` never touches it. It rides here
+   * because the scheduler's tick reads its schedules out of the same cached
+   * listing that answers `agents:list`, rather than re-parsing every
+   * `AGENT.md` once a minute.
+   *
+   * Absent means no ceiling — and absent is also the honest answer for a
+   * definition that would not parse.
+   */
+  dailyUsd?: number;
   /** The most recent run's cost, pre-formatted for display. */
   cost?: string;
   /** Why this definition could not be parsed. Listed, never hidden. */
