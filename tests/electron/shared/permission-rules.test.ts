@@ -81,6 +81,11 @@ describe('rungsFor', () => {
     expect(rungs.every((rung) => !(rung.rule ?? '').includes(','))).toBe(true);
   });
 
+  it('drops the family rung when a path has no directory to name', () => {
+    const rungs = rungsFor('Read', { file_path: 'notes.md' });
+    expect(rungs.map((rung) => rung.id)).toEqual(['allow-once', 'allow-tool']);
+  });
+
   it('gives every rung a caption', () => {
     for (const rung of rungsFor('Bash', { command: 'git push' })) {
       expect(rung.caption.length).toBeGreaterThan(0);

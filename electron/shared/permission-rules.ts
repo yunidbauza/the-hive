@@ -147,8 +147,12 @@ const familyRuleFor = (
   if (key === undefined) return undefined;
   const path = str(input, key);
   if (path === undefined) return undefined;
-  const dir = path.slice(0, path.lastIndexOf('/'));
-  if (dir === '') return undefined;
+  const slash = path.lastIndexOf('/');
+  // No `/` at all (a bare filename) means no directory to name — guard on
+  // the index itself, not the sliced result: slice(0, -1) on a `-1` index
+  // silently drops the path's last character instead of yielding "no dir".
+  if (slash <= 0) return undefined;
+  const dir = path.slice(0, slash);
   return {
     rule: `${toolName}(${dir}/**)`,
     label: `${dir}/**`,
