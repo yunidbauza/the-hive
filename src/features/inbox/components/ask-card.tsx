@@ -155,7 +155,26 @@ export function AskCard({ notif, thread }: AskCardProps) {
 
   const options = strings(ask?.meta?.options);
   const quote = text(ask?.meta?.quote);
-  const rungs = rungsOf(ask?.meta?.rungs);
+  /**
+   * `meta.kind === 'permission'` is the **only** discriminator, everywhere.
+   *
+   * Three consumers used to key on three different predicates: `notify.ts`
+   * on `meta.kind`, `permissions.ts` on `meta.kind` plus a loose rung
+   * validator, and this card on "at least one entry parses as a `Rung`" with
+   * a stricter one. Both disagreements were reachable, and the worst of them
+   * landed here: an ask carrying a well-formed `rungs` array and no
+   * `meta.kind` drew the Allow/Deny ladder and suppressed `meta.options`,
+   * while main's `isPermissionAnswer` answered `false` — so the click
+   * recorded an answer, granted nothing, and appended no event. A button
+   * that silently does nothing is exactly what the refusal line below exists
+   * to prevent.
+   *
+   * The import fence stops the three from sharing one validator — `@shared`
+   * crosses into the renderer as types only — so they cannot share code, but
+   * they can and now do share the predicate.
+   */
+  const isPermission = ask?.meta?.kind === 'permission';
+  const rungs = isPermission ? rungsOf(ask?.meta?.rungs) : [];
   /**
    * The scope preselected on open. `meta.default` names one of `rungs` by
    * id, computed once alongside them (`rungsFor`/`defaultRungFor` in
@@ -337,7 +356,21 @@ export function AskCard({ notif, thread }: AskCardProps) {
       <span className="text-[12.5px] font-semibold text-ink">
         {quote === undefined ? title : 'Send this reply?'}
       </span>
-      {detail === '' || quote !== undefined ? null : (
+      {detail === '' || quote !== undefined ? null : isPermission ? (
+        /*
+          The command, as a mono block (spec §3.6). It is the actual risk
+          surface — the one thing the user is being asked to decide on — and
+          in a plain prose `<span>` a multi-line command collapsed onto one
+          line, so `rm -rf /` sitting on line 3 of a heredoc read as part of
+          the sentence above it. `whitespace-pre-wrap` keeps the newlines,
+          `break-all` keeps a long unbroken path from widening the 316px
+          rail, and `overflow-x-auto` is the last resort for a token that
+          cannot break at all.
+        */
+        <pre className="mt-1 max-w-full overflow-x-auto rounded-md border border-border bg-panel-2 px-2 py-1.5 font-mono text-[11px] leading-[1.45] break-all whitespace-pre-wrap text-muted">
+          {detail}
+        </pre>
+      ) : (
         <span className="text-[11.5px] leading-[1.4] text-muted">{detail}</span>
       )}
 

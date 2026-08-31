@@ -35,6 +35,29 @@ describe('approve', () => {
     expect(client.post).not.toHaveBeenCalled();
   });
 
+  /**
+   * The widest rule in the grammar, and nothing pinned it. `'*'` is what a
+   * hostile `meta.rungs` was trying to get written into `tools:`, so what it
+   * does when it *is* there had better be written down: it allows every call
+   * to every tool, unasked.
+   */
+  it('lets the blanket rule allow anything, unasked', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client, ['*']);
+
+    for (const call of [
+      { tool_name: 'Bash', input: { command: 'rm -rf /' } },
+      { tool_name: 'WebFetch', input: { url: 'https://evil.test/x' } },
+      { tool_name: 'SomeToolNobodyHasHeardOf', input: {} },
+    ]) {
+      expect(decisionOf(await handlers.callTool('approve', call))).toEqual({
+        behavior: 'allow',
+        updatedInput: call.input,
+      });
+    }
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
   it('allows the hive tools through the mcp glob', async () => {
     const handlers = createToolHandlers(stub(), ['mcp__hive__*']);
     const result = await handlers.callTool('approve', {

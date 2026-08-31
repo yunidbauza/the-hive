@@ -246,6 +246,72 @@ describe('AskCard', () => {
   });
 
   /**
+   * Whole-branch review, finding 3: three consumers, one discriminator.
+   *
+   * `meta.kind === 'permission'` is what `notify.ts` and
+   * `agents/permissions.ts` both key on. This card used to key on "at least
+   * one entry parses as a `Rung`" instead, so a well-formed `rungs` array
+   * with no `meta.kind` drew the Allow/Deny ladder and suppressed
+   * `meta.options`, while main's `isPermissionAnswer` said `false` — the
+   * click recorded an answer, granted nothing, and appended no event.
+   */
+  it('does not draw the ladder for well-formed rungs without meta.kind', () => {
+    seedLedger([
+      {
+        ...ask,
+        meta: {
+          tool: 'Bash',
+          input: { command: 'npm test' },
+          rungs: [
+            { id: 'allow-tool', label: 'all Bash', caption: 'never asks again.', rule: 'Bash' },
+          ],
+          options: ['yes', 'no'],
+        },
+      },
+    ]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(screen.getByRole('button', { name: 'yes' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'no' })).toBeTruthy();
+  });
+
+  /**
+   * Spec §3.6: the command is the actual risk surface, so it gets a mono
+   * block. In the prose `<span>` this used to be, a multi-line command
+   * collapsed onto one line — the second line of a heredoc read as part of
+   * the sentence above it.
+   */
+  it('renders a permission ask\'s command as a mono block that keeps its lines', () => {
+    seedLedger([
+      {
+        ...ask,
+        body: 'Allow Bash?\ncat <<EOF > /tmp/x\nrm -rf /\nEOF',
+        meta: {
+          kind: 'permission',
+          tool: 'Bash',
+          input: { command: 'cat <<EOF > /tmp/x\nrm -rf /\nEOF' },
+          rungs: [{ id: 'allow-once', label: 'once', caption: 'runs this once.' }],
+          options: ['allow-once', 'deny'],
+        },
+      },
+    ]);
+    render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
+
+    const block = screen.getByText(/rm -rf \//);
+    expect(block.tagName).toBe('PRE');
+    expect(block.className).toContain('font-mono');
+    expect(block.textContent).toBe('cat <<EOF > /tmp/x\nrm -rf /\nEOF');
+  });
+
+  it('leaves an ordinary ask\'s detail as prose', () => {
+    seedLedger([{ ...ask, body: 'ship it?\nthe branch is green' }]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByText('the branch is green').tagName).toBe('SPAN');
+  });
+
+  /**
    * Whole-branch review, finding 5: `EDIT` used to be a prefix match
    * (`/^edit/i`), so an option that merely *starts* with those letters — a
    * model choosing more descriptive copy — hijacked the draft affordance

