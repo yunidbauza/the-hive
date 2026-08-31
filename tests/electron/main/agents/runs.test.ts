@@ -121,6 +121,29 @@ describe('createRunTracker', () => {
     expect(state.read('a').status).toBe('working');
   });
 
+  /*
+    Cleared where a run *starts*, not where the scheduler's tick decides to
+    start one (HIVE-121).
+
+    Every trigger resets it: a manual `run <agent>` or a ledger wake proves the
+    agent is alive exactly as well as a scheduled wake does. A count only some
+    wakes cleared would be a different number from the one the label beside it
+    promises — `skipped 3` next to an agent that has since run twice.
+  */
+  it('clears the skip count when a run starts, whatever started it', () => {
+    state.patch('a', { skipsSinceRun: 3 });
+
+    expect(tracker.run('a', 'manual').started).toBe(true);
+    expect(state.read('a').skipsSinceRun).toBe(0);
+  });
+
+  it('leaves the skip count alone when the run is refused', () => {
+    state.patch('a', { skipsSinceRun: 3, status: 'paused' });
+
+    expect(tracker.run('a', 'manual')).toEqual({ started: false, refused: 'paused' });
+    expect(state.read('a').skipsSinceRun).toBe(3);
+  });
+
   it('refuses a second run while one is live', () => {
     tracker.run('a', 'ledger');
 

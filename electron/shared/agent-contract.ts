@@ -767,6 +767,33 @@ export interface AgentRunState {
   /** Most recent last, capped at {@link AGENT_RUN_HISTORY}. */
   runs: RunSummary[];
   /**
+   * What this agent has done today, accumulated rather than derived (HIVE-121).
+   *
+   * {@link AgentRunState.runs} cannot answer it. That array is capped at
+   * {@link AGENT_RUN_HISTORY} and a five-minute agent takes 288 wakes a day,
+   * so a sum over it silently stops growing at twenty — under-reporting
+   * exactly the agents a daily ceiling exists for. A ceiling cannot be derived
+   * from a truncated array.
+   *
+   * That is a departure from the rule stated on {@link AgentSummary.runs},
+   * which argues "today" belongs in a selector. The rule holds for *display*
+   * and cannot hold for *enforcement*. Main's day and the renderer's day are
+   * the same machine's local day, so there is no second timezone for the two
+   * to disagree about — and {@link dayKey} is the one boundary both read.
+   *
+   * Replaced wholesale when the day changes, which is what resets `capped` and
+   * why nothing anywhere needs a midnight timer.
+   */
+  today?: { day: string; runs: number; usd: number; capped?: boolean };
+  /**
+   * Scheduled ticks skipped since the last run that actually started.
+   *
+   * The number that makes a *quiet* agent distinguishable from a *broken* one.
+   * A skip is not a run — it produces no {@link RunSummary} and so cannot move
+   * `Today`'s count — which is precisely why it needs a counter of its own.
+   */
+  skipsSinceRun?: number;
+  /**
    * Entries that arrived while this agent could not take them (HIVE-120).
    *
    * Persisted rather than held in the scheduler's memory because the failure it

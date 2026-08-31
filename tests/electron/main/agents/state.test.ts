@@ -15,6 +15,10 @@ const summary = (run: string) => ({
   outcome: 'done' as const,
 });
 
+/** Local, not UTC: `dayKey` reads a person's calendar day, and so must these. */
+const NOON = new Date(2026, 7, 31, 12).getTime();
+const NEXT_MORNING = new Date(2026, 8, 1, 9).getTime();
+
 describe('createAgentState', () => {
   let dir: string;
   let path: string;
@@ -172,12 +176,94 @@ describe('createAgentState', () => {
     const state = createAgentState({ path });
 
     for (let i = 0; i < AGENT_RUN_HISTORY + 5; i += 1) {
-      state.recordRun('a', summary(`run-${i}`));
+      state.recordRun('a', summary(`run-${i}`), NOON);
     }
 
     const runs = state.read('a').runs;
 
     expect(runs).toHaveLength(AGENT_RUN_HISTORY);
     expect(runs[runs.length - 1]?.run).toBe(`run-${AGENT_RUN_HISTORY + 4}`);
+  });
+
+  describe("today's accumulator", () => {
+    /*
+      The number a daily ceiling is compared against, and the reason it is
+      accumulated rather than summed from `runs`: that array is capped at
+      AGENT_RUN_HISTORY, and a five-minute agent takes 288 wakes a day. The
+      test above is the cap doing its job — and it is exactly why a sum over
+      the same array would stop growing at twenty.
+    */
+    it('counts a run and its cost against the day it ended', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('drone', { ...summary('r1'), costUsd: 0.07 }, NOON);
+
+      expect(state.read('drone').today).toEqual({
+        day: '2026-08-31',
+        runs: 1,
+        usd: 0.07,
+      });
+    });
+
+    it('accumulates a second run on the same day', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('drone', { ...summary('r1'), costUsd: 0.07 }, NOON);
+      state.recordRun('drone', { ...summary('r2'), costUsd: 0.05 }, NOON);
+
+      expect(state.read('drone').today).toEqual({
+        day: '2026-08-31',
+        runs: 2,
+        usd: 0.12,
+      });
+    });
+
+    /*
+      Rounded, because `0.07 + 0.05` is `0.12000000000000001` in IEEE 754 and
+      this number is both persisted and compared with `>=`. Four places is the
+      precision `formatRunCost` already displays for a sub-cent run.
+    */
+    it('does not accumulate floating-point noise', () => {
+      const state = createAgentState({ path });
+
+      for (let i = 0; i < 10; i += 1) {
+        state.recordRun('drone', { ...summary(`r${i}`), costUsd: 0.1 }, NOON);
+      }
+
+      expect(state.read('drone').today?.usd).toBe(1);
+    });
+
+    /*
+      Replaced wholesale rather than added to, which is also what clears
+      `capped` — a new day resumes a capped agent with no midnight timer to
+      arm and nothing to forget to cancel.
+    */
+    it('starts over on a new day, dropping the cap flag with it', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('drone', { ...summary('r1'), costUsd: 0.4 }, NOON);
+      state.patch('drone', {
+        today: { day: '2026-08-31', runs: 1, usd: 0.4, capped: true },
+      });
+      state.recordRun('drone', { ...summary('r2'), costUsd: 0.02 }, NEXT_MORNING);
+
+      expect(state.read('drone').today).toEqual({
+        day: '2026-09-01',
+        runs: 1,
+        usd: 0.02,
+      });
+    });
+
+    it('counts a run that reported no cost', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('drone', summary('r1'), NOON);
+
+      expect(state.read('drone').today).toEqual({
+        day: '2026-08-31',
+        runs: 1,
+        usd: 0,
+      });
+    });
   });
 });

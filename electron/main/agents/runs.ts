@@ -260,7 +260,16 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       ...(result?.costUsd === undefined ? {} : { costUsd: result.costUsd }),
       ...(result?.turns === undefined ? {} : { turns: result.turns }),
       ...(reason === null ? {} : { reason }),
-    });
+    },
+    /*
+      The run counts against the day it *ended*, not the one it started.
+
+      A wake that begins at 23:59 and finishes at 00:01 has spent tomorrow's
+      money, and tomorrow's ceiling is the one that should feel it — the
+      alternative lets a long run started before midnight spend against a day
+      whose accounting is already closed.
+    */
+    endedAt);
 
     const current = deps.state.read(name);
 
@@ -460,7 +469,17 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       };
 
       running.set(name, live);
-      deps.state.patch(name, { status: 'working' });
+      /*
+        The skip count is cleared here — at the one door every trigger passes
+        through — rather than in the scheduler's tick (HIVE-121). A manual run
+        or a ledger wake is just as good a proof that the agent is alive as a
+        scheduled one, and `skipped 3` beside a `Next` tile whose agent has
+        since run twice is a number contradicting the tile it sits in.
+
+        Below the `paused` and unbuildable-command refusals above, so a wake
+        that never happened does not clear a count that is still true.
+      */
+      deps.state.patch(name, { status: 'working', skipsSinceRun: 0 });
       deps.pushStatus(name);
 
       /*

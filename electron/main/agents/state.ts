@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import {
   AGENT_RUN_HISTORY,
+  dayKey,
   type AgentRunState,
   type RunSummary,
 } from '@shared/agent-contract';
@@ -40,7 +41,15 @@ export interface AgentState {
   all(): Record<string, AgentRunState>;
   read(name: string): AgentRunState;
   patch(name: string, change: Partial<AgentRunState>): AgentRunState;
-  recordRun(name: string, summary: RunSummary): void;
+  /**
+   * File a finished run, and count it against `now`'s calendar day.
+   *
+   * `now` is an argument rather than a `Date.now()` inside, for this module's
+   * existing reason: everything here is driven by fake timers in its spec, and
+   * a day boundary read off the wall clock would make "what happens at
+   * midnight" untestable.
+   */
+  recordRun(name: string, summary: RunSummary, now: number): void;
   /**
    * Drop this agent's entry — the definition is gone.
    *
@@ -160,9 +169,17 @@ export function createAgentState(options: AgentStateOptions): AgentState {
       return next;
     },
 
-    recordRun(name, summary) {
+    recordRun(name, summary, now) {
       const current = agents[name] ?? { ...EMPTY, runs: [] };
       const runs = [...current.runs, summary];
+      const day = dayKey(now);
+      /*
+        Replaced rather than merged the moment the day turns over, which is the
+        whole reset mechanism — and why nothing here arms a midnight timer or
+        has one to forget to cancel. `capped` rides along only while the day
+        does, so a capped agent resumes on its own.
+      */
+      const previous = current.today?.day === day ? current.today : undefined;
 
       agents[name] = {
         ...current,
@@ -170,6 +187,20 @@ export function createAgentState(options: AgentStateOptions): AgentState {
           runs.length > AGENT_RUN_HISTORY
             ? runs.slice(runs.length - AGENT_RUN_HISTORY)
             : runs,
+        today: {
+          day,
+          runs: (previous?.runs ?? 0) + 1,
+          /*
+            Rounded, because this number is persisted and then compared with
+            `>=` against a daily cap. Unrounded, 288 additions of a sub-cent
+            cost accumulate visible float noise into `agents.json` — and four
+            places is the precision `formatRunCost` already shows for a run.
+          */
+          usd:
+            Math.round(((previous?.usd ?? 0) + (summary.costUsd ?? 0)) * 10_000) /
+            10_000,
+          ...(previous?.capped === true ? { capped: true } : {}),
+        },
       };
       schedule();
     },
