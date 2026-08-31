@@ -832,25 +832,38 @@ the app's own. A permanent grant is written into `AGENT.md`'s `tools:` the
 moment the answer arrives (`permissions.ts`), so the next wake carries it as
 an ordinary `def.tools` entry; an `allow-once` writes nothing and is handed
 only to the one wake that asked, as `WakeInput.grants` — never merged into
-`def.tools`. That one-shot is composed as `exactRuleFor(meta.tool,
-meta.input)` — `Bash(touch /tmp/x)`, not `Bash` — because a bare tool name
-matches every call to that tool and the rung's caption promises exactly one.
-When no exact rule can be composed the grant widens to the bare tool and the
-`event` body says so, so the log never claims a narrower grant than it made.
+`def.tools`. That one-shot is composed by `oneShotRuleFor(meta.tool,
+meta.input)` as a **literal** rule — `literal:Bash:touch /tmp/x`, not `Bash`
+— because a bare tool name matches every call to that tool while the rung's
+caption promises exactly one. `matches` recognises the `literal:` sentinel
+first and compares the specifier text with `===`, skipping the glob, the
+shell-operator guard and the `..` guard: those exist to stop a *pattern*
+matching more than it names, and a literal names one call. That is why the
+one-shot needs no fallback — the glob DSL's comma ban and wildcard semantics
+are borrowed constraints on `HIVE_GRANTS`, not real ones, since a one-shot
+travels as JSON and is parsed by `readGrants`. The sentinel is a one-shot
+channel only and never reaches `tools:`.
 
-**Three things the grant path does not trust.** Only the overmind may
-answer a permission ask: the ledger deliberately lets an asker close its own
-thread and every agent holds `mcp__hive__*`, so without an author check an
-agent could deny-then-self-answer its way to a permanent `tools:` entry in two
-tool calls with no human. The ladder is **recomputed** from `meta.tool` and
-`meta.input` rather than read off `meta.rungs`, which is model-supplied text
-that passes through the MCP host unfiltered — a rung captioned "runs this
-once" could otherwise carry `rule: "*"`. And `meta.kind === 'permission'` is
-the single discriminator for "this is a permission ask", shared by
-`ledger/notify.ts`, `agents/permissions.ts` and `inbox/ask-card.tsx`; the
-import fence stops them sharing one validator, so they share the predicate
-instead. Every refusal on either road appends an `event` carrying
-`meta.grantFailed`, so an attempt is always legible in the log.
+**Four things the grant path does not trust.** Only the overmind may answer a
+permission ask: the ledger deliberately lets an asker close its own thread and
+every agent holds `mcp__hive__*`, so without an author check an agent could
+deny-then-self-answer its way to a permanent `tools:` entry in two tool calls
+with no human. The same check is on the `event` that marks a grant consumed,
+or a forged one would spend a pending one-shot before the user ever saw the
+card. The ladder is **recomputed** from `meta.tool` and `meta.input` rather
+than read off `meta.rungs`, which is model-supplied text that passes through
+the MCP host unfiltered — a rung captioned "runs this once" could otherwise
+carry `rule: "*"`. And `meta.tool` is itself model-supplied, so it is checked
+against `isToolName` before either road uses it: `'*'` would otherwise reach
+`HIVE_GRANTS` as the blanket rule, and `Bash]\ntools: [Write` would give
+`AGENT.md` a second `tools:` key that `readFrontmatter` lets win.
+
+`meta.kind === 'permission'` is the single discriminator for "this is a
+permission ask", shared by `ledger/notify.ts`, `agents/permissions.ts` and
+`inbox/ask-card.tsx`; the import fence stops them sharing one validator, so
+they share the predicate instead. Every refusal on either road appends an
+`event` carrying `meta.grantFailed`, so an attempt is always legible in the
+log.
 
 **`ToolSearch` is granted unconditionally** — in `HIVE_GRANTS` beside
 `mcp__hive__*`, never in `def.tools`. MCP tool schemas are deferred: the

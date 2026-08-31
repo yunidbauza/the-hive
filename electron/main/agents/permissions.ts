@@ -2,7 +2,7 @@ import { parseList, readFrontmatter } from '@shared/agent-contract';
 import type { AgentWriteResult } from '@shared/agent-contract';
 import { OVERMIND } from '@shared/ledger-contract';
 import type { LedgerEntry, LedgerPostRequest } from '@shared/ledger-contract';
-import { exactRuleFor, rungsFor } from '@shared/permission-rules';
+import { isToolName, oneShotRuleFor, rungsFor } from '@shared/permission-rules';
 
 import { patchFrontmatter } from './patch';
 
@@ -14,7 +14,11 @@ import { patchFrontmatter } from './patch';
  *
  * - `allow-once` writes nothing. It is read back at the wake the answer
  *   triggers, handed to that wake's `HIVE_GRANTS`, and retired by an `event`
- *   so a later wake cannot pick it up a second time.
+ *   so a later wake cannot pick it up a second time. It is composed as a
+ *   `literal:` rule naming the one call — a channel that exists only here
+ *   and only for one wake, and that must never reach `tools:`. It cannot:
+ *   the permanent road writes only rules that came out of `rungsFor`, and
+ *   `isToolName` forbids the `:` a forged one would need.
  * - `allow-family` / `allow-tool` are written into `AGENT.md` **here**, the
  *   moment the answer arrives, so the grant is visible in Settings › Agents
  *   before the agent has even woken. The next wake then carries it as an
@@ -123,6 +127,17 @@ export function createPermissions(deps: PermissionDeps): Permissions {
       .some(
         (entry) =>
           entry.kind === 'event' &&
+          /*
+            The author check again, and for the same reason as everywhere
+            else on this road: any party can append an `event` through the
+            MCP host, so without it an agent could forge its own
+            `meta.grantFailed` and pre-consume a one-shot the user was about
+            to be asked about — or, on the other side of the same coin, mark
+            a grant spent before it was ever handed out. Only the overmind
+            writes these, and this module is the only thing that writes them
+            as the overmind.
+          */
+          entry.from === OVERMIND &&
           (entry.meta?.['granted'] === askId ||
             entry.meta?.['grantFailed'] === askId),
       );
@@ -175,23 +190,35 @@ export function createPermissions(deps: PermissionDeps): Permissions {
 
         if (answer.body !== 'allow-once') continue;
 
+        /*
+          `meta.tool` is model-supplied and this road used to take it
+          verbatim. `meta.tool: '*'` composed into no rule at all, so the
+          old bare-name fallback pushed `'*'` straight into `HIVE_GRANTS` —
+          one click on **once**, the least dangerous button on the card, and
+          the next wake ran unfenced. See `isToolName`.
+        */
         const tool = ask.meta?.['tool'];
-        if (typeof tool !== 'string' || tool === '') continue;
+        if (!isToolName(tool)) {
+          refuse(ask, name, `${JSON.stringify(tool)} is not a tool name`);
+          continue;
+        }
 
         /*
-          The exact call, not the bare tool name. A bare name matches every
-          call to that tool, so `once` on `touch /tmp/x` used to authorise
-          every `Bash` command for the rest of the wake — while its caption
-          read "runs this once. asks again next time."
+          The exact call, as a literal rule — and no fallback. A bare tool
+          name matches every call to that tool, so `once` on `touch /tmp/x`
+          used to authorise every `Bash` command for the rest of the wake
+          while its caption read "runs this once. asks again next time."
 
-          When no exact rule can be composed (a `,` or a `*` in the command, a
-          shell operator the matcher refuses, a path that walks up) the grant
-          falls back to the bare tool, because a grant that cannot fire is a
-          click that did nothing. The event body then says so: the log must
-          never claim a narrower grant than it made.
+          `undefined` here means a tool the grammar *can* specify was asked
+          about with no specifier — `meta.input` omitted, which is how the
+          untrusted side chose when the old fallback fired. Refused out loud
+          rather than widened quietly: an event nobody reads is not consent.
         */
-        const exact = exactRuleFor(tool, record(ask.meta?.['input']) ?? {});
-        const rule = exact ?? tool;
+        const rule = oneShotRuleFor(tool, record(ask.meta?.['input']) ?? {});
+        if (rule === undefined) {
+          refuse(ask, name, `the ask carries no ${tool} call to grant`);
+          continue;
+        }
 
         grants.push(rule);
         /*
@@ -204,10 +231,7 @@ export function createPermissions(deps: PermissionDeps): Permissions {
           to: ask.from,
           kind: 'event',
           thread: ask.id,
-          body:
-            exact === undefined
-              ? `granted ${rule} to ${name} for one wake — the exact call could not be composed as a rule, so this is wider than "once" implies`
-              : `granted ${rule} to ${name} for one wake`,
+          body: `granted ${rule} to ${name} for one wake`,
           meta: { granted: ask.id, rule },
         });
       }
@@ -271,9 +295,22 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         from `meta.tool` and `meta.input` yields the rung the user actually
         clicked — with a rule this process derived itself.
       */
+      /*
+        And the same gate on the permanent road, which is the one that
+        *writes a file*. `rungsFor` echoes its argument back as the
+        `allow-tool` rule, and `patchFrontmatter` writes a value unescaped —
+        so `meta.tool: "Bash]\ntools: [Write"` closed the list early and gave
+        the file a second `tools:` key, which `readFrontmatter` lets win. The
+        user clicked a rung labelled "all Bash" and the agent permanently
+        held `Write`. Any known frontmatter key was settable that way, which
+        is why this is a shape check on the input rather than an escape at
+        the writer: `isToolName` admits no `]`, no newline and no `:`, so
+        nothing composed from it can break out of the value it is written
+        into — nor look like a one-shot literal.
+      */
       const tool = ask.meta?.['tool'];
-      if (typeof tool !== 'string' || tool === '') {
-        refuse(ask, name, `the ask names no tool`);
+      if (!isToolName(tool)) {
+        refuse(ask, name, `${JSON.stringify(tool)} is not a tool name`);
         return;
       }
 

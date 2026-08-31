@@ -132,12 +132,80 @@ const SHELL_CONTROL = /[;&|`\n]|\$\(/;
  */
 const walksUp = (path: string): boolean => path.split('/').includes('..');
 
+/** A built-in: `Bash`, `Read`, `ToolSearch`. */
+const BARE_TOOL = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** A qualified MCP name: `mcp__hive__ledger_read`. */
+const MCP_TOOL = /^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$/;
+
+/**
+ * Whether `value` is the name of a tool — the boundary check on `meta.tool`.
+ *
+ * This is not defensive noise, and deleting it reopens two escalations that
+ * were both live on this branch. `meta` on `ledger_ask` is free-form and the
+ * MCP host passes it through unfiltered, so **`meta.tool` is a string the
+ * model chose**, and both grant roads used to take it verbatim:
+ *
+ * - `meta.tool: '*'` — no exact rule can be composed from it, so the one-shot
+ *   road fell back to the bare name and pushed `'*'` into `HIVE_GRANTS`,
+ *   where `matches` treats it as everything. One click on **once** — the
+ *   least dangerous button on the card — and the next wake was unfenced.
+ * - `meta.tool: 'Bash]\ntools: [Write'` — `rungsFor` echoes its argument as
+ *   the `allow-tool` rule, `patchFrontmatter` writes it unescaped, and the
+ *   file gains a *second* `tools:` key that `readFrontmatter` lets win. A
+ *   click on a rung labelled "all Bash" permanently granted `Write`. Any
+ *   frontmatter key is settable that way, which is why the fix is a shape
+ *   check here rather than an escape at the writer.
+ *
+ * The grammar admits no `:` either, which is what keeps {@link
+ * LITERAL_PREFIX}'s three-part rule unambiguous and keeps `rungsFor` from
+ * ever producing a rule that looks like a one-shot literal.
+ */
+export function isToolName(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  return value.startsWith('mcp__') ? MCP_TOOL.test(value) : BARE_TOOL.test(value);
+}
+
+/**
+ * The sentinel on a one-shot rule: `literal:<tool>:<specifier text>`.
+ *
+ * A one-shot grant never enters `AGENT.md`. It travels as JSON in
+ * `HIVE_GRANTS` and is parsed back by `readGrants`, so the glob DSL's comma
+ * ban and its wildcard semantics are borrowed constraints on that channel,
+ * not real ones — and borrowing them is what forced the old bare-tool
+ * fallback, which announced its widening in a ledger event written *after*
+ * the click while the card still read "runs this once". Consent taken
+ * against a false caption is not consent.
+ *
+ * So a one-shot says what it means: this tool, this exact specifier text,
+ * compared with `===`. It never appears in `tools:` — `onAnswer` writes only
+ * rules that came out of `rungsFor`, and `isToolName` forbids the `:` that
+ * would be needed to forge one.
+ */
+export const LITERAL_PREFIX = 'literal:';
+
 export function matches(
   rule: string,
   toolName: string,
   input: Record<string, unknown>,
 ): boolean {
   if (rule === '') return false;
+
+  /*
+    Checked first, and deliberately short of everything below it. The
+    shell-operator and `..` guards exist to stop a *pattern* matching more
+    than it names; a literal names exactly one call, so there is nothing for
+    them to catch and applying them would only make a grant the user clicked
+    fail to fire.
+  */
+  if (rule.startsWith(LITERAL_PREFIX)) {
+    const rest = rule.slice(LITERAL_PREFIX.length);
+    const sep = rest.indexOf(':');
+    if (sep === -1) return false;
+    if (rest.slice(0, sep) !== toolName) return false;
+    return specifierTextFor(toolName, input) === rest.slice(sep + 1);
+  }
+
   if (rule === '*') return true;
 
   const open = rule.indexOf('(');
@@ -244,16 +312,24 @@ export function rungsFor(
     },
   ];
 
-  // familyRuleFor already validated its derived text with isSafeToCompose
-  // before building the rule string, so nothing further to check here.
-  const family = familyRuleFor(toolName, input);
+  /*
+    Both rules below embed `toolName`, so both are gated on `isToolName`
+    rather than the weaker `isSafeToCompose` this used to use.
+
+    `isSafeToCompose` bans `,` and `*` — the two characters the glob DSL
+    reads — but says nothing about the characters the *file format* reads.
+    `toolName` is echoed back as the `allow-tool` rule verbatim and written
+    into `tools:` unescaped, so `Bash]\ntools: [Write` closed the list early
+    and gave `AGENT.md` a second `tools:` key. Callers already reject that
+    (`permissions.ts`), but the echo happens here, so the guard belongs here
+    too: a rule this function emits is provably a tool name.
+  */
+  const family = isToolName(toolName) ? familyRuleFor(toolName, input) : undefined;
   if (family !== undefined) {
     rungs.push({ id: 'allow-family', ...family });
   }
 
-  // toolName is not model-controlled today (a `*` in a CLI tool name isn't
-  // reachable), but the guard should not depend on that staying true.
-  if (isSafeToCompose(toolName)) {
+  if (isToolName(toolName)) {
     rungs.push({
       id: 'allow-tool',
       label: `all ${toolName}`,
@@ -265,37 +341,40 @@ export function rungsFor(
   return rungs;
 }
 
+/** Tools the grammar can name a *part* of. Everything else is all-or-nothing. */
+const hasSpecifier = (toolName: string): boolean =>
+  toolName === 'Bash' || toolName === 'WebFetch' || PATH_TOOLS[toolName] !== undefined;
+
 /**
  * The rule that grants **this one call and nothing else** (HIVE-119).
  *
  * `allow-once` used to be handed out as the bare tool name, and a bare name
  * matches every call to that tool: clicking `once` on `touch /tmp/x`
  * authorised every `Bash` command for the rest of the wake, up to
- * `limits.turns`. The caption says "runs this once. asks again next time.",
- * so the grant has to be the call itself.
+ * `limits.turns`, while the caption read "runs this once. asks again next
+ * time." So the grant is the call itself, as a {@link LITERAL_PREFIX} rule —
+ * no glob, no escaping, no text the model can shape into a wider pattern.
  *
- * A wildcard-free specifier is an exact match — `globToRegExp` of a pattern
- * with no `*` compiles to the literal string — which is why composing the
- * specifier text verbatim is enough, and why `isSafeToCompose` (no `*`, no
- * `,`) is the same guard the family rungs use.
+ * There is **no fallback**. The one case that returns `undefined` is a tool
+ * the grammar can specify (`Bash`, `WebFetch`, a path tool) whose call
+ * carries no specifier — `meta.input` omitted, say, which is precisely how
+ * the untrusted side used to choose when the fallback fired. The caller
+ * refuses out loud instead of quietly granting something wider.
  *
- * The composed rule is then run back through `matches` before it is returned.
- * That is not belt-and-braces: `matches` refuses a `Bash` candidate carrying a
- * shell control operator and a path candidate carrying `..`, so without the
- * self-check this could hand out a rule that provably never fires — a grant
- * the user clicked and the fence then ignored, i.e. a button that does
- * nothing. `undefined` means "no exact rule exists for this call"; the caller
- * must then decide what to do and **say what it did**.
+ * A tool with no specifier at all (`Grep`, an MCP tool) returns its bare
+ * name, and that is not a widening: the bare name is the finest grain the
+ * fence has for it, so "once" and "all Grep" authorise the same calls — they
+ * differ only in how long the grant lives, which is exactly what the two
+ * rungs say.
  */
-export function exactRuleFor(
+export function oneShotRuleFor(
   toolName: string,
   input: Record<string, unknown>,
 ): string | undefined {
-  if (!isSafeToCompose(toolName)) return undefined;
+  if (!isToolName(toolName)) return undefined;
   const text = specifierTextFor(toolName, input);
-  if (text === undefined || !isSafeToCompose(text)) return undefined;
-  const rule = `${toolName}(${text})`;
-  return matches(rule, toolName, input) ? rule : undefined;
+  if (text === undefined) return hasSpecifier(toolName) ? undefined : toolName;
+  return `${LITERAL_PREFIX}${toolName}:${text}`;
 }
 
 export function defaultRungFor(rungs: readonly Rung[]): RungId {
