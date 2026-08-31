@@ -4339,6 +4339,33 @@ export const useSessionNameReports = (): SessionNameReport[] => {
 };
 
 /**
+ * The subscribing form of {@link isAgentId}, for a component (HIVE-118).
+ *
+ * `isAgentId` reads `getState()`, which is exactly right in an event handler —
+ * the `currentRowFor` precedent — and exactly wrong in a render path, for two
+ * separate reasons this codebase already states as rules.
+ *
+ * It is **not reactive**. `entities` gains its agents from `hydrateAgents`,
+ * and the `ledger:changed` push that puts an ask on screen can beat that
+ * hydration home. A card that asked during the gap would read `false` and keep
+ * reading `false` for ever, because nothing re-renders it when the correction
+ * lands — and in the very name collision the caller's guard exists to close,
+ * `false` means "resolve this through session lookup", which is the bug.
+ *
+ * And it is a `getState()` call from a component, which the project rule
+ * forbids outright: every consumer goes through a named selector hook, because
+ * that is what keeps a store write from re-rendering things it did not change.
+ *
+ * Returns a **boolean**, so a subscriber re-renders when the answer flips and
+ * not when anything else about the fleet moves.
+ */
+export const useIsAgentId = (id: string): boolean =>
+  useHiveStore((state) => {
+    const entity = state.entities[id];
+    return entity !== undefined && isAgent(entity);
+  });
+
+/**
  * What to call the session a **terminal** id names, right now (HIVE-110).
  *
  * The inbox's answer to a notification that outlives the name it was raised

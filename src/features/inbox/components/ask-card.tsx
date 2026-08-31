@@ -1,11 +1,16 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { HiveNotification } from '@/types/notification';
 
 import { Button } from '@components/ui/button';
 import { useRelativeTime } from '@hooks/use-relative-time';
-import { isAgentId, useAnswerAsk, useDisplayName, useThread } from '@stores/hive-store';
+import {
+  useAnswerAsk,
+  useDisplayName,
+  useIsAgentId,
+  useThread,
+} from '@stores/hive-store';
 
 interface AskCardProps {
   notif: HiveNotification;
@@ -87,9 +92,21 @@ export function AskCard({ notif, thread }: AskCardProps) {
    * conditional — but only ever with the session id, never the agent's; when
    * `from` names an agent, its own name is the display name outright, and
    * `useDisplayName` is called with `''` so it stays a no-op read.
+   *
+   * `useIsAgentId`, not the bare `isAgentId` this started as: that one reads
+   * `getState()`, which the project rule forbids in a render path and which is
+   * non-reactive besides — a card rendered before `hydrateAgents` lands would
+   * answer `false` for ever, and `false` is precisely "resolve it through
+   * session lookup". See the hook's own doc in `hive-store.ts`.
+   *
+   * `answer?.to` is the fallback asker, and it is not a nicety: the ask entry
+   * ages out of the capped ledger *before* its own answer does, so a collapsed
+   * card can outlive the entry that named the asker. `Ledger.answer` addresses
+   * every answer to `ask.from` — "the recipient of an answer is not a choice,
+   * it is whoever is owed the reply" — so the answer still carries it.
    */
-  const from = ask?.from ?? '';
-  const fromIsAgent = isAgentId(from);
+  const from = ask?.from ?? answer?.to ?? '';
+  const fromIsAgent = useIsAgentId(from);
   const sessionName = useDisplayName(fromIsAgent ? '' : from);
   const asker = fromIsAgent ? from : sessionName;
   const age = useRelativeTime(ask?.ts ?? notif.createdAt);
@@ -110,6 +127,27 @@ export function AskCard({ notif, thread }: AskCardProps) {
 
   const options = strings(ask?.meta?.options);
   const quote = text(ask?.meta?.quote);
+
+  /**
+   * What an **edited** draft is sent as (whole-branch review, finding 4).
+   *
+   * The literal `'approve'` this used to send was a word the asker may never
+   * have offered. `AGENT_PREAMBLE` mandates `'edit'` and nothing else, so a
+   * model is free to name its other options whatever it likes — `options:
+   * ['send it', 'edit', 'discard']` is a perfectly legal ask — and `Ledger.answer`
+   * validates the *thread*, never the body. The edit would have been recorded
+   * as `'approve'`, a string the asker cannot match against its own closed set
+   * and would have to guess at.
+   *
+   * So the answer is the asker's own affirmative: the first option that is
+   * neither the edit affordance nor a refusal. `'approve'` survives only as
+   * the last resort for an ask that offered a quote and no usable option at
+   * all — a shape that can only reach the draft through hand-written `meta`,
+   * since the affordance is an option.
+   */
+  const affirmative =
+    options.find((option) => !EDIT.test(option) && !NEGATIVE.test(option)) ??
+    'approve';
 
   const send = async (body: string, meta?: Record<string, unknown>) => {
     setSending(true);
@@ -143,6 +181,39 @@ export function AskCard({ notif, thread }: AskCardProps) {
     }
   };
 
+  const sendDraft = () => {
+    if (draft === null || sending) return;
+    void send(affirmative, { edited: draft });
+  };
+
+  const sendReply = () => {
+    const body = reply.trim();
+    if (body === '' || sending) return;
+    void send(body);
+  };
+
+  /**
+   * Enter sends, the way it does everywhere else that answers an ask.
+   *
+   * `agent-view.tsx` binds Enter on the equivalent single-line control, and a
+   * one-line "Answer…" box where Enter does nothing does not read as a
+   * deliberate choice — it reads as a broken input, so the user types their
+   * sentence, presses Enter, and watches it sit there.
+   *
+   * `allowNewline` is the textarea's exception: a draft is prose and may want
+   * more than one line, so Shift+Enter inserts one and plain Enter sends.
+   * `preventDefault` only on the branch that sends, or the newline the user
+   * asked for would be swallowed along with it.
+   */
+  const onEnter =
+    (submit: () => void, allowNewline = false) =>
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key !== 'Enter') return;
+      if (allowNewline && event.shiftKey) return;
+      event.preventDefault();
+      submit();
+    };
+
   const shell = (tone: string, children: ReactNode) => (
     <article
       data-notification={notif.id}
@@ -166,6 +237,36 @@ export function AskCard({ notif, thread }: AskCardProps) {
     </div>
   );
 
+  /**
+   * Answered, and checked **before** the missing-entry fallback below.
+   *
+   * The order is the whole fix (whole-branch review, finding 3). An ask is
+   * always older than its own answer, and the renderer keeps only the newest
+   * 500 entries, so the ask is always the one evicted first — there is a
+   * window, on any busy machine, where the thread holds an answer and no ask.
+   * Testing `ask === undefined` first sent a correctly-collapsed card back to
+   * the open-looking fallback: the original question, no buttons, no answer,
+   * reading exactly like an unanswered ask that had lost its controls. That is
+   * the "control that lies" the fallback exists to prevent, produced by the
+   * fallback itself.
+   *
+   * Nothing is lost by going first, because the answer alone carries
+   * everything this state renders — the body, the time, and (through
+   * `answer.to`) the asker.
+   */
+  if (answer !== undefined) {
+    return shell(
+      'border-l-border',
+      <div data-answered={answer.body} className="text-[11px] text-subtle">
+        <span className="font-medium text-muted">{asker}</span>
+        {' · answered '}
+        <span className="text-green">{answer.body}</span>
+        {' · '}
+        {age}
+      </div>,
+    );
+  }
+
   // The entry has aged out of the capped ledger. Say what main said, and stop.
   if (ask === undefined) {
     return shell(
@@ -177,19 +278,6 @@ export function AskCard({ notif, thread }: AskCardProps) {
           <span className="text-[11.5px] leading-[1.4] text-muted">{notif.body}</span>
         )}
       </>,
-    );
-  }
-
-  if (answer !== undefined) {
-    return shell(
-      'border-l-border',
-      <div data-answered={answer.body} className="text-[11px] text-subtle">
-        <span className="font-medium text-muted">{asker}</span>
-        {' · answered '}
-        <span className="text-green">{answer.body}</span>
-        {' · '}
-        {age}
-      </div>,
     );
   }
 
@@ -223,6 +311,7 @@ export function AskCard({ notif, thread }: AskCardProps) {
           aria-label="Edit the draft"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={onEnter(sendDraft, true)}
           rows={3}
           className="mt-1 w-full resize-y rounded-md border border-brand-fill bg-term-input px-2 py-1.5 text-[11px] leading-[1.45] text-ink"
         />
@@ -235,7 +324,7 @@ export function AskCard({ notif, thread }: AskCardProps) {
               size="sm"
               variant="primary"
               disabled={sending}
-              onClick={() => void send('approve', { edited: draft })}
+              onClick={sendDraft}
             >
               Send
             </Button>
@@ -274,6 +363,7 @@ export function AskCard({ notif, thread }: AskCardProps) {
               aria-label="Your answer"
               value={reply}
               onChange={(event) => setReply(event.target.value)}
+              onKeyDown={onEnter(sendReply)}
               className="min-w-0 flex-1 rounded-md border border-border bg-term-input px-2 py-1 text-[11px] text-ink placeholder:text-subtle"
               placeholder="Answer…"
             />
@@ -281,7 +371,7 @@ export function AskCard({ notif, thread }: AskCardProps) {
               size="sm"
               variant="primary"
               disabled={sending || reply.trim() === ''}
-              onClick={() => void send(reply.trim())}
+              onClick={sendReply}
             >
               Send
             </Button>

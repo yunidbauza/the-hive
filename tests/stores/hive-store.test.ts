@@ -47,6 +47,7 @@ import {
   useEndedSessions,
   currentRowFor,
   useHiveStore,
+  useIsAgentId,
   useLedgerEntries,
   useNavOrder,
   useOpenAskCount,
@@ -3987,6 +3988,47 @@ describe('the ledger slice', () => {
 
     const { result } = renderHook(() => useThread('1'));
     expect(result.current.map((found) => found.id)).toEqual(['1', '3']);
+  });
+
+  /**
+   * HIVE-118 self-review, finding 8. `AskCard` called the bare `isAgentId` —
+   * a `getState()` read — in its render path, which the project rule forbids
+   * and which cannot correct itself: `entities` gains its agents from
+   * `hydrateAgents`, and the `ledger:changed` push that puts an ask on screen
+   * can beat that home. The card would have answered `false` for ever, and
+   * `false` is precisely "resolve this asker through session lookup" — the
+   * collision the guard exists to close.
+   *
+   * The `rerender` is the whole point: it is what proves the subscription,
+   * because a non-reactive read passes the "after" assertion too.
+   */
+  it('answers whether an id names an agent, and re-answers when the fleet arrives', () => {
+    const { result, rerender } = renderHook(() => useIsAgentId('drone'));
+    expect(result.current).toBe(false);
+
+    act(() => {
+      useHiveStore.setState((state) => ({
+        entities: {
+          ...state.entities,
+          drone: {
+            kind: 'agent',
+            id: 'drone',
+            icon: 'ph-robot',
+            sub: '',
+            task: '',
+            status: 'sleeping',
+            wake: { on: [] },
+            runsSinceRotate: 0,
+            rotateAfter: 50,
+            runs: [],
+            lines: [],
+          },
+        },
+      }));
+    });
+    rerender();
+
+    expect(result.current).toBe(true);
   });
 });
 

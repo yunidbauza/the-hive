@@ -95,6 +95,41 @@ describe('AskCard', () => {
     expect(screen.queryByRole('button', { name: 'yes' })).not.toBeInTheDocument();
   });
 
+  /**
+   * HIVE-118 self-review, finding 3: the two fallbacks were tested in the
+   * wrong order.
+   *
+   * An ask is always older than its own answer, and the renderer keeps only
+   * the newest 500 entries, so the ask is always evicted **first** — this
+   * thread shape is what every answered card eventually becomes. Checking
+   * `ask === undefined` before `answer !== undefined` sent a correctly
+   * collapsed card back to the open-looking fallback: the original question,
+   * no buttons, no answer, reading exactly like an unanswered ask that had
+   * lost its controls.
+   */
+  it('stays collapsed when the answer outlives the ask entry', () => {
+    seedLedger([
+      {
+        id: 'x2',
+        ts: Date.now(),
+        kind: 'answer' as const,
+        thread: 'a41',
+        from: 'overmind',
+        // Whom the answer was owed to — the asker, and the only record of them
+        // once the ask itself has aged out.
+        to: 'drone',
+        body: 'yes',
+      },
+    ]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByText(/answered/)).toBeInTheDocument();
+    expect(screen.getByText('drone')).toBeInTheDocument();
+    // Never the fallback: the question with no controls under it.
+    expect(screen.queryByText('ship it?')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+  });
+
   it('falls back to the notification text when the entry has aged out of the store', () => {
     seedLedger([]);
     render(<AskCard notif={notif} thread="a41" />);
@@ -134,6 +169,73 @@ describe('AskCard', () => {
 
     expect(answerAsk).toHaveBeenCalledWith('a41', 'editorial pass');
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  /**
+   * HIVE-118 self-review, finding 4: the edited-draft Send used to post the
+   * literal `'approve'` whatever the asker had offered.
+   *
+   * `AGENT_PREAMBLE` mandates only `'edit'`; every other option is the model's
+   * own wording, and `Ledger.answer` validates the thread and nothing about
+   * the body. So an agent offering `['send it', 'edit', 'discard']` got back
+   * `'approve'` — a string it never offered and cannot match against its own
+   * closed set.
+   */
+  it('sends the asker’s own affirmative option after an edit, not a hardcoded approve', async () => {
+    const answerAsk = vi.fn().mockResolvedValue({ ok: true, id: 'a41' });
+    seedLedger(
+      [
+        {
+          ...ask,
+          meta: { quote: 'draft text', options: ['send it', 'edit', 'discard'] },
+        },
+      ],
+      { answerAsk },
+    );
+    render(<AskCard notif={notif} thread="a41" />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'edit' }));
+    await userEvent.type(screen.getByRole('textbox'), '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(answerAsk).toHaveBeenCalledWith('a41', 'send it', {
+      edited: 'draft text!',
+    });
+  });
+
+  /**
+   * HIVE-118 self-review, finding 11: a one-line "Answer…" box where Enter
+   * does nothing reads as a broken input. `agent-view.tsx` binds Enter on the
+   * equivalent control, and this matches it.
+   */
+  it('sends the free-text answer on Enter', async () => {
+    const answerAsk = vi.fn().mockResolvedValue(undefined);
+    seedLedger([{ ...ask, meta: {} }], { answerAsk });
+    render(<AskCard notif={notif} thread="a41" />);
+
+    await userEvent.type(screen.getByRole('textbox'), 'the staging one{Enter}');
+
+    expect(answerAsk).toHaveBeenCalledWith('a41', 'the staging one');
+  });
+
+  /** Shift+Enter is a newline in the draft; plain Enter sends it. */
+  it('keeps Shift+Enter a newline in the draft and sends on plain Enter', async () => {
+    const answerAsk = vi.fn().mockResolvedValue(undefined);
+    seedLedger(
+      [{ ...ask, meta: { quote: 'draft', options: ['approve', 'edit'] } }],
+      { answerAsk },
+    );
+    render(<AskCard notif={notif} thread="a41" />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'edit' }));
+    const box = screen.getByRole('textbox');
+    await userEvent.type(box, '{Shift>}{Enter}{/Shift}more');
+    expect(answerAsk).not.toHaveBeenCalled();
+
+    await userEvent.type(box, '{Enter}');
+    expect(answerAsk).toHaveBeenCalledWith('a41', 'approve', {
+      edited: 'draft\nmore',
+    });
   });
 
   /**
