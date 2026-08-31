@@ -895,19 +895,27 @@ describe('what the tracker was handed (HIVE-115)', () => {
     expect(destroyedSend).not.toHaveBeenCalled();
   });
 
-  it('never puts the session uuid on a status push', () => {
+  /*
+    HIVE-122. This used to be `never puts the session uuid on a status push`,
+    on the reasoning that it changed only on a first run and on a rotation and
+    that `agents:list` was soon enough for both. A rotation now happens on
+    every run, `agents:changed` only fires on an `AGENT.md` write, and the
+    Session fact's uuid half would go stale for however long until an
+    unrelated edit — so this push is the only way it reaches a live window.
+  */
+  it('puts the session uuid on a status push', () => {
     const send = vi.fn();
     windows.push({ isDestroyed: () => false, webContents: { send } });
     stored['slack-watcher'] = {
       status: 'sleeping',
       runsSinceRotate: 1,
-      sessionUuid: 'uuid-must-not-travel',
+      sessionUuid: 'b2e1c4d5',
       runs: [],
     };
 
     trackerDeps?.pushStatus('slack-watcher');
 
-    expect(send.mock.calls[0]?.[1]).not.toHaveProperty('sessionUuid');
+    expect(send.mock.calls[0]?.[1]).toHaveProperty('sessionUuid', 'b2e1c4d5');
   });
 
   it('pushes run-log lines under the agent that wrote them', () => {

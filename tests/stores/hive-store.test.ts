@@ -2602,6 +2602,75 @@ describe('hive-store', () => {
       });
     });
 
+    /*
+      HIVE-122. The rotation counter now moves live on every status push, and
+      the uuid it belongs to has to move with it — otherwise the tile's two
+      halves disagree the moment a rotation lands.
+    */
+    it('re-reads the session fact after a rotation', () => {
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'drone',
+          description: 'drone does things',
+          icon: 'ph-robot',
+          status: 'sleeping',
+          wake: { on: [] },
+          rotateAfter: 50,
+          skipsSinceRun: 0,
+          runs: [],
+          sessionUuid: '9f3c1e2a',
+          runsSinceRotate: 50,
+        },
+      ]);
+
+      useHiveStore.getState().setAgentStatus({
+        name: 'drone',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 1,
+        sessionUuid: 'b2e1c4d5',
+      });
+
+      const agent = useHiveStore.getState().entities['drone'];
+
+      expect(agent !== undefined && isAgent(agent) && agent.sessionUuid).toBe(
+        'b2e1c4d5',
+      );
+      expect(
+        agent !== undefined && isAgent(agent) && agent.runsSinceRotate,
+      ).toBe(1);
+    });
+
+    // Absent must mean unchanged, never cleared: main only ever replaces this.
+    it('keeps the uuid a push does not carry', () => {
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'drone',
+          description: 'drone does things',
+          icon: 'ph-robot',
+          status: 'sleeping',
+          wake: { on: [] },
+          rotateAfter: 50,
+          skipsSinceRun: 0,
+          runs: [],
+          sessionUuid: '9f3c1e2a',
+        },
+      ]);
+
+      useHiveStore.getState().setAgentStatus({
+        name: 'drone',
+        status: 'working',
+        runs: [],
+        runsSinceRotate: 0,
+      });
+
+      const agent = useHiveStore.getState().entities['drone'];
+
+      expect(agent !== undefined && isAgent(agent) && agent.sessionUuid).toBe(
+        '9f3c1e2a',
+      );
+    });
+
     it('appends run lines and keeps them across a re-hydrate', () => {
       seedAgent();
       useHiveStore.getState().appendAgentLines({

@@ -2625,6 +2625,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             */
             runs: push.runs,
             runsSinceRotate: push.runsSinceRotate,
+            // Absent means unchanged, never cleared: main only ever replaces this.
+            ...(push.sessionUuid === undefined ? {} : { sessionUuid: push.sessionUuid }),
             /*
               The scheduler pushes on a skip and on a new next-run time, with
               no run attached — so these two move on rows that are not running,

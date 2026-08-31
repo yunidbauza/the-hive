@@ -1418,6 +1418,7 @@ export function registerIpcHandlers(): void {
       */
       runs: state.runs,
       runsSinceRotate: state.runsSinceRotate,
+      ...(state.sessionUuid === undefined ? {} : { sessionUuid: state.sessionUuid }),
       /*
         And the two numbers `runs` cannot answer (HIVE-121): the day's totals,
         which outlive the twenty-run history, and the skip count, which counts
