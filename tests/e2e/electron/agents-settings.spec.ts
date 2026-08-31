@@ -327,6 +327,70 @@ test('authors an agent through the form controls', async ({}, testInfo) => {
 });
 
 /**
+ * The two fields HIVE-121 added, through the real form and onto real disk.
+ *
+ * The unit suite proves the controls render and patch a buffer. What it cannot
+ * show is the half that matters here: `check` is drawn *only* in interval mode,
+ * and the parser refuses `check:` beside `at:` — so a form that offered the
+ * control on a schedule would write a file the very next Save refuses. That is
+ * a round trip through the real registry, and only the built app makes it.
+ */
+test('writes check and a daily cap, and hides check on a schedule', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithConfig((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openAgents(page);
+
+    await page.getByRole('button', { name: '+ New agent' }).click();
+
+    const name = page.getByRole('textbox', { name: 'name' });
+    await expect(name).toBeVisible();
+    await name.fill('cap-watcher');
+    await page
+      .getByRole('textbox', { name: 'description' })
+      .fill('Watches, cheaply.');
+
+    // The template opens in interval mode, so the control is there to use.
+    const check = page.getByRole('radiogroup', { name: 'Check' });
+    await expect(check).toBeVisible();
+
+    await page.getByRole('radio', { name: 'always' }).click();
+    await page.getByRole('textbox', { name: 'daily cap $' }).fill('0.50');
+
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: /cap-watcher/ })).toBeVisible();
+
+    const agentMd = join(dirname(configPath), 'agents', 'cap-watcher', 'AGENT.md');
+
+    expect(readFileSync(agentMd, 'utf8')).toContain('check: always');
+    expect(readFileSync(agentMd, 'utf8')).toContain('daily_usd: 0.50');
+
+    /*
+      Now the half a jsdom test cannot reach: switch to a fixed time and the
+      control goes, taking its key with it — then Save, which is the parser
+      actually accepting what the form produced. A `check:` left behind here
+      would come back as a refusal on a file this pane had just written.
+    */
+    await page.getByRole('radio', { name: 'on a schedule' }).click();
+    await expect(check).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: /cap-watcher/ })).toBeVisible();
+
+    const after = readFileSync(agentMd, 'utf8');
+
+    expect(after).not.toContain('check:');
+    expect(after).toContain('at: [09:00]');
+    // The cap is not a wake key, so the mode switch must have left it alone.
+    expect(after).toContain('daily_usd: 0.50');
+  } finally {
+    await app.close();
+  }
+});
+
+/**
  * The bug the picker exists to make unreachable.
  *
  * `GLYPHS` is keyed `ph-robot`; the pane's old template wrote `icon: Robot`,
