@@ -14,6 +14,8 @@ import {
   agentWorkdir,
   agentsRoot,
 } from '../../electron/main/agents/paths';
+import { createPermissions, type Permissions } from '../../electron/main/agents/permissions';
+import { createAgentRegistry, type AgentRegistry } from '../../electron/main/agents/registry';
 import { createRunTracker, type ChildLike, type RunTracker } from '../../electron/main/agents/runs';
 import {
   createScheduler,
@@ -81,15 +83,23 @@ import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
  * targets moves — it is the only thing in this story that can notice a flag
  * being removed under it.
  *
- * ## The two things it has to pin, or it hangs or lies
+ * ## The two things it has to pin, or it fails confusingly
  *
- * **The tools.** `--allowedTools` grants and cannot restrict, so a turn that
- * reaches for something ungranted hits a permission prompt with no tty to
- * answer it and sits there until the suite's timeout. The definition below
- * therefore grants the read-only set a small model plausibly reaches for, and
- * the body tells it not to reach at all.
+ * **The tools.** `--allowedTools` grants and cannot restrict (see `waker.ts`),
+ * so a turn that reaches for something ungranted is not blocked there — it is
+ * routed to `mcp__hive__approve` (HIVE-119), which checks it against
+ * `HIVE_GRANTS` and, finding no match, writes a permission ask to the ledger
+ * and denies the call. That is a real fence, not a hang: the model gets a
+ * denial back, the preamble tells it to end its turn rather than retry, and
+ * the run finishes with an open ask — but an *unplanned* denial still lands on
+ * an assertion far from the one it broke, and takes real model minutes to get
+ * there. The definitions below therefore grant the read-only set a small model
+ * plausibly reaches for, and the body tells it not to reach for anything else;
+ * the one scenario that deliberately reaches for an ungranted tool (below)
+ * pins its own agent's tools just as narrowly, so the only denial it can hit
+ * is the one it is testing for.
  *
- * **The timeout.** Two real turns take far longer than Vitest's default five
+ * **The timeout.** Real turns take far longer than Vitest's default five
  * seconds; a short timeout here produces a red run that looks like a product
  * bug and is not one.
  */
@@ -120,11 +130,26 @@ const ASKER = 'probe-asker';
 /** The agent a *session* asks, to prove the wake is not the overmind's alone. */
 const RESPONDER = 'probe-responder';
 
+/**
+ * The agent whose `tools:` does not include `Bash` (HIVE-119).
+ *
+ * Its own definition, not a fourth body for {@link NAME}, for the reason
+ * {@link ASKER} already is one: this is the one agent in the suite that is
+ * *meant* to hit the fence, and every assertion below it depends on that
+ * being the only ungranted reach it makes. `wake.on: [ledger]` is
+ * deliberately absent — the scheduler would otherwise re-wake it the instant
+ * the overmind's answer lands, racing the still-in-flight `AGENT.md` write
+ * `permissions.onAnswer` makes for that same answer. The test drives both of
+ * this agent's wakes itself, so that write can be awaited before the second
+ * one is asked for.
+ */
+const FENCE = 'probe-fence';
+
 /** A party that stands in for a live session, which this suite has none of. */
 const SESSION = 'sess-live-probe';
 
 /** Every party the ledger and the receiver accept in this suite. */
-const AGENTS = [NAME, ASKER, RESPONDER];
+const AGENTS = [NAME, ASKER, RESPONDER, FENCE];
 
 const AGENT_MD = `---
 name: ${NAME}
@@ -206,18 +231,56 @@ Read your ledger inbox. If it contains an ask addressed to you, call
 "probe responded". Then end your turn. Say nothing else.
 `;
 
+/**
+ * The fence probe, as a definition (HIVE-119).
+ *
+ * `tools:` pins exactly the read-only set every other probe in this file
+ * pins, and no `Bash` — the one thing its body asks it to do. The instruction
+ * says nothing about permission, retrying, or the ledger: the preamble
+ * (`preamble.ts`) already covers all three ("a denied permission means wait,
+ * not retry" / "if you were woken because a permission ask was answered,
+ * retry that one call exactly once"), and this scenario exists to prove that
+ * prose actually holds against a real model, not to repeat it in the body.
+ *
+ * `marker` is a path outside every agent's own working directory — this
+ * suite's own temp root — so the file the command writes survives being
+ * checked from the test process without needing to know `agentWorkdir`'s
+ * layout.
+ */
+const fenceMd = (marker: string) => `---
+name: ${FENCE}
+description: Proves the permission fence denies an ungranted Bash call.
+icon: Ghost
+model: haiku
+tools: [Read, Glob, Grep, TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. After your ledger inbox, call the Bash tool
+with exactly this command and nothing else:
+
+touch ${marker}
+
+Do not call any other tool, and say nothing else.
+`;
+
 describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   /** `undefined` until `beforeAll` gets past its prerequisite check. */
   let dir: string | undefined;
   let hiveDir: string;
   let userDataPath: string;
   let previousConfigPath: string | undefined;
+  /** The absolute path {@link FENCE}'s one permitted command writes to. */
+  let marker: string;
 
   let receiver: Receiver | null = null;
   let ledger: Ledger;
   let agentState: AgentState;
   let runs: RunTracker;
   let scheduler: Scheduler | null = null;
+  let agentRegistry: AgentRegistry;
+  let permissions: Permissions;
 
   /** Every argv this suite spawned, in order. */
   const spawns: { file: string; args: string[] }[] = [];
@@ -269,10 +332,15 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     previousConfigPath = process.env[CONFIG_PATH_ENV];
     process.env[CONFIG_PATH_ENV] = join(hiveDir, 'config.json');
 
+    // Outside `hiveDir` on purpose: `rm(dir, { recursive: true })` in
+    // `afterAll` cleans it up as one directory rather than two.
+    marker = join(dir, 'bash-ran.txt');
+
     for (const [name, body] of [
       [NAME, AGENT_MD],
       [ASKER, ASKER_MD],
       [RESPONDER, RESPONDER_MD],
+      [FENCE, fenceMd(marker)],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -286,6 +354,27 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       // session this suite has no pty for (HIVE-120).
       knowsParty: (party) =>
         AGENTS.includes(party) || party === OVERMIND || party === SESSION,
+    });
+
+    /*
+      Composed exactly as `ipc/index.ts` composes them (HIVE-119): the
+      registry's own `read`/`write` handed straight to `PermissionDeps`, so a
+      grant this suite writes goes through the same `parseAgent` validation a
+      real save would, rather than a hand-rolled file write that could accept
+      a shape production would refuse.
+    */
+    agentRegistry = createAgentRegistry({
+      root: agentsRoot(),
+      skillNames: async () => ({ all: [], hive: [] }),
+    });
+
+    permissions = createPermissions({
+      entries: () => ledger.read({}).entries,
+      append: (request) => {
+        ledger.append(request);
+      },
+      read: (name) => agentRegistry.read(name),
+      write: (name, source) => agentRegistry.write(name, source),
     });
 
     receiver = createReceiver({
@@ -368,10 +457,11 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       state: agentState,
       env: () => process.env,
       newUuid: () => randomUUID(),
-      // No `permissions` runtime in this suite (HIVE-120's scheduler and its
-      // own live proof own that ground) — no wake here is owed a one-shot
-      // grant.
-      pendingGrants: () => [],
+      // Composed with the real `permissions` runtime (HIVE-119): a one-shot
+      // `allow-once` this suite never exercises would otherwise have nowhere
+      // to come from, and `grantsFor` is a no-op for every other agent here,
+      // none of which ever answers a permission ask that way.
+      pendingGrants: (name) => permissions.grantsFor(name),
     });
 
     runs = createRunTracker({
@@ -428,9 +518,15 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       run: (name, trigger, extra) => runs.run(name, trigger, extra),
       state: agentState,
       isAgent: (id) => AGENTS.includes(id),
-      // The definitions below declare `wake.on: [ledger]`, which is the gate
-      // `ipc/index.ts` reads off the parsed definition into `ledgerAgents`.
-      wakesOnLedger: (id) => AGENTS.includes(id),
+      /*
+        `ASKER` and `RESPONDER` declare `wake.on: [ledger]`; `NAME` and
+        `FENCE` do not — the gate `ipc/index.ts` reads off the parsed
+        definition into `ledgerAgents`. `FENCE`'s exclusion is load-bearing
+        (see its own doc comment): without it, the overmind's answer to its
+        permission ask would re-wake it before `permissions.onAnswer`'s
+        `AGENT.md` write has landed.
+      */
+      wakesOnLedger: (id) => id === ASKER || id === RESPONDER,
       ledger: {
         read: () => ledger.read({}),
         append: (request) => ledger.append(request),
@@ -465,6 +561,8 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     // three lines below.
     agentState?.dispose();
     await receiver?.stop();
+    // Stops the folder watch before `rm` below deletes what it is watching.
+    agentRegistry?.close();
 
     if (previousConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
     else process.env[CONFIG_PATH_ENV] = previousConfigPath;
@@ -539,6 +637,29 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
         }),
       )
     ).flat();
+  };
+
+  /**
+   * The `id` of every rung a permission ask's `meta.rungs` carries, in order.
+   *
+   * Takes the raw shape {@link onDisk} returns rather than a `LedgerEntry` —
+   * this is only ever called on an entry read back off disk as JSON, so
+   * `meta` is `unknown` all the way down.
+   */
+  const rungIdsOf = (entry: Record<string, unknown>): unknown[] => {
+    const meta = entry['meta'];
+    const raw =
+      typeof meta === 'object' && meta !== null
+        ? (meta as Record<string, unknown>)['rungs']
+        : undefined;
+
+    return Array.isArray(raw)
+      ? raw.map((rung) =>
+          typeof rung === 'object' && rung !== null
+            ? (rung as Record<string, unknown>)['id']
+            : undefined,
+        )
+      : [];
   };
 
   it('runs one process, reports its Stop under the agent name, and records the run', async () => {
@@ -763,5 +884,115 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(answers[0]?.['to']).toBe(SESSION);
     expect(answers[0]?.['thread']).toBe(asked.ok ? asked.id : undefined);
     expect(ledger.read({}).openAsks.some((ask) => ask.from === SESSION)).toBe(false);
+  }, 300_000);
+
+  /**
+   * The permission fence, end to end (HIVE-119).
+   *
+   * {@link FENCE}'s `tools:` does not include `Bash`; its one instruction is
+   * to call it anyway. Four things only a live run can prove, in the order
+   * they happen:
+   *
+   * 1. the fence itself: the ledger gains a `permission` ask naming `Bash`,
+   *    with the ladder `rungsFor` computed for this exact call;
+   * 2. the command never ran — proved from the filesystem, because a model's
+   *    own account of a denial is not evidence. `permission-rules.ts`'s own
+   *    doc comment records why: an earlier probe narrated the deny message as
+   *    though it were the output of the call it never made;
+   * 3. the turn ends `asking`, the same resting state `ledger_ask` produces —
+   *    a denial is a question with nobody answering it yet;
+   * 4. answering with a permanent rung (`allow-family`) patches `AGENT.md` on
+   *    disk, and the *next* wake — reading that file fresh, exactly as
+   *    `wake-command.ts`'s own doc comment says a wake must — carries the
+   *    grant, and the same command actually runs.
+   *
+   * `permissions.onAnswer` is awaited directly here rather than left to fire
+   * off `ledger.onChange` the way `ipc/index.ts` does (`.catch`-guarded,
+   * never awaited): the second wake below must not race that write, and an
+   * unawaited promise gives this test nothing to wait on. `FENCE` itself
+   * takes no ledger wake for the same reason — see its own doc comment above.
+   */
+  it('denies an ungranted Bash call, then carries a permanent grant to the next wake', async () => {
+    await wake('manual', FENCE);
+
+    // 1. The fence held by writing an ask, not by hanging: a `permission` ask
+    //    naming the exact tool and the ladder `approve` computed for it.
+    const entries = await onDisk();
+    const asks = entries.filter(
+      (entry) =>
+        entry['from'] === FENCE &&
+        entry['kind'] === 'ask' &&
+        (entry['meta'] as Record<string, unknown> | undefined)?.['kind'] === 'permission',
+    );
+
+    expect(asks).toHaveLength(1);
+
+    const ask = asks[0] as Record<string, unknown>;
+    const meta = ask['meta'] as Record<string, unknown> | undefined;
+
+    expect(meta?.['tool']).toBe('Bash');
+    expect(rungIdsOf(ask)).toEqual(['allow-once', 'allow-family', 'allow-tool']);
+
+    // 2. The command did not run. Not the model's word for it — the
+    //    filesystem's: nothing else in this suite ever writes this path.
+    expect(existsSync(marker)).toBe(false);
+
+    // 3. The turn ended holding an unanswered question, exactly as it would
+    //    have if the agent had called `ledger_ask` itself.
+    const first = await persisted(FENCE);
+
+    expect(first.runs).toHaveLength(1);
+    expect(first.runs[0]?.outcome).toBe('asking');
+    expect(agentState.read(FENCE).status).toBe('asking');
+
+    const open = ledger.read({}).openAsks.filter((candidate) => candidate.from === FENCE);
+
+    expect(open).toHaveLength(1);
+
+    const askId = open[0]?.id ?? '';
+
+    expect(askId).not.toBe('');
+
+    /*
+      4. `allow-family` is the ladder's default for a `Bash` call with a head
+      (`defaultRungFor`, `permission-rules.ts`) — answering with it is what a
+      card's own default button would send.
+    */
+    const answered = ledger.answer({ thread: askId, body: 'allow-family' }, OVERMIND);
+
+    expect(answered.ok).toBe(true);
+
+    const answerId = answered.ok ? answered.id : '';
+    const answerEntry = ledger.read({}).entries.find((entry) => entry.id === answerId);
+
+    expect(answerEntry).not.toBeUndefined();
+    if (answerEntry === undefined) throw new Error('answer entry vanished from the ledger');
+
+    // Awaited directly — see the doc comment above — so the write below is on
+    // disk before the second wake reads the file it lands in.
+    await permissions.onAnswer(answerEntry);
+
+    const patched = await readFile(join(agentsRoot(), FENCE, 'AGENT.md'), 'utf8');
+
+    expect(patched).toContain('Bash(touch *)');
+
+    await wake('manual', FENCE);
+
+    // The grant reached the wake itself, not only the file: the second run's
+    // own argv names the rule `matches()` will check the retried call against.
+    const args = spawns.at(-1)?.args ?? [];
+    const allowedIndex = args.indexOf('--allowedTools');
+
+    expect(allowedIndex).toBeGreaterThan(-1);
+    expect(args[allowedIndex + 1]).toContain('Bash(touch *)');
+
+    // And the call actually ran — the one thing no transcript can fake.
+    expect(existsSync(marker)).toBe(true);
+
+    const second = await persisted(FENCE);
+
+    expect(second.runs).toHaveLength(2);
+    expect(second.runs[1]?.outcome).not.toBe('asking');
+    expect(second.runs[1]?.outcome).not.toBe('failed');
   }, 300_000);
 });
