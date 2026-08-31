@@ -73,11 +73,25 @@ const globToRegExp = (pattern: string): RegExp => {
   return new RegExp(`^${escaped}$`);
 };
 
-/** `https://github.com/a/b` → `github.com`. No URL parser, by design. */
+/** A plausible hostname, optionally with a port. Nothing else is a host. */
+const HOSTNAME = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/;
+
+/**
+ * `https://github.com/a/b` → `github.com`. No URL parser, by design.
+ *
+ * The shape check is not cosmetic. This splits on `/`, `?` and `#` only, so
+ * before it a "host" could carry anything else the URL held — a newline
+ * included — and that string is what `familyRuleFor` composes into
+ * `WebFetch(domain:…)` and `permissions.ts` then writes into `tools:`. See
+ * {@link isSafeToCompose}: a newline there forges a second frontmatter key.
+ * Anything that is not a hostname yields `undefined`, which fails closed
+ * everywhere — `specifierTextFor` returns nothing, so `matches` refuses and
+ * the call is asked about rather than granted.
+ */
 const hostOf = (url: string): string | undefined => {
   const afterScheme = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
-  const host = afterScheme.split('/')[0]?.split('?')[0]?.split('#')[0];
-  return host === undefined || host === '' ? undefined : host.toLowerCase();
+  const host = afterScheme.split('/')[0]?.split('?')[0]?.split('#')[0]?.toLowerCase();
+  return host === undefined || !HOSTNAME.test(host) ? undefined : host;
 };
 
 /** The text a specifier is matched against, per tool. */
@@ -96,8 +110,9 @@ const specifierTextFor = (
 };
 
 /**
- * A shell control operator: `;`, `&`/`&&`, `|`/`||`, a backtick, `$(`, or a
- * newline.
+ * A shell control operator: `;`, `&`/`&&`, `|`/`||`, a redirection (`>`,
+ * `>>`, `<`, and the process substitutions `<(` / `>(`), a backtick, `$(`,
+ * or a newline.
  *
  * A `Bash(...)` specifier is matched against the *whole* command string and
  * nothing here splits on operators, so `Bash(git *)` compiles to `/^git .*$/`
@@ -111,14 +126,21 @@ const specifierTextFor = (
  * parser: this module is pure by construction and a half-correct tokeniser is
  * worse than none.
  *
- * The trade-off, stated plainly: a legitimate `git log | head -5` now falls
- * through to being asked instead of running under a granted `Bash(git *)`.
+ * Redirection is in the class for the same reason and it is not a lesser
+ * case: `Bash(echo *)` and `Bash(cat *)` are ordinary one-click family
+ * rungs, and both match `echo x > ~/.zshrc` and
+ * `cat f > ~/.ssh/authorized_keys` — arbitrary file write, nowhere near a
+ * caption reading "never asks again for echo commands".
+ *
+ * The trade-off, stated plainly: a legitimate `git log | head -5` or
+ * `echo x > /tmp/note` now falls through to being asked instead of running
+ * under a granted `Bash(git *)`.
  * That is the correct direction for a fence — the cost is one extra card, and
  * the alternative cost is an unreviewed `| sh`. Do not weaken this to a
  * prefix-only check: matching the head of the command and ignoring the tail
  * is exactly the hole this closes.
  */
-const SHELL_CONTROL = /[;&|`\n]|\$\(/;
+const SHELL_CONTROL = /[;&|<>`\n]|\$\(/;
 
 /**
  * Whether a candidate path walks upwards.
@@ -252,8 +274,37 @@ export function matches(
  * `*` in the command it asks to run. Refusing to compose is the safe
  * failure, same as the comma case: the rung is dropped and the ladder
  * degrades to `once` / `all <Tool>`.
+ *
+ * ## Why this is an allowlist and not a longer denylist
+ *
+ * A denylist of `,` and `*` covered the characters the *rule grammar* reads
+ * and none of the characters the *file format* reads, and the composed rule
+ * is written into `AGENT.md`. That was a live frontmatter injection needing
+ * no forged ask at all — the CLI hands `approve` the model's raw `input` and
+ * it is copied into `meta` verbatim, so the model picks this text:
+ *
+ * ```
+ * rungsFor('Read', { file_path: '/x\ntools: [Bash]\n/y.txt' })
+ *   → rule: 'Read(/x\ntools: [Bash]\n/**)'
+ * ```
+ *
+ * Written into `tools:`, that lands a second `tools:` line in the file.
+ * `readFrontmatter` builds a `Map` and the later key wins, so `parseAgent`
+ * reads `tools: [Bash]` with no problems reported: the agent permanently
+ * holds `Bash`, and the `Read` the user actually granted is silently gone.
+ * `]` alone closes the list early; `#` starts a comment; `(` and `)` break
+ * out of the `Tool(…)` specifier itself.
+ *
+ * Enumerating those is how the first version of this guard was wrong. The
+ * allowlist instead names what a Bash head, a hostname and a directory path
+ * are actually made of, so a character nobody thought about fails closed —
+ * the rung is dropped, the ladder degrades, and nothing is written. A real
+ * path that falls outside it loses its family rung and keeps `once` and
+ * `all <Tool>`, which is the documented safe failure.
  */
-const isSafeToCompose = (text: string): boolean => !text.includes(',') && !text.includes('*');
+const COMPOSABLE = /^[A-Za-z0-9 _\-./:+@~]+$/;
+
+const isSafeToCompose = (text: string): boolean => COMPOSABLE.test(text);
 
 /** The family rule for a call, or `undefined` when the tool has no specifier. */
 const familyRuleFor = (

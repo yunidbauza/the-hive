@@ -58,6 +58,56 @@ describe('approve', () => {
     expect(client.post).not.toHaveBeenCalled();
   });
 
+  /**
+   * The ledger is append-only JSONL that never rotates and `store.all()`
+   * holds every entry in memory, so a denied `Write` used to park the whole
+   * file — up to 64 KiB — in it permanently. Nothing reads those fields: the
+   * card does not render them and both the ladder and the one-shot rule come
+   * from the tool name and the specifier text.
+   */
+  it('does not park a denied call\'s file contents in the ledger', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client, []);
+
+    await handlers.callTool('approve', {
+      tool_name: 'Write',
+      input: { file_path: '/repo/a.ts', content: 'x'.repeat(64_000) },
+    });
+
+    const post = vi.mocked(client.post).mock.calls[0]![0] as unknown as {
+      meta: { input: Record<string, unknown> };
+    };
+    expect(post.meta.input['content']).toBe('[omitted from the ledger: 64000 chars]');
+    // The specifier the grant is computed from survives untouched.
+    expect(post.meta.input['file_path']).toBe('/repo/a.ts');
+  });
+
+  it('trims an Edit\'s old/new strings the same way', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client, []);
+
+    await handlers.callTool('approve', {
+      tool_name: 'Edit',
+      input: { file_path: '/repo/a.ts', old_string: 'aaa', new_string: 'bbbb' },
+    });
+
+    const post = vi.mocked(client.post).mock.calls[0]![0] as unknown as {
+      meta: { input: Record<string, unknown> };
+    };
+    expect(post.meta.input['old_string']).toBe('[omitted from the ledger: 3 chars]');
+    expect(post.meta.input['new_string']).toBe('[omitted from the ledger: 4 chars]');
+  });
+
+  it('never trims the input an allowed call actually runs with', async () => {
+    const handlers = createToolHandlers(stub(), ['Write']);
+    const input = { file_path: '/repo/a.ts', content: 'the whole file' };
+
+    expect(decisionOf(await handlers.callTool('approve', { tool_name: 'Write', input }))).toEqual({
+      behavior: 'allow',
+      updatedInput: input,
+    });
+  });
+
   it('allows the hive tools through the mcp glob', async () => {
     const handlers = createToolHandlers(stub(), ['mcp__hive__*']);
     const result = await handlers.callTool('approve', {

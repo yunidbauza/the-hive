@@ -373,11 +373,41 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         return;
       }
 
-      const patched = patchFrontmatter(
-        source,
-        'tools',
-        `[${[...current, rung.rule].join(', ')}]`,
-      );
+      const entries = [...current, rung.rule];
+
+      /*
+        The second shape check, on the exact bytes about to be written.
+
+        `isSafeToCompose` is the first, and a single shape check is what
+        failed here twice: `isToolName` closed `meta.tool`, and the *other*
+        half of a composed rule — the path dirname, the WebFetch host, the
+        Bash head — then turned out to be guarded only by a denylist of `,`
+        and `*`, which a `\n` or a `]` walks straight through. A rule
+        carrying either forges a **second `tools:` line**: `readFrontmatter`
+        builds a `Map`, the later key wins, and `parseAgent` reports no
+        problem at all, so the agent quietly ends up holding a tool nobody
+        granted while the one the user did grant disappears.
+
+        This is deliberately redundant with the composer, and it must stay
+        redundant. It is also not only about `rung.rule`: `current` is read
+        off whatever is on disk, and `parseList` splits on `,` alone, so an
+        entry already in the file can carry a `]` into the value being
+        composed here. Refusing the whole write is the only safe answer —
+        writing "most of" a frontmatter value is how the file gets a second
+        key in the first place.
+      */
+      const unwritable = entries.find((entry) => /[\n\r[\]#]/.test(entry));
+
+      if (unwritable !== undefined) {
+        refuse(
+          ask,
+          name,
+          `${JSON.stringify(unwritable)} cannot be written into tools: safely`,
+        );
+        return;
+      }
+
+      const patched = patchFrontmatter(source, 'tools', `[${entries.join(', ')}]`);
 
       const result = await deps.write(name, patched);
 

@@ -858,12 +858,36 @@ against `isToolName` before either road uses it: `'*'` would otherwise reach
 `HIVE_GRANTS` as the blanket rule, and `Bash]\ntools: [Write` would give
 `AGENT.md` a second `tools:` key that `readFrontmatter` lets win.
 
+And the *rest* of a composed rule — the Bash head, the WebFetch host, the path
+dirname — is model-supplied too, and reaches `approve` without any forged ask
+at all, since the CLI hands it the model's raw `input`. `isSafeToCompose` is
+therefore an **allowlist** (`[A-Za-z0-9 _-./:+@~]`), not a denylist of the two
+characters the rule grammar reads: a `\n` or a `]` in a path composed a rule
+that forged a *second* `tools:` line, which `readFrontmatter` lets win — the
+agent silently gained a tool nobody granted and lost the one the user did.
+`hostOf` rejects anything that is not a plausible hostname for the same
+reason, and `permissions.ts` re-checks every entry it is about to write, on
+purpose: a single shape check is what failed.
+
 `meta.kind === 'permission'` is the single discriminator for "this is a
 permission ask", shared by `ledger/notify.ts`, `agents/permissions.ts` and
 `inbox/ask-card.tsx`; the import fence stops them sharing one validator, so
 they share the predicate instead. Every refusal on either road appends an
 `event` carrying `meta.grantFailed`, so an attempt is always legible in the
 log.
+
+A `Bash(...)` specifier never matches a command carrying a shell control
+operator — `;`, `&`, `|`, a redirection (`>`, `<`), a backtick, `$(`, a
+newline. Chaining and redirection both reach past what a family caption
+promises: `Bash(git *)` would otherwise cover `git status; curl … | sh`, and
+`Bash(echo *)` — a one-click default — would cover `echo x > ~/.zshrc`. Such
+a command falls through to being asked.
+
+Only the specifier text a grant is computed from is kept in the ledger. The
+bulk fields of a call — `content`, `new_string`, `old_string` — are replaced
+with a size marker before the ask is posted, because the log is append-only
+JSONL that never rotates and `store.all()` holds all of it in memory; the
+`updatedInput` an *allowed* call runs with is never trimmed.
 
 **`ToolSearch` is granted unconditionally** — in `HIVE_GRANTS` beside
 `mcp__hive__*`, never in `def.tools`. MCP tool schemas are deferred: the

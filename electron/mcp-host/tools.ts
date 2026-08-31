@@ -268,6 +268,41 @@ export function createToolHandlers(
     isError: false,
   });
 
+  /**
+   * `meta.input` as it goes into the log, which is not the same thing as the
+   * input the call runs with.
+   *
+   * The ledger is append-only JSONL that never rotates, and `store.all()`
+   * holds every entry in memory; only `body` is capped. So a single denied
+   * `Write` used to park the whole file — up to 64 KiB — in the log
+   * permanently, and a busy agent parks one per denial.
+   *
+   * Nothing needs those fields. The card does not render them, `summarise`
+   * does not read them, and both the ladder and the one-shot rule are
+   * computed from the tool name and the specifier text alone
+   * (`@shared/permission-rules`). The `updatedInput` on an *allow* is a
+   * different value and is never trimmed — that one is what the model
+   * actually runs.
+   *
+   * Replaced by a marker rather than deleted, so a reader of the log sees
+   * that something was there and how big it was, instead of an input that
+   * looks like it never had a body.
+   */
+  const BULK_FIELDS = ['content', 'new_string', 'old_string'];
+
+  const forTheLedger = (input: Record<string, unknown>): Record<string, unknown> => {
+    const trimmed: Record<string, unknown> = { ...input };
+
+    for (const field of BULK_FIELDS) {
+      const value = trimmed[field];
+      if (typeof value === 'string') {
+        trimmed[field] = `[omitted from the ledger: ${value.length} chars]`;
+      }
+    }
+
+    return trimmed;
+  };
+
   const approve = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     const tool = stringArg(args, 'tool_name');
     if (tool === undefined) {
@@ -294,7 +329,7 @@ export function createToolHandlers(
         meta: {
           kind: 'permission',
           tool,
-          input,
+          input: forTheLedger(input),
           rungs,
           options: [...rungs.map((rung) => rung.id), 'deny'],
           default: defaultRungFor(rungs),

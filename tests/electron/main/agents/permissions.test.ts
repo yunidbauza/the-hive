@@ -532,6 +532,31 @@ describe('onAnswer', () => {
     expect(d.write.mock.calls[0]![1]).toContain('Bash(git *)');
   });
 
+  /**
+   * The second shape check, at the write itself (ship review).
+   *
+   * `current` is read off whatever is on disk, and `parseList` splits on `,`
+   * alone — so an entry already in the file can carry a `]` into the value
+   * being composed. Written out, that closes the list early and the file
+   * gains a second `tools:` line, which `readFrontmatter` lets win. The whole
+   * write is refused rather than partially made.
+   */
+  it.each([
+    ['---\nname: drone\ntools: [Read, Wri]te]\n---\n\nBody.\n', '"Wri]te"'],
+    ['---\nname: drone\ntools: [Read, W[rite]\n---\n\nBody.\n', '"W[rite"'],
+  ])('refuses the write when an entry cannot go into tools: safely', async (source, quoted) => {
+    const d = deps([ask('a1', 'drone', RUNGS)], { read: vi.fn(async () => source) });
+    await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
+
+    expect(d.write).not.toHaveBeenCalled();
+    expect(d.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: `could not grant to drone: ${quoted} cannot be written into tools: safely`,
+        meta: expect.objectContaining({ grantFailed: 'a1' }),
+      }),
+    );
+  });
+
   it('preserves existing tools when the source has a trailing comment on tools:', async () => {
     const d = deps([ask('a1', 'drone', RUNGS)], {
       read: vi.fn(async () => '---\nname: drone\ntools: [Read, Grep]        # narrow set\n---\n\nBody.\n'),

@@ -352,6 +352,22 @@ describe('AgentForm', () => {
         matter on a subscription, and it does.
       */
       expect(FIELD_HELP['limits.budget_usd']).toMatch(/unlimited/i);
+    });
+
+    /**
+     * `tools:` is read by two grammars and only one decides. The same strings
+     * ride `--allowedTools` (Claude Code's syntax, where `Bash(git status:*)`
+     * is idiomatic) and `HIVE_GRANTS` (this app's glob, where that compiles to
+     * `/^git status:.*$/` and matches nothing). `ask` outranks
+     * `--allowedTools`, so `matches()` is the grammar that counts — and the
+     * form accepts the Claude-Code shape happily, then asks on every call with
+     * no diagnostic. The help text is the cheap honest fix.
+     */
+    it('names the glob form so a Claude Code rule is not written by mistake', () => {
+      const help = FIELD_HELP.tools as string;
+      expect(help).toMatch(/Bash\(git \*\)/);
+      expect(help).toMatch(/Bash\(git status:\*\)/);
+      expect(help).toMatch(/matches nothing/);
       expect(FIELD_HELP['limits.budget_usd']).toMatch(/list rates/);
     });
 
