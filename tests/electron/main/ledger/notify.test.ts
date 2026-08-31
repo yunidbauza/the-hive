@@ -357,4 +357,81 @@ describe('createLedgerNotifier', () => {
 
     expect(dismiss).not.toHaveBeenCalled();
   });
+
+  describe('the daily cap card (HIVE-121)', () => {
+    it('raises a failed-toned card naming the agent', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(
+        entry({
+          kind: 'event',
+          body: 'daily budget reached — $0.50',
+          meta: { dailyCap: 0.5 },
+        }),
+      );
+
+      expect(raise).toHaveBeenCalledWith({
+        kind: 'agent.failed',
+        id: '20260830-101500-0001',
+        title: 'Hit its daily cap',
+        body: 'daily budget reached — $0.50',
+        action: { type: 'agent', name: 'drone' },
+        createdAt: 1_756_500_000_000,
+      });
+    });
+
+    /*
+      Gated on `from` being an agent, as the `expired` branch is gated on the
+      overmind: `meta` is a free-form rider the tool layer passes through
+      verbatim, so without the check any session could mint a card about one.
+    */
+    it('ignores the same meta from a party that is not an agent', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(
+        entry({
+          from: 'sess-01',
+          kind: 'event',
+          body: 'daily budget reached',
+          meta: { dailyCap: 0.5 },
+        }),
+      );
+
+      expect(raise).not.toHaveBeenCalled();
+    });
+
+    /*
+      Its own branch, above the run-receipt path, because that path calls
+      `spokenFor.delete(entry.from)` on any outcome — and a cap event is not a
+      run receipt: no run ended, the scheduler simply declined to start one.
+      Falling through would eat the dedup token and swallow the agent's next
+      real report.
+    */
+    it('leaves a pending run receipt intact', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(entry({ kind: 'failed', body: 'Run failed' }));
+      raise.mockClear();
+
+      onEntry(
+        entry({
+          id: 'cap-1',
+          kind: 'event',
+          body: 'daily budget reached',
+          meta: { dailyCap: 0.5 },
+        }),
+      );
+
+      expect(raise).toHaveBeenCalledTimes(1);
+      expect(raise.mock.calls[0][0].title).toBe('Hit its daily cap');
+
+      raise.mockClear();
+      onEntry(
+        entry({ id: 'end-1', kind: 'event', meta: { outcome: 'failed' } }),
+      );
+
+      // Still suppressed by the agent's own `failed` report, as it was before.
+      expect(raise).not.toHaveBeenCalled();
+    });
+  });
 });

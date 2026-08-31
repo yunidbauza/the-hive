@@ -209,6 +209,32 @@ export function createLedgerNotifier(
 
     if (entry.kind !== 'event' || !deps.isAgent(entry.from)) return;
 
+    /*
+      A day's ceiling reached (HIVE-121).
+
+      Its own branch, above the run-receipt path rather than folded into it,
+      and the reason is worth stating: that path consumes `spokenFor` on any
+      outcome, and this event is not a run receipt — no run ended, the
+      scheduler simply declined to start one. Falling through would eat the
+      dedup token and swallow the agent's next real report.
+
+      `agent.failed` rather than a new kind: the kinds are a closed set the
+      user configures delivery on, and "the agent stopped early" is exactly
+      what this one already means. The title says which ceiling it was, since
+      the per-wake budget raises the same kind.
+    */
+    if (meta.dailyCap !== undefined) {
+      deps.raise({
+        kind: 'agent.failed',
+        id: entry.id,
+        title: 'Hit its daily cap',
+        body: entry.body,
+        action: { type: 'agent', name: entry.from },
+        createdAt: entry.ts,
+      });
+      return;
+    }
+
     const outcome = str(meta.outcome);
     if (outcome === undefined) return;
 
