@@ -264,7 +264,7 @@ export const FIELD_HELP: Record<string, string> = {
   tools:
     'Tools it may call without stopping to ask, as [a, b]. The hive ledger tools are always granted. A wake has nobody to prompt, so a tool its body needs but this list omits is simply refused.',
   autonomy:
-    'ask first — it posts a question to the ledger and waits for an answer. act — it proceeds and reports afterwards.',
+    'ask first — it posts a question to the ledger and waits for an answer. act — it proceeds and reports afterwards. Neither changes the tool fence: act does not pre-allow permission prompts, so a tool outside "what it can do" still reaches your inbox.',
   model:
     'Which model each wake runs on. Default follows the model Claude Code would pick on its own.',
   'limits.turns': `Most turns in one wake before it is cut off — one turn is one reply from the model, tool call included. Default ${AGENT_LIMIT_DEFAULTS.turns}.`,

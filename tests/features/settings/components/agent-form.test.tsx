@@ -354,6 +354,18 @@ describe('AgentForm', () => {
       expect(FIELD_HELP['limits.budget_usd']).toMatch(/unlimited/i);
       expect(FIELD_HELP['limits.budget_usd']).toMatch(/list rates/);
     });
+
+    /*
+      `act` reads as a wider grant than it is: it skips the approval ask the
+      agent's own instructions would make before an outward action, and
+      nothing more. The fence in `tools:` is unaffected either way, and the
+      help text has to say so or "act" reads as "unfenced".
+    */
+    it('says that act does not pre-allow permission prompts', () => {
+      setup();
+
+      expect(screen.getByText(/does not pre-allow permission prompts/i)).toBeTruthy();
+    });
   });
 
   describe('the wake schedule', () => {

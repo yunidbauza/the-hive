@@ -600,9 +600,9 @@ Code derives the middle segment of every tool's fully-qualified name from how
 the server was delivered — the short form is what a server named in
 `--mcp-config` gets; a server delivered through `--plugin-dir` would double the
 name (`hive` as the plugin, `hive` again as the server inside it). HIVE-115's
-preamble and HIVE-119's `--permission-prompt-tool` both hardcode the short
-form, which is the whole reason `--mcp-config` was the delivery mechanism this
-story chose over a plugin.
+preamble and HIVE-119's `--permission-prompt-tool mcp__hive__approve` both
+hardcode the short form, which is the whole reason `--mcp-config` was the
+delivery mechanism this story chose over a plugin.
 
 **The read cursor lives for the process, not the ledger.** `createToolHandlers`
 (`tools.ts`) closes over one `cursor` variable — the id of the newest entry the
@@ -710,7 +710,7 @@ different way.
 | --- | --- | --- |
 | `skills` | Which skills this agent may invoke | Names checked against what exists on the machine |
 | `mcp` | Which outside systems are plugged in, and as whom | Entries in the agent's `--mcp-config`; whose OAuth token is used |
-| `tools` | Which calls proceed **without stopping to ask** | `--allowedTools` |
+| `tools` | Which calls proceed **without stopping to ask** | `--allowedTools` grants; `permissions.ask` + `--permission-prompt-tool` fence |
 
 `mcp` decides whether a system's tools exist in the process at all, and on whose
 behalf — Claude Code holds the user's Slack OAuth in the Keychain, so the agent
@@ -724,11 +724,10 @@ whose system was never named (it does not exist).
 a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model
 used Bash — with `--setting-sources ""`, and under `--permission-mode dontAsk`
 too. There is no default-deny in `-p`, so a tool left out of `tools` is not
-refused; it merely does not get the free pass. The fence is HIVE-119's
-`--permission-prompt-tool`, which is the mechanism built for the question. That
-also sets the trap the live suite has to avoid: an ungranted tool a wake reaches
-for hits a prompt with no tty to answer it and hangs until the timeout, which is
-why `tests/live/agent-conformance.test.ts` names every tool its probe could
+refused; it merely does not get the free pass. That sets the trap the live
+suite has to avoid: an ungranted tool a wake reaches for hits a prompt with no
+tty to answer it and hangs until the timeout, which is why
+`tests/live/agent-conformance.test.ts` names every tool its probe could
 plausibly touch.
 
 **`skills` is a declaration, not a sandbox.** This is the honest framing and it
@@ -776,6 +775,89 @@ it was: `/done` marks a *terminal session* finished, and it has no meaning for
 a headless agent that has no pty to close. Widening `available.ts` before that
 has an answer would let a definition name a skill whose effect on an agent is
 undefined.
+
+### The fence, measured (HIVE-119)
+
+A fence needs **two halves**, and neither works alone. `permissions.ask:
+["*"]`, written into the agent-only settings file (`agentSettings`,
+`electron/main/hooks/settings.ts`) — never `hookSettings`, which carries no
+`ask` rule and would run an agent with no fence at all — is the *trigger*: the
+only thing, measured against `claude` 2.1.251, that makes a permission check
+fire under `-p` at all. `--permission-prompt-tool mcp__hive__approve`
+(`waker.ts`) is the *router*: it hands that check to an MCP tool instead of to
+nobody. With the flag but no `ask` rule, nothing fires and the tool just runs.
+With the `ask` rule but no flag, the call is refused: the model asks a human
+who is not there. `--permission-prompt-tool` is itself **hidden from
+`--help`**, but real and accepted.
+
+**Precedence, measured: `ask` beats `allow` beats `--allowedTools`.** A tool
+named in `ask` routes to the prompt tool even when `allow` or
+`--allowedTools` also names it. This is why a one-shot grant cannot be
+implemented by appending to `--allowedTools` — the blanket `ask: ["*"]` rule
+would still win — and why `mcp__hive__approve` decides against `HIVE_GRANTS`
+itself, via `matches()` in `electron/shared/permission-rules.ts`, rather than
+the app trying to widen the command line per wake. A bare `*` is valid in
+`ask` and in `deny`, but is silently skipped, with a warning, in `allow` — so
+`allow` can never be a catch-all, which is part of why `def.tools` rides
+`--allowedTools` and not `permissions.allow`.
+
+`--permission-mode manual` and `dontAsk`, and `permissions.defaultMode:
+"ask"`, are all **inert under `-p`** — the tool simply runs, unprompted.
+`dontAsk` additionally skips the prompt tool and auto-denies, which is why
+`wakeCommand` never sets `--permission-mode` at all. `permissions.deny` /
+`--disallowedTools` are a different mechanism entirely: they remove the tool
+from the model's toolset, so no prompt fires and the model reports it has no
+such tool — that is a refusal, not the fence, and nothing here sets it.
+
+**The payload the CLI sends `mcp__hive__approve`:** `{ tool_name, input,
+tool_use_id }` — there is no `suggestions` field. **The return shape it
+accepts:** `{"behavior":"deny","message":"…"}` or
+`{"behavior":"allow","updatedInput":{…}}`, as JSON **text** in
+`content[0].text` — which is exactly what `decision()` in
+`electron/mcp-host/tools.ts` builds. Also setting `structuredContent` makes
+the CLI reject the result outright with "The permission prompt tool is
+returning an invalid result", so `decision()` deliberately never sets it. An
+`isError: true` result is treated as a denial — measured, it fails closed —
+which is why `approve` never lets a thrown error surface as an MCP error;
+every path through it returns a `decision(...)` instead.
+
+The prompt tool is consulted **once per tool use**, and `updatedPermissions`
+does **not** make a grant sticky through this path — persistence has to be
+the app's own. A permanent grant is written into `AGENT.md`'s `tools:` the
+moment the answer arrives (`permissions.ts`), so the next wake carries it as
+an ordinary `def.tools` entry; an `allow-once` writes nothing and is handed
+only to the one wake that asked, as `WakeInput.grants` — never merged into
+`def.tools`.
+
+**`ToolSearch` is granted unconditionally** — in `HIVE_GRANTS` beside
+`mcp__hive__*`, never in `def.tools`. MCP tool schemas are deferred: the
+model must call the built-in `ToolSearch` to load a schema like
+`mcp__hive__ledger_read`'s before it can invoke that tool at all, so denying
+`ToolSearch` strands a fenced agent on the preamble's first instruction,
+unable to reach even the ledger tools it *is* granted. It is plumbing, not
+capability: `ToolSearch` reveals only schemas, and every tool it surfaces is
+still checked by the fence the moment it is actually called, so granting it
+widens nothing an agent can do. This was found by `pnpm test:agent`, not by
+any unit test — nothing in a mocked child process can show a real `claude`
+binary refusing to call a tool it cannot yet describe.
+
+Under `-p`, `Notification` and `PermissionRequest` hooks do not fire and the
+status line does not run — there is no footer to write to and no human
+sitting at one. The fence's only externally visible effect is the `ask` entry
+`mcp__hive__approve` posts to the ledger.
+
+### `autonomy` does not touch the fence
+
+`autonomy` is a fourth layer next to `skills`, `mcp` and `tools`, and it is
+easy to mistake for a looser version of the same thing. It is not: `tools:`
+decides what proceeds without a prompt to `mcp__hive__approve`, and `autonomy`
+never changes that decision either way. What it decides instead is a
+different ask, one the agent's own instructions make of its own accord before
+an outward action — `ask` posts that question to the ledger and waits for an
+answer; `act` proceeds and reports afterwards. A tool outside `tools:` still
+reaches the permission-fence inbox card under either setting, because that ask
+belongs to `mcp__hive__approve`, not to the agent's judgement, and `act` has
+no way to pre-answer a card it never sees coming.
 
 ### The two limits, and the flags that enforce them
 

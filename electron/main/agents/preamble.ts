@@ -39,7 +39,9 @@ approving, and the answer's \`meta.edited\` then carries what they changed it to
 
 **A denied permission means wait, not retry.** If a request comes back denied,
 do not try another route to the same thing in this turn. End your turn and say
-what you were blocked on.
+what you were blocked on. **If you were woken because a permission ask was
+answered, retry that one call exactly once** — if it is denied again, post
+\`ledger_failed\` with the reason and stop.
 
 **Post one \`ledger_done\` per wake that did something, and nothing when quiet.**
 A wake where you found no work to do should end silently. A log entry that says
