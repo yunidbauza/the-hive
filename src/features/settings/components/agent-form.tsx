@@ -1003,7 +1003,7 @@ export function AgentForm({
 
       <SettingsGroup
         title="What it can do"
-        description="Everything it may reach while awake. Anything not listed is refused."
+        description="Everything it may reach while awake. Anything not listed reaches your inbox before it runs."
       >
         <div className="flex flex-col gap-2.5">
           {row(

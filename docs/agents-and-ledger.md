@@ -725,9 +725,9 @@ a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model
 used Bash — with `--setting-sources ""`, and under `--permission-mode dontAsk`
 too. There is no default-deny in `-p`, so a tool left out of `tools` is not
 refused; it merely does not get the free pass. That sets the trap the live
-suite has to avoid: an ungranted tool a wake reaches for hits a prompt with no
-tty to answer it and hangs until the timeout, which is why
-`tests/live/agent-conformance.test.ts` names every tool its probe could
+suite has to avoid: an ungranted tool a wake reaches for now hits the fence and
+ends its turn on a denial instead of completing the probe's assertion, which is
+why `tests/live/agent-conformance.test.ts` names every tool its probe could
 plausibly touch.
 
 **`skills` is a declaration, not a sandbox.** This is the honest framing and it

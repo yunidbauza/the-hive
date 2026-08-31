@@ -770,7 +770,7 @@ describe('AgentForm', () => {
         screen.getByText(/An agent sleeps until a schedule or a message/),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/Anything not listed is refused/),
+        screen.getByText(/Anything not listed reaches your inbox before it runs/),
       ).toBeInTheDocument();
     });
   });
