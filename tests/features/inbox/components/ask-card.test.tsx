@@ -151,6 +151,56 @@ describe('AskCard', () => {
     expect(screen.getAllByRole('button')).toHaveLength(3);
   });
 
+  /** HIVE-119: the scope ladder replaces the button row once `meta.rungs` is present. */
+  it('renders permission controls for a permission ask', () => {
+    seedLedger([
+      {
+        ...ask,
+        body: 'Allow Bash?\nnpm test',
+        meta: {
+          kind: 'permission',
+          tool: 'Bash',
+          input: { command: 'npm test' },
+          rungs: [
+            { id: 'allow-once', label: 'once', caption: 'runs this once. asks again next time.' },
+            {
+              id: 'allow-family',
+              label: 'npm *',
+              caption: 'never asks again for npm commands.',
+              rule: 'Bash(npm *)',
+            },
+            {
+              id: 'allow-tool',
+              label: 'all Bash',
+              caption: 'never asks again for Bash.',
+              rule: 'Bash',
+            },
+          ],
+          options: ['allow-once', 'allow-family', 'allow-tool', 'deny'],
+          default: 'allow-family',
+        },
+      },
+    ]);
+    render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
+
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'allow-once' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'npm *' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+  });
+
+  /** A normal ask must not be affected by the permission-controls branch above it. */
+  it('leaves an ordinary ask rendering its options as buttons', () => {
+    seedLedger([ask]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByRole('button', { name: 'yes' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'no' })).toBeTruthy();
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+  });
+
   /**
    * Whole-branch review, finding 5: `EDIT` used to be a prefix match
    * (`/^edit/i`), so an option that merely *starts* with those letters — a

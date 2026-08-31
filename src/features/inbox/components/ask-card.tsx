@@ -5,12 +5,15 @@ import type { HiveNotification } from '@/types/notification';
 
 import { Button } from '@components/ui/button';
 import { useRelativeTime } from '@hooks/use-relative-time';
+import type { Rung, RungId } from '@shared/permission-rules';
 import {
   useAnswerAsk,
   useDisplayName,
   useIsAgentId,
   useThread,
 } from '@stores/hive-store';
+
+import { PermissionControls } from './permission-controls';
 
 interface AskCardProps {
   notif: HiveNotification;
@@ -38,6 +41,31 @@ const strings = (value: unknown): string[] =>
 
 const text = (value: unknown): string | undefined =>
   typeof value === 'string' && value !== '' ? value : undefined;
+
+const RUNG_IDS: readonly RungId[] = ['allow-once', 'allow-family', 'allow-tool'];
+
+const isRungId = (value: unknown): value is RungId =>
+  typeof value === 'string' && (RUNG_IDS as readonly string[]).includes(value);
+
+/**
+ * A single entry of `meta.rungs`, validated the way `strings()` validates
+ * `meta.options` above — the shape is untrusted (it crossed a process
+ * boundary as JSON), and a malformed entry must be dropped rather than
+ * crash the rail.
+ */
+const isRung = (value: unknown): value is Rung => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const shape = value as Record<string, unknown>;
+  return (
+    isRungId(shape['id']) &&
+    typeof shape['label'] === 'string' &&
+    typeof shape['caption'] === 'string' &&
+    (shape['rule'] === undefined || typeof shape['rule'] === 'string')
+  );
+};
+
+const rungsOf = (value: unknown): Rung[] =>
+  Array.isArray(value) ? value.filter(isRung) : [];
 
 /**
  * An ask, answerable in place (HIVE-118).
@@ -127,6 +155,19 @@ export function AskCard({ notif, thread }: AskCardProps) {
 
   const options = strings(ask?.meta?.options);
   const quote = text(ask?.meta?.quote);
+  const rungs = rungsOf(ask?.meta?.rungs);
+  /**
+   * The scope preselected on open. `meta.default` names one of `rungs` by
+   * id, computed once alongside them (`rungsFor`/`defaultRungFor` in
+   * `@shared/permission-rules`) — this reads it back rather than
+   * recomputing it, and falls back to the first rung actually offered if
+   * `default` is missing, foreign, or names a rung that got filtered out
+   * above.
+   */
+  const initialRung: RungId =
+    isRungId(ask?.meta?.default) && rungs.some((rung) => rung.id === ask?.meta?.default)
+      ? (ask?.meta?.default as RungId)
+      : (rungs[0]?.id ?? 'allow-once');
 
   /**
    * What an **edited** draft is sent as (whole-branch review, finding 4).
@@ -332,6 +373,13 @@ export function AskCard({ notif, thread }: AskCardProps) {
               Cancel
             </Button>
           </>
+        ) : rungs.length > 0 ? (
+          <PermissionControls
+            rungs={rungs}
+            initial={initialRung}
+            sending={sending}
+            onAnswer={(body) => void send(body)}
+          />
         ) : options.length > 0 ? (
           options.map((option, index) => (
             <Button
