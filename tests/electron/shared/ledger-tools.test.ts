@@ -34,6 +34,17 @@ describe('ledger-tools', () => {
     expect(ask?.description).toMatch(/ends your turn/i);
   });
 
+  /**
+   * `quote` is what lets an agent's ask render as a draft-for-approval card
+   * (HIVE-118) rather than a plain question — declared optional because most
+   * asks are not that, and `required` staying untouched proves it.
+   */
+  it('declares an optional string quote on ledger_ask', () => {
+    const ask = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_ask');
+    expect(ask?.inputSchema.properties?.quote).toMatchObject({ type: 'string' });
+    expect(ask?.inputSchema.required).not.toContain('quote');
+  });
+
   it('gives every tool an object input schema', () => {
     for (const tool of LEDGER_TOOLS) {
       expect(tool.inputSchema.type).toBe('object');

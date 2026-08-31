@@ -215,6 +215,20 @@ An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
 line; one addressed to an agent is a wake (HIVE-120); a broadcast wakes nobody,
 because parties read those on their own schedule.
 
+`ledger_ask` takes two optional arguments that together turn a bare question
+into a draft awaiting approval: `options`, the closed set of answers offered
+as buttons, and `quote` (HIVE-118), the draft itself — the exact text the
+agent wants to send. Both fold into `meta` in the tool handler, guarded the
+same way (`Array.isArray` for `options`, `typeof === 'string'` for `quote`) so
+a malformed argument is dropped rather than written through. The inbox card
+(`ask-card.tsx`) reads `meta.quote` to decide whether to render a plain
+question or a quoted block above the buttons, and titles the card "Send this
+reply?" instead of the asker's own title (`notify.ts`). Approving the draft unedited answers with the clicked option's own text;
+clicking whichever option name starts with "edit" (case-insensitive) instead
+opens the quote in a text field seeded from it, and sending that answers
+`approve` with `meta.edited` carrying what the overmind changed it to — so the
+agent that reads its answer back can tell a rubber stamp from a rewrite.
+
 ## The console verbs
 
 The overmind's own mouth is three verbs in the orchestrator console —

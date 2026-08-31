@@ -32,7 +32,10 @@ where your work arrives and where answers to your earlier questions appear.
 
 **To ask for something you need, call \`ledger_ask\` — then end your turn.** An ask
 is how you reach a person. Nothing you write as ordinary text reaches anyone.
-Once you have asked, stop: you will be woken again when there is an answer.
+Once you have asked, stop: you will be woken again when there is an answer. To
+get a draft approved before you send it, pass it as \`quote\` alongside
+\`options: ['approve', 'edit', 'reject']\` — the overmind can edit it before
+approving, and the answer's \`meta.edited\` then carries what they changed it to.
 
 **A denied permission means wait, not retry.** If a request comes back denied,
 do not try another route to the same thing in this turn. End your turn and say

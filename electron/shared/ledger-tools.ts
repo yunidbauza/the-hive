@@ -94,6 +94,11 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
           description:
             'The answers you will accept, if the question is closed. Offered to the human as buttons.',
         },
+        quote: {
+          type: 'string',
+          description:
+            'A draft you want approved before you act on it — the text of the message you would send. The overmind sees it quoted above the buttons and can edit it before approving.',
+        },
         meta,
       },
       required: ['to', 'body'],

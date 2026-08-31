@@ -209,9 +209,11 @@ export function createToolHandlers(client: ReceiverClient): RpcHandlers {
 
   const ask = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     const options = args['options'];
+    const quote = args['quote'];
     const meta = {
       ...metaArg(args),
       ...(Array.isArray(options) ? { options } : {}),
+      ...(typeof quote === 'string' ? { quote } : {}),
     };
 
     const body = stringArg(args, 'body');

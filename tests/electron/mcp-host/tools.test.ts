@@ -262,6 +262,43 @@ describe('the writing tools', () => {
     expect(result.structuredContent).toEqual({ id: 'id-1', ref: 'a1' });
   });
 
+  it('ledger_ask folds quote into meta beside options (HIVE-118)', async () => {
+    const client = stub();
+    await createToolHandlers(client).callTool('ledger_ask', {
+      to: 'overmind',
+      body: 'Send this?',
+      quote: 'the draft',
+      options: ['approve', 'edit', 'reject'],
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'ask',
+        meta: { options: ['approve', 'edit', 'reject'], quote: 'the draft' },
+      }),
+    );
+  });
+
+  it('ledger_ask omits quote from meta when none was given', async () => {
+    const client = stub();
+    await createToolHandlers(client).callTool('ledger_ask', { to: 'overmind', body: 'ok?' });
+
+    const call = client.post as ReturnType<typeof vi.fn>;
+    expect(call.mock.calls[0][0]).not.toHaveProperty('meta');
+  });
+
+  it('ignores a non-string quote rather than writing it through', async () => {
+    const client = stub();
+    await createToolHandlers(client).callTool('ledger_ask', {
+      to: 'overmind',
+      body: 'ok?',
+      quote: 42,
+    });
+
+    const call = client.post as ReturnType<typeof vi.fn>;
+    expect(call.mock.calls[0][0]).not.toHaveProperty('meta');
+  });
+
   it('ledger_ask omits ref from structuredContent when the receiver returned none', async () => {
     const client = stub({ post: vi.fn(async () => ({ id: 'id-1' })) });
     const result = await createToolHandlers(client).callTool('ledger_ask', {
