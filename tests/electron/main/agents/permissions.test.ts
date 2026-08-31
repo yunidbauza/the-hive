@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { LedgerPostRequest } from '@shared/ledger-contract';
+
 import { createPermissions } from '../../../../electron/main/agents/permissions';
 
 const ask = (id: string, from: string, rungs: unknown) => ({
@@ -22,7 +24,7 @@ const SOURCE = '---\nname: drone\ntools: [Read]\n---\n\nBody.\n';
 
 const deps = (entries: unknown[], overrides = {}) => ({
   entries: () => entries as never,
-  append: vi.fn(),
+  append: vi.fn((_request: LedgerPostRequest) => undefined),
   read: vi.fn(async () => SOURCE),
   // Typed with both params (even though the default resolution ignores them)
   // so `.mock.calls[n]![1]` below resolves against a 2-element tuple instead
@@ -73,6 +75,7 @@ describe('onAnswer', () => {
     expect(d.write.mock.calls[0]![1]).toContain('Read');
     expect(d.append).toHaveBeenCalledWith(
       expect.objectContaining({
+        body: 'granted Bash(git *) to drone',
         meta: expect.objectContaining({ granted: 'a1', rule: 'Bash(git *)' }),
       }),
     );
@@ -109,7 +112,10 @@ describe('onAnswer', () => {
     });
     await createPermissions(d).onAnswer(answer('n1', 'a1', 'allow-family') as never);
     expect(d.append).toHaveBeenCalledWith(
-      expect.objectContaining({ meta: expect.objectContaining({ grantFailed: 'a1' }) }),
+      expect.objectContaining({
+        body: 'could not grant Bash(git *) to drone: bad',
+        meta: expect.objectContaining({ grantFailed: 'a1' }),
+      }),
     );
   });
 

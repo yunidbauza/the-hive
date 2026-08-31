@@ -1,6 +1,6 @@
 import { parseList } from '@shared/agent-contract';
 import type { AgentWriteResult } from '@shared/agent-contract';
-import type { LedgerEntry } from '@shared/ledger-contract';
+import type { LedgerEntry, LedgerPostRequest } from '@shared/ledger-contract';
 import type { Rung } from '@shared/permission-rules';
 
 import { patchFrontmatter } from './patch';
@@ -42,11 +42,15 @@ const isPermissionAsk = (entry: LedgerEntry): boolean =>
 
 export interface PermissionDeps {
   entries: () => readonly LedgerEntry[];
-  append: (entry: {
-    from: string;
-    kind: 'event';
-    meta: Record<string, unknown>;
-  }) => void;
+  /**
+   * The real `Ledger.append` request shape, not a hand-rolled subset — a
+   * `body` is required by that contract, and it is the human-readable line
+   * someone reads in the ledger later, so it is written here, next to the
+   * code that knows which rule was granted to which agent and why. This
+   * module never acts on the `LedgerResult` `append` would normally return,
+   * so the dep is typed to discard it.
+   */
+  append: (request: LedgerPostRequest) => void;
   read: (name: string) => Promise<string | null>;
   write: (name: string, source: string) => Promise<AgentWriteResult>;
 }
@@ -96,6 +100,7 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         deps.append({
           from: 'overmind',
           kind: 'event',
+          body: `granted ${tool} to ${name} for one wake`,
           meta: { granted: ask.id, rule: tool },
         });
       }
@@ -120,6 +125,7 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         deps.append({
           from: 'overmind',
           kind: 'event',
+          body: `could not grant ${rung.rule} to ${name}: no definition`,
           meta: { grantFailed: ask.id, reason: `no definition for ${name}` },
         });
         return;
@@ -132,6 +138,9 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         deps.append({
           from: 'overmind',
           kind: 'event',
+          // The rule was already there — the answer is still acted on and
+          // recorded, the file just already said so.
+          body: `granted ${rung.rule} to ${name}`,
           meta: { granted: ask.id, rule: rung.rule },
         });
         return;
@@ -148,6 +157,9 @@ export function createPermissions(deps: PermissionDeps): Permissions {
       deps.append({
         from: 'overmind',
         kind: 'event',
+        body: result.ok
+          ? `granted ${rung.rule} to ${name}`
+          : `could not grant ${rung.rule} to ${name}: ${result.problems.map((p) => p.reason).join('; ')}`,
         meta: result.ok
           ? { granted: ask.id, rule: rung.rule }
           : {
