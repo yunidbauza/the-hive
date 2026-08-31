@@ -667,7 +667,7 @@ with `ELECTRON_RUN_AS_NODE=1` so the app's own binary runs it as plain Node
 instead of booting Chromium. `claude` starts one host process per session and
 keeps it for that session's life — it talks JSON-RPC over stdio, the same
 protocol shape every MCP server speaks, hand-rolled here because the surface
-is eight tools and did not justify a dependency.
+is nine tools and did not justify a dependency.
 
 **Identity comes from the environment, not from an argument the host could be
 handed on the command line.** Three variables, all set on the session's own
@@ -685,7 +685,7 @@ spawns (HIVE-111), so a model with shell access could still `curl` the
 receiver directly using another session's header value. Closing that is
 tracked separately, not attempted here. If any of the three is missing — the
 process was started outside The Hive, or by hand in a plain terminal —
-`createHandlers` still lists all eight tools (so
+`createHandlers` still lists all nine tools (so
 `/mcp` shows a connected server, not a broken one) but every *call* answers
 with a sentence explaining why the ledger is out of reach, rather than the
 server refusing to start.
@@ -695,11 +695,12 @@ receiver routes are POST**, and the host's `ReceiverClient` (`client.ts`)
 calls them with the same two headers the hook path uses
 (`x-hive-session`, `x-hive-token`) and the same per-launch token.
 
-**The eight tools, one ledger kind each:** `ledger_post` → `post`,
+**The nine tools, one ledger kind each:** `ledger_post` → `post`,
 `ledger_ask` → `ask`, `ledger_answer` → `answer`, `ledger_claim` → `claim`,
 `ledger_release` → `release`, `ledger_done` → `done`, `ledger_failed` →
-`failed`, and `ledger_read`, which takes no kind — it is the one tool that
-reads rather than appends. `ledger_claim` and `ledger_release` still write
+`failed`, `ledger_handoff` → `handoff` (HIVE-122), and `ledger_read`, which
+takes no kind — it is the one tool that reads rather than appends.
+`ledger_claim` and `ledger_release` still write
 through `client.post` under the hood; they are separate tools rather than
 `kind` arguments to `ledger_post` because their argument shape (a bare `task`)
 and their response text (naming the previous holder, if any) are specific
@@ -738,7 +739,7 @@ all of it in one tool result.
 
 Proved against a real `claude` binary in `tests/live/ledger-conformance.test.ts`
 (`pnpm test:ledger`): that the binary actually loads the generated config and
-finds eight tools named the short way, that the identity in the environment —
+finds them named the short way, that the identity in the environment —
 not anything the model typed — is what lands in a written line's `from`, and
 that a refusal's reason reaches the model as readable text.
 
@@ -1111,13 +1112,69 @@ failure mode that makes a cap look like a bug in the agent.
 `rotate_after` is unaffected and worth stating plainly: every wake is
 `claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
 the feature — it is how an agent remembers it already answered a thread — and
-the cost is a transcript that only grows. Rotation is what bounds it: once
-`runsSinceRotate` reaches `rotate_after`, `wake-command.ts` drops the stored
-uuid and the next wake mints a fresh one with `--session-id` instead of
-resuming. Deliberate forgetting — and as it ships today, forgetting with no
-note left behind. `handoff` is a real `LedgerKind` and nothing writes one yet;
-the summary a rotating agent should leave itself is a later story's, and until
-it lands a rotation is a clean break rather than a handover.
+the cost is a transcript that only grows. Rotation is what bounds it, and
+**HIVE-122 made it a handover rather than an amnesia**: an agent that forgets
+without leaving a note forgets the open threads it was the only one watching,
+and the first anyone learns of that is a reply that never comes. So the agent
+is a participant in its own rotation, across two wakes.
+
+**The crossing wake still resumes.** When `runsSinceRotate` reaches
+`rotate_after`, `wake-command.ts` builds the same `--resume <uuid>` it always
+did — a handoff written by an agent that has been made to forget everything
+first would be worthless. What changes is the prompt: `wakePrompt` swaps the
+usual "read your inbox, then do your job" for a last turn that asks the agent to
+do that work and then call **`ledger_handoff`** with what a fresh copy of itself
+must know — what it watches, which threads are open and their ids, what it has
+learned about how this user wants things done. Swaps rather than appends,
+because an agent handed two instructions reliably does the first one. That wake
+resets nothing: the counter is still sitting at its old value when the run ends,
+deliberately, which is why `lastTurn` rides from the command onto the run record
+rather than being re-derived at close.
+
+**The close is what decides whether the rotation happens.** `runs.ts` asks
+`handoffFor` whether the run posted a `handoff` entry at or after its own
+`run.started` — the same run-boundary comparison `openAsksFor` uses, because the
+ledger has no other notion of which run an entry belongs to, and the last one
+wins if the agent wrote several. If it did, main mints the next session's uuid
+into `AgentRunState.pendingSession` beside the handoff body, zeroes
+`runsSinceRotate` and clears `rotateFailures`. If it did not, nothing rotates
+and the conversation is kept — a run cut off by its turn cap is not an agent
+that chose to forget, and dropping its memory anyway is precisely the outcome
+this design exists to prevent.
+
+Declining to rotate is a **strike**, and three consecutive strikes are the
+point at which a human is told. At exactly the third, main appends an `event`
+`from` the overmind carrying `meta: { rotateFailed: 3, agent }`, which
+`notify.ts` raises as an `agent.failed` card. The `from` is the overmind on
+purpose, gated on that at the other end, for the daily cap's reason: `meta` is a
+rider any party can write, so a card minted from an agent's own `from` is one
+any agent could mint about itself. Main declined to rotate; main says so. Fired
+at exactly three rather than three-or-more so it cannot repeat — the counter
+keeps climbing and every later wake keeps asking. A run that never reached the
+model takes no strike and does not advance the counter either: a spawn failure
+is a broken config, not a disobedient agent.
+
+**The next wake spends what the close parked.** `pendingSession` is a rotation
+already decided, waiting for someone to start it: the wake spells
+`--session-id <its uuid>` instead of resuming, and `wakePrompt` prefixes the
+stored handoff onto the prompt — first, because it is the context the rest of
+the prompt assumes. It is consumed only on the path that returns a command,
+after the filesystem writes that can fail, since clearing it ahead of a
+transient `mkdir` error would lose the handoff permanently — no run, and the
+memory gone anyway.
+
+`rotate <agent>` in the console brings all of that forward by hand, which is
+what you want after editing a definition substantially enough that the running
+conversation is about a different agent. It arms `forceRotate` and then goes
+through the ordinary run door, so a busy or paused agent refuses it exactly as
+it refuses a run — and the flag survives the refusal, so the wake that does land
+is still the handoff wake. One guard in that arm is not obvious: `lastTurn`
+requires a `sessionUuid` as well. Only a run writes that field, so the counter
+could never reach the arm without it — but `rotate` on an agent installed a
+minute ago could, and the result would be a last-turn prompt on a brand-new
+`--session-id` session, asking for a summary of a conversation that never
+happened. With the term, a forced rotation on a never-run agent degrades to the
+ordinary first wake, which is already the fresh session the user was asking for.
 
 ### A run ends exactly once, and quitting is one of the ways
 
@@ -1218,8 +1275,19 @@ comment used to say it never would. The alternative was emitting
 `agents:changed` at every run close so the renderer re-lists, which re-reads and
 re-parses every `AGENT.md` on disk to learn one number main already holds.
 Twenty summaries on a push that fires a few times an hour is the cheaper
-honesty. `sessionUuid` still stays behind: it moves on a first run and on a
-rotation, and `agents:list` is soon enough for both.
+honesty.
+
+**`sessionUuid` used to stay behind, and HIVE-122 is why it no longer does.**
+The old argument was that the field moves on a first run and on a rotation, and
+`agents:list` is soon enough for both. Rotation broke the second half of that.
+`finalizeRun` writes the uuid off the `result` event, so it changes at the close
+of the first run of every new session — once in an agent's life under the old
+reading, but every `rotate_after` wakes in practice, on an agent the user may
+well be watching. Nothing emits `agents:changed` on a run, so the `Session` fact
+went on naming the conversation that had already been handed off until something
+unrelated re-listed. It rides the status push now, and `setAgentStatus` applies
+it only when the push carries one: absent means unchanged, never cleared,
+because the scheduler pushes on a skip with no run and no uuid attached.
 
 ### An agent is not a terminal
 
