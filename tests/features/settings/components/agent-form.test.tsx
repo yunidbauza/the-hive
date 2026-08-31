@@ -229,6 +229,7 @@ describe('AgentForm', () => {
       'tools',
       'turns',
       'budget $',
+      'daily cap $',
       'rotate after',
     ]) {
       expect(screen.getByRole('textbox', { name: label })).toBeInTheDocument();
@@ -434,6 +435,94 @@ describe('AgentForm', () => {
 
       expect(fields?.has('wake.every')).toBe(false);
       expect(fields?.get('wake.at')?.value).toBe('[09:00]');
+    });
+
+    /*
+      `check` belongs to the interval it modifies (HIVE-121). Hidden in the
+      other two modes rather than disabled, matching how `every` and the
+      `at`/`days` chips already come and go — and because the parser refuses
+      `check:` beside `at:`, so a control that could write one there would
+      offer an edit this same form goes on to refuse.
+    */
+    it('offers the check control in interval mode', () => {
+      setup();
+
+      expect(
+        screen.getByRole('radiogroup', { name: 'Check' }),
+      ).toBeInTheDocument();
+    });
+
+    it('hides check on a schedule, where the parser refuses it', () => {
+      setup({ source: CAL });
+
+      expect(
+        screen.queryByRole('radiogroup', { name: 'Check' }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('hides check when nothing schedules the agent at all', () => {
+      setup({ source: SOURCE.replace('  every: 5m\n', '') });
+
+      expect(
+        screen.queryByRole('radiogroup', { name: 'Check' }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('reads onchange as the default when the file names no check', () => {
+      setup();
+
+      expect(screen.getByRole('radio', { name: 'on change' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+    });
+
+    it('writes check: always into the buffer', async () => {
+      const onChange = setup();
+
+      await userEvent.click(screen.getByRole('radio', { name: 'always' }));
+
+      expect(patched(onChange, 'wake.check')).toBe('always');
+    });
+
+    /*
+      Absence is the value, as with `model`: the parser materialises `onchange`
+      itself, so writing it into every file would spell out a default rather
+      than record a choice.
+    */
+    it('clears check: rather than writing the default back', async () => {
+      const onChange = setup({
+        source: SOURCE.replace('  every: 5m\n', '  every: 5m\n  check: always\n'),
+      });
+
+      await userEvent.click(screen.getByRole('radio', { name: 'on change' }));
+
+      const fields = readFrontmatter(
+        onChange.mock.calls.at(-1)?.[0] as string,
+      )?.fields;
+
+      expect(fields?.has('wake.check')).toBe(false);
+    });
+
+    /*
+      A buffer that kept `check:` across the switch would be a file the parser
+      refuses — offered by the form that wrote it.
+    */
+    it('drops check: when the mode changes to a schedule', async () => {
+      const onChange = setup({
+        source: SOURCE.replace('  every: 5m\n', '  every: 5m\n  check: always\n'),
+      });
+
+      await userEvent.click(
+        screen.getByRole('radio', { name: 'on a schedule' }),
+      );
+
+      const fields = readFrontmatter(
+        onChange.mock.calls.at(-1)?.[0] as string,
+      )?.fields;
+
+      expect(fields?.has('wake.check')).toBe(false);
+      expect(fields?.has('wake.every')).toBe(false);
     });
 
     it('swaps at: and days: back for every:', async () => {

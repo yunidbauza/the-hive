@@ -115,6 +115,19 @@ const WAKE_MODES = [
 
 type WakeMode = (typeof WAKE_MODES)[number]['value'];
 
+/**
+ * Whether a scheduled tick has to justify itself.
+ *
+ * Only meaningful in `every…` mode, which is why the control is drawn only
+ * there rather than disabled elsewhere: the parser refuses `check:` beside
+ * `at:`, so a control that could write one in calendar mode would produce a
+ * file this form goes on to refuse.
+ */
+const CHECK_OPTIONS = [
+  { value: 'onchange', label: 'on change' },
+  { value: 'always', label: 'always' },
+] as const;
+
 /** Times offered as one click. Anything else is added in the Source tab. */
 const TIME_PRESETS = ['06:00', '09:00', '12:00', '17:00', '21:00'] as const;
 
@@ -219,6 +232,12 @@ const LIMIT_FIELDS = [
     hint: 'unlimited',
   },
   {
+    // No default to show, as with the budget above — absent means no ceiling.
+    path: 'limits.daily_usd',
+    label: 'daily cap $',
+    hint: 'unlimited',
+  },
+  {
     path: 'limits.rotate_after',
     label: 'rotate after',
     hint: String(AGENT_LIMIT_DEFAULTS.rotateAfter),
@@ -249,7 +268,16 @@ export const FIELD_HELP: Record<string, string> = {
   'wake.days':
     'Days those times fire on. Selecting all seven, or none, means every day.',
   'wake.quiet':
-    'Local HH:MM-HH:MM, and may wrap midnight. No scheduled wakes inside the window; a message addressed to the agent still wakes it.',
+    'Local HH:MM-HH:MM, and may wrap midnight. No scheduled wakes inside the window; a message addressed to the agent still wakes it. A fixed time inside your own quiet hours is refused rather than silently dropped.',
+  /*
+    Says what the default costs, because the intuition it corrects is
+    expensive: five minutes of nothing is 288 turns a day spent proving an
+    empty inbox is still empty. And it names the one case that needs `always`
+    — work that arrives somewhere the ledger cannot see — since an agent set
+    wrongly here does not fail, it simply never runs.
+  */
+  'wake.check':
+    'on change — a scheduled wake is skipped unless something addressed the agent since its last run, which is what makes a five-minute interval affordable. always — every interval wakes it, for an agent whose work arrives somewhere the ledger cannot see, like a Slack search. Only applies to every…; a fixed time always runs.',
   /*
     `ledger` gets the most words because it is the one that is load-bearing and
     the one whose *absence* is easy to misread. Turning it off does not mean
@@ -276,6 +304,14 @@ export const FIELD_HELP: Record<string, string> = {
   */
   'limits.budget_usd':
     'Empty means unlimited. A number caps one wake, priced at list rates — so it stops a run on a subscription too, wherever the run happens to be.',
+  /*
+    Distinguished from the per-wake budget above in its first clause, because
+    the two fields sit adjacent and read alike. Says "scheduled" outright: a
+    cap that stopped a ledger answer reaching the agent would be a lock rather
+    than a budget, and this one is not.
+  */
+  'limits.daily_usd':
+    'Empty means no daily ceiling. A number stops its scheduled wakes for the rest of the day once the day’s runs reach it, and posts a card saying so — you can still wake it by hand, and it resumes at midnight. Priced at list rates, like the budget above.',
   'limits.rotate_after': `Runs before it starts a fresh session. Every wake resumes the last one, so this is what stops the transcript growing forever. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
 };
 
@@ -299,6 +335,7 @@ export const RENDERED_PATHS: readonly string[] = [
   'wake.at',
   'wake.days',
   'wake.quiet',
+  'wake.check',
   'wake.on',
   ...LIST_FIELDS.map((field) => field.path),
   // Explicit, because `mcp` left LIST_FIELDS for a chip row of its own. A path
@@ -533,6 +570,8 @@ export function AgentForm({
       draft = clear('wake.every', draft);
       draft = clear('wake.at', draft);
       draft = clear('wake.days', draft);
+      // Nothing left for it to modify — see the calendar branch below.
+      draft = clear('wake.check', draft);
     } else if (next === 'every') {
       draft = clear('wake.at', draft);
       draft = clear('wake.days', draft);
@@ -541,6 +580,11 @@ export function AgentForm({
       }
     } else {
       draft = clear('wake.every', draft);
+      /*
+        And `check:` with it: the parser refuses it beside `at:`, so a buffer
+        that kept it would be a file the form itself could not save.
+      */
+      draft = clear('wake.check', draft);
       if (!has('wake.at')) {
         draft = patchFrontmatter(draft, 'wake.at', WAKE_DEFAULTS.at);
       }
@@ -921,6 +965,37 @@ export function AgentForm({
                   options={wakeOptions}
                   value={wakeEvery}
                   onChange={(next) => set('wake.every', next)}
+                />,
+              )
+            : null}
+
+          {/*
+            Beneath the interval it modifies, and gone with it.
+
+            `check` is a `wake.*` key and reads as one thought with `every 5m`
+            above it. In the Limits group it would be the one control that is
+            meaningless unless a field two groups away says `every…`, with
+            nothing on screen to say so — and the parser refuses it in the
+            other two modes, so drawing it there would offer an edit that
+            cannot be saved.
+          */}
+          {mode === 'every'
+            ? row(
+                'wake.check',
+                'check',
+                <SegmentedControl
+                  label="Check"
+                  options={CHECK_OPTIONS}
+                  value={at('wake.check') === 'always' ? 'always' : 'onchange'}
+                  onChange={(next) => {
+                    /*
+                      Absence is the value, as with `model` below: the parser
+                      already materialises `onchange`, so writing it into every
+                      file would spell out a default rather than a choice.
+                    */
+                    if (next === 'onchange') onChange(clear('wake.check'));
+                    else set('wake.check', next);
+                  }}
                 />,
               )
             : null}
