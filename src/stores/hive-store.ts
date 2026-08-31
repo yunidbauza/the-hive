@@ -2606,7 +2606,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             ...previous,
             status: push.status,
             ...(push.lastRunAt === undefined ? {} : { lastRunAt: push.lastRunAt }),
-            ...(push.nextRunAt === undefined ? {} : { nextRunAt: push.nextRunAt }),
+            /*
+              Assigned, not spread-guarded — unlike `lastRunAt` and `cost`
+              above, which only ever gain a value.
+
+              `nextRunAt` genuinely goes away: the scheduler clears it when a
+              definition stops scheduling, or stops parsing mid-edit. Guarded,
+              that clear could never cross, and the rail would go on reading
+              `next 09:00` for an agent that will never wake again until an
+              unrelated re-list happened past.
+            */
+            nextRunAt: push.nextRunAt,
             ...(push.cost === undefined ? {} : { cost: push.cost }),
             /*
               Assigned, not spread-guarded: both are required on the push, and

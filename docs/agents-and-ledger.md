@@ -301,9 +301,35 @@ representation of when a wake is due, so four requirements stop being code:
 
 - a missed window wakes **once**, however long the app was closed, because one
   overdue timestamp is one wake rather than a backlog to replay;
-- a definition change re-arms nothing — `scheduleFor` is read again next tick;
 - pause and resume are a status the tick already declines to act on;
 - `stop()` clears one interval, which it already did.
+
+Two things it does **not** make free, and both were found by review rather than
+by reasoning:
+
+**A definition change still needs reconciling.** Re-reading the schedule each
+tick is not the same as re-arming: a persisted `nextRunAt` outlives the interval
+that produced it, so shortening `every: 6h` to `every: 5m` would otherwise sit
+out the original six hours. The tick therefore clamps `nextRunAt` **down** to
+one interval of the current schedule — downward only, because a *lengthened*
+interval still owes the wake it already armed. The clamp sits below the quiet
+and cap branches, which both `continue`, so it can never fight a deliberate
+deferral.
+
+**The tick has to know the difference between "no schedule" and "not listed
+yet".** The schedule map is filled from an unawaited `agents.list()` — a folder
+walk parsing every `AGENT.md` — while `scheduler.start()` ticks synchronously,
+and the walk routinely loses. Read as "nothing is scheduled", an empty map would
+have the clearing branch destroy every agent's overdue `nextRunAt` on the launch
+right after a missed window, which is precisely the one it exists to spend. So
+`schedules()` answers `undefined` until the registry has answered once, and the
+tick does nothing at all until it has.
+
+**And the roster is the schedule map, not `agents.json`.** That file gains an
+entry when an agent *runs*, is paused, or is queued against — never when a
+definition is merely saved. A tick walking run state alone would never see an
+agent authored in Settings and left alone, which is this feature's main path, so
+the tick walks the union of both.
 
 The cost is that a wake can be up to `LEDGER_SWEEP_MS` late. The grammar's floor
 is one minute, so no precision a definition is able to *express* is lost.
@@ -371,6 +397,13 @@ agent, because this is a budget for unattended work rather than a lock. The card
 is an `agent.failed` titled "Hit its daily cap" — its own branch in `notify.ts`,
 above the run-receipt path, because that path consumes `spokenFor` on any
 outcome and this event is not a run receipt.
+
+The event is posted by the **overmind**, not by the agent, and `notify.ts` gates
+on that. `meta` is a free-form rider any party can write, so a card keyed off an
+agent's own `from` would be one any agent could mint for itself — with a body it
+also writes — by posting a single event. It is the same reason the expiry event
+is the overmind's: main is what took the decision, so main is what reports it,
+and the agent it concerns rides in `meta.agent`.
 
 ### Expiry
 

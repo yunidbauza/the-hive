@@ -22,8 +22,6 @@ import {
  * `electron/main/**`.
  */
 
-const MINUTES_PER_DAY = 1440;
-
 /** `'23:30'` → `1410`. The grammar has already proved the shape. */
 export const minutesOf = (time: string): number => {
   const [hour, minute] = time.split(':');
@@ -74,10 +72,19 @@ export function quietEndAfter(
 
   end.setHours(Number(hour), Number(minute), 0, 0);
 
-  // Already past today's end: the window wrapped, so its end is tomorrow's.
-  return end.getTime() <= at
-    ? end.getTime() + MINUTES_PER_DAY * 60_000
-    : end.getTime();
+  /*
+    Already past today's end: the window wrapped, so its end is tomorrow's.
+
+    Advanced by a calendar **day** rather than by 86,400,000 ms, because those
+    are not the same thing twice a year. Across a spring-forward, adding a
+    fixed day to 07:00 EST lands on 08:00 EDT — an agent left asleep a whole
+    hour past the window its author wrote, with nothing to correct it, since
+    every later tick simply sees a `nextRunAt` it has not reached. `setDate`
+    keeps the wall clock the person meant.
+  */
+  if (end.getTime() <= at) end.setDate(end.getDate() + 1);
+
+  return end.getTime();
 }
 
 /** Monday-first, matching `WAKE_DAYS` — `getDay()` is Sunday-first. */

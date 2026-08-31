@@ -359,43 +359,66 @@ describe('createLedgerNotifier', () => {
   });
 
   describe('the daily cap card (HIVE-121)', () => {
-    it('raises a failed-toned card naming the agent', () => {
+    const cap = (over: Partial<LedgerEntry> = {}) =>
+      entry({
+        from: OVERMIND,
+        kind: 'event',
+        body: 'drone reached its daily budget — $0.50',
+        meta: { dailyCap: 0.5, agent: 'drone' },
+        ...over,
+      });
+
+    it('raises a failed-toned card naming the capped agent', () => {
       const { raise, onEntry } = harness();
 
-      onEntry(
-        entry({
-          kind: 'event',
-          body: 'daily budget reached — $0.50',
-          meta: { dailyCap: 0.5 },
-        }),
-      );
+      onEntry(cap());
 
       expect(raise).toHaveBeenCalledWith({
         kind: 'agent.failed',
         id: '20260830-101500-0001',
         title: 'Hit its daily cap',
-        body: 'daily budget reached — $0.50',
+        subject: 'drone',
+        body: 'drone reached its daily budget — $0.50',
         action: { type: 'agent', name: 'drone' },
         createdAt: 1_756_500_000_000,
       });
     });
 
     /*
-      Gated on `from` being an agent, as the `expired` branch is gated on the
-      overmind: `meta` is a free-form rider the tool layer passes through
-      verbatim, so without the check any session could mint a card about one.
+      Gated on the **overmind**, as the `expired` branch is, and for its
+      reason: `meta` is a free-form rider the tool layer passes through
+      verbatim. Keyed off an agent's own `from`, this card would be one any
+      agent could mint for itself — with a body it also writes — simply by
+      posting an event.
     */
-    it('ignores the same meta from a party that is not an agent', () => {
+    it('ignores the same meta posted by an agent about itself', () => {
       const { raise, onEntry } = harness();
 
-      onEntry(
-        entry({
-          from: 'sess-01',
-          kind: 'event',
-          body: 'daily budget reached',
-          meta: { dailyCap: 0.5 },
-        }),
-      );
+      onEntry(cap({ from: 'drone' }));
+
+      expect(raise).not.toHaveBeenCalled();
+    });
+
+    it('ignores it from a session', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(cap({ from: 'sess-01' }));
+
+      expect(raise).not.toHaveBeenCalled();
+    });
+
+    it('ignores a cap that is not a number', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(cap({ meta: { dailyCap: 'lots', agent: 'drone' } }));
+
+      expect(raise).not.toHaveBeenCalled();
+    });
+
+    it('ignores one naming a party that is not an agent', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(cap({ meta: { dailyCap: 0.5, agent: 'sess-01' } }));
 
       expect(raise).not.toHaveBeenCalled();
     });
@@ -413,14 +436,7 @@ describe('createLedgerNotifier', () => {
       onEntry(entry({ kind: 'failed', body: 'Run failed' }));
       raise.mockClear();
 
-      onEntry(
-        entry({
-          id: 'cap-1',
-          kind: 'event',
-          body: 'daily budget reached',
-          meta: { dailyCap: 0.5 },
-        }),
-      );
+      onEntry(cap({ id: 'cap-1' }));
 
       expect(raise).toHaveBeenCalledTimes(1);
       expect(raise.mock.calls[0][0].title).toBe('Hit its daily cap');

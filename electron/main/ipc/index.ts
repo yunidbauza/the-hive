@@ -367,6 +367,17 @@ const ledgerAgents = new Set<string>();
  * is what keeps a broken file off the timer while it stays listed to be fixed.
  */
 const agentSchedules = new Map<string, { wake: WakeSpec; dailyUsd?: number }>();
+/**
+ * Whether {@link agentSchedules} has been filled at least once.
+ *
+ * An empty map means two very different things, and the scheduler must not
+ * confuse them: "this machine has no scheduled agents" and "the folder walk has
+ * not finished yet". The second is the common case at boot — `agents.list()`
+ * reads and parses every `AGENT.md`, while `scheduler.start()` ticks
+ * synchronously — and reading it as the first would have the tick clear every
+ * agent's overdue `nextRunAt` on the launch right after a missed window.
+ */
+let agentsListed = false;
 
 /**
  * Re-read the folder into {@link knownAgents}.
@@ -414,9 +425,14 @@ function refreshKnownAgents(): void {
       }
 
       for (const name of runs?.live() ?? []) knownAgents.add(name);
+
+      // Only now may the tick trust an absence — see `agentsListed`.
+      agentsListed = true;
     })
     .catch(() => {
-      // Keep whatever we already knew.
+      // Keep whatever we already knew — including, deliberately, whether the
+      // schedules have ever been read. A failed listing must not license the
+      // tick to clear the times a previous one established.
     });
 }
 /** The clone flow (story 102), or `null` before registration. */
@@ -1490,12 +1506,14 @@ export function registerIpcHandlers(): void {
       `knownAgents`, so an edit in Settings or in a text editor reaches the
       scheduler by the same route it already reaches the party register.
 
-      An agent missing from the map — a broken definition, or the moments
-      before the first listing resolves at boot — takes no scheduled wake. The
-      boot case costs at most one tick, since `refreshKnownAgents` runs well
-      before the minute is out.
+      An agent missing from the map once the listing *has* resolved is one with
+      no usable definition — a file that stopped parsing mid-edit — and takes
+      no scheduled wake. Before it resolves the answer is `undefined`, which
+      the tick reads as "ask me again", not as "nobody is scheduled": the two
+      are indistinguishable in an empty map and only one of them licenses
+      clearing a `nextRunAt`.
     */
-    scheduleFor: (name) => agentSchedules.get(name),
+    schedules: () => (agentsListed ? agentSchedules : undefined),
     /*
       The same push `RunTracker` uses. The tick changes rows with no run
       attached — a new `nextRunAt`, a skip, a day that hit its ceiling — and
@@ -2848,6 +2866,10 @@ export function resetIpcHandlers(): void {
   agents = null;
   knownAgents.clear();
   ledgerAgents.clear();
+  agentSchedules.clear();
+  // Back to "nothing has been listed", not "nothing is scheduled": the next
+  // registration must earn the right to clear a `nextRunAt` all over again.
+  agentsListed = false;
   // HIVE-81. Test-only: a fresh registration starts with nothing on stage and
   // no listeners left over from a previous test — including the app-level
   // focus wiring and any tick it has already scheduled, which would otherwise

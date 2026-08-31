@@ -813,8 +813,11 @@ export function AgentForm({
     mode === 'every'
       ? ['wake.at', 'wake.days']
       : mode === 'at'
-        ? ['wake.every']
-        : ['wake.every', 'wake.at', 'wake.days'];
+        ? // `wake.check` too: the parser refuses it beside `at:`, so its
+          // problem is the *likeliest* one to arrive in this mode — and the
+          // control that would carry it is not drawn here.
+          ['wake.every', 'wake.check']
+        : ['wake.every', 'wake.at', 'wake.days', 'wake.check'];
 
   const homeless = problems.filter(
     (problem) =>

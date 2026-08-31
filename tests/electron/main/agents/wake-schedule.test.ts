@@ -81,6 +81,36 @@ describe('quietEndAfter', () => {
       at(2026, 8, 31, 17),
     );
   });
+
+  /*
+    A calendar day, not 86,400,000 ms — they differ twice a year.
+
+    Adding a fixed day across a spring-forward lands an hour late: an agent
+    kept asleep past the window its author wrote, with nothing to correct it,
+    because every later tick just sees a `nextRunAt` it has not reached.
+
+    Written as a wall-clock assertion so it holds in any zone: whatever
+    07:00 the next morning is locally, that is the answer. In a zone with no
+    DST it still passes — it is simply not exercising the difference.
+  */
+  it('lands on the next local 07:00 even across a spring-forward', () => {
+    const answer = new Date(
+      quietEndAfter(at(2026, 3, 7, 23, 30), { from: '23:00', to: '07:00' }),
+    );
+
+    expect(answer.getHours()).toBe(7);
+    expect(answer.getMinutes()).toBe(0);
+    expect(answer.getDate()).toBe(8);
+  });
+
+  it('lands on the next local 07:00 across an autumn fall-back too', () => {
+    const answer = new Date(
+      quietEndAfter(at(2026, 10, 31, 23, 30), { from: '23:00', to: '07:00' }),
+    );
+
+    expect(answer.getHours()).toBe(7);
+    expect(answer.getDate()).toBe(1);
+  });
 });
 
 describe('nextRunFrom — interval mode', () => {

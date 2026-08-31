@@ -946,15 +946,6 @@ export interface AgentLinesPush {
 }
 
 /**
- * A run's cost as a row shows it, or `undefined` when there is none.
- *
- * Formatted **once**, in main, rather than in the renderer: `agents:list` and
- * `agents:status` both carry this number and are read by the same row, so two
- * formatters would be two chances for the list and the live push to disagree
- * about one run. Four decimals under a cent, because an agent wake routinely
- * costs less than that and `$0.00` for a real run reads as a bug.
- */
-/**
  * The local calendar day, as `YYYY-MM-DD` (HIVE-121).
  *
  * Here rather than in either process, because both read it: main decides
@@ -973,6 +964,15 @@ export function dayKey(at: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/**
+ * A run's cost as a row shows it, or `undefined` when there is none.
+ *
+ * Formatted **once**, in main, rather than in the renderer: `agents:list` and
+ * `agents:status` both carry this number and are read by the same row, so two
+ * formatters would be two chances for the list and the live push to disagree
+ * about one run. Four decimals under a cent, because an agent wake routinely
+ * costs less than that and `$0.00` for a real run reads as a bug.
+ */
 export function formatRunCost(usd: number | undefined): string | undefined {
   if (usd === undefined || !Number.isFinite(usd)) return undefined;
 

@@ -444,6 +444,31 @@ describe('AgentForm', () => {
       `check:` beside `at:`, so a control that could write one there would
       offer an edit this same form goes on to refuse.
     */
+    /*
+      A problem naming a field the current mode does not draw has to fall
+      through to the banner, or it renders nowhere at all: excluded from the
+      banner for being renderable, and from the form for being in the other
+      mode. `wake.check` is the likeliest such problem there is — the parser
+      refuses it precisely *because* the mode is `at`.
+    */
+    it('shows a check problem in the banner when the mode hides the control', () => {
+      render(
+        <AgentForm
+          source={CAL}
+          problems={[
+            {
+              field: 'wake.check',
+              reason: 'Only applies to every: — a fixed time always runs.',
+            },
+          ]}
+          taken={[]}
+          onChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText(/Only applies to every:/)).toBeInTheDocument();
+    });
+
     it('offers the check control in interval mode', () => {
       setup();
 

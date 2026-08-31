@@ -207,33 +207,49 @@ export function createLedgerNotifier(
       return;
     }
 
-    if (entry.kind !== 'event' || !deps.isAgent(entry.from)) return;
-
     /*
       A day's ceiling reached (HIVE-121).
 
-      Its own branch, above the run-receipt path rather than folded into it,
-      and the reason is worth stating: that path consumes `spokenFor` on any
-      outcome, and this event is not a run receipt — no run ended, the
-      scheduler simply declined to start one. Falling through would eat the
-      dedup token and swallow the agent's next real report.
+      Gated on the **overmind**, exactly as the expiry branch above is, and for
+      its reason: `meta` is a free-form rider the tool layer passes through
+      verbatim, so a branch keyed off an agent's own `from` is one any agent
+      could fire for itself by posting an event. Main is what declined to start
+      the run, so main is what says so — and the agent it is about rides in
+      `meta.agent` rather than in `from`.
 
-      `agent.failed` rather than a new kind: the kinds are a closed set the
-      user configures delivery on, and "the agent stopped early" is exactly
-      what this one already means. The title says which ceiling it was, since
-      the per-wake budget raises the same kind.
+      Above the run-receipt path rather than folded into it, because that path
+      consumes `spokenFor` on any outcome and this is not a run receipt: no run
+      ended. Falling through would eat the dedup token and swallow the agent's
+      next real report.
+
+      `agent.failed` rather than a new kind: the kinds are a closed set the user
+      configures delivery on, and "the agent stopped early" is what this one
+      already means. The title names which ceiling it was, since the per-wake
+      budget raises the same kind.
     */
-    if (meta.dailyCap !== undefined) {
-      deps.raise({
-        kind: 'agent.failed',
-        id: entry.id,
-        title: 'Hit its daily cap',
-        body: entry.body,
-        action: { type: 'agent', name: entry.from },
-        createdAt: entry.ts,
-      });
+    if (entry.kind === 'event' && entry.from === OVERMIND) {
+      const cappedAgent = str(meta.agent);
+
+      if (
+        typeof meta.dailyCap === 'number' &&
+        cappedAgent !== undefined &&
+        deps.isAgent(cappedAgent)
+      ) {
+        deps.raise({
+          kind: 'agent.failed',
+          id: entry.id,
+          title: 'Hit its daily cap',
+          subject: cappedAgent,
+          body: entry.body,
+          action: { type: 'agent', name: cappedAgent },
+          createdAt: entry.ts,
+        });
+      }
+
       return;
     }
+
+    if (entry.kind !== 'event' || !deps.isAgent(entry.from)) return;
 
     const outcome = str(meta.outcome);
     if (outcome === undefined) return;

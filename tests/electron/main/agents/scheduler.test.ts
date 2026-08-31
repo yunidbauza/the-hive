@@ -40,6 +40,8 @@ describe('createScheduler', () => {
   let schedules: Map<string, { wake: WakeSpec; dailyUsd?: number }>;
   /** Makes `run` answer a refusal, as `RunTracker` does for a working agent. */
   let refuse: boolean;
+  /** Whether the registry has answered its first listing yet. */
+  let listed: boolean;
   /** Names pushed to the renderer, in order. */
   let pushed: string[];
 
@@ -59,7 +61,7 @@ describe('createScheduler', () => {
       state,
       isAgent: (id) => id === AGENT,
       wakesOnLedger: () => wakesOnLedger,
-      scheduleFor: (name) => schedules.get(name),
+      schedules: () => (listed ? schedules : undefined),
       pushStatus: (name) => pushed.push(name),
       ledger: {
         read: () => ({ entries }),
@@ -91,6 +93,7 @@ describe('createScheduler', () => {
     appendOk = true;
     schedules = new Map();
     refuse = false;
+    listed = true;
     pushed = [];
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
     state.patch(AGENT, { status: 'sleeping' });
@@ -222,7 +225,7 @@ describe('createScheduler', () => {
       isAgent: (id) => id === AGENT,
       wakesOnLedger: () => true,
       // This spec drives `onEntry` only; the tick has nothing to read.
-      scheduleFor: () => undefined,
+      schedules: () => new Map(),
       pushStatus: () => {},
       ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
       now: () => clock,
@@ -295,7 +298,7 @@ describe('createScheduler', () => {
         isAgent: (id) => id === AGENT,
         wakesOnLedger: () => true,
       // This spec drives `onEntry` only; the tick has nothing to read.
-      scheduleFor: () => undefined,
+      schedules: () => new Map(),
       pushStatus: () => {},
         ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
         now: () => clock,
@@ -353,7 +356,7 @@ describe('createScheduler', () => {
         isAgent: (id) => id === AGENT,
         wakesOnLedger: () => true,
       // This spec drives `onEntry` only; the tick has nothing to read.
-      scheduleFor: () => undefined,
+      schedules: () => new Map(),
       pushStatus: () => {},
         ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
         now: () => clock,
@@ -588,6 +591,89 @@ describe('createScheduler', () => {
       expect(state.read(AGENT).nextRunAt).toBe(NOON + 300_000);
     });
 
+    /*
+      The feature's primary path, and the one every other case here hid.
+
+      `agents.json` gains an entry when an agent *runs*, is paused, or is
+      queued against — nothing writes one when a definition is merely saved.
+      So an agent authored in Settings and left alone has a schedule and no run
+      state, and a tick driven off `state.all()` never sees it: it would never
+      wake, on a fresh install or on any newly created agent, and the only
+      escape would be clicking Run now once.
+
+      Every other scheduling case in this file calls `state.patch` first, which
+      is exactly why they could not catch it.
+    */
+    it('schedules an agent that has never run and has no state entry', () => {
+      schedules.set('brand-new', { wake: every5m });
+
+      tick();
+
+      expect(state.read('brand-new').nextRunAt).toBe(NOON + 300_000);
+    });
+
+    it('wakes an agent whose only trace is its definition', () => {
+      schedules.set('brand-new', { wake: every5m });
+
+      tick();
+      clock = NOON + 300_000;
+      tick();
+
+      expect(woke).toEqual([{ name: 'brand-new', trigger: 'interval' }]);
+    });
+
+    /*
+      A schedule that got shorter must not wait out the old, longer time.
+
+      `every: 6h` armed at 10:00 and edited to `every: 5m` at 10:05 would
+      otherwise sit until 16:00 — and a calendar agent switched to an interval
+      would sit for nearly a day. The docs promise a definition change re-arms
+      the schedule; without this they are only true in the lengthening
+      direction.
+    */
+    it('re-arms when the interval is shortened under it', () => {
+      state.patch(AGENT, { nextRunAt: NOON + 6 * 60 * 60_000 });
+      schedules.set(AGENT, { wake: every5m });
+
+      tick();
+
+      expect(state.read(AGENT).nextRunAt).toBe(NOON + 300_000);
+    });
+
+    /*
+      The clamp bounds the remaining wait at one interval of the *new*
+      schedule — it does not fire immediately.
+
+      That is deliberate. Firing at once would mean re-deriving the owed time
+      from `lastRunAt`, and the moment the tick arms a wake it has not yet
+      recorded, `lastRunAt` still names the *previous* run — so the next tick
+      would read the same stale time and wake again. Bounding the wait instead
+      is one comparison, cannot double-fire, and costs at most one interval.
+    */
+    it('wakes within one interval of the shortened schedule, not at once', () => {
+      state.patch(AGENT, { nextRunAt: NOON + 6 * 60 * 60_000, lastRunAt: NOON - 600_000 });
+      schedules.set(AGENT, { wake: { everyMs: 60_000, check: 'always', on: [] } });
+
+      tick();
+
+      expect(woke).toEqual([]);
+      expect(state.read(AGENT).nextRunAt).toBe(NOON + 60_000);
+
+      clock = NOON + 60_000;
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
+    it('leaves a longer schedule to run its course rather than pushing it out', () => {
+      state.patch(AGENT, { nextRunAt: NOON + 60_000 });
+      schedules.set(AGENT, { wake: { everyMs: 6 * 60 * 60_000, check: 'always', on: [] } });
+
+      tick();
+
+      expect(state.read(AGENT).nextRunAt).toBe(NOON + 60_000);
+    });
+
     it('wakes on the boundary and arms the next one', () => {
       state.patch(AGENT, { nextRunAt: NOON });
       schedules.set(AGENT, { wake: every5m });
@@ -671,9 +757,9 @@ describe('createScheduler', () => {
     });
 
     /*
-      `scheduleFor` answers `undefined` for a definition that will not parse,
-      and that is what stops a broken file being woken on a timer — the same
-      agent is still *listed*, so the user can see and fix it.
+      A definition that will not parse is absent from the schedule map, and
+      that is what stops a broken file being woken on a timer — the same agent
+      is still *listed*, so the user can see and fix it.
     */
     it('leaves an agent with no usable definition alone', () => {
       state.patch(AGENT, { nextRunAt: NOON });
@@ -681,6 +767,53 @@ describe('createScheduler', () => {
       tick();
 
       expect(woke).toEqual([]);
+    });
+
+    /*
+      "The registry has not answered yet" is not "this agent has no schedule",
+      and conflating them destroys the thing the boot tick exists to catch.
+
+      `refreshKnownAgents` fills the schedule map from an unawaited
+      `agents.list()` — a folder walk that reads and parses every `AGENT.md` —
+      while `scheduler.start()` ticks synchronously. The walk routinely loses
+      that race. If an empty map read as "nothing is scheduled", the first tick
+      after every launch would clear the overdue `nextRunAt` of every agent, and
+      the promise that a missed window wakes once would be false precisely when
+      it matters: on the launch that follows the miss.
+    */
+    it('waits for the registry rather than clearing what it cannot see', () => {
+      listed = false;
+      state.patch(AGENT, { nextRunAt: NOON - 60_000 });
+
+      tick();
+
+      expect(state.read(AGENT).nextRunAt).toBe(NOON - 60_000);
+      expect(woke).toEqual([]);
+    });
+
+    it('spends that overdue time as one wake once the registry answers', () => {
+      listed = false;
+      state.patch(AGENT, { nextRunAt: NOON - 60_000, lastRunAt: NOON - 600_000 });
+      schedules.set(AGENT, { wake: every5m });
+
+      tick();
+      listed = true;
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
+    /*
+      And once it has answered, an agent genuinely missing from it *is* one
+      with no usable schedule — a definition that stopped parsing mid-edit —
+      so a stale time is cleared rather than left promising a wake.
+    */
+    it('clears a stale next run once the registry has answered without it', () => {
+      state.patch(AGENT, { nextRunAt: NOON + 60_000 });
+
+      tick();
+
+      expect(state.read(AGENT).nextRunAt).toBeUndefined();
     });
 
     /*
@@ -977,7 +1110,17 @@ describe('createScheduler', () => {
       );
 
       expect(posted).toHaveLength(1);
-      expect(posted[0]).toMatchObject({ from: AGENT, kind: 'event' });
+      /*
+        From the **overmind**, not the agent. `meta` is a free-form rider any
+        party can write, so a card keyed off an agent's own `from` is one any
+        agent could mint for itself — the same reason the expiry event is the
+        overmind's. Main declined to start this run; main says so.
+      */
+      expect(posted[0]).toMatchObject({
+        from: 'overmind',
+        kind: 'event',
+        meta: { dailyCap: 0.1, agent: AGENT },
+      });
       expect(state.read(AGENT).today?.capped).toBe(true);
     });
 

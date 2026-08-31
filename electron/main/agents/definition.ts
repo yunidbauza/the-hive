@@ -241,7 +241,15 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
   */
   const check = shaped('wake.check');
 
-  if (check !== undefined && at !== undefined) {
+  /*
+    Gated on the absence of an *interval*, not on the presence of `at:`.
+
+    Checking `at !== undefined` let a third case through: a file naming
+    `check:` with neither wake key parsed clean, stored nothing, and drew no
+    control — the very "key the file names and the scheduler drops" this
+    refusal exists to prevent, reached by the one path it did not cover.
+  */
+  if (check !== undefined && (everyMs === undefined || everyMs === null)) {
     problems.push({
       field: 'wake.check',
       reason: 'Only applies to every: — a fixed time always runs.',

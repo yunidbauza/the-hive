@@ -2502,6 +2502,33 @@ describe('hive-store', () => {
       });
     });
 
+    /*
+      `nextRunAt` genuinely goes away — the scheduler clears it when a
+      definition stops scheduling or stops parsing mid-edit. Spread-guarded,
+      that clear could never cross the wire, and the rail would go on promising
+      `next 09:00` for an agent that will never wake.
+    */
+    it('lets a push clear the next run time', () => {
+      seedAgent();
+      useHiveStore.getState().setAgentStatus({
+        name: 'slack-watcher',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 0,
+        nextRunAt: 1_756_500_000_000,
+      });
+      useHiveStore.getState().setAgentStatus({
+        name: 'slack-watcher',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 0,
+      });
+
+      const agent = useHiveStore.getState().entities['slack-watcher'];
+
+      expect(agent !== undefined && isAgent(agent) && agent.nextRunAt).toBeUndefined();
+    });
+
     it('ignores a status for an agent it does not have', () => {
       expect(() =>
         useHiveStore.getState().setAgentStatus({

@@ -576,6 +576,22 @@ describe('parseAgent — check, and the daily cap', () => {
     expect(definition(GOOD.replace('every: 5m', 'at: [09:00]')).wake.check).toBeUndefined();
   });
 
+  /*
+    The third case, which a check for `at:` alone let through: a file naming
+    `check:` with neither wake key. It parsed clean, stored nothing, and drew
+    no control — exactly the silent drop the refusal exists to prevent.
+  */
+  it('refuses check on a manual-only agent, which has no interval to modify', () => {
+    expect(
+      problems(GOOD.replace('every: 5m', 'check: onchange')),
+    ).toEqual([
+      {
+        field: 'wake.check',
+        reason: 'Only applies to every: — a fixed time always runs.',
+      },
+    ]);
+  });
+
   it('refuses check alongside at:, rather than silently dropping it', () => {
     expect(
       problems(GOOD.replace('every: 5m', 'at: [09:00]\n  check: onchange')),
