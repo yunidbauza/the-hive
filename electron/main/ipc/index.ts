@@ -1080,37 +1080,58 @@ export function registerIpcHandlers(): void {
       console.warn(`[ledger] could not deliver ${entry.id}:`, cause);
     }
     /*
-      The third consumer the comment above anticipated (HIVE-120): an entry
-      addressed to an agent is a wake, and an agent has no terminal to nudge.
-      Its own try/catch for the same reason as the other two — a throw here runs
-      inside `Ledger.append` and would tell the asker their question was not
-      recorded, for an entry already safely on disk.
+      The third and fourth consumers, sequenced against each other (HIVE-120,
+      HIVE-119): an entry addressed to an agent is a wake, and an answer to a
+      permission ask is also a grant that has to reach `AGENT.md` before that
+      same wake reads the file.
+
+      Every other entry — including an ordinary answer — schedules
+      synchronously, exactly as `deliver` above did: there is nothing to write
+      first, because an ordinary answer is only ever news arriving. A
+      *permission* answer is the one exception, and the exception is
+      load-bearing: `onAnswer` may still be writing the granted rule into
+      `AGENT.md` when the wake it triggers would otherwise read that same
+      file — race it, and a user's "allow for this agent" click retries into
+      a second denial. It does not fail every time, because the write is
+      fast; that is exactly what makes it easy to ship and hard to notice.
+      `permissions.isPermissionAnswer` is what tells the two cases apart, so
+      only the answer with a dependency waits for it. Reversing the order
+      here — scheduling before the grant is written — silently breaks
+      Allow-for-this-agent, and nothing in the types stops it; the live
+      conformance suite's fence scenario (HIVE-119) is what would catch it.
+
+      Both keep their own try/catch, for the same reason `deliver` above is
+      guarded: a throw here runs inside `Ledger.append`'s own call stack and
+      must not be reported to the party who appended, for an entry already
+      safely on disk. `.finally`, not `.then`, on the permission path: a
+      grant that failed to write must still wake the agent, so it can retry,
+      be denied again, and report — not be stranded with no wake at all.
+      `permissions` is read through the module binding rather than closed
+      over, exactly as `scheduler` is: both are armed later, once `agents`
+      and `ledger` exist, not at the point this listener is wired.
     */
-    try {
-      scheduler?.onEntry(entry);
-    } catch (cause) {
-      console.warn(`[ledger] could not schedule ${entry.id}:`, cause);
+    const schedule = () => {
+      try {
+        scheduler?.onEntry(entry);
+      } catch (cause) {
+        console.warn(`[ledger] could not schedule ${entry.id}:`, cause);
+      }
+    };
+
+    if (entry.kind === 'answer' && permissions?.isPermissionAnswer(entry) === true) {
+      permissions
+        .onAnswer(entry)
+        .catch((cause: unknown) => {
+          console.warn(`[ledger] could not grant on ${entry.id}:`, cause);
+        })
+        .finally(schedule);
+    } else {
+      schedule();
     }
     try {
       notifyLedgerEntry(entry);
     } catch (cause) {
       console.warn(`[ledger] could not notify on ${entry.id}:`, cause);
-    }
-    /*
-      A fourth consumer, one door down from the notifier (HIVE-119): an
-      `answer` to a permission ask becomes a grant. `onAnswer` is async — it
-      awaits a definition read and, on `allow-family`/`allow-tool`, a write —
-      so it cannot share the synchronous try/catch above; a `.catch` here
-      keeps a rejected write from becoming an unhandled rejection instead of
-      the same "told, not lost" console warning every other consumer gets.
-      `permissions` is read through the module binding rather than closed
-      over, exactly as `scheduler` is a few lines up: it is armed later, once
-      `agents` and `ledger` exist, not at the point this listener is wired.
-    */
-    if (entry.kind === 'answer') {
-      permissions?.onAnswer(entry).catch((cause: unknown) => {
-        console.warn(`[ledger] could not grant on ${entry.id}:`, cause);
-      });
     }
   });
 

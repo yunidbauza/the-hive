@@ -136,12 +136,19 @@ const RESPONDER = 'probe-responder';
  * Its own definition, not a fourth body for {@link NAME}, for the reason
  * {@link ASKER} already is one: this is the one agent in the suite that is
  * *meant* to hit the fence, and every assertion below it depends on that
- * being the only ungranted reach it makes. `wake.on: [ledger]` is
- * deliberately absent — the scheduler would otherwise re-wake it the instant
- * the overmind's answer lands, racing the still-in-flight `AGENT.md` write
- * `permissions.onAnswer` makes for that same answer. The test drives both of
- * this agent's wakes itself, so that write can be awaited before the second
- * one is asked for.
+ * being the only ungranted reach it makes.
+ *
+ * `wake.on: [ledger]` **is** declared, and the second wake below is left to
+ * the scheduler rather than driven by hand — on purpose. An earlier version
+ * of this suite drove both wakes itself, off the same worry `ipc/index.ts`'s
+ * listener now names explicitly: the overmind's answer is also a grant, and
+ * a wake that races the still-in-flight `AGENT.md` write would retry into a
+ * second denial. Hand-driving the second wake made that race unreachable —
+ * which meant this suite could not have noticed it either way. The fix
+ * belongs in `ipc/index.ts` (`permissions.isPermissionAnswer` sequences the
+ * wake behind the grant, for a permission answer only); this suite's own
+ * `ledger.onChange` wiring below reproduces that same sequencing, so a wake
+ * this agent takes through the real path is the one thing actually proven.
  */
 const FENCE = 'probe-fence';
 
@@ -246,12 +253,19 @@ Read your ledger inbox. If it contains an ask addressed to you, call
  * suite's own temp root — so the file the command writes survives being
  * checked from the test process without needing to know `agentWorkdir`'s
  * layout.
+ *
+ * `wake.on: [ledger]` is declared, unlike every earlier draft of this
+ * probe — see {@link FENCE}'s own doc comment for why leaving it out would
+ * have made this scenario unable to prove anything about the ordering it
+ * exists to check.
  */
 const fenceMd = (marker: string) => `---
 name: ${FENCE}
 description: Proves the permission fence denies an ungranted Bash call.
 icon: Ghost
 model: haiku
+wake:
+  on: [ledger]
 tools: [Read, Glob, Grep, TodoWrite]
 limits:
   turns: 8
@@ -518,15 +532,10 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       run: (name, trigger, extra) => runs.run(name, trigger, extra),
       state: agentState,
       isAgent: (id) => AGENTS.includes(id),
-      /*
-        `ASKER` and `RESPONDER` declare `wake.on: [ledger]`; `NAME` and
-        `FENCE` do not — the gate `ipc/index.ts` reads off the parsed
-        definition into `ledgerAgents`. `FENCE`'s exclusion is load-bearing
-        (see its own doc comment): without it, the overmind's answer to its
-        permission ask would re-wake it before `permissions.onAnswer`'s
-        `AGENT.md` write has landed.
-      */
-      wakesOnLedger: (id) => id === ASKER || id === RESPONDER,
+      // `ASKER`, `RESPONDER` and `FENCE` all declare `wake.on: [ledger]` —
+      // the gate `ipc/index.ts` reads off the parsed definition into
+      // `ledgerAgents`. Only `NAME` does not.
+      wakesOnLedger: (id) => id === ASKER || id === RESPONDER || id === FENCE,
       ledger: {
         read: () => ledger.read({}),
         append: (request) => ledger.append(request),
@@ -534,8 +543,30 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       now: () => Date.now(),
     });
 
+    /*
+      Reproduces `ipc/index.ts`'s own sequencing (HIVE-119), not the plain
+      `scheduler?.onEntry(entry)` an earlier draft of this suite used. That
+      plainer version is what let the ordering bug in `ipc/index.ts` ship
+      unnoticed: it scheduled every wake synchronously, including the wake a
+      permission answer triggers, so nothing here ever raced the still-in-
+      flight `AGENT.md` write `permissions.onAnswer` makes for that same
+      answer — the exact race `FENCE`'s scenario exists to catch.
+
+      An ordinary answer still schedules synchronously, same as before:
+      there is nothing to write first. Only an answer to a *permission* ask
+      — `permissions.isPermissionAnswer` — has a grant that has to land on
+      disk before the wake it causes reads that file, so only that one path
+      is deferred behind `onAnswer`, via `.finally` rather than `.then` so a
+      failed write still wakes the agent to retry and report.
+    */
     ledger.onChange((entry) => {
-      scheduler?.onEntry(entry);
+      const schedule = () => scheduler?.onEntry(entry);
+
+      if (entry.kind === 'answer' && permissions.isPermissionAnswer(entry)) {
+        permissions.onAnswer(entry).catch(() => undefined).finally(schedule);
+      } else {
+        schedule();
+      }
     });
   }, 180_000);
 
@@ -902,15 +933,19 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    * 3. the turn ends `asking`, the same resting state `ledger_ask` produces —
    *    a denial is a question with nobody answering it yet;
    * 4. answering with a permanent rung (`allow-family`) patches `AGENT.md` on
-   *    disk, and the *next* wake — reading that file fresh, exactly as
-   *    `wake-command.ts`'s own doc comment says a wake must — carries the
+   *    disk, and the *next* wake — started by the scheduler off the answer
+   *    itself, not by this test calling `wake()` a second time — carries the
    *    grant, and the same command actually runs.
    *
-   * `permissions.onAnswer` is awaited directly here rather than left to fire
-   * off `ledger.onChange` the way `ipc/index.ts` does (`.catch`-guarded,
-   * never awaited): the second wake below must not race that write, and an
-   * unawaited promise gives this test nothing to wait on. `FENCE` itself
-   * takes no ledger wake for the same reason — see its own doc comment above.
+   * Point 4 is what this scenario exists for. An earlier draft drove both of
+   * `FENCE`'s wakes by hand and awaited `permissions.onAnswer` directly, which
+   * sidestepped a real ordering bug in `ipc/index.ts`'s listener — production
+   * scheduled the wake *before* the grant it depends on had reached disk —
+   * rather than proving it fixed. This version lets the answer wake the agent
+   * the same way a user's click on "allow for this agent" does: through
+   * `ledger.onChange`, reproduced in this file's `beforeAll` with the same
+   * sequencing `ipc/index.ts` now uses. A regression in that ordering fails
+   * here, not only in `permissions.test.ts`'s narrower unit coverage.
    */
   it('denies an ungranted Bash call, then carries a permanent grant to the next wake', async () => {
     await wake('manual', FENCE);
@@ -957,42 +992,43 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       4. `allow-family` is the ladder's default for a `Bash` call with a head
       (`defaultRungFor`, `permission-rules.ts`) — answering with it is what a
       card's own default button would send.
+
+      The wake this answer causes is not started here. `ledger.answer`
+      returns as soon as the entry is on disk; the second wake fires from
+      *inside* that same call, asynchronously, off the scheduler this file's
+      `beforeAll` wires behind `permissions.onAnswer`'s `AGENT.md` write —
+      exactly as `ipc/index.ts` now wires it. `settled` is armed first, the
+      same way `wake()` arms it for a wake this test starts directly, so
+      there is something to await either way.
     */
+    const second = settled(FENCE);
     const answered = ledger.answer({ thread: askId, body: 'allow-family' }, OVERMIND);
 
     expect(answered.ok).toBe(true);
 
-    const answerId = answered.ok ? answered.id : '';
-    const answerEntry = ledger.read({}).entries.find((entry) => entry.id === answerId);
-
-    expect(answerEntry).not.toBeUndefined();
-    if (answerEntry === undefined) throw new Error('answer entry vanished from the ledger');
-
-    // Awaited directly — see the doc comment above — so the write below is on
-    // disk before the second wake reads the file it lands in.
-    await permissions.onAnswer(answerEntry);
+    await second;
 
     const patched = await readFile(join(agentsRoot(), FENCE, 'AGENT.md'), 'utf8');
 
     expect(patched).toContain('Bash(touch *)');
 
-    await wake('manual', FENCE);
-
     // The grant reached the wake itself, not only the file: the second run's
-    // own argv names the rule `matches()` will check the retried call against.
+    // own argv names the rule `matches()` checked the retried call against.
     const args = spawns.at(-1)?.args ?? [];
     const allowedIndex = args.indexOf('--allowedTools');
 
     expect(allowedIndex).toBeGreaterThan(-1);
     expect(args[allowedIndex + 1]).toContain('Bash(touch *)');
 
-    // And the call actually ran — the one thing no transcript can fake.
+    // And the call actually ran — the one thing no transcript can fake, and
+    // the one proof that the wake really did land behind the grant rather
+    // than racing it.
     expect(existsSync(marker)).toBe(true);
 
-    const second = await persisted(FENCE);
+    const closed = await persisted(FENCE);
 
-    expect(second.runs).toHaveLength(2);
-    expect(second.runs[1]?.outcome).not.toBe('asking');
-    expect(second.runs[1]?.outcome).not.toBe('failed');
+    expect(closed.runs).toHaveLength(2);
+    expect(closed.runs[1]?.outcome).not.toBe('asking');
+    expect(closed.runs[1]?.outcome).not.toBe('failed');
   }, 300_000);
 });

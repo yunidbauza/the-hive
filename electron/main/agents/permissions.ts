@@ -58,6 +58,18 @@ export interface PermissionDeps {
 export interface Permissions {
   grantsFor: (name: string) => string[];
   onAnswer: (entry: LedgerEntry) => Promise<void>;
+  /**
+   * Whether `entry` is an answer to a permission ask — the one case a caller
+   * must sequence a wake *behind*, never beside (`ipc/index.ts`). Every other
+   * answer wakes the agent it is addressed to the moment it is appended,
+   * synchronously, because there is nothing to write first. This one has a
+   * write: `onAnswer` may still be putting a rung into `AGENT.md` when the
+   * agent's next wake would otherwise read that same file. A caller that
+   * schedules the wake without checking this first will see it *most* of the
+   * time — the write is fast — and then, once in a while, watch a user's
+   * "allow for this agent" click retry into a second denial.
+   */
+  isPermissionAnswer: (entry: LedgerEntry) => boolean;
 }
 
 export function createPermissions(deps: PermissionDeps): Permissions {
@@ -108,6 +120,14 @@ export function createPermissions(deps: PermissionDeps): Permissions {
       }
 
       return grants;
+    },
+
+    isPermissionAnswer(entry) {
+      return (
+        entry.kind === 'answer' &&
+        entry.thread !== undefined &&
+        askFor(entry.thread) !== undefined
+      );
     },
 
     async onAnswer(entry) {

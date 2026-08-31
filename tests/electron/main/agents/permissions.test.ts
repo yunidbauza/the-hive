@@ -71,6 +71,33 @@ describe('grantsFor', () => {
   });
 });
 
+describe('isPermissionAnswer', () => {
+  it('is true for an answer to a permission ask', () => {
+    const d = deps([ask('a1', 'drone', RUNGS)]);
+    expect(
+      createPermissions(d).isPermissionAnswer(answer('n1', 'a1', 'allow-family') as never),
+    ).toBe(true);
+  });
+
+  it('is false for an answer to an ordinary ask', () => {
+    const ordinary = {
+      id: 'o1', ts: 1, from: 'drone', to: 'overmind', kind: 'ask' as const,
+      body: 'may I have a review?',
+    };
+    const d = deps([ordinary]);
+    expect(
+      createPermissions(d).isPermissionAnswer(answer('n1', 'o1', 'sure') as never),
+    ).toBe(false);
+  });
+
+  it('is false for a non-answer entry', () => {
+    const d = deps([ask('a1', 'drone', RUNGS)]);
+    expect(
+      createPermissions(d).isPermissionAnswer(ask('a1', 'drone', RUNGS) as never),
+    ).toBe(false);
+  });
+});
+
 describe('onAnswer', () => {
   it('appends the family rule to tools: and records it', async () => {
     const d = deps([ask('a1', 'drone', RUNGS)]);
