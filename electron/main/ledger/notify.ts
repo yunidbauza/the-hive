@@ -246,6 +246,30 @@ export function createLedgerNotifier(
         });
       }
 
+      /*
+        `agent.failed` rather than a new kind, for the reason the daily cap is:
+        the kinds are a closed set the user configures delivery on, and "this
+        agent stopped doing what it should" is what this one already means. The
+        title names the specific ceiling, since three kinds share it.
+      */
+      const stuckAgent = str(meta.agent);
+
+      if (
+        typeof meta.rotateFailed === 'number' &&
+        stuckAgent !== undefined &&
+        deps.isAgent(stuckAgent)
+      ) {
+        deps.raise({
+          kind: 'agent.failed',
+          id: entry.id,
+          title: 'Could not rotate its session',
+          subject: stuckAgent,
+          body: entry.body,
+          action: { type: 'agent', name: stuckAgent },
+          createdAt: entry.ts,
+        });
+      }
+
       return;
     }
 

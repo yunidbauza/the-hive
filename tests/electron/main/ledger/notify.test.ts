@@ -450,4 +450,45 @@ describe('createLedgerNotifier', () => {
       expect(raise).not.toHaveBeenCalled();
     });
   });
+
+  describe('the rotate-failed card (HIVE-122)', () => {
+    it('raises a card when an agent could not rotate', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(
+        entry({
+          id: 'e-9',
+          from: OVERMIND,
+          kind: 'event',
+          body: 'drone could not rotate — three handoff wakes ended without a handoff.',
+          meta: { rotateFailed: 3, agent: 'drone' },
+        }),
+      );
+
+      expect(raise).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'agent.failed',
+          id: 'e-9',
+          subject: 'drone',
+          action: { type: 'agent', name: 'drone' },
+        }),
+      );
+    });
+
+    it('ignores a rotation failure naming something that is not an agent', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(
+        entry({
+          id: 'e-9',
+          from: OVERMIND,
+          kind: 'event',
+          body: 'x',
+          meta: { rotateFailed: 3, agent: 'sess-01' },
+        }),
+      );
+
+      expect(raise).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -482,7 +482,7 @@ export const NOTIFICATION_KIND_SPECS: Record<
     source: 'agent',
     label: 'When an agent fails or hits a limit',
     description:
-      'A run ended badly — it failed, ran out of turns, or spent its budget.',
+      'A run ended badly — it failed, ran out of turns, spent its budget, or could not hand off its session.',
     icon: 'ph-warning',
     tone: 'red',
     defaultDelivery: 'both',
