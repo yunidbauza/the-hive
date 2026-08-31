@@ -284,4 +284,57 @@ describe('createLedgerNotifier', () => {
 
     expect(raise).toHaveBeenCalledTimes(2);
   });
+
+  /**
+   * An ask time retired takes its card with it (HIVE-120).
+   *
+   * The thread is closed, so `Ledger.append` refuses everything the card's
+   * buttons could send — a live card over a dead thread is the bug the `failed`
+   * branch above was made symmetric to fix.
+   */
+  it('dismisses the card of an ask that expired', () => {
+    const { raise, dismiss, onEntry } = harness();
+    onEntry(
+      entry({
+        id: '20260831-090000-0009',
+        from: OVERMIND,
+        to: 'drone',
+        kind: 'event',
+        thread: '20260830-101500-0001',
+        body: 'ask a7 expired',
+        meta: { expired: '20260830-101500-0001' },
+      }),
+    );
+
+    expect(dismiss).toHaveBeenCalledWith('20260830-101500-0001');
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('leaves a run receipt alone', () => {
+    const { dismiss, onEntry } = harness();
+    onEntry(
+      entry({
+        from: 'drone',
+        kind: 'event',
+        body: 'run.ended — done',
+        meta: { run: 'r-1', outcome: 'done' },
+      }),
+    );
+
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
+  it('ignores an expired rider that is not an id', () => {
+    const { dismiss, onEntry } = harness();
+    onEntry(
+      entry({
+        from: OVERMIND,
+        kind: 'event',
+        body: 'nonsense',
+        meta: { expired: true },
+      }),
+    );
+
+    expect(dismiss).not.toHaveBeenCalled();
+  });
 });
