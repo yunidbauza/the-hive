@@ -29,22 +29,45 @@ export const taskOf = (entry: Pick<LedgerEntry, 'meta'>): string | undefined => 
 };
 
 /**
- * Asks nobody has answered and time has not retired.
+ * The kinds that close a thread they name.
+ *
+ * An `answer` is the obvious one — the question got its reply. `done` and
+ * `failed` are the two the *asker* uses to take the question back, and
+ * `ledger-tools.ts` says so in the schema the model reads: `thread` on
+ * `ledger_done` is "the ask this completes", on `ledger_failed` "the ask this
+ * abandons". Either way nobody is owed a reply any more.
+ *
+ * They were missing here, and the gap was visible on screen (HIVE-118): the
+ * notifier dismissed the card on a `done` while this function kept the ask
+ * open, so the left rail's Agents badge — counted straight off the ledger and
+ * immune to notification state — stayed lit with nothing behind it to answer.
+ * A `failed` was the mirror image: the ask closed nowhere and the user kept a
+ * live, button-bearing card for a question its asker had already given up on,
+ * whose buttons `Ledger.append` would refuse anyway.
+ *
+ * One set rather than a condition spelled out twice, because the notifier
+ * makes the same call about the same three kinds and the two must not drift.
+ */
+const CLOSING_KINDS = new Set(['answer', 'done', 'failed']);
+
+/**
+ * Asks nobody has closed and time has not retired.
  *
  * Both conditions matter. Without the TTL an ask whose asker died stays open
- * forever and the inbox never empties; without the answer check a thread
- * closes on a timer while someone is still owed a reply.
+ * forever and the inbox never empties; without the {@link CLOSING_KINDS} check
+ * a thread closes on a timer while someone is still owed a reply.
  */
 export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[] {
-  const answered = new Set<string>();
+  const closed = new Set<string>();
   for (const entry of entries) {
-    if (entry.kind === 'answer' && entry.thread !== undefined) answered.add(entry.thread);
+    if (entry.thread === undefined) continue;
+    if (CLOSING_KINDS.has(entry.kind)) closed.add(entry.thread);
   }
 
   const open: OpenAsk[] = [];
   for (const entry of entries) {
     if (entry.kind !== 'ask') continue;
-    if (answered.has(entry.id)) continue;
+    if (closed.has(entry.id)) continue;
     const ageMs = now - entry.ts;
     if (ageMs >= LEDGER_ASK_TTL_MS) continue;
     open.push({ ...entry, kind: 'ask', open: true, ageMs });

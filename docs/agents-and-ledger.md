@@ -226,9 +226,9 @@ there is no lookup table to keep in sync.
 
 | Entry | Effect |
 | --- | --- |
-| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id |
+| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id, and its `subject` is the asker |
 | `kind === 'answer'` with a thread | the ask's card is marked read |
-| `kind === 'done'` with a thread | the ask's card is dismissed |
+| `kind === 'done'` or `kind === 'failed'` with a thread | the ask's card is dismissed — and `openAsks` closes the ask itself, so the two agree |
 | `kind === 'done'` from an agent | raise `agent.done` |
 | `kind === 'failed'` from an agent | raise `agent.failed`, and that agent is recorded as having spoken |
 | `kind === 'event'` from an agent whose `meta.outcome` is `failed`, `budget` or `turns` | raise `agent.failed`, unless that agent already spoke |
@@ -252,10 +252,18 @@ reply?" instead of the asker's own title (`notify.ts`). Approving the draft
 unedited answers with the clicked option's own text; clicking the option
 named exactly `edit` (case-insensitive — not merely one that starts with
 those letters, which would hijack a model's own more descriptive copy)
-instead opens the quote in a text field seeded from it, and sending that
-answers `approve` with `meta.edited` carrying what the overmind changed it
-to — so the agent that reads its answer back can tell a rubber stamp from a
-rewrite.
+instead opens the quote in a text field seeded from it. Sending that answers
+with the asker's **own** affirmative — the first option that is neither the
+edit affordance nor a refusal, falling back to `approve` only when the ask
+offered nothing usable — and carries `meta.edited` with what the overmind
+changed it to, so the agent that reads its answer back can tell a rubber stamp
+from a rewrite and can still match the body against the closed set it offered.
+
+A click on an ask's **toast** does not answer it and does not dismiss its row:
+it reveals the card. Main sends `{ type: 'ask' }` on `notifications:activate`
+— the same channel a session's click uses, widened into a union — and the
+renderer answers it with `revealRailTab('inbox')`, because main may not touch
+the rail and the rail can be sitting on another tab or collapsed outright.
 
 ## The console verbs
 
@@ -289,12 +297,23 @@ Two questions get asked constantly and answered nowhere on disk: *is this ask
 still open*, and *who holds this task*. Both are computed, not stored, by pure
 functions in `electron/shared/ledger-derive.ts`:
 
-- **`openAsks`** — an ask is open until it is answered *or* until
+- **`openAsks`** — an ask is open until something *closes* it, or until
   `LEDGER_ASK_TTL_MS` (24h) has passed since it was made, whichever comes
-  first. Both halves matter on their own: without the TTL, an ask whose asker
-  died (a session that crashed, a terminal that was closed) stays open
-  forever and the inbox never empties; without the answer check, a thread
-  would close on a timer while someone is still owed a reply.
+  first. Three kinds close a thread they name: an `answer` (the question got
+  its reply), a `done` ("the ask this completes") and a `failed` ("the ask
+  this abandons") — the asker taking its own question back. Both halves matter
+  on their own: without the TTL, an ask whose asker died (a session that
+  crashed, a terminal that was closed) stays open forever and the inbox never
+  empties; without the closing check, a thread would close on a timer while
+  someone is still owed a reply.
+
+  `done` and `failed` are the same rule as `answer` on purpose, and
+  `ledger/notify.ts` dismisses the card for all three symmetrically. Left
+  apart, the two halves disagreed on screen: a `done` dismissed the card while
+  the ask stayed open, so the left rail's Agents badge — counted off the
+  ledger, immune to notification state — stayed lit with nothing behind it;
+  and a `failed` closed nothing at all, so the user kept a live card whose
+  buttons `append` would refuse.
 - **`claims`** — a task is held by whichever party's `claim` entry (naming
   the task in `meta.task`) is the most recent one with no later `release` for
   that same task. **The ledger records claims; it does not arbitrate them.**

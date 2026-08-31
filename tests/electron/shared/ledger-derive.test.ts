@@ -43,6 +43,43 @@ describe('openAsks', () => {
     expect(openAsks(entries, NOW)).toEqual([]);
   });
 
+  /**
+   * HIVE-118 self-review, findings 2 and 6. `done` and `failed` both take a
+   * `thread` — `ledger-tools.ts` calls them "the ask this completes" and "the
+   * ask this abandons" — and neither closed the ask here.
+   *
+   * The `done` half was visible: `notify.ts` dismissed the card while this
+   * function kept the ask open, so the left rail's Agents badge — counted off
+   * the ledger, immune to notification state — stayed lit with nothing behind
+   * it. The `failed` half was the mirror image: the card stayed, offering
+   * buttons `Ledger.append` would refuse.
+   */
+  it.each(['done', 'failed'] as const)(
+    'closes an ask when a %s names its thread, exactly as an answer does',
+    (kind) => {
+      const entries = [
+        entry({ id: '20260828-100000-0001', kind: 'ask' }),
+        entry({ id: '20260828-100001-0001', kind, thread: '20260828-100000-0001' }),
+      ];
+
+      expect(openAsks(entries, NOW)).toEqual([]);
+    },
+  );
+
+  /**
+   * A `done` or `failed` with no thread is an agent reporting on its wake, not
+   * on a question. It must leave every open ask exactly where it was.
+   */
+  it.each(['done', 'failed'] as const)(
+    'leaves an unrelated ask open when a threadless %s lands',
+    (kind) => {
+      const ask = entry({ id: '20260828-100000-0001', kind: 'ask', ts: NOW - 60_000 });
+      const entries = [ask, entry({ id: '20260828-100001-0001', kind })];
+
+      expect(openAsks(entries, NOW)).toEqual([{ ...ask, open: true, ageMs: 60_000 }]);
+    },
+  );
+
   it('expires an ask older than the TTL even with no answer', () => {
     const entries = [
       entry({ id: '20260827-100000-0001', kind: 'ask', ts: NOW - LEDGER_ASK_TTL_MS - 1 }),
