@@ -89,7 +89,7 @@ const build = (over: Partial<WakeCommandDeps> = {}) =>
     workdir: (name) => `/home/u/.hive/work/${name}`,
     promptFile: (name) => `/data/hive/agents/${name}.system.md`,
     pluginDir: () => '/data/hive/plugin',
-    settingsPath: () => '/data/hive/claude-hooks.settings.json',
+    agentSettingsPath: () => '/data/hive/claude-agent.settings.json',
     mcpConfig: () => '/data/hive/hive.mcp.json',
     hookEnv: (name) => ({ HIVE_SESSION_ID: name, HIVE_HOOK_TOKEN: 'tok' }),
     claudeCommand: () => '/usr/local/bin/claude',
@@ -97,6 +97,7 @@ const build = (over: Partial<WakeCommandDeps> = {}) =>
     state: state(),
     env: () => ({ PATH: '/usr/local/bin', HOME: '/home/u' }),
     newUuid: () => 'minted-uuid',
+    pendingGrants: () => [],
     fs,
     isExecutable: (path) => path === '/usr/local/bin/claude',
     ...over,
@@ -218,12 +219,38 @@ describe('createWakeCommand', () => {
     expect('problem' in build()('slack-watcher', 'manual')).toBe(false);
   });
 
-  it('refuses when the hook receiver has not started', () => {
-    const built = build({ settingsPath: () => null })('slack-watcher', 'manual');
+  it('refuses when the agent settings file has not been written', () => {
+    const built = build({ agentSettingsPath: () => null })(
+      'slack-watcher',
+      'manual',
+    );
 
     expect(built).toMatchObject({
-      problem: expect.stringContaining('hook receiver'),
+      problem: expect.stringContaining('agent settings file'),
     });
+  });
+
+  it('starts an agent with the agent settings file, not the session one', () => {
+    const built = build({
+      agentSettingsPath: () => '/data/hive/claude-agent.settings.json',
+    })('slack-watcher', 'manual');
+
+    if ('problem' in built) throw new Error('expected a command');
+
+    expect(built.args[built.args.indexOf('--settings') + 1]).toBe(
+      '/data/hive/claude-agent.settings.json',
+    );
+  });
+
+  it("carries this wake's one-shot grants into the command", () => {
+    const built = build({ pendingGrants: () => ['Bash'] })(
+      'slack-watcher',
+      'manual',
+    );
+
+    if ('problem' in built) throw new Error('expected a command');
+
+    expect(JSON.parse(built.env['HIVE_GRANTS']!)).toContain('Bash');
   });
 
   it('refuses when the MCP config has not been written', () => {

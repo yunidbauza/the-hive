@@ -22,7 +22,7 @@ import {
 import { createAgentState, type AgentState } from '../../electron/main/agents/state';
 import { createWakeCommand } from '../../electron/main/agents/wake-command';
 import { createReceiver, type Receiver } from '../../electron/main/hooks/receiver';
-import { writeHookSettings } from '../../electron/main/hooks/settings';
+import { writeAgentSettings } from '../../electron/main/hooks/settings';
 import { createLedger, type Ledger } from '../../electron/main/ledger';
 import { mcpConfig } from '../../electron/main/mcp/config';
 import { createSkillsRuntime } from '../../electron/main/skills';
@@ -309,7 +309,16 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
     expect(url).not.toBeNull();
 
-    const settingsPath = await writeHookSettings(userDataPath, url ?? '');
+    /*
+      The agent-space file, not the session one (HIVE-119): production wakes
+      read `hooks.agentSettingsPathFor()`, which carries the `permissions.ask`
+      rule that routes every tool call through `approve`. Every tool this
+      suite's agents actually call — `ledger_*` via `mcp__hive__*`, and each
+      definition's own `tools:` list — is already in `HIVE_GRANTS`, so
+      `approve` auto-approves them without ever writing an ask; nothing here
+      can hang waiting on a card nobody will answer.
+    */
+    const settingsPath = await writeAgentSettings(userDataPath, url ?? '');
 
     const mcpConfigPath = join(userDataPath, 'hive', 'hive.mcp.json');
 
@@ -341,7 +350,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       workdir: agentWorkdir,
       promptFile: (name) => agentPromptFile(userDataPath, name),
       pluginDir: () => pluginDir ?? '',
-      settingsPath: () => settingsPath,
+      agentSettingsPath: () => settingsPath,
       mcpConfig: () => mcpConfigPath,
       hookEnv: (name) => ({
         [HOOK_ENV_SESSION]: name,
@@ -359,6 +368,10 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       state: agentState,
       env: () => process.env,
       newUuid: () => randomUUID(),
+      // No `permissions` runtime in this suite (HIVE-120's scheduler and its
+      // own live proof own that ground) — no wake here is owed a one-shot
+      // grant.
+      pendingGrants: () => [],
     });
 
     runs = createRunTracker({

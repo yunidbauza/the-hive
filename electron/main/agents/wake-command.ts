@@ -67,8 +67,16 @@ export interface WakeCommandDeps {
   promptFile: (name: string) => string;
   /** `<userData>/hive/plugin` — the skills The Hive generates. */
   pluginDir: () => string;
-  /** `hooks.settingsPathFor()`. `null` until the receiver has bound. */
-  settingsPath: () => string | null;
+  /**
+   * `hooks.agentSettingsPathFor()`. `null` until the receiver has bound.
+   *
+   * The agent-space twin of a session's settings file — it carries the
+   * `permissions.ask: ["*"]` rule that routes every tool call through
+   * `mcp__hive__approve` (HIVE-119). A wake must never read
+   * `hooks.settingsPathFor()`: that file has no such rule, and an agent
+   * started against it would run with no fence at all.
+   */
+  agentSettingsPath: () => string | null;
   /** `mcp.configPathFor()`. `null` until the config has been written. */
   mcpConfig: () => string | null;
   /** `hooks.envFor(name)` — the three variables that make a hook attributable. */
@@ -80,6 +88,17 @@ export interface WakeCommandDeps {
   /** `process.env`, by the time HIVE-84 has repaired its `PATH`. */
   env: () => NodeJS.ProcessEnv;
   newUuid: () => string;
+  /**
+   * `permissions.grantsFor(name)` — the one-shot `allow-once` grants an
+   * answered ask owes this particular wake (HIVE-119).
+   *
+   * Read once, right before the argv is spelled, and handed straight to
+   * `wakeCommand` as `grants`: this wake's `HIVE_GRANTS`, never `def.tools`.
+   * Calling it here rather than earlier is what makes the grant apply to the
+   * wake it answered rather than to whichever wake happened to be building
+   * next.
+   */
+  pendingGrants: (name: string) => string[];
   fs?: WakeFs;
   /**
    * How `resolveClaude` decides a candidate is runnable.
@@ -180,13 +199,13 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       instruction is to call one. An agent that cannot read its inbox has
       nothing to do, so starting it would burn a turn to accomplish nothing.
     */
-    const settings = deps.settingsPath();
+    const settings = deps.agentSettingsPath();
 
     if (settings === null) {
       return {
         problem:
-          'The hook receiver has not started, so a run could not be tracked. ' +
-          'Try again in a moment.',
+          'The agent settings file has not been written yet, so a run could ' +
+          'not be tracked. Try again in a moment.',
       };
     }
 
@@ -293,6 +312,7 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
         hook: deps.hookEnv(name),
         subscriptionAuth: deps.subscriptionAuth(),
       },
+      grants: deps.pendingGrants(name),
     });
 
     // Whichever of the two `wakeCommand` actually spelled — `--resume <uuid>`
