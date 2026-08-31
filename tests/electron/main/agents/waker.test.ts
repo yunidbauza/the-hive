@@ -193,6 +193,30 @@ describe('wakeCommand', () => {
     expect(result['PATH']).toBe('/usr/bin');
     expect(result['HOME']).toBe('/home/me');
   });
+
+  it('routes every permission decision to the hive approve tool', () => {
+    const { args } = build();
+    const at = args.indexOf('--permission-prompt-tool');
+    expect(at).toBeGreaterThan(-1);
+    expect(args[at + 1]).toBe('mcp__hive__approve');
+  });
+
+  it('never sets a permission mode, which would skip the prompt tool', () => {
+    expect(build().args).not.toContain('--permission-mode');
+  });
+
+  it('grants the ledger tools and the definition to the fence', () => {
+    const { env } = build({ def: def({ tools: ['Read', 'Grep'] }) });
+    expect(JSON.parse(env['HIVE_GRANTS']!)).toEqual(['mcp__hive__*', 'Read', 'Grep']);
+  });
+
+  it('adds a one-shot grant for this wake only', () => {
+    const withOnce = build({ def: def({ tools: ['Read'] }), grants: ['Bash'] });
+    expect(JSON.parse(withOnce.env['HIVE_GRANTS']!)).toEqual(['mcp__hive__*', 'Read', 'Bash']);
+
+    const next = build({ def: def({ tools: ['Read'] }) });
+    expect(JSON.parse(next.env['HIVE_GRANTS']!)).toEqual(['mcp__hive__*', 'Read']);
+  });
 });
 
 describe('wakePrompt', () => {
