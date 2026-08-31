@@ -18,7 +18,7 @@ import { ReceiverError, type ReceiverClient } from './client';
 import type { RpcHandlers } from './rpc';
 
 /**
- * The eight tools, as behaviour (HIVE-112).
+ * The nine tools, as behaviour (HIVE-112, `ledger_handoff` added by HIVE-122).
  *
  * Every one of them is the same three steps: read the arguments, make one
  * receiver call, turn the outcome into a `CallToolResult`. The interesting part
@@ -390,6 +390,8 @@ export function createToolHandlers(
             return await write('done', args);
           case 'ledger_failed':
             return await write('failed', args);
+          case 'ledger_handoff':
+            return await write('handoff', args);
           default:
             return failed(`no such tool: ${name}`);
         }

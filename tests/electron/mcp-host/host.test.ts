@@ -29,9 +29,9 @@ describe('readGrants', () => {
 });
 
 describe('createHandlers without an environment', () => {
-  it('still lists the nine tools, so /mcp shows the server connected', () => {
+  it('still lists the ten tools, so /mcp shows the server connected', () => {
     const handlers = createHandlers({}, vi.fn() as never);
-    expect(handlers.listTools()).toHaveLength(9);
+    expect(handlers.listTools()).toHaveLength(10);
   });
 
   it('answers every call with a legible reason instead of hanging', async () => {

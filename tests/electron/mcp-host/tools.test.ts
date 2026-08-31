@@ -17,7 +17,7 @@ const textOf = (result: { content: { text: string }[] }): string =>
   result.content.map((part) => part.text).join('');
 
 describe('createToolHandlers — listing', () => {
-  it('lists the nine shared definitions unchanged', () => {
+  it('lists the ten shared definitions unchanged', () => {
     const handlers = createToolHandlers(stub());
     expect(handlers.listTools().map((tool) => tool.name)).toEqual([
       'ledger_read',
@@ -28,6 +28,7 @@ describe('createToolHandlers — listing', () => {
       'ledger_release',
       'ledger_done',
       'ledger_failed',
+      'ledger_handoff',
       'approve',
     ]);
   });
@@ -327,6 +328,21 @@ describe('the writing tools', () => {
 
     await handlers.callTool('ledger_failed', { body: 'blocked' });
     expect(client.post).toHaveBeenCalledWith({ kind: 'failed', body: 'blocked' });
+  });
+
+  it('writes a handoff entry', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client);
+
+    const result = await handlers.callTool('ledger_handoff', {
+      body: 'I watch #ops. Thread 42 is open.',
+    });
+
+    expect(result.isError).toBe(false);
+    expect(client.post).toHaveBeenCalledWith({
+      kind: 'handoff',
+      body: 'I watch #ops. Thread 42 is open.',
+    });
   });
 
   it('refuses a write with no body before troubling the receiver', async () => {
