@@ -164,4 +164,33 @@ describe('SlackGroup', () => {
     expect(await screen.findByText('Not signed in')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in to Slack' })).toBeInTheDocument();
   });
+
+  /**
+   * `signIn` waits on a 10-minute browser OAuth round-trip. With no in-flight
+   * state a second click would run a second `claude mcp add` + `claude mcp
+   * login` and contend for the single registered callback port 3118.
+   */
+  it('disables sign-in while one is already in flight, so a second click cannot fire a second one', async () => {
+    status.mockResolvedValue({ kind: 'not-added' });
+    let resolveSignIn: (result: { kind: string }) => void = () => {};
+    signIn.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSignIn = resolve;
+      }),
+    );
+    render(<SlackGroup agents={[]} />);
+
+    const button = await screen.findByRole('button', { name: 'Sign in to Slack' });
+    await userEvent.click(button);
+
+    const pending = await screen.findByRole('button', { name: 'Signing in…' });
+    expect(pending).toBeDisabled();
+
+    await userEvent.click(pending);
+    expect(signIn).toHaveBeenCalledTimes(1);
+
+    resolveSignIn({ kind: 'connected' });
+
+    expect(await screen.findByRole('button', { name: 'Test' })).toBeInTheDocument();
+  });
 });

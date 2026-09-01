@@ -14,12 +14,12 @@ import type { SlackStatus } from '@shared/slack-contract';
  *
  * https://claude.ai/code/artifact/efe48323-a347-4744-8c00-026f8ff086b8
  *
- * One `SettingsGroup`, not three: a status row (state pill · identity ·
- * actions), a hairline, then one caption line and an `Advanced` disclosure.
- * The two alternatives considered — mirroring Jira's three nested groups, and
- * a connection card — both cost roughly three times the height to say one
+ * One `SettingsGroup`, not three: a status row (state pill · actions), a
+ * hairline, then one caption line and an `Advanced` disclosure. The two
+ * alternatives considered — mirroring Jira's three nested groups, and a
+ * connection card — both cost roughly three times the height to say one
  * sentence; this is the smallest shape that still answers "am I signed in,
- * as whom, and what is using it".
+ * and what is using it".
  *
  * ## The caption does double duty
  *
@@ -205,10 +205,23 @@ function testLabel(testing: boolean, failed: boolean): string {
   return failed ? 'Test again' : 'Test';
 }
 
+/**
+ * `Sign in to Slack`/`Try again` until one is in flight, `Signing in…` while
+ * it waits on the browser round-trip — the same idiom as {@link testLabel},
+ * because the failure this button needs to survive is a second click, not a
+ * second label.
+ */
+function signInLabel(signingIn: boolean, failed: boolean): string {
+  if (signingIn) return 'Signing in…';
+
+  return failed ? 'Try again' : 'Sign in to Slack';
+}
+
 function Actions({
   status,
   testing,
   testFailed,
+  signingIn,
   onSignIn,
   onSignOut,
   onTest,
@@ -216,6 +229,7 @@ function Actions({
   status: SlackStatus;
   testing: boolean;
   testFailed: boolean;
+  signingIn: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
   onTest: () => void;
@@ -224,8 +238,8 @@ function Actions({
     case 'not-added':
     case 'needs-auth':
       return (
-        <Button variant="primary" onClick={onSignIn}>
-          Sign in to Slack
+        <Button variant="primary" onClick={onSignIn} disabled={signingIn}>
+          {signInLabel(signingIn, false)}
         </Button>
       );
     case 'connected':
@@ -247,8 +261,8 @@ function Actions({
       );
     case 'error':
       return (
-        <Button variant="primary" onClick={onSignIn}>
-          Try again
+        <Button variant="primary" onClick={onSignIn} disabled={signingIn}>
+          {signInLabel(signingIn, true)}
         </Button>
       );
   }
@@ -303,6 +317,13 @@ export function SlackGroup({ agents }: SlackGroupProps) {
    */
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  /**
+   * Guards `handleSignIn` against a second click. `signIn` waits on a
+   * 10-minute browser OAuth round-trip with no other visible feedback; a
+   * second click would run a second `claude mcp add` + `claude mcp login`
+   * and contend for the single registered callback port 3118.
+   */
+  const [signingIn, setSigningIn] = useState(false);
   const [open, setOpen] = useState(false);
 
   /*
@@ -329,7 +350,11 @@ export function SlackGroup({ agents }: SlackGroupProps) {
   };
 
   const handleSignIn = () => {
-    void signIn().then(applyResult);
+    setSigningIn(true);
+    void signIn().then((result) => {
+      setSigningIn(false);
+      applyResult(result);
+    });
   };
 
   const handleSignOut = () => {
@@ -386,6 +411,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
                 status={status}
                 testing={testing}
                 testFailed={testError !== null}
+                signingIn={signingIn}
                 onSignIn={handleSignIn}
                 onSignOut={handleSignOut}
                 onTest={handleTest}
