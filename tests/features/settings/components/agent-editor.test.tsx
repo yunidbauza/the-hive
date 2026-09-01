@@ -28,6 +28,7 @@ interface Props {
   onChange: (source: string) => void;
   onSave: () => void;
   onDelete: () => void;
+  onRun: () => void;
   taken: readonly string[];
 }
 
@@ -40,6 +41,7 @@ const props: Props = {
   onChange: vi.fn(),
   onSave: vi.fn(),
   onDelete: vi.fn(),
+  onRun: vi.fn(),
 };
 
 const setup = (over: Partial<Props> = {}) => {
@@ -302,14 +304,51 @@ describe('AgentEditor', () => {
   });
 
   describe('the footer', () => {
-    it('offers Run now disabled, saying why', () => {
-      setup();
+    /*
+      The waker landed, so the button is live. It used to carry a literal
+      `disabled` and a title saying agents did not run yet, which was false on
+      the one screen where a user had just finished configuring one.
+    */
+    it('runs a saved, valid definition', async () => {
+      const onRun = vi.fn();
+
+      setup({ onRun });
+
+      const run = screen.getByRole('button', { name: 'Run now' });
+
+      expect(run).toBeEnabled();
+      await userEvent.click(run);
+
+      expect(onRun).toHaveBeenCalled();
+    });
+
+    /*
+      A wake reads AGENT.md off disk and never sees this buffer, so running it
+      would execute the previous version while the screen shows the new one.
+      Each refusal says which of the three it is — a disabled control with no
+      reason is what this pane replaced.
+    */
+    it.each([
+      ['unsaved edits', { dirty: true }, /save first/i],
+      ['a definition never saved', { path: null }, /no definition on disk/i],
+      [
+        'problems main refused',
+        { problems: [{ field: 'wake.every', reason: 'Must be a duration.' }] },
+        /fix the problems/i,
+      ],
+    ])('refuses to run with %s, and says why', async (_name, over, reason) => {
+      const onRun = vi.fn();
+
+      setup({ ...over, onRun });
 
       const run = screen.getByRole('button', { name: 'Run now' });
 
       expect(run).toBeDisabled();
       // Native title: the app mounts no TooltipProvider.
-      expect(run).toHaveAttribute('title', expect.stringMatching(/do not run yet/i));
+      expect(run).toHaveAttribute('title', expect.stringMatching(reason));
+
+      await userEvent.click(run);
+      expect(onRun).not.toHaveBeenCalled();
     });
 
     it('saves and deletes', async () => {

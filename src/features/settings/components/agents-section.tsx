@@ -23,6 +23,7 @@ import {
   type AgentProblem,
 } from '@shared/agent-contract';
 import type { SlackStatus } from '@shared/slack-contract';
+import { agentRunRefusal } from '@stores/hive-store';
 
 /**
  * The Agents section of settings (HIVE-114).
@@ -364,6 +365,42 @@ export function AgentsSection() {
     })();
   };
 
+  /**
+   * Wake the open agent once, from the pane that configures it.
+   *
+   * The editor gates on what it can see — unsaved, never saved, or refused by
+   * main — so by the time this runs there is a file on disk that parsed. What
+   * is left are the refusals only the runtime knows: it is already working, the
+   * user paused it, or the runtime is not up.
+   *
+   * Reported through `problems` as a whole-file entry, which is the one channel
+   * this pane already has for "main said no" and which `AgentEditor`'s footer
+   * renders in full. A `''` field is what marks it as belonging to no field —
+   * see the footer's own note — so it cannot land beside an input as though the
+   * user had typed something wrong.
+   */
+  const run = (): void => {
+    if (open === null) return;
+
+    setProblems([]);
+
+    void window.hive?.agents
+      .run({ name: open })
+      .then((result) => {
+        if (result.started) return;
+
+        setProblems([{ field: '', reason: agentRunRefusal(open, result) }]);
+      })
+      .catch((cause: unknown) => {
+        setProblems([
+          {
+            field: '',
+            reason: cause instanceof Error ? cause.message : String(cause),
+          },
+        ]);
+      });
+  };
+
   const remove = (): void => {
     if (open === null) {
       // Never written, so there is nothing to delete — just close it.
@@ -545,6 +582,7 @@ export function AgentsSection() {
               onChange={setBuffer}
               onSave={save}
               onDelete={remove}
+              onRun={run}
             />
 
             {pending === null ? null : (

@@ -47,29 +47,34 @@ export function AgentRow({ id }: AgentRowProps) {
   /**
    * The second line of the meta — the fact that makes the status actionable.
    *
-   * `working` deliberately shows **no** cost. `entity.cost` is the *last
-   * finished* run's spend — `pushAgentStatus` reads `runs[last]`, and a run is
-   * only appended to `runs` when it finalizes — so drawing it beside a running
-   * agent presents the previous run's money as this one's. Nothing on the wire
-   * carries an in-flight cost, so the honest row says nothing.
-   *
-   * A resting row is where that number is unambiguous, so it rides there
-   * beside the next wake. `asking` and `failed` show nothing: the ref is
+   * Only a resting row has one. `asking` and `failed` show nothing: the ref is
    * already beside the word, and a failure's reason belongs in the view rather
-   * than squeezed into a rail row.
+   * than squeezed into a rail row. `working` shows nothing either.
+   *
+   * **The cost is deliberately not here, and this column is why.** The meta is
+   * `shrink-0`, so every character it holds is taken out of the name and
+   * description beside it: `next 04:46 PM · $0.04` is 21 characters, about half
+   * the width of a 268px rail once the avatar and the gaps are paid for, and it
+   * truncated `ultralisk` to `ultrali…`. An agent's name is the only thing in
+   * this row that identifies it, and a number is a poor trade for it.
+   *
+   * Nothing is lost by the omission. `entity.cost` is the *last finished* run's
+   * spend, and the view's Today tile already carries the day's — which is the
+   * figure anyone actually acts on. It was never drawn beside a `working` row
+   * anyway: `pushAgentStatus` reads `runs[last]` and a run is only appended
+   * when it finalizes, so beside a running agent it was the previous run's
+   * money wearing this one's clothes.
+   *
+   * `skipped 3` stays, and only when there have been any (HIVE-121). The rail
+   * is where "why has this done nothing all day?" actually gets asked, so this
+   * is where the answer belongs — in the meta's own subtle colour rather than
+   * amber, because the count reports the scheduler working exactly as its
+   * definition asked, and a warning colour for correct behaviour is a lie the
+   * reader has to spend time disproving.
    */
-  /*
-    `skipped 3` sits between the next wake and the cost, and only when there
-    have been any (HIVE-121). The rail is where "why has this done nothing all
-    day?" actually gets asked, so this is where the answer belongs.
-
-    In the meta's own subtle colour rather than amber: the count reports the
-    scheduler working exactly as its definition asked, and a warning colour for
-    correct behaviour is a lie the reader has to spend time disproving.
-  */
   const detail =
     entity.status === 'sleeping'
-      ? [`next ${describeNextRun(entity)}`, describeSkips(entity), entity.cost]
+      ? [`next ${describeNextRun(entity)}`, describeSkips(entity)]
           .filter((part) => part !== undefined)
           .join(' · ')
       : '';

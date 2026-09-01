@@ -53,7 +53,33 @@ interface AgentRunLogProps {
  * Receipts do not expand, and they have no chevron promising that they might.
  * Their lines were never kept — `agents:lines` is a live push and nothing
  * writes it to disk — so a disclosure control would open onto nothing.
+ *
+ * ## Two scroll regions, not one
+ *
+ * The receipts and the output are two different documents that happened to be
+ * stacked in one `overflow-y-auto` box, and one scrollbar for both made each of
+ * them unreadable: scrolling back through fifty receipts pushed the output off
+ * the bottom, and reading the output pushed every receipt out of reach. Worse,
+ * the autoscroll below chases the foot of the *whole* box, so a live run
+ * dragged the receipts away with it.
+ *
+ * So each half scrolls itself. The receipts take their natural height up to
+ * {@link RECEIPTS_MAX}, then scroll in place; the output takes everything left
+ * and is the half that grows. That split is the right way round because the
+ * receipts are a fixed-height ledger of one line each and the output is prose
+ * of unknown length — the elastic content gets the elastic space.
  */
+
+/**
+ * The ceiling on the receipts half, as a share of the log's height.
+ *
+ * A percentage rather than a row count: this component's type scale is the
+ * user's terminal one (10px to 18px), so "eight rows" is anywhere from 110px to
+ * 200px of a box whose own height depends on two draggable rails. A share keeps
+ * the same *proportion* at every size, which is what the rule is actually
+ * about — the output must never be the smaller half.
+ */
+const RECEIPTS_MAX = '40%';
 export function AgentRunLog({ name, status }: AgentRunLogProps) {
   const lines = useAgentLines(name);
   const runs = useAgentRuns(name);
@@ -63,46 +89,76 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
   const live = status === 'working';
 
   useEffect(() => {
-    // Follow the output while it is being written, as the terminal does. Not
-    // when it is finished: yanking a reader to the bottom of a log they are
-    // scrolling back through is the behaviour every transcript gets wrong.
-    if (live) foot.current?.scrollIntoView({ block: 'end' });
+    /*
+      Follow the output while it is being written, as the terminal does. Not
+      when it is finished: yanking a reader to the bottom of a log they are
+      scrolling back through is the behaviour every transcript gets wrong.
+
+      `nearest` rather than `end`, and it matters now that the foot lives
+      inside the output half instead of at the bottom of the whole box. `end`
+      scrolls **every** scrollable ancestor to put the target at its bottom, so
+      it reached past the output region and dragged the view's own layout with
+      it; `nearest` moves each ancestor by the least it can, which for the
+      region that actually overflows is the same scroll and for the ones that
+      do not is nothing at all.
+    */
+    if (live) foot.current?.scrollIntoView({ block: 'nearest' });
   }, [lines, live]);
 
   return (
     <div
-      className="min-h-0 overflow-y-auto rounded-lg bg-term-bg p-2.5"
+      className="flex min-h-0 flex-col rounded-lg bg-term-bg p-2.5"
       style={{ fontFamily, fontSize }}
       data-region="run-log"
     >
-      {runs.map((run) => (
-        <RunHeader key={run.run} run={run} dim={palette.dim} brand={palette.blue} />
-      ))}
+      {runs.length === 0 ? null : (
+        <div
+          className="shrink-0 overflow-y-auto"
+          style={{ maxHeight: RECEIPTS_MAX }}
+          data-region="run-receipts"
+        >
+          {runs.map((run) => (
+            <RunHeader
+              key={run.run}
+              run={run}
+              dim={palette.dim}
+              brand={palette.blue}
+            />
+          ))}
+        </div>
+      )}
 
       {live ? (
         <div
-          className="border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
+          className="shrink-0 border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
           style={{ color: palette.dim }}
         >
           Running now — this run is recorded when it ends.
         </div>
       ) : null}
 
-      {lines.length === 0 ? (
-        <p style={{ color: palette.dim }}>
-          Nothing yet — Run now wakes it.
+      {/*
+        The heading sits outside the scroll box rather than at the top of it,
+        so the output can be scrolled without losing the label that says what
+        it is. It is also the seam between the two regions — hence the rule,
+        which the receipts above no longer draw for it.
+      */}
+      {!live && runs.length > 0 && lines.length > 0 ? (
+        <p
+          className="shrink-0 border-t border-border-soft pt-1.5 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
+          style={{ color: palette.dim }}
+        >
+          Last output
         </p>
-      ) : (
-        <>
-          {!live && runs.length > 0 ? (
-            <p
-              className="pt-1.5 text-[0.85em] tracking-[0.1em] uppercase"
-              style={{ color: palette.dim }}
-            >
-              Last output
-            </p>
-          ) : null}
-          {lines.map((line, index) => (
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto" data-region="run-output">
+        {lines.length === 0 ? (
+          <p style={{ color: palette.dim }}>
+            Nothing yet — Run now wakes it.
+          </p>
+        ) : (
+          lines.map((line, index) => (
             <p
               // Lines are append-only and never reordered, so the index is a
               // stable identity here in the one way it usually is not.
@@ -117,11 +173,11 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
             >
               {line.text}
             </p>
-          ))}
-        </>
-      )}
+          ))
+        )}
 
-      <div ref={foot} />
+        <div ref={foot} />
+      </div>
     </div>
   );
 }

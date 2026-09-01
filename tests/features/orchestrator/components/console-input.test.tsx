@@ -186,8 +186,6 @@ describe('ConsoleInput', () => {
   it('keeps the hint bar beneath the prompt, listing every verb', () => {
     render(<ConsoleInput />);
 
-    expect(screen.getByText('↑↓ select')).toBeInTheDocument();
-
     /*
       Asserted against `CONSOLE_VERBS` rather than a copy of the string: the whole
       point of that constant is that the footer and the grammar cannot drift, and
@@ -199,6 +197,19 @@ describe('ConsoleInput', () => {
     // The claim that is gone, pinned so it cannot come back by accident.
     expect(screen.queryByText(/read-only/)).toBeNull();
     expect(screen.queryByText(/orchestrator/i)).toBeNull();
+  });
+
+  /*
+    The bar used to open with `↑↓ select` and `→ or ↵ open session`, which are
+    the same two keys the input row's own corner prints a few pixels above. One
+    fact twice, and at a narrow stage the duplicates were what wrapped the bar
+    onto a second line.
+  */
+  it('states each key once, in the input row rather than twice', () => {
+    render(<ConsoleInput />);
+
+    expect(screen.getAllByText(/↑↓ select/)).toHaveLength(1);
+    expect(screen.queryByText(/open session/)).toBeNull();
   });
 
   /**

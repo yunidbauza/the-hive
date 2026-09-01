@@ -432,6 +432,75 @@ describe('AgentsSection', () => {
     });
   });
 
+  /*
+    The waker landed in HIVE-117 and this button did not notice: it carried a
+    literal `disabled` and a title reading "Agents do not run yet", on the one
+    screen where a user has just finished configuring the agent.
+  */
+  describe('running from the editor', () => {
+    const open = async (over: Record<string, unknown> = {}) => {
+      const bridge = stub([agent('slack-watcher')], over);
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /slack-watcher/ }),
+      );
+      await waitFor(() => expect(bridge.read).toHaveBeenCalled());
+
+      return bridge;
+    };
+
+    it('wakes the open agent by name', async () => {
+      const run = vi.fn(async () => ({ started: true, run: 'r1' }));
+      await open({ run });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Run now' }));
+
+      await waitFor(() =>
+        expect(run).toHaveBeenCalledWith({ name: 'slack-watcher' }),
+      );
+    });
+
+    /*
+      The refusals only main knows — already working, paused, runtime down.
+      They land in the footer as a whole-file problem, which is the one channel
+      this pane already has for "main said no".
+    */
+    it('says why a refused run did not happen', async () => {
+      const run = vi.fn(async () => ({ started: false, refused: 'paused' }));
+      await open({ run });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Run now' }));
+
+      expect(
+        await screen.findByText(/slack-watcher is paused/),
+      ).toBeInTheDocument();
+    });
+
+    /*
+      A wake reads AGENT.md off disk, so running with unsaved edits would
+      execute the previous version while the screen shows the new one.
+    */
+    it('refuses while the buffer is unsaved, and says so', async () => {
+      const run = vi.fn(async () => ({ started: true, run: 'r1' }));
+      await open({ run });
+
+      await userEvent.click(await screen.findByRole('tab', { name: 'Source' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'Agent source' }),
+        'x',
+      );
+
+      const button = screen.getByRole('button', { name: 'Run now' });
+
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', expect.stringMatching(/save first/i));
+
+      await userEvent.click(button);
+      expect(run).not.toHaveBeenCalled();
+    });
+  });
+
   describe('the Slack watcher example (HIVE-123)', () => {
     it('is hidden when slack is not connected', async () => {
       vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'not-added' });

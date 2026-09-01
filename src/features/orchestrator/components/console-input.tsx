@@ -219,9 +219,28 @@ export function ConsoleInput() {
         </span>
       </div>
 
-      <div className="flex shrink-0 items-center justify-center gap-5 border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-subtle">
-        <span>↑↓ select</span>
-        <span>→ or ↵ open session</span>
+      {/*
+        The verbs, and only the verbs.
+
+        This bar used to open with `↑↓ select` and `→ or ↵ open session`, which
+        are the same two keys `KEY_HINT` already prints in the input row's right
+        corner a few pixels above — the same fact twice, and at a narrow stage
+        the duplicates were what wrapped the row onto two lines.
+
+        The verb list stays because nothing else says it. It is the only place
+        the grammar is visible without already knowing that `help` exists.
+      */}
+      <div
+        /*
+          The last thing on the stage, and `fleet-scroll.spec.ts` reads it as
+          exactly that: it proves the fleet table never grows until the console
+          is pushed past the foot of the window. It used to find this bar by
+          its `↑↓ select` span, which no longer exists — a text locator for a
+          string that has moved is a spec that silently stops testing anything.
+        */
+        data-testid="console-hints"
+        className="flex shrink-0 items-center justify-center border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-subtle"
+      >
         <span>{CONSOLE_VERBS.join(' · ')}</span>
       </div>
     </>

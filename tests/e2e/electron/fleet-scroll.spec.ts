@@ -172,7 +172,7 @@ test('a fleet taller than the stage scrolls, and the console stays on screen', a
       own, because an element inside an `overflow-hidden` ancestor is still
       "visible" to Playwright when it has been laid out past the bottom edge.
     */
-    const legend = page.getByText('↑↓ select', { exact: true });
+    const legend = page.getByTestId('console-hints');
     await expect(legend).toBeVisible();
     const belowTheFold = await legend.evaluate(
       (element) => element.getBoundingClientRect().bottom - window.innerHeight,
@@ -194,7 +194,7 @@ test('a fleet taller than the stage scrolls, and the console stays on screen', a
     /*
       And the caret drags the scroll box after it.
 
-      `↑↓ select` is printed under the prompt, so a caret that walks off the
+      The console prints what the arrow keys do, so a caret that walks off the
       bottom of the scroll box and stays there is the console telling the user
       something the screen does not do. Fifteen rows is past the fold at this
       window and short of the end of the list, so the assertion is about the

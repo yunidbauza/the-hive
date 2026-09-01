@@ -83,25 +83,22 @@ describe('AgentRow', () => {
   });
 
   /**
-   * `entity.cost` is the *last finished* run's spend — `pushAgentStatus` reads
-   * `runs[last]`, and a run only joins `runs` when it finalizes. Drawing it
-   * beside a running agent presents the previous run's money as this one's,
-   * and nothing on the wire carries an in-flight cost.
+   * The meta is `shrink-0`, so every character it holds is taken out of the
+   * name and description beside it — and the name is the only thing in the row
+   * that identifies the agent. `next 04:46 PM · $0.04` truncated `ultralisk`
+   * to `ultrali…`, which is a poor trade for a number the view's Today tile
+   * already carries.
    */
-  it('does not show a cost while working — it would be the previous run’s', () => {
-    hydrate({ status: 'working', cost: '$0.08' });
+  it('never shows a cost, whatever the agent is doing', () => {
+    for (const status of ['working', 'sleeping'] as const) {
+      hydrate({ status, cost: '$0.08' });
 
-    render(<AgentRow id="watcher" />);
+      const { unmount } = render(<AgentRow id="watcher" />);
 
-    expect(screen.queryByText(/\$0\.08/)).not.toBeInTheDocument();
-  });
+      expect(screen.queryByText(/\$0\.08/)).not.toBeInTheDocument();
 
-  it('shows the last run’s cost on a resting row, where it is unambiguous', () => {
-    hydrate({ status: 'sleeping', cost: '$0.08' });
-
-    render(<AgentRow id="watcher" />);
-
-    expect(screen.getByText(/next manual · \$0\.08/)).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('shows when a sleeping agent wakes next', () => {
@@ -114,16 +111,16 @@ describe('AgentRow', () => {
 
   /*
     The rail is where "why has this done nothing all day?" gets asked, so it is
-    where the answer belongs (HIVE-121) — between the next wake and the cost,
-    and in the meta's own subtle colour rather than amber, because the count
-    reports the scheduler working exactly as asked.
+    where the answer belongs (HIVE-121) — after the next wake, and in the meta's
+    own subtle colour rather than amber, because the count reports the scheduler
+    working exactly as asked.
   */
-  it('names skipped ticks between the next wake and the cost', () => {
+  it('names skipped ticks after the next wake, and ends there', () => {
     hydrate({ status: 'sleeping', skipsSinceRun: 3, cost: '$0.03' });
 
     render(<AgentRow id="watcher" />);
 
-    expect(screen.getByText('next manual · skipped 3 · $0.03')).toBeInTheDocument();
+    expect(screen.getByText('next manual · skipped 3')).toBeInTheDocument();
   });
 
   it('leaves the meta as it was when nothing has been skipped', () => {

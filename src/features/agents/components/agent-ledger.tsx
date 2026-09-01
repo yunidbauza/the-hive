@@ -8,7 +8,32 @@ interface AgentLedgerProps {
 }
 
 /**
+ * How many entries this column draws, newest first.
+ *
+ * A **render** bound, not a retention one: the store's mirror is already capped
+ * at `LEDGER_MEMORY_CAP` (500), and the file on disk keeps everything. What
+ * this bounds is the DOM — a busy agent's thread is a few hundred entries, each
+ * one a chip, a timestamp and a wrapped paragraph, all of them inside a 280px
+ * column nobody scrolls past the first screen of.
+ *
+ * Below the cap the column looks exactly as it always did. Above it, the
+ * remainder is *counted* on a final line rather than silently dropped — a list
+ * that just stops is indistinguishable from one that has nothing more.
+ */
+const THREAD_SHOWN = 100;
+
+/**
  * One agent's side of the log — what it said, and what it was told.
+ *
+ * ## Newest first
+ *
+ * The store keeps the ledger in write order, which is right for a record and
+ * wrong for a column: it put the entry the user opened the view to read at the
+ * bottom of a list they had to scroll to reach, and every new entry pushed the
+ * interesting end further away. Reversed here rather than in the selector,
+ * because `useAgentThread` is the *thread* — write order is what a thread is,
+ * and the console's `ledger` verb reads the same shape and wants it oldest
+ * first.
  *
  * ## Why the chip sits above the body, not beside it
  *
@@ -32,6 +57,16 @@ interface AgentLedgerProps {
 export function AgentLedger({ name }: AgentLedgerProps) {
   const entries = useAgentThread(name);
 
+  /*
+    `slice` before `reverse`, and on a copy either way: `reverse` mutates, and
+    the array here is the memoized value `useAgentThread` hands every consumer
+    of this thread. Reversing it in place would reorder the selector's own
+    cache — the next reader gets a different order than the one it computed,
+    with no state change to explain it.
+  */
+  const shown = entries.slice(-THREAD_SHOWN).reverse();
+  const older = entries.length - shown.length;
+
   return (
     <div
       className="flex min-h-0 flex-col gap-2.5 overflow-y-auto rounded-lg border border-border-soft bg-panel p-2.5"
@@ -41,12 +76,12 @@ export function AgentLedger({ name }: AgentLedgerProps) {
         Ledger
       </p>
 
-      {entries.length === 0 ? (
+      {shown.length === 0 ? (
         <p className="text-[11px] text-subtle">
           Nothing on the record yet.
         </p>
       ) : (
-        entries.map((entry) => (
+        shown.map((entry) => (
           <div key={entry.id} className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5">
               <span
@@ -70,6 +105,12 @@ export function AgentLedger({ name }: AgentLedgerProps) {
             </p>
           </div>
         ))
+      )}
+
+      {older === 0 ? null : (
+        <p className="border-t border-border-soft pt-2 text-[10px] text-subtle">
+          {`+${String(older)} older on the record`}
+        </p>
       )}
     </div>
   );

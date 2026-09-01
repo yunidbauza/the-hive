@@ -20,6 +20,15 @@ interface AgentEditorProps {
   onChange: (source: string) => void;
   onSave: () => void;
   onDelete: () => void;
+  /**
+   * Wake this agent once, now (HIVE-117's verb, reached from here at last).
+   *
+   * The section owns the call rather than this component, for the reason every
+   * other verb on this pane is a prop: the editor holds a buffer and knows
+   * nothing about which agent is open on disk — `path` is a string it renders,
+   * not a name it could pass to a bridge.
+   */
+  onRun: () => void;
 }
 
 /**
@@ -56,8 +65,38 @@ export function AgentEditor({
   onChange,
   onSave,
   onDelete,
+  onRun,
 }: AgentEditorProps) {
   const [tab, setTab] = useState<Tab>('form');
+
+  /**
+   * Why Run now would refuse, or `null` when it would not.
+   *
+   * The button used to carry a literal `disabled` and the title "Agents do not
+   * run yet — that lands with the waker." The waker landed: `agents.run` is the
+   * same channel the agent view's own Run now has been calling since HIVE-117,
+   * and leaving a dead control beside it told users the feature was missing
+   * from the one screen where they had just finished configuring it.
+   *
+   * The three conditions are all about *what would actually run*. A wake reads
+   * `AGENT.md` off disk — it does not see this buffer — so running with unsaved
+   * edits would execute the previous version while the screen shows the new
+   * one, and running a definition main has already refused would fail on the
+   * problem the footer is showing. A never-saved agent has no file at all.
+   *
+   * Refusals that only main can know — the agent is working, or paused — are
+   * not predicted here. They come back as an `AgentRunResult` and land in the
+   * footer through `problems`, which is where a whole-file complaint already
+   * goes.
+   */
+  const cannotRun =
+    path === null
+      ? 'Save it first — there is no definition on disk yet.'
+      : dirty
+        ? 'Save first — a wake reads the file, not this buffer.'
+        : problems.length > 0
+          ? 'Fix the problems first — this definition cannot be read.'
+          : null;
 
   /*
     What the footer says, and what it deliberately does not.
@@ -217,9 +256,10 @@ export function AgentEditor({
           */}
           <button
             type="button"
-            disabled
-            title="Agents do not run yet — that lands with the waker."
-            className="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted disabled:opacity-60"
+            disabled={cannotRun !== null}
+            onClick={onRun}
+            title={cannotRun ?? 'Wake this agent once, now.'}
+            className="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-muted"
           >
             Run now
           </button>
