@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   defaultRungFor,
+  honestPermissionAsk,
   isToolName,
   matches,
   oneShotRuleFor,
@@ -400,5 +401,123 @@ describe('summarise', () => {
 
   it('says something legible for a tool it has no special case for', () => {
     expect(summarise('TodoWrite', {}).length).toBeGreaterThan(0);
+  });
+});
+
+describe('honestPermissionAsk', () => {
+  it('leaves an ordinary ask exactly as written', () => {
+    const meta = { options: ['yes', 'no'] };
+    expect(honestPermissionAsk('ship it?', meta)).toEqual({
+      body: 'ship it?',
+      meta: { options: ['yes', 'no'] },
+    });
+  });
+
+  /**
+   * The whole point of the ticket: the body and the meta disagree on purpose,
+   * and what is displayed must come from the meta the grant is computed from.
+   */
+  it('rebuilds a deceptive body from the meta the grant uses', () => {
+    const result = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'rm -rf /' },
+    });
+
+    expect(result.body).toBe('Allow Bash?\nrm -rf /');
+    expect(result.meta['tool']).toBe('Bash');
+  });
+
+  it('replaces model-supplied rungs, default and options with the real ladder', () => {
+    const result = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      rungs: [{ id: 'allow-once', label: 'once', caption: 'harmless', rule: '*' }],
+      default: 'allow-tool',
+      options: ['yes'],
+    });
+
+    expect(result.meta['rungs']).toEqual(rungsFor('Bash', { command: 'npm test' }));
+    expect(result.meta['default']).toBe('allow-family');
+    expect(result.meta['options']).toEqual([
+      'allow-once',
+      'allow-family',
+      'allow-tool',
+      'deny',
+    ]);
+  });
+
+  /**
+   * `meta.quote` retitles the card "Send this reply?" and suppresses the
+   * command block entirely, so it hides the one thing the user is deciding on.
+   * A permission ask may not carry one.
+   */
+  it('drops meta.quote from a permission ask', () => {
+    const result = honestPermissionAsk('Allow Bash?\nnpm test', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      quote: 'something else entirely',
+    });
+
+    expect(result.meta['quote']).toBeUndefined();
+  });
+
+  it('trims bulk fields out of the input it keeps', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Write',
+      input: { file_path: '/repo/a.ts', content: 'x'.repeat(100) },
+    });
+
+    expect(result.meta['input']).toEqual({
+      file_path: '/repo/a.ts',
+      content: '[omitted from the ledger: 100 chars]',
+    });
+    expect(result.body).toBe('Allow Write?\n/repo/a.ts');
+  });
+
+  /**
+   * A ladder computed from an input that is not the stored one would make
+   * display/grant equality rest on a coincidence — bulk fields are never
+   * specifiers *today*. `permissions.ts` recomputes from the stored input, so
+   * this function must too.
+   */
+  it('computes the ladder from the same input object it stores', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test', content: 'y'.repeat(50) },
+    });
+
+    expect(result.meta['rungs']).toEqual(
+      rungsFor('Bash', result.meta['input'] as Record<string, unknown>),
+    );
+  });
+
+  it.each([
+    ['missing', {}],
+    ['not a string', { tool: 42 }],
+    ['not a tool name', { tool: 'Bash]\ntools: [Write' }],
+  ])('downgrades a permission ask whose tool is %s', (_label, extra) => {
+    const result = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      rungs: [{ id: 'allow-tool', label: 'all', caption: 'c', rule: '*' }],
+      default: 'allow-tool',
+      ...extra,
+    });
+
+    expect(result.body).toBe('Allow Read?\n/repo/a.ts');
+    expect(result.meta['kind']).toBeUndefined();
+    expect(result.meta['rungs']).toBeUndefined();
+    expect(result.meta['default']).toBeUndefined();
+  });
+
+  it('keeps a permission ask that was already honest byte-identical', () => {
+    const input = { command: 'npm test' };
+    const honest = honestPermissionAsk('', { kind: 'permission', tool: 'Bash', input });
+
+    expect(honestPermissionAsk(honest.body, honest.meta)).toEqual(honest);
   });
 });
