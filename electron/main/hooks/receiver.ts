@@ -34,6 +34,7 @@ import {
   METRICS_PATH,
   type SessionMetrics,
 } from '@shared/metrics-contract';
+import { sessionNameFromPrompt } from '@shared/session-contract';
 
 import { parseMetrics } from './metrics';
 import { ticketKeyFromPrompt } from './ticket-intent';
@@ -99,6 +100,22 @@ export interface ReceiverOptions {
    * two would put an optional key on every tick of the busiest event here.
    */
   onTicketIntent: (event: HookTicketIntentEvent) => void;
+  /**
+   * A name derived from the session's **first** prompt (HIVE-126).
+   *
+   * Separate from {@link onTicketIntent} even though both read the same event,
+   * because they answer different questions and disagree on purpose: a ticket
+   * association demands work intent around the key ("work on ABC-123" claims it,
+   * "the PR for ABC-123 broke CI" does not), while a *name* takes any key it can
+   * see. Folding them together would force one rule to serve both, and the
+   * stricter rule would leave most sessions unnamed to avoid a harm a label
+   * cannot do.
+   *
+   * Fired **at most once per conversation** — see the first-prompt set in
+   * `createReceiver`. Nothing here forwards the prompt itself; the derivation
+   * happens in this process and only the resulting name leaves it.
+   */
+  onPromptName: (entityId: string, name: string) => void;
   /**
    * The session's conversation ended by `/clear`, and its pty is still running.
    *
@@ -391,6 +408,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const {
     onEvent,
     onTicketIntent,
+    onPromptName,
     onCleared,
     onMetrics,
     onDone,
@@ -413,6 +431,23 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * free of mutable module state, which nothing else here has.
    */
   const warnedTaskTypes = new Set<string>();
+
+  /**
+   * Sessions whose first prompt has already been read (HIVE-126).
+   *
+   * The whole point of naming from a prompt is that it is the **first** one: the
+   * name should say why the session exists, not what it drifted onto by turn
+   * 170. That is exactly the failure Claude's own `ai-title` has, so a rule that
+   * re-derived on every prompt would reproduce it with extra steps.
+   *
+   * Cleared by `/clear`, because a cleared terminal is a new conversation that
+   * has not had a first prompt yet — the same boundary `onCleared` draws for
+   * every other piece of per-conversation state.
+   *
+   * Per receiver rather than per module, for the reason {@link warnedTaskTypes}
+   * gives: module state would let one test silence the next.
+   */
+  const promptedSessions = new Set<string>();
   const noteUnknownTaskType = (type: string): void => {
     if (warnedTaskTypes.has(type)) return;
     warnedTaskTypes.add(type);
@@ -878,6 +913,15 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     let agentId: unknown;
     let runInBackground: unknown;
     let backgroundShells: string[] | undefined;
+    /**
+     * Claude's own id for the conversation this event fired in (HIVE-126).
+     *
+     * Read on the session path as well as the agent one, because it is what
+     * names the transcript — and unlike the uuid pinned at spawn it stays
+     * correct across a `/clear`, which starts a *new* conversation in the same
+     * pty under a uuid nothing told main about.
+     */
+    let sessionUuid: unknown;
 
     if (truncated) {
       // The prefix is all there is; see EVENT_IN_PREFIX.
@@ -886,6 +930,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       cwd = CWD_IN_PREFIX.exec(body)?.[1];
       notificationType = NOTIFICATION_TYPE_IN_PREFIX.exec(body)?.[1];
       toolName = TOOL_NAME_IN_PREFIX.exec(body)?.[1];
+      sessionUuid = SESSION_ID_IN_PREFIX.exec(body)?.[1];
     } else {
       let parsed: unknown;
       try {
@@ -906,9 +951,11 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               agent_id?: unknown;
               tool_input?: { run_in_background?: unknown };
               background_tasks?: unknown;
+              session_id?: unknown;
             })
           : undefined;
       event = fields?.hook_event_name;
+      sessionUuid = fields?.session_id;
       reason = fields?.reason;
       cwd = fields?.cwd;
       prompt = fields?.prompt;
@@ -942,7 +989,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * already.
      */
     if (event === 'SessionEnd') {
-      if (reason === CLEAR_REASON) onCleared(entityId);
+      if (reason === CLEAR_REASON) {
+        // A cleared terminal is a fresh conversation, so its next prompt is a
+        // first prompt again (HIVE-126).
+        promptedSessions.delete(entityId);
+        onCleared(entityId);
+      }
       return 204;
     }
 
@@ -959,6 +1011,21 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (event === 'UserPromptSubmit' && typeof prompt === 'string') {
       const key = ticketKeyFromPrompt(prompt);
       if (key !== null) onTicketIntent({ entityId, key, source: 'prompt' });
+
+      /**
+       * The first prompt names the session (HIVE-126).
+       *
+       * Marked as seen whether or not a name came out of it. A greeting is
+       * still the first prompt, and re-reading until one happens to yield a
+       * name would quietly turn this back into "name from whatever prompt
+       * looks nameable", which is the defect rather than the fix — the row
+       * waits for Claude's title instead, which is what it did before.
+       */
+      if (!promptedSessions.has(entityId)) {
+        promptedSessions.add(entityId);
+        const name = sessionNameFromPrompt(prompt);
+        if (name !== undefined) onPromptName(entityId, name);
+      }
     }
 
     /**
@@ -982,6 +1049,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         status: NOTIFICATION_TYPE_STATUS[notificationType],
         notificationType,
         ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+      ...(typeof sessionUuid === 'string' && sessionUuid !== '' ? { sessionUuid } : {}),
       });
       return 204;
     }
@@ -990,6 +1058,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       entityId,
       event,
       status: HOOK_STATUS[event],
+      ...(typeof sessionUuid === 'string' && sessionUuid !== '' ? { sessionUuid } : {}),
       /**
        * Absent rather than empty when the payload did not carry one. The
        * session layer treats absence as "nothing to look at on this tick",

@@ -26,6 +26,7 @@ import {
   type SessionFinishedEvent,
   type SessionReadyEvent,
   type SessionNameEvent,
+  type SessionNameOrigin,
   type SessionStatusEvent,
   type SessionTicketIntentEvent,
 } from '@shared/session-contract';
@@ -45,6 +46,7 @@ import { createBranchReader, resolveGit, type BranchReaderOptions } from './git'
 import type { SessionHistory } from './history';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
+import { createTitleOriginReader } from './title-origin';
 
 /**
  * Sessions: what a terminal actually *is* in this app (story 096).
@@ -531,6 +533,32 @@ export function createSessions(options: SessionsOptions): Sessions {
   const titles = new Map<string, TitleReader>();
 
   /**
+   * What each session's conversation transcript is called (HIVE-126).
+   *
+   * The uuid is pinned at spawn and the cwd is the pty's, which together name
+   * `~/.claude/projects/<escaped-cwd>/<uuid>.jsonl` — the file that says whether
+   * a title was a `/rename` or Claude's own guess. Held here rather than asked
+   * of the history, because the history is optional and this must work in a
+   * build that has none.
+   */
+  const transcripts = new Map<string, { cwd: string; sessionUuid: string }>();
+
+  /**
+   * The last title classified for each session, and what it was classified as.
+   *
+   * Claude repaints its title several times a second and the reader reports
+   * every repaint, so without this the transcript would be read at that rate for
+   * an answer that cannot have changed. Keyed by the name itself, so a *new*
+   * title is always classified afresh.
+   *
+   * An `unknown` verdict is deliberately **not** cached — see
+   * {@link classifyTitle}.
+   */
+  const titleOrigins = new Map<string, { name: string; origin: SessionNameOrigin }>();
+
+  const titleOrigin = createTitleOriginReader();
+
+  /**
    * Reads `git rev-parse` for a directory, cached and rate-limited (HIVE-78).
    *
    * One reader for the whole layer rather than one per session, because its
@@ -783,6 +811,33 @@ export function createSessions(options: SessionsOptions): Sessions {
        * `git` spawn between a hook arriving and a status dot moving, on every
        * event, which is the one thing the receiver was careful not to do.
        */
+      /**
+       * Keep the transcript pointer on the conversation that is actually
+       * running (HIVE-126).
+       *
+       * Only the **uuid** is taken from the payload. The directory stays the one
+       * the pty was spawned in, because that is what decides Claude's project
+       * folder — an agent that `cd`s into a worktree reports the new directory
+       * here while its transcript stays where the process started, and following
+       * `event.cwd` would send every later lookup to a folder that does not
+       * exist.
+       *
+       * The uuid is the half that genuinely changes: `/clear` opens a new
+       * conversation in the same pty, and this is the only thing that says so.
+       */
+      if (event.sessionUuid !== undefined) {
+        const transcript = transcripts.get(event.entityId);
+        if (transcript !== undefined && transcript.sessionUuid !== event.sessionUuid) {
+          transcripts.set(event.entityId, {
+            cwd: transcript.cwd,
+            sessionUuid: event.sessionUuid,
+          });
+          // The cache describes the old conversation's transcript; it cannot be
+          // carried into one whose titles are written by a different file.
+          titleOrigins.delete(event.entityId);
+        }
+      }
+
       if (event.cwd !== undefined) {
         /**
          * `Stop` reads **fresh** (HIVE-78).
@@ -803,6 +858,23 @@ export function createSessions(options: SessionsOptions): Sessions {
         keys: [event.key],
         source: event.source,
       } satisfies SessionTicketIntentEvent),
+    /**
+     * The first prompt named the session (HIVE-126).
+     *
+     * Travels on `CH.sessionName` rather than a channel of its own, because it
+     * is the same fact the OSC-0 path reports — *this session is called X* — and
+     * the renderer's rename rule has to weigh the two against each other. A
+     * second channel would mean two writers racing to name one row with no
+     * shared notion of which outranks which; `origin` is that notion.
+     *
+     * Recorded in the history for the reason `readTitle` records titles: a
+     * restored row should come back reading as whatever it was called, not as
+     * the `sess-07` it was born as.
+     */
+    onPromptName: (entityId, name) => {
+      history?.record(entityId, { name });
+      send(CH.sessionName, { entityId, name, origin: 'prompt' } satisfies SessionNameEvent);
+    },
     onCleared: (entityId) => {
       /**
        * `/clear` keeps the pty and opens a successor row (HIVE-83).
@@ -1328,8 +1400,48 @@ export function createSessions(options: SessionsOptions): Sessions {
       // HIVE-87. A restored row should read as whatever the agent last called
       // itself, not as the `sess-07` it was born as.
       history?.record(entityId, { name });
-      send(CH.sessionName, { entityId, name } satisfies SessionNameEvent);
+      send(CH.sessionName, {
+        entityId,
+        name,
+        origin: classifyTitle(entityId, name),
+      } satisfies SessionNameEvent);
     }
+  }
+
+  /**
+   * Whether a title the terminal just showed was a `/rename` or Claude's guess
+   * (HIVE-126).
+   *
+   * The two are identical on the OSC-0 channel, so the answer comes from the
+   * transcript — see `title-origin.ts` for why Claude's own record is the only
+   * honest source, and why its `ai-title` is a guess about the wrong moment.
+   *
+   * ## Why an `unknown` is not cached
+   *
+   * The repaint and the transcript append race, so the first repaint of a new
+   * title can arrive before the line explaining it exists. Caching that would
+   * make a millisecond of ordering permanent — a `/rename` demoted to a guess
+   * for the life of the session. Leaving it uncached costs one more tail read on
+   * the next repaint, which is milliseconds away, and the verdict settles itself
+   * with no timer and no retry loop.
+   *
+   * It reports `agent` in the meantime, which is the conservative half of the
+   * trade: the worst case is that a rename takes one extra frame to land, where
+   * reporting `rename` on no evidence would let exactly the late `ai-title` this
+   * story exists to refuse through on every unreadable transcript.
+   */
+  function classifyTitle(entityId: string, name: string): SessionNameOrigin {
+    const cached = titleOrigins.get(entityId);
+    if (cached !== undefined && cached.name === name) return cached.origin;
+
+    const transcript = transcripts.get(entityId);
+    if (transcript === undefined) return 'agent';
+
+    const verdict = titleOrigin.classify(transcript.cwd, transcript.sessionUuid, name);
+    if (verdict === 'unknown') return 'agent';
+
+    titleOrigins.set(entityId, { name, origin: verdict });
+    return verdict;
   }
 
   /**
@@ -1691,6 +1803,18 @@ export function createSessions(options: SessionsOptions): Sessions {
       request.resume === true ? history?.resumable(request.entityId) : undefined;
     const resume = resumeUuid !== undefined;
     const sessionUuid = resumeUuid ?? newSessionUuid();
+
+    /**
+     * The transcript this generation will write to (HIVE-126).
+     *
+     * Recorded here because this is the only place both halves of the path are
+     * known at once, and overwritten rather than merged: a restart mints a new
+     * uuid, and classifying a new generation's titles against the previous
+     * conversation's transcript would answer about a file that has stopped
+     * growing. The stale origin cache goes with it, for the same reason.
+     */
+    transcripts.set(request.entityId, { cwd: project.path, sessionUuid });
+    titleOrigins.delete(request.entityId);
 
     /**
      * Written down before the process starts, not after (HIVE-87).

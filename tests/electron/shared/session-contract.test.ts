@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hiveNameFromTitle,
   isSendableSessionName,
+  sessionNameFromPrompt,
   SESSION_NAME_MAX,
 } from '../../../electron/shared/session-contract';
 
@@ -206,6 +207,124 @@ describe('hiveNameFromTitle', () => {
       );
       expect(long).toBeDefined();
       expect((long as string).length).toBeLessThanOrEqual(SESSION_NAME_MAX);
+    });
+  });
+});
+
+/**
+ * Naming a session after the first thing it was asked to do (HIVE-126).
+ *
+ * The half of the fix that is a pure function. What it cannot show — that the
+ * *first* prompt is the only one read, and that a late `ai-title` no longer
+ * overrides the result — lives in the receiver and store suites respectively,
+ * because both are facts about state rather than about text.
+ */
+describe('sessionNameFromPrompt', () => {
+  describe('a ticket key', () => {
+    it('names the session after a key the prompt routes work to', () => {
+      expect(sessionNameFromPrompt('/work-on HIVE-123 and also do X')).toBe('HIVE-123');
+    });
+
+    it('takes a bare key as the whole name', () => {
+      expect(sessionNameFromPrompt('HIVE-123')).toBe('HIVE-123');
+    });
+
+    it('upper-cases the project part and leaves the number alone', () => {
+      expect(sessionNameFromPrompt('please continue hive-53 today')).toBe('HIVE-53');
+    });
+
+    it('finds a key that is not in the opening words', () => {
+      // Position must not decide whether a row gets its key: the sentence's
+      // word order is not a statement about identity.
+      expect(sessionNameFromPrompt('fix the settings bug reported in HIVE-9')).toBe('HIVE-9');
+    });
+
+    it('reads a key through the punctuation people wrap it in', () => {
+      expect(sessionNameFromPrompt('start (hive-53) now')).toBe('HIVE-53');
+    });
+
+    it('keeps the first key when a prompt names two', () => {
+      expect(sessionNameFromPrompt('finish HIVE-1 then start HIVE-2')).toBe('HIVE-1');
+    });
+
+    it('takes a key without the work intent `ticket-intent.ts` demands', () => {
+      /*
+        The looser rule, asserted rather than assumed. `ticketKeyFromPrompt`
+        answers `null` here — no verb claims the ticket — and that is right for
+        *association*. A name is not an association, and refusing to name this
+        row would leave it `sess-0n` to avoid a harm a label cannot do.
+      */
+      expect(sessionNameFromPrompt('the PR for HIVE-77 broke CI')).toBe('HIVE-77');
+    });
+
+    it('does not read a date as a key, or spend the word budget on one', () => {
+      // A leading letter is required, which keeps `2026-08-27` from matching as
+      // a key — and the all-numeric token rule keeps it from eating all four
+      // words as `2026-08-27-release` instead.
+      expect(sessionNameFromPrompt('the 2026-08-27 release notes')).toBe('release-notes');
+    });
+
+    it('keeps a lone number, which is usually a version', () => {
+      expect(sessionNameFromPrompt('the React 18 upgrade')).toBe('react-18-upgrade');
+    });
+  });
+
+  describe('the slug', () => {
+    it('drops stopwords and keeps at most four words', () => {
+      expect(
+        sessionNameFromPrompt('fix the bug in the settings for when capturing the project name'),
+      ).toBe('fix-bug-settings-capturing');
+    });
+
+    it('drops a leading slash command so it does not spend the budget', () => {
+      // The command routes the work; it is not what the work is about. Keeping
+      // it would name every routed session after its verb.
+      expect(sessionNameFromPrompt('/graphify the terminal transport layer')).toBe(
+        'terminal-transport-layer',
+      );
+    });
+
+    it('lower-cases and hyphenates', () => {
+      expect(sessionNameFromPrompt('Rewrite The Splash Screen')).toBe('rewrite-splash-screen');
+    });
+
+    it('splits on punctuation rather than keeping it', () => {
+      const name = sessionNameFromPrompt('fix "login" & logout');
+      expect(name).toBeDefined();
+      expect(isSendableSessionName(name as string)).toBe(true);
+    });
+
+    it('never exceeds the sendable length', () => {
+      const name = sessionNameFromPrompt(
+        'extraordinarily circumlocutory nomenclature generation subsystem overhaul',
+      );
+      expect(name).toBeDefined();
+      expect((name as string).length).toBeLessThanOrEqual(SESSION_NAME_MAX);
+    });
+
+    it('reads only the opening of an enormous paste', () => {
+      /*
+        Two rules meeting: the scan is capped, so a 100 KB paste is not 100 KB
+        of tokenising — and the word that survives the cap is dropped whole
+        rather than truncated mid-word, which is why the answer is three words
+        and not a 64-character fragment of `xxxx…`.
+      */
+      const name = sessionNameFromPrompt(`rename the splash screen ${'x'.repeat(100_000)}`);
+      expect(name).toBe('rename-splash-screen');
+    });
+  });
+
+  describe('when there is nothing to name', () => {
+    it('answers undefined for an empty prompt', () => {
+      expect(sessionNameFromPrompt('')).toBeUndefined();
+    });
+
+    it('answers undefined for a prompt that is only stopwords', () => {
+      expect(sessionNameFromPrompt('what is it about')).toBeUndefined();
+    });
+
+    it('answers undefined for a prompt with no words in it at all', () => {
+      expect(sessionNameFromPrompt('!!! ??? ...')).toBeUndefined();
     });
   });
 });

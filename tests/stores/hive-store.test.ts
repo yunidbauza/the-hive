@@ -3975,6 +3975,152 @@ describe('statusWord agrees with statusLabel', () => {
 });
 
 /**
+ * Which name may replace which (HIVE-126).
+ *
+ * ## The measurement this rule is built on
+ *
+ * Claude Code writes exactly **one** `ai-title` per conversation — no transcript
+ * in this project holds two distinct ones — but it writes it at an arbitrary
+ * point, from whatever the conversation is about by then:
+ *
+ * ```
+ * line  170/2054   "PR 157 merge check and implementation"
+ * line 1226/2613   "terminal focus and text scramble"
+ * line 1441/1445   "runtime and appearance settings"
+ * ```
+ *
+ * The first is a session opened for HIVE-123 that took the name of a merge check
+ * it ran three hundred turns later. So a guess is welcome while the alternative
+ * is `sess-07`, and refused once the row has a name that came from somewhere
+ * better. Main separates a `/rename` from a guess by reading the transcript
+ * Claude records the difference in; this suite is about what the store does with
+ * the answer.
+ */
+describe('renameSession and where a name came from', () => {
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+  });
+
+  /** The name on a row, or `undefined` while it has none. */
+  const nameOf = (id: string): string | undefined => {
+    const entity = useHiveStore.getState().entities[id];
+    return entity && isSession(entity) ? entity.name : undefined;
+  };
+
+  describe('while the row is still generic', () => {
+    it("takes the agent's own title, because sess-0n is worse", () => {
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation', 'agent');
+
+      expect(nameOf('lead-form')).toBe('mutex-explanation');
+    });
+
+    it('takes it for a freshly spawned row, whose id is the generic name', () => {
+      const id = useHiveStore.getState().spawnSession('nova-web');
+      useHiveStore.getState().renameSession(id, 'github token debug', 'agent');
+
+      expect(nameOf(id)).toBe('github-token-debug');
+    });
+
+    it('takes a name derived from the first prompt', () => {
+      useHiveStore.getState().renameSession('lead-form', 'HIVE-123', 'prompt');
+
+      expect(nameOf('lead-form')).toBe('HIVE-123');
+    });
+  });
+
+  describe('once the row has a real name', () => {
+    it("refuses the agent's late guess", () => {
+      // The reported defect, exactly: a session opened for HIVE-123 must not end
+      // up called after a merge check it ran hundreds of turns later.
+      useHiveStore.getState().renameSession('lead-form', 'HIVE-123', 'prompt');
+      useHiveStore
+        .getState()
+        .renameSession('lead-form', 'PR 157 merge check and implementation', 'agent');
+
+      expect(nameOf('lead-form')).toBe('HIVE-123');
+    });
+
+    it('accepts a deliberate rename', () => {
+      useHiveStore.getState().renameSession('lead-form', 'HIVE-123', 'prompt');
+      useHiveStore.getState().renameSession('lead-form', 'something else', 'rename');
+
+      expect(nameOf('lead-form')).toBe('something-else');
+    });
+
+    it("refuses a guess against a name an earlier guess established", () => {
+      /*
+        The gate is about the row, not about who named it last: once *any* real
+        name is there, a second guess is the late-title case again.
+      */
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation', 'agent');
+      useHiveStore.getState().renameSession('lead-form', 'terminal focus', 'agent');
+
+      expect(nameOf('lead-form')).toBe('mutex-explanation');
+    });
+
+    it('lets the first prompt correct a guess that arrived first', () => {
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation', 'agent');
+      useHiveStore.getState().renameSession('lead-form', 'HIVE-123', 'prompt');
+
+      expect(nameOf('lead-form')).toBe('HIVE-123');
+    });
+
+    it('treats an absent origin as a guess, which is what every old sender was', () => {
+      useHiveStore.getState().renameSession('lead-form', 'HIVE-123', 'prompt');
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation');
+
+      expect(nameOf('lead-form')).toBe('HIVE-123');
+    });
+  });
+
+  describe('a pinned ticket row', () => {
+    /*
+      Covered by the gate rather than exempted from it. HIVE-108 let a title
+      enrich `HIVE-73` into `HIVE-73-back-key-interception`, on the reasoning
+      that the key plus a description beats either alone — true only if the
+      description is of the right work, and the measurement above is that it
+      frequently is not.
+    */
+    it('keeps its key rather than taking a late description', () => {
+      const id = useHiveStore.getState().spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
+      expect(nameOf(id)).toBe('HIVE-73');
+
+      useHiveStore.getState().renameSession(id, 'PR 157 merge check', 'agent');
+
+      expect(nameOf(id)).toBe('HIVE-73');
+    });
+  });
+
+  describe('after a /clear', () => {
+    it('lets the successor name itself, because it is generic again', () => {
+      /*
+        The successor starts with no name at all, so the gate opens for it. This
+        is the property that would break if "named" were tracked per terminal
+        rather than read off the row.
+      */
+      useHiveStore.getState().renameSession('lead-form', 'HIVE-123', 'prompt');
+      const successor = useHiveStore.getState().clearSession('lead-form')!;
+
+      useHiveStore.getState().renameSession(successor, 'a new topic', 'agent');
+
+      expect(nameOf(successor)).toBe('a-new-topic');
+    });
+
+    it('still refuses the retired conversation\'s title', () => {
+      // The stale-title guard is untouched by the gate: the successor is
+      // generic, so the gate lets this through, and the older rule stops it.
+      useHiveStore.getState().renameSession('lead-form', 'Mutex explanation', 'agent');
+      const successor = useHiveStore.getState().clearSession('lead-form')!;
+
+      useHiveStore.getState().renameSession(successor, 'Mutex explanation', 'agent');
+
+      expect(nameOf(successor)).toBeUndefined();
+    });
+  });
+});
+
+/**
  * Names, resolved rather than remembered (HIVE-110).
  *
  * Two consumers, one fact. `useDisplayName` is what an inbox row asks so that a

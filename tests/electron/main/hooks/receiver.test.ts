@@ -65,6 +65,7 @@ describe('hook receiver', () => {
   let receiver: Receiver;
   let events: HookStatusEvent[];
   let intents: HookTicketIntentEvent[];
+  let promptNames: { entityId: string; name: string }[];
   let cleared: string[];
   let dones: string[];
   let readies: string[];
@@ -75,6 +76,7 @@ describe('hook receiver', () => {
   beforeEach(async () => {
     events = [];
     intents = [];
+    promptNames = [];
     cleared = [];
     dones = [];
     readies = [];
@@ -84,6 +86,7 @@ describe('hook receiver', () => {
       onCleared: (entityId) => cleared.push(entityId),
       onEvent: (event) => events.push(event),
       onTicketIntent: (event) => intents.push(event),
+      onPromptName: (entityId, name) => promptNames.push({ entityId, name }),
       onDone: (entityId) => dones.push(entityId),
       onReady: (entityId) => readies.push(entityId),
       // Every session exists except the one explicitly named as gone.
@@ -806,7 +809,20 @@ describe('hook receiver', () => {
   ])('maps %s to %s', async (event, status) => {
     const response = await post({ hook_event_name: event, session_id: 'uuid' });
     expect(response.status).toBe(204);
-    expect(events).toEqual([{ entityId: 'sess-01', event, status }]);
+    /*
+      `sessionUuid` rides along on every session event since HIVE-126. It is what
+      names the transcript, and unlike the uuid pinned at spawn it stays correct
+      across a `/clear` — which starts a new conversation in the same pty under
+      an id nothing else tells main about.
+    */
+    expect(events).toEqual([{ entityId: 'sess-01', event, status, sessionUuid: 'uuid' }]);
+  });
+
+  it('omits the conversation uuid when the payload carried none', async () => {
+    // Absence is the honest answer, the same discipline `cwd` follows.
+    await post({ hook_event_name: 'Stop' });
+
+    expect(events).toEqual([{ entityId: 'sess-01', event: 'Stop', status: 'idle' }]);
   });
 
   /**
@@ -1404,6 +1420,7 @@ describe('hook receiver', () => {
         onCleared: () => {},
         onEvent: () => order.push('status'),
         onTicketIntent: () => order.push('intent'),
+        onPromptName: () => {},
         onDone: () => {},
         onReady: () => {},
         knowsSession: () => true,
@@ -1488,6 +1505,108 @@ describe('hook receiver', () => {
     });
   });
 
+  /**
+   * Naming a session from its **first** prompt (HIVE-126).
+   *
+   * The rule that matters here is not what the name is — `sessionNameFromPrompt`
+   * owns that and is tested on its own — but *when* it is read. Naming from any
+   * prompt would reproduce the defect this story exists to fix: Claude's own
+   * `ai-title` is wrong precisely because it describes a late turn rather than
+   * the one the session was opened for.
+   */
+  describe('the first prompt names the session', () => {
+    it('derives a name from the first prompt', async () => {
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: '/work-on ABC-123 and do X' });
+
+      expect(promptNames).toEqual([{ entityId: 'sess-01', name: 'ABC-123' }]);
+    });
+
+    it('reads only the first prompt, whatever the later ones say', async () => {
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: '/work-on ABC-123 and do X' });
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: 'now check the PR 157 merge' });
+
+      expect(promptNames).toEqual([{ entityId: 'sess-01', name: 'ABC-123' }]);
+    });
+
+    it('does not retry on a later prompt when the first yielded nothing', async () => {
+      /*
+        A greeting is still the first prompt. Re-reading until some prompt
+        happened to be nameable would be "name from whatever looks nameable",
+        which is the defect wearing the fix's clothes — the row waits for
+        Claude's title instead, exactly as it did before.
+      */
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: 'what is it about' });
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: 'now check the PR 157 merge' });
+
+      expect(promptNames).toEqual([]);
+    });
+
+    it('names each session from its own first prompt', async () => {
+      await post(
+        { hook_event_name: 'UserPromptSubmit', prompt: 'rename the splash screen' },
+        { [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-02'), [HOOK_HEADER_SESSION]: 'sess-02' },
+      );
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: '/work-on ABC-123' });
+
+      expect(promptNames).toEqual([
+        { entityId: 'sess-02', name: 'rename-splash-screen' },
+        { entityId: 'sess-01', name: 'ABC-123' },
+      ]);
+    });
+
+    it('reads a first prompt again after `/clear`', async () => {
+      // A cleared terminal is a new conversation, so it has not had a first
+      // prompt yet — the same boundary `onCleared` draws everywhere else.
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: '/work-on ABC-123' });
+      await post({ hook_event_name: 'SessionEnd', reason: 'clear' });
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: 'rename the splash screen' });
+
+      expect(promptNames).toEqual([
+        { entityId: 'sess-01', name: 'ABC-123' },
+        { entityId: 'sess-01', name: 'rename-splash-screen' },
+      ]);
+    });
+
+    it('names a session whose prompt claims no ticket', async () => {
+      /*
+        The looser rule, at the seam rather than in the pure function: this
+        prompt yields no ticket *intent* — no verb claims ABC-123 — and must
+        still name the row after it.
+      */
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: 'the PR for ABC-123 broke CI' });
+
+      expect(intents).toEqual([]);
+      expect(promptNames).toEqual([{ entityId: 'sess-01', name: 'ABC-123' }]);
+    });
+
+    it('never forwards the prompt itself', async () => {
+      /*
+        The boundary `SessionTicketIntentEvent` states in prose, asserted. What
+        leaves this process is a name; the text it was derived from is read and
+        dropped.
+      */
+      await post({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'rename the splash screen now with confidential unshareable details',
+      });
+
+      expect(promptNames).toEqual([{ entityId: 'sess-01', name: 'rename-splash-screen-now' }]);
+      expect(JSON.stringify({ promptNames, intents, events })).not.toContain('unshareable');
+    });
+
+    it('reads no prompt off a truncated body', async () => {
+      // Same reasoning the intent path documents: a prompt cut at an arbitrary
+      // byte is the worst input for a shape test.
+      await post({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: `rename the splash screen ${'x'.repeat(256 * 1024)}`,
+      });
+
+      expect(promptNames).toEqual([]);
+    });
+  });
+
+
   it('serves only its own path and method', async () => {
     expect((await fetch(url.replace('/hook', '/'), { method: 'POST' })).status).toBe(404);
     expect((await fetch(url, { method: 'GET' })).status).toBe(404);
@@ -1509,6 +1628,7 @@ describe('hook receiver', () => {
     onCleared: () => {},
       onEvent: () => {},
       onTicketIntent: () => {},
+      onPromptName: () => {},
       onDone: () => {},
       onReady: () => {},
       knowsSession: () => true,
@@ -1528,6 +1648,7 @@ describe('hook receiver', () => {
         throw new Error('listener blew up');
       },
       onTicketIntent: () => {},
+      onPromptName: () => {},
       onDone: () => {},
       onReady: () => {},
       knowsSession: () => true,
@@ -1580,6 +1701,7 @@ describe('the token binds to one session (HIVE-112)', () => {
       onCleared: () => {},
       onEvent: () => {},
       onTicketIntent: () => {},
+      onPromptName: () => {},
       onDone: () => {},
       onReady: () => {},
       onMetrics: () => {},
@@ -1674,6 +1796,7 @@ describe('the token binds to one session (HIVE-112)', () => {
         onCleared: () => {},
         onEvent: () => {},
         onTicketIntent: () => {},
+        onPromptName: () => {},
         onDone: () => {},
         onReady: () => {},
         onMetrics: () => {},
@@ -1700,8 +1823,8 @@ describe('hook receiver tokens', () => {
     // *the same* session id — the launch secret is what has to differ for
     // this to hold, since `tokenFor` is otherwise a pure function of its
     // argument (HIVE-112).
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(a.tokenFor('sess-01')).not.toBe(b.tokenFor('sess-01'));
     // Hex-encoded SHA-256, not a v4 uuid.
     expect(a.tokenFor('sess-01')).toHaveLength(64);
@@ -1709,17 +1832,17 @@ describe('hook receiver tokens', () => {
   });
 
   it('is deterministic: the same receiver and session id always agree', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.tokenFor('sess-01')).toBe(receiver.tokenFor('sess-01'));
   });
 
   it('derives a different token for a different session id on the same receiver', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.tokenFor('sess-01')).not.toBe(receiver.tokenFor('sess-02'));
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.url).toBeNull();
   });
 });
@@ -1744,6 +1867,7 @@ describe('the status line path', () => {
       onEvent: () => {},
       onCleared: () => {},
       onTicketIntent: () => {},
+      onPromptName: () => {},
       onMetrics: (entityId, reported) => metrics.push({ entityId, reported }),
       onDone: () => {},
       onReady: () => {},
@@ -1783,6 +1907,7 @@ describe('the status line path', () => {
       onEvent: () => {},
       onCleared: () => {},
       onTicketIntent: () => {},
+      onPromptName: () => {},
       onMetrics: () => {},
       onDone: () => {},
       onReady: () => {},
@@ -1932,6 +2057,7 @@ describe('the agent id space (HIVE-115)', () => {
       onEvent: (event) => sessionEvents.push(event),
       onAgentEvent: (event) => agentEvents.push(event),
       onTicketIntent: (event) => intents.push(event),
+      onPromptName: () => {},
       onCleared: (entityId) => cleared.push(entityId),
       onDone: (entityId) => dones.push(entityId),
       onReady: (entityId) => readies.push(entityId),

@@ -575,6 +575,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
           });
         },
         onTicketIntent: () => undefined,
+        onPromptName: () => {},
         onCleared: () => undefined,
         onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
         onLedgerPost: () => ({ ok: false, status: 503, reason: 'not exercised by this test' }),

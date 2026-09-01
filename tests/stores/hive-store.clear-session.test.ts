@@ -365,9 +365,28 @@ describe('clearSession', () => {
       const successorId = state().clearSession('hero-refresh')!;
       state().renameSession('hero-refresh', 'pepe');
 
-      state().renameSession('hero-refresh', 'lolo');
+      /*
+        A different name released the suppression, so `lolo` is no longer
+        withheld from the successor. It arrives here as a `/rename` because the
+        successor is by now named `pepe`, and HIVE-126 lets only a deliberate
+        rename replace a real name — the suppression being released is what this
+        test is about, and it is what the assertion still turns on.
+      */
+      state().renameSession('hero-refresh', 'lolo', 'rename');
 
       expect(sessionAt(successorId).name).toBe('lolo');
+    });
+
+    it('goes on suppressing it against the agent’s own repaints', () => {
+      // The guard's original job, unchanged: the retired conversation's title
+      // must not name its successor, however many times Claude repaints it.
+      named('hero-refresh', 'lolo');
+      const successorId = state().clearSession('hero-refresh')!;
+
+      state().renameSession('hero-refresh', 'lolo');
+      state().renameSession('hero-refresh', 'lolo');
+
+      expect(sessionAt(successorId).name).toBeUndefined();
     });
 
     it('leaves the retired row’s own name intact', () => {

@@ -569,6 +569,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
       onTicketIntent: () => undefined,
+      onPromptName: () => {},
       onCleared: () => undefined,
       onMetrics: () => undefined,
       onDone: () => undefined,

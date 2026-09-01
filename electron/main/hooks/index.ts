@@ -91,6 +91,13 @@ export interface HookHandlers {
   onAgentEvent: (event: HookAgentEvent) => void;
   /** A prompt named a ticket (HIVE-78). Unconfirmed — see the contract. */
   onTicketIntent: (event: HookTicketIntentEvent) => void;
+  /**
+   * A session's **first** prompt yielded a name for it (HIVE-126).
+   *
+   * Already a session name, not a prompt: the receiver derives it and drops the
+   * text. See `ReceiverOptions.onPromptName`.
+   */
+  onPromptName: (entityId: string, name: string) => void;
   onCleared: (entityId: string) => void;
   /** A session reported its context and rate-limit usage (HIVE-79). */
   onMetrics: (entityId: string, metrics: SessionMetrics) => void;
@@ -175,6 +182,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       onEvent,
       onAgentEvent,
       onTicketIntent,
+      onPromptName,
       onCleared,
       onMetrics,
       onDone,
@@ -184,6 +192,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onEvent,
         onAgentEvent,
         onTicketIntent,
+        onPromptName,
         onCleared,
         onMetrics,
         onDone,

@@ -78,8 +78,8 @@ export function useSessionStatus(): void {
         setSessionStatus(entityId, status, idleDetail);
       },
     );
-    const disposeName = bridge.session.onName(({ entityId, name }) => {
-      renameSession(entityId, name);
+    const disposeName = bridge.session.onName(({ entityId, name, origin }) => {
+      renameSession(entityId, name, origin);
     });
 
     /**

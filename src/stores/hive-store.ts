@@ -49,6 +49,7 @@ import { pickPhrase } from '@lib/swarm/phrases';
 import { reopenChannel, requestSpawn } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
 import {
+  SESSION_ID_PREFIX_PATTERN,
   type AgentLinesPush,
   type AgentRunResult,
   type AgentStatus,
@@ -74,6 +75,7 @@ import {
   hiveNameFromTitle,
   SESSION_EFFORTS,
   SESSION_MODELS,
+  type SessionNameOrigin,
 } from '@shared/session-contract';
 import type {
   SessionHistoryEntry,
@@ -522,8 +524,14 @@ interface HiveState {
     status: SessionStatus,
     idleDetail?: IdleDetail,
   ) => void;
-  /** The agent reported a new display name (HIVE-61). */
-  renameSession: (id: string, name: string) => void;
+  /**
+   * A new display name for a session (HIVE-61, gated by HIVE-126).
+   *
+   * `origin` says who decided it, which is what settles whether it may replace a
+   * name the row already has — see the action for the rule. Defaults to `agent`,
+   * the only origin that existed before HIVE-126.
+   */
+  renameSession: (id: string, name: string, origin?: SessionNameOrigin) => void;
   /**
    * Main observed this session's real branch and working directory (HIVE-78).
    *
@@ -3020,7 +3028,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * most: Claude repaints several times a second, and a normaliser that grew its
    * input would rename the session on every frame.
    */
-  renameSession: (id, name) =>
+  renameSession: (id, name, origin = 'agent') =>
     set((state) => {
       // The terminal's current row, for the reason `setSessionStatus` gives:
       // a rename after a `/clear` describes the new conversation, not the
@@ -3057,6 +3065,44 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * renamed on a guess.
        */
       if (entity.namePinned === true && entity.ticket === undefined) return state;
+
+      /**
+       * **Claude's own title may only name a row that has no name yet**
+       * (HIVE-126).
+       *
+       * Claude Code writes exactly one `ai-title` per conversation — measured,
+       * across every transcript this project has produced — but it writes it at
+       * an arbitrary point, from whatever the conversation is about by then:
+       *
+       * ```
+       * line  170/2054   "PR 157 merge check and implementation"
+       * line 1226/2613   "terminal focus and text scramble"
+       * line 1441/1445   "runtime and appearance settings"
+       * ```
+       *
+       * The first of those is a session opened for HIVE-123 that took the name
+       * of a merge check it happened to be running three hundred turns later.
+       * That is not a stale value or a race — it is Claude answering a question
+       * about the wrong moment, and no amount of ordering fixes it.
+       *
+       * So a guess is welcome while the alternative is `sess-07`, and refused
+       * once the row has a name that came from somewhere better: the session's
+       * first prompt, or a person typing `/rename`. Main separates those two
+       * from the guess by reading the transcript Claude records the difference
+       * in — see `sessions/title-origin.ts`, because the OSC-0 channel this
+       * arrives on cannot tell them apart.
+       *
+       * A pinned ticket row is covered by this rather than exempted from it.
+       * HIVE-108 let a title enrich `HIVE-73` into `HIVE-73-back-key-interception`
+       * on the reasoning that the key plus a description beats either alone —
+       * true, but only if the description is of the right work, and the measured
+       * behaviour above is that it frequently is not. `HIVE-73` alone is the
+       * name the user asked for.
+       */
+      const named =
+        entity.name !== undefined && !SESSION_ID_PREFIX_PATTERN.test(entity.name);
+      if (origin === 'agent' && named) return state;
+
       const next = hiveNameFromTitle(
         name,
         entity.namePinned === true ? entity.ticket : undefined,

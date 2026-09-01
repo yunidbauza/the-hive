@@ -459,6 +459,23 @@ export interface HookStatusEvent {
    */
   cwd?: string;
   /**
+   * Claude's own id for the conversation this event fired in (HIVE-126).
+   *
+   * The uuid the Hive pins at spawn answers the same question for the *first*
+   * conversation in a pty and stops being true after a `/clear`, which starts a
+   * new one under an id nothing tells main about. This does not: the payload is
+   * written by the conversation that is actually running.
+   *
+   * It is what names the transcript, `~/.claude/projects/<escaped-cwd>/<uuid>.jsonl`,
+   * which is the only place a `/rename` is distinguishable from Claude's own
+   * `ai-title` — see `sessions/title-origin.ts`.
+   *
+   * Optional on the same terms as {@link cwd}: it is read off a payload this app
+   * does not control, and its absence means one title goes unclassified rather
+   * than anything failing.
+   */
+  sessionUuid?: string;
+  /**
    * Tool identity, carried since HIVE-83.
    *
    * All optional because not every event has them and because a body over

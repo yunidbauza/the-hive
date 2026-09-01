@@ -209,8 +209,16 @@ describe('setSessionTicket', () => {
     expect(sessionAt(id).name).toBe('ledger-spike');
     expect(sessionAt(id).namePinned).toBeUndefined();
 
-    // And the agent can still rename it afterwards.
-    useHiveStore.getState().renameSession(id, 'ledger-spike-2');
+    /*
+      And the name is still the user's to change afterwards. It is no longer the
+      *agent's* to change (HIVE-126): a row that already has a real name refuses
+      a later title unless a person typed it, because Claude's own title is a
+      guess about a turn hundreds of prompts after the one that named this row.
+    */
+    useHiveStore.getState().renameSession(id, 'ledger-spike-2', 'agent');
+    expect(sessionAt(id).name).toBe('ledger-spike');
+
+    useHiveStore.getState().renameSession(id, 'ledger-spike-2', 'rename');
     expect(sessionAt(id).name).toBe('ledger-spike-2');
   });
 
@@ -480,22 +488,43 @@ describe('a pinned name outranks the agent', () => {
   });
 
   /**
-   * What the pin defends is the **key**, not the whole name (HIVE-108).
+   * What the pin defends is the **key**, not the whole name (HIVE-108, narrowed
+   * by HIVE-126).
    *
    * Refusing every title was right while the alternative was `sess-01`. The
-   * alternative is now a description of the work, and the ticket plus that
-   * description beats either alone — which is the whole shape the user asked
-   * for: `HIVE-1234-bug-fixing`.
+   * alternative became a description of the work, and the ticket plus that
+   * description beats either alone — `HIVE-1234-bug-fixing`.
+   *
+   * HIVE-126 keeps that machinery and narrows **who may reach it**. The
+   * description is only worth having if it is a description of the right work,
+   * and Claude's own title measurably is not: it is written once, at an
+   * arbitrary point, about whatever the conversation had drifted to. So a
+   * deliberate rename still gains a topic, and the agent's guess no longer does.
    */
   it('lets a pinned session gain a topic, with the key still in front', () => {
     const id = spawn();
     useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
 
-    useHiveStore.getState().renameSession(id, 'back key interception');
+    useHiveStore.getState().renameSession(id, 'back key interception', 'rename');
 
     expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
     // The pin is not spent by being honoured once.
     expect(sessionAt(id).namePinned).toBe(true);
+  });
+
+  it('keeps the bare key against the agent’s own late title', () => {
+    /*
+      The reported defect (HIVE-126). A session opened for HIVE-123 came back
+      called `HIVE-123-pr-157-merge-check`, because Claude titled it after a
+      merge check it happened to be running three hundred turns later. The key
+      alone is the name the user asked for.
+    */
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
+
+    useHiveStore.getState().renameSession(id, 'PR 157 merge check', 'agent');
+
+    expect(sessionAt(id).name).toBe('HIVE-73');
   });
 
   it('does not grow the name on every repaint', () => {
@@ -509,7 +538,7 @@ describe('a pinned name outranks the agent', () => {
     useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
 
     for (let i = 0; i < 5; i += 1) {
-      useHiveStore.getState().renameSession(id, 'back key interception');
+      useHiveStore.getState().renameSession(id, 'back key interception', 'rename');
     }
 
     expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
@@ -521,7 +550,7 @@ describe('a pinned name outranks the agent', () => {
     const id = spawn();
     useHiveStore.getState().setSessionTicket(id, 'HIVE-73');
 
-    useHiveStore.getState().renameSession(id, 'fixing hive-99 regression');
+    useHiveStore.getState().renameSession(id, 'fixing hive-99 regression', 'rename');
 
     expect(sessionAt(id).name).toBe('HIVE-73-fixing-regression');
   });
@@ -541,8 +570,13 @@ describe('a pinned name outranks the agent', () => {
       .spawnSession('nova-web', '', 'opus', 'high', 'HIVE-73');
     expect(sessionAt(id).namePinned).toBe(true);
 
-    useHiveStore.getState().renameSession(id, 'back key interception');
+    // Under HIVE-126 the key survives by itself: the row is already named, so
+    // the agent's guess never reaches the prefix machinery at all.
+    useHiveStore.getState().renameSession(id, 'back key interception', 'agent');
+    expect(sessionAt(id).name).toBe('HIVE-73');
 
+    // A person saying so still gets the topic in behind the key.
+    useHiveStore.getState().renameSession(id, 'back key interception', 'rename');
     expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
   });
 

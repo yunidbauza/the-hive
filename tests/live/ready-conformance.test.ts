@@ -74,6 +74,7 @@ describe.skipIf(!enabled)('ready-signal conformance', () => {
       onEvent: () => {},
       onCleared: () => {},
       onTicketIntent: () => {},
+      onPromptName: () => {},
       onMetrics: () => {},
       onDone: () => {},
       onReady: (entityId) => {

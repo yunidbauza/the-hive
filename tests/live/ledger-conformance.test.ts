@@ -66,6 +66,7 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
       // Not exercised by this test: every other route the receiver serves.
       onEvent: () => undefined,
       onTicketIntent: () => undefined,
+      onPromptName: () => {},
       onCleared: () => undefined,
       onMetrics: () => undefined,
       onDone: () => undefined,

@@ -43,6 +43,7 @@ const noopHandlers: HookHandlers = {
   onEvent: () => {},
   onAgentEvent: () => {},
   onTicketIntent: () => {},
+  onPromptName: () => {},
   onCleared: () => {},
   onMetrics: () => {},
   onDone: () => {},
