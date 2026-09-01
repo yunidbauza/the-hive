@@ -458,61 +458,11 @@ describe('AgentView', () => {
     });
 
     /*
-      Write order is right for a record and wrong for a column: it put the
-      entry the user opened the view to read at the bottom of a list they had
-      to scroll to reach, and every new entry pushed it further away.
+      Ordering and the render cap live in `agent-ledger.test.tsx`, the mirror
+      file for the component that owns them. What belongs *here* is only that
+      the view mounts the column against the right agent — which the test above
+      covers.
     */
-    it('draws the newest entry first', () => {
-      const entity = seed();
-      useHiveStore.getState().hydrateLedger(
-        ['oldest', 'middle', 'newest'].map((body, index) => ({
-          id: `20260830-140000-000${String(index + 1)}`,
-          ts: Date.now() + index,
-          from: 'watcher',
-          to: 'overmind',
-          kind: 'event' as const,
-          body,
-        })),
-      );
-
-      render(<AgentView entity={entity} />);
-
-      const ledger = screen.getByText('Ledger').parentElement as HTMLElement;
-      const bodies = within(ledger)
-        .getAllByText(/oldest|middle|newest/)
-        .map((node) => node.textContent);
-
-      expect(bodies).toEqual(['newest', 'middle', 'oldest']);
-    });
-
-    /*
-      A render bound, not a retention one — the store keeps 500 and the file
-      keeps everything. What must not happen is the list simply stopping: a
-      column that ends silently is indistinguishable from one with nothing
-      more on the record.
-    */
-    it('draws the newest hundred and counts the rest', () => {
-      const entity = seed();
-      useHiveStore.getState().hydrateLedger(
-        Array.from({ length: 130 }, (_, index) => ({
-          id: `20260830-140000-${String(index).padStart(4, '0')}`,
-          ts: Date.now() + index,
-          from: 'watcher',
-          to: 'overmind',
-          kind: 'event' as const,
-          body: `entry ${String(index)}`,
-        })),
-      );
-
-      render(<AgentView entity={entity} />);
-
-      const ledger = screen.getByText('Ledger').parentElement as HTMLElement;
-
-      expect(within(ledger).getAllByText(/^entry /)).toHaveLength(100);
-      expect(within(ledger).getByText('entry 129')).toBeInTheDocument();
-      expect(within(ledger).queryByText('entry 29')).not.toBeInTheDocument();
-      expect(within(ledger).getByText('+30 older on the record')).toBeInTheDocument();
-    });
 
     it('renders an ask without option buttons, which HIVE-118 owns', () => {
       const entity = seed();
@@ -646,6 +596,42 @@ describe('AgentView', () => {
       render(<AgentView entity={seed()} />);
 
       expect(screen.getByText('watcher ❯')).toBeInTheDocument();
+    });
+
+    /**
+     * The placeholder must describe a grammar `parseAgentInput` accepts.
+     *
+     * It read `a1 <answer> to answer an open ask` first, and there is no bare-ref
+     * form — anything not starting with the literal `answer ` falls through to
+     * `{ kind: 'ask' }`. So a user following the hint typed `a1 yes`, the write
+     * *succeeded* as a new ask addressed to the agent, the box cleared on
+     * success, `a1` stayed open, and the agent stayed blocked. Nothing failed,
+     * so `notice` had nothing to report.
+     *
+     * Driven through the real parser rather than string-matched: the property
+     * that matters is that the example works, not that it is spelled a
+     * particular way.
+     */
+    it('demonstrates a grammar the parser actually accepts', async () => {
+      const { answer, post } = bridge();
+      render(<AgentView entity={seed()} />);
+
+      const box = screen.getByRole('textbox');
+      const shown = box.getAttribute('placeholder') ?? '';
+      const example = shown.slice(shown.indexOf('answer '));
+
+      // The placeholder names an example at all.
+      expect(example).toMatch(/^answer \S+/);
+
+      await userEvent.type(
+        box,
+        `${example.replace(/<text>/, 'go ahead')}{Enter}`,
+      );
+
+      expect(answer).toHaveBeenCalledWith(
+        expect.objectContaining({ thread: 'a1' }),
+      );
+      expect(post).not.toHaveBeenCalled();
     });
   });
 });

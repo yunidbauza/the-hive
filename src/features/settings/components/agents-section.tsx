@@ -168,6 +168,14 @@ export function AgentsSection() {
   } | null>(null);
   /** What main refused, field by field. Cleared on every fresh attempt. */
   const [problems, setProblems] = useState<AgentProblem[]>([]);
+  /**
+   * What the last Run now answered — a refusal, or that it woke.
+   *
+   * Separate from {@link problems} because it must not latch: see {@link run}.
+   * Cleared whenever the pane changes what it is looking at, so a message about
+   * one agent cannot be read as being about the next.
+   */
+  const [runNotice, setRunNotice] = useState<string | null>(null);
   /** Gates the Slack-watcher example below. `null` until the read resolves. */
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
 
@@ -249,6 +257,7 @@ export function AgentsSection() {
         setBuffer(null);
         setSaved(null);
         setProblems([]);
+        setRunNotice(null);
 
         void readAgent(name).then((source) => {
           if (source === null) {
@@ -305,6 +314,7 @@ export function AgentsSection() {
         // which it is: nothing has been written.
         setSaved(null);
         setProblems([]);
+        setRunNotice(null);
       },
       discardQuestion,
       discardDetail,
@@ -330,6 +340,7 @@ export function AgentsSection() {
         setBuffer(slackWatcherTemplate());
         setSaved(null);
         setProblems([]);
+        setRunNotice(null);
       },
       discardQuestion,
       discardDetail,
@@ -341,6 +352,7 @@ export function AgentsSection() {
     if (buffer === null || localProblem !== null) return;
 
     setProblems([]);
+    setRunNotice(null);
 
     void (async () => {
       /*
@@ -373,31 +385,32 @@ export function AgentsSection() {
    * is left are the refusals only the runtime knows: it is already working, the
    * user paused it, or the runtime is not up.
    *
-   * Reported through `problems` as a whole-file entry, which is the one channel
-   * this pane already has for "main said no" and which `AgentEditor`'s footer
-   * renders in full. A `''` field is what marks it as belonging to no field —
-   * see the footer's own note — so it cannot land beside an input as though the
-   * user had typed something wrong.
+   * Reported through `runNotice`, **not** through `problems`. `problems` is
+   * simultaneously the reason Save refuses and the third gate in the editor's
+   * `cannotRun`, so answering "it is already working" through it disabled the
+   * button that had just produced the message and relabelled it "this
+   * definition cannot be read" — which is false, since the definition parsed.
+   * Every refusal on this path is transient, so none of them may be reported
+   * on a channel that latches.
    */
   const run = (): void => {
     if (open === null) return;
 
-    setProblems([]);
+    setRunNotice(null);
 
     void window.hive?.agents
       .run({ name: open })
       .then((result) => {
-        if (result.started) return;
+        if (result.started) {
+          setRunNotice(`woke ${open}`);
 
-        setProblems([{ field: '', reason: agentRunRefusal(open, result) }]);
+          return;
+        }
+
+        setRunNotice(agentRunRefusal(open, result));
       })
       .catch((cause: unknown) => {
-        setProblems([
-          {
-            field: '',
-            reason: cause instanceof Error ? cause.message : String(cause),
-          },
-        ]);
+        setRunNotice(cause instanceof Error ? cause.message : String(cause));
       });
   };
 
@@ -407,6 +420,7 @@ export function AgentsSection() {
       setBuffer(null);
       setSaved(null);
       setProblems([]);
+      setRunNotice(null);
       return;
     }
 
@@ -583,6 +597,7 @@ export function AgentsSection() {
               onSave={save}
               onDelete={remove}
               onRun={run}
+              notice={runNotice}
             />
 
             {pending === null ? null : (

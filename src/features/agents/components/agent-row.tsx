@@ -28,7 +28,7 @@ interface AgentRowProps {
  * only state an agent could be in was `sleeping` and saying so on screen would
  * have been noise. Now that a rail can hold four states at once (HIVE-116),
  * the word is visible and the detail beneath it is whatever makes that word
- * actionable: the open ask's ref, the next wake and last spend, or nothing.
+ * actionable: the open ask's ref, the next wake, or nothing.
  *
  * The status word being on screen is also what lets the dot be decoration: it
  * stays `aria-hidden`, and the state is never carried by colour alone.

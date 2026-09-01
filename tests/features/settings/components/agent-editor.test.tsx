@@ -29,6 +29,7 @@ interface Props {
   onSave: () => void;
   onDelete: () => void;
   onRun: () => void;
+  notice: string | null;
   taken: readonly string[];
 }
 
@@ -42,6 +43,7 @@ const props: Props = {
   onSave: vi.fn(),
   onDelete: vi.fn(),
   onRun: vi.fn(),
+  notice: null,
 };
 
 const setup = (over: Partial<Props> = {}) => {

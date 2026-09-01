@@ -29,6 +29,24 @@ interface AgentEditorProps {
    * not a name it could pass to a bridge.
    */
   onRun: () => void;
+  /**
+   * What the last run attempt answered, or `null`.
+   *
+   * **Deliberately not a `problems` entry**, which is where this landed first
+   * and where it was a trap. `problems` is what makes Save refuse *and* what
+   * {@link cannotRun} reads, so reporting "it is already working" through it
+   * disabled the very button that had just produced the message — and
+   * relabelled it "this definition cannot be read", which was false: the
+   * definition parsed, which is why the call reached main at all. The state
+   * cleared only on reselect or a no-op Save.
+   *
+   * A refusal here is transient by construction. `working` ends, `paused` is
+   * one click away, and `unknown` is the runtime coming up — every one of them
+   * is a reason to try again shortly, so none of them may disable retrying.
+   * `agent-view.tsx` reached the same shape from the other direction and calls
+   * it `notice`.
+   */
+  notice: string | null;
 }
 
 /**
@@ -66,6 +84,7 @@ export function AgentEditor({
   onSave,
   onDelete,
   onRun,
+  notice,
 }: AgentEditorProps) {
   const [tab, setTab] = useState<Tab>('form');
 
@@ -85,9 +104,9 @@ export function AgentEditor({
    * problem the footer is showing. A never-saved agent has no file at all.
    *
    * Refusals that only main can know — the agent is working, or paused — are
-   * not predicted here. They come back as an `AgentRunResult` and land in the
-   * footer through `problems`, which is where a whole-file complaint already
-   * goes.
+   * not predicted here and must not appear in this chain. They arrive as an
+   * `AgentRunResult` and are drawn from {@link AgentEditorProps.notice}, which
+   * says why that is a separate channel rather than a fourth condition.
    */
   const cannotRun =
     path === null
@@ -232,15 +251,28 @@ export function AgentEditor({
       )}
 
       <div className="flex items-center justify-between gap-3 border-t border-border-soft px-2.5 py-1.5">
-        <span
-          className={
-            problems.length === 0
-              ? 'min-w-0 text-[11px] text-subtle'
-              : 'min-w-0 text-[11px] text-red'
-          }
-        >
-          {footer}
-        </span>
+        {/*
+          The notice outranks the standing line, and is amber rather than red:
+          "it is already working" is the system behaving correctly, not a fault
+          in the file. A problem still wins over both — a definition that will
+          not parse is the more urgent fact, and it is also why the run was
+          never attempted.
+        */}
+        {problems.length === 0 && notice !== null ? (
+          <span role="status" className="min-w-0 text-[11px] text-amber">
+            {notice}
+          </span>
+        ) : (
+          <span
+            className={
+              problems.length === 0
+                ? 'min-w-0 text-[11px] text-subtle'
+                : 'min-w-0 text-[11px] text-red'
+            }
+          >
+            {footer}
+          </span>
+        )}
         <div className="flex shrink-0 gap-1.5">
           <button
             type="button"

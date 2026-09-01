@@ -463,8 +463,6 @@ describe('AgentsSection', () => {
 
     /*
       The refusals only main knows — already working, paused, runtime down.
-      They land in the footer as a whole-file problem, which is the one channel
-      this pane already has for "main said no".
     */
     it('says why a refused run did not happen', async () => {
       const run = vi.fn(async () => ({ started: false, refused: 'paused' }));
@@ -475,6 +473,70 @@ describe('AgentsSection', () => {
       expect(
         await screen.findByText(/slack-watcher is paused/),
       ).toBeInTheDocument();
+    });
+
+    /**
+     * A refusal must not disable the control that produced it.
+     *
+     * This reported through `problems` first, which is simultaneously why Save
+     * refuses and the third gate in the editor's `cannotRun` — so the message
+     * "slack-watcher is working" disabled Run now and relabelled it "this
+     * definition cannot be read", which was false: the definition parsed, which
+     * is why the call reached main at all. Escaping needed a reselect or a
+     * no-op Save.
+     *
+     * Every refusal on this path is transient. `working` ends, `paused` is one
+     * click away, and `unknown` is the runtime still coming up — the case where
+     * retrying is *most* likely to work.
+     */
+    it('stays clickable after a refusal, so the retry is one click', async () => {
+      const run = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, refused: 'working' })
+        .mockResolvedValueOnce({ started: true, run: 'r2' });
+
+      await open({ run });
+
+      const button = screen.getByRole('button', { name: 'Run now' });
+
+      await userEvent.click(button);
+      expect(
+        await screen.findByText(/slack-watcher is working/),
+      ).toBeInTheDocument();
+
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute(
+        'title',
+        expect.stringMatching(/cannot be read/i),
+      );
+
+      await userEvent.click(button);
+
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(await screen.findByText('woke slack-watcher')).toBeInTheDocument();
+    });
+
+    /*
+      Cleared when the pane changes what it is looking at, so a message about
+      one agent is never read as being about the next.
+    */
+    it('drops the notice when another agent is opened', async () => {
+      const run = vi.fn(async () => ({ started: false, refused: 'paused' }));
+      const bridge = stub([agent('slack-watcher'), agent('other')], { run });
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /slack-watcher/ }),
+      );
+      await waitFor(() => expect(bridge.read).toHaveBeenCalled());
+      await userEvent.click(screen.getByRole('button', { name: 'Run now' }));
+      await screen.findByText(/slack-watcher is paused/);
+
+      await userEvent.click(row('other'));
+
+      await waitFor(() =>
+        expect(screen.queryByText(/slack-watcher is paused/)).toBeNull(),
+      );
     });
 
     /*

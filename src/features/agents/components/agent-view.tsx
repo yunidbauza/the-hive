@@ -198,7 +198,15 @@ export function AgentView({ entity }: AgentViewProps) {
         <button
           type="button"
           onClick={backToOrch}
-          title="Back to overmind (←)"
+          /*
+            No `(←)` in the title, unlike `session-meta-bar.tsx`'s otherwise
+            identical button. That hint is true there because bare `←` reaches
+            `backToOrch` through `TERMINAL_CHORD_EVENT`, which only
+            `terminal-surface.tsx` emits — and this view mounts no terminal
+            surface. Copying the string across would have promised a key that
+            does nothing here.
+          */
+          title="Back to overmind"
           aria-label="Back to overmind"
           className="flex shrink-0 items-center gap-1 rounded-full bg-chip px-2.5 py-1 text-muted hover:text-ink"
         >
@@ -256,58 +264,58 @@ export function AgentView({ entity }: AgentViewProps) {
         is content and does not.
       */}
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 py-3">
-      {facts === null ? null : (
-        <div
-          /*
-            A container query, not `sm:`. The tiles live on the stage, and the
-            stage is not the viewport: with both rails dragged wide a 1100px
-            window leaves ~560px here, where `sm:` (a 640px *viewport*) still
-            fires and truncates `Session` and `Today` into five ~105px columns.
-            The same box this grid sits in is what knows.
-          */
-          className="grid grid-cols-2 gap-1.5 @min-[720px]:grid-cols-5"
-        >
-          <Fact label="Status" tone={STATUS_TEXT[facts.status]}>
-            {STATUS_LABEL[facts.status]}
-            {facts.askRef === undefined ? '' : ` ${facts.askRef}`}
-          </Fact>
-          <Fact label="Wake">{facts.wake}</Fact>
-          {/*
-            The skip count dimmed, and drawn only when it is not zero
-            (HIVE-121). Zero draws nothing, so the tile keeps the width it has
-            at five columns and the suffix *arriving* is the signal — which is
-            what distinguishes a quiet agent from a broken one.
+        {facts === null ? null : (
+          <div
+            /*
+              A container query, not `sm:`. The tiles live on the stage, and the
+              stage is not the viewport: with both rails dragged wide a 1100px
+              window leaves ~560px here, where `sm:` (a 640px *viewport*) still
+              fires and truncates `Session` and `Today` into five ~105px columns.
+              The same box this grid sits in is what knows.
+            */
+            className="grid grid-cols-2 gap-1.5 @min-[720px]:grid-cols-5"
+          >
+            <Fact label="Status" tone={STATUS_TEXT[facts.status]}>
+              {STATUS_LABEL[facts.status]}
+              {facts.askRef === undefined ? '' : ` ${facts.askRef}`}
+            </Fact>
+            <Fact label="Wake">{facts.wake}</Fact>
+            {/*
+              The skip count dimmed, and drawn only when it is not zero
+              (HIVE-121). Zero draws nothing, so the tile keeps the width it has
+              at five columns and the suffix *arriving* is the signal — which is
+              what distinguishes a quiet agent from a broken one.
 
-            `Session`'s `· run 7/50` below is the same idiom: a value, then a
-            `·`-joined qualifier that is quieter than it.
-          */}
-          <Fact label="Next">
-            {facts.next}
-            {facts.skips === undefined ? null : (
-              <span className="text-subtle"> · {facts.skips}</span>
-            )}
-          </Fact>
-          <Fact label="Today">{`${facts.todayRuns} runs · ${facts.todayCost}`}</Fact>
-          {/*
-            The rotation made visible *before* it happens: an agent resumes one
-            conversation until this fraction fills, and HIVE-122 starts a fresh
-            one. Without the denominator a reader has no way to know how close
-            that is.
-          */}
-          <Fact label="Session">
-            {facts.sessionUuid === undefined
-              ? '—'
-              : `${facts.sessionUuid.slice(0, 8)} · run ${facts.runsSinceRotate}/${facts.rotateAfter}`}
-          </Fact>
-        </div>
-      )}
+              `Session`'s `· run 7/50` below is the same idiom: a value, then a
+              `·`-joined qualifier that is quieter than it.
+            */}
+            <Fact label="Next">
+              {facts.next}
+              {facts.skips === undefined ? null : (
+                <span className="text-subtle"> · {facts.skips}</span>
+              )}
+            </Fact>
+            <Fact label="Today">{`${facts.todayRuns} runs · ${facts.todayCost}`}</Fact>
+            {/*
+              The rotation made visible *before* it happens: an agent resumes one
+              conversation until this fraction fills, and HIVE-122 starts a fresh
+              one. Without the denominator a reader has no way to know how close
+              that is.
+            */}
+            <Fact label="Session">
+              {facts.sessionUuid === undefined
+                ? '—'
+                : `${facts.sessionUuid.slice(0, 8)} · run ${facts.runsSinceRotate}/${facts.rotateAfter}`}
+            </Fact>
+          </div>
+        )}
 
-      <div className="min-h-0 flex-1">
-        <div className="grid h-full min-h-0 gap-2 [grid-template-columns:minmax(0,1fr)_clamp(280px,22%,380px)] @max-[800px]:[grid-template-columns:minmax(0,1fr)]">
-          <AgentRunLog name={entity.id} status={entity.status} />
-          <AgentLedger name={entity.id} />
+        <div className="min-h-0 flex-1">
+          <div className="grid h-full min-h-0 gap-2 [grid-template-columns:minmax(0,1fr)_clamp(280px,22%,380px)] @max-[800px]:[grid-template-columns:minmax(0,1fr)]">
+            <AgentRunLog name={entity.id} status={entity.status} />
+            <AgentLedger name={entity.id} />
+          </div>
         </div>
-      </div>
       </div>
 
       {/*
@@ -337,7 +345,16 @@ export function AgentView({ entity }: AgentViewProps) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="a message, or a1 <answer> to answer an open ask"
+          /*
+            The grammar `parseAgentInput` actually accepts, and the literal
+            `answer ` is load-bearing. Anything that does not start with it
+            falls through to `{ kind: 'ask' }` — so a placeholder promising a
+            bare `a1 yes` would have posted "a1 yes" as a *new ask addressed to
+            the agent*, cleared the box on success, left `a1` open, and left
+            the agent blocked. A write that succeeds at the wrong thing is the
+            one failure this surface's `notice` channel cannot report.
+          */
+          placeholder="a message, or answer a1 <text>"
           className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-ink caret-green outline-none placeholder:text-subtle"
         />
       </div>
@@ -354,14 +371,14 @@ export function AgentView({ entity }: AgentViewProps) {
         not exist in the log.
       */}
       {notice === null ? (
-        <p className="flex shrink-0 items-center justify-center gap-5 border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-subtle">
+        <p className="flex shrink-0 items-center justify-center border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-subtle">
           ↵ posts to the ledger as the overmind · not a terminal — nothing here
           reaches a process
         </p>
       ) : (
         <p
           role="status"
-          className="flex shrink-0 items-center justify-center gap-5 border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-amber"
+          className="flex shrink-0 items-center justify-center border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-amber"
         >
           {notice}
         </p>

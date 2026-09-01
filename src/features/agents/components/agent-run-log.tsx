@@ -1,9 +1,20 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 
 import type { AgentStatus, RunSummary } from '@shared/agent-contract';
 import { formatRunCost } from '@shared/agent-contract';
 import { useTerminalAppearance } from '@stores/appearance-store';
 import { useAgentLines, useAgentRuns } from '@stores/hive-store';
+
+/**
+ * The ceiling on the receipts half, as a share of the log's height.
+ *
+ * A percentage rather than a row count: this component's type scale is the
+ * user's terminal one (10px to 18px), so "eight rows" is anywhere from 110px to
+ * 200px of a box whose own height depends on two draggable rails. A share keeps
+ * the same *proportion* at every size, which is what the rule is actually
+ * about — the output must never be the smaller half.
+ */
+const RECEIPTS_MAX = '40%';
 
 interface AgentRunLogProps {
   name: string;
@@ -68,25 +79,57 @@ interface AgentRunLogProps {
  * and is the half that grows. That split is the right way round because the
  * receipts are a fixed-height ledger of one line each and the output is prose
  * of unknown length — the elastic content gets the elastic space.
+ *
+ * The receipts half is **pinned to its newest row**, and that is a consequence
+ * of the split rather than a flourish. `runs` is oldest-first and capped at
+ * `AGENT_RUN_HISTORY`, so a full history in a box that now clips at 40% opens
+ * showing the ten oldest — with the newest receipt, the one the `Last output`
+ * heading directly beneath it actually describes, scrolled out of sight. In one
+ * scroll box that could not happen: the newest receipts sat against the output
+ * the reader was already looking at.
  */
 
-/**
- * The ceiling on the receipts half, as a share of the log's height.
- *
- * A percentage rather than a row count: this component's type scale is the
- * user's terminal one (10px to 18px), so "eight rows" is anywhere from 110px to
- * 200px of a box whose own height depends on two draggable rails. A share keeps
- * the same *proportion* at every size, which is what the rule is actually
- * about — the output must never be the smaller half.
- */
-const RECEIPTS_MAX = '40%';
 export function AgentRunLog({ name, status }: AgentRunLogProps) {
   const lines = useAgentLines(name);
   const runs = useAgentRuns(name);
   const { palette, fontFamily, fontSize } = useTerminalAppearance();
   const foot = useRef<HTMLDivElement>(null);
+  const receipts = useRef<HTMLDivElement>(null);
 
   const live = status === 'working';
+
+  /**
+   * Keep the receipts half showing its newest row.
+   *
+   * `useLayoutEffect`, not `useEffect`: this runs on every open, and a paint
+   * with the box at `scrollTop: 0` before it corrects would show the oldest
+   * receipts for a frame and jump.
+   *
+   * Conditional on the reader not having scrolled away, which is the rule the
+   * output half already follows for the same reason — yanking someone out of
+   * a receipt they are reading is the behaviour this whole split exists to
+   * stop. `atBottom` is measured *before* React commits the new row, so it
+   * answers "were they following along", not "does the box happen to fit".
+   * The 2px slack absorbs sub-pixel heights at fractional zoom.
+   */
+  const following = useRef(true);
+
+  useLayoutEffect(() => {
+    const box = receipts.current;
+
+    if (box === null) return;
+
+    if (following.current) box.scrollTop = box.scrollHeight;
+  }, [runs]);
+
+  const noteScroll = () => {
+    const box = receipts.current;
+
+    if (box === null) return;
+
+    following.current =
+      box.scrollHeight - box.scrollTop - box.clientHeight <= 2;
+  };
 
   useEffect(() => {
     /*
@@ -113,6 +156,8 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
     >
       {runs.length === 0 ? null : (
         <div
+          ref={receipts}
+          onScroll={noteScroll}
           className="shrink-0 overflow-y-auto"
           style={{ maxHeight: RECEIPTS_MAX }}
           data-region="run-receipts"

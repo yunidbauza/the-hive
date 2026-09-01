@@ -107,9 +107,16 @@ export function AgentLedger({ name }: AgentLedgerProps) {
         ))
       )}
 
+      {/*
+        "in this view", not "on the record". `entries` is the renderer's mirror,
+        capped at `LEDGER_MEMORY_CAP`, so this number counts what the *store* is
+        holding back and can never exceed 400 — while the record it would
+        otherwise claim to measure is the JSONL on disk, which keeps everything
+        and may hold thousands more.
+      */}
       {older === 0 ? null : (
         <p className="border-t border-border-soft pt-2 text-[10px] text-subtle">
-          {`+${String(older)} older on the record`}
+          {`+${String(older)} older in this view`}
         </p>
       )}
     </div>

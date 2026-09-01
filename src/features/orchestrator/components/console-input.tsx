@@ -222,10 +222,17 @@ export function ConsoleInput() {
       {/*
         The verbs, and only the verbs.
 
-        This bar used to open with `↑↓ select` and `→ or ↵ open session`, which
-        are the same two keys `KEY_HINT` already prints in the input row's right
-        corner a few pixels above — the same fact twice, and at a narrow stage
-        the duplicates were what wrapped the row onto two lines.
+        This bar used to open with `↑↓ select` and `→ or ↵ open session`, and
+        `KEY_HINT` prints `↑↓ select · → open` in the input row's right corner a
+        few pixels above — the same fact twice, which at a narrow stage was what
+        wrapped this row onto two lines.
+
+        One thing did go with them, and it is worth naming rather than glossing:
+        `KEY_HINT` says `↵ run`, not that `↵` on an *empty* row opens the
+        selected session. That branch is real (see `onKeyDown`) and is now
+        undocumented on screen. It is the cheaper half of the trade — the keys
+        it shares with `→`, which is documented — but it is a trade, not a free
+        removal.
 
         The verb list stays because nothing else says it. It is the only place
         the grammar is visible without already knowing that `help` exists.
