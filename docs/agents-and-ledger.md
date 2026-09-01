@@ -859,12 +859,46 @@ different way.
 | `tools` | Which calls proceed **without stopping to ask** | `--allowedTools` grants; `permissions.ask` + `--permission-prompt-tool` fence |
 
 `mcp` decides whether a system's tools exist in the process at all, and on whose
-behalf — Claude Code holds the user's Slack OAuth in the Keychain, so the agent
-posts **as them**, not as a bot. `tools` decides which of the tools that exist
-may run unattended, and it is worth wording as *without asking* rather than
-*allowed*. Naming a system while granting none of its tools is a legitimate
-state (it can reach nothing until each call is approved); so is granting a tool
-whose system was never named (it does not exist).
+behalf — Claude Code holds the user's Slack OAuth **not** in the Keychain but in
+`~/.claude/.credentials.json`, under `mcpOAuth`, keyed by *delivery* rather than
+by server name: measured on this machine, the key for a plugin-delivered Slack
+server reads `plugin:slack:slack|<hash>`, and the value carries `serverUrl`,
+`accessToken`, `refreshToken` and `expiresAt`. Because the key encodes the route
+a server arrived by, a token does **not** transfer between routes — a server
+named `slack` in a `--mcp-config` file reports `needs-auth` even when an
+identical URL is already authorised under a plugin's own delivery, because the
+two keys differ and Claude Code has no way to know they name the same service.
+This is why the Hive cannot piggyback on a plugin-based Slack sign-in the user
+already has and needs its own sign-in flow (`signInToSlack`, `login.ts`). `tools`
+decides which of the tools that exist may run unattended, and it is worth
+wording as *without asking* rather than *allowed*. Naming a system while
+granting none of its tools is a legitimate state (it can reach nothing until
+each call is approved); so is granting a tool whose system was never named (it
+does not exist).
+
+#### `<name>.mcp.json`: the per-agent server set
+
+An agent whose `mcp:` list is non-empty gets its own `--mcp-config` file,
+written fresh on every wake to `<userData>/hive/agents/<name>.mcp.json`
+(`wake-command.ts`, `agentMcpConfig` in `electron/main/mcp/agent-config.ts`).
+It carries the hive server (so `ledger_*` tools keep working) plus one entry
+per name in `mcp:`, resolved through `agent-config.ts`'s `SPECS` map — today
+just `slack`, via `slackServerSpec()`.
+
+An agent with an **empty** `mcp:` gets no such file and keeps pointing at the
+shared `hive.mcp.json`: a per-agent copy would be byte-identical to it, and a
+second file per agent is a second thing that can go stale.
+
+Every wake carries `--strict-mcp-config`, which makes whichever file is named
+in `--mcp-config` — the shared file or the per-agent one — the **entire**
+server set the run can see; nothing merges in from the user's own
+`~/.claude.json` or any project-level config. That is why an integration
+missing from `SPECS` is invisible to a wake even when the definition names it
+in `mcp:`: `parseAgent` already refuses that at edit time via
+`KNOWN_AGENT_MCP`, but the two lists — the contract's and `SPECS`' — must be
+kept in agreement, since a name accepted by one and unresolved by the other
+either fails validation for no reason or writes a server-less file that fails
+the run instead.
 
 **HIVE-115 measured what `--allowedTools` actually does, and it is a grant, not
 a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model

@@ -95,10 +95,13 @@ export const isReservedAgentName = (name: string): boolean =>
 /**
  * Integrations an agent's `mcp:` list may name.
  *
- * One entry, because one integration is planned. Whether Slack is *connected*
+ * One entry, because one integration exists. Whether Slack is *connected*
  * is a wake-time question, not a validation one — a definition naming a
- * signed-out Slack is well-formed, it just will not run. HIVE-123 replaces
- * this with the real registry.
+ * signed-out Slack is well-formed, it just will not run. This list is the
+ * set of integrations with a server spec in `electron/main/mcp/agent-config.ts`
+ * (its `SPECS` map) — the two must be changed together, or a name accepted
+ * here yields no server there, or a spec there is unreachable from a
+ * definition.
  */
 export const KNOWN_AGENT_MCP = ['slack'] as const;
 

@@ -91,13 +91,17 @@ test('reports a gh state without throwing, installed or not', async ({}, testInf
  * The hierarchy pass, in the shipped renderer (the settings half).
  *
  * The pane was six equal groups with nothing saying three were GitHub's and
- * three were Jira's. Three claims here that the unit suite cannot make: the two
+ * three were Jira's. Three claims here that the unit suite cannot make: the
  * bands are real landmarks a screen reader can jump between, their eyebrows are
  * painted in the theme's brand rather than in body ink, and the groups inside
  * them draw no rules — the complaint the bands answer was too many lines, so a
  * band that kept them would have fixed nothing.
+ *
+ * A third band, Slack's, joined GitHub's and Jira's in HIVE-123 — the same
+ * `SettingsProviderGroup` landmark, so the count below moved from two to three
+ * rather than needing a different kind of assertion.
  */
-test('groups the pane into two provider bands, and draws one line each', async ({}, testInfo) => {
+test('groups the pane into three provider bands, and draws one line each', async ({}, testInfo) => {
   const { configPath } = seed((name) => testInfo.outputPath(name));
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -119,21 +123,24 @@ test('groups the pane into two provider bands, and draws one line each', async (
 
   const github = page.getByRole('region', { name: 'GitHub' });
   const jira = page.getByRole('region', { name: 'Jira' });
+  const slack = page.getByRole('region', { name: 'Slack' });
 
   await expect(github).toBeVisible();
   await expect(jira).toBeVisible();
+  await expect(slack).toBeVisible();
   /*
-    Two bands, and only two — scoped to the pane rather than counted page-wide.
-    A page-global `getByRole('region')` would also fail for any landmark added
-    anywhere else in the shell, reporting "the pane grew a third provider" for a
-    change that had nothing to do with this pane.
+    Three bands, and only three — scoped to the pane rather than counted
+    page-wide. A page-global `getByRole('region')` would also fail for any
+    landmark added anywhere else in the shell, reporting "the pane grew a
+    fourth provider" for a change that had nothing to do with this pane.
   */
-  await expect(pane.getByRole('region')).toHaveCount(2);
+  await expect(pane.getByRole('region')).toHaveCount(3);
 
   // Each group sits under the provider that owns it, and says it once.
   await expect(github.getByRole('heading', { name: 'Token source' })).toBeVisible();
   await expect(github.getByRole('heading', { name: 'Command line' })).toBeVisible();
   await expect(jira.getByRole('heading', { name: 'Site' })).toBeVisible();
+  await expect(slack.getByRole('heading', { name: 'Connection' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'PATH source' })).toHaveCount(0);
 
   /**

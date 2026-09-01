@@ -25,6 +25,8 @@ import { createAgentState, type AgentState } from '../../electron/main/agents/st
 import { createWakeCommand } from '../../electron/main/agents/wake-command';
 import { createReceiver, type Receiver } from '../../electron/main/hooks/receiver';
 import { writeAgentSettings } from '../../electron/main/hooks/settings';
+import { runCommand } from '../../electron/main/integrations/gh';
+import { readSlackStatus } from '../../electron/main/integrations/slack/status';
 import { createLedger, type Ledger } from '../../electron/main/ledger';
 import { agentMcpConfigFile } from '../../electron/main/mcp';
 import { hiveServerSpec, mcpConfig } from '../../electron/main/mcp/config';
@@ -43,6 +45,7 @@ import {
 } from '../../electron/shared/hook-contract';
 import { CONFIG_PATH_ENV } from '../../electron/shared/config-contract';
 import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
+import { SLACK_TOOL_GLOB, SLACK_TOOL_PREFIX } from '../../electron/shared/slack-contract';
 
 /**
  * What only a real `claude` can prove about a wake (HIVE-115).
@@ -187,7 +190,22 @@ const INTERVAL = 'probe-interval';
  */
 const ROTATOR = 'probe-rotator';
 
-const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL, ROTATOR];
+/**
+ * The agent that names Slack in `mcp:` (HIVE-123).
+ *
+ * Its own definition rather than a sixth body for {@link NAME}, because it is
+ * the only probe here whose `mcp:` list is non-empty — that is what makes
+ * `wake-command.ts` write it a per-agent `<name>.mcp.json` instead of pointing
+ * it at the shared `hive.mcp.json`, and this scenario exists to prove that
+ * file actually puts a working Slack server in the process.
+ *
+ * The scenario this agent drives skips (never fails) when this machine has no
+ * signed-in Slack — `slackConnected`, read once in `beforeAll` off a real
+ * `claude mcp get slack`, exactly the check the pane itself makes.
+ */
+const SLACK = 'probe-slack';
+
+const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL, ROTATOR, SLACK];
 
 const AGENT_MD = `---
 name: ${NAME}
@@ -260,6 +278,38 @@ After your ledger inbox, do exactly one of these and end your turn:
   the entire body.
 
 Say nothing else.
+`;
+
+/**
+ * The Slack probe, as a definition (HIVE-123).
+ *
+ * `mcp: [slack]` is the one line that matters — it is what makes
+ * `wake-command.ts` write `${SLACK}.mcp.json` instead of leaving this agent on
+ * the shared file. `tools:` grants the Slack glob and nothing else, so the one
+ * ungranted reach this scenario could hit is the one it is not testing for.
+ *
+ * The body is worded like `probe.ts`'s own live probe on purpose: **use
+ * ToolSearch, then call one tool** — because MCP tool schemas are deferred, a
+ * model that skips the search has no schema to call the tool with, and this
+ * is the ordering the live scenario exists to prove actually holds.
+ */
+const SLACK_MD = `---
+name: ${SLACK}
+description: Proves a wake that names Slack in mcp: actually reaches it.
+icon: Ghost
+model: haiku
+mcp: [slack]
+tools: [${SLACK_TOOL_GLOB}, TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find. After your ledger inbox, use
+ToolSearch to load the schema for a Slack tool that reports who I am, then
+call that tool and reply with the single sentence "slack probe reporting in".
+If the call fails, quote the error message verbatim instead. Do not call any
+other tool.
 `;
 
 /**
@@ -384,6 +434,12 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   let scheduler: Scheduler | null = null;
   let agentRegistry: AgentRegistry;
   let permissions: Permissions;
+  /**
+   * Read once in `beforeAll` off a real `claude mcp get slack` — the same
+   * check the pane makes. `false` on any machine that has never signed in,
+   * which is what lets the slack scenario skip instead of failing there.
+   */
+  let slackConnected = false;
 
   /** Every argv this suite spawned, in order. */
   const spawns: { file: string; args: string[] }[] = [];
@@ -453,10 +509,23 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [FENCE, fenceMd(marker)],
       [INTERVAL, INTERVAL_MD],
       [ROTATOR, ROTATOR_MD],
+      [SLACK, SLACK_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
     }
+
+    /*
+      The same fact the pane reads, off the same command — `claude mcp get
+      slack` — via the real `readSlackStatus` this app ships, not a
+      hand-rolled shell-out. `runCommand` is synchronous, so this needs no
+      extra await and cannot race anything below it. A `connected` result here
+      is the only thing that arms the slack scenario; anything else — no
+      server added, needs-auth, pending-approval, or a broken `claude` on
+      PATH — leaves it skipped rather than failing a suite that never signed
+      in.
+    */
+    slackConnected = readSlackStatus('claude', runCommand).kind === 'connected';
 
     ledger = createLedger({
       dir: join(dirname(process.env[CONFIG_PATH_ENV]), LEDGER_DIR),
@@ -1434,4 +1503,61 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
     expect(said).toContain('HALCYON');
   }, 300_000);
+
+  /**
+   * The honest one (HIVE-123): skips rather than fails without a signed-in
+   * Slack, so `pnpm test:agent` stays green on a machine that has never run
+   * `claude mcp add slack`. `ctx.skip(condition, note)` is Vitest's dynamic
+   * skip — a no-op when `slackConnected` is `true`, and otherwise throws
+   * before a single assertion runs, which is what keeps this from ever
+   * reporting a false pass or a false fail on an unconnected machine.
+   *
+   * What it proves when it does run: the `init` event's `mcp_servers` really
+   * did carry `slack`'s status (not just that a file was written), and the
+   * model actually called `ToolSearch` before its first `mcp__slack__` call —
+   * the ordering HIVE-123's own spec note calls correct, not noise, because
+   * MCP tool schemas are deferred and there is no schema to invoke a tool
+   * with until `ToolSearch` has loaded one.
+   */
+  it(
+    'reaches Slack when mcp: names it, loading the schema before calling the tool',
+    async (ctx) => {
+      ctx.skip(
+        !slackConnected,
+        'Slack is not signed in on this machine (`claude mcp get slack` did ' +
+          'not report connected) — the live Slack scenario needs a real ' +
+          'sign-in and cannot fake one.',
+      );
+
+      // Everything this run's own stdout produces lands after this point;
+      // slicing from here is what keeps the ordering assertion below about
+      // *this* wake rather than every line the suite has pushed so far.
+      const before = lines.length;
+
+      await wake('manual', SLACK);
+
+      const state = await persisted(SLACK);
+      const run = state.runs.at(-1);
+
+      expect(run?.outcome).not.toBe('failed');
+      // Read straight off the init event's own `mcp_servers` array
+      // (`runs.ts`'s `slackStatus`) — proof the per-agent `probe-slack.mcp.json`
+      // this wake wrote actually put a *working* Slack server in the process,
+      // not merely a well-formed one.
+      expect(run?.slack).toBe('connected');
+
+      const produced = lines.slice(before);
+      const toolSearchAt = produced.findIndex((line) =>
+        line.text.startsWith('ToolSearch'),
+      );
+      const slackToolAt = produced.findIndex((line) =>
+        line.text.startsWith(SLACK_TOOL_PREFIX),
+      );
+
+      expect(toolSearchAt).toBeGreaterThanOrEqual(0);
+      expect(slackToolAt).toBeGreaterThanOrEqual(0);
+      expect(toolSearchAt).toBeLessThan(slackToolAt);
+    },
+    300_000,
+  );
 });

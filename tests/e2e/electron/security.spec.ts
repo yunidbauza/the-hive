@@ -280,6 +280,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'pty',
     'session',
     'skills',
+    /*
+      HIVE-123 added the slack namespace to `BRIDGE_KEYS` and to the preload:
+      status, sign-in, sign-out, and the one-turn test call. None of the four
+      takes an argument and none returns a credential — Claude Code holds the
+      OAuth token; this app only asks what state it is in
+      (`electron/shared/ipc-contract.ts`, the comment above `BRIDGE_KEYS`).
+    */
+    'slack',
     'theme',
     'ui',
     'updates',
