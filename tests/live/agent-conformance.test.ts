@@ -1278,10 +1278,23 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    * `handoffFor` that returns whatever the test hands it, so all of them would
    * pass on a build where the last-turn prompt reaches no model, the handoff
    * body is dropped between `pendingSession` and the argv, or `--session-id`
-   * names a conversation the binary then quietly replaces. The codeword is what
-   * closes all of that at once: it is said **once**, into the first
-   * conversation, by a wake whose `extra` this test wrote — and the session
-   * that has to repeat it back has never seen that wake.
+   * names a conversation the binary then quietly replaces. The codeword is the
+   * instrument that reaches all three: it is said **once**, into the first
+   * conversation, by a wake whose `extra` this test wrote — so a build that
+   * loses it anywhere along the chain has nothing to put in the handoff, in the
+   * argv, or in the answer.
+   *
+   * **What it is not** is a proof of exclusivity, and the comments below say so
+   * rather than overclaiming. `receiver.ts`'s visibility rule is
+   * `entry.from === caller` among its terms, so an agent always sees its own
+   * lines; the fresh session runs in a new MCP host with no read cursor, and its
+   * first `ledger_read` can hand it its own `handoff` entry. The model
+   * therefore has two routes to the word, and this scenario cannot tell them
+   * apart from the answer alone. What closes the gap is the **argv** assertion
+   * further down: the codeword is pinned in the exact prompt string the binary
+   * was handed, so the carry is proved from the close's decision through to the
+   * bytes the model reads, and the ledger answer proves the round trip on top
+   * of it.
    *
    * Three wakes, and the middle one is the whole mechanism:
    *
@@ -1292,8 +1305,8 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    *    `handoff` entry landed: `pendingSession` gains a uuid and the body, and
    *    the counter goes to zero;
    * 3. the fresh session, started under `--session-id <that uuid>` with the
-   *    handoff prefixed onto its prompt. It answers with a codeword it can only
-   *    have read there.
+   *    handoff — codeword and all — prefixed onto its prompt, and answering
+   *    with that codeword.
    *
    * A failure here is a failure of the feature, not a flake. The handoff was
    * either not written or not carried, and which of the two is legible from
@@ -1364,8 +1377,20 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(freshArgs).not.toContain('--resume');
     expect(freshArgs).toContain('--session-id');
     expect(freshArgs[freshArgs.indexOf('--session-id') + 1]).toBe(next);
-    // The handoff really did reach the string the model reads, and it leads.
+    /*
+      The handoff really did reach the string the model reads, and it leads.
+
+      Both halves are needed, and the second is the load-bearing one.
+      `wakePrompt` branches on `handoff === undefined`, not on emptiness — so a
+      build that carried the `pendingSession` record but dropped or mangled its
+      body between there and the argv still emits the "continuing from" preamble
+      and would pass the first line alone. Pinning the codeword *in the argv* is
+      what closes that gap: `wake-command.ts` spells it from the same
+      `pending.handoff` already asserted above, so this follows the body all the
+      way from the close's decision to the bytes handed to the binary.
+    */
     expect(freshArgs.at(-1) ?? '').toContain('continuing from a previous session');
+    expect(freshArgs.at(-1) ?? '').toContain('HALCYON');
 
     const fresh = await persisted(ROTATOR);
 
@@ -1378,11 +1403,16 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(fresh.pendingSession).toBeUndefined();
 
     /*
-      And the one assertion the whole scenario is for: a codeword spoken into a
-      conversation this session never had, said back by a session that could
-      only have read it in the handoff. Filtered to entries **after** the
-      handoff, since the handoff itself contains the word — counting it would
-      make this pass on a build that never carried anything.
+      And the round trip closes: a codeword spoken into a conversation this
+      session never had, said back by a session that was handed it in its own
+      prompt — which the argv assertion above already pinned, so this is the
+      model acting on the handoff rather than the only evidence it arrived.
+
+      Filtered to entries **after** the handoff, since the handoff itself
+      contains the word — counting it would make this pass on a build that never
+      carried anything. It is not filtered against the agent *reading* its own
+      handoff back off the ledger, which `receiver.ts`'s `entry.from === caller`
+      term allows and this suite cannot prevent; the docblock says so.
     */
     const since = String(mark?.['id'] ?? '');
     const said = (await onDisk())

@@ -1980,10 +1980,14 @@ export const BRIDGE_SKILLS_KEYS = [
  *
  * Listeners, like `onChanged`, and the same test applies: can either carry
  * something `list` would not already hand over? `onStatus` carries a subset of
- * what `agents:list` returns for that agent — deliberately *less*, since
- * {@link AgentStatusPush} omits `sessionUuid`. `onLines` carries the agent's
- * own stdout, which is the one genuinely new fact, and it is the fact the
- * feature exists to show: a run nobody can read is a run nobody can trust.
+ * what `agents:list` returns for that agent — including, since HIVE-122,
+ * `sessionUuid`, which this comment used to name as the one field it withheld.
+ * A rotation moves that uuid mid-life, on an agent the user may well be
+ * watching, and nothing emits `agents:changed` on a run to carry it. It is
+ * still a subset — `agents:list` has always returned it — so the answer to the
+ * question above is unchanged. `onLines` carries the agent's own stdout, which
+ * is the one genuinely new fact, and it is the fact the feature exists to show:
+ * a run nobody can read is a run nobody can trust.
  */
 export const BRIDGE_AGENTS_KEYS = [
   'list',
