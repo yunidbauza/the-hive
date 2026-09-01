@@ -1680,12 +1680,18 @@ describe('the history', () => {
    * the user had finished reading the rename, and the file is what the next
    * launch restores from.
    *
-   * What the pin defends is now the **key**, not the whole name: the agent's
-   * title is taken and `HIVE-104` is kept in front of it. The regression this
-   * guards against is the same one either way — the ticket falling off the
-   * front on the next repaint.
+   * What the pin defends is the **key**, and since first-prompt naming the
+   * agent's repaint no longer gets to add to it: a row that already has a real
+   * name refuses a title Claude chose, because Claude's title is written once,
+   * late, about whatever the conversation had drifted to by then.
+   *
+   * The regression this guards against is the same one it always was — the
+   * ticket falling off the front on the next repaint — and it now guards the
+   * stronger property, through the real seam: the classification runs against a
+   * transcript that does not exist here, answers `unknown`, and is reported as
+   * `agent`, which is the conservative half of that trade working as intended.
    */
-  it('keeps a pinned key in front of the agent’s own repaints', () => {
+  it('keeps a pinned key whole against the agent’s own repaints', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hive-pin-'));
     const file = join(dir, 'sessions.json');
     try {
@@ -1713,7 +1719,7 @@ describe('the history', () => {
       history.flush();
 
       expect(history.all()[0]).toMatchObject({
-        name: 'HIVE-104-hero-refresh',
+        name: 'HIVE-104',
         namePinned: true,
         ticket: 'HIVE-104',
       });

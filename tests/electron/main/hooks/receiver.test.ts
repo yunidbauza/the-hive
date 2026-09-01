@@ -1604,6 +1604,65 @@ describe('hook receiver', () => {
 
       expect(promptNames).toEqual([]);
     });
+
+    it('spends the first prompt even when its body truncated', async () => {
+      /*
+        A 256 KB paste is still the first prompt. Marking it seen only when the
+        text was readable let the *second* prompt name the session — the
+        late-prompt defect, reintroduced through an edge case.
+      */
+      await post({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: `rename the splash screen ${'x'.repeat(256 * 1024)}`,
+      });
+      await post({ hook_event_name: 'UserPromptSubmit', prompt: 'now check the PR 157 merge' });
+
+      expect(promptNames).toEqual([]);
+    });
+
+    describe('a new conversation in the same session', () => {
+      /*
+        The mark is keyed by Claude's conversation id, not by the entity id,
+        because the two boundaries that start a new conversation look nothing
+        alike: `/clear` announces itself with a `SessionEnd`, and a **restart**
+        announces itself here not at all — main kills the pty and spawns a fresh
+        `claude`, which no hook reports.
+      */
+      it('reads a first prompt again after a restart, which sends no SessionEnd', async () => {
+        await post({
+          hook_event_name: 'UserPromptSubmit',
+          prompt: '/work-on ABC-123',
+          session_id: 'uuid-one',
+        });
+
+        // No SessionEnd: a restart does not produce one. Only the uuid moves.
+        await post({
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'rename the splash screen',
+          session_id: 'uuid-two',
+        });
+
+        expect(promptNames).toEqual([
+          { entityId: 'sess-01', name: 'ABC-123' },
+          { entityId: 'sess-01', name: 'rename-splash-screen' },
+        ]);
+      });
+
+      it('still reads only the first prompt within one conversation', async () => {
+        await post({
+          hook_event_name: 'UserPromptSubmit',
+          prompt: '/work-on ABC-123',
+          session_id: 'uuid-one',
+        });
+        await post({
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'now check the PR 157 merge',
+          session_id: 'uuid-one',
+        });
+
+        expect(promptNames).toEqual([{ entityId: 'sess-01', name: 'ABC-123' }]);
+      });
+    });
   });
 
 

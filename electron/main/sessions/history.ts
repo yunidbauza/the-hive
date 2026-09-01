@@ -1,6 +1,10 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
-import { hiveNameFromTitle } from '@shared/session-contract';
+import { SESSION_ID_PREFIX_PATTERN } from '@shared/agent-contract';
+import {
+  hiveNameFromTitle,
+  type SessionNameOrigin,
+} from '@shared/session-contract';
 import {
   HISTORY_CAP,
   type SessionRecord,
@@ -57,7 +61,22 @@ import { nameFromTitle } from './title';
 const PERSIST_DEBOUNCE_MS = 400;
 
 /** A patch is any part of a record except the identity, which is the key. */
-export type SessionPatch = Partial<Omit<SessionRecord, 'id'>>;
+export type SessionPatch = Partial<Omit<SessionRecord, 'id'>> & {
+  /**
+   * Who decided the `name` in this patch, when one is being written.
+   *
+   * **Not part of the record** — it is stripped before the merge, and nothing is
+   * persisted under this key. It exists because this file has to run *the same
+   * rule the store runs*, and since first-prompt naming that rule is no longer a
+   * function of the title alone: a late `ai-title` may name a row that is still
+   * generic and may not replace a name that came from a first prompt or a
+   * `/rename`.
+   *
+   * Absent means `agent`, which is what every writer that predates the field was
+   * reporting — a terminal title with nothing else known about it.
+   */
+  nameOrigin?: SessionNameOrigin;
+};
 
 export interface BeginOptions {
   /**
@@ -543,20 +562,52 @@ export function createSessionHistory(
           and cast at the call, so the compiler is the thing proving there is a
           title here and not a comment claiming it.
         */
+        /**
+         * A guess may not overwrite a name that came from somewhere better.
+         *
+         * The store refuses this in `renameSession`, and refusing it *only*
+         * there would be a fix that lasts until the next launch: `readTitle`
+         * records every title it reads, so the late `ai-title` the live row
+         * correctly ignored would still land in this file — and
+         * `hydrateSessions` would restore the row under it. The defect would
+         * come back on restart, one layer down, which is precisely the shape
+         * HIVE-107 warned about.
+         *
+         * "Generic" is read off the *record*, the same test the store applies to
+         * the row: no name, or one still wearing its minted `sess-0n` id.
+         */
+        const generic =
+          existing.name === undefined || SESSION_ID_PREFIX_PATTERN.test(existing.name);
+        const guessed = (patch.nameOrigin ?? 'agent') === 'agent';
+
         const title = patch.namePinned === undefined ? patch.name : undefined;
         const pinned = existing.namePinned === true;
         const renamed =
-          title === undefined || (pinned && existing.ticket === undefined)
+          title === undefined ||
+          (pinned && existing.ticket === undefined) ||
+          (guessed && !generic)
             ? undefined
             : hiveNameFromTitle(title, pinned ? existing.ticket : undefined);
 
+        /*
+          `nameOrigin` decides what is written; it is never itself written. A
+          spread that carried it would put a key on the record that nothing
+          reads and `hydrateSessions` would have to learn to ignore.
+        */
+        const { nameOrigin: _nameOrigin, ...fields } = patch;
+
         const merged: SessionRecord = {
           ...existing,
-          ...patch,
+          ...fields,
           /*
-            `?? existing.name` covers both refusals — a pin the ticket cannot
-            complete, and a title that normalised to nothing — with the value
-            that was already true. Neither is a reason to forget the name.
+            `?? existing.name` covers all three refusals — a pin the ticket
+            cannot complete, a guess against a name that came from somewhere
+            better, and a title that normalised to nothing — with the value that
+            was already true. None of them is a reason to forget the name.
+
+            This branch is also what makes a refusal *stick*: `fields` above
+            spreads `patch.name` raw, so a refusal expressed by skipping this
+            line would write the unnormalised title instead of withholding it.
           */
           ...(title === undefined ? {} : { name: renamed ?? existing.name }),
           // `createdAt` is deliberately not overwritable: it is the first thing

@@ -433,21 +433,43 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const warnedTaskTypes = new Set<string>();
 
   /**
-   * Sessions whose first prompt has already been read (first-prompt naming).
+   * Conversations whose first prompt has already been read.
    *
    * The whole point of naming from a prompt is that it is the **first** one: the
    * name should say why the session exists, not what it drifted onto by turn
    * 170. That is exactly the failure Claude's own `ai-title` has, so a rule that
    * re-derived on every prompt would reproduce it with extra steps.
    *
-   * Cleared by `/clear`, because a cleared terminal is a new conversation that
-   * has not had a first prompt yet — the same boundary `onCleared` draws for
-   * every other piece of per-conversation state.
+   * ## Keyed by the conversation, not by the session
+   *
+   * A session id outlives the conversations inside it, and the two boundaries
+   * that start a new one look nothing like each other: `/clear` announces itself
+   * with a `SessionEnd`, and a **restart** does not announce itself here at all —
+   * main kills the pty and spawns a fresh `claude`, which no hook reports. Keyed
+   * by entity id, a restarted session would carry the previous generation's mark
+   * for the life of the process and never be named from a prompt again.
+   *
+   * Claude's own conversation id is the thing that actually changes at both
+   * boundaries — a `/clear` and a restart each mint a new one — so it is the
+   * honest key. The entity id is the fallback for a payload that carried no
+   * `session_id`, and `SessionEnd{clear}` still clears that fallback, which is
+   * the only case it can still matter for.
    *
    * Per receiver rather than per module, for the reason {@link warnedTaskTypes}
    * gives: module state would let one test silence the next.
    */
   const promptedSessions = new Set<string>();
+
+  /**
+   * What identifies the conversation a hook fired in, best available.
+   *
+   * The uuid is globally unique, so it needs no entity qualifier; the fallback
+   * does, or two sessions with no uuid would share one mark.
+   */
+  const conversationKey = (entityId: string, sessionUuid: unknown): string =>
+    typeof sessionUuid === 'string' && sessionUuid !== ''
+      ? `uuid:${sessionUuid}`
+      : `entity:${entityId}`;
   const noteUnknownTaskType = (type: string): void => {
     if (warnedTaskTypes.has(type)) return;
     warnedTaskTypes.add(type);
@@ -990,9 +1012,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      */
     if (event === 'SessionEnd') {
       if (reason === CLEAR_REASON) {
-        // A cleared terminal is a fresh conversation, so its next prompt is a
-        // first prompt again (first-prompt naming).
-        promptedSessions.delete(entityId);
+        /*
+          A cleared terminal is a fresh conversation, so its next prompt is a
+          first prompt again. Only the entity-id fallback needs clearing: a
+          `/clear` mints a new conversation id, so a uuid-keyed mark already
+          belongs to the conversation that just ended and can never match the
+          new one.
+        */
+        promptedSessions.delete(conversationKey(entityId, undefined));
         onCleared(entityId);
       }
       return 204;
@@ -1008,22 +1035,33 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * into the other's path, which is why the whole `handle` runs inside the
      * caller's try.
      */
-    if (event === 'UserPromptSubmit' && typeof prompt === 'string') {
-      const key = ticketKeyFromPrompt(prompt);
-      if (key !== null) onTicketIntent({ entityId, key, source: 'prompt' });
+    if (event === 'UserPromptSubmit') {
+      if (typeof prompt === 'string') {
+        const key = ticketKeyFromPrompt(prompt);
+        if (key !== null) onTicketIntent({ entityId, key, source: 'prompt' });
+      }
 
       /**
-       * The first prompt names the session (first-prompt naming).
+       * The first prompt names the session.
        *
-       * Marked as seen whether or not a name came out of it. A greeting is
-       * still the first prompt, and re-reading until one happens to yield a
-       * name would quietly turn this back into "name from whatever prompt
-       * looks nameable", which is the defect rather than the fix — the row
-       * waits for Claude's title instead, which is what it did before.
+       * ## Marked on the event, not on the text
+       *
+       * Marked as seen whether or not a name came out of it, and whether or not
+       * the text was even readable. A greeting is still the first prompt, and so
+       * is a 256 KB paste whose body truncated past `prompt` — re-reading until
+       * some prompt happened to be nameable is "name from whatever prompt looks
+       * nameable", which is the defect wearing the fix's clothes. The row waits
+       * for Claude's title instead, exactly as it did before.
+       *
+       * That is why the mark is taken on `UserPromptSubmit` itself rather than
+       * inside the `typeof prompt === 'string'` branch above: a truncated first
+       * prompt left the mark unset, and the *second* prompt then named the
+       * session — the late-prompt defect, reintroduced by an edge case.
        */
-      if (!promptedSessions.has(entityId)) {
-        promptedSessions.add(entityId);
-        const name = sessionNameFromPrompt(prompt);
+      const conversation = conversationKey(entityId, sessionUuid);
+      if (!promptedSessions.has(conversation)) {
+        promptedSessions.add(conversation);
+        const name = typeof prompt === 'string' ? sessionNameFromPrompt(prompt) : undefined;
         if (name !== undefined) onPromptName(entityId, name);
       }
     }

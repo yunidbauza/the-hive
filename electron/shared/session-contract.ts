@@ -196,6 +196,47 @@ const TOKEN_EDGES = /^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g;
 const NAME_WORD_MAX = 4;
 
 /**
+ * Join words into a name that fits, dropping whole words rather than cutting one.
+ *
+ * Shared by {@link hiveNameFromTitle} and {@link sessionNameFromPrompt} because
+ * both had this loop verbatim, and the two must not be able to drift: they name
+ * the same rail, and a truncation rule that applied to titles but not to prompts
+ * would show up as two spellings of the same session.
+ *
+ * Words go before `lead` in the caller, not here — a key is hoisted by one and
+ * used alone by the other, which is the part they genuinely disagree about.
+ *
+ * Answers `''` when nothing survives, which callers already treat as "no name".
+ */
+function joinWithinLimit(parts: string[]): string {
+  const kept = [...parts];
+  // A name cut through the middle of a word is a worse label than a shorter one
+  // that still reads — the reason SESSION_NAME_DISPLAY_MAX gives.
+  while (kept.length > 1 && kept.join('-').length > SESSION_NAME_MAX) kept.pop();
+
+  const name = kept.join('-');
+  return name.length > SESSION_NAME_MAX ? '' : name;
+}
+
+/**
+ * The words a raw token contributes to a name, lower-cased.
+ *
+ * Shared for the same reason {@link joinWithinLimit} is: both callers split a
+ * token on non-alphanumerics and fold it down, and a change to what counts as a
+ * word boundary must reach both or the two paths spell one session differently.
+ *
+ * Splitting and folding only. What to *do* with the result differs between the
+ * two callers and is deliberately left to them — see the all-numeric rule in
+ * {@link sessionNameFromPrompt}, which must not reach titles.
+ */
+function wordsInToken(token: string): string[] {
+  return token
+    .split(/[^A-Za-z0-9]+/)
+    .filter((piece) => piece !== '')
+    .map((piece) => piece.toLowerCase());
+}
+
+/**
  * Rewrite an agent's terminal title into the register the rail names sessions in
  * (HIVE-108).
  *
@@ -309,9 +350,7 @@ export function hiveNameFromTitle(title: string, prefix?: string): string | unde
       continue;
     }
 
-    for (const word of token.split(/[^A-Za-z0-9]+/)) {
-      if (word !== '') words.push(word.toLowerCase());
-    }
+    words.push(...wordsInToken(token));
   }
 
   /*
@@ -336,16 +375,8 @@ export function hiveNameFromTitle(title: string, prefix?: string): string | unde
     return lead === undefined || lead.length > SESSION_NAME_MAX ? undefined : lead;
   }
 
-  /*
-    Trailing words are dropped rather than the name truncated mid-word, for the
-    reason SESSION_NAME_DISPLAY_MAX gives: a name cut through the middle of a
-    word is a worse label than a shorter one that still reads.
-  */
-  const parts = lead === undefined ? capped : [lead, ...capped];
-  while (parts.length > 1 && parts.join('-').length > SESSION_NAME_MAX) parts.pop();
-
-  const name = parts.join('-');
-  return name === '' || name.length > SESSION_NAME_MAX ? undefined : name;
+  const name = joinWithinLimit(lead === undefined ? capped : [lead, ...capped]);
+  return name === '' ? undefined : name;
 }
 
 /**
@@ -525,25 +556,27 @@ export function sessionNameFromPrompt(prompt: string): string | undefined {
       continue;
     }
 
-    const pieces = token.split(/[^A-Za-z0-9]+/).filter((piece) => piece !== '');
+    const pieces = wordsInToken(token);
 
     /*
       A token that is nothing but numbers joined by punctuation is a date, a
-      version range, or an id — never a description. `2026-08-27` splits into
+      version range or an id — never a description. `2026-08-27` splits into
       three pieces and would otherwise spend the entire four-word budget saying
       nothing, which is the same complaint TITLE_TICKET_KEY's "a leading letter
       is required" answers one rule earlier.
 
-      Scoped to the *token*, not to the word, so a lone number keeps its meaning:
-      `React 18 upgrade` is `react-18-upgrade`, because `18` arrived on its own
-      and is doing work there.
-    */
-    if (pieces.length > 1 && pieces.every((piece) => !/[A-Za-z]/.test(piece))) continue;
+      **A prompt rule, not a shared one.** `hiveNameFromTitle` deliberately keeps
+      `2026-08-27 retro` whole: a title is already a short label Claude chose,
+      where a date is there because it is the subject. A prompt is a sentence
+      somebody typed, where it is nearly always incidental.
 
-    for (const piece of pieces) {
-      const lower = piece.toLowerCase();
-      if (PROMPT_STOPWORDS.has(lower)) continue;
-      words.push(lower);
+      Scoped to the *token*, so a lone number keeps its meaning: `React 18
+      upgrade` is `react-18-upgrade`, because `18` arrived on its own.
+    */
+    if (pieces.length > 1 && pieces.every((piece) => !/[a-z]/.test(piece))) continue;
+
+    for (const word of pieces) {
+      if (!PROMPT_STOPWORDS.has(word)) words.push(word);
     }
   }
 
@@ -556,13 +589,8 @@ export function sessionNameFromPrompt(prompt: string): string | undefined {
   */
   if (found !== undefined) return found;
 
-  const parts = words.slice(0, NAME_WORD_MAX);
-  // Trailing words are dropped rather than the name truncated mid-word, for the
-  // reason SESSION_NAME_DISPLAY_MAX gives.
-  while (parts.length > 1 && parts.join('-').length > SESSION_NAME_MAX) parts.pop();
-
-  const name = parts.join('-');
-  return name === '' || name.length > SESSION_NAME_MAX ? undefined : name;
+  const name = joinWithinLimit(words.slice(0, NAME_WORD_MAX));
+  return name === '' ? undefined : name;
 }
 
 /**

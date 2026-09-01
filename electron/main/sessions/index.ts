@@ -554,7 +554,29 @@ export function createSessions(options: SessionsOptions): Sessions {
    * An `unknown` verdict is deliberately **not** cached — see
    * {@link classifyTitle}.
    */
-  const titleOrigins = new Map<string, { name: string; origin: SessionNameOrigin }>();
+  const titleOrigins = new Map<
+    string,
+    {
+      name: string;
+      origin: SessionNameOrigin;
+      /** The transcript actually answered for this name; stop asking. */
+      settled: boolean;
+      /** Lookups spent on an answer that has not settled. */
+      attempts: number;
+    }
+  >();
+
+  /**
+   * How many times one title may be looked up before its verdict is settled.
+   *
+   * An `unknown` is deliberately not cached, so that the repaint/append race
+   * resolves itself a frame later — but "not cached" and "retried forever" are
+   * one line apart, and the second would put a synchronous 256 KB read on the
+   * pty data path several times a second for any title whose record never
+   * arrives. After this many tries the answer is taken as `agent`, which is what
+   * it was already being reported as in the meantime.
+   */
+  const MAX_TITLE_LOOKUPS = 8;
 
   const titleOrigin = createTitleOriginReader();
 
@@ -872,7 +894,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      * the `sess-07` it was born as.
      */
     onPromptName: (entityId, name) => {
-      history?.record(entityId, { name });
+      history?.record(entityId, { name, nameOrigin: 'prompt' });
       send(CH.sessionName, { entityId, name, origin: 'prompt' } satisfies SessionNameEvent);
     },
     onCleared: (entityId) => {
@@ -1399,12 +1421,12 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (name.length > SESSION_NAME_DISPLAY_MAX) continue;
       // HIVE-87. A restored row should read as whatever the agent last called
       // itself, not as the `sess-07` it was born as.
-      history?.record(entityId, { name });
-      send(CH.sessionName, {
-        entityId,
-        name,
-        origin: classifyTitle(entityId, name),
-      } satisfies SessionNameEvent);
+      const origin = classifyTitle(entityId, name);
+      // The origin travels to the history too, not only to the renderer: the
+      // record is what the next launch restores from, so a gate applied in only
+      // one of the two lasts until the app is quit.
+      history?.record(entityId, { name, nameOrigin: origin });
+      send(CH.sessionName, { entityId, name, origin } satisfies SessionNameEvent);
     }
   }
 
@@ -1432,16 +1454,31 @@ export function createSessions(options: SessionsOptions): Sessions {
    */
   function classifyTitle(entityId: string, name: string): SessionNameOrigin {
     const cached = titleOrigins.get(entityId);
-    if (cached !== undefined && cached.name === name) return cached.origin;
+    const known = cached !== undefined && cached.name === name;
+
+    // Settled by an answer, or by having asked often enough. Either way, done.
+    if (known && (cached.settled || cached.attempts >= MAX_TITLE_LOOKUPS)) return cached.origin;
 
     const transcript = transcripts.get(entityId);
     if (transcript === undefined) return 'agent';
 
     const verdict = titleOrigin.classify(transcript.cwd, transcript.sessionUuid, name);
-    if (verdict === 'unknown') return 'agent';
+    const settled = verdict !== 'unknown';
 
-    titleOrigins.set(entityId, { name, origin: verdict });
-    return verdict;
+    /*
+      An unsettled answer is still recorded, so the *count* survives even though
+      the verdict does not. That is what turns "ask again on the next repaint"
+      into a bounded retry rather than a disk read per frame, forever, for any
+      title whose record never arrives.
+    */
+    titleOrigins.set(entityId, {
+      name,
+      origin: settled ? verdict : 'agent',
+      settled,
+      attempts: (known ? cached.attempts : 0) + 1,
+    });
+
+    return settled ? verdict : 'agent';
   }
 
   /**
@@ -1464,6 +1501,16 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     titles.delete(entityId);
     hookDriven.delete(entityId);
+    /*
+      Per-generation too. A restart mints a new conversation uuid and `open`
+      overwrites both — but a terminal that is closed for good never reaches
+      that, and one stale entry per session for the life of the process is a
+      leak, however slow. Unlike `lastCwd` above, nothing reads either map after
+      the process is gone: classification only happens while a pty is producing
+      titles.
+    */
+    transcripts.delete(entityId);
+    titleOrigins.delete(entityId);
     /*
       Per-generation for the same reason (HIVE-113). A restart reuses the entity
       id, and a retained `idle` would let the ledger write a nudge into the new

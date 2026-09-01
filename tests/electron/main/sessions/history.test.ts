@@ -186,7 +186,7 @@ describe('session history', () => {
         name: 'HIVE-104',
         namePinned: true,
       });
-      history.record('sess-01', { name: 'back key interception' });
+      history.record('sess-01', { name: 'back key interception', nameOrigin: 'rename' });
       history.flush();
 
       expect(readHistory(file)[0]?.name).toBe('HIVE-104-back-key-interception');
@@ -203,7 +203,7 @@ describe('session history', () => {
         namePinned: true,
       });
       for (let i = 0; i < 5; i += 1) {
-        history.record('sess-01', { name: 'back key interception' });
+        history.record('sess-01', { name: 'back key interception', nameOrigin: 'rename' });
       }
       history.flush();
 
@@ -229,6 +229,66 @@ describe('session history', () => {
       history.flush();
 
       expect(readHistory(file)[0]?.name).toBe('HIVE-104-2');
+    });
+
+    /**
+     * The same origin rule the store runs, because this file is what the next
+     * launch restores from.
+     *
+     * Applying it in only one of the two places is a fix that lasts until the
+     * app is quit: `readTitle` records every title it reads, so a late `ai-title`
+     * the live row correctly ignored would still land here — and
+     * `hydrateSessions` would bring the row back under it. That is the HIVE-107
+     * shape, one layer down.
+     */
+    describe('who may replace a name', () => {
+      const named = (name: string, origin?: 'prompt' | 'rename' | 'agent') => {
+        const history = createSessionHistory(file, () => 1000);
+        history.record('sess-01', { project: 'p', task: '', status: 'working' });
+        history.record('sess-01', { name: 'HIVE-123', nameOrigin: 'prompt' });
+        history.record('sess-01', origin === undefined ? { name } : { name, nameOrigin: origin });
+        history.flush();
+        return readHistory(file)[0]?.name;
+      };
+
+      it('refuses the agent’s late guess against a first-prompt name', () => {
+        expect(named('PR 157 merge check and implementation', 'agent')).toBe('HIVE-123');
+      });
+
+      it('refuses it when no origin is given, which is what every old writer was', () => {
+        expect(named('PR 157 merge check and implementation')).toBe('HIVE-123');
+      });
+
+      it('accepts a deliberate rename', () => {
+        expect(named('something else', 'rename')).toBe('something-else');
+      });
+
+      it('takes any title while the row is still wearing its minted id', () => {
+        const history = createSessionHistory(file, () => 1000);
+        history.record('sess-01', { project: 'p', task: '', status: 'working' });
+        history.record('sess-01', { name: 'sess-01' });
+        history.record('sess-01', { name: 'Mutex explanation', nameOrigin: 'agent' });
+        history.flush();
+
+        expect(readHistory(file)[0]?.name).toBe('mutex-explanation');
+      });
+
+      it('never writes the origin into the record itself', () => {
+        // It decides what is written; it is not a field. A record carrying it
+        // would be one `hydrateSessions` had to learn to ignore.
+        const history = createSessionHistory(file, () => 1000);
+        history.record('sess-01', {
+          project: 'p',
+          task: '',
+          status: 'working',
+          name: 'HIVE-123',
+          nameOrigin: 'prompt',
+        });
+        history.flush();
+
+        expect(readHistory(file)[0]).not.toHaveProperty('nameOrigin');
+        expect(readHistory(file)[0]?.name).toBe('HIVE-123');
+      });
     });
 
     it('still takes a title-stream name on a row nobody pinned', () => {
