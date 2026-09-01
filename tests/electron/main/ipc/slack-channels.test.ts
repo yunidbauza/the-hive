@@ -189,8 +189,11 @@ const asyncRun = vi.fn<
 >(() => Promise.resolve({ code: 0, stdout: '', stderr: '', timedOut: false }));
 
 vi.mock('../../../../electron/main/integrations/github/run', () => ({
-  runAsync: (file: string, args: readonly string[], options?: unknown) =>
-    asyncRun(file, args, options),
+  runAsync: (
+    file: string,
+    args: readonly string[],
+    options?: { signal?: AbortSignal; timeoutMs?: number },
+  ) => asyncRun(file, args, options),
 }));
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
@@ -333,7 +336,7 @@ describe('slack channels (HIVE-123)', () => {
     const run = probeSlack.mock.calls[0]?.[1] as (
       file: string,
       args: readonly string[],
-      options?: unknown,
+      options?: { timeoutMs?: number },
     ) => Promise<unknown>;
 
     await run('/bin/echo', ['hi'], { timeoutMs: 1_000 });

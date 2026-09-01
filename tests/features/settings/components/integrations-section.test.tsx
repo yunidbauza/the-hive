@@ -540,7 +540,7 @@ describe('IntegrationsSection — Slack', () => {
         agent('slack-watcher', { mcp: ['slack'], tools: ['mcp__slack__*'] }),
         agent('pr-nanny'),
       ],
-      problems: [],
+      agentsRoot: '/home/u/.hive/agents',
     });
     slackStatus.mockResolvedValue({ kind: 'connected' });
 
@@ -560,7 +560,7 @@ describe('IntegrationsSection — Slack', () => {
   it('passes tools through, so the missing-grant hint can fire', async () => {
     setAgentsForTest({
       agents: [agent('slack-watcher', { mcp: ['slack'], tools: ['Read'] })],
-      problems: [],
+      agentsRoot: '/home/u/.hive/agents',
     });
     slackStatus.mockResolvedValue({ kind: 'connected' });
 
