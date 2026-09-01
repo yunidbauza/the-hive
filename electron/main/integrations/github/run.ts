@@ -69,6 +69,20 @@ export type RunAsync = (
      * not patience, it is a timer held open on a wedged filesystem.
      */
     timeoutMs?: number;
+    /**
+     * Kill this child when the signal aborts (HIVE-123).
+     *
+     * The runner's own timeout bounds a call that is *waiting*; this bounds one
+     * whose owner has gone away. `claude mcp login` holds Slack's single
+     * registered callback port for up to ten minutes, so a quit mid-sign-in
+     * left a child holding port 3118 against a relaunched app that would then
+     * fail to sign in with nothing on screen explaining why.
+     *
+     * Aborting reports {@link RunResult.code} `-1` with `timedOut: false` — a
+     * kill that was not ours to wait out, told apart from a timeout for the
+     * same reason a signal from the OOM killer is.
+     */
+    signal?: AbortSignal;
   },
 ) => Promise<RunResult>;
 
@@ -80,6 +94,7 @@ export const runAsync: RunAsync = (file, args, options) =>
       {
         cwd: options?.cwd,
         timeout: options?.timeoutMs ?? TIMEOUT_MS,
+        signal: options?.signal,
         maxBuffer: MAX_BUFFER,
         encoding: 'utf8',
         shell: false,
@@ -120,6 +135,19 @@ export const runAsync: RunAsync = (file, args, options) =>
             stderr: 'the response exceeded the output limit',
             timedOut: false,
           });
+          return;
+        }
+
+        /**
+         * An aborted child — the caller's `signal` fired.
+         *
+         * Node reports this as `ABORT_ERR` with `killed: true`, which the kill
+         * branch below would read as **our** timeout and caption "claude did
+         * not answer in time". It did answer in time; we hung up on it, which
+         * is a different fact and never one the user needs told.
+         */
+        if (code === 'ABORT_ERR') {
+          resolve({ code: -1, stdout, stderr, timedOut: false });
           return;
         }
 

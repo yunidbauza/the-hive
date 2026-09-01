@@ -1096,6 +1096,50 @@ describe('createScheduler', () => {
       expect(state.read(AGENT).skipsSinceRun).toBe(1);
     });
 
+    /**
+     * The livelock, and the only thing that breaks it (HIVE-123 self-review).
+     *
+     * The skip gates on what the agent's **last run** found — and only a run
+     * can rewrite that field, which the skip is precisely what prevents. For
+     * the shipped `slack-watcher` (`every: 5m`, rare ledger traffic) that is
+     * not a delay but a permanent stall, while the pane's caption promises
+     * signing in fixes it.
+     *
+     * `clearSlackNeedsAuth` is what the `slack:sign-in` handler calls on a
+     * successful sign-in, and this drives the whole cycle rather than the call
+     * alone: a run that found Slack signed out, a tick that skips, the
+     * sign-in, and then a tick that actually wakes.
+     */
+    it('wakes on the next tick once a sign-in has cleared the stale marker', () => {
+      state.patch(AGENT, {
+        nextRunAt: NOON,
+        lastRunAt: NOON - 600_000,
+        runs: [
+          {
+            run: 'r1',
+            trigger: 'interval',
+            startedAt: NOON - 600_000,
+            endedAt: NOON - 599_000,
+            outcome: 'done',
+            slack: 'needs-auth',
+          },
+        ],
+      });
+
+      tick();
+
+      expect(woke).toEqual([]);
+
+      expect(state.clearSlackNeedsAuth()).toEqual([AGENT]);
+
+      // The skipped tick re-armed for five minutes out; that is when the wake
+      // it was owed comes back round.
+      clock = NOON + 300_000;
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
     it('does not skip once the last run found slack connected', () => {
       state.patch(AGENT, {
         nextRunAt: NOON,

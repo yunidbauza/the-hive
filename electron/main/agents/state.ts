@@ -51,6 +51,26 @@ export interface AgentState {
    */
   recordRun(name: string, summary: RunSummary, now: number): void;
   /**
+   * Retire every stale `slack: 'needs-auth'` marker, and say whose (HIVE-123).
+   *
+   * The scheduler skips an agent's clock wake while its **last run** reported
+   * Slack signed out (`slackSignedOut`). Only a run writes that field, and the
+   * skip is precisely what stops a run happening — so signing back in could
+   * never reach it, and the shipped `slack-watcher` (`every: 5m`, rare ledger
+   * traffic) stalled for good on a fact that had stopped being true. This is
+   * the one moment the app learns it changed, so this is where the marker goes.
+   *
+   * The field is **deleted, not set to `'connected'`**. Nothing observed a
+   * working connection for that run, and `runs.ts` documents `undefined` as
+   * exactly this: not "connected", but "no reason to skip" — the next wake runs
+   * and discovers its own status, which is the honest answer and strictly more
+   * information than a guess.
+   *
+   * Returns the names it changed so the caller can push each row, rather than
+   * pushing the whole fleet or nothing.
+   */
+  clearSlackNeedsAuth(): string[];
+  /**
    * Drop this agent's entry — the definition is gone.
    *
    * Without it a name freed by a delete is reused with the previous agent's
@@ -203,6 +223,32 @@ export function createAgentState(options: AgentStateOptions): AgentState {
         },
       };
       schedule();
+    },
+
+    clearSlackNeedsAuth() {
+      const cleared: string[] = [];
+
+      for (const [name, agent] of Object.entries(agents)) {
+        const last = agent.runs[agent.runs.length - 1];
+
+        if (last?.slack !== 'needs-auth') continue;
+
+        // Rebuilt without the key rather than assigned `undefined`: this array
+        // is `JSON.stringify`d straight into `agents.json`, and an explicit
+        // `undefined` and an absent key serialise the same but compare
+        // differently in a test that reads the object back.
+        const { slack: _dropped, ...rest } = last;
+
+        agents[name] = {
+          ...agent,
+          runs: [...agent.runs.slice(0, -1), rest],
+        };
+        cleared.push(name);
+      }
+
+      if (cleared.length > 0) schedule();
+
+      return cleared;
     },
 
     forget(name) {

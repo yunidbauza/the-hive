@@ -20,22 +20,38 @@ import { readSlackStatus } from './status';
  * spinner and nothing else. The browser is where the flow actually happens,
  * and the pane reports the outcome.
  *
- * Two commands rather than one, because `add` is idempotent configuration and
- * `login` is the interactive half — and a failed `add` must not be followed by
- * a login that would prompt against a server that is not there.
+ * Two commands rather than one, because `add` is configuration and `login` is
+ * the interactive half — and an `add` that genuinely failed must not be
+ * followed by a login that would prompt against a server that is not there.
  *
- * ## Two runners, on purpose
+ * ## `claude mcp add` is not idempotent, and re-authentication depends on it
  *
- * `run` is the **asynchronous** one, the same `runAsync` the PR poller and
- * `sessions/git.ts` already share. The login blocks on a human in a browser:
- * `gh.ts`'s synchronous runner would SIGTERM it after five seconds — so it
- * could never succeed — and would block the whole main process, every IPC
+ * Measured against `claude` 2.1.252: a second
+ * `claude mcp add --transport http slack <url> --scope user` prints
+ * `MCP server slack already exists in user config` **on stderr** and exits
+ * **1**. Treating that as a failed add is what made an expired token
+ * unrecoverable: the pane reports "Not signed in", the only button offered is
+ * `Sign in to Slack`, and that click could never get past the `add` to reach
+ * the `mcp login` that would refresh the credential. A permanent dead end
+ * reached by doing nothing but waiting.
+ *
+ * The fix asks the CLI's own **state** rather than matching its prose: on a
+ * non-zero `add`, read the server back with `claude mcp get`. A server that is
+ * there was already configured, so the add failed only by being redundant and
+ * the login proceeds; a server that is not there means the add failed for a
+ * real reason, and *that* reason — the add's own stderr, not the read-back's —
+ * is what the pane is told. A wording change in the CLI cannot break this the
+ * way an `/already exists/` match would.
+ *
+ * ## One runner, asynchronous
+ *
+ * The same `runAsync` the PR poller and `sessions/git.ts` share. The login
+ * blocks on a human in a browser and `mcp get` health-checks over HTTP:
+ * `gh.ts`'s synchronous runner would SIGTERM the login after five seconds — so
+ * it could never succeed — and would block the whole main process, every IPC
  * reply, every pty chunk and the agent scheduler, for those five seconds on the
  * way to failing. The timeout is passed **per verb**, because "how long is too
  * long" is a fact about the verb and not about the mechanism.
- *
- * `readBack` is the synchronous runner, kept for the one call here that really
- * is a sub-second local fact-read — `claude mcp get`.
  */
 
 /**
@@ -57,10 +73,24 @@ export const SLACK_ADD_TIMEOUT_MS = 30_000;
  */
 export const SLACK_SIGN_IN_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * Is the server configured despite the `add` having failed?
+ *
+ * `not-added` is the CLI saying there is no such server, and `error` is this
+ * module being unable to tell — a `claude` that hung, or one that could not be
+ * run at all. Neither is evidence the add was merely redundant, so both keep
+ * the add's own failure as the answer. See the module comment for why this
+ * reads state rather than matching the "already exists" sentence.
+ */
+const alreadyAdded = async (claude: string, run: RunAsync): Promise<boolean> => {
+  const existing = await readSlackStatus(claude, run);
+
+  return existing.kind !== 'not-added' && existing.kind !== 'error';
+};
+
 export async function signInToSlack(
   claude: string,
   run: RunAsync,
-  readBack: RunCommand,
 ): Promise<SlackStatus> {
   try {
     const added = await run(
@@ -75,7 +105,9 @@ export async function signInToSlack(
       { timeoutMs: SLACK_ADD_TIMEOUT_MS },
     );
 
-    if (added.code !== 0) return failure(added);
+    if (added.code !== 0 && !(await alreadyAdded(claude, run))) {
+      return failure(added);
+    }
 
     const logged = await run(claude, ['mcp', 'login', SLACK_SERVER_KEY], {
       timeoutMs: SLACK_SIGN_IN_TIMEOUT_MS,
@@ -88,7 +120,7 @@ export async function signInToSlack(
 
   // Read it back rather than assuming: the login can exit zero having been
   // abandoned in the browser.
-  return readSlackStatus(claude, readBack);
+  return readSlackStatus(claude, run);
 }
 
 export function signOutOfSlack(claude: string, run: RunCommand): SlackStatus {

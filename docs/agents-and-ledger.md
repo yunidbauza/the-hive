@@ -901,9 +901,9 @@ either fails validation for no reason or writes a server-less file that fails
 the run instead.
 
 The Settings pane's **Test** button (`integrations/slack/probe.ts`) obeys the
-same rule from the other end, and got it wrong first. It spends one capped model
-turn purely to read the run's own `system`/`init` event, which is the only place
-workspace-admin approval is observable. It shipped with `--strict-mcp-config`
+same rule from the other end, and got it wrong first. It spends a few capped
+model turns to make one real Slack tool call, because a refused call is the only
+place workspace-admin approval is observable. It shipped with `--strict-mcp-config`
 and **no** `--mcp-config`, which by the rule above names the empty set: no
 `slack` entry could ever reach the init event, so the probe reported an error on
 a perfectly healthy connection every time. It now passes `slackOnlyMcpConfig()`
@@ -915,14 +915,54 @@ model can actually call. `tests/electron/main/integrations/slack/probe.test.ts`
 pins that argv exactly, because it is the only place a regression in it is
 caught.
 
-Both long Slack verbs run on the shared **asynchronous** runner
+**`--max-turns 1` was a false "connected", not a saving.** Measured at 2.1.252,
+a one-turn probe goes `tool_use` → `tool_result` → `result` with subtype
+`error_max_turns`: the single turn is spent on the `ToolSearch` the prompt's
+first sentence asks for, so no `mcp__slack__*` tool is ever called, no refusal
+can be matched, and an unapproved workspace is reported connected — the one
+direction that matters. Three turns is the arithmetic minimum (search, call,
+answer); the cap is five, so a Test click can cost up to five model turns.
+
+The probe is also the one model run in this repo that grants tools **outside**
+HIVE-119's permission fence, deliberately: `--setting-sources ''` is what makes
+it an instrument rather than something that reads differently on every machine,
+and a fence would mean loading the settings it is defined by not loading. What
+bounds it instead is `--strict-mcp-config` over a Slack-only server set (no hive
+server, so nothing that can write to this app's state), an `--allowedTools` of
+exactly `mcp__slack__*` and `ToolSearch`, and the turn cap.
+
+Three of the four Slack verbs run on the shared **asynchronous** runner
 (`integrations/github/run.ts`, also used by the PR poller and `sessions/git.ts`)
 with per-verb timeouts — ten minutes for the browser OAuth round-trip, three for
-the probe's model turn. `gh.ts`'s `runCommand` is `spawnSync` with a
-five-second cap and stays that way for the sub-second reads (`claude mcp get`,
-`claude mcp remove`); pointing the sign-in or the probe at it meant neither
-could ever succeed, and each attempt blocked the main process — IPC, PTY
-routing and the agent scheduler — for the full five seconds first.
+the probe's model turns, ten seconds for a status read. That third one is not
+obvious and is why the list is three rather than two: **`claude mcp get`
+health-checks the server over HTTP**, about 1.7 s measured, so on `gh.ts`'s
+`spawnSync` helper it is a network round-trip on the main process's event loop
+— and two components ask for it on mount. Only `claude mcp remove` stays
+synchronous: a local JSON edit with no network and no model in it.
+
+**`claude mcp add` is not idempotent.** A second add of the same server prints
+`MCP server slack already exists in user config` on stderr and exits 1
+(measured). Treating that as a failed add made an expired token unrecoverable —
+the pane offers only *Sign in to Slack*, and that click could never get past
+`add` to reach the `mcp login` that would refresh the credential. `login.ts`
+answers by asking the CLI's own state instead of matching its prose: on a
+non-zero add it reads the server back with `mcp get`, proceeds to the login if
+the server is there, and otherwise reports the add's own stderr.
+
+Signing in also **clears every stale `slack: 'needs-auth'`** off the agents'
+last runs (`AgentState.clearSlackNeedsAuth`). Without that the scheduler's skip
+is a livelock: it gates on what the last run found, and only a new run can
+change that.
+
+The Slack children are killed on quit, through an `AbortSignal` the composition
+threads into `runAsync`. `before-quit` covers the agent runs and `pty-host`
+covers the sessions; a `claude mcp login` spawned from a settings pane was in
+neither registry, and it holds Slack's single registered callback port 3118 for
+up to ten minutes — long enough for the relaunched app's sign-in to fail on a
+port conflict with nothing on screen explaining it. The four verbs are also
+deduped in main, keyed by channel: the pane's own in-flight guards are
+component-local and a closed-and-reopened Settings re-enables them.
 
 **HIVE-115 measured what `--allowedTools` actually does, and it is a grant, not
 a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model

@@ -185,6 +185,70 @@ describe('createAgentState', () => {
     expect(runs[runs.length - 1]?.run).toBe(`run-${AGENT_RUN_HISTORY + 4}`);
   });
 
+  /**
+   * What a successful Slack sign-in retires (HIVE-123 self-review).
+   *
+   * The scheduler skips an agent's clock wake while its last run reported
+   * Slack signed out — and only a run can rewrite that, which the skip is what
+   * prevents. This is the one call that can break the livelock, so it has to be
+   * exact about *which* runs it touches and about what it leaves behind.
+   */
+  describe('clearSlackNeedsAuth', () => {
+    const withSlack = (run: string, slack: 'connected' | 'needs-auth') => ({
+      ...summary(run),
+      slack,
+    });
+
+    it('drops the marker from the last run and names the agent', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('a', withSlack('r1', 'needs-auth'), NOON);
+
+      expect(state.clearSlackNeedsAuth()).toEqual(['a']);
+      // Deleted, not rewritten to `connected`: nothing observed a working
+      // connection, and `runs.ts` reads an absent field as "no reason to
+      // skip" — the next wake discovers its own status.
+      expect(state.read('a').runs.at(-1)).toEqual(summary('r1'));
+      expect(state.read('a').runs.at(-1)).not.toHaveProperty('slack');
+    });
+
+    it('leaves every other agent, and every earlier run, exactly as it was', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('stale', withSlack('r1', 'needs-auth'), NOON);
+      state.recordRun('stale', withSlack('r2', 'needs-auth'), NOON);
+      state.recordRun('fine', withSlack('r1', 'connected'), NOON);
+      state.recordRun('quiet', summary('r1'), NOON);
+
+      expect(state.clearSlackNeedsAuth()).toEqual(['stale']);
+      // Only the *last* run is what the scheduler reads, so only the last run
+      // is rewritten — the history stays a record of what happened.
+      expect(state.read('stale').runs[0]).toEqual(withSlack('r1', 'needs-auth'));
+      expect(state.read('fine').runs.at(-1)).toEqual(withSlack('r1', 'connected'));
+      expect(state.read('quiet').runs.at(-1)).toEqual(summary('r1'));
+    });
+
+    it('answers with nothing when no agent was waiting on a sign-in', () => {
+      const state = createAgentState({ path });
+
+      state.recordRun('fine', withSlack('r1', 'connected'), NOON);
+
+      expect(state.clearSlackNeedsAuth()).toEqual([]);
+    });
+
+    it('persists the clearing, so a restart does not resurrect the skip', async () => {
+      const state = createAgentState({ path, debounceMs: 5 });
+
+      state.recordRun('a', withSlack('r1', 'needs-auth'), NOON);
+      state.clearSlackNeedsAuth();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(
+        JSON.parse(await readFile(path, 'utf8')).a.runs.at(-1),
+      ).not.toHaveProperty('slack');
+    });
+  });
+
   describe("today's accumulator", () => {
     /*
       The number a daily ceiling is compared against, and the reason it is

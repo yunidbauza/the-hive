@@ -24,6 +24,24 @@ export const SILENT_FAILURE =
   'claude failed without a message — it may have been interrupted.';
 
 /**
+ * How much of a failing command's output becomes a caption.
+ *
+ * The runner caps a child at an 8 MiB `maxBuffer`, and every byte of that was
+ * eligible to cross IPC and be rendered into a single `<p>` in the settings
+ * pane — a `claude` that failed while streaming would have hung the pane on
+ * its own error message. A caption is a sentence or two; two thousand
+ * characters is already far more than anyone reads, and it bounds the value at
+ * the point where it stops being a stream and becomes a status.
+ */
+export const MAX_MESSAGE_CHARS = 2_000;
+
+/** The head, because a CLI's first line is the one that names the problem. */
+const clamp = (message: string): string =>
+  message.length <= MAX_MESSAGE_CHARS
+    ? message
+    : `${message.slice(0, MAX_MESSAGE_CHARS)}…`;
+
+/**
  * What a command that ran and failed should say.
  *
  * `stderr` first, `stdout` as the fallback: `claude` writes its diagnostics to
@@ -45,7 +63,10 @@ export const failure = (result: {
 
   const message = (result.stderr.trim() === '' ? result.stdout : result.stderr).trim();
 
-  return { kind: 'error', message: message === '' ? SILENT_FAILURE : message };
+  return {
+    kind: 'error',
+    message: message === '' ? SILENT_FAILURE : clamp(message),
+  };
 };
 
 /** A command that could not be executed at all — a bad path, a missing binary. */

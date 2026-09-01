@@ -25,7 +25,7 @@ import { createAgentState, type AgentState } from '../../electron/main/agents/st
 import { createWakeCommand } from '../../electron/main/agents/wake-command';
 import { createReceiver, type Receiver } from '../../electron/main/hooks/receiver';
 import { writeAgentSettings } from '../../electron/main/hooks/settings';
-import { runCommand } from '../../electron/main/integrations/gh';
+import { runAsync } from '../../electron/main/integrations/github/run';
 import { readSlackStatus } from '../../electron/main/integrations/slack/status';
 import { createLedger, type Ledger } from '../../electron/main/ledger';
 import { agentMcpConfigFile } from '../../electron/main/mcp';
@@ -518,14 +518,14 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     /*
       The same fact the pane reads, off the same command — `claude mcp get
       slack` — via the real `readSlackStatus` this app ships, not a
-      hand-rolled shell-out. `runCommand` is synchronous, so this needs no
-      extra await and cannot race anything below it. A `connected` result here
-      is the only thing that arms the slack scenario; anything else — no
-      server added, needs-auth, pending-approval, or a broken `claude` on
-      PATH — leaves it skipped rather than failing a suite that never signed
-      in.
+      hand-rolled shell-out. Awaited, because that read is asynchronous: `mcp
+      get` health-checks the server over HTTP and has no business on the
+      synchronous runner (HIVE-123 self-review). A `connected` result here is
+      the only thing that arms the slack scenario; anything else — no server
+      added, needs-auth, pending-approval, or a broken `claude` on PATH —
+      leaves it skipped rather than failing a suite that never signed in.
     */
-    slackConnected = readSlackStatus('claude', runCommand).kind === 'connected';
+    slackConnected = (await readSlackStatus('claude', runAsync)).kind === 'connected';
 
     ledger = createLedger({
       dir: join(dirname(process.env[CONFIG_PATH_ENV]), LEDGER_DIR),

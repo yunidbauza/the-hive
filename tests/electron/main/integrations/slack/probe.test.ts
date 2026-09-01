@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   probeSlack,
+  SLACK_PROBE_MAX_TURNS,
   SLACK_PROBE_PROMPT,
   SLACK_PROBE_TIMEOUT_MS,
 } from '../../../../../electron/main/integrations/slack/probe';
@@ -30,6 +31,22 @@ describe('probeSlack', () => {
     const run = () => Promise.resolve(attached('needs-auth'));
 
     await expect(probeSlack('claude', run)).resolves.toEqual({ kind: 'needs-auth' });
+  });
+
+  /**
+   * A third status word, which is the point: this used to match `needs-auth`
+   * and let **everything else** fall through to `connected` — so a server
+   * answering `failed` was reported as a working connection, the one direction
+   * the module comment calls dangerous. `agents/runs.ts` fixed the same hole on
+   * its own side; the two readings of one server must not disagree.
+   */
+  it('does not call an unrecognised status connected', async () => {
+    const run = () => Promise.resolve(attached('failed'));
+
+    await expect(probeSlack('claude', run)).resolves.toEqual({
+      kind: 'error',
+      message: 'Slack\'s MCP server reported "failed".',
+    });
   });
 
   it('is pending-approval when the tool call reports the server unapproved', async () => {
@@ -134,8 +151,16 @@ describe('probeSlack', () => {
    *
    * The timeout is pinned too: on the five-second synchronous runner this used
    * to share with `gh auth status`, a model turn was killed every time.
+   *
+   * And `--max-turns`, which shipped as `1`. Measured at 2.1.252, one turn is
+   * spent entirely on the `ToolSearch` the prompt asks for first: the run ends
+   * `error_max_turns` having called no Slack tool at all, so there is no
+   * refusal to match and an unapproved workspace comes back `connected`. Three
+   * is the arithmetic floor — search, call, answer — and the assertion is
+   * written as a floor rather than as a number, because what must never come
+   * back is a cap below it.
    */
-  it('spends exactly one capped model turn, against a slack-only server set it can actually load', async () => {
+  it('spends enough capped model turns to actually call a slack tool, against a server set it can load', async () => {
     const calls: { args: string[]; timeoutMs: number | undefined }[] = [];
     const run = (
       _f: string,
@@ -155,7 +180,7 @@ describe('probeSlack', () => {
       '--mcp-config', slackOnlyMcpConfig(),
       '--strict-mcp-config',
       '--setting-sources', '',
-      '--max-turns', '1',
+      '--max-turns', String(SLACK_PROBE_MAX_TURNS),
       '--allowedTools', `${SLACK_TOOL_GLOB},ToolSearch`,
       '--output-format', 'stream-json',
       '--verbose',
@@ -163,5 +188,6 @@ describe('probeSlack', () => {
     ]);
     expect(calls[0]?.timeoutMs).toBe(SLACK_PROBE_TIMEOUT_MS);
     expect(SLACK_PROBE_TIMEOUT_MS).toBeGreaterThan(60_000);
+    expect(SLACK_PROBE_MAX_TURNS).toBeGreaterThanOrEqual(3);
   });
 });

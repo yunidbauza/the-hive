@@ -69,6 +69,7 @@ const state = (): AgentState => ({
     return next;
   },
   recordRun: vi.fn(),
+  clearSlackNeedsAuth: vi.fn(() => []),
   forget: (name) => {
     delete stored[name];
   },
@@ -578,6 +579,7 @@ Read the channel and report.
           return next;
         },
         recordRun: vi.fn(),
+        clearSlackNeedsAuth: vi.fn(() => []),
         forget: (name) => {
           delete localState[name];
         },

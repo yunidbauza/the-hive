@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   couldNotRun,
   failure,
+  MAX_MESSAGE_CHARS,
   SILENT_FAILURE,
   TIMED_OUT,
 } from '../../../../../electron/main/integrations/slack/outcome';
@@ -21,6 +22,28 @@ describe('failure', () => {
     expect(failure({ stderr: 'bad url', stdout: 'usage: claude mcp add' })).toEqual({
       kind: 'error',
       message: 'bad url',
+    });
+  });
+
+  /**
+   * The runner caps a child at 8 MiB, and every byte of that was eligible to
+   * cross IPC and be rendered into one `<p>` in the settings pane.
+   */
+  it('caps the caption rather than handing the pane the whole stream', () => {
+    const status = failure({ stderr: 'x'.repeat(MAX_MESSAGE_CHARS * 4), stdout: '' });
+
+    expect(status).toEqual({
+      kind: 'error',
+      message: `${'x'.repeat(MAX_MESSAGE_CHARS)}…`,
+    });
+  });
+
+  it('leaves a message that already fits exactly as it was', () => {
+    const message = 'y'.repeat(MAX_MESSAGE_CHARS);
+
+    expect(failure({ stderr: message, stdout: '' })).toEqual({
+      kind: 'error',
+      message,
     });
   });
 
