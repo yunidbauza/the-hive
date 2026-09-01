@@ -14,6 +14,8 @@ export interface LedgerNotifierDeps {
     subject?: string;
     body?: string;
     action?: NotificationAction;
+    /** The card's Slack link, already validated by the time it gets here. */
+    link?: { href: string; label: string };
     createdAt?: number;
   }) => unknown;
   markRead: (id: string) => void;
@@ -39,6 +41,50 @@ const split = (body: string): [string, string] => {
 
 const str = (value: unknown): string | undefined =>
   typeof value === 'string' && value !== '' ? value : undefined;
+
+/** A `slack.com` origin — the message a link captioned "Open in Slack" actually opens. */
+const isSlackHost = (hostname: string): boolean =>
+  hostname === 'slack.com' || hostname.endsWith('.slack.com');
+
+/**
+ * `meta.slack.permalink` into a card link, or nothing (HIVE-123).
+ *
+ * The permalink is the agent's own report of a message it posted through the
+ * Slack tools — untrusted the same way `honestPermissionAsk` treats a
+ * permission ask's `meta` (`@shared/permission-rules`): it crossed a process
+ * boundary as free-form JSON, so it is parsed inside a `try`/`catch` (the
+ * agent may have written nonsense) and accepted only on an exact `https:`
+ * scheme.
+ *
+ * Also held to a Slack host, beyond what `isSafeExternalUrl` requires of an
+ * ordinary link. The card's caption is fixed — `'Open in Slack'`, never the
+ * agent's text — so a non-Slack `https:` URL here would be a click the label
+ * lies about: an agent with Slack tools could point "Open in Slack" at any
+ * page on the internet, and the label alone is what a user judges the click
+ * by.
+ *
+ * The label is minted here too, never read off `meta` — the whole point is
+ * that nothing the agent wrote becomes the text a click is trusted on.
+ */
+const slackLinkFor = (
+  meta: Record<string, unknown>,
+): { href: string; label: string } | undefined => {
+  const slack = meta.slack;
+  if (typeof slack !== 'object' || slack === null) return undefined;
+  const permalink = str((slack as Record<string, unknown>).permalink);
+  if (permalink === undefined) return undefined;
+
+  try {
+    const parsed = new URL(permalink);
+    if (parsed.protocol !== 'https:' || !isSlackHost(parsed.hostname)) {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return { href: permalink, label: 'Open in Slack' };
+};
 
 /**
  * Ledger entries into inbox cards (HIVE-118).
@@ -170,6 +216,7 @@ export function createLedgerNotifier(
       if (!deps.isAgent(entry.from)) return;
       if (entry.kind === 'failed') spokenFor.add(entry.from);
       const [first, rest] = split(entry.body);
+      const link = slackLinkFor(meta);
       deps.raise({
         kind: entry.kind === 'done' ? 'agent.done' : 'agent.failed',
         id: entry.id,
@@ -177,6 +224,7 @@ export function createLedgerNotifier(
         body: rest,
         action: { type: 'agent', name: entry.from },
         createdAt: entry.ts,
+        ...(link === undefined ? {} : { link }),
       });
       return;
     }

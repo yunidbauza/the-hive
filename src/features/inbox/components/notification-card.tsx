@@ -239,7 +239,21 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
     exitTimer.current = setTimeout(() => dismissNotif(notif.id), CARD_EXIT_MS);
   };
 
-  return (
+  /*
+    The clickable row itself. When the card carries no `link` this is the
+    whole return value, exactly as before HIVE-123.
+
+    When it does, this button cannot also be the card's root: `notif.link`
+    renders as a real `<a>`, and an anchor nested inside a `<button>` is
+    interactive content nested inside interactive content — invalid HTML, and
+    the two targets no mouse or keyboard could tell apart, which is the same
+    reason `AskCard` forks away from this button entirely (see its own doc
+    comment) and `session-table.tsx` draws its row action as "a sibling of
+    the row, not a child of it". So the list spacing (`mb-*`/`last:mb-0`)
+    moves to a wrapper in that case, and the link is the wrapper's other
+    child — a sibling of the button, never its descendant.
+  */
+  const card = (
     <button
       ref={ref}
       type="button"
@@ -253,16 +267,17 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
       data-notification={notif.id}
       onClick={onClick}
       className={cn(
-        'flex items-start gap-2.5 rounded-xl border px-3 py-[var(--cc-card-py)] text-left hover:bg-hover',
+        'flex w-full items-start gap-2.5 rounded-xl border px-3 py-[var(--cc-card-py)] text-left hover:bg-hover',
         notif.unread ? 'border-border bg-chip' : 'border-border-soft',
         /*
-          The list's spacing lives here rather than as a parent `gap`, so it can
-          collapse with the rest of the card on the way out. See `inbox-panel`.
+          `overflow-hidden` always, so this button's own contents clip as its
+          `max-height` closes instead of spilling past the shrinking border.
 
-          `overflow-hidden` so the contents clip as `max-height` closes instead of
-          spilling past the shrinking border.
+          The list's spacing (`mb-*`/`last:mb-0`) lives here only when there is
+          no link below to share the wrapper with — see the comment above.
         */
-        'mb-[var(--cc-list-gap-sm)] overflow-hidden last:mb-0',
+        'overflow-hidden',
+        notif.link === undefined && 'mb-[var(--cc-list-gap-sm)] last:mb-0',
         leaving && 'pointer-events-none animate-ccslideout',
       )}
     >
@@ -284,5 +299,31 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
 
       <span className="shrink-0 font-mono text-[10px] text-subtle">{time}</span>
     </button>
+  );
+
+  if (notif.link === undefined) return card;
+
+  return (
+    <div className="mb-[var(--cc-list-gap-sm)] last:mb-0">
+      {card}
+      <a
+        href={notif.link.href}
+        target="_blank"
+        rel="noreferrer"
+        /*
+          Stops here, not because the click would otherwise misfire — the link
+          is a sibling of the button, never its descendant, so nothing would
+          route to `onClick` regardless. It stops the *bubble*: without this
+          the click still reaches whatever this row's ancestors are listening
+          for (the panel, eventually the document), and a link that also
+          fires those handlers is a click doing two things the user asked for
+          only one of.
+        */
+        onClick={(event) => event.stopPropagation()}
+        className="mt-1 block px-3 text-[11px] font-medium text-brand hover:underline"
+      >
+        {notif.link.label}
+      </a>
+    </div>
   );
 }

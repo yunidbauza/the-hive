@@ -67,6 +67,13 @@ export interface NotificationInput {
    */
   id?: string;
   action?: NotificationAction;
+  /**
+   * A validated place to send the reader beyond `action` — see
+   * `HiveNotification.link` (HIVE-123). Carried straight through; the hub does
+   * no validation of its own, because a producer that sets it has already done
+   * that work (`notify.ts`'s `slackLinkFor`).
+   */
+  link?: { href: string; label: string };
   /** Overridable for tests; defaults to the hub's clock. */
   createdAt?: number;
 }
@@ -627,6 +634,7 @@ export function createNotificationHub(
           createdAt,
           unread: !foreground,
           action: input.action ?? { type: 'none' },
+          ...(input.link === undefined ? {} : { link: input.link }),
         };
 
         /**

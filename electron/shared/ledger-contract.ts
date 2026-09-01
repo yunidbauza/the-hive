@@ -55,7 +55,10 @@ export interface LedgerEntry {
   /**
    * Free-form rider: slack ts, pr number, ticket key, `options`, `edited`,
    * `tool`. `meta.task` is the carrier for `claim` / `release` — see
-   * `claims()` in `ledger-derive.ts`.
+   * `claims()` in `ledger-derive.ts`. On a `done`/`failed`, `meta.slack.permalink`
+   * is the agent's own report of a message it posted; `notify.ts` treats it as
+   * untrusted and turns it into `HiveNotification.link` only after validating
+   * it (HIVE-123).
    */
   meta?: Record<string, unknown>;
 }

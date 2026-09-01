@@ -238,6 +238,20 @@ export interface HiveNotification {
   createdAt: number;
   unread: boolean;
   action: NotificationAction;
+  /**
+   * A place to send the reader beyond {@link action} — a Slack permalink for a
+   * `done` an agent posted through the Slack tools (HIVE-123).
+   *
+   * `href` and `label` both come from **main**, never from the ledger entry's
+   * own text. `notify.ts` builds this from `meta.slack.permalink`, which an
+   * agent wrote and is therefore untrusted the same way `honestPermissionAsk`
+   * treats a permission ask's own `meta` (`permission-rules.ts`): parsed as a
+   * URL and accepted only on an exact `https:` scheme and a Slack host, inside
+   * a `try`/`catch` because the agent may have written nonsense. `label` is
+   * always the fixed string `'Open in Slack'` — the agent's own words never
+   * become link text a click can be tricked into trusting.
+   */
+  link?: { href: string; label: string };
 }
 
 /** Everything any consumer needs to know about a kind. */

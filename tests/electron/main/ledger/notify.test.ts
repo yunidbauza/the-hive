@@ -134,6 +134,60 @@ describe('createLedgerNotifier', () => {
     });
   });
 
+  /**
+   * HIVE-123: a `done` an agent posted through the Slack tools can carry a
+   * permalink, but only once it survives the same validation
+   * `honestPermissionAsk` applies to a permission ask's own `meta` — the
+   * agent wrote it, so it is untrusted until checked.
+   */
+  it('carries a slack permalink from a done entry onto the card', () => {
+    const { raise, onEntry } = harness();
+    onEntry(
+      entry({
+        kind: 'done',
+        from: 'slack-watcher',
+        body: 'Replied to Dana in #incorp-dev',
+        meta: { slack: { permalink: 'https://behiques.slack.com/archives/C1/p123' } },
+      }),
+    );
+    expect(raise.mock.calls[0][0].link).toEqual({
+      href: 'https://behiques.slack.com/archives/C1/p123',
+      label: 'Open in Slack',
+    });
+  });
+
+  it('drops a permalink that is not https — the agent wrote it', () => {
+    const { raise, onEntry } = harness();
+    onEntry(
+      entry({
+        kind: 'done',
+        from: 'slack-watcher',
+        body: 'done',
+        meta: { slack: { permalink: 'javascript:alert(1)' } },
+      }),
+    );
+    expect(raise.mock.calls[0][0].link).toBeUndefined();
+  });
+
+  it('drops an https permalink on a non-slack host — the label would lie', () => {
+    const { raise, onEntry } = harness();
+    onEntry(
+      entry({
+        kind: 'done',
+        from: 'slack-watcher',
+        body: 'done',
+        meta: { slack: { permalink: 'https://evil.example.com/p123' } },
+      }),
+    );
+    expect(raise.mock.calls[0][0].link).toBeUndefined();
+  });
+
+  it('raises no link at all when the done entry carries none', () => {
+    const { raise, onEntry } = harness();
+    onEntry(entry({ kind: 'done', from: 'drone', body: 'Sent.' }));
+    expect(raise.mock.calls[0][0].link).toBeUndefined();
+  });
+
   it('mints nothing for a session done — only the ask card goes', () => {
     const { dismiss, raise, onEntry } = harness();
     onEntry(entry({ from: 'sess-01', kind: 'done', thread: 'a41', body: 'ok' }));
