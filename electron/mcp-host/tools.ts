@@ -278,21 +278,31 @@ export function createToolHandlers(
         ? (raw as Record<string, unknown>)
         : {};
 
+    if (grants.some((rule) => matches(rule, tool, input))) {
+      return decision({ behavior: 'allow', updatedInput: input });
+    }
+
     /*
       Never post an ask that cannot be described. `Ledger.append` downgrades a
       permission ask whose `tool` is not a tool name to an ordinary one, and
       this tool's body is empty, so the result would be a card that says
-      nothing. Denying is both safer and more legible to the model.
+      nothing — a control with no question above it.
+
+      **Below the grants check, not above it.** A grant is a decision the user
+      already made, and `matches` compares the name literally, so a rule can
+      name a tool this predicate rejects. Above the check this denied calls
+      the fence was configured to allow — and it is not hypothetical: MCP tool
+      names carry hyphens, which `isToolName` did not admit until this story
+      widened it. Ordering it this way means a name the predicate cannot
+      describe can still be *granted*, and only the road that needs to render
+      a card requires a describable name.
+
+      `PERMISSION_DENY_MESSAGE` rather than a bespoke line, because that text
+      is what tells the model to end its turn instead of retrying; a terse
+      status here reads as a transient error and invites a loop.
     */
     if (!isToolName(tool)) {
-      return decision({
-        behavior: 'deny',
-        message: `approve got a tool_name that is not a tool name: ${tool}`,
-      });
-    }
-
-    if (grants.some((rule) => matches(rule, tool, input))) {
-      return decision({ behavior: 'allow', updatedInput: input });
+      return decision({ behavior: 'deny', message: PERMISSION_DENY_MESSAGE });
     }
 
     try {

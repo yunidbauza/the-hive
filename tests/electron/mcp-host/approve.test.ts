@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LedgerSnapshot } from '@shared/ledger-contract';
+import { PERMISSION_DENY_MESSAGE } from '@shared/permission-rules';
 
 import { ReceiverError, type ReceiverClient } from '../../../electron/mcp-host/client';
 import { createToolHandlers } from '../../../electron/mcp-host/tools';
@@ -165,6 +166,66 @@ describe('approve', () => {
 
     expect(decisionOf(result)['behavior']).toBe('deny');
     expect(client.post).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Self review, finding 2. The describability gate sits *below* the grants
+   * check: a grant is a decision the user already made, and `matches`
+   * compares literally, so a rule may name a tool the predicate would not
+   * describe. Above the check, this revoked tools the fence was configured to
+   * allow.
+   */
+  it('still allows a granted tool whose name the predicate would not describe', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client, ['weird name']);
+
+    const result = await handlers.callTool('approve', {
+      tool_name: 'weird name',
+      input: {},
+    });
+
+    expect(decisionOf(result)['behavior']).toBe('allow');
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  /** Hyphenated MCP tool names are ordinary, and are grantable and askable. */
+  it('handles a hyphenated MCP tool on both roads', async () => {
+    const granted = createToolHandlers(stub(), ['mcp__ctx__query-docs']);
+    expect(
+      decisionOf(await granted.callTool('approve', { tool_name: 'mcp__ctx__query-docs', input: {} }))[
+        'behavior'
+      ],
+    ).toBe('allow');
+
+    const client = stub();
+    const ungranted = createToolHandlers(client, ['Read']);
+    const result = await ungranted.callTool('approve', {
+      tool_name: 'mcp__ctx__query-docs',
+      input: {},
+    });
+
+    expect(decisionOf(result)['behavior']).toBe('deny');
+    expect(client.post).toHaveBeenCalledWith({
+      to: 'overmind',
+      kind: 'ask',
+      body: '',
+      meta: { kind: 'permission', tool: 'mcp__ctx__query-docs', input: {} },
+    });
+  });
+
+  /**
+   * The deny that is not a refusal to answer. `PERMISSION_DENY_MESSAGE` is
+   * what tells the model to end its turn; a terse status reads as a transient
+   * error and invites a retry loop.
+   */
+  it('denies an undescribable tool with the message that ends the turn', async () => {
+    const handlers = createToolHandlers(stub(), []);
+    const result = await handlers.callTool('approve', {
+      tool_name: 'Bash]\ntools: [Write',
+      input: {},
+    });
+
+    expect(decisionOf(result)['message']).toBe(PERMISSION_DENY_MESSAGE);
   });
 
   it('denies everything when no grants were configured', async () => {

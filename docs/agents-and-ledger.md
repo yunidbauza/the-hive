@@ -1069,16 +1069,40 @@ It is closed at **`Ledger.append`**, not at the tool. `hive_approve` only sees
 the asks it wrote itself, and the attack is an agent that never calls it;
 `append` is the one door both callers pass through. `honestPermissionAsk`
 (`electron/shared/permission-rules.ts`) rebuilds `body` from `meta.tool` and
-`meta.input`, replaces the ladder with `rungsFor`'s, recomputes `default`,
-drops `quote`, and trims the bulk fields out of the input it stores. It runs
-*after* the `LEDGER_BODY_MAX` refusal, so an oversized body is still refused
-rather than silently replaced.
+`meta.input`, replaces the ladder with `rungsFor`'s, recomputes `default`, and
+trims the bulk fields out of the input it stores.
+
+The rebuilt `meta` is an **allowlist** — `kind`, `tool`, `input`, `rungs`,
+`default`, `options` and nothing else. Dropping `quote` was the fix for one
+model-supplied key; building from nothing is the fix for the shape of the bug,
+and it is what keeps the next such key from riding onto an entry the system
+then certifies as honest. It is gated on `kind === 'ask'` as well as on
+`meta.kind`, matching every other reader of that discriminator, so a `post`
+merely carrying the rider keeps its author's text.
+
+**The cap is applied twice**, and it has to be: the first refusal tests the
+body that was *sent*, and a permission ask's stored body is composed after it
+from a `meta.input` nothing bounds — `summarise` returns `input.command`
+verbatim and `command` is not a bulk field. Without the second check an empty
+sent body carrying a 60 KB command wrote 60 KB into a 16 KiB-capped log that
+never rotates. It is refused rather than truncated: a shortened command would
+be a card showing part of what it authorises, which is the class of bug this
+section exists to close.
 
 An ask whose `meta.tool` is not a tool name is **downgraded** to an ordinary
 ask rather than refused — the asker's words are honest as long as nothing
 frames them as a permission prompt, and no ladder is offered for a call main
 cannot describe. `hive_approve` denies such a call outright rather than
-posting an ask it cannot describe.
+posting an ask it cannot describe, **below** its grants check rather than
+above it: a grant is a decision the user already made and `matches` compares
+literally, so a rule may name a tool the predicate would not describe, and
+denying above the check revoked tools the fence was configured to allow.
+
+That gate also surfaced a gap in `isToolName` itself: `MCP_TOOL` admitted no
+`-`, yet hyphenated MCP tool names (`mcp__…__query-docs`) are ordinary, so the
+fence could describe no rung for such a call and `tools:` could not name one.
+It now admits `-`, which is safe on both roads — the glob DSL reads only `,`
+and `*`, and a hyphen is an ordinary character in a YAML flow-sequence item.
 
 Because `store.append` emits the *stored* entry to its listeners, the card, the
 OS toast, `deliver.ts` and the renderer's mirror are all honest without any of

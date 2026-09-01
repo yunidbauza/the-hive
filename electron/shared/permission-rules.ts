@@ -158,7 +158,18 @@ const walksUp = (path: string): boolean => path.split('/').includes('..');
 const BARE_TOOL = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /** A qualified MCP name: `mcp__hive__ledger_read`. */
-const MCP_TOOL = /^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$/;
+/*
+  `-` is admitted in both segments because real MCP tool names carry it —
+  `mcp__plugin_context7_context7__query-docs` is an ordinary one — and without
+  it `isToolName` rejects them, so the fence could describe no rung for such a
+  call and `tools:` could not name one at all. Surfaced by HIVE-125, which
+  made the predicate load-bearing on the deny path as well as the grant path.
+
+  Safe on both roads it feeds: the glob DSL reads only `,` and `*`, and a
+  hyphen is an ordinary character in a YAML flow-sequence item, so it can
+  neither widen a rule nor close `tools:` early.
+*/
+const MCP_TOOL = /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/;
 
 /**
  * Whether `value` is the name of a tool — the boundary check on `meta.tool`.
@@ -468,10 +479,21 @@ const keepForTheLedger = (input: Record<string, unknown>): Record<string, unknow
   const trimmed: Record<string, unknown> = { ...input };
 
   for (const field of BULK_FIELDS) {
+    if (!(field in trimmed)) continue;
+
+    /*
+      Bounded whatever its type. The string case is the one that occurs, but
+      the marker used to be conditional on it, so `content: ['x'.repeat(64000)]`
+      walked past the only trim point in the system and parked in the log
+      anyway. A non-string in these fields is malformed input, and reporting
+      its size in characters would be a lie, so it is named rather than
+      measured.
+    */
     const value = trimmed[field];
-    if (typeof value === 'string') {
-      trimmed[field] = `[omitted from the ledger: ${value.length} chars]`;
-    }
+    trimmed[field] =
+      typeof value === 'string'
+        ? `[omitted from the ledger: ${value.length} chars]`
+        : '[omitted from the ledger]';
   }
 
   return trimmed;
@@ -531,10 +553,24 @@ export function honestPermissionAsk(
   const input = keepForTheLedger(asRecord(meta['input']));
   const rungs = rungsFor(tool, input);
 
+  /*
+    Built from nothing, not from the caller's `meta` with the known keys
+    overwritten.
+
+    A denylist only ever excludes the keys someone thought of: spreading the
+    original through and blanking `quote` would carry every *other*
+    model-supplied key onto an entry the system then certifies as honest, and
+    `meta.delivered` — which `deliver.ts` reads off any entry of any kind — is
+    one that already exists to be carried. Dropping `quote` was the fix for
+    one such key; an allowlist is the fix for the shape of the bug, and makes
+    the next `quote` a non-event.
+
+    This is the argument {@link isSafeToCompose} makes for the rule grammar,
+    applied to the rider that travels beside it.
+  */
   return {
     body: `Allow ${tool}?\n${summarise(tool, input)}`,
     meta: {
-      ...without(meta, ['quote']),
       kind: 'permission',
       tool,
       input,

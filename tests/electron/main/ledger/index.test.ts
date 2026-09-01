@@ -565,4 +565,46 @@ describe('createLedger', () => {
 
     expect(result).toMatchObject({ ok: false, status: 413 });
   });
+
+  /**
+   * Self review, finding 1. The cap above tests the body that was *sent*; a
+   * permission ask's stored body is composed here, from a `meta.input` that
+   * nothing bounds — `command` is not a bulk field and `summarise` returns it
+   * verbatim. So an empty sent body carrying a 60 KB command wrote 60 KB into
+   * a log capped at 16 KiB, that never rotates, and that `store.all()` holds
+   * whole in memory.
+   */
+  it('refuses a composed body over the cap, however short the sent one', () => {
+    const result = ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: '',
+      meta: {
+        kind: 'permission',
+        tool: 'Bash',
+        input: { command: `echo ${'x'.repeat(LEDGER_BODY_MAX)}` },
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 413 });
+    expect(ledger.read({}).entries).toHaveLength(0);
+  });
+
+  /**
+   * Self review, finding 3. Every other reader of the discriminator requires
+   * the entry kind too. Keyed on `meta.kind` alone this rewrote a `post`,
+   * destroying its author's text to compose a permission line for an entry
+   * that is a permission ask to nobody.
+   */
+  it('leaves a non-ask carrying permission meta exactly as written', () => {
+    ledger.append({
+      from: 'sess-a',
+      kind: 'post',
+      body: 'just a note',
+      meta: { kind: 'permission', tool: 'Bash', input: { command: 'rm -rf /' } },
+    });
+
+    expect(ledger.read({}).entries[0]?.body).toBe('just a note');
+  });
 });
