@@ -317,6 +317,27 @@ describe('createRunTracker', () => {
     expect(state.read('a').runs.at(-1)?.slack).toBe('connected');
   });
 
+  /**
+   * The two halves of the story have to agree about the same server.
+   * `integrations/slack/status.ts` calls an unrecognised status an error, so
+   * this side must not call it connected — the earlier form read "anything
+   * that is not needs-auth" as a working connection.
+   */
+  it('claims nothing when the init event reports a status it does not recognise', () => {
+    const init = `${JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      mcp_servers: [{ name: 'slack', status: 'failed' }],
+    })}\n`;
+
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(init);
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').runs.at(-1)?.slack).toBeUndefined();
+  });
+
   it('leaves slack unset when the run never named it', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStdout(resultLine());

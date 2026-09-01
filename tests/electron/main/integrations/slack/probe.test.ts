@@ -1,37 +1,49 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { probeSlack } from '../../../../../electron/main/integrations/slack/probe';
-import { SLACK_TOOL_GLOB } from '@shared/slack-contract';
+import {
+  probeSlack,
+  SLACK_PROBE_PROMPT,
+  SLACK_PROBE_TIMEOUT_MS,
+} from '../../../../../electron/main/integrations/slack/probe';
+import { SILENT_FAILURE, TIMED_OUT } from '../../../../../electron/main/integrations/slack/outcome';
+import { SLACK_TOOL_GLOB, slackOnlyMcpConfig } from '@shared/slack-contract';
 
 const init = (servers: unknown) =>
   `${JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })}\n`;
 
+const attached = (status: string) => ({
+  code: 0,
+  stdout: init([{ name: 'slack', status }]),
+  stderr: '',
+  timedOut: false,
+});
+
 describe('probeSlack', () => {
-  it('is connected when the run reports the server attached', () => {
-    const run = () => ({ code: 0, stdout: init([{ name: 'slack', status: 'connected' }]), stderr: '' });
+  it('is connected when the run reports the server attached', async () => {
+    const run = () => Promise.resolve(attached('connected'));
 
-    expect(probeSlack('claude', run)).toEqual({ kind: 'connected' });
+    await expect(probeSlack('claude', run)).resolves.toEqual({ kind: 'connected' });
   });
 
-  it('is needs-auth when the init event says so', () => {
-    const run = () => ({ code: 0, stdout: init([{ name: 'slack', status: 'needs-auth' }]), stderr: '' });
+  it('is needs-auth when the init event says so', async () => {
+    const run = () => Promise.resolve(attached('needs-auth'));
 
-    expect(probeSlack('claude', run)).toEqual({ kind: 'needs-auth' });
+    await expect(probeSlack('claude', run)).resolves.toEqual({ kind: 'needs-auth' });
   });
 
-  it('is pending-approval when the tool call reports the server unapproved', () => {
+  it('is pending-approval when the tool call reports the server unapproved', async () => {
     const stdout = `${init([{ name: 'slack', status: 'connected' }])}${JSON.stringify({
       type: 'result',
       subtype: 'success',
       result: 'The Slack MCP server has not been approved by a workspace admin.',
     })}\n`;
-    const run = () => ({ code: 0, stdout, stderr: '' });
+    const run = () => Promise.resolve({ code: 0, stdout, stderr: '', timedOut: false });
 
-    expect(probeSlack('claude', run)).toEqual({ kind: 'pending-approval' });
+    await expect(probeSlack('claude', run)).resolves.toEqual({ kind: 'pending-approval' });
   });
 
-  it('is pending-approval when the raw refusal is buried in a tool-result event, even if the model paraphrases it blandly', () => {
+  it('is pending-approval when the raw refusal is buried in a tool-result event, even if the model paraphrases it blandly', async () => {
     // Schema unmeasured — this is a plausible shape for a tool_result content
     // block, not a claim about the real one. The point is that probeSlack
     // must not depend on it: it should find the refusal by scanning raw text.
@@ -53,37 +65,103 @@ describe('probeSlack', () => {
       result: 'I could not complete that.',
     };
     const stdout = `${init([{ name: 'slack', status: 'connected' }])}${JSON.stringify(toolResult)}\n${JSON.stringify(finalResult)}\n`;
-    const run = () => ({ code: 0, stdout, stderr: '' });
+    const run = () => Promise.resolve({ code: 0, stdout, stderr: '', timedOut: false });
 
-    expect(probeSlack('claude', run)).toEqual({ kind: 'pending-approval' });
+    await expect(probeSlack('claude', run)).resolves.toEqual({ kind: 'pending-approval' });
   });
 
-  it('is an error when no init event arrives at all', () => {
-    const run = () => ({ code: 1, stdout: '', stderr: 'boom' });
+  it('is an error when no init event arrives at all', async () => {
+    const run = () =>
+      Promise.resolve({ code: 1, stdout: '', stderr: 'boom', timedOut: false });
 
-    expect(probeSlack('claude', run)).toEqual({ kind: 'error', message: 'boom' });
+    await expect(probeSlack('claude', run)).resolves.toEqual({
+      kind: 'error',
+      message: 'boom',
+    });
   });
 
-  it('spends exactly one capped model turn scoped to slack tools only', () => {
-    const calls: string[][] = [];
-    const run = (_f: string, args: readonly string[]) => {
-      calls.push([...args]);
+  /**
+   * The blank-caption case. A killed run prints nothing on either stream, and
+   * the earlier `failure` handed the pane an empty red line.
+   */
+  it('says something when the run died silently', async () => {
+    const run = () =>
+      Promise.resolve({ code: -1, stdout: '', stderr: '', timedOut: false });
 
-      return { code: 0, stdout: init([{ name: 'slack', status: 'connected' }]), stderr: '' };
+    await expect(probeSlack('claude', run)).resolves.toEqual({
+      kind: 'error',
+      message: SILENT_FAILURE,
+    });
+  });
+
+  it('names the timeout rather than echoing the half-written stream', async () => {
+    const run = () =>
+      Promise.resolve({
+        code: -1,
+        stdout: '{"type":"stream_event"',
+        stderr: '',
+        timedOut: true,
+      });
+
+    await expect(probeSlack('claude', run)).resolves.toEqual({
+      kind: 'error',
+      message: TIMED_OUT,
+    });
+  });
+
+  it('reports a binary that could not be executed rather than throwing', async () => {
+    const run = () => Promise.reject(new Error('spawn ENOENT'));
+
+    await expect(probeSlack('claude', run)).resolves.toEqual({
+      kind: 'error',
+      message: 'Could not run claude: spawn ENOENT',
+    });
+  });
+
+  /**
+   * The exact argv, because this is the one place a regression in it is caught.
+   *
+   * Two of these arguments were missing and the probe could not succeed
+   * without them:
+   *
+   * - `--mcp-config` with a Slack-only server set. `--strict-mcp-config` makes
+   *   the named set the **entire** set, so strict with no config is an empty
+   *   set: the init event never lists `slack` and every probe returns `error`.
+   * - `ToolSearch` in the grant. MCP tool schemas are deferred (`waker.ts`
+   *   grants it on every wake for the same reason), so `mcp__slack__*` alone
+   *   is a grant the model cannot act on — and this prompt opens by telling it
+   *   to call `ToolSearch`.
+   *
+   * The timeout is pinned too: on the five-second synchronous runner this used
+   * to share with `gh auth status`, a model turn was killed every time.
+   */
+  it('spends exactly one capped model turn, against a slack-only server set it can actually load', async () => {
+    const calls: { args: string[]; timeoutMs: number | undefined }[] = [];
+    const run = (
+      _f: string,
+      args: readonly string[],
+      options?: { timeoutMs?: number },
+    ) => {
+      calls.push({ args: [...args], timeoutMs: options?.timeoutMs });
+
+      return Promise.resolve(attached('connected'));
     };
 
-    probeSlack('claude', run);
+    await probeSlack('claude', run);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual([
+    expect(calls[0]?.args).toEqual([
       '-p',
+      '--mcp-config', slackOnlyMcpConfig(),
       '--strict-mcp-config',
       '--setting-sources', '',
       '--max-turns', '1',
-      '--allowedTools', SLACK_TOOL_GLOB,
+      '--allowedTools', `${SLACK_TOOL_GLOB},ToolSearch`,
       '--output-format', 'stream-json',
       '--verbose',
-      'Use ToolSearch to load the schema for a Slack tool that reports who I am, call it, and reply with one line. If any tool call fails, quote the error message verbatim in your reply.',
+      SLACK_PROBE_PROMPT,
     ]);
+    expect(calls[0]?.timeoutMs).toBe(SLACK_PROBE_TIMEOUT_MS);
+    expect(SLACK_PROBE_TIMEOUT_MS).toBeGreaterThan(60_000);
   });
 });

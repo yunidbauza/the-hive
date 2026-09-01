@@ -28,6 +28,19 @@ const DISCONNECTED = `slack:
   Type: http
 `;
 
+/**
+ * The glyph is decoration, and a build that dropped it must not break the read.
+ *
+ * The earlier strip was `^Status:\s*\S*\s*`, which assumed a whitespace-
+ * delimited glyph token was always there: on this line it ate the word
+ * `Connected` itself and reported an error on a healthy server.
+ */
+const NO_GLYPH = `slack:
+  Scope: User config
+  Status: Connected
+  Type: http
+`;
+
 describe('parseMcpGet', () => {
   it('reads a connected server', () => {
     expect(parseMcpGet(CONNECTED)).toEqual({ kind: 'connected' });
@@ -48,6 +61,10 @@ describe('parseMcpGet', () => {
     });
   });
 
+  it('reads a connected server whose line carries no glyph', () => {
+    expect(parseMcpGet(NO_GLYPH)).toEqual({ kind: 'connected' });
+  });
+
   it('rejects "Disconnected" as an error, not connected', () => {
     expect(parseMcpGet(DISCONNECTED)).toEqual({
       kind: 'error',
@@ -61,6 +78,19 @@ describe('readSlackStatus', () => {
     const run = () => ({ code: 1, stdout: '', stderr: 'No MCP server found' });
 
     expect(readSlackStatus('claude', run)).toEqual({ kind: 'not-added' });
+  });
+
+  /**
+   * `-1` is `gh.ts`'s marker for a process killed by signal — where its
+   * five-second timeout lands. Folded into the non-zero branch it read as "not
+   * signed in", offering a sign-in button for a `claude` that had hung.
+   */
+  it('reports a signalled death as an error, not as "not signed in"', () => {
+    const run = () => ({ code: -1, stdout: '', stderr: '' });
+    const status = readSlackStatus('claude', run);
+
+    expect(status.kind).toBe('error');
+    expect(status).not.toEqual({ kind: 'not-added' });
   });
 
   it('ignores the SEP-2352 warning the sdk writes to stderr', () => {

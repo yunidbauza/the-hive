@@ -2300,17 +2300,37 @@ export function registerIpcHandlers(): void {
    * `claudeCommand` is the same resolver `buildWakeCommand` above reads —
    * `getConfig().claudeCommand`, read fresh on every call so a binary edited
    * in Settings reaches the next status read without a restart.
+   *
+   * ## Two runners, and which verb gets which
+   *
+   * `runCommand` is `gh.ts`'s **synchronous** five-second one, and it is right
+   * for exactly the two verbs that read a local fact: `claude mcp get` and
+   * `claude mcp remove` both answer in well under a second, and a hung one must
+   * not stall the pane.
+   *
+   * `runAsync` — the same shared async runner the PR poller and `sessions/git.ts`
+   * already use — is for the two that wait on the world. `mcp login` blocks
+   * on a browser OAuth round-trip and the probe blocks on a model turn — minutes
+   * and tens of seconds respectively, so on the sync runner neither could ever
+   * succeed, and each attempt froze IPC, PTY routing and the agent scheduler for
+   * five seconds on the way to failing. The per-verb timeouts live with the
+   * verbs, in `slack/login.ts` and `slack/probe.ts`.
+   *
+   * `signInToSlack` takes both: the async one for `add` and `login`, and the
+   * sync one for the `mcp get` it reads the result back with.
    */
   handle(CH.slackStatus, (): SlackStatus =>
     readSlackStatus(claudeCommand(), runCommand),
   );
-  handle(CH.slackSignIn, (): SlackStatus =>
-    signInToSlack(claudeCommand(), runCommand),
+  handle(CH.slackSignIn, (): Promise<SlackStatus> =>
+    signInToSlack(claudeCommand(), runAsync, runCommand),
   );
   handle(CH.slackSignOut, (): SlackStatus =>
     signOutOfSlack(claudeCommand(), runCommand),
   );
-  handle(CH.slackTest, (): SlackStatus => probeSlack(claudeCommand(), runCommand));
+  handle(CH.slackTest, (): Promise<SlackStatus> =>
+    probeSlack(claudeCommand(), runAsync),
+  );
 
   /**
    * Cloning a repository (story 102).

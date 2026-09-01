@@ -1,6 +1,13 @@
-import { SLACK_SERVER_KEY, SLACK_TOOL_GLOB, type SlackStatus } from '@shared/slack-contract';
+import {
+  SLACK_SERVER_KEY,
+  SLACK_TOOL_GLOB,
+  slackOnlyMcpConfig,
+  type SlackStatus,
+} from '@shared/slack-contract';
 
-import type { RunCommand } from '../gh';
+import type { RunAsync, RunResult } from '../github/run';
+
+import { couldNotRun, failure } from './outcome';
 
 /**
  * The Test button: the only thing here that spends a model turn (HIVE-123).
@@ -15,30 +22,71 @@ import type { RunCommand } from '../gh';
  * carrying `mcp_servers: [{ name, status }]`. Measured: asking the model what
  * tools it has answers "NONE" even with a server attached, because MCP tool
  * schemas are deferred — the model's self-report is the wrong instrument.
+ *
+ * ## The two flags that make it a real probe
+ *
+ * `--mcp-config` carries {@link slackOnlyMcpConfig}, an inline JSON string
+ * naming Slack and nothing else. `--strict-mcp-config` beside it makes that the
+ * *entire* server set the run can see — which is the point (no hive server, no
+ * user config, nothing but the thing under test), and which is also why strict
+ * **without** a config is a bug rather than a tightening: the set is then
+ * empty, no `slack` entry ever reaches the init event, and the probe reports an
+ * error on a healthy connection every single time.
+ *
+ * `ToolSearch` is granted alongside `mcp__slack__*` for the reason
+ * `agents/waker.ts` grants it on every wake: MCP tool schemas are **deferred**,
+ * so the model sees `mcp__slack__*` by name but must call the built-in
+ * `ToolSearch` to fetch a schema before it can invoke anything. Granting the
+ * Slack glob without it grants nothing callable — and this prompt opens by
+ * telling the model to use `ToolSearch`.
  */
 
 /** Slack's refusal when the server is not approved for the workspace. */
 const UNAPPROVED = /not been approved|not approved|admin approval/i;
 
-export function probeSlack(claude: string, run: RunCommand): SlackStatus {
-  let result: ReturnType<RunCommand>;
+/**
+ * Three minutes.
+ *
+ * A model turn, plus an HTTP MCP handshake, plus a tool round-trip to Slack.
+ * Tens of seconds is the normal case; this is the backstop for a run that has
+ * stopped making progress, not a budget anyone should be near.
+ */
+export const SLACK_PROBE_TIMEOUT_MS = 3 * 60_000;
+
+/**
+ * What the model is asked to do.
+ *
+ * "Quote the error message verbatim" is load-bearing: the accumulator below
+ * reads the raw stream, but the model's own reply is the fallback instrument
+ * and a bland paraphrase makes it useless.
+ */
+export const SLACK_PROBE_PROMPT =
+  'Use ToolSearch to load the schema for a Slack tool that reports who I am, call it, and reply with one line. If any tool call fails, quote the error message verbatim in your reply.';
+
+export async function probeSlack(
+  claude: string,
+  run: RunAsync,
+): Promise<SlackStatus> {
+  let result: RunResult;
 
   try {
-    result = run(claude, [
-      '-p',
-      '--strict-mcp-config',
-      '--setting-sources', '',
-      '--max-turns', '1',
-      '--allowedTools', SLACK_TOOL_GLOB,
-      '--output-format', 'stream-json',
-      '--verbose',
-      'Use ToolSearch to load the schema for a Slack tool that reports who I am, call it, and reply with one line. If any tool call fails, quote the error message verbatim in your reply.',
-    ]);
+    result = await run(
+      claude,
+      [
+        '-p',
+        '--mcp-config', slackOnlyMcpConfig(),
+        '--strict-mcp-config',
+        '--setting-sources', '',
+        '--max-turns', '1',
+        '--allowedTools', `${SLACK_TOOL_GLOB},ToolSearch`,
+        '--output-format', 'stream-json',
+        '--verbose',
+        SLACK_PROBE_PROMPT,
+      ],
+      { timeoutMs: SLACK_PROBE_TIMEOUT_MS },
+    );
   } catch (cause) {
-    return {
-      kind: 'error',
-      message: `Could not run claude: ${cause instanceof Error ? cause.message : String(cause)}`,
-    };
+    return couldNotRun(cause);
   }
 
   let status: string | null = null;
@@ -82,9 +130,11 @@ export function probeSlack(claude: string, run: RunCommand): SlackStatus {
     }
   }
 
-  if (status === null) {
-    return { kind: 'error', message: (result.stderr.trim() || result.stdout).trim() };
-  }
+  // No init event, or one that never named the server: the run did not get far
+  // enough to answer the question. `failure` rather than a hand-rolled message
+  // so a run that died silently — a timeout kills stdout mid-stream — still
+  // says something.
+  if (status === null) return failure(result);
 
   if (status === 'needs-auth') return { kind: 'needs-auth' };
   // The connection is real; whether the workspace allows it is what the turn

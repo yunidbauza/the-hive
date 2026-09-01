@@ -7,6 +7,7 @@ import {
   SLACK_SERVER_KEY,
   SLACK_TOOL_GLOB,
   grantsSlackTools,
+  slackOnlyMcpConfig,
   slackServerSpec,
 } from '@shared/slack-contract';
 
@@ -22,6 +23,31 @@ describe('slackServerSpec', () => {
   it('keys on `slack`, because that is what names the tools', () => {
     expect(SLACK_SERVER_KEY).toBe('slack');
     expect(SLACK_TOOL_GLOB).toBe('mcp__slack__*');
+  });
+});
+
+/**
+ * The probe's server set (HIVE-123).
+ *
+ * A JSON **string**, not a path: `--mcp-config` takes "JSON files or strings"
+ * (measured, `claude` 2.1.252), so the Test button needs no temp file. It is
+ * what makes `--strict-mcp-config` a scoping flag rather than a bug — strict
+ * with no config names an *empty* server set, so the run's init event never
+ * lists `slack` and the probe fails on a healthy connection every time.
+ */
+describe('slackOnlyMcpConfig', () => {
+  it('names slack and nothing else', () => {
+    const parsed = JSON.parse(slackOnlyMcpConfig()) as {
+      mcpServers: Record<string, unknown>;
+    };
+
+    expect(Object.keys(parsed.mcpServers)).toEqual([SLACK_SERVER_KEY]);
+    expect(parsed.mcpServers[SLACK_SERVER_KEY]).toEqual(slackServerSpec());
+  });
+
+  it('is a single argv-safe line, not a path', () => {
+    expect(slackOnlyMcpConfig()).not.toContain('\n');
+    expect(() => JSON.parse(slackOnlyMcpConfig())).not.toThrow();
   });
 });
 

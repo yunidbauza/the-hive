@@ -900,6 +900,30 @@ kept in agreement, since a name accepted by one and unresolved by the other
 either fails validation for no reason or writes a server-less file that fails
 the run instead.
 
+The Settings pane's **Test** button (`integrations/slack/probe.ts`) obeys the
+same rule from the other end, and got it wrong first. It spends one capped model
+turn purely to read the run's own `system`/`init` event, which is the only place
+workspace-admin approval is observable. It shipped with `--strict-mcp-config`
+and **no** `--mcp-config`, which by the rule above names the empty set: no
+`slack` entry could ever reach the init event, so the probe reported an error on
+a perfectly healthy connection every time. It now passes `slackOnlyMcpConfig()`
+— an inline JSON *string*, since `--mcp-config` takes "JSON files or strings"
+(measured, 2.1.252) — so the probe needs no temp file, and it grants
+`ToolSearch` beside `mcp__slack__*` for the same reason every wake does: MCP
+tool schemas are deferred, so a glob without `ToolSearch` grants nothing the
+model can actually call. `tests/electron/main/integrations/slack/probe.test.ts`
+pins that argv exactly, because it is the only place a regression in it is
+caught.
+
+Both long Slack verbs run on the shared **asynchronous** runner
+(`integrations/github/run.ts`, also used by the PR poller and `sessions/git.ts`)
+with per-verb timeouts — ten minutes for the browser OAuth round-trip, three for
+the probe's model turn. `gh.ts`'s `runCommand` is `spawnSync` with a
+five-second cap and stays that way for the sub-second reads (`claude mcp get`,
+`claude mcp remove`); pointing the sign-in or the probe at it meant neither
+could ever succeed, and each attempt blocked the main process — IPC, PTY
+routing and the agent scheduler — for the full five seconds first.
+
 **HIVE-115 measured what `--allowedTools` actually does, and it is a grant, not
 a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model
 used Bash — with `--setting-sources ""`, and under `--permission-mode dontAsk`

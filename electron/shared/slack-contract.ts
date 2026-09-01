@@ -49,13 +49,23 @@ export const slackServerSpec = (): SlackServerSpec => ({
   oauth: { clientId: SLACK_CLIENT_ID, callbackPort: SLACK_CALLBACK_PORT },
 });
 
-/** Who the token belongs to, once a probe has read it back. */
-export interface SlackConnection {
-  /** `@yunid`, as Slack reports it. */
-  user: string;
-  /** `behiques.slack.com`. */
-  workspace: string;
-}
+/**
+ * The whole `--mcp-config` payload for a run that must see Slack and nothing
+ * else — the Test probe's server set (HIVE-123).
+ *
+ * A JSON **string**, not a path: `--mcp-config <configs...>` is documented and
+ * measured as "Load MCP servers from JSON files or strings", so the probe needs
+ * no temp file, no directory to create and nothing to clean up. Measured
+ * against `claude` 2.1.252: passed with `--strict-mcp-config`, the run's
+ * `system`/`init` event reports `mcp_servers: [{ name: 'slack', status: … }]`.
+ *
+ * Load-bearing, not decoration. `--strict-mcp-config` makes the named set the
+ * *entire* set of servers a run can see, so passing it **without** this leaves
+ * the set empty: no `slack` entry ever reaches the init event and the probe
+ * fails unconditionally, on a connection that is perfectly healthy.
+ */
+export const slackOnlyMcpConfig = (): string =>
+  JSON.stringify({ mcpServers: { [SLACK_SERVER_KEY]: slackServerSpec() } });
 
 /**
  * What the pane draws.
@@ -63,12 +73,28 @@ export interface SlackConnection {
  * `pending-approval` is deliberately separate from `connected`: the token is
  * real and refreshable, but every tool call fails until a workspace admin
  * approves the server, and only an actual tool call can tell the two apart.
+ *
+ * ## Why there is no identity here
+ *
+ * An earlier draft carried a `connection: { user, workspace }` rider so the
+ * pane could say *as whom* you are signed in. Nothing could honestly produce
+ * it. `claude mcp get` reports a status and a URL and no identity at all, and
+ * the only other instrument is the probe — whose answer is a **model
+ * paraphrase**, which this story already ruled out as an instrument once
+ * (scanning the raw stream rather than trusting `result.result`). Parsing a
+ * username out of a sentence the model chose the words for would reintroduce
+ * exactly that mistake, in the one place where being wrong means naming the
+ * wrong human.
+ *
+ * So the field is gone rather than left unpopulated: a rendered-but-unreachable
+ * identity slot is worse than an absent one. A later story that reads identity
+ * from a structured tool result can add it back with a real producer.
  */
 export type SlackStatus =
   | { kind: 'not-added' }
   | { kind: 'needs-auth' }
-  | { kind: 'connected'; connection?: SlackConnection }
-  | { kind: 'pending-approval'; connection?: SlackConnection }
+  | { kind: 'connected' }
+  | { kind: 'pending-approval' }
   | { kind: 'error'; message: string };
 
 /**

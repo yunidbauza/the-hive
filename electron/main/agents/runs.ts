@@ -21,18 +21,34 @@ import type { WakeCommand } from './waker';
  * What this run's `init` event said about Slack, in `RunSummary`'s two words
  * (HIVE-123).
  *
- * `undefined` covers two cases the scheduler treats alike: the agent's `mcp:`
- * never named `slack`, and the run never reached an `init` event at all (a
- * spawn failure). Either way there is nothing to skip a future wake over.
+ * `undefined` covers three cases the scheduler treats alike: the agent's `mcp:`
+ * never named `slack`, the run never reached an `init` event at all (a spawn
+ * failure), and the server reported a status this app does not recognise.
+ *
+ * That third case is why both words are matched exactly rather than reading
+ * "anything that is not `needs-auth`" as connected. A server answering
+ * `failed` is not a working connection, and the earlier form claimed it was —
+ * while `integrations/slack/status.ts`, reading the very same server through
+ * `claude mcp get`, calls an unrecognised status an **error**. The two halves
+ * of the same story disagreeing about the same server is the bug; this is the
+ * side that was wrong, because it was the side claiming health it had not
+ * observed.
+ *
+ * `undefined` rather than a third word: nothing here consumes `'connected'` —
+ * the scheduler and the chip tooltip both only ask whether this says
+ * `needs-auth` — so an unrecognised status has no skip to justify and no claim
+ * to make. The wake runs, and the run log shows what actually happened, which
+ * is strictly more information than a skip would have given.
  */
 const slackStatus = (
   servers: McpServerStatus[] | null,
 ): 'connected' | 'needs-auth' | undefined => {
   const slack = servers?.find((server) => server.name === SLACK_SERVER_KEY);
 
-  if (slack === undefined) return undefined;
+  if (slack?.status === 'needs-auth') return 'needs-auth';
+  if (slack?.status === 'connected') return 'connected';
 
-  return slack.status === 'needs-auth' ? 'needs-auth' : 'connected';
+  return undefined;
 };
 
 /**

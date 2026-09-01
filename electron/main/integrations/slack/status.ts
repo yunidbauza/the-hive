@@ -2,6 +2,8 @@ import { SLACK_SERVER_KEY, type SlackStatus } from '@shared/slack-contract';
 
 import type { RunCommand } from '../gh';
 
+import { couldNotRun } from './outcome';
+
 /**
  * What `claude mcp get slack` says (HIVE-123).
  *
@@ -27,8 +29,14 @@ export function parseMcpGet(stdout: string): SlackStatus {
     Matched on the words rather than on the glyph. The tick and the bang are
     decoration and have changed before; "Connected" and "Needs authentication"
     are the message. Strip the Status: label and any leading glyph before matching.
+
+    The glyph is stripped as *non-word characters*, not as a whitespace-delimited
+    token. `\S*` assumed a glyph is always there: on a build that printed a bare
+    `Status: Connected` it would have eaten the word itself and reported an
+    error on a healthy server. `\W+` strips a tick, a bang or nothing at all,
+    and can never reach a letter.
   */
-  const message = line.replace(/^Status:\s*\S*\s*/, '');
+  const message = line.replace(/^Status:\s*/, '').replace(/^\W+/, '').trim();
   if (/^connected$/i.test(message)) return { kind: 'connected' };
   if (/^needs authentication$/i.test(message)) return { kind: 'needs-auth' };
 
@@ -49,14 +57,25 @@ export function readSlackStatus(claude: string, run: RunCommand): SlackStatus {
     */
     result = run(claude, ['mcp', 'get', SLACK_SERVER_KEY]);
   } catch (cause) {
+    return couldNotRun(cause);
+  }
+
+  /*
+    `-1` is `gh.ts`'s marker for a process that died by signal rather than by
+    exiting — which is where its timeout kill lands. Folding that into the
+    non-zero branch below reported "not signed in" for a `claude` that hung or
+    was killed, which is a *different* fact and one the user can act on
+    differently. It gets its own answer.
+  */
+  if (result.code === -1) {
     return {
       kind: 'error',
-      message: `Could not run claude: ${cause instanceof Error ? cause.message : String(cause)}`,
+      message: 'claude did not exit normally — it may have timed out.',
     };
   }
 
-  // Non-zero means no such server. stderr carries an unrelated sdk warning on
-  // every call, so it is never read.
+  // Any other non-zero means no such server. stderr carries an unrelated sdk
+  // warning on every call, so it is never read.
   if (result.code !== 0) return { kind: 'not-added' };
 
   return parseMcpGet(result.stdout);

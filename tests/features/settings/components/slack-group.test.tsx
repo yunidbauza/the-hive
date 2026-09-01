@@ -7,10 +7,10 @@ import { SlackGroup } from '@features/settings/components/slack-group';
 /**
  * The Slack provider group — variant B (HIVE-123).
  *
- * One status row, one caption line with a strict precedence (an error, else
- * the approval sentence, else the Used-by summary — never two at once), and
- * an Advanced disclosure that keeps the read-only server URL and client ID
- * out of the resting view.
+ * One status row, one caption line with a strict precedence (a failed Test,
+ * else a failed sign-in, else the approval sentence, else the sign-in promise,
+ * else the Used-by summary — never two at once), and an Advanced disclosure
+ * that keeps the read-only server URL and client ID out of the resting view.
  */
 
 const status = vi.fn();
@@ -38,16 +38,30 @@ describe('SlackGroup', () => {
     expect(screen.getByRole('button', { name: 'Sign in to Slack' })).toBeInTheDocument();
   });
 
-  it('shows who you are, and the caption names the agents using it', async () => {
-    status.mockResolvedValue({
-      kind: 'connected',
-      connection: { user: '@yunid', workspace: 'behiques.slack.com' },
-    });
+  it('names the agents using it, and says who actually holds the token', async () => {
+    status.mockResolvedValue({ kind: 'connected' });
     render(<SlackGroup agents={[{ name: 'slack-watcher', tools: ['mcp__slack__*'] }]} />);
 
     expect(await screen.findByText('Signed in')).toBeInTheDocument();
-    expect(screen.getByText(/@yunid/)).toBeInTheDocument();
     expect(screen.getByText(/slack-watcher/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/token held by Claude Code, not the Hive/),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The reassurance the approved design leads with, and the security claim the
+   * whole story rests on. This is the only screen that states it.
+   */
+  it('promises the browser flow costs no stored token, before you start it', async () => {
+    status.mockResolvedValue({ kind: 'not-added' });
+    render(<SlackGroup agents={[]} />);
+
+    expect(
+      await screen.findByText('Opens your browser once. The Hive never sees the token.'),
+    ).toBeInTheDocument();
+    // The Used-by summary is the *fallback*, and must not pre-empt it.
+    expect(screen.queryByText(/No agent names Slack yet/)).not.toBeInTheDocument();
   });
 
   it('warns about an agent that names slack but grants no slack tool', async () => {
@@ -74,6 +88,8 @@ describe('SlackGroup', () => {
 
     expect(await screen.findByText(/callback port 3118 is in use/)).toBeInTheDocument();
     expect(await screen.findByText('Failed')).toBeInTheDocument();
+    // A credential failure *is* the case where re-running the browser flow helps.
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('keeps the server url and client id behind Advanced', async () => {
@@ -91,6 +107,45 @@ describe('SlackGroup', () => {
     expect(screen.getByText('https://mcp.slack.com/mcp')).toBeInTheDocument();
     expect(screen.getByText('1601185624273.8899143856786')).toBeInTheDocument();
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  /**
+   * A failed Test is a failed **tool call**, not a failed credential. Letting it
+   * overwrite the status turned "Signed in" into "Failed" and offered a browser
+   * re-auth as the remedy for, say, a model turn that timed out.
+   */
+  it('keeps you signed in when the Test itself fails, and offers the Test again', async () => {
+    status.mockResolvedValue({ kind: 'connected' });
+    testSlack.mockResolvedValue({
+      kind: 'error',
+      message: 'claude did not answer in time. Try again.',
+    });
+    render(<SlackGroup agents={[]} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Test' }));
+
+    expect(await screen.findByText(/did not answer in time/)).toBeInTheDocument();
+    // The pill still reports the connection, which nothing has said is broken.
+    expect(screen.getByText('Signed in')).toBeInTheDocument();
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+    // And the remedy on offer is the Test, not a browser round-trip.
+    expect(screen.getByRole('button', { name: 'Test again' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Try again' }),
+    ).not.toBeInTheDocument();
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
+  /** A probe that reports a real credential problem still moves the pill. */
+  it('does move the pill when the Test reports the credential itself is the problem', async () => {
+    status.mockResolvedValue({ kind: 'connected' });
+    testSlack.mockResolvedValue({ kind: 'pending-approval' });
+    render(<SlackGroup agents={[]} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Test' }));
+
+    expect(await screen.findByText('Needs approval')).toBeInTheDocument();
+    expect(screen.getByText(/workspace admin must approve/i)).toBeInTheDocument();
   });
 
   it('never spends a model turn on mount — no automatic test call', async () => {

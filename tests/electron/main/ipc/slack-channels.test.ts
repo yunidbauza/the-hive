@@ -14,9 +14,11 @@ import type { SlackStatus } from '../../../../electron/shared/slack-contract';
  * `tests/electron/main/integrations/slack/`. What belongs here is the seam —
  * that each of the four channels calls the right function, that the resolver
  * it passes as `claude` is the same one the agents composition reads
- * (`getConfig().claudeCommand`, live on every call), that the `run` it passes
- * is the real `runCommand` from `gh.ts` and not a second implementation, and
- * that a payload arriving on any of the four verbs is inert — there is no
+ * (`getConfig().claudeCommand`, live on every call), that each verb gets the
+ * **right runner** — the synchronous `runCommand` from `gh.ts` for the two
+ * local fact-reads, the shared asynchronous `runAsync` for the two that wait on
+ * a browser or a model turn — and that a payload arriving on any of the four
+ * verbs is inert — there is no
  * validator to throw `IpcValidationError`; the handler signature simply does
  * not declare a `payload` parameter, so nothing sent from the renderer can
  * ever reach the call.
@@ -137,21 +139,22 @@ vi.mock('../../../../electron/main/ledger', () => ({
 const readSlackStatus = vi.fn<(claude: string, run: unknown) => SlackStatus>(
   () => ({ kind: 'connected' }),
 );
-const signInToSlack = vi.fn<(claude: string, run: unknown) => SlackStatus>(
-  () => ({ kind: 'connected' }),
-);
+const signInToSlack = vi.fn<
+  (claude: string, run: unknown, readBack: unknown) => Promise<SlackStatus>
+>(() => Promise.resolve({ kind: 'connected' }));
 const signOutOfSlack = vi.fn<(claude: string, run: unknown) => SlackStatus>(
   () => ({ kind: 'not-added' }),
 );
-const probeSlack = vi.fn<(claude: string, run: unknown) => SlackStatus>(
-  () => ({ kind: 'connected' }),
+const probeSlack = vi.fn<(claude: string, run: unknown) => Promise<SlackStatus>>(
+  () => Promise.resolve({ kind: 'connected' }),
 );
 
 vi.mock('../../../../electron/main/integrations/slack/status', () => ({
   readSlackStatus: (claude: string, run: unknown) => readSlackStatus(claude, run),
 }));
 vi.mock('../../../../electron/main/integrations/slack/login', () => ({
-  signInToSlack: (claude: string, run: unknown) => signInToSlack(claude, run),
+  signInToSlack: (claude: string, run: unknown, readBack: unknown) =>
+    signInToSlack(claude, run, readBack),
   signOutOfSlack: (claude: string, run: unknown) => signOutOfSlack(claude, run),
 }));
 vi.mock('../../../../electron/main/integrations/slack/probe', () => ({
@@ -160,6 +163,7 @@ vi.mock('../../../../electron/main/integrations/slack/probe', () => ({
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
 const { runCommand } = await import('../../../../electron/main/integrations/gh');
+const { runAsync } = await import('../../../../electron/main/integrations/github/run');
 const { registerIpcHandlers, resetIpcHandlers } = await import(
   '../../../../electron/main/ipc'
 );
@@ -194,11 +198,25 @@ describe('slack channels (HIVE-123)', () => {
     expect(readSlackStatus).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
   });
 
-  it('routes slack:sign-in to signInToSlack with the same resolver', async () => {
-    signInToSlack.mockReturnValueOnce({ kind: 'needs-auth' });
+  /**
+   * Both runners, and which is which. `claude mcp login` waits on a browser
+   * OAuth round-trip, so it takes the async one; the `mcp get` it reads the
+   * result back with is a sub-second local read and keeps the sync one.
+   *
+   * Handing it `runCommand` for the login is precisely the defect this pins:
+   * that runner is `spawnSync` with a five-second cap, so the sign-in could
+   * never succeed and every attempt froze the main process on its way to
+   * failing.
+   */
+  it('routes slack:sign-in to signInToSlack with the async runner and the sync read-back', async () => {
+    signInToSlack.mockResolvedValueOnce({ kind: 'needs-auth' });
 
     await expect(call(CH.slackSignIn)).resolves.toEqual({ kind: 'needs-auth' });
-    expect(signInToSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
+    expect(signInToSlack).toHaveBeenCalledWith(
+      snapshot.claudeCommand,
+      runAsync,
+      runCommand,
+    );
   });
 
   it('routes slack:sign-out to signOutOfSlack with the same resolver', async () => {
@@ -208,11 +226,12 @@ describe('slack channels (HIVE-123)', () => {
     expect(signOutOfSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
   });
 
-  it('routes slack:test to probeSlack with the same resolver', async () => {
-    probeSlack.mockReturnValueOnce({ kind: 'pending-approval' });
+  /** A model turn cannot run on the five-second synchronous runner either. */
+  it('routes slack:test to probeSlack with the async runner', async () => {
+    probeSlack.mockResolvedValueOnce({ kind: 'pending-approval' });
 
     await expect(call(CH.slackTest)).resolves.toEqual({ kind: 'pending-approval' });
-    expect(probeSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
+    expect(probeSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runAsync);
   });
 
   /**
@@ -237,13 +256,22 @@ describe('slack channels (HIVE-123)', () => {
     }
 
     expect(readSlackStatus).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
-    expect(signInToSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
+    expect(signInToSlack).toHaveBeenCalledWith(
+      snapshot.claudeCommand,
+      runAsync,
+      runCommand,
+    );
     expect(signOutOfSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
-    expect(probeSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runCommand);
+    expect(probeSlack).toHaveBeenCalledWith(snapshot.claudeCommand, runAsync);
 
-    // Exactly two arguments each — nothing from the smuggled payload arrived.
-    for (const mock of [readSlackStatus, signInToSlack, signOutOfSlack, probeSlack]) {
+    /*
+      Exactly the runners the handler chose and nothing else — nothing from the
+      smuggled payload arrived. Sign-in takes three because it needs both.
+    */
+    for (const mock of [readSlackStatus, signOutOfSlack, probeSlack]) {
       expect(mock.mock.calls[0]).toHaveLength(2);
     }
+
+    expect(signInToSlack.mock.calls[0]).toHaveLength(3);
   });
 });

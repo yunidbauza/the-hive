@@ -23,10 +23,23 @@ import type { SlackStatus } from '@shared/slack-contract';
  *
  * ## The caption does double duty
  *
- * It is one slot with a strict precedence — an error message, else the
- * approval sentence, else the Used-by summary — and never two at once. That
- * is what lets `pending-approval` and a failed sign-in fit without a fourth
- * block: {@link Caption} is the one place that decision gets made.
+ * It is one slot with a strict precedence — a failed Test, else a failed
+ * sign-in, else the approval sentence, else the sign-in promise, else the
+ * Used-by summary — and never two at once. That is what lets every state fit
+ * without a second block: {@link Caption} is the one place that decision gets
+ * made.
+ *
+ * ## A failed Test is not a failed connection
+ *
+ * The two errors this pane can show come from different places and want
+ * different answers. An error from `status` or `signIn` means the *credential*
+ * is the problem, and "Try again" (which re-runs the browser flow) is the
+ * remedy. An error from `test` is a failed **tool call** on a connection that
+ * may be perfectly healthy — a model turn that timed out, a run that could not
+ * start. Folding it into `status` replaced "Signed in" with "Failed" and then
+ * pushed the user through a browser re-auth they did not need. So a Test
+ * failure is held separately: the pill keeps reporting the connection, the
+ * caption reports the Test, and the button offers the Test again.
  *
  * ## Only two fields off `AgentSummary`
  *
@@ -101,17 +114,18 @@ function StatePill({ kind }: { kind: PillKind }) {
   );
 }
 
-/** `@yunid`, and `· workspace` only when the probe that discovered it named one. */
-function identityOf(status: SlackStatus): string | null {
-  if (status.kind !== 'connected' && status.kind !== 'pending-approval') return null;
+/**
+ * The promise the sign-in makes, on the one screen that offers it.
+ *
+ * That no Slack credential is ever stored by this app is the security claim the
+ * whole story rests on — `claude mcp login` holds the token, in Claude Code's
+ * own credential store. This caption and the one below it are the only place
+ * the product says so.
+ */
+const SIGN_IN_PROMISE = 'Opens your browser once. The Hive never sees the token.';
 
-  const { connection } = status;
-  if (connection === undefined) return null;
-
-  return connection.workspace
-    ? `${connection.user} · ${connection.workspace}`
-    : connection.user;
-}
+/** The same claim, restated where it matters most: while you are signed in. */
+const TOKEN_HOLDER = ' · token held by Claude Code, not the Hive';
 
 /** Who is using it — the fallback slot when there is no error and no approval to report. */
 function usedBySummary(agents: SlackGroupAgent[]): ReactNode {
@@ -143,10 +157,20 @@ function usedBySummary(agents: SlackGroupAgent[]): ReactNode {
 function Caption({
   status,
   agents,
+  testError,
 }: {
   status: SlackStatus;
   agents: SlackGroupAgent[];
+  testError: string | null;
 }) {
+  if (testError !== null) {
+    return (
+      <p className="text-[11.5px] text-red">
+        <span className="font-semibold text-ink">Test failed.</span> {testError}
+      </p>
+    );
+  }
+
   if (status.kind === 'error') {
     return <p className="text-[11.5px] text-red">{status.message}</p>;
   }
@@ -162,18 +186,36 @@ function Caption({
     );
   }
 
-  return <p className="text-[11.5px] text-subtle">{usedBySummary(agents)}</p>;
+  if (status.kind === 'not-added' || status.kind === 'needs-auth') {
+    return <p className="text-[11.5px] text-subtle">{SIGN_IN_PROMISE}</p>;
+  }
+
+  return (
+    <p className="text-[11.5px] text-subtle">
+      {usedBySummary(agents)}
+      {TOKEN_HOLDER}
+    </p>
+  );
+}
+
+/** `Test` until one has failed, `Test again` after — the retry it actually needs. */
+function testLabel(testing: boolean, failed: boolean): string {
+  if (testing) return 'Testing…';
+
+  return failed ? 'Test again' : 'Test';
 }
 
 function Actions({
   status,
   testing,
+  testFailed,
   onSignIn,
   onSignOut,
   onTest,
 }: {
   status: SlackStatus;
   testing: boolean;
+  testFailed: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
   onTest: () => void;
@@ -190,7 +232,7 @@ function Actions({
       return (
         <>
           <Button onClick={onTest} disabled={testing}>
-            {testing ? 'Testing…' : 'Test'}
+            {testLabel(testing, testFailed)}
           </Button>
           <Button variant="danger" onClick={onSignOut}>
             Sign out
@@ -200,7 +242,7 @@ function Actions({
     case 'pending-approval':
       return (
         <Button onClick={onTest} disabled={testing}>
-          {testing ? 'Testing…' : 'Test again'}
+          {testLabel(testing, true)}
         </Button>
       );
     case 'error':
@@ -252,6 +294,14 @@ function advancedSuffix(): string | null {
 
 export function SlackGroup({ agents }: SlackGroupProps) {
   const [status, setStatus] = useState<SlackStatus | null>(null);
+  /**
+   * The last Test failure, held apart from {@link status}.
+   *
+   * See the module comment: a failed tool call is not a failed connection, and
+   * letting it overwrite the status turned "Signed in" into "Failed" and
+   * offered a browser re-auth as the fix.
+   */
+  const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -274,6 +324,8 @@ export function SlackGroup({ agents }: SlackGroupProps) {
 
   const applyResult = (result: SlackStatus | null) => {
     setStatus(result ?? bridgeError());
+    // Any fresh answer about the credential retires the old Test's verdict.
+    setTestError(null);
   };
 
   const handleSignIn = () => {
@@ -293,7 +345,21 @@ export function SlackGroup({ agents }: SlackGroupProps) {
     setTesting(true);
     void testSlack().then((result) => {
       setTesting(false);
-      applyResult(result);
+
+      const next = result ?? bridgeError();
+
+      /*
+        Only the failure is held aside. Every other answer the probe can give —
+        `connected`, `needs-auth`, `pending-approval` — is real news about the
+        credential and belongs in the pill, which is the whole reason the turn
+        was spent.
+      */
+      if (next.kind === 'error') {
+        setTestError(next.message);
+        return;
+      }
+
+      applyResult(next);
     });
   };
 
@@ -310,12 +376,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
             {status === null ? (
               <span className="text-[11.5px] text-subtle">…</span>
             ) : (
-              <>
-                <StatePill kind={pillKindOf(status)} />
-                {identityOf(status) !== null && (
-                  <span className="text-[12.5px] text-muted">{identityOf(status)}</span>
-                )}
-              </>
+              <StatePill kind={pillKindOf(status)} />
             )}
           </div>
 
@@ -324,6 +385,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
               <Actions
                 status={status}
                 testing={testing}
+                testFailed={testError !== null}
                 onSignIn={handleSignIn}
                 onSignOut={handleSignOut}
                 onTest={handleTest}
@@ -338,7 +400,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
           {status === null ? (
             <p className="text-[11.5px] text-subtle">…</p>
           ) : (
-            <Caption status={status} agents={agents} />
+            <Caption status={status} agents={agents} testError={testError} />
           )}
 
           <button
