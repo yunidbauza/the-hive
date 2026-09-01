@@ -7,7 +7,7 @@ import {
   STATUS_LABEL,
   STATUS_TEXT,
 } from '@components/ui/status-dot';
-import { describeNextRun, describeSkips } from '@lib/agents';
+import { describeNextRun, describeSkips, slackSignedOut } from '@lib/agents';
 import { useAgentAskRef, useEntity, useOpenEntity } from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
@@ -74,6 +74,14 @@ export function AgentRow({ id }: AgentRowProps) {
           .join(' · ')
       : '';
 
+  /*
+    The chip's tooltip, alongside `skipped N` rather than in place of it
+    (HIVE-123). `skipped N` already answers "is anything wrong?"; this answers
+    "what, specifically?" for the one reason a hover can name without the row
+    growing another line — undefined leaves the chip with no `title` at all.
+  */
+  const slackReason = slackSignedOut(entity) ? 'slack: not signed in' : undefined;
+
   return (
     <button
       type="button"
@@ -84,7 +92,10 @@ export function AgentRow({ id }: AgentRowProps) {
         active ? 'bg-active' : 'hover:bg-hover',
       )}
     >
-      <span className="relative flex size-7 shrink-0 items-center justify-center rounded-lg bg-chip">
+      <span
+        className="relative flex size-7 shrink-0 items-center justify-center rounded-lg bg-chip"
+        title={slackReason}
+      >
         <Icon name={entity.icon} size={15} className="text-brand" />
 
         {/*

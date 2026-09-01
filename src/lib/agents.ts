@@ -5,6 +5,7 @@ import {
   type AgentStatus,
   type AgentsSnapshot,
   type AgentWriteResult,
+  type RunSummary,
   type WakeSpec,
 } from '@shared/agent-contract';
 
@@ -140,6 +141,30 @@ export function describeSkips(agent: {
   skipsSinceRun: number;
 }): string | undefined {
   return agent.skipsSinceRun > 0 ? `skipped ${agent.skipsSinceRun}` : undefined;
+}
+
+/**
+ * `slack: not signed in`, or nothing — the reason a scheduled wake is being
+ * skipped, when it is Slack (HIVE-123).
+ *
+ * No new field to hang this on: `RunSummary.slack`, already persisted at
+ * close (`runs.ts`) and already read by the scheduler's own `slackSignedOut`
+ * to decide the skip, is the one true record of "why". This reads the exact
+ * same value rather than a second, parallel copy of it — main's decision and
+ * the row's tooltip cannot disagree about what caused a skip because both
+ * derive it from the same run.
+ *
+ * Takes only `runs`, not `mcp` — the store's `Agent` entity does not carry
+ * `mcp` (only the Settings pane's raw `AgentSummary` snapshot does), and
+ * nothing here needs it: `RunSummary.slack` is only ever set from an `init`
+ * event that named the `slack` server, which itself only happens when the
+ * definition's `mcp:` asked for it (`agent-config.ts`). "The last run named
+ * slack and reported `needs-auth`" already **is** "an agent with `mcp:
+ * [slack]` is signed out" — there is no agent for which the two answers can
+ * disagree.
+ */
+export function slackSignedOut(agent: { runs: RunSummary[] }): boolean {
+  return agent.runs.at(-1)?.slack === 'needs-auth';
 }
 
 /**

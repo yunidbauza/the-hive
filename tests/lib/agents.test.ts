@@ -13,6 +13,7 @@ import {
   resetAgents,
   runsToday,
   saveAgent,
+  slackSignedOut,
   subscribeAgents,
 } from '@/lib/agents';
 
@@ -268,6 +269,47 @@ describe('describeSkips', () => {
 
   it('names the count once there is one', () => {
     expect(describeSkips({ skipsSinceRun: 3 })).toBe('skipped 3');
+  });
+});
+
+describe('slackSignedOut', () => {
+  const run = (over: Record<string, unknown> = {}) => ({
+    run: 'r1',
+    trigger: 'interval',
+    startedAt: 0,
+    endedAt: 1,
+    outcome: 'done' as const,
+    ...over,
+  });
+
+  it('is true when the last run found slack signed out', () => {
+    expect(
+      slackSignedOut({ runs: [run({ slack: 'needs-auth' })] }),
+    ).toBe(true);
+  });
+
+  it('is false when the last run found slack connected', () => {
+    expect(
+      slackSignedOut({ runs: [run({ slack: 'connected' })] }),
+    ).toBe(false);
+  });
+
+  it('is false for a run that never named slack', () => {
+    expect(slackSignedOut({ runs: [run()] })).toBe(false);
+  });
+
+  // An agent that has never run must not read as signed out — see the
+  // scheduler's own `slackSignedOut`, which the same rule protects.
+  it('is false for an agent that has never run', () => {
+    expect(slackSignedOut({ runs: [] })).toBe(false);
+  });
+
+  it('reads only the most recent run', () => {
+    expect(
+      slackSignedOut({
+        runs: [run({ slack: 'needs-auth' }), run({ slack: 'connected' })],
+      }),
+    ).toBe(false);
   });
 });
 

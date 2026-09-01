@@ -134,6 +134,63 @@ describe('AgentRow', () => {
     expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
   });
 
+  /*
+    HIVE-123: a scheduled skip caused by a signed-out Slack is otherwise
+    indistinguishable from an `onchange` no-op skip — the row only ever shows
+    a generic `skipped N`. The chip's tooltip names the reason, read straight
+    off the last run's own `RunSummary.slack` rather than a second field, and
+    it sits *alongside* the count rather than replacing it.
+  */
+  it('names slack in the chip tooltip when the last run found it signed out', () => {
+    hydrate({
+      status: 'sleeping',
+      skipsSinceRun: 2,
+      runs: [
+        {
+          run: 'r1',
+          trigger: 'interval',
+          startedAt: 0,
+          endedAt: 1,
+          outcome: 'done',
+          slack: 'needs-auth',
+        },
+      ],
+    });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.getByTitle('slack: not signed in')).toBeInTheDocument();
+    expect(screen.getByText(/skipped 2/)).toBeInTheDocument();
+  });
+
+  it('shows no slack tooltip once the last run found it connected', () => {
+    hydrate({
+      status: 'sleeping',
+      runs: [
+        {
+          run: 'r1',
+          trigger: 'interval',
+          startedAt: 0,
+          endedAt: 1,
+          outcome: 'done',
+          slack: 'connected',
+        },
+      ],
+    });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.queryByTitle('slack: not signed in')).not.toBeInTheDocument();
+  });
+
+  it('shows no slack tooltip for an agent that has never run', () => {
+    hydrate({ status: 'sleeping', skipsSinceRun: 1 });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.queryByTitle('slack: not signed in')).not.toBeInTheDocument();
+  });
+
   it('reads manual for a sleeping agent nothing schedules', () => {
     hydrate({ status: 'sleeping' });
 

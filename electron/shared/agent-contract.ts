@@ -816,6 +816,13 @@ export interface RunSummary {
    * *next* tick to decide whether a scheduled wake is worth spending — an
    * agent that has never run has no entry here and is never skipped on that
    * account.
+   *
+   * This field **is** the skip's reason, not a fact beside it: a scheduled
+   * skip is only ever caused by `needs-auth` here (`scheduler.ts`'s
+   * `slackSignedOut`) or by `check: 'onchange'` finding nothing new, and the
+   * two are told apart by re-reading this rather than by a second, parallel
+   * "why did that skip happen" field. The renderer's chip tooltip
+   * (`src/lib/agents.ts`'s `slackSignedOut`) reads the exact same value.
    */
   slack?: 'connected' | 'needs-auth';
 }
