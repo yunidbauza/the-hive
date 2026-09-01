@@ -43,6 +43,18 @@ import { join } from 'node:path';
  * change is the thing Claude has just appended. The line being looked for is
  * always near the end of the file at the only moment anyone asks.
  *
+ * ## What guards this against Claude Code changing its mind
+ *
+ * These two records are someone else's private format, so a release that renames
+ * or drops them would make `classify` answer `unknown` forever and silently
+ * report every title as `agent` — the feature defeated with nothing to see.
+ *
+ * `tests/live/title-conformance.test.ts` is the guard, and it already was one
+ * before this module existed: it asserts, against a real `claude`, that an
+ * unnamed session reaches an `ai-title` and that a named one writes a
+ * `custom-title`. Both assertions are exactly the shapes read here, so a format
+ * change fails `pnpm test:title` rather than going unnoticed.
+ *
  * ## Why "unknown" is a real answer
  *
  * The OSC repaint and the transcript append are not ordered with respect to each
