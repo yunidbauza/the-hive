@@ -16,6 +16,18 @@ const NEEDS_AUTH = `slack:
   Type: http
 `;
 
+const NOT_CONNECTED = `slack:
+  Scope: User config
+  Status: ✗ Not connected
+  Type: http
+`;
+
+const DISCONNECTED = `slack:
+  Scope: User config
+  Status: Disconnected
+  Type: http
+`;
+
 describe('parseMcpGet', () => {
   it('reads a connected server', () => {
     expect(parseMcpGet(CONNECTED)).toEqual({ kind: 'connected' });
@@ -27,6 +39,20 @@ describe('parseMcpGet', () => {
 
   it('treats output with no Status line as not-added', () => {
     expect(parseMcpGet('No MCP server found')).toEqual({ kind: 'not-added' });
+  });
+
+  it('rejects "Not connected" as an error, not connected', () => {
+    expect(parseMcpGet(NOT_CONNECTED)).toEqual({
+      kind: 'error',
+      message: 'Status: ✗ Not connected',
+    });
+  });
+
+  it('rejects "Disconnected" as an error, not connected', () => {
+    expect(parseMcpGet(DISCONNECTED)).toEqual({
+      kind: 'error',
+      message: 'Status: Disconnected',
+    });
   });
 });
 
@@ -47,7 +73,7 @@ describe('readSlackStatus', () => {
     expect(readSlackStatus('claude', run)).toEqual({ kind: 'connected' });
   });
 
-  it('asks about the user scope — a local server is invisible to an agent', () => {
+  it('runs `claude mcp get slack` with no scope argument', () => {
     const calls: string[][] = [];
     const run = (_file: string, args: readonly string[]) => {
       calls.push([...args]);
@@ -57,7 +83,7 @@ describe('readSlackStatus', () => {
 
     readSlackStatus('claude', run);
 
-    expect(calls[0]).toEqual(['mcp', 'get', 'slack', '--scope', 'user']);
+    expect(calls[0]).toEqual(['mcp', 'get', 'slack']);
   });
 
   it('reports a thrown spawn failure as an error rather than throwing', () => {

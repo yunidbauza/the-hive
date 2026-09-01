@@ -26,10 +26,11 @@ export function parseMcpGet(stdout: string): SlackStatus {
   /*
     Matched on the words rather than on the glyph. The tick and the bang are
     decoration and have changed before; "Connected" and "Needs authentication"
-    are the message.
+    are the message. Strip the Status: label and any leading glyph before matching.
   */
-  if (/connected/i.test(line)) return { kind: 'connected' };
-  if (/needs authentication/i.test(line)) return { kind: 'needs-auth' };
+  const message = line.replace(/^Status:\s*\S*\s*/, '');
+  if (/^connected$/i.test(message)) return { kind: 'connected' };
+  if (/^needs authentication$/i.test(message)) return { kind: 'needs-auth' };
 
   return { kind: 'error', message: line };
 }
@@ -39,12 +40,14 @@ export function readSlackStatus(claude: string, run: RunCommand): SlackStatus {
 
   try {
     /*
-      `--scope user`, not the default `local`. A local server lives under this
-      project's key in `~/.claude.json`, and an agent runs with cwd
-      `~/.hive/work/<name>` — a different project entirely, so a locally-scoped
-      sign-in would show as connected here and be missing at wake time.
+      `claude mcp get` searches scopes automatically and does not accept a
+      `--scope` argument — attempting to pass one fails with "unknown option".
+      It reports servers visible to the current process, which is sufficient:
+      agents run with cwd `~/.hive/work/<name>`, a different project entirely,
+      so a locally-scoped sign-in would show here and be missing at wake time
+      (a third Finding, deferred as Minor).
     */
-    result = run(claude, ['mcp', 'get', SLACK_SERVER_KEY, '--scope', 'user']);
+    result = run(claude, ['mcp', 'get', SLACK_SERVER_KEY]);
   } catch (cause) {
     return {
       kind: 'error',
