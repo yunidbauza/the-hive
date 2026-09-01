@@ -375,6 +375,17 @@ export interface Agent {
   task: string;
   status: AgentStatus;
   wake: WakeSpec;
+  /**
+   * `mcp:` from the definition, verbatim (HIVE-123).
+   *
+   * A definition fact, carried through unchanged from `AgentSummary.mcp` by
+   * `hydrateAgents` — not run state, and not touched by `mergeRunState`'s
+   * push path. It is what lets the row's chip tooltip gate on the agent's
+   * **current** `mcp:` list rather than inferring "still names Slack" from
+   * run history that a later edit can leave stale: `AgentRunState.runs` is
+   * never cleared or invalidated when a definition is saved.
+   */
+  mcp: string[];
   lastRunAt?: number;
   nextRunAt?: number;
   /**

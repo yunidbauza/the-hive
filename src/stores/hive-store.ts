@@ -2576,6 +2576,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           sub: summary.description,
           status: summary.status,
           wake: summary.wake,
+          mcp: summary.mcp,
           ...(summary.lastRunAt === undefined
             ? {}
             : { lastRunAt: summary.lastRunAt }),

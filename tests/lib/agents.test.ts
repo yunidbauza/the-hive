@@ -282,33 +282,48 @@ describe('slackSignedOut', () => {
     ...over,
   });
 
-  it('is true when the last run found slack signed out', () => {
+  it('is true when the agent names slack and the last run found it signed out', () => {
     expect(
-      slackSignedOut({ runs: [run({ slack: 'needs-auth' })] }),
+      slackSignedOut({ mcp: ['slack'], runs: [run({ slack: 'needs-auth' })] }),
     ).toBe(true);
   });
 
   it('is false when the last run found slack connected', () => {
     expect(
-      slackSignedOut({ runs: [run({ slack: 'connected' })] }),
+      slackSignedOut({ mcp: ['slack'], runs: [run({ slack: 'connected' })] }),
     ).toBe(false);
   });
 
   it('is false for a run that never named slack', () => {
-    expect(slackSignedOut({ runs: [run()] })).toBe(false);
+    expect(slackSignedOut({ mcp: ['slack'], runs: [run()] })).toBe(false);
   });
 
   // An agent that has never run must not read as signed out — see the
   // scheduler's own `slackSignedOut`, which the same rule protects.
   it('is false for an agent that has never run', () => {
-    expect(slackSignedOut({ runs: [] })).toBe(false);
+    expect(slackSignedOut({ mcp: ['slack'], runs: [] })).toBe(false);
   });
 
   it('reads only the most recent run', () => {
     expect(
       slackSignedOut({
+        mcp: ['slack'],
         runs: [run({ slack: 'needs-auth' }), run({ slack: 'connected' })],
       }),
+    ).toBe(false);
+  });
+
+  /*
+    The re-review's finding (HIVE-123): `AgentRunState.runs` is never cleared
+    or invalidated when a definition is saved, so a `needs-auth` run followed
+    by removing `slack` from `mcp:` leaves a stale reading in `runs` alone.
+    The gate has to be the agent's *current* `mcp:` list, not an inference
+    from run history — a definition that no longer names slack must read as
+    not signed out even with a needs-auth run sitting in its history.
+  */
+  it('is false once the definition no longer names slack, even with a stale needs-auth run', () => {
+    expect(
+      slackSignedOut({ mcp: [], runs: [run({ slack: 'needs-auth' })] }),
     ).toBe(false);
   });
 });

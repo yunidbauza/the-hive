@@ -144,6 +144,7 @@ describe('AgentRow', () => {
   it('names slack in the chip tooltip when the last run found it signed out', () => {
     hydrate({
       status: 'sleeping',
+      mcp: ['slack'],
       skipsSinceRun: 2,
       runs: [
         {
@@ -166,6 +167,7 @@ describe('AgentRow', () => {
   it('shows no slack tooltip once the last run found it connected', () => {
     hydrate({
       status: 'sleeping',
+      mcp: ['slack'],
       runs: [
         {
           run: 'r1',
@@ -184,7 +186,37 @@ describe('AgentRow', () => {
   });
 
   it('shows no slack tooltip for an agent that has never run', () => {
-    hydrate({ status: 'sleeping', skipsSinceRun: 1 });
+    hydrate({ status: 'sleeping', mcp: ['slack'], skipsSinceRun: 1 });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.queryByTitle('slack: not signed in')).not.toBeInTheDocument();
+  });
+
+  /*
+    The re-review's finding: `AgentRunState.runs` is never cleared or
+    invalidated when a definition is saved (`saveAgent`/`renameAgent`/
+    `deleteAgent` in `state.ts` all leave run history untouched). An agent
+    that removed `slack` from its `mcp:` after a `needs-auth` run must not
+    keep the tooltip — the gate is the agent's *current* definition, not an
+    inference from history alone.
+  */
+  it('shows no slack tooltip once the definition no longer names slack, even with a stale needs-auth run', () => {
+    hydrate({
+      status: 'sleeping',
+      mcp: [],
+      skipsSinceRun: 2,
+      runs: [
+        {
+          run: 'r1',
+          trigger: 'interval',
+          startedAt: 0,
+          endedAt: 1,
+          outcome: 'done',
+          slack: 'needs-auth',
+        },
+      ],
+    });
 
     render(<AgentRow id="watcher" />);
 

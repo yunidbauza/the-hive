@@ -37,7 +37,7 @@ describe('createScheduler', () => {
   let state: ReturnType<typeof createAgentState>;
   let scheduler: ReturnType<typeof createScheduler>;
   /** What `scheduleFor` answers. Empty means "no usable definition". */
-  let schedules: Map<string, { wake: WakeSpec; dailyUsd?: number }>;
+  let schedules: Map<string, { wake: WakeSpec; dailyUsd?: number; mcp?: string[] }>;
   /** Makes `run` answer a refusal, as `RunTracker` does for a working agent. */
   let refuse: boolean;
   /** Whether the registry has answered its first listing yet. */
@@ -1069,7 +1069,9 @@ describe('createScheduler', () => {
       clock = NOON;
       // Armed before anything is arranged — see the interval tick's beforeEach.
       scheduler.start();
-      schedules.set(AGENT, { wake: every5m });
+      // The default for this block is an agent that currently names slack;
+      // the stale-definition case below overrides it to `[]`.
+      schedules.set(AGENT, { wake: every5m, mcp: ['slack'] });
     });
 
     it('skips a scheduled wake whose last run found slack signed out', () => {
@@ -1144,6 +1146,60 @@ describe('createScheduler', () => {
             startedAt: NOON - 600_000,
             endedAt: NOON - 599_000,
             outcome: 'done',
+          },
+        ],
+      });
+
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
+    /*
+      The re-review's finding: `state.ts`'s `saveAgent`/`renameAgent`/
+      `deleteAgent` never clear or invalidate `AgentRunState.runs` when a
+      definition is saved. An agent that removed `slack` from `mcp:` after a
+      `needs-auth` run must not keep skipping on a fact that stopped being
+      true — the gate is the schedule's *current* `mcp`, read off the same
+      map `wake` already comes from, not an inference from run history alone.
+    */
+    it('does not skip once the definition no longer names slack, even with a stale needs-auth run', () => {
+      schedules.set(AGENT, { wake: every5m, mcp: [] });
+      state.patch(AGENT, {
+        nextRunAt: NOON,
+        lastRunAt: NOON - 600_000,
+        runs: [
+          {
+            run: 'r1',
+            trigger: 'interval',
+            startedAt: NOON - 600_000,
+            endedAt: NOON - 599_000,
+            outcome: 'done',
+            slack: 'needs-auth',
+          },
+        ],
+      });
+
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
+    // A schedule from before HIVE-123 (no `mcp` at all) must not crash or
+    // silently start skipping — absent reads as `[]`, same as an empty list.
+    it('does not skip when the schedule carries no mcp field at all', () => {
+      schedules.set(AGENT, { wake: every5m });
+      state.patch(AGENT, {
+        nextRunAt: NOON,
+        lastRunAt: NOON - 600_000,
+        runs: [
+          {
+            run: 'r1',
+            trigger: 'interval',
+            startedAt: NOON - 600_000,
+            endedAt: NOON - 599_000,
+            outcome: 'done',
+            slack: 'needs-auth',
           },
         ],
       });

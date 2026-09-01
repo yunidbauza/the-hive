@@ -8,6 +8,7 @@ import {
   type RunSummary,
   type WakeSpec,
 } from '@shared/agent-contract';
+import { SLACK_SERVER_KEY } from '@shared/slack-contract';
 
 /**
  * The agent definitions, as the renderer sees them (HIVE-114).
@@ -154,17 +155,25 @@ export function describeSkips(agent: {
  * the row's tooltip cannot disagree about what caused a skip because both
  * derive it from the same run.
  *
- * Takes only `runs`, not `mcp` — the store's `Agent` entity does not carry
- * `mcp` (only the Settings pane's raw `AgentSummary` snapshot does), and
- * nothing here needs it: `RunSummary.slack` is only ever set from an `init`
- * event that named the `slack` server, which itself only happens when the
- * definition's `mcp:` asked for it (`agent-config.ts`). "The last run named
- * slack and reported `needs-auth`" already **is** "an agent with `mcp:
- * [slack]` is signed out" — there is no agent for which the two answers can
- * disagree.
+ * **Two conditions, not one — `runs` alone is not enough.** A first version
+ * of this read only `runs.at(-1)?.slack`, reasoning that the field is never
+ * set unless the definition named `slack`. That direction holds, but nothing
+ * clears `AgentRunState.runs` when a definition is *edited* — `saveAgent`
+ * removing `slack` from `mcp:` after a `needs-auth` run leaves the stale
+ * reading in place — so a tooltip gated on run history alone would keep
+ * naming Slack for an agent that no longer mentions it. `mcp` is the
+ * agent's **current** definition (`AgentSummary.mcp`, carried onto the
+ * store's `Agent` entity by `hydrateAgents`), so both must agree: the last
+ * run found it signed out, *and* the agent still names it today.
  */
-export function slackSignedOut(agent: { runs: RunSummary[] }): boolean {
-  return agent.runs.at(-1)?.slack === 'needs-auth';
+export function slackSignedOut(agent: {
+  mcp: string[];
+  runs: RunSummary[];
+}): boolean {
+  return (
+    agent.mcp.includes(SLACK_SERVER_KEY) &&
+    agent.runs.at(-1)?.slack === 'needs-auth'
+  );
 }
 
 /**

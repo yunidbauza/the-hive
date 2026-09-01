@@ -370,7 +370,10 @@ const ledgerAgents = new Set<string>();
  * a map the next tick reads again. An `invalid` definition is left out, which
  * is what keeps a broken file off the timer while it stays listed to be fixed.
  */
-const agentSchedules = new Map<string, { wake: WakeSpec; dailyUsd?: number }>();
+const agentSchedules = new Map<
+  string,
+  { wake: WakeSpec; dailyUsd?: number; mcp: string[] }
+>();
 /**
  * Whether {@link agentSchedules} has been filled at least once.
  *
@@ -421,10 +424,13 @@ function refreshKnownAgents(): void {
         // the scheduler is asked synchronously, from inside `Ledger.append`.
         if (agent.wake.on.includes('ledger')) ledgerAgents.add(agent.name);
         // And the schedule, for the tick — which is asked just as
-        // synchronously, sixty seconds at a time.
+        // synchronously, sixty seconds at a time. `mcp` rides along so the
+        // tick's Slack skip (HIVE-123) can gate on the agent's *current*
+        // definition rather than on stale run history.
         agentSchedules.set(agent.name, {
           wake: agent.wake,
           ...(agent.dailyUsd === undefined ? {} : { dailyUsd: agent.dailyUsd }),
+          mcp: agent.mcp,
         });
       }
 

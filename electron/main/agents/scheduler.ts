@@ -11,6 +11,7 @@ import {
   type LedgerPostRequest,
 } from '@shared/ledger-contract';
 import { expiredAsks } from '@shared/ledger-derive';
+import { SLACK_SERVER_KEY } from '@shared/slack-contract';
 
 import { decide, decideForStatus, type WakeDecision } from './scheduler-rules';
 import type { AgentState } from './state';
@@ -110,8 +111,18 @@ export interface SchedulerDeps {
    *
    * Read every tick rather than cached here: that is what makes "a definition
    * change re-arms the schedule" need no timer to re-arm.
+   *
+   * `mcp` rides along for the same reason `dailyUsd` does (HIVE-123): the
+   * scheduler's Slack skip has to gate on the agent's **current** `mcp:`
+   * list, not on whatever an old run's `RunSummary.slack` says, or an agent
+   * that removed `slack` from its definition after a `needs-auth` run would
+   * skip forever on a fact that stopped being true. Optional, and read as `[]`
+   * when absent, so a schedule that predates this field (every existing test
+   * fixture) still means "does not name Slack" rather than failing to type.
    */
-  schedules: () => ReadonlyMap<string, { wake: WakeSpec; dailyUsd?: number }> | undefined;
+  schedules: () =>
+    | ReadonlyMap<string, { wake: WakeSpec; dailyUsd?: number; mcp?: string[] }>
+    | undefined;
   /**
    * Tell the renderer this agent's row changed.
    *
@@ -305,23 +316,30 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   };
 
   /**
-   * Did the last run find Slack signed out? (HIVE-123)
+   * Did the last run find Slack signed out, and does the agent still name it?
+   * (HIVE-123)
    *
-   * Read off {@link AgentRunState.runs}' own last entry — `RunSummary.slack`,
-   * carried onto it at close from the run's `init` event (`runs.ts`) — rather
-   * than a probe: the event is already on the wire every wake, so this costs
-   * nothing and needs no dependency the scheduler was not already given.
+   * Two conditions, not one. `RunSummary.slack`, carried onto the last run at
+   * close from its `init` event (`runs.ts`), says what the *last run* found —
+   * but nothing clears `AgentRunState.runs` when a definition is edited
+   * (`state.ts`'s `saveAgent`/`renameAgent`/`deleteAgent` all leave run
+   * history untouched), so a `needs-auth` run followed by removing `slack`
+   * from `mcp:` would otherwise skip forever on a fact that stopped being
+   * true. `mcp` is the agent's **current** definition, read off the same
+   * `schedules()` map the tick already resolves `wake` from — not a second,
+   * parallel lookup — so the gate is "signed out *and still relevant*", not
+   * an inference from history alone.
    *
-   * `undefined` covers both an agent whose `mcp:` never named `slack` and one
-   * that has **never run at all**, and both read as "not signed out": a
-   * signed-out-at-boot Slack must not wedge an agent permanently, so the
-   * first wake is always let through to discover its own status. Only the
-   * *clock-driven* tick is gated — a ledger wake or a manual "Run now" still
-   * reaches `RunTracker.run` directly, so the agent stays reachable while its
-   * autonomous polling is quiet.
+   * `undefined`/absent `slack` covers both an agent whose `mcp:` never named
+   * `slack` and one that has **never run at all**, and both read as "not
+   * signed out": a signed-out-at-boot Slack must not wedge an agent
+   * permanently, so the first wake is always let through to discover its own
+   * status. Only the *clock-driven* tick is gated — a ledger wake or a manual
+   * "Run now" still reaches `RunTracker.run` directly, so the agent stays
+   * reachable while its autonomous polling is quiet.
    */
-  const slackSignedOut = (agent: AgentRunState): boolean =>
-    agent.runs.at(-1)?.slack === 'needs-auth';
+  const slackSignedOut = (agent: AgentRunState, mcp: readonly string[]): boolean =>
+    mcp.includes(SLACK_SERVER_KEY) && agent.runs.at(-1)?.slack === 'needs-auth';
 
   /**
    * Time passed (HIVE-121).
@@ -514,7 +532,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (due !== agent.nextRunAt) arm(name, agent.nextRunAt, due);
       if (now < due) continue;
 
-      if (slackSignedOut(agent)) {
+      if (slackSignedOut(agent, schedule.mcp ?? [])) {
         arm(name, due, next, {
           skipsSinceRun: (agent.skipsSinceRun ?? 0) + 1,
         });

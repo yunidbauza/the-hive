@@ -40,6 +40,7 @@ const agent: Agent = {
   task: 'watch the channel',
   status: 'sleeping',
   wake: { on: [] },
+  mcp: [],
   runsSinceRotate: 0,
   rotateAfter: 50,
   skipsSinceRun: 0,
