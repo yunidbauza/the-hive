@@ -120,6 +120,7 @@ import type {
   SkillWriteRequest,
   SkillsSnapshot,
 } from './skills-contract';
+import type { SlackStatus } from './slack-contract';
 import type { PickedTheme, SaveThemeRequest } from './theme-contract';
 import type { UpdateStatus } from './update-contract';
 
@@ -262,6 +263,19 @@ export const CH = {
   jiraComments: 'jira:comments',
   jiraLinks: 'jira:links',
   jiraAddComment: 'jira:add-comment',
+  /**
+   * Slack's MCP server (HIVE-123).
+   *
+   * Four verbs and, like Jira's, **no verb that returns a credential** — but
+   * for a stronger reason: there is no credential here to return. Claude Code
+   * holds the OAuth token in `~/.claude/.credentials.json` and refreshes it;
+   * this app only asks what state it is in. None of the four takes a payload,
+   * so none of them can be widened by a compromised renderer.
+   */
+  slackStatus: 'slack:status',
+  slackSignIn: 'slack:sign-in',
+  slackSignOut: 'slack:sign-out',
+  slackTest: 'slack:test',
   /**
    * The pull requests the configured repositories hold.
    *
@@ -1508,6 +1522,28 @@ export interface HiveBridge {
       request: AddJiraCommentRequest,
     ): Promise<JiraResult<JiraComment>>;
   };
+  /**
+   * Slack's MCP server (HIVE-123).
+   *
+   * Four verbs, and — like `jira` — **no verb that returns a credential**. The
+   * reason is stronger here: there is no credential in this app to return at
+   * all. Claude Code holds the OAuth token and refreshes it; this bridge only
+   * asks what state the connection is in, signs in, signs out, and spends one
+   * model turn confirming a workspace admin has approved the server. None of
+   * the four takes an argument, which is what makes a handler that spawns
+   * `claude` safe to expose: there is no argv for a compromised renderer to
+   * reach.
+   */
+  slack: {
+    /** `claude mcp get slack`, parsed. No model turn, answers in well under a second. */
+    status(): Promise<SlackStatus>;
+    /** `claude mcp add` then `claude mcp login slack`, then a re-read of status. */
+    signIn(): Promise<SlackStatus>;
+    /** `claude mcp remove slack`, which drops the credential entry with it. */
+    signOut(): Promise<SlackStatus>;
+    /** The Test button — the only verb here that spends a model turn. */
+    test(): Promise<SlackStatus>;
+  };
   /** OS notifications raised by main (story 106). */
   notifications: {
     /**
@@ -1818,6 +1854,12 @@ export const RESIZE_THROTTLE_MS = 50;
  * and `answer` take no `from`; main supplies {@link OVERMIND} and would
  * overwrite anything a caller sent, so this namespace cannot be used to forge
  * another party's words the way a compromised page could try.
+ *
+ * HIVE-123 adds `slack`. What a web page can now do that it could not before:
+ * read Slack's MCP connection state, sign in, sign out, and spend one model
+ * turn confirming a workspace admin has approved the server. None of the four
+ * verbs takes an argument, and none returns a credential — Claude Code holds
+ * the OAuth token, this app only asks what state it is in.
  */
 export const BRIDGE_KEYS = [
   'agents',
@@ -1832,6 +1874,7 @@ export const BRIDGE_KEYS = [
   'pty',
   'session',
   'skills',
+  'slack',
   'theme',
   'ui',
   'updates',
@@ -2162,6 +2205,16 @@ export const BRIDGE_JIRA_KEYS = [
   'links',
   'addComment',
 ] as const;
+
+/**
+ * The exact key set of `window.hive.slack` (HIVE-123).
+ *
+ * Four, and the count is the security story: no verb here returns a
+ * credential, and the reason is stronger than Jira's — there is no credential
+ * in this app to return at all. A fifth verb would be the one addition this
+ * list exists to make impossible to add quietly.
+ */
+export const BRIDGE_SLACK_KEYS = ['status', 'signIn', 'signOut', 'test'] as const;
 
 /** The exact key set of `window.hive.notifications`. */
 /**

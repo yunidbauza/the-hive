@@ -15,6 +15,7 @@ import {
   BRIDGE_PTY_KEYS,
   BRIDGE_SESSION_KEYS,
   BRIDGE_SKILLS_KEYS,
+  BRIDGE_SLACK_KEYS,
   BRIDGE_THEME_KEYS,
   BRIDGE_UI_KEYS,
   CH,
@@ -74,6 +75,8 @@ const notifications = () =>
   exposed.notifications as Record<string, (...args: unknown[]) => unknown>;
 const jira = () =>
   exposed.jira as Record<string, (...args: unknown[]) => unknown>;
+const slack = () =>
+  exposed.slack as Record<string, (...args: unknown[]) => unknown>;
 const github = () =>
   exposed.github as Record<string, (...args: unknown[]) => unknown>;
 const fs = () =>
@@ -139,6 +142,12 @@ describe('exposed surface', () => {
       ...BRIDGE_NOTIFICATIONS_KEYS,
     ].sort());
     expect(Object.keys(jira()).sort()).toEqual([...BRIDGE_JIRA_KEYS].sort());
+    /**
+     * HIVE-123's namespace, checked the same way: the constant is only an
+     * alarm if something reads it against the object the preload actually
+     * exposes.
+     */
+    expect(Object.keys(slack()).sort()).toEqual([...BRIDGE_SLACK_KEYS].sort());
     /**
      * The fourth time, avoided. `BRIDGE_UPDATES_KEYS` shipped exported and
      * unimported — exactly the shape the note above describes — and was caught
@@ -338,6 +347,46 @@ describe('exposed surface', () => {
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.jiraSetToken, {
       token: 'ATATT-x',
     });
+  });
+
+  /**
+   * HIVE-123's namespace, asserted for what it cannot do — and for a
+   * stronger reason than Jira's: there is no credential in this app to read
+   * back at all, so a fifth verb here could not add one even by mistake.
+   *
+   * Every one of the four routes with **no payload**, which is what makes a
+   * verb that spawns `claude` safe to expose: a caller that tries to smuggle
+   * an argument in has it dropped, because the bridge functions here take no
+   * parameters at all.
+   */
+  it('exposes exactly four verbs, none of them returning a credential (HIVE-123)', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    expect(Object.keys(slack())).not.toContain('token');
+    expect(Object.keys(slack())).not.toContain('getToken');
+    expect(Object.keys(slack())).not.toContain('readToken');
+
+    await slack().status();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.slackStatus);
+
+    await slack().signIn();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.slackSignIn);
+
+    await slack().signOut();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.slackSignOut);
+
+    await slack().test();
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.slackTest);
+  });
+
+  it('passes no payload to any slack verb, whatever the caller tries to smuggle in', async () => {
+    const { ipcRenderer } = await import('electron');
+
+    await (slack().status as (...args: unknown[]) => unknown)({
+      command: '/bin/sh',
+    });
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(CH.slackStatus);
   });
 
   /**

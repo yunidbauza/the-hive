@@ -121,6 +121,7 @@ import type {
   SkillWriteRequest,
   SkillsSnapshot,
 } from '@shared/skills-contract';
+import type { SlackStatus } from '@shared/slack-contract';
 import type { PickedTheme, SaveThemeRequest } from '@shared/theme-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
@@ -438,6 +439,19 @@ const bridge: HiveBridge = {
       request: AddJiraCommentRequest,
     ): Promise<JiraResult<JiraComment>> =>
       ipcRenderer.invoke(CH.jiraAddComment, request),
+  },
+  /*
+    HIVE-123. Four verbs, none of them returning a credential — see the
+    contract for why that is a stronger guarantee than Jira's own. Every one
+    of them takes no argument at all, which is what makes a call that spawns
+    `claude` safe to expose: there is no argv for a compromised renderer to
+    reach.
+  */
+  slack: {
+    status: (): Promise<SlackStatus> => ipcRenderer.invoke(CH.slackStatus),
+    signIn: (): Promise<SlackStatus> => ipcRenderer.invoke(CH.slackSignIn),
+    signOut: (): Promise<SlackStatus> => ipcRenderer.invoke(CH.slackSignOut),
+    test: (): Promise<SlackStatus> => ipcRenderer.invoke(CH.slackTest),
   },
   notifications: {
     onActivate: (callback: (event: NotificationActivateEvent) => void) =>

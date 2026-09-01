@@ -116,6 +116,7 @@ import {
   SESSION_HISTORY_FILE,
   type SessionHistoryEntry,
 } from '@shared/session-history-contract';
+import type { SlackStatus } from '@shared/slack-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
@@ -174,6 +175,9 @@ import { createGithub } from '../integrations/github';
 import { runAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
+import { signInToSlack, signOutOfSlack } from '../integrations/slack/login';
+import { probeSlack } from '../integrations/slack/probe';
+import { readSlackStatus } from '../integrations/slack/status';
 import { createLedger } from '../ledger';
 import { createDeliver } from '../ledger/deliver';
 import { createLedgerNotifier } from '../ledger/notify';
@@ -1313,6 +1317,15 @@ export function registerIpcHandlers(): void {
   */
   const newUuid = (): string => randomUUID();
 
+  /**
+   * Read per call, not captured: a `claudeCommand` edited in Settings must
+   * reach the next run without a restart. There is no per-project override to
+   * resolve — an agent belongs to no project, and neither does Slack's status
+   * read (HIVE-123), which reuses this exact resolver rather than resolving
+   * the binary a second time or hard-coding `'claude'`.
+   */
+  const claudeCommand = (): string => getConfig().claudeCommand;
+
   const buildWakeCommand = createWakeCommand({
     agentsRoot,
     workdir: agentWorkdir,
@@ -1326,10 +1339,7 @@ export function registerIpcHandlers(): void {
     hiveServer: () => mcp.hiveServerSpec(),
     agentMcpFile: (name) => agentMcpConfigFile(app.getPath('userData'), name),
     hookEnv: (name) => hooks.envFor(name),
-    // Read per wake, not captured: a `claudeCommand` edited in Settings must
-    // reach the next run without a restart. There is no per-project override
-    // to resolve — an agent belongs to no project.
-    claudeCommand: () => getConfig().claudeCommand,
+    claudeCommand,
     subscriptionAuth: () => getConfig().subscriptionAuth,
     state: agentState,
     env: () => process.env,
@@ -2270,6 +2280,31 @@ export function registerIpcHandlers(): void {
   handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
     setJira(parseSetJiraRequest(payload)),
   );
+
+  /**
+   * Slack's MCP server (HIVE-123) — four verbs, none taking a payload.
+   *
+   * The same no-payload design `integrations:status` and `jira:status` use:
+   * with nothing arriving from the renderer, there is no argv to guard and
+   * nothing for a compromised renderer to widen. Each handler's own signature
+   * takes no `payload` parameter at all, so a caller that tries to smuggle one
+   * in has it silently ignored rather than acted on — the same shape every
+   * other no-payload verb in this file already has.
+   *
+   * `claudeCommand` is the same resolver `buildWakeCommand` above reads —
+   * `getConfig().claudeCommand`, read fresh on every call so a binary edited
+   * in Settings reaches the next status read without a restart.
+   */
+  handle(CH.slackStatus, (): SlackStatus =>
+    readSlackStatus(claudeCommand(), runCommand),
+  );
+  handle(CH.slackSignIn, (): SlackStatus =>
+    signInToSlack(claudeCommand(), runCommand),
+  );
+  handle(CH.slackSignOut, (): SlackStatus =>
+    signOutOfSlack(claudeCommand(), runCommand),
+  );
+  handle(CH.slackTest, (): SlackStatus => probeSlack(claudeCommand(), runCommand));
 
   /**
    * Cloning a repository (story 102).
