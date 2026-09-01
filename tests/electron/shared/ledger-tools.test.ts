@@ -4,7 +4,7 @@ import { LEDGER_KINDS } from '@shared/ledger-contract';
 import { LEDGER_TOOLS, LEDGER_TOOL_NAMES } from '@shared/ledger-tools';
 
 describe('ledger-tools', () => {
-  it('ships exactly the eight tools the epic names', () => {
+  it('ships exactly the nine tools the epic names', () => {
     expect(LEDGER_TOOL_NAMES).toEqual([
       'ledger_read',
       'ledger_post',
@@ -14,6 +14,7 @@ describe('ledger-tools', () => {
       'ledger_release',
       'ledger_done',
       'ledger_failed',
+      'ledger_handoff',
     ]);
   });
 
@@ -80,8 +81,26 @@ describe('ledger-tools', () => {
 
   it('names only kinds the ledger accepts', () => {
     // Every tool maps to one kind; a typo here is a 400 at runtime.
-    for (const kind of ['post', 'ask', 'answer', 'claim', 'release', 'done', 'failed']) {
+    for (const kind of [
+      'post',
+      'ask',
+      'answer',
+      'claim',
+      'release',
+      'done',
+      'failed',
+      'handoff',
+    ]) {
       expect(LEDGER_KINDS).toContain(kind);
     }
+  });
+
+  it('offers ledger_handoff, requiring only a body', () => {
+    const tool = LEDGER_TOOLS.find((t) => t.name === 'ledger_handoff');
+
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema.required).toEqual(['body']);
+    // A handoff is addressed to your own next session; `to` would be noise.
+    expect(tool?.inputSchema.properties).not.toHaveProperty('to');
   });
 });

@@ -83,7 +83,10 @@ export interface WakeCommandDeps {
   hookEnv: (name: string) => Record<string, string>;
   claudeCommand: () => string;
   subscriptionAuth: () => boolean;
-  /** Read for `sessionUuid` and written on a rotation. */
+  /**
+   * Read for `sessionUuid`, `runsSinceRotate` and the rotation the close left
+   * pending; written only to *consume* that — never to record one.
+   */
   state: AgentState;
   /** `process.env`, by the time HIVE-84 has repaired its `PATH`. */
   env: () => NodeJS.ProcessEnv;
@@ -117,10 +120,19 @@ export interface WakeCommandDeps {
  * The uuid is returned rather than left implicit because `runs.ts` uses it to
  * tell a late `Stop` hook for a finished run apart from one for the run now
  * live under the same name. Only this builder knows it — it is either the uuid
- * being resumed or the one just minted for `--session-id`, and the difference
- * is decided here, by the rotation rule.
+ * being resumed or the one `--session-id` starts — minted here on a first wake,
+ * or taken from the rotation the close left pending — and which of the two it
+ * is gets decided here.
+ *
+ * `lastTurn` travels for the same reason and to the same reader: the close
+ * rotates only a run that was *asked* for a handoff, and nothing downstream can
+ * re-derive that — the counter it was decided from is still sitting at its old
+ * value, deliberately (HIVE-122).
  */
-export type WakeInvocation = WakeCommand & { sessionUuid: string };
+export type WakeInvocation = WakeCommand & {
+  sessionUuid: string;
+  lastTurn: boolean;
+};
 
 export type BuildWakeCommand = (
   name: string,
@@ -245,18 +257,36 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
     const { def } = parsed;
     const previous = deps.state.read(name);
     /*
-      Rotation (`limits.rotate_after`): start a fresh conversation instead of
-      resuming the old one.
-
       A resumed session carries every earlier turn, so its cost per wake climbs
-      without bound. The decision is made here, before anything is prepared,
-      because it decides what gets prepared — but it is *recorded* further down,
-      after the writes that can fail. The counter has to be reset on this side
-      of the run rather than at close: `close()` increments whatever it finds,
-      so a reset written afterwards would be immediately overwritten by the run
-      the rotation started.
+      without bound. Rotation bounds it — but as a handover, not an amnesia
+      (HIVE-122).
+
+      Two wakes, and this decides which of them is happening. The wake that
+      crosses the threshold still `--resume`s the old conversation: an agent
+      asked to summarise what it knows must still be able to remember it. What
+      changes is the prompt. Whether the rotation then actually happens is the
+      *close's* call, gated on a handoff having been posted — which is why
+      nothing here resets the counter or touches the uuid any more.
+
+      `pendingSession` is the other side: a rotation the close already decided,
+      waiting for a wake to start it.
+
+      The `sessionUuid` term is what keeps a *forced* rotation coherent
+      (HIVE-122). Only a run sets that field, so the counter can never reach
+      this arm with it missing — but the console's `rotate` verb can, on an
+      agent installed a minute ago. Without the term that wake would be a last
+      turn on a brand-new `--session-id` session: an agent asked to summarise a
+      conversation that has never happened, and a handoff that could only be
+      invention. With it, a forced rotation on a never-run agent degrades to
+      the ordinary first wake, which is already the fresh session the user was
+      asking for.
     */
-    const rotating = previous.runsSinceRotate >= def.limits.rotateAfter;
+    const pending = previous.pendingSession;
+    const lastTurn =
+      pending === undefined &&
+      previous.sessionUuid !== undefined &&
+      (previous.forceRotate === true ||
+        previous.runsSinceRotate >= def.limits.rotateAfter);
     const workdir = deps.workdir(name);
     const systemPrompt = deps.promptFile(name);
 
@@ -271,27 +301,22 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
     }
 
     /*
-      Written **after** the writes that can fail, and only on the path that
-      returns a command.
-
-      The rotation is still decided above, before anything is prepared, because
-      it decides what gets prepared. But *recording* it before the `mkdir`/
-      `write` meant a transient fs error — a full disk, a home that is not
-      mounted yet — threw away the session uuid and returned `{ problem }`: no
-      run, and the conversation gone anyway. The next wake would then start
-      fresh for no reason a user could see.
-
-      `sessionUuid` is cleared with the counter. Leaving it would mean a rotating
-      run that failed before it emitted a `result` resumed the very conversation
-      the rotation existed to leave behind, with the counter already back at
-      zero.
+      Consumed **after** the writes that can fail, and only on the path that
+      returns a command — the same ordering the rotation record already used,
+      for a sharper version of the same reason. Clearing `pendingSession` before
+      a transient fs error would discard the handoff permanently: no run, and
+      the agent's memory gone anyway, which is strictly worse than the stale
+      counter that ordering was originally written to prevent.
     */
-    if (rotating) {
-      deps.state.patch(name, { runsSinceRotate: 0, sessionUuid: undefined });
+    if (pending !== undefined || previous.forceRotate === true) {
+      deps.state.patch(name, {
+        pendingSession: undefined,
+        forceRotate: undefined,
+      });
     }
 
-    const resuming = rotating ? undefined : previous.sessionUuid;
-    const minted = deps.newUuid();
+    const resuming = pending === undefined ? previous.sessionUuid : undefined;
+    const minted = pending?.uuid ?? deps.newUuid();
 
     const command = wakeCommand({
       claudePath: claude.path,
@@ -300,6 +325,8 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       newUuid: minted,
       trigger,
       ...(extra === undefined ? {} : { extra }),
+      ...(lastTurn ? { lastTurn: true as const } : {}),
+      ...(pending === undefined ? {} : { handoff: pending.handoff }),
       paths: {
         settings,
         pluginDir: deps.pluginDir(),
@@ -317,6 +344,6 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
 
     // Whichever of the two `wakeCommand` actually spelled — `--resume <uuid>`
     // or `--session-id <uuid>`. The tracker matches a Stop hook against it.
-    return { ...command, sessionUuid: resuming ?? minted };
+    return { ...command, sessionUuid: resuming ?? minted, lastTurn };
   };
 }

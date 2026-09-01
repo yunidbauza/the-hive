@@ -171,7 +171,22 @@ const SESSION = 'sess-live-probe';
  */
 const INTERVAL = 'probe-interval';
 
-const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL];
+/**
+ * The agent that hands its memory to a fresh copy of itself (HIVE-122).
+ *
+ * Its own definition for a reason no other probe here has: its frontmatter
+ * pins `rotate_after: 1`, and every other definition in this file pins **50**
+ * precisely so it never rotates. A shared body could not carry both numbers,
+ * and an accidental rotation under any of the others would break the
+ * `--resume <same uuid>` assertions they exist for.
+ *
+ * The codeword it is told is the whole instrument. It exists only inside the
+ * first conversation, so a third wake that can still name it is a wake that
+ * read the handoff — there is nowhere else for it to have come from.
+ */
+const ROTATOR = 'probe-rotator';
+
+const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL, ROTATOR];
 
 const AGENT_MD = `---
 name: ${NAME}
@@ -204,6 +219,46 @@ limits:
 This is a conformance probe. Do not read files, search the disk, or run
 commands — there is nothing here to find. After your ledger inbox, reply with
 the single sentence "interval probe reporting in" and end your turn.
+`;
+
+/**
+ * The rotating probe, as a definition (HIVE-122).
+ *
+ * `rotate_after: 1` is the only interesting line: it makes the *second* wake
+ * the handoff wake, which is the shortest run of the protocol that still has
+ * all three phases in it.
+ *
+ * The body says the codeword is the one fact worth handing over, and nothing
+ * else about how a handoff should be written — the preamble already says that,
+ * and this scenario exists to prove that prose holds against a real model
+ * rather than to restate it. What the body does have to pin is how the answer
+ * comes back: an assistant text block is not a ledger entry, and the only
+ * evidence this suite can read off disk is one the agent wrote there itself.
+ */
+const ROTATOR_MD = `---
+name: ${ROTATOR}
+description: Proves a rotation carries what the old session knew.
+icon: Ghost
+model: haiku
+tools: [TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 1
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find.
+
+You are keeping exactly one fact for this user: a codeword. It is the one thing
+a fresh copy of you would have no other way to learn, so any handoff you write
+must state it.
+
+After your ledger inbox, do exactly one of these and end your turn:
+
+- If you have just been told a codeword, remember it and say nothing.
+- If you are asked for the codeword, call \`ledger_post\` with that codeword as
+  the entire body.
+
+Say nothing else.
 `;
 
 /**
@@ -396,6 +451,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [RESPONDER, RESPONDER_MD],
       [FENCE, fenceMd(marker)],
       [INTERVAL, INTERVAL_MD],
+      [ROTATOR, ROTATOR_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -489,6 +545,10 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
     agentState = createAgentState({ path: agentStateFile() });
 
+    // One generator for both the wake builder and the tracker's rotation, as
+    // the real composition does it (HIVE-122).
+    const newUuid = (): string => randomUUID();
+
     const buildWakeCommand = createWakeCommand({
       agentsRoot,
       workdir: agentWorkdir,
@@ -511,7 +571,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       subscriptionAuth: () => false,
       state: agentState,
       env: () => process.env,
-      newUuid: () => randomUUID(),
+      newUuid,
       // Composed with the real `permissions` runtime (HIVE-119): a one-shot
       // `allow-once` this suite never exercises would otherwise have nowhere
       // to come from, and `grantsFor` is a no-op for every other agent here,
@@ -548,6 +608,24 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
           (ask) => ask.from === name && (started === undefined || ask.id >= started.id),
         );
       },
+      // The real reader, so a live run that rotates is decided the way the app
+      // decides it (HIVE-122).
+      handoffFor: (name, run) => {
+        const { entries } = ledger.read({ from: name });
+        const started = entries.find(
+          (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
+        );
+
+        // Fails closed with no start entry, exactly as production does: a
+        // fallback to "any handoff this agent ever wrote" would rotate off a
+        // previous rotation's body.
+        if (started === undefined) return undefined;
+
+        return entries.findLast(
+          (entry) => entry.kind === 'handoff' && entry.id >= started.id,
+        )?.body;
+      },
+      newUuid,
       pushStatus: (name) => {
         if (agentState.read(name).status === 'working') return;
 
@@ -687,12 +765,22 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       settlers.set(name, resolve);
     });
 
-  /** Wake the agent and resolve when the tracker has finalized the run. */
-  const wake = (trigger: string, name: string = NAME): Promise<void> =>
+  /**
+   * Wake the agent and resolve when the tracker has finalized the run.
+   *
+   * `extra` is the same sentence the scheduler appends to a ledger wake, and it
+   * is what lets a scenario say something to the model that only this wake
+   * knows — which is the whole instrument the rotation scenario is built on.
+   */
+  const wake = (
+    trigger: string,
+    name: string = NAME,
+    extra?: string,
+  ): Promise<void> =>
     new Promise((resolve, reject) => {
       settlers.set(name, resolve);
 
-      const started = runs.run(name, trigger);
+      const started = runs.run(name, trigger, extra);
 
       if (!started.started) {
         reject(
@@ -1184,5 +1272,162 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     */
     expect(twice.today?.runs).toBe(2);
     expect(twice.today?.usd).toBeGreaterThan(0);
+  }, 300_000);
+
+  /**
+   * A rotation is a handover, and this is the only proof of it (HIVE-122).
+   *
+   * Every unit test of this protocol is written against a recording spawn and a
+   * `handoffFor` that returns whatever the test hands it, so all of them would
+   * pass on a build where the last-turn prompt reaches no model, the handoff
+   * body is dropped between `pendingSession` and the argv, or `--session-id`
+   * names a conversation the binary then quietly replaces. The codeword is the
+   * instrument that reaches all three: it is said **once**, into the first
+   * conversation, by a wake whose `extra` this test wrote — so a build that
+   * loses it anywhere along the chain has nothing to put in the handoff, in the
+   * argv, or in the answer.
+   *
+   * **What it is not** is a proof of exclusivity, and the comments below say so
+   * rather than overclaiming. `receiver.ts`'s visibility rule is
+   * `entry.from === caller` among its terms, so an agent always sees its own
+   * lines; the fresh session runs in a new MCP host with no read cursor, and its
+   * first `ledger_read` can hand it its own `handoff` entry. The model
+   * therefore has two routes to the word, and this scenario cannot tell them
+   * apart from the answer alone. What closes the gap is the **argv** assertion
+   * further down: the codeword is pinned in the exact prompt string the binary
+   * was handed, so the carry is proved from the close's decision through to the
+   * bytes the model reads, and the ledger answer proves the round trip on top
+   * of it.
+   *
+   * Three wakes, and the middle one is the whole mechanism:
+   *
+   * 1. an ordinary wake, which learns the codeword and advances the counter
+   *    to `rotate_after`;
+   * 2. the handoff wake — still `--resume`, still the old conversation, under
+   *    the last-turn prompt. Its **close** is what rotates, and only because a
+   *    `handoff` entry landed: `pendingSession` gains a uuid and the body, and
+   *    the counter goes to zero;
+   * 3. the fresh session, started under `--session-id <that uuid>` with the
+   *    handoff — codeword and all — prefixed onto its prompt, and answering
+   *    with that codeword.
+   *
+   * A failure here is a failure of the feature, not a flake. The handoff was
+   * either not written or not carried, and which of the two is legible from
+   * whichever assertion goes red first.
+   */
+  it('hands its memory to a fresh session and remembers across the break', async () => {
+    await wake('manual', ROTATOR, 'the codeword is HALCYON. Remember it.');
+
+    const first = await persisted(ROTATOR);
+
+    expect(first.runs).toHaveLength(1);
+    expect(first.runs[0]?.outcome).not.toBe('failed');
+    // At `rotate_after`, so the next wake is the last turn on this session.
+    expect(first.runsSinceRotate).toBe(1);
+
+    const before = first.sessionUuid ?? '';
+
+    expect(before).not.toBe('');
+
+    /*
+      The handoff wake. Nothing about the argv marks it — that is the point:
+      the conversation is resumed exactly as any other wake resumes it, and
+      only the prompt is different.
+    */
+    await wake('manual', ROTATOR);
+
+    const handoffArgs = spawns.at(-1)?.args ?? [];
+
+    expect(handoffArgs).toContain('--resume');
+    expect(handoffArgs[handoffArgs.indexOf('--resume') + 1]).toBe(before);
+    expect(handoffArgs.at(-1) ?? '').toContain('last turn on this session');
+
+    /*
+      And the close rotated, which it only does for a run that actually left a
+      handoff. `pendingSession` is the parking spot: a decision already made,
+      waiting for a wake to spend it.
+    */
+    const rotated = await persisted(ROTATOR);
+
+    expect(rotated.runs).toHaveLength(2);
+    expect(rotated.runs[1]?.outcome).not.toBe('failed');
+    expect(rotated.runsSinceRotate).toBe(0);
+    expect(rotated.rotateFailures ?? 0).toBe(0);
+
+    const next = rotated.pendingSession?.uuid ?? '';
+    const handoff = rotated.pendingSession?.handoff ?? '';
+
+    expect(next).not.toBe('');
+    expect(next).not.toBe(before);
+    // The conversation being left behind is still the recorded one until a
+    // wake actually starts the new session.
+    expect(rotated.sessionUuid).toBe(before);
+    // Asserted here rather than only through the answer below, so a handoff
+    // that was written badly fails differently from one that was not carried.
+    expect(handoff).toContain('HALCYON');
+
+    const mark = (await onDisk()).findLast(
+      (entry) => entry['from'] === ROTATOR && entry['kind'] === 'handoff',
+    );
+
+    expect(mark).toBeDefined();
+
+    // The fresh session, which has never been told the codeword.
+    await wake('manual', ROTATOR, 'reply with the codeword you were given.');
+
+    const freshArgs = spawns.at(-1)?.args ?? [];
+
+    expect(freshArgs).not.toContain('--resume');
+    expect(freshArgs).toContain('--session-id');
+    expect(freshArgs[freshArgs.indexOf('--session-id') + 1]).toBe(next);
+    /*
+      The handoff really did reach the string the model reads, and it leads.
+
+      Both halves are needed, and the second is the load-bearing one.
+      `wakePrompt` branches on `handoff === undefined`, not on emptiness — so a
+      build that carried the `pendingSession` record but dropped or mangled its
+      body between there and the argv still emits the "continuing from" preamble
+      and would pass the first line alone. Pinning the codeword *in the argv* is
+      what closes that gap: `wake-command.ts` spells it from the same
+      `pending.handoff` already asserted above, so this follows the body all the
+      way from the close's decision to the bytes handed to the binary.
+    */
+    expect(freshArgs.at(-1) ?? '').toContain('continuing from a previous session');
+    expect(freshArgs.at(-1) ?? '').toContain('HALCYON');
+
+    const fresh = await persisted(ROTATOR);
+
+    expect(fresh.runs).toHaveLength(3);
+    expect(fresh.runs[2]?.outcome).not.toBe('failed');
+    // The binary accepted the minted uuid and reported it back, and the
+    // parking spot was consumed rather than left to rotate twice.
+    expect(fresh.sessionUuid).toBe(next);
+    expect(fresh.sessionUuid).not.toBe(before);
+    expect(fresh.pendingSession).toBeUndefined();
+
+    /*
+      And the round trip closes: a codeword spoken into a conversation this
+      session never had, said back by a session that was handed it in its own
+      prompt — which the argv assertion above already pinned, so this is the
+      model acting on the handoff rather than the only evidence it arrived.
+
+      Filtered to entries **after** the handoff, since the handoff itself
+      contains the word — counting it would make this pass on a build that never
+      carried anything. It is not filtered against the agent *reading* its own
+      handoff back off the ledger, which `receiver.ts`'s `entry.from === caller`
+      term allows and this suite cannot prevent; the docblock says so.
+    */
+    const since = String(mark?.['id'] ?? '');
+    const said = (await onDisk())
+      .filter(
+        (entry) =>
+          entry['from'] === ROTATOR &&
+          entry['kind'] === 'post' &&
+          String(entry['id']) > since,
+      )
+      .map((entry) => String(entry['body']))
+      .join('\n');
+
+    expect(said).toContain('HALCYON');
   }, 300_000);
 });

@@ -1305,6 +1305,14 @@ export function registerIpcHandlers(): void {
   */
   const agentRunState = agentState;
 
+  /*
+    One generator, two readers. `createWakeCommand` mints the uuid a *first*
+    wake starts under; `createRunTracker` mints the one a rotation's next
+    session will start under. A second function here would be a second place to
+    change if uuids ever stop being `randomUUID()`.
+  */
+  const newUuid = (): string => randomUUID();
+
   const buildWakeCommand = createWakeCommand({
     agentsRoot,
     workdir: agentWorkdir,
@@ -1323,7 +1331,7 @@ export function registerIpcHandlers(): void {
     subscriptionAuth: () => getConfig().subscriptionAuth,
     state: agentState,
     env: () => process.env,
-    newUuid: () => randomUUID(),
+    newUuid,
     // `permissions` is armed later, alongside `scheduler` — read through the
     // module binding for the same reason `hooks`/`mcp` are read through
     // getters here rather than closed over as values.
@@ -1359,6 +1367,39 @@ export function registerIpcHandlers(): void {
   };
 
   /**
+   * What did this run hand over, if anything (HIVE-122)?
+   *
+   * The same `run.started` id comparison `openAsksFor` uses, for the same
+   * reason: the ledger has no notion of which run an entry belongs to, and a
+   * clock comparison would be a worse answer to the same question. The **last**
+   * handoff wins if the agent wrote several — a second one is a correction of
+   * the first, not a competitor to it.
+   *
+   * Where the two part company is the missing-start-entry case, and they part
+   * deliberately: `openAsksFor` fails **open** because its worst error parks an
+   * agent that was in fact done, while this one must fail **closed** because
+   * its worst error is destructive. Without the guard the predicate collapses
+   * to "any handoff this agent ever wrote", so `findLast` returns a *previous*
+   * rotation's body — and `finalizeRun` reads that as a successful handover:
+   * it zeroes the counter, parks a `pendingSession`, and seeds the next
+   * session from an out-of-date summary while abandoning the live
+   * conversation. No handoff is the honest answer when we cannot tell which
+   * run wrote one; the close then takes a strike, which is recoverable.
+   */
+  const handoffFor = (name: string, run: string): string | undefined => {
+    const { entries } = ledger.read({ from: name });
+    const started = entries.find(
+      (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
+    );
+
+    if (started === undefined) return undefined;
+
+    return entries.findLast(
+      (entry) => entry.kind === 'handoff' && entry.id >= started.id,
+    )?.body;
+  };
+
+  /**
    * One agent's row changed. Pushed through `send`, so the notifier tap and the
    * destroyed-window guard apply here exactly as they do to a `pty:data`.
    *
@@ -1388,6 +1429,7 @@ export function registerIpcHandlers(): void {
       */
       runs: state.runs,
       runsSinceRotate: state.runsSinceRotate,
+      ...(state.sessionUuid === undefined ? {} : { sessionUuid: state.sessionUuid }),
       /*
         And the two numbers `runs` cannot answer (HIVE-121): the day's totals,
         which outlive the twenty-run history, and the skip count, which counts
@@ -1433,10 +1475,15 @@ export function registerIpcHandlers(): void {
     },
     state: agentState,
     /*
-      The tracker's ledger writes are `from` the **agent**, never the overmind:
-      a run is the agent's own activity and the log is read back by name. That
-      is the same rule `ledger:post` enforces from the other direction, where
-      the renderer may only ever speak as the coordinator.
+      A run's own entries are `from` the **agent**: a run is the agent's
+      activity and the log is read back by name. That is the same rule
+      `ledger:post` enforces from the other direction, where the renderer may
+      only ever speak as the coordinator.
+
+      The one exception is main's own verdict — the failed-rotation event
+      (HIVE-122), which is `from` the overmind precisely because it is a claim
+      *about* the agent that the agent must not be able to make about itself.
+      The tracker picks the `from`; this only carries it.
     */
     appendLedger: (entry) => {
       const result = ledger.append(entry);
@@ -1456,6 +1503,8 @@ export function registerIpcHandlers(): void {
       }
     },
     openAsksFor,
+    handoffFor,
+    newUuid,
     pushStatus: pushAgentStatus,
     pushLines: (name, lines) => {
       /*
@@ -2488,6 +2537,9 @@ export function registerIpcHandlers(): void {
    * explains. `BRIDGE_AGENTS_KEYS` claims these two verbs cannot create an
    * agent; this is what makes that true of its run state as well.
    *
+   * HIVE-122's `rotate` is the third caller, for exactly this reason: it too
+   * patches state before anything reads a definition.
+   *
    * `run` needs no equivalent: it reaches `deps.command`, which reads the
    * definition off disk and refuses `invalid` when there is none.
    */
@@ -2500,6 +2552,51 @@ export function registerIpcHandlers(): void {
 
     return name;
   };
+
+  /**
+   * Force a handoff wake now (HIVE-122).
+   *
+   * `agents:run` with one field armed first, and the ordering is the point: the
+   * flag is written to **state**, then the run goes through the ordinary door.
+   * If the agent is busy or paused the run is refused exactly as `agents:run`
+   * would refuse it — and the flag stays armed, so the wake that does happen is
+   * the handoff wake. A rotation the user asked for is never silently dropped.
+   *
+   * `requireAgent` for `pause`'s reason and not `run`'s: this writes to
+   * `agents.json` before it reaches anything that reads a definition, so
+   * without the check a typo would leave `{"ghost": {"forceRotate": true}}` on
+   * disk permanently — and an agent later created under that name would be
+   * born owing a handoff for a conversation it never had.
+   *
+   * `agentState`, not the tracker, is what carries the flag, so arming a
+   * rotation works on an agent that has never run: there is no tracker entry to
+   * arm. `wake-command.ts` gives that case an ordinary first wake rather than a
+   * last turn on a session that does not exist yet.
+   *
+   * The same two awaits as `run`, for the same two reasons, since this reaches
+   * the same spawn: `PATH` may still be the pre-repair one, and `hive.mcp.json`
+   * may not have been written yet.
+   */
+  handle(CH.agentsRotate, async (_event, payload): Promise<AgentRunResult> => {
+    const name = await requireAgent(parseAgentNameRequest(payload).name);
+
+    if (agentState === null) {
+      throw new Error('The agent runtime is not running.');
+    }
+
+    agentState.patch(name, { forceRotate: true });
+
+    await loginEnvStatus();
+    await mcp.start();
+
+    return (
+      runs?.run(name, 'manual') ?? {
+        started: false,
+        refused: 'unknown',
+        reason: 'The agent runtime is not running.',
+      }
+    );
+  });
 
   handle(CH.agentsPause, async (_event, payload): Promise<AgentStatus> =>
     // No `kill`. A pause lets the turn in flight finish — see the contract, and

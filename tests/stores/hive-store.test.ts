@@ -1596,6 +1596,9 @@ describe('hive-store', () => {
         resume: vi.fn<() => Promise<AgentStatus>>(() =>
           Promise.resolve('sleeping'),
         ),
+        rotate: vi.fn<() => Promise<AgentRunResult>>(() =>
+          Promise.resolve({ started: true, run: 'run-7' }),
+        ),
       };
 
       beforeEach(() => {
@@ -1604,6 +1607,7 @@ describe('hive-store', () => {
         bridge.kill.mockResolvedValue(true);
         bridge.pause.mockResolvedValue('paused');
         bridge.resume.mockResolvedValue('sleeping');
+        bridge.rotate.mockResolvedValue({ started: true, run: 'run-7' });
         window.hive = { agents: bridge } as unknown as Window['hive'];
       });
 
@@ -1860,6 +1864,82 @@ describe('hive-store', () => {
             text: expect.stringContaining('nothing running'),
             color: 'dim',
           });
+        });
+      });
+
+      /**
+       * The manual rotation (HIVE-122).
+       *
+       * The same shape as `run` — it *is* a run, with `forceRotate` armed
+       * first — so it is asserted against `run`'s contract rather than a new
+       * one: the refusals are main's, worded by `agentRunRefusal`, and the
+       * not-an-agent guard is the group's.
+       */
+      describe('rotate', () => {
+        beforeEach(() => {
+          useHiveStore.getState().hydrateAgents([summary()]);
+        });
+
+        it('rotates the agent and prints the run it started', async () => {
+          run('rotate slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.rotate).toHaveBeenCalledWith({ name: 'slack-watcher' });
+          expect(lastLine()?.text).toContain(
+            'woke slack-watcher to rotate (run-7)',
+          );
+        });
+
+        /*
+          A busy agent refuses the run, and main leaves the flag armed — so the
+          console says only what `run` would say. The rotation is not lost; it
+          happens on the wake that does land.
+        */
+        it('prints main’s refusal when the agent is busy', async () => {
+          bridge.rotate.mockResolvedValue({
+            started: false,
+            refused: 'working',
+          });
+
+          run('rotate slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining('is working'),
+            color: 'red',
+          });
+        });
+
+        it('refuses to rotate something that is not an agent', () => {
+          seedDemoFleet();
+          const session = useHiveStore.getState().order[0];
+
+          run(`rotate ${String(session)}`);
+
+          expect(lastLine()?.text).toContain('not an agent');
+          expect(bridge.rotate).not.toHaveBeenCalled();
+        });
+
+        it('refuses a name nothing answers to', () => {
+          run('rotate nope');
+
+          expect(lastLine()?.text).toContain('no such agent: nope');
+          expect(bridge.rotate).not.toHaveBeenCalled();
+        });
+
+        it('is refused in the browser', () => {
+          vi.mocked(isDesktop).mockReturnValue(false);
+
+          run('rotate slack-watcher');
+
+          expect(lastLine()?.color).toBe('red');
+          expect(bridge.rotate).not.toHaveBeenCalled();
+        });
+
+        it('is listed in help', () => {
+          run('help');
+
+          expect(transcript()).toContain('  rotate <agent>');
         });
       });
 
@@ -2600,6 +2680,75 @@ describe('hive-store', () => {
       expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({
         cost: '$0.02',
       });
+    });
+
+    /*
+      HIVE-122. The rotation counter now moves live on every status push, and
+      the uuid it belongs to has to move with it — otherwise the tile's two
+      halves disagree the moment a rotation lands.
+    */
+    it('re-reads the session fact after a rotation', () => {
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'drone',
+          description: 'drone does things',
+          icon: 'ph-robot',
+          status: 'sleeping',
+          wake: { on: [] },
+          rotateAfter: 50,
+          skipsSinceRun: 0,
+          runs: [],
+          sessionUuid: '9f3c1e2a',
+          runsSinceRotate: 50,
+        },
+      ]);
+
+      useHiveStore.getState().setAgentStatus({
+        name: 'drone',
+        status: 'sleeping',
+        runs: [],
+        runsSinceRotate: 1,
+        sessionUuid: 'b2e1c4d5',
+      });
+
+      const agent = useHiveStore.getState().entities['drone'];
+
+      expect(agent !== undefined && isAgent(agent) && agent.sessionUuid).toBe(
+        'b2e1c4d5',
+      );
+      expect(
+        agent !== undefined && isAgent(agent) && agent.runsSinceRotate,
+      ).toBe(1);
+    });
+
+    // Absent must mean unchanged, never cleared: main only ever replaces this.
+    it('keeps the uuid a push does not carry', () => {
+      useHiveStore.getState().hydrateAgents([
+        {
+          name: 'drone',
+          description: 'drone does things',
+          icon: 'ph-robot',
+          status: 'sleeping',
+          wake: { on: [] },
+          rotateAfter: 50,
+          skipsSinceRun: 0,
+          runs: [],
+          sessionUuid: '9f3c1e2a',
+        },
+      ]);
+
+      useHiveStore.getState().setAgentStatus({
+        name: 'drone',
+        status: 'working',
+        runs: [],
+        runsSinceRotate: 0,
+      });
+
+      const agent = useHiveStore.getState().entities['drone'];
+
+      expect(agent !== undefined && isAgent(agent) && agent.sessionUuid).toBe(
+        '9f3c1e2a',
+      );
     });
 
     it('appends run lines and keeps them across a re-hydrate', () => {

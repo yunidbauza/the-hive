@@ -228,20 +228,42 @@ export function createLedgerNotifier(
       budget raises the same kind.
     */
     if (entry.kind === 'event' && entry.from === OVERMIND) {
-      const cappedAgent = str(meta.agent);
+      const subjectAgent = str(meta.agent);
 
       if (
         typeof meta.dailyCap === 'number' &&
-        cappedAgent !== undefined &&
-        deps.isAgent(cappedAgent)
+        subjectAgent !== undefined &&
+        deps.isAgent(subjectAgent)
       ) {
         deps.raise({
           kind: 'agent.failed',
           id: entry.id,
           title: 'Hit its daily cap',
-          subject: cappedAgent,
+          subject: subjectAgent,
           body: entry.body,
-          action: { type: 'agent', name: cappedAgent },
+          action: { type: 'agent', name: subjectAgent },
+          createdAt: entry.ts,
+        });
+      }
+
+      /*
+        `agent.failed` rather than a new kind, for the reason the daily cap is:
+        the kinds are a closed set the user configures delivery on, and "this
+        agent stopped doing what it should" is what this one already means. The
+        title names the specific ceiling, since three kinds share it.
+      */
+      if (
+        typeof meta.rotateFailed === 'number' &&
+        subjectAgent !== undefined &&
+        deps.isAgent(subjectAgent)
+      ) {
+        deps.raise({
+          kind: 'agent.failed',
+          id: entry.id,
+          title: 'Could not rotate its session',
+          subject: subjectAgent,
+          body: entry.body,
+          action: { type: 'agent', name: subjectAgent },
           createdAt: entry.ts,
         });
       }

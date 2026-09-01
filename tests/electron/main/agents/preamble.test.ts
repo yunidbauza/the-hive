@@ -7,4 +7,9 @@ describe('AGENT_PREAMBLE', () => {
     expect(AGENT_PREAMBLE).toMatch(/retry that one call exactly once/i);
     expect(AGENT_PREAMBLE).toMatch(/ledger_failed/);
   });
+
+  it('tells the agent how to leave a handoff', () => {
+    expect(AGENT_PREAMBLE).toContain('ledger_handoff');
+    expect(AGENT_PREAMBLE).toContain('last turn on this session');
+  });
 });

@@ -166,27 +166,8 @@ describe('createWakeCommand', () => {
     expect(built.args.join(' ')).toContain('--resume earlier-uuid');
     expect(built.args).not.toContain('--session-id');
     expect(built.sessionUuid).toBe('earlier-uuid');
-  });
-
-  it('rotates once the run count reaches rotate_after, and resets the counter', () => {
-    stored['slack-watcher'] = {
-      status: 'sleeping',
-      runsSinceRotate: 5,
-      runs: [],
-      sessionUuid: 'stale-uuid',
-    };
-
-    const built = build()('slack-watcher', 'manual');
-
-    if ('problem' in built) throw new Error('expected a command');
-
-    expect(built.args.join(' ')).toContain('--session-id minted-uuid');
-    expect(built.args.join(' ')).not.toContain('stale-uuid');
-    expect(built.sessionUuid).toBe('minted-uuid');
-    // Cleared with the counter: a rotating run that dies before it emits a
-    // `result` must not resume the conversation the rotation left behind.
-    expect(stored['slack-watcher']?.runsSinceRotate).toBe(0);
-    expect(stored['slack-watcher']?.sessionUuid).toBeUndefined();
+    // Two under `rotate_after: 5`, so this is an ordinary wake, not a goodbye.
+    expect(built.lastTurn).toBe(false);
   });
 
   it('refuses an agent that is not on disk', () => {
@@ -294,14 +275,16 @@ describe('createWakeCommand', () => {
   });
 
   /**
-   * A rotation that could not be prepared has not happened.
+   * A wake that could not be prepared has changed nothing.
    *
-   * Recording it before the `mkdir`/`write` meant a transient fs error threw
-   * away the session uuid *and* returned no command: no run, and the
-   * conversation gone anyway, with the next wake starting fresh for a reason
-   * the user could never see.
+   * The ordering this pins predates HIVE-122 — recording a rotation before the
+   * `mkdir`/`write` meant a transient fs error threw away the session uuid
+   * *and* returned no command: no run, and the conversation gone anyway. The
+   * crossing wake no longer writes anything at all, so the invariant is now
+   * that a failed prepare leaves the counter and the uuid exactly as it found
+   * them, whichever side of the threshold they are on.
    */
-  it('keeps the rotation unrecorded when preparing the run fails', () => {
+  it('leaves the counter and the uuid untouched when preparing the run fails', () => {
     stored['slack-watcher'] = {
       status: 'sleeping',
       runsSinceRotate: 5,
@@ -336,5 +319,166 @@ describe('createWakeCommand', () => {
     expect(built.env).not.toHaveProperty('ANTHROPIC_API_KEY');
     expect(built.env['HIVE_SESSION_ID']).toBe('slack-watcher');
     expect(built.env['HIVE_AGENT']).toBe('1');
+  });
+});
+
+/**
+ * Rotation as a handover rather than an amnesia (HIVE-122).
+ *
+ * The wake that crosses `rotate_after` used to clear the uuid and start fresh
+ * on the spot. It now spends that wake asking the agent for a handoff, still
+ * resumed on the old conversation — and writes nothing, because whether the
+ * rotation happens is the *close's* call. `pendingSession` is the other half:
+ * a rotation already decided, waiting for a wake to start it.
+ *
+ * `AGENT_MD` above declares `rotate_after: 5`.
+ */
+describe('the handoff wake', () => {
+  /** The disk this wake cannot write its system prompt to. */
+  const failWrites = (): WakeFs => ({
+    ...fs,
+    write: () => {
+      throw new Error('ENOSPC: no space left on device');
+    },
+  });
+
+  it('resumes the old session and asks for a handoff when the counter is up', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 50,
+      runs: [],
+      sessionUuid: '9f3c1e2a',
+    };
+
+    const result = build()('slack-watcher', 'schedule');
+
+    expect('problem' in result).toBe(false);
+
+    if ('problem' in result) return;
+
+    expect(result.lastTurn).toBe(true);
+    expect(result.args).toContain('--resume');
+    expect(result.args).toContain('9f3c1e2a');
+    expect(result.args).not.toContain('--session-id');
+    expect(result.sessionUuid).toBe('9f3c1e2a');
+    expect(result.args.at(-1)).toContain('This is your last turn on this session.');
+  });
+
+  it('leaves the counter and the uuid alone — the close decides', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 50,
+      runs: [],
+      sessionUuid: '9f3c1e2a',
+    };
+
+    build()('slack-watcher', 'schedule');
+
+    expect(stored['slack-watcher']?.runsSinceRotate).toBe(50);
+    expect(stored['slack-watcher']?.sessionUuid).toBe('9f3c1e2a');
+  });
+
+  it('starts the pending session and carries its handoff', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      sessionUuid: '9f3c1e2a',
+      pendingSession: { uuid: 'b2e1-new', handoff: 'I watch #ops.' },
+    };
+
+    const result = build()('slack-watcher', 'schedule');
+
+    if ('problem' in result) throw new Error(result.problem);
+
+    expect(result.lastTurn).toBe(false);
+    expect(result.args).toContain('--session-id');
+    expect(result.args).toContain('b2e1-new');
+    expect(result.args).not.toContain('--resume');
+    expect(result.sessionUuid).toBe('b2e1-new');
+    expect(result.args.at(-1)).toContain('I watch #ops.');
+    // Consumed, so the wake after this one resumes normally.
+    expect(stored['slack-watcher']?.pendingSession).toBeUndefined();
+  });
+
+  it('honours a forced rotation, and clears the flag', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      sessionUuid: '9f3c1e2a',
+      forceRotate: true,
+    };
+
+    const result = build()('slack-watcher', 'manual');
+
+    if ('problem' in result) throw new Error(result.problem);
+
+    expect(result.lastTurn).toBe(true);
+    expect(stored['slack-watcher']?.forceRotate).toBeUndefined();
+  });
+
+  /*
+    A forced rotation on an agent that has never run degrades to an ordinary
+    first wake (HIVE-122).
+
+    Only a run sets `sessionUuid`, so the counter path can never reach this —
+    but the console's `rotate` verb can, on an agent installed five minutes ago.
+    Without the `sessionUuid` term the wake would be a *last turn* on a brand
+    new `--session-id` session: an agent asked to summarise a conversation that
+    has not happened yet, and a handoff that could only be fiction.
+  */
+  it('degrades a forced rotation on a never-run agent to a first wake', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      forceRotate: true,
+    };
+
+    const result = build()('slack-watcher', 'manual');
+
+    if ('problem' in result) throw new Error(result.problem);
+
+    expect(result.lastTurn).toBe(false);
+    expect(result.args).toContain('--session-id');
+    expect(result.args).not.toContain('--resume');
+    // Consumed all the same: the fresh session the user asked for is the one
+    // this wake starts, so leaving the flag armed would rotate again next time.
+    expect(stored['slack-watcher']?.forceRotate).toBeUndefined();
+  });
+
+  it('keeps the pending session when preparing the run fails', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      pendingSession: { uuid: 'b2e1-new', handoff: 'I watch #ops.' },
+    };
+
+    const built = build({ fs: failWrites() })('slack-watcher', 'schedule');
+
+    expect('problem' in built).toBe(true);
+    // Nothing consumed: a full disk must not destroy the handoff.
+    expect(stored['slack-watcher']?.pendingSession).toEqual({
+      uuid: 'b2e1-new',
+      handoff: 'I watch #ops.',
+    });
+  });
+
+  it('never both asks for a handoff and starts a fresh session', () => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 50,
+      runs: [],
+      pendingSession: { uuid: 'b2e1-new', handoff: 'I watch #ops.' },
+    };
+
+    const result = build()('slack-watcher', 'schedule');
+
+    if ('problem' in result) throw new Error(result.problem);
+
+    expect(result.lastTurn).toBe(false);
+    expect(result.args).toContain('--session-id');
   });
 });

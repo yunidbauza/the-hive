@@ -320,6 +320,72 @@ describe('agents:kill (HIVE-115)', () => {
   });
 });
 
+/**
+ * The manual rotation (HIVE-122).
+ *
+ * Two facts, and the second is the one worth a channel of its own: the flag is
+ * armed **on state**, and the run then goes through the ordinary door. A
+ * refused run therefore leaves the flag armed, so the wake that does happen is
+ * the handoff wake — a rotation the user asked for is never silently dropped.
+ */
+describe('agents:rotate (HIVE-122)', () => {
+  it('arms the rotation and wakes the agent through the ordinary path', async () => {
+    await expect(
+      invoke(CH.agentsRotate, { name: 'slack-watcher' }),
+    ).resolves.toEqual({ started: true, run: 'run-1' });
+
+    expect(statePatch).toHaveBeenCalledWith('slack-watcher', {
+      forceRotate: true,
+    });
+    expect(trackerRun).toHaveBeenCalledWith('slack-watcher', 'manual');
+  });
+
+  it('leaves the flag armed when the run is refused', async () => {
+    trackerRun.mockReturnValueOnce({
+      started: false,
+      refused: 'working',
+    } as never);
+
+    await expect(
+      invoke(CH.agentsRotate, { name: 'slack-watcher' }),
+    ).resolves.toMatchObject({ started: false });
+
+    expect(stored['slack-watcher']?.forceRotate).toBe(true);
+  });
+
+  it('refuses a name that could reach anything but an agent folder', async () => {
+    await expect(
+      invoke(CH.agentsRotate, { name: '../../claude' }),
+    ).rejects.toThrow();
+
+    expect(statePatch).not.toHaveBeenCalled();
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+
+  it('refuses a payload that tries to name its own trigger', async () => {
+    await expect(
+      invoke(CH.agentsRotate, { name: 'slack-watcher', trigger: 'ledger' }),
+    ).rejects.toThrow();
+
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+
+  /*
+    `pause`'s guard, needed here for `pause`'s reason: this writes to state
+    before anything reads a definition, so a name nothing answers to would
+    leave `{"ghost": {"forceRotate": true}}` in `agents.json` permanently — and
+    an agent later created under that name would be born owing a handoff.
+  */
+  it('refuses a name that is not an agent, writing nothing', async () => {
+    await expect(invoke(CH.agentsRotate, { name: 'ghost' })).rejects.toThrow(
+      'No such agent: ghost',
+    );
+
+    expect(statePatch).not.toHaveBeenCalled();
+    expect(trackerRun).not.toHaveBeenCalled();
+  });
+});
+
 describe('agents:pause and agents:resume (HIVE-117)', () => {
   /** A live window, so the status push has somewhere to land. */
   const watchWindow = () => {
@@ -844,6 +910,76 @@ describe('what the tracker was handed (HIVE-115)', () => {
     expect(trackerDeps?.openAsksFor('slack-watcher', 'run-1')).toBe(false);
   });
 
+  /*
+    HIVE-122. `handoffFor` is what decides, at a run's close, whether the
+    session actually rotates — and it is asserted here, against the real IPC
+    composition, for the reason `openAsksFor` is: the only other exercise it
+    got was a hand-copied clone inside `tests/live/agent-conformance.test.ts`,
+    which is `describe.skipIf(!LIVE)` and never runs under `pnpm test`.
+  */
+  const startedEntry = (run: string, id: string): LedgerEntry => ({
+    id,
+    ts: 1,
+    from: 'slack-watcher',
+    kind: 'event',
+    body: `run.started — ${run}`,
+    meta: { run },
+  });
+
+  const handoffEntry = (id: string, body: string): LedgerEntry => ({
+    id,
+    ts: 2,
+    from: 'slack-watcher',
+    kind: 'handoff',
+    body,
+  });
+
+  it('finds a handoff this run posted', () => {
+    ledgerEntries = [
+      startedEntry('run-1', '20260830-010000-0001'),
+      handoffEntry('20260830-010500-0002', 'I watch #ops.'),
+    ];
+
+    expect(trackerDeps?.handoffFor('slack-watcher', 'run-1')).toBe(
+      'I watch #ops.',
+    );
+  });
+
+  it('ignores a handoff written before this run started', () => {
+    ledgerEntries = [
+      handoffEntry('20260830-005900-0001', 'a previous rotation'),
+      startedEntry('run-2', '20260830-010000-0002'),
+    ];
+
+    expect(trackerDeps?.handoffFor('slack-watcher', 'run-2')).toBeUndefined();
+  });
+
+  it('takes the last handoff when the run wrote several', () => {
+    ledgerEntries = [
+      startedEntry('run-3', '20260830-010000-0001'),
+      handoffEntry('20260830-010500-0002', 'first draft'),
+      handoffEntry('20260830-010900-0003', 'the correction'),
+    ];
+
+    expect(trackerDeps?.handoffFor('slack-watcher', 'run-3')).toBe(
+      'the correction',
+    );
+  });
+
+  /*
+    Fails **closed**, unlike `openAsksFor` above, and the asymmetry is the
+    point: falling back to "any handoff this agent ever wrote" would hand
+    `finalizeRun` a previous rotation's body, which it reads as a successful
+    handover — zeroing the counter, parking a `pendingSession`, and seeding the
+    next session from an out-of-date summary while abandoning the live
+    conversation. A strike is the recoverable error; this is not.
+  */
+  it('returns nothing rather than a stale handoff when the run has no start entry', () => {
+    ledgerEntries = [handoffEntry('20260830-005900-0001', 'a previous rotation')];
+
+    expect(trackerDeps?.handoffFor('slack-watcher', 'run-4')).toBeUndefined();
+  });
+
   it('pushes a status built from the state file, to live windows only', () => {
     const liveSend = vi.fn();
     const destroyedSend = vi.fn();
@@ -895,19 +1031,27 @@ describe('what the tracker was handed (HIVE-115)', () => {
     expect(destroyedSend).not.toHaveBeenCalled();
   });
 
-  it('never puts the session uuid on a status push', () => {
+  /*
+    HIVE-122. This used to be `never puts the session uuid on a status push`,
+    on the reasoning that it changed only on a first run and on a rotation and
+    that `agents:list` was soon enough for both. A rotation now happens every
+    `rotate_after` wakes, `agents:changed` only fires on an `AGENT.md` write,
+    and the Session fact's uuid half would go stale for however long until an
+    unrelated edit — so this push is the only way it reaches a live window.
+  */
+  it('puts the session uuid on a status push', () => {
     const send = vi.fn();
     windows.push({ isDestroyed: () => false, webContents: { send } });
     stored['slack-watcher'] = {
       status: 'sleeping',
       runsSinceRotate: 1,
-      sessionUuid: 'uuid-must-not-travel',
+      sessionUuid: 'b2e1c4d5',
       runs: [],
     };
 
     trackerDeps?.pushStatus('slack-watcher');
 
-    expect(send.mock.calls[0]?.[1]).not.toHaveProperty('sessionUuid');
+    expect(send.mock.calls[0]?.[1]).toHaveProperty('sessionUuid', 'b2e1c4d5');
   });
 
   it('pushes run-log lines under the agent that wrote them', () => {

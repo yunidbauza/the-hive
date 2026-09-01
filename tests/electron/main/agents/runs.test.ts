@@ -12,6 +12,7 @@ import {
   AGENT_KILL_GRACE_MS,
   AGENT_STALL_GRACE_MS,
 } from '../../../../electron/shared/agent-contract';
+import { OVERMIND } from '../../../../electron/shared/ledger-contract';
 
 const resultLine = (over: Record<string, unknown> = {}) =>
   `${JSON.stringify({
@@ -24,10 +25,19 @@ const resultLine = (over: Record<string, unknown> = {}) =>
   })}\n`;
 
 describe('createRunTracker', () => {
-  let ledger: { kind: string; body?: string; meta?: Record<string, unknown> }[];
+  let ledger: {
+    from?: string;
+    kind: string;
+    body?: string;
+    meta?: Record<string, unknown>;
+  }[];
   let statuses: string[];
   let lines: { name: string; count: number }[];
   let openAsks: boolean;
+  /** Did the wake ask for a handoff? Set per test (HIVE-122). */
+  let lastTurn: boolean;
+  /** What the run left behind as a handoff, if anything (HIVE-122). */
+  let handoff: string | undefined;
   let commandCalls: number;
   let commandArgs: { name: string; trigger: string; extra?: string }[];
   let closed: string[];
@@ -42,6 +52,8 @@ describe('createRunTracker', () => {
     statuses = [];
     lines = [];
     openAsks = false;
+    lastTurn = false;
+    handoff = undefined;
     commandCalls = 0;
     commandArgs = [];
     closed = [];
@@ -60,11 +72,14 @@ describe('createRunTracker', () => {
           env: { HIVE_AGENT: '1' },
           cwd: '/tmp/work',
           sessionUuid: `sess-${commandCalls}`,
+          lastTurn,
         };
       },
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => openAsks,
+      handoffFor: () => handoff,
+      newUuid: () => 'uuid-minted',
       pushStatus: (name) => statuses.push(name),
       pushLines: (name, pushed) => lines.push({ name, count: pushed.length }),
       onRunClosed: (name) => {
@@ -161,6 +176,8 @@ describe('createRunTracker', () => {
       state,
       appendLedger: () => {},
       openAsksFor: () => false,
+      handoffFor: () => undefined,
+      newUuid: () => 'uuid-minted',
       pushStatus: () => {},
       pushLines: () => {},
       now: () => 1,
@@ -185,10 +202,13 @@ describe('createRunTracker', () => {
         env: {},
         cwd: '/tmp/work',
         sessionUuid: 'sess-1',
+        lastTurn: false,
       }),
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => false,
+      handoffFor: () => undefined,
+      newUuid: () => 'uuid-minted',
       pushStatus: (name) => statuses.push(name),
       pushLines: () => {},
       now: () => 1_000,
@@ -306,10 +326,13 @@ describe('createRunTracker', () => {
         env: {},
         cwd: '/tmp/work',
         sessionUuid: 'sess-1',
+        lastTurn: false,
       }),
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => false,
+      handoffFor: () => undefined,
+      newUuid: () => 'uuid-minted',
       pushStatus: () => {},
       pushLines: () => {},
       onRunClosed: (name) => closed.push(name),
@@ -714,6 +737,190 @@ describe('createRunTracker', () => {
         finds it — but until then the row says what the user did last.
       */
       expect(state.read('a').status).toBe('paused');
+    });
+  });
+
+  /**
+   * HIVE-122. The wake that crosses the threshold only *asks* for a handoff;
+   * the close is what decides whether the rotation happens. An agent that was
+   * cut off by its turn cap, or that simply ignored the instruction, keeps its
+   * conversation rather than losing it silently.
+   */
+  describe('rotation at close (HIVE-122)', () => {
+    const runToClose = (name: string) => {
+      const index = childInstances.length;
+
+      tracker.run(name, 'ledger');
+      childInstances[index]?.emitStdout(resultLine());
+      childInstances[index]?.emitClose(0);
+    };
+
+    const runThatFailsToSpawn = (name: string) => {
+      const index = childInstances.length;
+
+      tracker.run(name, 'ledger');
+      childInstances[index]?.emitError(new Error('spawn ENOENT'));
+    };
+
+    it('mints a pending session when the agent posted a handoff', () => {
+      lastTurn = true;
+      handoff = 'I watch #ops.';
+      state.patch('drone', { runsSinceRotate: 50 });
+
+      runToClose('drone');
+
+      const after = state.read('drone');
+
+      expect(after.pendingSession).toEqual({
+        uuid: 'uuid-minted',
+        handoff: 'I watch #ops.',
+      });
+      expect(after.runsSinceRotate).toBe(0);
+      expect(after.rotateFailures).toBe(0);
+      // The uuid the agent is still on is untouched until that session runs.
+      expect(after.sessionUuid).not.toBe('uuid-minted');
+    });
+
+    it('does not rotate when no handoff was posted, and takes a strike', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50 });
+
+      runToClose('drone');
+
+      const after = state.read('drone');
+
+      expect(after.pendingSession).toBeUndefined();
+      expect(after.runsSinceRotate).toBe(51);
+      expect(after.rotateFailures).toBe(1);
+    });
+
+    it('asks a human to look on the third failure, exactly once', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50, rotateFailures: 2 });
+
+      runToClose('drone');
+
+      expect(state.read('drone').rotateFailures).toBe(3);
+      expect(ledger).toContainEqual(
+        expect.objectContaining({
+          from: OVERMIND,
+          kind: 'event',
+          meta: expect.objectContaining({ rotateFailed: 3, agent: 'drone' }),
+        }),
+      );
+
+      ledger.length = 0;
+      runToClose('drone');
+
+      expect(state.read('drone').rotateFailures).toBe(4);
+      expect(
+        ledger.filter((entry) => entry.meta?.['rotateFailed'] !== undefined),
+      ).toEqual([]);
+    });
+
+    /*
+      The invariant behind `const failures = strike ? … : null`.
+
+      `rotateFailures + 1` is only a meaningful number on a close that is a
+      strike: an agent already sitting at `rotateFailures: 2` reaches 3 on its
+      very next close even when that close is a *successful* rotation. Sizing
+      it unconditionally and guarding both readers with `strike &&` worked, but
+      one forgotten guard raised a spurious "could not rotate" card on a run
+      that had just rotated fine. This test is what says so out loud, whichever
+      shape the code takes.
+    */
+    it('does not raise the card on a successful rotation, even at rotateFailures 2', () => {
+      lastTurn = true;
+      handoff = 'I watch #ops.';
+      state.patch('drone', { runsSinceRotate: 50, rotateFailures: 2 });
+
+      runToClose('drone');
+
+      const after = state.read('drone');
+
+      expect(after.pendingSession).toEqual({
+        uuid: 'uuid-minted',
+        handoff: 'I watch #ops.',
+      });
+      expect(after.rotateFailures).toBe(0);
+      expect(
+        ledger.filter((entry) => entry.meta?.['rotateFailed'] !== undefined),
+      ).toEqual([]);
+    });
+
+    /*
+      A strike is an accusation, and main must not level it at the agent for
+      something main did. `kill`, the stall watchdog, `killAll` and the
+      `closeAll` on quit all end the run before the agent could post anything —
+      three app quits landing mid-handoff-wake would otherwise raise a card
+      reading "three handoff wakes ended without a handoff", which is a claim
+      about the agent that describes main's own behaviour.
+    */
+    it('does not take a strike when main killed the handoff wake', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50 });
+
+      const index = childInstances.length;
+
+      tracker.run('drone', 'ledger');
+      tracker.kill('drone');
+      childInstances[index]?.emitClose(null, 'SIGTERM');
+
+      const after = state.read('drone');
+
+      expect(after.rotateFailures).toBeUndefined();
+      expect(after.pendingSession).toBeUndefined();
+    });
+
+    it('does not take a strike when the app quit mid-handoff-wake', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50, rotateFailures: 2 });
+
+      tracker.run('drone', 'ledger');
+      tracker.closeAll('app-closed');
+
+      expect(state.read('drone').rotateFailures).toBe(2);
+      expect(
+        ledger.filter((entry) => entry.meta?.['rotateFailed'] !== undefined),
+      ).toEqual([]);
+    });
+
+    it('does not take a strike when the run never reached the model', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50 });
+
+      runThatFailsToSpawn('drone');
+
+      const after = state.read('drone');
+
+      expect(after.rotateFailures).toBeUndefined();
+      expect(after.runsSinceRotate).toBe(50);
+    });
+
+    it('ignores a handoff on an ordinary wake', () => {
+      lastTurn = false;
+      handoff = 'I watch #ops.';
+      state.patch('drone', { runsSinceRotate: 3 });
+
+      runToClose('drone');
+
+      const after = state.read('drone');
+
+      expect(after.pendingSession).toBeUndefined();
+      expect(after.runsSinceRotate).toBe(4);
+    });
+
+    it('records the session uuid the run ran on', () => {
+      runToClose('drone');
+
+      expect(state.read('drone').runs.at(-1)?.sessionUuid).toBe(
+        'uuid-from-result',
+      );
     });
   });
 });

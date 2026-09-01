@@ -62,6 +62,22 @@ export interface WakeInput {
    * the next wake as an ordinary `def.tools` entry.
    */
   grants?: readonly string[];
+  /**
+   * This wake is the agent's last turn on this session (HIVE-122).
+   *
+   * Replaces the wake prompt with the one that asks for a handoff. The command
+   * line is otherwise identical — a handoff wake still `--resume`s the old
+   * conversation, because a handoff written by an agent that cannot remember
+   * anything would be worthless.
+   */
+  lastTurn?: true;
+  /**
+   * The previous session's handoff, prefixed onto this wake's prompt.
+   *
+   * Set only on the first wake of a fresh session, together with the
+   * `--session-id` that starts it. Never set with {@link WakeInput.lastTurn}.
+   */
+  handoff?: string;
 }
 
 export interface WakeCommand {
@@ -71,13 +87,32 @@ export interface WakeCommand {
   cwd: string;
 }
 
-export function wakePrompt(trigger: string, extra?: string): string {
+export function wakePrompt(
+  trigger: string,
+  extra?: string,
+  rotation?: { lastTurn?: true; handoff?: string },
+): string {
+  /*
+    A last turn replaces the instruction rather than adding to it. The agent
+    still does its normal work if something is waiting — the prompt says so —
+    but "read your inbox, then do your job, then end" and "wind this session up"
+    are one instruction, not two, and an agent given both tends to do the first.
+  */
+  if (rotation?.lastTurn === true) {
+    return `This is your last turn on this session. Do your normal work if something is waiting, then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
+  }
+
   const because =
     extra === undefined || extra === ''
       ? `You woke because: ${trigger}.`
       : `You woke because: ${trigger} — ${extra}.`;
 
-  return `${because} Read your ledger inbox first, then do your job. End your turn when nothing is left or when you are waiting on an answer.`;
+  const normal = `${because} Read your ledger inbox first, then do your job. End your turn when nothing is left or when you are waiting on an answer.`;
+
+  // The handoff comes first: it is the context the rest of the prompt assumes.
+  return rotation?.handoff === undefined
+    ? normal
+    : `You are continuing from a previous session of yourself. Its handoff:\n\n${rotation.handoff}\n\n${normal}`;
 }
 
 export function systemPromptFor(
@@ -131,7 +166,10 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     '--output-format',
     'stream-json',
     '--verbose',
-    wakePrompt(input.trigger, input.extra),
+    wakePrompt(input.trigger, input.extra, {
+      ...(input.lastTurn === undefined ? {} : { lastTurn: input.lastTurn }),
+      ...(input.handoff === undefined ? {} : { handoff: input.handoff }),
+    }),
   ];
 
   const merged: Record<string, string> = {};

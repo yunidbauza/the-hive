@@ -700,6 +700,23 @@ export const CH = {
    */
   agentsPause: 'agents:pause',
   agentsResume: 'agents:resume',
+  /**
+   * End this agent's session after a handoff (HIVE-122).
+   *
+   * A channel of its own rather than a flag on `agents:run`, because
+   * `AgentRunRequest`'s closed key set is the reason a renderer cannot name its
+   * own trigger — widening it to carry a second field would spend that argument
+   * to save a constant. This takes the same {@link AgentNameRequest} `kill`,
+   * `pause` and `resume` take, and the same guard refuses the same payloads.
+   *
+   * What it adds over `run` is one boolean on state that main itself writes:
+   * the next wake asks the agent to write a handoff before the session is
+   * replaced. That is a thing the counter already does on its own every
+   * `rotateAfter` runs — this only brings it forward, which is what you want
+   * after editing a definition substantially enough that the running
+   * conversation is about a different agent.
+   */
+  agentsRotate: 'agents:rotate',
   /** A run started, ended, or changed the agent's status. */
   agentsStatus: 'agents:status',
   /** A batch of run-log lines. */
@@ -1599,6 +1616,15 @@ export interface HiveBridge {
      * agent has an unanswered question in the ledger, `sleeping` otherwise.
      */
     resume(request: AgentNameRequest): Promise<AgentStatus>;
+    /**
+     * Force a handoff wake now (HIVE-122).
+     *
+     * Answers an {@link AgentRunResult} because it *is* a run — the flag is
+     * armed and the ordinary path taken — so a busy or paused agent refuses
+     * here exactly as it refuses `run`. The flag survives a refusal, so the
+     * wake that does land is still the handoff wake.
+     */
+    rotate(request: AgentNameRequest): Promise<AgentRunResult>;
     /** A run started, ended, or changed this agent's status. */
     onStatus(callback: (push: AgentStatusPush) => void): () => void;
     /** Run-log lines, as the process writes them. */
@@ -1932,14 +1958,36 @@ export const BRIDGE_SKILLS_KEYS = [
  * paused agent woken by a clock the moment HIVE-121 lands, and the bug would
  * look like the timer's.
  *
+ * ## The argument for `rotate` (HIVE-122)
+ *
+ * Narrower than `run`, which it is otherwise a copy of. Both take a name and
+ * nothing else, both build their argv in main from a definition read off disk,
+ * and both go through `RunTracker.run` — so a paused agent refuses a rotate for
+ * the same reason it refuses a run. The one thing this verb can do that `run`
+ * cannot is set `forceRotate`, and the consequence of that field is bounded by
+ * what `rotate-after` already does unattended: the agent is asked to summarise
+ * itself, and its session is replaced by a fresh one carrying that summary.
+ *
+ * A renderer that called it in a loop would cost the user turns — the same
+ * reach `run` has, and bounded by the same one-run-per-agent rule.
+ *
+ * Why not a second field on `AgentRunRequest`: that guard's closed key set is
+ * the whole reason a renderer cannot name its own trigger, and it is only
+ * closed while nothing has needed to open it. A separate channel keeps that
+ * argument intact and costs one constant.
+ *
  * ## `onStatus` and `onLines` widen nothing
  *
  * Listeners, like `onChanged`, and the same test applies: can either carry
  * something `list` would not already hand over? `onStatus` carries a subset of
- * what `agents:list` returns for that agent — deliberately *less*, since
- * {@link AgentStatusPush} omits `sessionUuid`. `onLines` carries the agent's
- * own stdout, which is the one genuinely new fact, and it is the fact the
- * feature exists to show: a run nobody can read is a run nobody can trust.
+ * what `agents:list` returns for that agent — including, since HIVE-122,
+ * `sessionUuid`, which this comment used to name as the one field it withheld.
+ * A rotation moves that uuid mid-life, on an agent the user may well be
+ * watching, and nothing emits `agents:changed` on a run to carry it. It is
+ * still a subset — `agents:list` has always returned it — so the answer to the
+ * question above is unchanged. `onLines` carries the agent's own stdout, which
+ * is the one genuinely new fact, and it is the fact the feature exists to show:
+ * a run nobody can read is a run nobody can trust.
  */
 export const BRIDGE_AGENTS_KEYS = [
   'list',
@@ -1952,6 +2000,7 @@ export const BRIDGE_AGENTS_KEYS = [
   'kill',
   'pause',
   'resume',
+  'rotate',
   'onStatus',
   'onLines',
 ] as const;

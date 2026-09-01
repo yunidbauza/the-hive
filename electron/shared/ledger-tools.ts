@@ -1,5 +1,5 @@
 /**
- * The eight ledger tools, as data (HIVE-112).
+ * The nine ledger tools, as data (HIVE-112, `ledger_handoff` added by HIVE-122).
  *
  * In `electron/shared` rather than beside the server that serves them, for one
  * reason: HIVE-115's agent preamble is the same text read by a different
@@ -177,6 +177,19 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
           type: 'string',
           description: 'The ask this abandons, if it abandons one.',
         },
+        meta,
+      },
+      required: ['body'],
+    },
+  },
+  {
+    name: 'ledger_handoff',
+    description:
+      'Leave a handoff for the fresh copy of yourself that continues after this session ends. Write it when you are told this is your last turn: what you watch, which threads are open and their ids, the decisions and preferences you have learned, and anything a fresh copy of you must know to pick up where you left off. Your next session opens with it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        body,
         meta,
       },
       required: ['body'],

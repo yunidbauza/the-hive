@@ -775,6 +775,7 @@ const HELP_LINES = [
   '  pause <agent>              stop an agent waking',
   '  resume <agent>             let it wake again',
   '  kill <agent>               stop the run in progress',
+  '  rotate <agent>             hand off, then start a fresh session',
   '  clear                      empty this transcript',
   /*
     One trailing line rather than a fourth column, because it is a footnote and
@@ -2245,6 +2246,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       case 'run':
       case 'pause':
       case 'resume':
+      case 'rotate':
       case 'kill': {
         if (!isDesktop()) {
           pushOrch(`  ${AGENTS_REQUIRE_DESKTOP}`, 'red');
@@ -2336,6 +2338,37 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
                 could reproduce. The refusals the console says better than main
                 are the ones that name the user's next move.
               */
+              pushOrch(`  ${agentRunRefusal(name, outcome)}`, 'red');
+            }),
+          );
+          return;
+        }
+
+        /*
+          `run`'s twin, refusals and all (HIVE-122).
+
+          The refusal wording is `run`'s exactly rather than a rotation-flavoured
+          variant, because what was refused *is* a run — and main leaves
+          `forceRotate` armed when it refuses one, so the rotation is not lost:
+          the wake that does land is the handoff wake. Wording it as "the
+          rotation failed" would say the opposite of what happened.
+
+          The success line says "to rotate", not "for a handoff": main only
+          makes it a handoff wake when the agent already has a session to hand
+          over, and on the documented degrade path — a `rotate` on an agent
+          that has never run — the wake that starts is an ordinary first wake
+          on a fresh session, with no handoff asked for. The renderer cannot
+          see which branch main took, and inventing an IPC field to tell it
+          would be a lot of wire for one adverb. "To rotate" is what the user
+          asked for, and it is true of both branches.
+        */
+        if (command.kind === 'rotate') {
+          said(
+            agents.rotate({ name }).then((outcome) => {
+              if (outcome.started) {
+                pushOrch(`  woke ${name} to rotate (${outcome.run})`, 'dim');
+                return;
+              }
               pushOrch(`  ${agentRunRefusal(name, outcome)}`, 'red');
             }),
           );
@@ -2625,6 +2658,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             */
             runs: push.runs,
             runsSinceRotate: push.runsSinceRotate,
+            // Absent means unchanged, never cleared: main only ever replaces this.
+            ...(push.sessionUuid === undefined ? {} : { sessionUuid: push.sessionUuid }),
             /*
               The scheduler pushes on a skip and on a new next-run time, with
               no run attached — so these two move on rows that are not running,
