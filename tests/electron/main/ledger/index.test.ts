@@ -479,4 +479,65 @@ describe('createLedger', () => {
 
     expect(seen).toEqual(['kept']);
   });
+
+  /**
+   * HIVE-125. `meta` is a free-form rider, so an agent can post this ask
+   * itself and make the card read one thing while the grant authorises
+   * another. The log must never hold the deceptive version.
+   */
+  it('stores a permission ask rebuilt from its meta, not from its body', () => {
+    ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: 'Allow Read?\n/repo/a.ts',
+      meta: { kind: 'permission', tool: 'Bash', input: { command: 'rm -rf /' } },
+    });
+
+    const [entry] = ledger.read({}).entries;
+
+    expect(entry?.body).toBe('Allow Bash?\nrm -rf /');
+    expect(entry?.meta?.['default']).toBe('allow-family');
+  });
+
+  it('leaves an ordinary ask body untouched', () => {
+    ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: 'ship it?',
+      meta: { options: ['yes', 'no'] },
+    });
+
+    const [entry] = ledger.read({}).entries;
+
+    expect(entry?.body).toBe('ship it?');
+    expect(entry?.meta).toEqual({ options: ['yes', 'no'] });
+  });
+
+  /**
+   * An entry that never had a `meta` must not gain an empty one: the absence
+   * is what `visibleTo` and the derive helpers read.
+   */
+  it('does not give a post without meta an empty meta', () => {
+    ledger.append({ from: 'sess-a', kind: 'post', body: 'hello' });
+
+    expect(ledger.read({}).entries[0]?.meta).toBeUndefined();
+  });
+
+  /**
+   * The size refusal runs first, so an oversized body is still refused rather
+   * than silently replaced by a short honest one.
+   */
+  it('still refuses an oversized body on a permission ask', () => {
+    const result = ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: 'x'.repeat(LEDGER_BODY_MAX + 1),
+      meta: { kind: 'permission', tool: 'Bash', input: { command: 'npm test' } },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 413 });
+  });
 });

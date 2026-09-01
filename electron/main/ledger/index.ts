@@ -10,6 +10,7 @@ import {
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
 import { claims, keepNewest, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
+import { honestPermissionAsk } from '@shared/permission-rules';
 
 import { createLedgerStore } from './store';
 
@@ -168,8 +169,32 @@ export function createLedger(options: LedgerOptions): Ledger {
 
       let stored: LedgerEntry;
       try {
+        /*
+          The last thing before the write, and the only place it happens
+          (HIVE-125).
+
+          Both callers land in this function, so a permission ask cannot reach
+          the log without passing here — including one an agent posts itself
+          through `ledger_ask`, which bypasses `hive_approve` entirely and is
+          the case the fence left open. `store.append` emits the *stored*
+          entry to its listeners, so normalising the input is what makes the
+          card, the OS toast and `deliver.ts` honest without any of them
+          knowing about it.
+
+          Below the `LEDGER_BODY_MAX` refusal on purpose: an oversized body is
+          refused rather than silently replaced with a short one.
+
+          Skipped entirely when there is no `meta`, so an entry that never had
+          one does not gain an empty object — the absence is meaningful.
+        */
+        const honest =
+          request.meta === undefined
+            ? undefined
+            : honestPermissionAsk(request.body, request.meta);
+
         stored = store.append({
           ...request,
+          ...(honest === undefined ? {} : { body: honest.body, meta: honest.meta }),
           ...(thread === undefined ? {} : { thread }),
           ...(to === undefined ? {} : { to }),
         });
