@@ -10,7 +10,7 @@ import {
 } from '../../../../electron/main/sessions/title-origin';
 
 /**
- * Telling a `/rename` apart from Claude's own auto-title (HIVE-126).
+ * Telling a `/rename` apart from Claude's own auto-title (first-prompt naming).
  *
  * Real files rather than a mocked `fs`, because every interesting case here is a
  * property of a file — a tail that starts mid-line, a transcript that does not

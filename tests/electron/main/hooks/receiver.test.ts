@@ -810,7 +810,7 @@ describe('hook receiver', () => {
     const response = await post({ hook_event_name: event, session_id: 'uuid' });
     expect(response.status).toBe(204);
     /*
-      `sessionUuid` rides along on every session event since HIVE-126. It is what
+      `sessionUuid` rides along on every session event since first-prompt naming. It is what
       names the transcript, and unlike the uuid pinned at spawn it stays correct
       across a `/clear` — which starts a new conversation in the same pty under
       an id nothing else tells main about.
@@ -1506,7 +1506,7 @@ describe('hook receiver', () => {
   });
 
   /**
-   * Naming a session from its **first** prompt (HIVE-126).
+   * Naming a session from its **first** prompt (first-prompt naming).
    *
    * The rule that matters here is not what the name is — `sessionNameFromPrompt`
    * owns that and is tested on its own — but *when* it is read. Naming from any

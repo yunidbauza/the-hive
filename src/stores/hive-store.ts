@@ -525,11 +525,11 @@ interface HiveState {
     idleDetail?: IdleDetail,
   ) => void;
   /**
-   * A new display name for a session (HIVE-61, gated by HIVE-126).
+   * A new display name for a session (HIVE-61, gated by first-prompt naming).
    *
    * `origin` says who decided it, which is what settles whether it may replace a
    * name the row already has — see the action for the rule. Defaults to `agent`,
-   * the only origin that existed before HIVE-126.
+   * the only origin that existed before first-prompt naming.
    */
   renameSession: (id: string, name: string, origin?: SessionNameOrigin) => void;
   /**
@@ -3068,7 +3068,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
       /**
        * **Claude's own title may only name a row that has no name yet**
-       * (HIVE-126).
+       * (first-prompt naming).
        *
        * Claude Code writes exactly one `ai-title` per conversation — measured,
        * across every transcript this project has produced — but it writes it at

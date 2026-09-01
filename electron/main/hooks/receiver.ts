@@ -101,7 +101,7 @@ export interface ReceiverOptions {
    */
   onTicketIntent: (event: HookTicketIntentEvent) => void;
   /**
-   * A name derived from the session's **first** prompt (HIVE-126).
+   * A name derived from the session's **first** prompt (first-prompt naming).
    *
    * Separate from {@link onTicketIntent} even though both read the same event,
    * because they answer different questions and disagree on purpose: a ticket
@@ -433,7 +433,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const warnedTaskTypes = new Set<string>();
 
   /**
-   * Sessions whose first prompt has already been read (HIVE-126).
+   * Sessions whose first prompt has already been read (first-prompt naming).
    *
    * The whole point of naming from a prompt is that it is the **first** one: the
    * name should say why the session exists, not what it drifted onto by turn
@@ -914,7 +914,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     let runInBackground: unknown;
     let backgroundShells: string[] | undefined;
     /**
-     * Claude's own id for the conversation this event fired in (HIVE-126).
+     * Claude's own id for the conversation this event fired in (first-prompt naming).
      *
      * Read on the session path as well as the agent one, because it is what
      * names the transcript — and unlike the uuid pinned at spawn it stays
@@ -991,7 +991,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (event === 'SessionEnd') {
       if (reason === CLEAR_REASON) {
         // A cleared terminal is a fresh conversation, so its next prompt is a
-        // first prompt again (HIVE-126).
+        // first prompt again (first-prompt naming).
         promptedSessions.delete(entityId);
         onCleared(entityId);
       }
@@ -1013,7 +1013,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       if (key !== null) onTicketIntent({ entityId, key, source: 'prompt' });
 
       /**
-       * The first prompt names the session (HIVE-126).
+       * The first prompt names the session (first-prompt naming).
        *
        * Marked as seen whether or not a name came out of it. A greeting is
        * still the first prompt, and re-reading until one happens to yield a

@@ -368,9 +368,9 @@ describe('clearSession', () => {
       /*
         A different name released the suppression, so `lolo` is no longer
         withheld from the successor. It arrives here as a `/rename` because the
-        successor is by now named `pepe`, and HIVE-126 lets only a deliberate
-        rename replace a real name — the suppression being released is what this
-        test is about, and it is what the assertion still turns on.
+        successor is by now named `pepe`, and only a deliberate rename may
+        replace a real name — the suppression being released is what this test is
+        about, and it is what the assertion still turns on.
       */
       state().renameSession('hero-refresh', 'lolo', 'rename');
 

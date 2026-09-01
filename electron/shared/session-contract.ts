@@ -350,7 +350,7 @@ export function hiveNameFromTitle(title: string, prefix?: string): string | unde
 
 /**
  * Words that say nothing about what a session is *for*, dropped before a first
- * prompt is slugged (HIVE-126).
+ * prompt is slugged.
  *
  * Articles, prepositions, auxiliaries, and the politeness a person puts around
  * an instruction. Deliberately **not** a general English stopword list: verbs
@@ -451,7 +451,7 @@ const PROMPT_STOPWORDS = new Set([
 const MAX_PROMPT_NAME_SCAN = 4_096;
 
 /**
- * Name a session after the **first thing it was asked to do** (HIVE-126).
+ * Name a session after the **first thing it was asked to do**.
  *
  * ## Why the Hive has to do this itself
  *
@@ -566,8 +566,7 @@ export function sessionNameFromPrompt(prompt: string): string | undefined {
 }
 
 /**
- * Who decided a session's name, and therefore how much it may override
- * (HIVE-126).
+ * Who decided a session's name, and therefore how much it may override.
  *
  * The three arrive on the same channel and are indistinguishable there, which is
  * the whole reason this type exists. `readTitle` in `sessions/index.ts` is what
@@ -604,7 +603,7 @@ export interface SessionNameEvent {
   /** Already stripped of the leading activity glyph. Never empty. */
   name: string;
   /**
-   * Who decided this name (HIVE-126) — see {@link SessionNameOrigin}.
+   * Who decided this name — see {@link SessionNameOrigin}.
    *
    * Optional, and absent means `agent`. That default is what keeps the field
    * additive: every sender that predates it was reporting a terminal title, and

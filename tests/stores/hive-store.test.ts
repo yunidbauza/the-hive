@@ -3975,7 +3975,7 @@ describe('statusWord agrees with statusLabel', () => {
 });
 
 /**
- * Which name may replace which (HIVE-126).
+ * Which name may replace which (first-prompt naming).
  *
  * ## The measurement this rule is built on
  *

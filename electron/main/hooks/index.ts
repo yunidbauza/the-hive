@@ -92,7 +92,7 @@ export interface HookHandlers {
   /** A prompt named a ticket (HIVE-78). Unconfirmed — see the contract. */
   onTicketIntent: (event: HookTicketIntentEvent) => void;
   /**
-   * A session's **first** prompt yielded a name for it (HIVE-126).
+   * A session's **first** prompt yielded a name for it (first-prompt naming).
    *
    * Already a session name, not a prompt: the receiver derives it and drops the
    * text. See `ReceiverOptions.onPromptName`.

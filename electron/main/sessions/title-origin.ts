@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * Telling a `/rename` apart from Claude's own auto-title (HIVE-126).
+ * Telling a `/rename` apart from Claude's own auto-title (first-prompt naming).
  *
  * ## The problem this exists for
  *

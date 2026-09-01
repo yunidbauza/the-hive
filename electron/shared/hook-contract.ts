@@ -459,7 +459,7 @@ export interface HookStatusEvent {
    */
   cwd?: string;
   /**
-   * Claude's own id for the conversation this event fired in (HIVE-126).
+   * Claude's own id for the conversation this event fired in (first-prompt naming).
    *
    * The uuid the Hive pins at spawn answers the same question for the *first*
    * conversation in a pty and stops being true after a `/clear`, which starts a

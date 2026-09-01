@@ -212,7 +212,7 @@ describe('hiveNameFromTitle', () => {
 });
 
 /**
- * Naming a session after the first thing it was asked to do (HIVE-126).
+ * Naming a session after the first thing it was asked to do (first-prompt naming).
  *
  * The half of the fix that is a pure function. What it cannot show — that the
  * *first* prompt is the only one read, and that a late `ai-title` no longer

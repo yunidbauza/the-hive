@@ -533,7 +533,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   const titles = new Map<string, TitleReader>();
 
   /**
-   * What each session's conversation transcript is called (HIVE-126).
+   * What each session's conversation transcript is called (first-prompt naming).
    *
    * The uuid is pinned at spawn and the cwd is the pty's, which together name
    * `~/.claude/projects/<escaped-cwd>/<uuid>.jsonl` — the file that says whether
@@ -813,7 +813,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        */
       /**
        * Keep the transcript pointer on the conversation that is actually
-       * running (HIVE-126).
+       * running (first-prompt naming).
        *
        * Only the **uuid** is taken from the payload. The directory stays the one
        * the pty was spawned in, because that is what decides Claude's project
@@ -859,7 +859,7 @@ export function createSessions(options: SessionsOptions): Sessions {
         source: event.source,
       } satisfies SessionTicketIntentEvent),
     /**
-     * The first prompt named the session (HIVE-126).
+     * The first prompt named the session (first-prompt naming).
      *
      * Travels on `CH.sessionName` rather than a channel of its own, because it
      * is the same fact the OSC-0 path reports — *this session is called X* — and
@@ -1410,7 +1410,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   /**
    * Whether a title the terminal just showed was a `/rename` or Claude's guess
-   * (HIVE-126).
+   * (first-prompt naming).
    *
    * The two are identical on the OSC-0 channel, so the answer comes from the
    * transcript — see `title-origin.ts` for why Claude's own record is the only
@@ -1805,7 +1805,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     const sessionUuid = resumeUuid ?? newSessionUuid();
 
     /**
-     * The transcript this generation will write to (HIVE-126).
+     * The transcript this generation will write to (first-prompt naming).
      *
      * Recorded here because this is the only place both halves of the path are
      * known at once, and overwritten rather than merged: a restart mints a new
