@@ -463,6 +463,15 @@ A stack of notification cards, newest first, from `useNotifs()`.
   count that fill implies is the whole point of the red tab badge, and colour
   alone puts it out of reach of a screen reader.
 - The store caps the list at 8 (`NOTIF_CAP`); the panel renders what it is given.
+- **A card carrying a `link` grows a wrapper, and the exit moves with it**
+  (HIVE-123). `notif.link` renders as a real `<a>`, and an anchor inside a
+  `<button>` is interactive content inside interactive content — so the link is
+  the button's *sibling* under a wrapping `<div>`, the way `session-table.tsx`
+  draws its row action. The card's dismissal — `overflow-hidden`, the measured
+  `--cc-card-h`, `animate-ccslideout` and the list's own `mb-*` — then belongs
+  to that wrapper rather than to the button: left on the button, the link and
+  the margin below it held full height while the button collapsed, and the list
+  jumped when the remainder unmounted.
 
 ### `<PrsPanel />` and `<PrCard />`
 
