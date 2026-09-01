@@ -500,6 +500,31 @@ describe('createLedger', () => {
     expect(entry?.meta?.['default']).toBe('allow-family');
   });
 
+  /**
+   * The trim `mcp-host/tools.ts` used to do, now at the door a direct
+   * `ledger_ask` also passes through. The log never rotates and `store.all()`
+   * holds every entry in memory, so an untrimmed `Write` parks 64 KiB
+   * permanently.
+   */
+  it('bounds a permission ask input that arrived untrimmed', () => {
+    ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: '',
+      meta: {
+        kind: 'permission',
+        tool: 'Write',
+        input: { file_path: '/repo/a.ts', content: 'x'.repeat(64_000) },
+      },
+    });
+
+    const input = ledger.read({}).entries[0]?.meta?.['input'] as Record<string, unknown>;
+
+    expect(input['content']).toBe('[omitted from the ledger: 64000 chars]');
+    expect(input['file_path']).toBe('/repo/a.ts');
+  });
+
   it('leaves an ordinary ask body untouched', () => {
     ledger.append({
       from: 'sess-a',

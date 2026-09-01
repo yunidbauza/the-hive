@@ -6,11 +6,9 @@ import {
   type McpToolDefinition,
 } from '@shared/mcp-contract';
 import {
-  defaultRungFor,
+  isToolName,
   matches,
   PERMISSION_DENY_MESSAGE,
-  rungsFor,
-  summarise,
   type PermissionDecision,
 } from '@shared/permission-rules';
 
@@ -268,41 +266,6 @@ export function createToolHandlers(
     isError: false,
   });
 
-  /**
-   * `meta.input` as it goes into the log, which is not the same thing as the
-   * input the call runs with.
-   *
-   * The ledger is append-only JSONL that never rotates, and `store.all()`
-   * holds every entry in memory; only `body` is capped. So a single denied
-   * `Write` used to park the whole file — up to 64 KiB — in the log
-   * permanently, and a busy agent parks one per denial.
-   *
-   * Nothing needs those fields. The card does not render them, `summarise`
-   * does not read them, and both the ladder and the one-shot rule are
-   * computed from the tool name and the specifier text alone
-   * (`@shared/permission-rules`). The `updatedInput` on an *allow* is a
-   * different value and is never trimmed — that one is what the model
-   * actually runs.
-   *
-   * Replaced by a marker rather than deleted, so a reader of the log sees
-   * that something was there and how big it was, instead of an input that
-   * looks like it never had a body.
-   */
-  const BULK_FIELDS = ['content', 'new_string', 'old_string'];
-
-  const forTheLedger = (input: Record<string, unknown>): Record<string, unknown> => {
-    const trimmed: Record<string, unknown> = { ...input };
-
-    for (const field of BULK_FIELDS) {
-      const value = trimmed[field];
-      if (typeof value === 'string') {
-        trimmed[field] = `[omitted from the ledger: ${value.length} chars]`;
-      }
-    }
-
-    return trimmed;
-  };
-
   const approve = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     const tool = stringArg(args, 'tool_name');
     if (tool === undefined) {
@@ -315,25 +278,36 @@ export function createToolHandlers(
         ? (raw as Record<string, unknown>)
         : {};
 
+    /*
+      Never post an ask that cannot be described. `Ledger.append` downgrades a
+      permission ask whose `tool` is not a tool name to an ordinary one, and
+      this tool's body is empty, so the result would be a card that says
+      nothing. Denying is both safer and more legible to the model.
+    */
+    if (!isToolName(tool)) {
+      return decision({
+        behavior: 'deny',
+        message: `approve got a tool_name that is not a tool name: ${tool}`,
+      });
+    }
+
     if (grants.some((rule) => matches(rule, tool, input))) {
       return decision({ behavior: 'allow', updatedInput: input });
     }
-
-    const rungs = rungsFor(tool, input);
 
     try {
       await client.post({
         to: 'overmind',
         kind: 'ask',
-        body: `Allow ${tool}?\n${summarise(tool, input)}`,
-        meta: {
-          kind: 'permission',
-          tool,
-          input: forTheLedger(input),
-          rungs,
-          options: [...rungs.map((rung) => rung.id), 'deny'],
-          default: defaultRungFor(rungs),
-        },
+        /*
+          Empty on purpose. `Ledger.append` composes the body from `meta.tool`
+          and `meta.input` (HIVE-125), so composing one here would be a second
+          copy of the same computation — and the copy that does *not* govern,
+          since an agent posting through `ledger_ask` never reaches this code.
+          The ladder, the default and the options arrive the same way.
+        */
+        body: '',
+        meta: { kind: 'permission', tool, input },
       });
     } catch (cause) {
       /*
