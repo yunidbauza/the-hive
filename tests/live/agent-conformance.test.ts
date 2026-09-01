@@ -1507,6 +1507,14 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     const entries = await onDisk();
 
     expect(entries.some((entry) => entry['to'] === STANDING)).toBe(false);
+
+    /*
+      Disarm. This probe is the only one here on a 1m interval, and a schedule
+      left in the map is a wake any later `fireTick` would take — spawning a
+      stray `claude` inside another scenario's budget and displacing the
+      `spawns.at(-1)` it asserts on.
+    */
+    schedules.delete(STANDING);
   }, 300_000);
 
   /**

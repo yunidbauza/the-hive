@@ -62,6 +62,15 @@ import type { SlackStatus } from '@shared/slack-contract';
  * `icon` is seeded with a name the icon registry can actually draw. `Robot`
  * was not one: `GLYPHS` is keyed `ph-robot`, so every agent created from this
  * template rendered the fallback question mark on its own row.
+ *
+ * The body is a **stub instruction**, not a sentence about the agent. It used to
+ * read "You are … . On every wake, read your ledger inbox first, then do your
+ * job" — which is both the self-description shape and the exact "do your job"
+ * phrasing that `wakePrompt` dropped for naming no work. A user who kept the
+ * seeded body got an agent whose standing instructions said nothing to carry
+ * out, one screen after the Source tab told them to write instructions rather
+ * than a description. `slackWatcherTemplate` below is the worked version of the
+ * same shape.
  */
 const templateFor = (taken: readonly string[]): string => `---
 name: ${nextAgentName(taken)}
@@ -73,7 +82,7 @@ wake:
 autonomy: ask
 ---
 
-You are … . On every wake, read your ledger inbox first, then do your job.
+Watch … , and when you find … , do … .
 `;
 
 /**
@@ -514,7 +523,16 @@ export function AgentsSection() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-col gap-2">
+            {/*
+              Keyed by the agent, so switching rows remounts the editor rather
+              than re-rendering it with a different buffer. The form below it
+              holds per-field state that is only meaningful for the agent it was
+              typed into — the in-progress whitespace draft, and the rename
+              notice — and neither has any way to notice that the file under it
+              became a different file.
+            */}
             <AgentEditor
+              key={open ?? 'new'}
               path={
                 open === null
                   ? null

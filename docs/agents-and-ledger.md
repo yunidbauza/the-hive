@@ -1256,7 +1256,16 @@ skip the work.
 
 The corollary for anyone writing one: the body is read as an instruction, so
 write it as one. "Watch X, and when you find Y, do Z" behaves; a paragraph
-describing what sort of agent this is has nothing in it to carry out.
+describing what sort of agent this is has nothing in it to carry out. The New
+agent template in `agents-section.tsx` seeds that shape as a stub for the same
+reason — it previously seeded "You are … . On every wake, read your ledger inbox
+first, then do your job", which is the defect above written into the starting
+point.
+
+All three wake prompts name the work, the rotation one included. That branch is
+easy to miss — it takes one wake in `rotate_after`, so roughly one in fifty —
+and leaving it inbox-conditional would have kept the original bug alive on
+exactly the wake that also has to write a handoff.
 
 ### `autonomy` does not touch the fence
 
@@ -1268,6 +1277,16 @@ by nothing at all: no reader in `electron/` or `src/`, so the field documented
 in the form's help text had no effect on any run. It matters more now that the
 body is standing work — an `ask` agent doing its own job unprompted is exactly
 where the distinction bites.
+
+**`ask` is the parsed default, so it is the clause a file with no `autonomy:`
+line gets** — which, since nothing read the field before, is every definition
+written up to this change. That makes its wording load-bearing in a way `act`'s
+is not, and it is why the sentence says outright that carrying out its
+instructions is not something to ask about. The cost of getting that wrong is
+not chatter: `scheduler.ts` skips any agent whose status is not `sleeping` or
+`failed`, and leaves an `asking` agent's `nextRunAt` deliberately stale, so an
+agent that asks needlessly loses every scheduled wake until someone answers or
+the ask expires — a day, per `LEDGER_ASK_TTL_MS`.
 
 It is a fourth layer next to `skills`, `mcp` and `tools`, and it is
 easy to mistake for a looser version of the same thing. It is not: `tools:`
@@ -1337,8 +1356,9 @@ is a participant in its own rotation, across two wakes.
 `rotate_after`, `wake-command.ts` builds the same `--resume <uuid>` it always
 did — a handoff written by an agent that has been made to forget everything
 first would be worthless. What changes is the prompt: `wakePrompt` swaps the
-usual "read your inbox, then carry out your instructions" for a last turn that asks the agent to
-do that work and then call **`ledger_handoff`** with what a fresh copy of itself
+usual "read your inbox, then carry out your instructions" for a last turn that
+asks the agent to do that work and then call **`ledger_handoff`** with what a
+fresh copy of itself
 must know — what it watches, which threads are open and their ids, what it has
 learned about how this user wants things done. Swaps rather than appends,
 because an agent handed two instructions reliably does the first one. That wake

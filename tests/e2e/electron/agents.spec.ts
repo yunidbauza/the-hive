@@ -75,6 +75,87 @@ async function authorAgent(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Close settings' }).click();
 }
 
+/**
+ * The reported bug, in a real browser: the Description field "doesn't allow
+ * spaces".
+ *
+ * No unit test could have caught it as a *user* experiences it, and none of the
+ * flows above go near it — `authorAgent` fills the Source tab, so the Form tab's
+ * controlled inputs are never typed into at all. The mechanism needed a real
+ * keystroke sequence against a real React commit: the value round-trips through
+ * `patchFrontmatter`/`readFrontmatter` on every character, the read trims, and
+ * the space was gone before the next character arrived — so the field silently
+ * ate every one, and `Watches my open PRs` came out `Watchesmyopenprs`-shaped.
+ *
+ * Typed rather than `fill()`ed, deliberately: `fill()` sets the value in one
+ * commit and would pass on the broken build. Only per-character typing
+ * reproduces it.
+ */
+test('accepts spaces typed into the agent form fields', async ({}, testInfo) => {
+  const { app, page } = await launchWithConfig((name) => testInfo.outputPath(name));
+
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Agents' }).click();
+  await page.getByRole('button', { name: '+ New agent' }).click();
+
+  const description = page.getByRole('textbox', { name: 'description' });
+
+  await description.click();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('watches my open PRs');
+
+  await expect(description).toHaveValue('watches my open PRs');
+
+  // The list fields carry the same defect, where `[a, b]` is the documented
+  // syntax and the space after the comma was equally unreachable.
+  const tools = page.getByRole('textbox', { name: 'tools' });
+
+  await tools.click();
+  await page.keyboard.type('[Bash(gh *), Read]');
+
+  await expect(tools).toHaveValue('[Bash(gh *), Read]');
+
+  /*
+    And what was typed is what the file holds — modulo the trimming the buffer
+    does at the ends, which is the behaviour the draft exists to hide from the
+    typist rather than to defeat.
+  */
+  await page.getByRole('tab', { name: 'Source' }).click();
+
+  await expect(page.getByLabel('Agent source')).toHaveValue(
+    /description: watches my open PRs/,
+  );
+  await expect(page.getByLabel('Agent source')).toHaveValue(
+    /tools: \[Bash\(gh \*\), Read\]/,
+  );
+
+  await app.close();
+});
+
+/**
+ * The Source tab says what the body is for.
+ *
+ * Every frontmatter field has a `FIELD_HELP` sentence under its control; the
+ * body had none anywhere, and it is the field users read as a description of
+ * the agent rather than as the work it does on every wake.
+ */
+test('tells the author what the body below the frontmatter does', async ({}, testInfo) => {
+  const { app, page } = await launchWithConfig((name) => testInfo.outputPath(name));
+
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Agents' }).click();
+  await page.getByRole('button', { name: '+ New agent' }).click();
+
+  await expect(page.getByText(/carried out on every wake/)).toHaveCount(0);
+
+  await page.getByRole('tab', { name: 'Source' }).click();
+
+  await expect(page.getByText(/carried out on every wake/)).toBeVisible();
+
+  await app.close();
+});
+
 test('lists an authored agent in the rail, grouped by state', async ({}, testInfo) => {
   const { app, page } = await launchWithConfig((name) => testInfo.outputPath(name));
 

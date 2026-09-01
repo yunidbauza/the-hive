@@ -93,13 +93,19 @@ export function wakePrompt(
   rotation?: { lastTurn?: true; handoff?: string },
 ): string {
   /*
-    A last turn replaces the instruction rather than adding to it. The agent
-    still does its normal work if something is waiting — the prompt says so —
-    but "read your inbox, then do your job, then end" and "wind this session up"
-    are one instruction, not two, and an agent given both tends to do the first.
+    A last turn replaces the instruction rather than adding to it: "do the work,
+    then end" and "wind this session up" are one instruction, not two, and an
+    agent given both tends to do only the first.
+
+    It still has to name the work the same way {@link normal} does. This branch
+    was missed when the other two strings were reworded, and it said "do your
+    normal work if something is waiting" — the inbox-conditional framing the
+    rest of this change exists to remove. With `every: 5m` and the default
+    `rotate_after: 50` a rotation wake lands about every four hours, so that
+    left the original defect alive on one wake in fifty.
   */
   if (rotation?.lastTurn === true) {
-    return `This is your last turn on this session. Do your normal work if something is waiting, then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
+    return `This is your last turn on this session. Carry out your instructions for this wake as usual — they are standing work whether or not anything is waiting in your inbox — then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
   }
 
   const because =
@@ -140,9 +146,19 @@ export function wakePrompt(
  * boundary and neither pretends to be: the tool fence is what stops a call, and
  * `act` does not pre-allow anything. This is about what the agent does with a
  * judgement call the fence has no opinion on.
+ *
+ * `ask` is the parsed default (`definition.ts`), so it is the clause a
+ * definition with no `autonomy:` line receives — which, since nothing read the
+ * field before, is every definition written so far. That makes its wording
+ * load-bearing in a way `act`'s is not, and it is why the sentence says
+ * outright that carrying out its instructions is not the kind of thing to ask
+ * about. An agent that asked once per wake would be worse than one that never
+ * asked: `scheduler.ts` deliberately leaves an `asking` agent's `nextRunAt`
+ * stale until the answer lands, so a needless ask costs it every scheduled wake
+ * until someone replies or the ask expires.
  */
 const AUTONOMY_CLAUSE: Record<Autonomy, string> = {
-  ask: '**Check before you act on anything consequential.** Post a `ledger_ask` describing what you propose to do, then end your turn and wait for the answer. Routine steps your instructions already cover do not need asking; a decision their author would want a say in does.',
+  ask: '**Check before you act on anything consequential.** Post a `ledger_ask` describing what you propose to do, then end your turn and wait for the answer. This is not a reason to skip your instructions or to ask permission to follow them: carrying out the work you were given is what you are awake for, and the routine steps it already covers need no asking. Ask about a *decision* their author would want a say in — something outward, irreversible, or not covered by what you were told.',
   act: '**Proceed without asking, and report afterwards.** Your instructions are your authority: carry them out and say what you did with `ledger_done`. Ask only when you are genuinely blocked, not to confirm what you were already told to do.',
 };
 

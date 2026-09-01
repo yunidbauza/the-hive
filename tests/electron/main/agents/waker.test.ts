@@ -326,11 +326,19 @@ describe('wakePrompt', () => {
     );
   });
 
-  it('leaves the last-turn prompt free of the ordinary instruction', () => {
+  /*
+    The last-turn branch names the work the same way the ordinary one does. It
+    was missed when the other two strings were reworded and still said "do your
+    normal work if something is waiting" — the inbox-conditional framing this
+    change exists to remove, left alive on the one wake in `rotate_after` that
+    takes this branch.
+  */
+  it('asks a last turn to carry out the instructions too', () => {
     const prompt = wakePrompt('schedule', undefined, { lastTurn: true });
 
     expect(prompt).toContain('This is your last turn on this session.');
-    expect(prompt).not.toContain('An empty inbox');
+    expect(prompt).toContain('Carry out your instructions');
+    expect(prompt).not.toContain('if something is waiting');
   });
 });
 

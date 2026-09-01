@@ -518,9 +518,15 @@ export function AgentForm({
    * arrives.
    *
    * One draft, not one per field: only the focused control can be mid-word, and
-   * a map would be a second thing to expire. It is kept only while it still
-   * trims to what the buffer says, which is what makes a rewrite from the
-   * Source tab win over stale text — see {@link shown}.
+   * a map would be a second thing to expire.
+   *
+   * Its lifetime is the focus, and `onBlur` is what ends it. The equality guard
+   * in {@link shown} is a second line rather than the first: it catches a value
+   * replaced underneath a still-focused field, but it cannot catch a *switch of
+   * agent* — `AgentForm` is not remounted for that, and two agents whose value
+   * for the same key is equal (both absent, most often) make the guard
+   * trivially true. Blur fires on that switch, which is why it is the one that
+   * has to be load-bearing.
    */
   const [draft, setDraft] = useState<{ path: string; text: string } | null>(
     null,
@@ -535,10 +541,11 @@ export function AgentForm({
    * What a text input displays: the buffer's value, or the draft that trims to
    * it.
    *
-   * The equality test is the whole expiry policy. A draft only ever differs
-   * from the value by whitespace at its ends, so one that no longer trims to
-   * what the buffer holds is describing a value that has since been replaced,
-   * and the buffer wins.
+   * A draft only ever differs from the value by whitespace at its ends, so one
+   * that no longer trims to what the buffer holds is describing a value that has
+   * since been replaced — by the Source tab, or by a patch from anywhere else —
+   * and the buffer wins. That is a guard against a *stale* draft, not the thing
+   * that retires a finished one; blur does that.
    */
   const shown = (path: string): string => {
     const value = at(path);
@@ -571,20 +578,17 @@ export function AgentForm({
   };
 
   /**
-   * Remember the in-progress whitespace, or forget this field's.
+   * Remember the in-progress whitespace, or forget it.
    *
-   * Scoped to `path` on the way out as well as in: clearing the draft outright
-   * would let a keystroke in one field discard the space someone left mid-word
-   * in another, which is the bug this whole mechanism exists to stop, moved one
-   * field to the left.
+   * Unconditional, because the draft's lifetime is the focus and only one
+   * control holds that: by the time a keystroke reaches a second field, the
+   * first has blurred and cleared. An earlier version cleared only its own
+   * `path` so a keystroke here could not discard a draft over there — a branch
+   * nothing could reach once blur existed, and an unreachable branch is a shape
+   * problem rather than something to cover.
    */
   const stash = (path: string, value: string) => {
-    if (value.trim() !== value) {
-      setDraft({ path, text: value });
-      return;
-    }
-
-    setDraft((current) => (current?.path === path ? null : current));
+    setDraft(value.trim() === value ? null : { path, text: value });
   };
 
   const set = (path: string, value: string) => {
@@ -840,6 +844,13 @@ export function AgentForm({
       value={shown(path)}
       placeholder={placeholder}
       onChange={(event) => set(path, event.target.value)}
+      /*
+        The draft's lifetime is the focus. Without this a leading space — held
+        by `stash` exactly like a trailing one, but never consumed by a
+        following character — would sit in the box for the life of the mount,
+        showing text the buffer does not hold.
+      */
+      onBlur={() => setDraft(null)}
       className="min-w-0 rounded-[5px] border border-border-soft bg-panel-2 px-2 py-1 text-[11.5px] text-ink outline-none focus:border-border"
     />
   );
@@ -973,6 +984,8 @@ export function AgentForm({
               */
               onBlur={(event) => {
                 const typed = event.target.value.trim();
+
+                setDraft(null);
 
                 if (typed === '' || !taken.includes(typed)) return;
 

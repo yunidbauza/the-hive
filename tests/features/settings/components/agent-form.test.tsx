@@ -327,28 +327,52 @@ describe('AgentForm', () => {
     });
 
     /*
-      Editing a *different* field must not discard the space in progress here.
-      The draft is per-field and survives any buffer change that leaves this
-      field's own value alone — which is what lets a user tab away mid-sentence
-      and come back to the words they typed.
+      Moving to another field retires the draft rather than carrying it along:
+      focus is its whole lifetime, so the space is gone by the time the next
+      field takes a keystroke, and neither box shows text its buffer does not
+      hold.
     */
-    it('survives an edit to a different field', async () => {
+    it('does not carry a draft to the field focused next', async () => {
       const onChange = setup();
-      const field = screen.getByRole('textbox', { name: 'description' });
+      const description = screen.getByRole('textbox', { name: 'description' });
 
-      await userEvent.type(field, ' ');
+      await userEvent.type(description, ' ');
       await userEvent.type(screen.getByRole('textbox', { name: 'name' }), 'x');
 
       expect(patched(onChange, 'name')).toBe('slack-watcherx');
+      expect(description).toHaveValue('Watches #incorp-dev for build failures');
+    });
+
+    /*
+      A leading space is stashed exactly like a trailing one — `stash` fires on
+      whitespace at either end — but nothing ever consumes it, since the next
+      character lands after it rather than before. Blur is what retires it, and
+      without that it sat in the box for the life of the mount showing text the
+      buffer does not hold.
+    */
+    it('drops in-progress whitespace when the field loses focus', async () => {
+      setup();
+
+      const field = screen.getByRole('textbox', { name: 'description' });
+
+      await userEvent.type(field, ' ');
       expect(field).toHaveValue('Watches #incorp-dev for build failures ');
+
+      await userEvent.tab();
+      expect(field).toHaveValue('Watches #incorp-dev for build failures');
     });
 
     /*
       A draft that outlived its own value would make the form lie about the
-      file: rewrite `description:` in the Source tab, come back, and the stale
-      text would still be sitting in the box. The draft is only ever the
-      trailing whitespace the buffer cannot hold, so it is kept only while it
-      still trims to what the buffer says — and a rewrite from outside wins.
+      file: rewrite `description:` from anywhere else while the field is still
+      focused, and the stale text would be sitting in the box. The draft is only
+      ever whitespace the buffer cannot hold, so it is kept only while it still
+      trims to what the buffer says.
+
+      Not the Source tab, despite the temptation to say so: that tab *unmounts*
+      `AgentForm` (`agent-editor.tsx` renders one or the other), so no draft
+      survives the trip and it could not exercise this guard. A sibling control
+      patching the same key is what actually reaches it.
     */
     it('yields to a rewrite of its own value from outside', async () => {
       function Outside() {
