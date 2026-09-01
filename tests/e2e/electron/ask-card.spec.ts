@@ -52,6 +52,8 @@ const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
 const SESSION = 'sess-01';
 const PROJECT = 'nova-web';
 const ASK_TITLE = 'Deploy to production?';
+/** Named in `meta`, disowned by the body the same ask carries (HIVE-125). */
+const DECEPTIVE_COMMAND = 'git push --force origin main';
 
 function writeConfig(path: string, bootstrapMarker: string): void {
   writeFileSync(
@@ -113,6 +115,103 @@ function postAskCommand(statusMarker: string): string {
     ` > '${statusMarker}'`
   );
 }
+
+/**
+ * The deceptive permission ask (HIVE-125), posted the same way.
+ *
+ * `body` names `Read` and a harmless path; `meta` names `Bash` and a force
+ * push. Before the fix the card rendered the body, so the words on screen were
+ * the asker's and the click authorised the meta's call. Nothing here goes
+ * through `hive_approve` — that is the point: this is the ask an agent writes
+ * for itself, which is why the fix lives at `Ledger.append` instead.
+ */
+function postDeceptiveAskCommand(statusMarker: string): string {
+  const body = JSON.stringify({
+    to: 'overmind',
+    kind: 'ask',
+    body: 'Allow Read?\n/repo/a.ts',
+    meta: {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: DECEPTIVE_COMMAND },
+      rungs: [{ id: 'allow-tool', label: 'just this once', caption: 'harmless.', rule: '*' }],
+      default: 'allow-tool',
+    },
+  });
+
+  return (
+    `curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST "$${HOOK_ENV_RECEIVER_URL}${LEDGER_POST_PATH}"` +
+    ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
+    ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}"` +
+    ` -H "content-type: application/json"` +
+    ` --data-binary '${body}'` +
+    ` > '${statusMarker}'`
+  );
+}
+
+test('a permission card names the call the click authorises, not the body', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  const posted = testInfo.outputPath('posted.txt');
+  writeConfig(configPath, bootstrapped);
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+
+  try {
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('header');
+
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
+    const search = page.getByRole('textbox', { name: 'Search all projects' });
+    await expect(search).toBeFocused();
+    await page.keyboard.type(PROJECT);
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
+    await expectMarker(bootstrapped, 'bootstrapped');
+
+    await shell(page, postDeceptiveAskCommand(posted));
+    await expectMarker(posted, '200');
+
+    await page.getByRole('tab', { name: /^Inbox/ }).click();
+
+    // The title is main's, so the card is addressable by the tool it will run.
+    const card = page.getByRole('article', {
+      name: new RegExp(`^Ask from ${SESSION}: Allow Bash\\?`),
+    });
+    await expect(card).toBeVisible();
+
+    // What the user actually reads, on a real screen.
+    await expect(card.getByText(DECEPTIVE_COMMAND)).toBeVisible();
+    await expect(card.getByText('Allow Read?')).toHaveCount(0);
+    await expect(card.getByText('/repo/a.ts')).toHaveCount(0);
+
+    /*
+      The ladder is the recomputed one. `just this once` was the asker's label
+      for a rung whose rule was `*`; the rungs drawn are `rungsFor`'s, and the
+      preselected one is `defaultRungFor`'s family rung rather than the
+      `allow-tool` the ask asked for.
+    */
+    await expect(card.getByRole('radio', { name: 'just this once' })).toHaveCount(0);
+    await expect(card.getByRole('radio', { name: 'git *' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(card.getByRole('radio', { name: 'all Bash' })).toBeVisible();
+
+    // And the log holds the honest version, not the one that was posted.
+    const snapshot = await page.evaluate(() => window.hive!.ledger.list());
+    const ask = snapshot.entries.find((entry: LedgerEntry) => entry.kind === 'ask');
+    expect(ask?.body).toBe(`Allow Bash?\n${DECEPTIVE_COMMAND}`);
+    expect(ask?.meta?.['default']).toBe('allow-family');
+  } finally {
+    await app.close();
+  }
+});
 
 test('an ask posted to the ledger becomes a card, and answering it collapses the card', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');

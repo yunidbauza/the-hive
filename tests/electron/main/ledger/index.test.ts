@@ -479,4 +479,132 @@ describe('createLedger', () => {
 
     expect(seen).toEqual(['kept']);
   });
+
+  /**
+   * HIVE-125. `meta` is a free-form rider, so an agent can post this ask
+   * itself and make the card read one thing while the grant authorises
+   * another. The log must never hold the deceptive version.
+   */
+  it('stores a permission ask rebuilt from its meta, not from its body', () => {
+    ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: 'Allow Read?\n/repo/a.ts',
+      meta: { kind: 'permission', tool: 'Bash', input: { command: 'rm -rf /' } },
+    });
+
+    const [entry] = ledger.read({}).entries;
+
+    expect(entry?.body).toBe('Allow Bash?\nrm -rf /');
+    expect(entry?.meta?.['default']).toBe('allow-family');
+  });
+
+  /**
+   * The trim `mcp-host/tools.ts` used to do, now at the door a direct
+   * `ledger_ask` also passes through. The log never rotates and `store.all()`
+   * holds every entry in memory, so an untrimmed `Write` parks 64 KiB
+   * permanently.
+   */
+  it('bounds a permission ask input that arrived untrimmed', () => {
+    ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: '',
+      meta: {
+        kind: 'permission',
+        tool: 'Write',
+        input: { file_path: '/repo/a.ts', content: 'x'.repeat(64_000) },
+      },
+    });
+
+    const input = ledger.read({}).entries[0]?.meta?.['input'] as Record<string, unknown>;
+
+    expect(input['content']).toBe('[omitted from the ledger: 64000 chars]');
+    expect(input['file_path']).toBe('/repo/a.ts');
+  });
+
+  it('leaves an ordinary ask body untouched', () => {
+    ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: 'ship it?',
+      meta: { options: ['yes', 'no'] },
+    });
+
+    const [entry] = ledger.read({}).entries;
+
+    expect(entry?.body).toBe('ship it?');
+    expect(entry?.meta).toEqual({ options: ['yes', 'no'] });
+  });
+
+  /**
+   * An entry that never had a `meta` must not gain an empty one: the absence
+   * is what `visibleTo` and the derive helpers read.
+   */
+  it('does not give a post without meta an empty meta', () => {
+    ledger.append({ from: 'sess-a', kind: 'post', body: 'hello' });
+
+    expect(ledger.read({}).entries[0]?.meta).toBeUndefined();
+  });
+
+  /**
+   * The size refusal runs first, so an oversized body is still refused rather
+   * than silently replaced by a short honest one.
+   */
+  it('still refuses an oversized body on a permission ask', () => {
+    const result = ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: 'x'.repeat(LEDGER_BODY_MAX + 1),
+      meta: { kind: 'permission', tool: 'Bash', input: { command: 'npm test' } },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 413 });
+  });
+
+  /**
+   * Self review, finding 1. The cap above tests the body that was *sent*; a
+   * permission ask's stored body is composed here, from a `meta.input` that
+   * nothing bounds — `command` is not a bulk field and `summarise` returns it
+   * verbatim. So an empty sent body carrying a 60 KB command wrote 60 KB into
+   * a log capped at 16 KiB, that never rotates, and that `store.all()` holds
+   * whole in memory.
+   */
+  it('refuses a composed body over the cap, however short the sent one', () => {
+    const result = ledger.append({
+      from: 'sess-a',
+      to: OVERMIND,
+      kind: 'ask',
+      body: '',
+      meta: {
+        kind: 'permission',
+        tool: 'Bash',
+        input: { command: `echo ${'x'.repeat(LEDGER_BODY_MAX)}` },
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 413 });
+    expect(ledger.read({}).entries).toHaveLength(0);
+  });
+
+  /**
+   * Self review, finding 3. Every other reader of the discriminator requires
+   * the entry kind too. Keyed on `meta.kind` alone this rewrote a `post`,
+   * destroying its author's text to compose a permission line for an entry
+   * that is a permission ask to nobody.
+   */
+  it('leaves a non-ask carrying permission meta exactly as written', () => {
+    ledger.append({
+      from: 'sess-a',
+      kind: 'post',
+      body: 'just a note',
+      meta: { kind: 'permission', tool: 'Bash', input: { command: 'rm -rf /' } },
+    });
+
+    expect(ledger.read({}).entries[0]?.body).toBe('just a note');
+  });
 });

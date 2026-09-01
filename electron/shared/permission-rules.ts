@@ -158,7 +158,18 @@ const walksUp = (path: string): boolean => path.split('/').includes('..');
 const BARE_TOOL = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /** A qualified MCP name: `mcp__hive__ledger_read`. */
-const MCP_TOOL = /^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$/;
+/*
+  `-` is admitted in both segments because real MCP tool names carry it —
+  `mcp__plugin_context7_context7__query-docs` is an ordinary one — and without
+  it `isToolName` rejects them, so the fence could describe no rung for such a
+  call and `tools:` could not name one at all. Surfaced by HIVE-125, which
+  made the predicate load-bearing on the deny path as well as the grant path.
+
+  Safe on both roads it feeds: the glob DSL reads only `,` and `*`, and a
+  hyphen is an ordinary character in a YAML flow-sequence item, so it can
+  neither widen a rule nor close `tools:` early.
+*/
+const MCP_TOOL = /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/;
 
 /**
  * Whether `value` is the name of a tool — the boundary check on `meta.tool`.
@@ -440,4 +451,132 @@ export function summarise(
 ): string {
   const text = specifierTextFor(toolName, input);
   return text === undefined ? `use ${toolName}` : text;
+}
+
+/**
+ * Fields whose value is bulk content rather than a specifier, replaced by a
+ * marker before anything is stored (HIVE-125, moved from `mcp-host/tools.ts`).
+ *
+ * The ledger is append-only JSONL that never rotates and `store.all()` holds
+ * every entry in memory, so a denied `Write` used to park up to 64 KiB in the
+ * log permanently. It lives here rather than at the tool because a direct
+ * `ledger_ask` reaches the log without passing the tool at all.
+ */
+const BULK_FIELDS = ['content', 'new_string', 'old_string'];
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const without = (
+  meta: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(meta).filter(([key]) => !keys.includes(key)));
+
+const keepForTheLedger = (input: Record<string, unknown>): Record<string, unknown> => {
+  const trimmed: Record<string, unknown> = { ...input };
+
+  for (const field of BULK_FIELDS) {
+    if (!(field in trimmed)) continue;
+
+    /*
+      Bounded whatever its type. The string case is the one that occurs, but
+      the marker used to be conditional on it, so `content: ['x'.repeat(64000)]`
+      walked past the only trim point in the system and parked in the log
+      anyway. A non-string in these fields is malformed input, and reporting
+      its size in characters would be a lie, so it is named rather than
+      measured.
+    */
+    const value = trimmed[field];
+    trimmed[field] =
+      typeof value === 'string'
+        ? `[omitted from the ledger: ${value.length} chars]`
+        : '[omitted from the ledger]';
+  }
+
+  return trimmed;
+};
+
+/**
+ * What a permission ask is allowed to say (HIVE-125).
+ *
+ * HIVE-119 bounded the **grant**: it is computed in main from `meta.tool` and
+ * `meta.input`, both validated as a tool name, and never from free text. It
+ * did not bound the **card**, whose title and body came from `ask.body` and
+ * whose scope labels came from `meta.rungs` — all model-written, and none of
+ * it tied to the meta the grant is computed from. An ask could therefore read
+ * `Allow Read? /repo/a.ts` while carrying `meta.tool: "Bash"`, and the click
+ * that looked like reading a file authorised a shell command.
+ *
+ * `meta` is a free-form rider that `ledger_ask` passes through unfiltered, so
+ * this cannot be fixed at the tool: an agent posting the ask directly bypasses
+ * `hive_approve` entirely, which is precisely the attack. It is fixed at
+ * `Ledger.append` instead — the one door every writer passes through — so the
+ * deceptive text never enters the log and every downstream consumer (the card,
+ * the OS toast, `deliver.ts`, the renderer's mirror) is honest for free.
+ *
+ * Four inputs are model-controlled and all four are replaced or dropped:
+ * `body`, `meta.rungs`, `meta.default` (which rung opens *preselected*) and
+ * `meta.quote` (which retitles the card and hides the command block).
+ *
+ * An ordinary ask is returned untouched: its body is the asker's message and
+ * is meant to be read as written.
+ */
+export function honestPermissionAsk(
+  body: string,
+  meta: Record<string, unknown>,
+): { body: string; meta: Record<string, unknown> } {
+  if (meta['kind'] !== 'permission') return { body, meta };
+
+  const tool = meta['tool'];
+
+  /*
+    Not a tool name, so main cannot describe the call and must not offer a
+    ladder for it. Downgraded to an ordinary ask rather than refused: the
+    asker's own words are honest as long as nothing frames them as a
+    permission prompt, so the question still reaches the user and nothing
+    lies. Refusing would make a malformed ask vanish instead.
+  */
+  if (!isToolName(tool)) {
+    return { body, meta: without(meta, ['kind', 'rungs', 'default']) };
+  }
+
+  /*
+    Trimmed first, then everything else derived from the *same* object that is
+    stored. `permissions.ts` recomputes `rungsFor(tool, meta.input)` off the
+    stored entry when it writes the grant, so deriving display from a different
+    input would make display/grant equality a coincidence rather than a
+    construction — bulk fields happen not to be specifiers today.
+  */
+  const input = keepForTheLedger(asRecord(meta['input']));
+  const rungs = rungsFor(tool, input);
+
+  /*
+    Built from nothing, not from the caller's `meta` with the known keys
+    overwritten.
+
+    A denylist only ever excludes the keys someone thought of: spreading the
+    original through and blanking `quote` would carry every *other*
+    model-supplied key onto an entry the system then certifies as honest, and
+    `meta.delivered` — which `deliver.ts` reads off any entry of any kind — is
+    one that already exists to be carried. Dropping `quote` was the fix for
+    one such key; an allowlist is the fix for the shape of the bug, and makes
+    the next `quote` a non-event.
+
+    This is the argument {@link isSafeToCompose} makes for the rule grammar,
+    applied to the rider that travels beside it.
+  */
+  return {
+    body: `Allow ${tool}?\n${summarise(tool, input)}`,
+    meta: {
+      kind: 'permission',
+      tool,
+      input,
+      rungs,
+      default: defaultRungFor(rungs),
+      options: [...rungs.map((rung) => rung.id), 'deny'],
+    },
+  };
 }

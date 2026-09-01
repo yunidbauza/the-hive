@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LedgerSnapshot } from '@shared/ledger-contract';
+import { PERMISSION_DENY_MESSAGE } from '@shared/permission-rules';
 
 import { ReceiverError, type ReceiverClient } from '../../../electron/mcp-host/client';
 import { createToolHandlers } from '../../../electron/mcp-host/tools';
@@ -64,8 +65,15 @@ describe('approve', () => {
    * file — up to 64 KiB — in it permanently. Nothing reads those fields: the
    * card does not render them and both the ladder and the one-shot rule come
    * from the tool name and the specifier text.
+   *
+   * Trimming moved to `honestPermissionAsk` at `Ledger.append` in HIVE-125,
+   * because a direct `ledger_ask` reaches the log without passing this tool at
+   * all. What this layer still owes is the raw specifier: it posts the facts
+   * and lets the one door compose the entry. The trim itself is covered in
+   * `tests/electron/shared/permission-rules.test.ts` and end-to-end in
+   * `tests/electron/main/ledger/index.test.ts`.
    */
-  it('does not park a denied call\'s file contents in the ledger', async () => {
+  it('posts the input untrimmed and lets append bound it', async () => {
     const client = stub();
     const handlers = createToolHandlers(client, []);
 
@@ -77,25 +85,9 @@ describe('approve', () => {
     const post = vi.mocked(client.post).mock.calls[0]![0] as unknown as {
       meta: { input: Record<string, unknown> };
     };
-    expect(post.meta.input['content']).toBe('[omitted from the ledger: 64000 chars]');
+    expect(post.meta.input['content']).toBe('x'.repeat(64_000));
     // The specifier the grant is computed from survives untouched.
     expect(post.meta.input['file_path']).toBe('/repo/a.ts');
-  });
-
-  it('trims an Edit\'s old/new strings the same way', async () => {
-    const client = stub();
-    const handlers = createToolHandlers(client, []);
-
-    await handlers.callTool('approve', {
-      tool_name: 'Edit',
-      input: { file_path: '/repo/a.ts', old_string: 'aaa', new_string: 'bbbb' },
-    });
-
-    const post = vi.mocked(client.post).mock.calls[0]![0] as unknown as {
-      meta: { input: Record<string, unknown> };
-    };
-    expect(post.meta.input['old_string']).toBe('[omitted from the ledger: 3 chars]');
-    expect(post.meta.input['new_string']).toBe('[omitted from the ledger: 4 chars]');
   });
 
   it('never trims the input an allowed call actually runs with', async () => {
@@ -135,23 +127,105 @@ describe('approve', () => {
       input: { command: 'git push origin main' },
     });
 
-    expect(client.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'overmind',
-        kind: 'ask',
-        body: 'Allow Bash?\ngit push origin main',
-      }),
-    );
-
-    const meta = (client.post as ReturnType<typeof vi.fn>).mock.calls[0]![0]['meta'];
-    expect(meta['kind']).toBe('permission');
-    expect(meta['tool']).toBe('Bash');
-    expect(meta['default']).toBe('allow-family');
-    expect(meta['options']).toEqual(['allow-once', 'allow-family', 'allow-tool', 'deny']);
+    /*
+      HIVE-125: the honest text is composed at `Ledger.append` and nowhere
+      else, so this tool posts only the facts the ladder is derived from. Two
+      places computing the same string is two places that can drift — and the
+      copy here is the one that does *not* govern, since an agent posting
+      through `ledger_ask` never reaches this code.
+    */
+    expect(client.post).toHaveBeenCalledWith({
+      to: 'overmind',
+      kind: 'ask',
+      body: '',
+      meta: {
+        kind: 'permission',
+        tool: 'Bash',
+        input: { command: 'git push origin main' },
+      },
+    });
 
     const decision = decisionOf(result);
     expect(decision['behavior']).toBe('deny');
     expect(typeof decision['message']).toBe('string');
+  });
+
+  /**
+   * The tool never posts an ask it cannot describe: `append` would downgrade
+   * it to an ordinary ask with an empty body, which is a card that says
+   * nothing.
+   */
+  it('denies a tool_name that is not a tool name, without writing an ask', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client, ['Read']);
+
+    const result = await handlers.callTool('approve', {
+      tool_name: 'Bash]\ntools: [Write',
+      input: {},
+    });
+
+    expect(decisionOf(result)['behavior']).toBe('deny');
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Self review, finding 2. The describability gate sits *below* the grants
+   * check: a grant is a decision the user already made, and `matches`
+   * compares literally, so a rule may name a tool the predicate would not
+   * describe. Above the check, this revoked tools the fence was configured to
+   * allow.
+   */
+  it('still allows a granted tool whose name the predicate would not describe', async () => {
+    const client = stub();
+    const handlers = createToolHandlers(client, ['weird name']);
+
+    const result = await handlers.callTool('approve', {
+      tool_name: 'weird name',
+      input: {},
+    });
+
+    expect(decisionOf(result)['behavior']).toBe('allow');
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  /** Hyphenated MCP tool names are ordinary, and are grantable and askable. */
+  it('handles a hyphenated MCP tool on both roads', async () => {
+    const granted = createToolHandlers(stub(), ['mcp__ctx__query-docs']);
+    expect(
+      decisionOf(await granted.callTool('approve', { tool_name: 'mcp__ctx__query-docs', input: {} }))[
+        'behavior'
+      ],
+    ).toBe('allow');
+
+    const client = stub();
+    const ungranted = createToolHandlers(client, ['Read']);
+    const result = await ungranted.callTool('approve', {
+      tool_name: 'mcp__ctx__query-docs',
+      input: {},
+    });
+
+    expect(decisionOf(result)['behavior']).toBe('deny');
+    expect(client.post).toHaveBeenCalledWith({
+      to: 'overmind',
+      kind: 'ask',
+      body: '',
+      meta: { kind: 'permission', tool: 'mcp__ctx__query-docs', input: {} },
+    });
+  });
+
+  /**
+   * The deny that is not a refusal to answer. `PERMISSION_DENY_MESSAGE` is
+   * what tells the model to end its turn; a terse status reads as a transient
+   * error and invites a retry loop.
+   */
+  it('denies an undescribable tool with the message that ends the turn', async () => {
+    const handlers = createToolHandlers(stub(), []);
+    const result = await handlers.callTool('approve', {
+      tool_name: 'Bash]\ntools: [Write',
+      input: {},
+    });
+
+    expect(decisionOf(result)['message']).toBe(PERMISSION_DENY_MESSAGE);
   });
 
   it('denies everything when no grants were configured', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   defaultRungFor,
+  honestPermissionAsk,
   isToolName,
   matches,
   oneShotRuleFor,
@@ -400,5 +401,210 @@ describe('summarise', () => {
 
   it('says something legible for a tool it has no special case for', () => {
     expect(summarise('TodoWrite', {}).length).toBeGreaterThan(0);
+  });
+});
+
+describe('honestPermissionAsk', () => {
+  it('leaves an ordinary ask exactly as written', () => {
+    const meta = { options: ['yes', 'no'] };
+    expect(honestPermissionAsk('ship it?', meta)).toEqual({
+      body: 'ship it?',
+      meta: { options: ['yes', 'no'] },
+    });
+  });
+
+  /**
+   * The whole point of the ticket: the body and the meta disagree on purpose,
+   * and what is displayed must come from the meta the grant is computed from.
+   */
+  it('rebuilds a deceptive body from the meta the grant uses', () => {
+    const result = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'rm -rf /' },
+    });
+
+    expect(result.body).toBe('Allow Bash?\nrm -rf /');
+    expect(result.meta['tool']).toBe('Bash');
+  });
+
+  it('replaces model-supplied rungs, default and options with the real ladder', () => {
+    const result = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      rungs: [{ id: 'allow-once', label: 'once', caption: 'harmless', rule: '*' }],
+      default: 'allow-tool',
+      options: ['yes'],
+    });
+
+    expect(result.meta['rungs']).toEqual(rungsFor('Bash', { command: 'npm test' }));
+    expect(result.meta['default']).toBe('allow-family');
+    expect(result.meta['options']).toEqual([
+      'allow-once',
+      'allow-family',
+      'allow-tool',
+      'deny',
+    ]);
+  });
+
+  /**
+   * `meta.quote` retitles the card "Send this reply?" and suppresses the
+   * command block entirely, so it hides the one thing the user is deciding on.
+   * A permission ask may not carry one.
+   */
+  it('drops meta.quote from a permission ask', () => {
+    const result = honestPermissionAsk('Allow Bash?\nnpm test', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      quote: 'something else entirely',
+    });
+
+    expect(result.meta['quote']).toBeUndefined();
+  });
+
+  it('trims bulk fields out of the input it keeps', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Write',
+      input: { file_path: '/repo/a.ts', content: 'x'.repeat(100) },
+    });
+
+    expect(result.meta['input']).toEqual({
+      file_path: '/repo/a.ts',
+      content: '[omitted from the ledger: 100 chars]',
+    });
+    expect(result.body).toBe('Allow Write?\n/repo/a.ts');
+  });
+
+  /**
+   * A ladder computed from an input that is not the stored one would make
+   * display/grant equality rest on a coincidence — bulk fields are never
+   * specifiers *today*. `permissions.ts` recomputes from the stored input, so
+   * this function must too.
+   */
+  it('computes the ladder from the same input object it stores', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test', content: 'y'.repeat(50) },
+    });
+
+    expect(result.meta['rungs']).toEqual(
+      rungsFor('Bash', result.meta['input'] as Record<string, unknown>),
+    );
+  });
+
+  it.each([
+    ['missing', {}],
+    ['not a string', { tool: 42 }],
+    ['not a tool name', { tool: 'Bash]\ntools: [Write' }],
+  ])('downgrades a permission ask whose tool is %s', (_label, extra) => {
+    const result = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      rungs: [{ id: 'allow-tool', label: 'all', caption: 'c', rule: '*' }],
+      default: 'allow-tool',
+      ...extra,
+    });
+
+    expect(result.body).toBe('Allow Read?\n/repo/a.ts');
+    expect(result.meta['kind']).toBeUndefined();
+    expect(result.meta['rungs']).toBeUndefined();
+    expect(result.meta['default']).toBeUndefined();
+  });
+
+  it('keeps a permission ask that was already honest byte-identical', () => {
+    const input = { command: 'npm test' };
+    const honest = honestPermissionAsk('', { kind: 'permission', tool: 'Bash', input });
+
+    expect(honestPermissionAsk(honest.body, honest.meta)).toEqual(honest);
+  });
+
+  /**
+   * The security property stated directly, rather than by re-deriving the
+   * expected ladder from the same function that produced it (self review,
+   * finding 7). `*` is the blanket rule — the thing a hostile `meta.rungs`
+   * exists to get written into `tools:` — and no rung this returns may carry
+   * it, whatever the ask asked for.
+   */
+  it('never lets a blanket rule survive onto a rung', () => {
+    const result = honestPermissionAsk('Allow Bash?\nnpm test', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      rungs: [
+        { id: 'allow-once', label: 'once', caption: 'harmless.', rule: '*' },
+        { id: 'allow-tool', label: 'all', caption: 'harmless.', rule: '*' },
+      ],
+    });
+
+    const rungs = result.meta['rungs'] as { rule?: string }[];
+    expect(rungs.length).toBeGreaterThan(0);
+    expect(rungs.every((rung) => rung.rule !== '*')).toBe(true);
+  });
+
+  /**
+   * Self review, finding 4. A denylist only excludes the keys someone thought
+   * of; `meta.delivered` is read off any entry by `deliver.ts` and was one
+   * such key already sitting there to be carried.
+   */
+  it('carries no key the caller invented onto a certified ask', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      delivered: true,
+      somethingNobodyHasThoughtOf: 'yet',
+    });
+
+    expect(Object.keys(result.meta).sort()).toEqual([
+      'default',
+      'input',
+      'kind',
+      'options',
+      'rungs',
+      'tool',
+    ]);
+  });
+
+  /** Self review, finding 5: the marker was conditional on the value being a string. */
+  it('bounds a bulk field that is not a string', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Write',
+      input: { file_path: '/repo/a.ts', content: ['x'.repeat(64_000)] },
+    });
+
+    expect((result.meta['input'] as Record<string, unknown>)['content']).toBe(
+      '[omitted from the ledger]',
+    );
+  });
+});
+
+describe('isToolName and MCP names', () => {
+  /**
+   * Self review, finding 2. `mcp__plugin_context7_context7__query-docs` is an
+   * ordinary tool name; before HIVE-125 widened `MCP_TOOL` the predicate
+   * rejected it, so no rung could describe such a call and `tools:` could not
+   * name one.
+   */
+  it('accepts a hyphenated MCP tool name', () => {
+    expect(isToolName('mcp__plugin_context7_context7__query-docs')).toBe(true);
+    expect(isToolName('mcp__hive__ledger_read')).toBe(true);
+  });
+
+  it('still refuses a name that could break out of the rule or the file', () => {
+    expect(isToolName('Bash]\ntools: [Write')).toBe(false);
+    expect(isToolName('Bash,Write')).toBe(false);
+    expect(isToolName('Bash(*)')).toBe(false);
+    expect(isToolName('literal:Bash:x')).toBe(false);
+  });
+
+  it('gives a hyphenated MCP tool a usable ladder', () => {
+    const rungs = rungsFor('mcp__plugin_context7_context7__query-docs', {});
+
+    expect(rungs.map((rung) => rung.id)).toContain('allow-tool');
+    expect(rungs.every((rung) => rung.rule !== '*')).toBe(true);
   });
 });

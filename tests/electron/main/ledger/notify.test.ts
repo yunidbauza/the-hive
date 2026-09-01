@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { OVERMIND, type LedgerEntry } from '@shared/ledger-contract';
+import { honestPermissionAsk } from '@shared/permission-rules';
 
 import { createLedgerNotifier } from '../../../../electron/main/ledger/notify';
 
@@ -448,6 +449,52 @@ describe('createLedgerNotifier', () => {
 
       // Still suppressed by the agent's own `failed` report, as it was before.
       expect(raise).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+    HIVE-125. This notifier does no normalising of its own — it is a
+    `store.onChange` listener, so it only ever receives entries `append` has
+    already rebuilt. Handing it a raw mismatched entry would assert against a
+    state that cannot occur, so these go through the same function `append`
+    does.
+  */
+  describe('a permission ask, normalised', () => {
+    /**
+     * The aged-out fallback renders `notif.title`/`notif.body`
+     * (`ask-card.tsx`), so an honest toast is also what makes a card whose
+     * entry has left the capped mirror honest.
+     */
+    it('titles a permission toast with the meta tool, not the body', () => {
+      const { raise, onEntry } = harness();
+      const honest = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+        kind: 'permission',
+        tool: 'Bash',
+        input: { command: 'rm -rf /' },
+      });
+
+      onEntry(entry({ to: OVERMIND, kind: 'ask', body: honest.body, meta: honest.meta }));
+
+      expect(raise.mock.calls[0]![0]).toMatchObject({
+        kind: 'agent.permission',
+        title: 'Allow Bash?',
+        body: 'rm -rf /',
+      });
+    });
+
+    /** `meta.quote` retitled the toast too, so dropping it shows up here. */
+    it('does not let a quote retitle a permission toast', () => {
+      const { raise, onEntry } = harness();
+      const honest = honestPermissionAsk('Allow Bash?\nnpm test', {
+        kind: 'permission',
+        tool: 'Bash',
+        input: { command: 'npm test' },
+        quote: 'looks harmless',
+      });
+
+      onEntry(entry({ to: OVERMIND, kind: 'ask', body: honest.body, meta: honest.meta }));
+
+      expect(raise.mock.calls[0]![0].title).toBe('Allow Bash?');
     });
   });
 

@@ -10,6 +10,7 @@ import {
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
 import { claims, keepNewest, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
+import { honestPermissionAsk } from '@shared/permission-rules';
 
 import { createLedgerStore } from './store';
 
@@ -166,10 +167,58 @@ export function createLedger(options: LedgerOptions): Ledger {
         }
       }
 
+      /*
+        The last thing before the write, and the only place it happens
+        (HIVE-125).
+
+        Both callers land in this function, so a permission ask cannot reach
+        the log without passing here — including one an agent posts itself
+        through `ledger_ask`, which bypasses `hive_approve` entirely and is
+        the case the fence left open. `store.append` emits the *stored* entry
+        to its listeners, so normalising the input is what makes the card, the
+        OS toast and `deliver.ts` honest without any of them knowing about it.
+
+        Gated on `ask` as well as on `meta.kind`, matching every other reader
+        of that discriminator (`agents/permissions.ts`, `ledger/notify.ts`).
+        Keyed on `meta.kind` alone it also rewrote a `post` that merely
+        carried the rider, destroying the author's text to compose a
+        permission line for an entry that is a permission ask to nobody.
+
+        Skipped entirely when there is no `meta`, so an entry that never had
+        one does not gain an empty object — the absence is meaningful.
+      */
+      const honest =
+        request.meta === undefined || request.kind !== 'ask'
+          ? undefined
+          : honestPermissionAsk(request.body, request.meta);
+
+      /*
+        The cap, re-applied to the body that is actually stored.
+
+        The check above tests `request.body`, which for a permission ask is no
+        longer the body that gets written — `hive_approve` now posts an empty
+        one and the real text is composed here, from a `meta.input` nothing
+        bounds. `summarise` returns `input.command` verbatim and `command` is
+        not a bulk field, so a 60 KB command walked past a 16 KiB cap into a
+        log that never rotates and is held whole in memory.
+
+        Refused rather than truncated, deliberately. A shortened command would
+        be a card that shows part of what it authorises — which is the class
+        of bug this whole story exists to close — so if the call cannot be
+        described honestly it is not described at all.
+      */
+      if (honest !== undefined && honest.body.length > LEDGER_BODY_MAX) {
+        return refuse(
+          413,
+          `composed body is ${honest.body.length} characters; the limit is ${LEDGER_BODY_MAX}`,
+        );
+      }
+
       let stored: LedgerEntry;
       try {
         stored = store.append({
           ...request,
+          ...(honest === undefined ? {} : { body: honest.body, meta: honest.meta }),
           ...(thread === undefined ? {} : { thread }),
           ...(to === undefined ? {} : { to }),
         });

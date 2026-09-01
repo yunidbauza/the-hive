@@ -447,7 +447,7 @@ there is no lookup table to keep in sync.
 
 | Entry | Effect |
 | --- | --- |
-| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id, and its `subject` is the asker |
+| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id, and its `subject` is the asker. A permission ask's text is main's, normalised at `append` (HIVE-125) |
 | `kind === 'answer'` with a thread | the ask's card is marked read |
 | `kind === 'done'` or `kind === 'failed'` with a thread | the ask's card is dismissed — and `openAsks` closes the ask itself, so the two agree |
 | `kind === 'done'` from an agent | raise `agent.done` |
@@ -1031,9 +1031,10 @@ a command falls through to being asked.
 
 Only the specifier text a grant is computed from is kept in the ledger. The
 bulk fields of a call — `content`, `new_string`, `old_string` — are replaced
-with a size marker before the ask is posted, because the log is append-only
-JSONL that never rotates and `store.all()` holds all of it in memory; the
-`updatedInput` an *allowed* call runs with is never trimmed.
+with a size marker before the ask is **stored** (at `append`, since HIVE-125;
+posting is not the door a direct `ledger_ask` uses), because the log is
+append-only JSONL that never rotates and `store.all()` holds all of it in
+memory; the `updatedInput` an *allowed* call runs with is never trimmed.
 
 **`ToolSearch` is granted unconditionally** — in `HIVE_GRANTS` beside
 `mcp__hive__*`, never in `def.tools`. MCP tool schemas are deferred: the
@@ -1051,6 +1052,72 @@ Under `-p`, `Notification` and `PermissionRequest` hooks do not fire and the
 status line does not run — there is no footer to write to and no human
 sitting at one. The fence's only externally visible effect is the `ask` entry
 `mcp__hive__approve` posts to the ledger.
+
+### The card says what the grant does (HIVE-125)
+
+HIVE-119 bounded the grant and not the card. `meta` is a free-form rider that
+`ledger_ask` passes through unfiltered, so an agent could post its own ask
+reading `Allow Read? /repo/a.ts` while carrying `meta.tool: "Bash"` and
+`meta.input: { command: "rm -rf /" }`. Everything the user saw was the
+attacker's text; the click authorised the shell command.
+
+Four inputs were model-controlled, not the two that were first obvious: `body`,
+`meta.rungs`, `meta.default` — which rung opens *preselected* — and
+`meta.quote`, which retitled the card "Send this reply?" and suppressed the
+command block entirely.
+
+It is closed at **`Ledger.append`**, not at the tool. `hive_approve` only sees
+the asks it wrote itself, and the attack is an agent that never calls it;
+`append` is the one door both callers pass through. `honestPermissionAsk`
+(`electron/shared/permission-rules.ts`) rebuilds `body` from `meta.tool` and
+`meta.input`, replaces the ladder with `rungsFor`'s, recomputes `default`, and
+trims the bulk fields out of the input it stores.
+
+The rebuilt `meta` is an **allowlist** — `kind`, `tool`, `input`, `rungs`,
+`default`, `options` and nothing else. Dropping `quote` was the fix for one
+model-supplied key; building from nothing is the fix for the shape of the bug,
+and it is what keeps the next such key from riding onto an entry the system
+then certifies as honest. It is gated on `kind === 'ask'` as well as on
+`meta.kind`, matching every other reader of that discriminator, so a `post`
+merely carrying the rider keeps its author's text.
+
+**The cap is applied twice**, and it has to be: the first refusal tests the
+body that was *sent*, and a permission ask's stored body is composed after it
+from a `meta.input` nothing bounds — `summarise` returns `input.command`
+verbatim and `command` is not a bulk field. Without the second check an empty
+sent body carrying a 60 KB command wrote 60 KB into a 16 KiB-capped log that
+never rotates. It is refused rather than truncated: a shortened command would
+be a card showing part of what it authorises, which is the class of bug this
+section exists to close.
+
+An ask whose `meta.tool` is not a tool name is **downgraded** to an ordinary
+ask rather than refused — the asker's words are honest as long as nothing
+frames them as a permission prompt, and no ladder is offered for a call main
+cannot describe. `hive_approve` denies such a call outright rather than
+posting an ask it cannot describe, **below** its grants check rather than
+above it: a grant is a decision the user already made and `matches` compares
+literally, so a rule may name a tool the predicate would not describe, and
+denying above the check revoked tools the fence was configured to allow.
+
+That gate also surfaced a gap in `isToolName` itself: `MCP_TOOL` admitted no
+`-`, yet hyphenated MCP tool names (`mcp__…__query-docs`) are ordinary, so the
+fence could describe no rung for such a call and `tools:` could not name one.
+It now admits `-`, which is safe on both roads — the glob DSL reads only `,`
+and `*`, and a hyphen is an ordinary character in a YAML flow-sequence item.
+
+Because `store.append` emits the *stored* entry to its listeners, the card, the
+OS toast, `deliver.ts` and the renderer's mirror are all honest without any of
+them knowing about it. The card is unchanged: it still prefers the ledger,
+which is what makes an answer posted from another session collapse it.
+`hive_approve` now posts only `kind`/`tool`/`input`, so the display text is
+composed in exactly one place.
+
+**Not retro-fixed.** The log never rotates, so an entry written before this
+shipped keeps rendering as written.
+
+Its corollary: `defaultRungFor` preselecting the family rung is an ordinary
+product decision again rather than a security one — both the caption and the
+preselection are now main's.
 
 ### `autonomy` does not touch the fence
 
