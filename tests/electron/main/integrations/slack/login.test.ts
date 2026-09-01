@@ -26,6 +26,27 @@ describe('signInToSlack', () => {
     expect(calls[1]).toEqual(['mcp', 'login', 'slack']);
   });
 
+  it('reads the status back rather than assuming the zero exit means success', () => {
+    // add and login both exit zero — a login abandoned in the browser does
+    // this too — but the read-back (`mcp get`) reports needs-auth. The
+    // returned status must come from that third call, not from an optimistic
+    // short-circuit after a zero-exit login.
+    const calls: string[][] = [];
+    const run = (_f: string, args: readonly string[]) => {
+      calls.push([...args]);
+
+      if (calls.length === 3) return { code: 0, stdout: 'Status: ! Needs authentication', stderr: '' };
+
+      return ok();
+    };
+
+    const status = signInToSlack('claude', run);
+
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual(['mcp', 'get', 'slack']);
+    expect(status).toEqual({ kind: 'needs-auth' });
+  });
+
   it('does not attempt the login when the add fails', () => {
     const calls: string[][] = [];
     const run = (_f: string, args: readonly string[]) => {

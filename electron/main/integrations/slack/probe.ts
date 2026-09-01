@@ -32,7 +32,7 @@ export function probeSlack(claude: string, run: RunCommand): SlackStatus {
       '--allowedTools', SLACK_TOOL_GLOB,
       '--output-format', 'stream-json',
       '--verbose',
-      'Use ToolSearch to load the schema for a Slack tool that reports who I am, call it, and reply with one line.',
+      'Use ToolSearch to load the schema for a Slack tool that reports who I am, call it, and reply with one line. If any tool call fails, quote the error message verbatim in your reply.',
     ]);
   } catch (cause) {
     return {
@@ -43,6 +43,13 @@ export function probeSlack(claude: string, run: RunCommand): SlackStatus {
 
   let status: string | null = null;
   let text = '';
+  // Every event's raw text, not just the model's final paraphrase. Slack's
+  // refusal appears verbatim in whatever tool-result event carries it; the
+  // model's own summary of that event is not a reliable place to look for it
+  // (Finding 1, HIVE-123 review) — accumulating the raw line means this needs
+  // no assumption about the tool-result event's shape, which has not been
+  // measured.
+  let accumulated = '';
 
   for (const line of result.stdout.split('\n')) {
     if (line.trim() === '') continue;
@@ -54,6 +61,8 @@ export function probeSlack(claude: string, run: RunCommand): SlackStatus {
     } catch {
       continue;
     }
+
+    accumulated += line;
 
     if (event['type'] === 'system' && event['subtype'] === 'init') {
       const servers = event['mcp_servers'];
@@ -79,8 +88,10 @@ export function probeSlack(claude: string, run: RunCommand): SlackStatus {
 
   if (status === 'needs-auth') return { kind: 'needs-auth' };
   // The connection is real; whether the workspace allows it is what the turn
-  // was spent to find out.
-  if (UNAPPROVED.test(text)) return { kind: 'pending-approval' };
+  // was spent to find out. Check the model's own reply first, but fall back
+  // to the raw stream — the dangerous direction is a false "connected", so
+  // the prose match is a fallback, never the sole instrument.
+  if (UNAPPROVED.test(text) || UNAPPROVED.test(accumulated)) return { kind: 'pending-approval' };
 
   return { kind: 'connected' };
 }
