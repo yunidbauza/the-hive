@@ -17,6 +17,9 @@
  * would turn a tidy-up into a refusal the user cannot act on. The generated
  * `<name>.system.md` is deliberately not touched: it is rewritten from the
  * definition on every wake, so it self-heals and a stale one is unreachable.
+ * `<name>.mcp.json` (HIVE-123) is left for exactly the same reason — same
+ * directory, same "regenerated every wake from the definition" lifetime — so
+ * the omission is the rule here, not a second thing that was forgotten.
  */
 import { rename, rm } from 'node:fs/promises';
 

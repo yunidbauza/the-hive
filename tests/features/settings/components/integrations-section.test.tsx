@@ -11,10 +11,13 @@ import type {
   IntegrationsStatus,
   LoginEnvStatus,
 } from '@shared/ipc-contract';
+import type { AgentSummary } from '@shared/agent-contract';
 import type { JiraStatus } from '@shared/jira-contract';
+import type { SlackStatus } from '@shared/slack-contract';
 
 import { PHRASES } from '@lib/swarm/phrases';
 import { IntegrationsSection } from '@features/settings/components/integrations-section';
+import { resetAgents, setAgentsForTest } from '@lib/agents';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
 const setNotificationPrefs = vi.fn();
@@ -26,6 +29,23 @@ vi.mock('@/lib/jira', () => ({
   saveJiraToken: () => Promise.resolve(null),
   clearJiraToken: () => Promise.resolve(null),
   testJiraConnection: () => Promise.resolve(null),
+}));
+
+/**
+ * Slack's bridge, stubbed for the same reason Jira's is: without a `window.hive`
+ * every verb answers `null`, and `SlackGroup` renders that as a bridge error —
+ * which is a fine default here, but leaves no way to reach the states this
+ * section's own filtering is visible in.
+ */
+const slackStatus = vi.fn<() => Promise<SlackStatus | null>>(() =>
+  Promise.resolve(null),
+);
+
+vi.mock('@/lib/slack', () => ({
+  readSlackStatus: () => slackStatus(),
+  signIn: () => Promise.resolve(null),
+  signOut: () => Promise.resolve(null),
+  testSlack: () => Promise.resolve(null),
 }));
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
@@ -90,6 +110,12 @@ const install = (notifications?: Partial<NotificationPrefs>): void => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  /*
+    Back to "no bridge" for every case that is not about Slack — which is what
+    this file saw before the group existed, and what keeps its "Not signed in"
+    assertions about `gh` unambiguous.
+  */
+  slackStatus.mockResolvedValue(null);
   readIntegrationsStatus.mockResolvedValue(status());
   readJiraStatus.mockResolvedValue({
     site: null,
@@ -413,6 +439,7 @@ describe('IntegrationsSection — the provider bands', () => {
       await screen.findByRole('region', { name: 'GitHub' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Jira' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Slack' })).toBeInTheDocument();
   });
 
   it('puts the GitHub groups inside the GitHub band, and Jira’s inside Jira’s', async () => {
@@ -462,5 +489,85 @@ describe('IntegrationsSection — the provider bands', () => {
     expect(
       screen.queryByRole('heading', { name: 'PATH source' }),
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The Slack band (HIVE-123), from the section's side rather than the group's.
+ *
+ * `SlackGroup`'s own rules live in `slack-group.test.tsx`. What belongs here is
+ * the one thing only this component does: it filters `useAgents()` down to the
+ * agents whose `mcp:` actually names Slack, and hands *those* to the group.
+ * Passing the whole fleet would have every agent on the machine claim to be
+ * using Slack in the pane's "Used by" line.
+ */
+describe('IntegrationsSection — Slack', () => {
+  const agent = (
+    name: string,
+    over: Partial<AgentSummary> = {},
+  ): AgentSummary =>
+    ({
+      name,
+      description: '',
+      icon: 'ph-robot',
+      mcp: [],
+      tools: [],
+      skills: [],
+      autonomy: 'ask',
+      status: 'sleeping',
+      runsSinceRotate: 0,
+      runs: [],
+      ...over,
+    }) as AgentSummary;
+
+  afterEach(() => {
+    resetAgents();
+  });
+
+  it('mounts the Slack group inside the Slack band', async () => {
+    render(<IntegrationsSection />);
+
+    const slack = await screen.findByRole('region', { name: 'Slack' });
+
+    expect(
+      within(slack).getByRole('heading', { name: 'Connection' }),
+    ).toBeInTheDocument();
+  });
+
+  it('names only the agents whose mcp: lists slack', async () => {
+    setAgentsForTest({
+      agents: [
+        agent('slack-watcher', { mcp: ['slack'], tools: ['mcp__slack__*'] }),
+        agent('pr-nanny'),
+      ],
+      problems: [],
+    });
+    slackStatus.mockResolvedValue({ kind: 'connected' });
+
+    render(<IntegrationsSection />);
+
+    const slack = await screen.findByRole('region', { name: 'Slack' });
+
+    expect(await within(slack).findByText('slack-watcher')).toBeInTheDocument();
+    expect(within(slack).queryByText('pr-nanny')).not.toBeInTheDocument();
+  });
+
+  /**
+   * `mcp: [slack]` with no slack tool in `tools:` is a well-formed definition
+   * that can reach nothing — HIVE-119 made `tools:` a real fence — so the group
+   * flags it. It can only do that if this component passes `tools` through.
+   */
+  it('passes tools through, so the missing-grant hint can fire', async () => {
+    setAgentsForTest({
+      agents: [agent('slack-watcher', { mcp: ['slack'], tools: ['Read'] })],
+      problems: [],
+    });
+    slackStatus.mockResolvedValue({ kind: 'connected' });
+
+    render(<IntegrationsSection />);
+
+    expect(
+      await screen.findByText(/no slack tools granted/i),
+    ).toBeInTheDocument();
   });
 });
