@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
-import { writeMcpConfig } from './config';
+import type { McpServerSpec } from './agent-config';
+import { hiveServerSpec, writeMcpConfig } from './config';
 import { MCP_CONFIG_FILE } from './paths';
 
 /**
@@ -33,6 +34,14 @@ export interface McpRuntime {
    * not there — `claude` reports a missing `--mcp-config` as a startup error.
    */
   configPathFor(): string | null;
+  /**
+   * The hive server descriptor, for a per-agent config (HIVE-123).
+   *
+   * `null` on exactly the same condition `configPathFor()` is: if the shared
+   * file could not be written, this process cannot serve ledger tools at all
+   * and a per-agent file naming it would be a lie.
+   */
+  hiveServerSpec(): McpServerSpec | null;
 }
 
 export interface McpRuntimeOptions {
@@ -89,8 +98,13 @@ export function createMcpRuntime({
     configPathFor(): string | null {
       return written ? path : null;
     },
+
+    hiveServerSpec(): McpServerSpec | null {
+      return written ? hiveServerSpec({ execPath, scriptPath }) : null;
+    },
   };
 }
 
 export { mcpConfig, writeMcpConfig } from './config';
-export { MCP_CONFIG_FILE } from './paths';
+export { MCP_CONFIG_FILE, AGENT_MCP_DIR, agentMcpConfigFile } from './paths';
+export { agentMcpConfig, type McpServerSpec } from './agent-config';

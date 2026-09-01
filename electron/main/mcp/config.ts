@@ -20,22 +20,25 @@ export interface McpConfigOptions {
   scriptPath: string;
 }
 
-export const mcpConfig = ({ execPath, scriptPath }: McpConfigOptions): string =>
+/**
+ * The hive server's own descriptor, extracted so `agent-config.ts` can write
+ * it into a per-agent file too (HIVE-123) — the shared `hive.mcp.json` and an
+ * agent's own file must never define this server two different ways.
+ */
+export const hiveServerSpec = ({ execPath, scriptPath }: McpConfigOptions) => ({
+  command: execPath,
+  args: [scriptPath],
+  /*
+    Without this the Electron binary boots Chromium and opens a window
+    instead of running the script. Verified against the real CLI: an `env`
+    block in this file does reach the server process.
+  */
+  env: { ELECTRON_RUN_AS_NODE: '1' },
+});
+
+export const mcpConfig = (options: McpConfigOptions): string =>
   `${JSON.stringify(
-    {
-      mcpServers: {
-        [MCP_SERVER_NAME]: {
-          command: execPath,
-          args: [scriptPath],
-          /*
-            Without this the Electron binary boots Chromium and opens a window
-            instead of running the script. Verified against the real CLI: an
-            `env` block in this file does reach the server process.
-          */
-          env: { ELECTRON_RUN_AS_NODE: '1' },
-        },
-      },
-    },
+    { mcpServers: { [MCP_SERVER_NAME]: hiveServerSpec(options) } },
     null,
     2,
   )}\n`;

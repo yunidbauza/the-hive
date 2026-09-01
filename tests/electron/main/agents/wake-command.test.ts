@@ -7,6 +7,7 @@ import {
   type WakeFs,
 } from '../../../../electron/main/agents/wake-command';
 import type { AgentState } from '../../../../electron/main/agents/state';
+import type { McpServerSpec } from '../../../../electron/main/mcp/agent-config';
 import type { AgentRunState } from '../../../../electron/shared/agent-contract';
 
 /**
@@ -91,6 +92,14 @@ const build = (over: Partial<WakeCommandDeps> = {}) =>
     pluginDir: () => '/data/hive/plugin',
     agentSettingsPath: () => '/data/hive/claude-agent.settings.json',
     mcpConfig: () => '/data/hive/hive.mcp.json',
+    // Unused by every test below: `AGENT_MD` has no `mcp:` field, so
+    // `def.mcp.length > 0` never fires and neither dep is ever called.
+    hiveServer: () => ({
+      command: '/App',
+      args: ['/host.js'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    }),
+    agentMcpFile: (name) => `/data/hive/agents/${name}.mcp.json`,
     hookEnv: (name) => ({ HIVE_SESSION_ID: name, HIVE_HOOK_TOKEN: 'tok' }),
     claudeCommand: () => '/usr/local/bin/claude',
     subscriptionAuth: () => true,
@@ -480,5 +489,179 @@ describe('the handoff wake', () => {
 
     expect(result.lastTurn).toBe(false);
     expect(result.args).toContain('--session-id');
+  });
+});
+
+/**
+ * A per-agent `--mcp-config`, for a definition that names an integration
+ * (HIVE-123, task 2).
+ *
+ * A self-contained fixture set rather than a reuse of `build()` above: that
+ * one's `AGENT_MD` has no `mcp:` field on purpose, so it cannot exercise this
+ * branch without being rewritten out from under the rotation tests it exists
+ * for.
+ */
+describe('a per-agent mcp config', () => {
+  const HIVE: McpServerSpec = {
+    command: '/App',
+    args: ['/host.js'],
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  };
+
+  /**
+   * An AGENT.md body, customisable by the one field each test varies.
+   *
+   * `name:` is a placeholder rather than a fixed value: `deps()`'s `read`
+   * fills it in with whatever folder was actually asked for, so this same
+   * source works whichever agent name a test wakes.
+   */
+  function agentSource(over: { mcp?: string; tools?: string } = {}): string {
+    const tools = over.tools ?? '[Read, Bash]';
+    const mcpLine = over.mcp === undefined ? '' : `mcp: ${over.mcp}\n`;
+
+    return `---
+name: {{name}}
+description: Watches the channel.
+icon: ChatCircleDots
+model: sonnet
+tools: ${tools}
+${mcpLine}limits:
+  turns: 12
+  rotate_after: 5
+---
+Read the channel and report.
+`;
+  }
+
+  /** A `WakeFs.read` that serves `source` for whichever folder was asked for. */
+  function readerFor(source: string): WakeFs['read'] {
+    return (path) => {
+      const match = /\/agents\/([^/]+)\/AGENT\.md$/.exec(path);
+
+      if (match === null) throw new Error(`ENOENT: ${path}`);
+
+      return source.replace('{{name}}', match[1]!);
+    };
+  }
+
+  /** `WakeCommandDeps`, fixed across these tests apart from what each varies. */
+  function deps(
+    over: {
+      source?: string;
+      fs?: Partial<WakeFs>;
+      hiveServer?: () => McpServerSpec | null;
+    } = {},
+  ): WakeCommandDeps {
+    const source = over.source ?? agentSource();
+    const localState: Record<string, AgentRunState> = {};
+
+    return {
+      agentsRoot: () => '/home/u/.hive/agents',
+      workdir: (name) => `/home/u/.hive/work/${name}`,
+      promptFile: (name) => `/userData/hive/agents/${name}.system.md`,
+      pluginDir: () => '/userData/hive/plugin',
+      agentSettingsPath: () => '/userData/hive/claude-agent.settings.json',
+      mcpConfig: () => '/userData/hive/hive.mcp.json',
+      hiveServer: over.hiveServer ?? (() => HIVE),
+      agentMcpFile: (name) => `/userData/hive/agents/${name}.mcp.json`,
+      hookEnv: (name) => ({ HIVE_SESSION_ID: name, HIVE_HOOK_TOKEN: 'tok' }),
+      claudeCommand: () => '/usr/local/bin/claude',
+      subscriptionAuth: () => true,
+      state: {
+        all: () => ({ ...localState }),
+        read: (name) => localState[name] ?? EMPTY,
+        patch: (name, change) => {
+          const next = { ...(localState[name] ?? EMPTY), ...change };
+
+          localState[name] = next;
+
+          return next;
+        },
+        recordRun: vi.fn(),
+        forget: (name) => {
+          delete localState[name];
+        },
+        carry: (from, to) => {
+          const entry = localState[from];
+
+          if (entry === undefined) return;
+
+          localState[to] = entry;
+          delete localState[from];
+        },
+        flush: vi.fn(),
+        dispose: vi.fn(),
+      },
+      env: () => ({ PATH: '/usr/local/bin', HOME: '/home/u' }),
+      newUuid: () => 'minted-uuid',
+      pendingGrants: () => [],
+      isExecutable: (path) => path === '/usr/local/bin/claude',
+      fs: {
+        read: readerFor(source),
+        write: () => {},
+        mkdir: () => {},
+        ...over.fs,
+      },
+    };
+  }
+
+  it('points --mcp-config at a per-agent file when the definition names an integration', () => {
+    const written = new Map<string, string>();
+    const build = createWakeCommand(
+      deps({
+        source: agentSource({ mcp: '[slack]', tools: '[Read, mcp__slack__*]' }),
+        fs: {
+          write: (path, body) => {
+            written.set(path, body);
+          },
+        },
+      }),
+    );
+
+    const command = build('slack-watcher', 'interval');
+
+    if ('problem' in command) throw new Error(command.problem);
+
+    const flag = command.args[command.args.indexOf('--mcp-config') + 1];
+
+    expect(flag).toBe('/userData/hive/agents/slack-watcher.mcp.json');
+    expect(JSON.parse(written.get(flag ?? '') ?? '{}').mcpServers).toHaveProperty(
+      'slack',
+    );
+  });
+
+  it('keeps the shared file for an agent with an empty mcp:', () => {
+    const written = new Map<string, string>();
+    const build = createWakeCommand(
+      deps({
+        source: agentSource({ tools: '[Read]' }),
+        fs: {
+          write: (path, body) => {
+            written.set(path, body);
+          },
+        },
+      }),
+    );
+
+    const command = build('drone', 'interval');
+
+    if ('problem' in command) throw new Error(command.problem);
+
+    expect(command.args[command.args.indexOf('--mcp-config') + 1]).toBe(
+      '/userData/hive/hive.mcp.json',
+    );
+    expect([...written.keys()]).not.toContain('/userData/hive/agents/drone.mcp.json');
+  });
+
+  it('refuses the wake when the hive descriptor is unavailable', () => {
+    const build = createWakeCommand(
+      deps({ source: agentSource({ mcp: '[slack]' }), hiveServer: () => null }),
+    );
+
+    expect(build('slack-watcher', 'interval')).toEqual({
+      problem:
+        'The ledger tools are not configured yet, and an agent reads its ' +
+        'inbox before anything else. Try again in a moment.',
+    });
   });
 });

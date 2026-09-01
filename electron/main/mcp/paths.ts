@@ -16,3 +16,16 @@ import { join } from 'node:path';
  * preamble and HIVE-119's permission tool both depend on.
  */
 export const MCP_CONFIG_FILE = join('hive', 'hive.mcp.json');
+
+/**
+ * `<userData>/hive/agents/<name>.mcp.json` — an agent's own server set.
+ *
+ * Beside `<name>.system.md` rather than under `~/.hive/agents/`, and for the
+ * same two reasons that file is: it is app-generated and rewritten every wake,
+ * and `~/.hive/agents/` is watched recursively, so writing here would re-parse
+ * every definition on every wake.
+ */
+export const AGENT_MCP_DIR = join('hive', 'agents');
+
+export const agentMcpConfigFile = (userDataPath: string, name: string): string =>
+  join(userDataPath, AGENT_MCP_DIR, `${name}.mcp.json`);

@@ -35,6 +35,8 @@ import {
   type AgentDefinition,
 } from '@shared/agent-contract';
 
+import { agentMcpConfig, type McpServerSpec } from '../mcp/agent-config';
+
 import { resolveClaude } from './claude-path';
 import { parseAgent } from './definition';
 import { AGENT_PREAMBLE } from './preamble';
@@ -79,6 +81,17 @@ export interface WakeCommandDeps {
   agentSettingsPath: () => string | null;
   /** `mcp.configPathFor()`. `null` until the config has been written. */
   mcpConfig: () => string | null;
+  /**
+   * `mcp.hiveServerSpec()`. `null` on the same condition `mcpConfig` is.
+   *
+   * Needed only for an agent that names an integration: its file is written
+   * here rather than by the runtime, because it is per-wake content and this
+   * is where per-wake files are written — the same place, and the same `fs`,
+   * as `<name>.system.md`.
+   */
+  hiveServer: () => McpServerSpec | null;
+  /** `<userData>/hive/agents/<name>.mcp.json`. */
+  agentMcpFile: (name: string) => string;
   /** `hooks.envFor(name)` — the three variables that make a hook attributable. */
   hookEnv: (name: string) => Record<string, string>;
   claudeCommand: () => string;
@@ -142,6 +155,16 @@ export type BuildWakeCommand = (
 
 const describe = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+/**
+ * The refusal for both `mcpConfig` and `hiveServer` reading `null` — the same
+ * wording, because they are the same fact told twice: the shared config and
+ * the per-agent one both depend on the hive server having been written, and
+ * an agent that cannot read its inbox has nothing to do.
+ */
+const MCP_NOT_READY =
+  'The ledger tools are not configured yet, and an agent reads its ' +
+  'inbox before anything else. Try again in a moment.';
 
 /**
  * Parse an AGENT.md for the purpose of **running** it.
@@ -224,11 +247,7 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
     const mcpConfig = deps.mcpConfig();
 
     if (mcpConfig === null) {
-      return {
-        problem:
-          'The ledger tools are not configured yet, and an agent reads its ' +
-          'inbox before anything else. Try again in a moment.',
-      };
+      return { problem: MCP_NOT_READY };
     }
 
     let source: string;
@@ -289,6 +308,7 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
         previous.runsSinceRotate >= def.limits.rotateAfter);
     const workdir = deps.workdir(name);
     const systemPrompt = deps.promptFile(name);
+    let agentMcp: string | null = null;
 
     try {
       fs.mkdir(workdir);
@@ -296,6 +316,21 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       // Rewritten on every wake, so an app update to the preamble reaches every
       // agent without anyone editing anything.
       fs.write(systemPrompt, systemPromptFor(AGENT_PREAMBLE, def));
+
+      /*
+        Only for an agent that names one. An agent with an empty `mcp:` keeps
+        pointing at the shared file: its per-agent copy would be byte-identical,
+        and a second file per agent is a second thing to go stale.
+      */
+      if (def.mcp.length > 0) {
+        const hive = deps.hiveServer();
+
+        if (hive === null) return { problem: MCP_NOT_READY };
+
+        agentMcp = deps.agentMcpFile(name);
+        fs.mkdir(dirname(agentMcp));
+        fs.write(agentMcp, agentMcpConfig(hive, def.mcp));
+      }
     } catch (cause) {
       return { problem: `Could not prepare the run: ${describe(cause)}` };
     }
@@ -330,7 +365,7 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       paths: {
         settings,
         pluginDir: deps.pluginDir(),
-        mcpConfig,
+        mcpConfig: agentMcp ?? mcpConfig,
         systemPrompt,
         workdir,
       },

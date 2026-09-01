@@ -26,7 +26,8 @@ import { createWakeCommand } from '../../electron/main/agents/wake-command';
 import { createReceiver, type Receiver } from '../../electron/main/hooks/receiver';
 import { writeAgentSettings } from '../../electron/main/hooks/settings';
 import { createLedger, type Ledger } from '../../electron/main/ledger';
-import { mcpConfig } from '../../electron/main/mcp/config';
+import { agentMcpConfigFile } from '../../electron/main/mcp';
+import { hiveServerSpec, mcpConfig } from '../../electron/main/mcp/config';
 import { createSkillsRuntime } from '../../electron/main/skills';
 import type {
   AgentRunState,
@@ -556,6 +557,9 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       pluginDir: () => pluginDir ?? '',
       agentSettingsPath: () => settingsPath,
       mcpConfig: () => mcpConfigPath,
+      hiveServer: () =>
+        hiveServerSpec({ execPath: process.execPath, scriptPath: host }),
+      agentMcpFile: (name) => agentMcpConfigFile(userDataPath, name),
       hookEnv: (name) => ({
         [HOOK_ENV_SESSION]: name,
         [HOOK_ENV_TOKEN]: receiver?.tokenFor(name) ?? '',

@@ -177,7 +177,7 @@ import { credentialFile } from '../integrations/jira/auth';
 import { createLedger } from '../ledger';
 import { createDeliver } from '../ledger/deliver';
 import { createLedgerNotifier } from '../ledger/notify';
-import { createMcpRuntime } from '../mcp';
+import { agentMcpConfigFile, createMcpRuntime } from '../mcp';
 import {
   createNotificationHub,
   createNotifier,
@@ -1323,6 +1323,8 @@ export function registerIpcHandlers(): void {
     // no fence at all (HIVE-119).
     agentSettingsPath: () => hooks.agentSettingsPathFor(),
     mcpConfig: () => mcp.configPathFor(),
+    hiveServer: () => mcp.hiveServerSpec(),
+    agentMcpFile: (name) => agentMcpConfigFile(app.getPath('userData'), name),
     hookEnv: (name) => hooks.envFor(name),
     // Read per wake, not captured: a `claudeCommand` edited in Settings must
     // reach the next run without a restart. There is no per-project override
