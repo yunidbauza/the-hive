@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '@/types/entity';
 
+import { honestPermissionAsk } from '@shared/permission-rules';
+
 import { AskCard } from '@features/inbox/components/ask-card';
 import { useHiveStore } from '@stores/hive-store';
 
@@ -478,5 +480,92 @@ describe('AskCard', () => {
     expect(onUnhandledRejection).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('bridge is gone');
     process.off('unhandledRejection', onUnhandledRejection);
+  });
+
+  /*
+    HIVE-125. The card is deliberately unchanged by that story, so asserting on
+    a hand-built entry would prove nothing about the fix. The seam that makes
+    the claim true is `honestPermissionAsk` at `Ledger.append`, so these seed
+    what the ledger would actually hold.
+  */
+
+  /**
+   * The acceptance criterion. The body says Read, the meta says Bash, and what
+   * the user is shown must be the call the click authorises.
+   */
+  it('names the meta tool when the body disagrees with it', () => {
+    const honest = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'rm -rf /' },
+    });
+
+    seedLedger([{ ...ask, body: honest.body, meta: honest.meta }]);
+    render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
+
+    expect(screen.getByText('Allow Bash?')).toBeInTheDocument();
+    expect(screen.getByText('rm -rf /')).toBeInTheDocument();
+    expect(screen.queryByText('Allow Read?')).toBeNull();
+    expect(screen.queryByText('/repo/a.ts')).toBeNull();
+  });
+
+  /**
+   * The scope labels are the recomputed ladder's. A hostile `meta.rungs`
+   * offering a single wide rung under a harmless caption does not survive.
+   */
+  it('draws the recomputed ladder, not the one the ask carried', () => {
+    const honest = honestPermissionAsk('Allow Bash?\nnpm test', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      rungs: [{ id: 'allow-once', label: 'once', caption: 'harmless', rule: '*' }],
+      default: 'allow-once',
+    });
+
+    seedLedger([{ ...ask, body: honest.body, meta: honest.meta }]);
+    render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
+
+    expect(screen.getByRole('radio', { name: 'npm *' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+    expect(screen.getByRole('radio', { name: 'all Bash' })).toBeTruthy();
+  });
+
+  /**
+   * `meta.quote` used to retitle the card "Send this reply?" and suppress the
+   * command block, hiding the one thing being decided on.
+   */
+  it('shows the command block for a permission ask that carried a quote', () => {
+    const honest = honestPermissionAsk('Allow Bash?\nnpm test', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      quote: 'looks harmless',
+    });
+
+    seedLedger([{ ...ask, body: honest.body, meta: honest.meta }]);
+    render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
+
+    expect(screen.getByText('Allow Bash?')).toBeInTheDocument();
+    expect(screen.queryByText('Send this reply?')).toBeNull();
+    expect(screen.getByText('npm test')).toBeInTheDocument();
+  });
+
+  /**
+   * A permission ask main cannot describe is downgraded, so it renders as the
+   * asker's own question with no grant ladder attached to it.
+   */
+  it('renders a downgraded ask as an ordinary one, with no ladder', () => {
+    const honest = honestPermissionAsk('Allow Read?\n/repo/a.ts', {
+      kind: 'permission',
+      tool: 42,
+      options: ['yes', 'no'],
+    });
+
+    seedLedger([{ ...ask, body: honest.body, meta: honest.meta }]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(screen.getByRole('button', { name: 'yes' })).toBeTruthy();
   });
 });
