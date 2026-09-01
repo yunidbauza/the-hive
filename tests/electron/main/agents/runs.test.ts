@@ -287,6 +287,44 @@ describe('createRunTracker', () => {
     expect(statuses).toEqual(['a', 'a']);
   });
 
+  it('persists the slack status the init event reported (HIVE-123)', () => {
+    const init = `${JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      mcp_servers: [{ name: 'slack', status: 'needs-auth' }],
+    })}\n`;
+
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(init);
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').runs.at(-1)?.slack).toBe('needs-auth');
+  });
+
+  it('records slack connected when the init event names it without needs-auth', () => {
+    const init = `${JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      mcp_servers: [{ name: 'slack', status: 'connected' }],
+    })}\n`;
+
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(init);
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').runs.at(-1)?.slack).toBe('connected');
+  });
+
+  it('leaves slack unset when the run never named it', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    expect(state.read('a').runs.at(-1)?.slack).toBeUndefined();
+  });
+
   it('reports a closed run, after the status is on disk', () => {
     // The scheduler reads the status back inside this callback to decide
     // whether to flush its queue, so it has to run after the patch.

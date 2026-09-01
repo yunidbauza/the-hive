@@ -305,6 +305,25 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   };
 
   /**
+   * Did the last run find Slack signed out? (HIVE-123)
+   *
+   * Read off {@link AgentRunState.runs}' own last entry — `RunSummary.slack`,
+   * carried onto it at close from the run's `init` event (`runs.ts`) — rather
+   * than a probe: the event is already on the wire every wake, so this costs
+   * nothing and needs no dependency the scheduler was not already given.
+   *
+   * `undefined` covers both an agent whose `mcp:` never named `slack` and one
+   * that has **never run at all**, and both read as "not signed out": a
+   * signed-out-at-boot Slack must not wedge an agent permanently, so the
+   * first wake is always let through to discover its own status. Only the
+   * *clock-driven* tick is gated — a ledger wake or a manual "Run now" still
+   * reaches `RunTracker.run` directly, so the agent stays reachable while its
+   * autonomous polling is quiet.
+   */
+  const slackSignedOut = (agent: AgentRunState): boolean =>
+    agent.runs.at(-1)?.slack === 'needs-auth';
+
+  /**
    * Time passed (HIVE-121).
    *
    * The other half of this module. `onEntry` answers *something happened*;
@@ -494,6 +513,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
       if (due !== agent.nextRunAt) arm(name, agent.nextRunAt, due);
       if (now < due) continue;
+
+      if (slackSignedOut(agent)) {
+        arm(name, due, next, {
+          skipsSinceRun: (agent.skipsSinceRun ?? 0) + 1,
+        });
+        continue;
+      }
 
       if (wake.check === 'onchange' && !hasChanged(name, agent, entries)) {
         arm(name, due, next, {

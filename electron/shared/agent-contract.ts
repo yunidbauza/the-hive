@@ -808,6 +808,16 @@ export interface RunSummary {
    * conversation run 14 belonged to. Twenty of these is under a kilobyte.
    */
   sessionUuid?: string;
+  /**
+   * What this run's own `init` event said about the Slack server (HIVE-123).
+   *
+   * Absent when the run's `mcp:` list did not name `slack` at all, or the
+   * `init` event never arrived (a spawn failure). Read by the scheduler on the
+   * *next* tick to decide whether a scheduled wake is worth spending — an
+   * agent that has never run has no entry here and is never skipped on that
+   * account.
+   */
+  slack?: 'connected' | 'needs-auth';
 }
 
 /** What `~/.hive/ledger/agents.json` holds per agent. */

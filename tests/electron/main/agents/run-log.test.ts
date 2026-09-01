@@ -155,4 +155,26 @@ describe('foldRunLog', () => {
       ).state.result,
     ).toEqual({ subtype: 'success' });
   });
+
+  it('records the mcp servers the init event named', () => {
+    const chunk = `${JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      mcp_servers: [
+        { name: 'hive', status: 'connected' },
+        { name: 'slack', status: 'needs-auth' },
+      ],
+    })}\n`;
+
+    const { state } = foldRunLog(NO_LOG, chunk);
+
+    expect(state.mcpServers).toEqual([
+      { name: 'hive', status: 'connected' },
+      { name: 'slack', status: 'needs-auth' },
+    ]);
+  });
+
+  it('leaves mcpServers null when no init event has arrived', () => {
+    expect(foldRunLog(NO_LOG, '{"type":"assistant"}\n').state.mcpServers).toBeNull();
+  });
 });

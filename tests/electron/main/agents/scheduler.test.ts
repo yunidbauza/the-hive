@@ -1061,6 +1061,99 @@ describe('createScheduler', () => {
     });
   });
 
+  describe('slack signed out (HIVE-123)', () => {
+    const NOON = new Date(2026, 7, 31, 12).getTime();
+    const every5m: WakeSpec = { everyMs: 300_000, check: 'always', on: [] };
+
+    beforeEach(() => {
+      clock = NOON;
+      // Armed before anything is arranged — see the interval tick's beforeEach.
+      scheduler.start();
+      schedules.set(AGENT, { wake: every5m });
+    });
+
+    it('skips a scheduled wake whose last run found slack signed out', () => {
+      state.patch(AGENT, {
+        nextRunAt: NOON,
+        lastRunAt: NOON - 600_000,
+        runs: [
+          {
+            run: 'r1',
+            trigger: 'interval',
+            startedAt: NOON - 600_000,
+            endedAt: NOON - 599_000,
+            outcome: 'done',
+            slack: 'needs-auth',
+          },
+        ],
+      });
+
+      tick();
+
+      expect(woke).toEqual([]);
+      expect(state.read(AGENT).skipsSinceRun).toBe(1);
+    });
+
+    it('does not skip once the last run found slack connected', () => {
+      state.patch(AGENT, {
+        nextRunAt: NOON,
+        lastRunAt: NOON - 600_000,
+        runs: [
+          {
+            run: 'r1',
+            trigger: 'interval',
+            startedAt: NOON - 600_000,
+            endedAt: NOON - 599_000,
+            outcome: 'done',
+            slack: 'connected',
+          },
+        ],
+      });
+
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
+    /*
+      An agent that has never run has no `runs[]` entry at all — and it must
+      not be skipped on that account. It has to be allowed to discover its own
+      status once, or a signed-out-at-boot Slack would wedge it permanently.
+    */
+    it('does not skip an agent that has never run', () => {
+      state.patch(AGENT, { nextRunAt: NOON });
+
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+
+    /*
+      A run that never named slack at all — no `mcp: [slack]`, or a spawn
+      failure before any `init` event arrived — leaves `slack` unset, and
+      unset is not "signed out".
+    */
+    it('does not skip a run that never named slack', () => {
+      state.patch(AGENT, {
+        nextRunAt: NOON,
+        lastRunAt: NOON - 600_000,
+        runs: [
+          {
+            run: 'r1',
+            trigger: 'interval',
+            startedAt: NOON - 600_000,
+            endedAt: NOON - 599_000,
+            outcome: 'done',
+          },
+        ],
+      });
+
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'interval' }]);
+    });
+  });
+
   describe('the daily cap', () => {
     const NOON = new Date(2026, 7, 31, 12).getTime();
     const MIDNIGHT = new Date(2026, 8, 1).getTime();

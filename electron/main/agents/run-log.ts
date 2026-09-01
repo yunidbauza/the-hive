@@ -27,13 +27,28 @@ export interface RunResult {
   sessionUuid?: string;
 }
 
+/** One entry from the `init` event's `mcp_servers` array. */
+export interface McpServerStatus {
+  name: string;
+  status: string;
+}
+
 export interface LogFold {
   /** Bytes after the last `\n`, carried into the next chunk. */
   partial: string;
   result: RunResult | null;
+  /**
+   * What the run's own first line said about its MCP servers (HIVE-123).
+   *
+   * Free: the `init` event is already on the wire, so an agent's Slack status
+   * is observable on every wake without a probe. This is what lets the
+   * scheduler say *why* a wake was skipped instead of letting the run fail on
+   * its first tool call.
+   */
+  mcpServers: McpServerStatus[] | null;
 }
 
-export const NO_LOG: LogFold = { partial: '', result: null };
+export const NO_LOG: LogFold = { partial: '', result: null, mcpServers: null };
 
 /** How much of a tool's arguments the log shows. */
 const ARG_LIMIT = 60;
@@ -63,20 +78,40 @@ const shortArgs = (input: unknown): string => {
 
 function readEvent(
   line: string,
-): { lines: RunLine[]; result: RunResult | null } {
+): {
+  lines: RunLine[];
+  result: RunResult | null;
+  mcpServers: McpServerStatus[] | null;
+} {
   const text = line.trim();
 
-  if (text === '') return { lines: [], result: null };
+  if (text === '') return { lines: [], result: null, mcpServers: null };
 
   let event: Record<string, unknown> | null;
 
   try {
     event = asRecord(JSON.parse(text));
   } catch {
-    return { lines: [], result: null };
+    return { lines: [], result: null, mcpServers: null };
   }
 
-  if (event === null) return { lines: [], result: null };
+  if (event === null) return { lines: [], result: null, mcpServers: null };
+
+  if (event['type'] === 'system' && event['subtype'] === 'init') {
+    const servers = event['mcp_servers'];
+
+    const mcpServers = Array.isArray(servers)
+      ? servers.filter(
+          (server): server is McpServerStatus =>
+            typeof server === 'object' &&
+            server !== null &&
+            typeof (server as { name?: unknown }).name === 'string' &&
+            typeof (server as { status?: unknown }).status === 'string',
+        )
+      : null;
+
+    return { lines: [], result: null, mcpServers };
+  }
 
   if (event['type'] === 'assistant') {
     const message = asRecord(event['message']);
@@ -108,7 +143,7 @@ function readEvent(
       }
     }
 
-    return { lines, result: null };
+    return { lines, result: null, mcpServers: null };
   }
 
   if (event['type'] === 'result') {
@@ -139,6 +174,7 @@ function readEvent(
     return {
       lines: [{ text: `● turn ended — ${subtype}${cost}`, color: 'cyan' }],
       result,
+      mcpServers: null,
     };
   }
 
@@ -153,7 +189,7 @@ function readEvent(
     chunk** revert to the earlier value — which is the ordering `claude` actually
     produces at the end of a turn.
   */
-  return { lines: [], result: null };
+  return { lines: [], result: null, mcpServers: null };
 }
 
 export function foldRunLog(
@@ -166,13 +202,15 @@ export function foldRunLog(
   const partial = parts.pop() ?? '';
   const lines: RunLine[] = [];
   let result = state.result;
+  let mcpServers = state.mcpServers;
 
   for (const part of parts) {
     const read = readEvent(part);
 
     lines.push(...read.lines);
     if (read.result !== null) result = read.result;
+    if (read.mcpServers !== null) mcpServers = read.mcpServers;
   }
 
-  return { state: { partial, result }, lines };
+  return { state: { partial, result, mcpServers }, lines };
 }
