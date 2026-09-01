@@ -739,7 +739,7 @@ all of it in one tool result.
 
 Proved against a real `claude` binary in `tests/live/ledger-conformance.test.ts`
 (`pnpm test:ledger`): that the binary actually loads the generated config and
-finds them named the short way, that the identity in the environment —
+finds nine tools named the short way, that the identity in the environment —
 not anything the model typed — is what lands in a written line's `from`, and
 that a refusal's reason reaches the model as readable text.
 

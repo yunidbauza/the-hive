@@ -228,20 +228,20 @@ export function createLedgerNotifier(
       budget raises the same kind.
     */
     if (entry.kind === 'event' && entry.from === OVERMIND) {
-      const cappedAgent = str(meta.agent);
+      const subjectAgent = str(meta.agent);
 
       if (
         typeof meta.dailyCap === 'number' &&
-        cappedAgent !== undefined &&
-        deps.isAgent(cappedAgent)
+        subjectAgent !== undefined &&
+        deps.isAgent(subjectAgent)
       ) {
         deps.raise({
           kind: 'agent.failed',
           id: entry.id,
           title: 'Hit its daily cap',
-          subject: cappedAgent,
+          subject: subjectAgent,
           body: entry.body,
-          action: { type: 'agent', name: cappedAgent },
+          action: { type: 'agent', name: subjectAgent },
           createdAt: entry.ts,
         });
       }
@@ -252,20 +252,18 @@ export function createLedgerNotifier(
         agent stopped doing what it should" is what this one already means. The
         title names the specific ceiling, since three kinds share it.
       */
-      const stuckAgent = str(meta.agent);
-
       if (
         typeof meta.rotateFailed === 'number' &&
-        stuckAgent !== undefined &&
-        deps.isAgent(stuckAgent)
+        subjectAgent !== undefined &&
+        deps.isAgent(subjectAgent)
       ) {
         deps.raise({
           kind: 'agent.failed',
           id: entry.id,
           title: 'Could not rotate its session',
-          subject: stuckAgent,
+          subject: subjectAgent,
           body: entry.body,
-          action: { type: 'agent', name: stuckAgent },
+          action: { type: 'agent', name: subjectAgent },
           createdAt: entry.ts,
         });
       }

@@ -616,10 +616,13 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
           (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
         );
 
+        // Fails closed with no start entry, exactly as production does: a
+        // fallback to "any handoff this agent ever wrote" would rotate off a
+        // previous rotation's body.
+        if (started === undefined) return undefined;
+
         return entries.findLast(
-          (entry) =>
-            entry.kind === 'handoff' &&
-            (started === undefined || entry.id >= started.id),
+          (entry) => entry.kind === 'handoff' && entry.id >= started.id,
         )?.body;
       },
       newUuid,

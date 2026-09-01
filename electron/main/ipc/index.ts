@@ -1374,6 +1374,17 @@ export function registerIpcHandlers(): void {
    * clock comparison would be a worse answer to the same question. The **last**
    * handoff wins if the agent wrote several — a second one is a correction of
    * the first, not a competitor to it.
+   *
+   * Where the two part company is the missing-start-entry case, and they part
+   * deliberately: `openAsksFor` fails **open** because its worst error parks an
+   * agent that was in fact done, while this one must fail **closed** because
+   * its worst error is destructive. Without the guard the predicate collapses
+   * to "any handoff this agent ever wrote", so `findLast` returns a *previous*
+   * rotation's body — and `finalizeRun` reads that as a successful handover:
+   * it zeroes the counter, parks a `pendingSession`, and seeds the next
+   * session from an out-of-date summary while abandoning the live
+   * conversation. No handoff is the honest answer when we cannot tell which
+   * run wrote one; the close then takes a strike, which is recoverable.
    */
   const handoffFor = (name: string, run: string): string | undefined => {
     const { entries } = ledger.read({ from: name });
@@ -1381,10 +1392,10 @@ export function registerIpcHandlers(): void {
       (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
     );
 
+    if (started === undefined) return undefined;
+
     return entries.findLast(
-      (entry) =>
-        entry.kind === 'handoff' &&
-        (started === undefined || entry.id >= started.id),
+      (entry) => entry.kind === 'handoff' && entry.id >= started.id,
     )?.body;
   };
 

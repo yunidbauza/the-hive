@@ -2352,15 +2352,21 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           `forceRotate` armed when it refuses one, so the rotation is not lost:
           the wake that does land is the handoff wake. Wording it as "the
           rotation failed" would say the opposite of what happened.
+
+          The success line says "to rotate", not "for a handoff": main only
+          makes it a handoff wake when the agent already has a session to hand
+          over, and on the documented degrade path — a `rotate` on an agent
+          that has never run — the wake that starts is an ordinary first wake
+          on a fresh session, with no handoff asked for. The renderer cannot
+          see which branch main took, and inventing an IPC field to tell it
+          would be a lot of wire for one adverb. "To rotate" is what the user
+          asked for, and it is true of both branches.
         */
         if (command.kind === 'rotate') {
           said(
             agents.rotate({ name }).then((outcome) => {
               if (outcome.started) {
-                pushOrch(
-                  `  woke ${name} for a handoff (${outcome.run})`,
-                  'dim',
-                );
+                pushOrch(`  woke ${name} to rotate (${outcome.run})`, 'dim');
                 return;
               }
               pushOrch(`  ${agentRunRefusal(name, outcome)}`, 'red');

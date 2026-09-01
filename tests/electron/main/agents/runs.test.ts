@@ -821,12 +821,15 @@ describe('createRunTracker', () => {
     });
 
     /*
-      The card guard is `strike && failures === 3`, not bare `failures === 3`.
-      `failures` climbs on every close regardless of strike — it is only the
-      local used to size the strike count — so an agent already sitting at
-      `rotateFailures: 2` reaches `failures === 3` on its very next close even
-      when that close is a successful rotation. Without `strike &&` this would
-      raise a spurious "could not rotate" card on a run that just rotated fine.
+      The invariant behind `const failures = strike ? … : null`.
+
+      `rotateFailures + 1` is only a meaningful number on a close that is a
+      strike: an agent already sitting at `rotateFailures: 2` reaches 3 on its
+      very next close even when that close is a *successful* rotation. Sizing
+      it unconditionally and guarding both readers with `strike &&` worked, but
+      one forgotten guard raised a spurious "could not rotate" card on a run
+      that had just rotated fine. This test is what says so out loud, whichever
+      shape the code takes.
     */
     it('does not raise the card on a successful rotation, even at rotateFailures 2', () => {
       lastTurn = true;
@@ -842,6 +845,45 @@ describe('createRunTracker', () => {
         handoff: 'I watch #ops.',
       });
       expect(after.rotateFailures).toBe(0);
+      expect(
+        ledger.filter((entry) => entry.meta?.['rotateFailed'] !== undefined),
+      ).toEqual([]);
+    });
+
+    /*
+      A strike is an accusation, and main must not level it at the agent for
+      something main did. `kill`, the stall watchdog, `killAll` and the
+      `closeAll` on quit all end the run before the agent could post anything —
+      three app quits landing mid-handoff-wake would otherwise raise a card
+      reading "three handoff wakes ended without a handoff", which is a claim
+      about the agent that describes main's own behaviour.
+    */
+    it('does not take a strike when main killed the handoff wake', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50 });
+
+      const index = childInstances.length;
+
+      tracker.run('drone', 'ledger');
+      tracker.kill('drone');
+      childInstances[index]?.emitClose(null, 'SIGTERM');
+
+      const after = state.read('drone');
+
+      expect(after.rotateFailures).toBeUndefined();
+      expect(after.pendingSession).toBeUndefined();
+    });
+
+    it('does not take a strike when the app quit mid-handoff-wake', () => {
+      lastTurn = true;
+      handoff = undefined;
+      state.patch('drone', { runsSinceRotate: 50, rotateFailures: 2 });
+
+      tracker.run('drone', 'ledger');
+      tracker.closeAll('app-closed');
+
+      expect(state.read('drone').rotateFailures).toBe(2);
       expect(
         ledger.filter((entry) => entry.meta?.['rotateFailed'] !== undefined),
       ).toEqual([]);

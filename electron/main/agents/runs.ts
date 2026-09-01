@@ -312,8 +312,28 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       than throw it away silently.
     */
     const handoff = info.lastTurn && reachedModel ? deps.handoffFor(name, info.run) : undefined;
-    const strike = info.lastTurn && handoff === undefined && reachedModel;
-    const failures = (current.rotateFailures ?? 0) + 1;
+    /*
+      A strike is the *agent's* failure to hand over, and only that.
+
+      `reason !== null` is the tracker's own marker for "we ended this run" —
+      it is set by `escalate`, which is every path main takes to stop a child:
+      `kill`, the stall watchdog, `killAll`, and the `closeAll('app-closed')`
+      on quit. A handoff wake cut short by any of those never got the chance
+      to post one, and three app quits landing mid-handoff-wake would otherwise
+      raise a card accusing the agent of something main did. Same rule as
+      `reachedModel`: main's failures are not the agent's.
+    */
+    const strike =
+      info.lastTurn && handoff === undefined && reachedModel && reason === null;
+    /*
+      Sized inside the strike, not beside it: `rotateFailures + 1` is only ever
+      a meaningful number when this close is a strike, and computing it
+      unconditionally left a live trap — an agent sitting at `rotateFailures: 2`
+      reaches 3 on its very next close even when that close is a *successful*
+      rotation. `null` is what makes both readers below safe by construction
+      rather than by remembering to re-check `strike`.
+    */
+    const failures = strike ? (current.rotateFailures ?? 0) + 1 : null;
 
     deps.state.patch(name, {
       /*
@@ -358,7 +378,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         : reachedModel
           ? { runsSinceRotate: current.runsSinceRotate + 1 }
           : {}),
-      ...(strike ? { rotateFailures: failures } : {}),
+      ...(failures === null ? {} : { rotateFailures: failures }),
       ...(sessionUuid === undefined ? {} : { sessionUuid }),
     });
 
@@ -379,7 +399,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       rotation keeps being attempted on every later wake. The ask here is that a
       human look, not that the agent give up.
     */
-    if (strike && failures === 3) {
+    if (failures === 3) {
       deps.appendLedger({
         from: OVERMIND,
         kind: 'event',

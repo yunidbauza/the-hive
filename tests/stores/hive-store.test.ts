@@ -1886,7 +1886,7 @@ describe('hive-store', () => {
 
           expect(bridge.rotate).toHaveBeenCalledWith({ name: 'slack-watcher' });
           expect(lastLine()?.text).toContain(
-            'woke slack-watcher for a handoff (run-7)',
+            'woke slack-watcher to rotate (run-7)',
           );
         });
 

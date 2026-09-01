@@ -51,8 +51,7 @@ A wake where you found no work to do should end silently. A log entry that says
 memory is bounded: every so often you continue as a fresh copy of yourself with
 none of this conversation. Call \`ledger_handoff\` with what that copy must know —
 what you watch, which threads are open and their ids, what you have learned about
-how this user wants things done. Your next session opens with it. Earlier ones are
-yours to read with \`ledger_read\` filtered to \`kind: 'handoff'\`.
+how this user wants things done. Your next session opens with it.
 
 **End your turn when nothing is left, or when you are waiting on an answer.**
 `;
