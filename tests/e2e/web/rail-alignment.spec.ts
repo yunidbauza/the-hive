@@ -241,3 +241,47 @@ test.describe('resizing a rail', () => {
     await page.mouse.up();
   });
 });
+
+/**
+ * A resize seam offers a resize cursor.
+ *
+ * Asserted in a real browser because this is a *cascade* fact, not a markup
+ * one: `split-handle.tsx` has always written `cursor-col-resize`, and happy-dom
+ * loads no stylesheet, so a unit test could only re-read the class name it was
+ * given. What actually decided the cursor was layering — the pointer-cursor
+ * default in `global.css` was unlayered, and unlayered CSS outranks every
+ * `@layer`, so Tailwind's utility lost and both rails offered a pointing hand.
+ * Only a computed style catches that, and only in a browser.
+ */
+test.describe('the resize handles', () => {
+  const cursorOf = (page: import('@playwright/test').Page, name: string) =>
+    page
+      .getByRole('slider', { name })
+      .evaluate((el) => getComputedStyle(el).cursor);
+
+  test('offer a horizontal resize cursor, not a pointer', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    expect(await cursorOf(page, 'Resize the navigation rail')).toBe('col-resize');
+    expect(await cursorOf(page, 'Resize the activity rail')).toBe('col-resize');
+  });
+
+  /**
+   * The hit area is a child `<span>` five times wider than the hairline, and it
+   * is what the pointer is actually over for four of those five pixels. `cursor`
+   * inherits, so it needs no rule of its own — but a future `cursor-*` on the
+   * span, or a reset that stops the inheritance, would leave the visible target
+   * and the cursor disagreeing.
+   */
+  test('carry the cursor across the whole hit area', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    const hitArea = page
+      .getByRole('slider', { name: 'Resize the navigation rail' })
+      .locator('span');
+
+    expect(await hitArea.evaluate((el) => getComputedStyle(el).cursor)).toBe(
+      'col-resize',
+    );
+  });
+});

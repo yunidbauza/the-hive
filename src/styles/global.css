@@ -33,13 +33,26 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Interactive controls always show a pointer cursor — Tailwind v4 dropped the
-   base rule that used to provide this. */
-button:not(:disabled),
-[role='button']:not([aria-disabled='true']),
-summary,
-label[for] {
-  cursor: pointer;
+/*
+ * Interactive controls always show a pointer cursor — Tailwind v4 dropped the
+ * base rule that used to provide this.
+ *
+ * `@layer base` is load-bearing, not decoration. Unlayered CSS outranks every
+ * `@layer`, so an unlayered version of this rule beat Tailwind's utilities
+ * (which live in `@layer utilities`) and forced a hand cursor onto controls
+ * that had asked for something else — the rails' and the editor's
+ * `cursor-col-resize` drag handles are `<button>`s, and a resize seam that
+ * offers a pointing hand reads as a link, not a seam. In the layer, this is
+ * what it was always meant to be: the default a control can override by naming
+ * its own `cursor-*` utility.
+ */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary,
+  label[for] {
+    cursor: pointer;
+  }
 }
 
 /**
