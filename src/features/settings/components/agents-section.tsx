@@ -16,11 +16,13 @@ import { AgentEditor } from '@features/settings/components/agent-editor';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { useAgents } from '@hooks/use-agents';
+import { readSlackStatus } from '@lib/slack';
 import {
   AGENT_NAME_PATTERN,
   isReservedAgentName,
   type AgentProblem,
 } from '@shared/agent-contract';
+import type { SlackStatus } from '@shared/slack-contract';
 
 /**
  * The Agents section of settings (HIVE-114).
@@ -74,6 +76,58 @@ autonomy: ask
 You are … . On every wake, read your ledger inbox first, then do your job.
 `;
 
+/**
+ * The example this epic exists to demonstrate (HIVE-123).
+ *
+ * Three things in it are load-bearing and must not be "tidied":
+ *
+ * `check: always` — an onchange agent wakes only when the *ledger* changed,
+ * and this agent's change lives in Slack, where this process cannot see it.
+ * With `onchange` it would never wake at all.
+ *
+ * `mcp__slack__*` in `tools:` — `mcp:` puts the server in the process;
+ * `tools:` is the grant HIVE-119 made a real fence. Naming only `mcp: [slack]`
+ * produces an agent that can see Slack's tools and is denied every one.
+ *
+ * `autonomy: ask` plus the body's instruction — nothing in the preamble stops
+ * an agent posting to Slack unasked, so the instruction to ask first is this
+ * file's own and belongs in its body.
+ *
+ * `icon` deliberately reads `ph-slack-logo`, not the brief's
+ * `ph-chat-teardrop-dots` — the icon registry (`components/ui/icon.tsx`'s
+ * `GLYPHS`) has no entry for the latter, so it would draw the fallback
+ * question mark on the very row meant to demonstrate the feature. Slack's own
+ * logo was already registered for this purpose (see "Agents (033)" there).
+ */
+const slackWatcherTemplate = (): string => `---
+name: slack-watcher
+description: Watches my Slack mentions and drafts replies for me to approve
+icon: ph-slack-logo
+wake:
+  every: 5m
+  check: always
+  on: [ledger, slack.mention]
+mcp: [slack]
+tools: [Read, Grep, mcp__slack__*]
+autonomy: ask
+limits:
+  turns: 40
+  budget_usd: 0.50
+  rotate_after: 50
+---
+
+You watch my Slack mentions.
+
+On every wake, read your ledger inbox first. Then search Slack for messages that
+mention me since your last run. For each one that needs a reply, draft it and ask
+me to approve it with ledger_ask, putting the draft in the quote and offering
+approve / edit / reject. Never post to Slack before I have approved the words.
+
+When I approve, post the reply as me, then post one ledger_done naming the thread
+and the permalink of what you posted. If nothing mentions me, end your turn
+silently.
+`;
+
 /** Why this name cannot be saved, or `null`. Mirrors main's own rules. */
 function nameProblem(name: string, taken: readonly string[]): string | null {
   if (name === '') return 'Give the agent a name in its frontmatter.';
@@ -103,9 +157,30 @@ export function AgentsSection() {
   } | null>(null);
   /** What main refused, field by field. Cleared on every fresh attempt. */
   const [problems, setProblems] = useState<AgentProblem[]>([]);
+  /** Gates the Slack-watcher example below. `null` until the read resolves. */
+  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
 
   useEffect(() => {
     void loadAgents();
+  }, []);
+
+  /*
+    Read on mount only, mirroring `slack-group.tsx`'s own effect: `claude mcp
+    get slack`, parsed, answers in well under a second and spends no model
+    turn. `testSlack()` is never called here — that is the one verb that
+    spends a real model turn, and this pane only needs to know whether Slack
+    is connected, not whether every tool call currently succeeds.
+  */
+  useEffect(() => {
+    let cancelled = false;
+
+    void readSlackStatus().then((next) => {
+      if (!cancelled) setSlackStatus(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const agents = snapshot?.agents ?? [];
@@ -226,6 +301,31 @@ export function AgentsSection() {
     );
   };
 
+  /*
+    Both conditions gate the button below: Slack must actually be reachable
+    (`connected` — not `pending-approval`, which still fails every tool call),
+    and there must be no agent already claiming the name the template writes,
+    or "create the example" would silently collide with one the user wrote
+    themselves.
+  */
+  const showSlackExample =
+    slackStatus?.kind === 'connected' &&
+    !allNames.includes('slack-watcher');
+
+  const createSlackWatcher = (): void => {
+    guard(
+      () => {
+        setOpen(null);
+        setBuffer(slackWatcherTemplate());
+        setSaved(null);
+        setProblems([]);
+      },
+      discardQuestion,
+      discardDetail,
+      'Discard',
+    );
+  };
+
   const save = (): void => {
     if (buffer === null || localProblem !== null) return;
 
@@ -313,13 +413,25 @@ export function AgentsSection() {
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={newAgent}
-          className="w-fit rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover"
-        >
-          + New agent
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={newAgent}
+            className="w-fit rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover"
+          >
+            + New agent
+          </button>
+
+          {showSlackExample && (
+            <button
+              type="button"
+              onClick={createSlackWatcher}
+              className="w-fit rounded-md border border-border px-3 py-1.5 text-[12.5px] text-brand hover:bg-hover"
+            >
+              Create example: Slack watcher
+            </button>
+          )}
+        </div>
 
         <p className="mt-auto pt-2 text-[11px] text-subtle">
           Agents folder: {snapshot.agentsRoot}
@@ -383,6 +495,16 @@ export function AgentsSection() {
           >
             + New agent
           </button>
+
+          {showSlackExample && (
+            <button
+              type="button"
+              onClick={createSlackWatcher}
+              className="border-t border-border-soft px-2.5 py-1.5 text-left text-[11.5px] text-brand hover:bg-hover"
+            >
+              Create example: Slack watcher
+            </button>
+          )}
         </div>
 
         {buffer === null ? (

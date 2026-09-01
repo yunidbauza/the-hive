@@ -8,7 +8,23 @@ import { AgentsSection } from '@features/settings/components/agents-section';
 
 import { AGENT_NAME_POOL } from '@/lib/agents';
 
+import { readSlackStatus } from '@lib/slack';
+
 import type { AgentSummary } from '@shared/agent-contract';
+
+/*
+  R12: the brief's own test renders `<AgentsSection slack={…} agents={…} />`,
+  but neither prop exists — `AgentsSection` reads `useAgents()` internally and
+  is mounted from a bare component map with no props at all. It reads its own
+  Slack status with `readSlackStatus()` in a mount effect instead, mirroring
+  `slack-group.tsx`'s `useEffect`. So these tests mock `@lib/slack` (below)
+  rather than passing a `slack` prop, and drive the agent roster through the
+  same `stub()`/`window.hive` bridge every other test in this file already
+  uses, rather than a second, competing mock of `@hooks/use-agents`.
+*/
+vi.mock('@lib/slack', () => ({
+  readSlackStatus: vi.fn(async () => null),
+}));
 
 const GOOD = `---
 name: slack-watcher
@@ -53,6 +69,7 @@ beforeEach(() => {
   delete (window as unknown as { hive?: unknown }).hive;
   resetAgents();
   vi.restoreAllMocks();
+  vi.mocked(readSlackStatus).mockResolvedValue(null);
 });
 
 describe('AgentsSection', () => {
@@ -412,6 +429,99 @@ describe('AgentsSection', () => {
       await waitFor(() =>
         expect(bridge.remove).toHaveBeenCalledWith({ name: 'slack-watcher' }),
       );
+    });
+  });
+
+  describe('the Slack watcher example (HIVE-123)', () => {
+    it('is hidden when slack is not connected', async () => {
+      vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'not-added' });
+      stub([]);
+      render(<AgentsSection />);
+
+      await screen.findByRole('button', { name: '+ New agent' });
+
+      expect(
+        screen.queryByRole('button', { name: /Slack watcher/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('appears once slack is connected and no slack-watcher agent exists', async () => {
+      vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'connected' });
+      stub([]);
+      render(<AgentsSection />);
+
+      expect(
+        await screen.findByRole('button', { name: /Slack watcher/ }),
+      ).toBeInTheDocument();
+    });
+
+    it('is hidden again once an agent named slack-watcher already exists', async () => {
+      vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'connected' });
+      stub([agent('slack-watcher')]);
+      render(<AgentsSection />);
+
+      await screen.findByText('slack-watcher');
+
+      expect(
+        screen.queryByRole('button', { name: /Slack watcher/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('the example grants the slack tools it needs, not just the server', async () => {
+      vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'connected' });
+      stub([]);
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /Slack watcher/ }),
+      );
+      await userEvent.click(await screen.findByRole('tab', { name: 'Source' }));
+
+      const buffer = screen.getByRole('textbox', {
+        name: 'Agent source',
+      }) as HTMLTextAreaElement;
+
+      expect(buffer.value).toEqual(expect.stringContaining('mcp: [slack]'));
+      expect(buffer.value).toEqual(expect.stringContaining('mcp__slack__*'));
+      expect(buffer.value).toEqual(expect.stringContaining('check: always'));
+    });
+
+    it('names the watched agent slack-watcher, ready to save as-is', async () => {
+      vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'connected' });
+      stub([]);
+      render(<AgentsSection />);
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /Slack watcher/ }),
+      );
+
+      const name = await screen.findByRole('textbox', { name: 'name' });
+      expect((name as HTMLInputElement).value).toBe('slack-watcher');
+      expect(
+        screen.queryByText('You already have an agent called slack-watcher.'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('goes through the same unsaved-changes guard as New agent', async () => {
+      vi.mocked(readSlackStatus).mockResolvedValue({ kind: 'connected' });
+      const bridge = stub([agent('other')]);
+      render(<AgentsSection />);
+
+      await userEvent.click(await screen.findByRole('button', { name: /other/ }));
+      await waitFor(() => expect(bridge.read).toHaveBeenCalled());
+      await userEvent.click(await screen.findByRole('tab', { name: 'Source' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'Agent source' }),
+        'x',
+      );
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /Slack watcher/ }),
+      );
+
+      expect(
+        await screen.findByText('Discard changes to other?'),
+      ).toBeInTheDocument();
     });
   });
 });
