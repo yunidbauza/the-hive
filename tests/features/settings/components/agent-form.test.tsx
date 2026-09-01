@@ -236,6 +236,160 @@ describe('AgentForm', () => {
     }
   });
 
+  /*
+    The bug this block exists for: every text control is driven off the buffer,
+    and `readFrontmatter` trims the value it reads back. A trailing space was
+    therefore stripped between the keystroke and the re-render, so the next
+    character landed against the previous word and a space could never be typed
+    at all. Reported as "the description field doesn't allow spaces"; it was
+    every text field in the form.
+  */
+  describe('typing a space', () => {
+    it('keeps a space typed into the description', async () => {
+      const onChange = setup({
+        source: SOURCE.replace(
+          'description: Watches #incorp-dev for build failures',
+          'description:',
+        ),
+      });
+      const field = screen.getByRole('textbox', { name: 'description' });
+
+      await userEvent.type(field, 'watches my open PRs');
+
+      expect(field).toHaveValue('watches my open PRs');
+      expect(patched(onChange, 'description')).toBe('watches my open PRs');
+    });
+
+    /*
+      The list fields are the sharper case: `[a, b]` is the syntax the parser
+      documents and the help text prints, and the space after the comma was as
+      unreachable as any other.
+    */
+    it('keeps the spaces typed into a list field', async () => {
+      const onChange = setup();
+      const field = screen.getByRole('textbox', { name: 'tools' });
+
+      // `[[` is userEvent's escape for a literal `[`; a bare one opens a key
+      // descriptor and it refuses the rest of the string.
+      await userEvent.type(field, '[[Bash(gh *), Read]');
+
+      expect(field).toHaveValue('[Bash(gh *), Read]');
+      expect(patched(onChange, 'tools')).toBe('[Bash(gh *), Read]');
+    });
+
+    it('keeps a quiet-hours range typed in full', async () => {
+      const onChange = setup();
+      const field = screen.getByRole('textbox', { name: 'quiet hours' });
+
+      await userEvent.type(field, '22:00-07:00');
+
+      expect(field).toHaveValue('22:00-07:00');
+      expect(patched(onChange, 'wake.quiet')).toBe('22:00-07:00');
+    });
+
+    /*
+      A space is held for the keystroke that follows it, not written into the
+      file — a frontmatter value with a trailing space is not a value the
+      parser would read back, and the buffer the Source tab shows must stay a
+      file anyone could have typed by hand.
+    */
+    it('does not write a trailing space into the buffer', async () => {
+      const onChange = setup();
+
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'description' }),
+        ' ',
+      );
+
+      const next = onChange.mock.calls.at(-1)?.[0] as string | undefined;
+
+      if (next !== undefined) {
+        expect(next).not.toContain(
+          'description: Watches #incorp-dev for build failures ',
+        );
+      }
+    });
+
+    /*
+      The draft is per-field. Two inputs sharing one `useState` would make a
+      space typed in `description` reappear in `tools`, which is a worse bug
+      than the one being fixed.
+    */
+    it('does not leak a draft between two fields', async () => {
+      setup();
+
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'description' }),
+        ' now ',
+      );
+
+      expect(screen.getByRole('textbox', { name: 'tools' })).toHaveValue('');
+    });
+
+    /*
+      Editing a *different* field must not discard the space in progress here.
+      The draft is per-field and survives any buffer change that leaves this
+      field's own value alone — which is what lets a user tab away mid-sentence
+      and come back to the words they typed.
+    */
+    it('survives an edit to a different field', async () => {
+      const onChange = setup();
+      const field = screen.getByRole('textbox', { name: 'description' });
+
+      await userEvent.type(field, ' ');
+      await userEvent.type(screen.getByRole('textbox', { name: 'name' }), 'x');
+
+      expect(patched(onChange, 'name')).toBe('slack-watcherx');
+      expect(field).toHaveValue('Watches #incorp-dev for build failures ');
+    });
+
+    /*
+      A draft that outlived its own value would make the form lie about the
+      file: rewrite `description:` in the Source tab, come back, and the stale
+      text would still be sitting in the box. The draft is only ever the
+      trailing whitespace the buffer cannot hold, so it is kept only while it
+      still trims to what the buffer says — and a rewrite from outside wins.
+    */
+    it('yields to a rewrite of its own value from outside', async () => {
+      function Outside() {
+        const [source, setSource] = useState(SOURCE);
+
+        return (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setSource(
+                  SOURCE.replace(
+                    'Watches #incorp-dev for build failures',
+                    'Rewritten in the Source tab',
+                  ),
+                );
+              }}
+            >
+              rewrite
+            </button>
+            <AgentForm
+              source={source}
+              problems={[]}
+              taken={[]}
+              onChange={setSource}
+            />
+          </>
+        );
+      }
+
+      render(<Outside />);
+
+      const field = screen.getByRole('textbox', { name: 'description' });
+
+      await userEvent.type(field, ' ');
+      await userEvent.click(screen.getByRole('button', { name: 'rewrite' }));
+
+      expect(field).toHaveValue('Rewritten in the Source tab');
+    });
+  });
+
   describe('the icon field', () => {
     it('is a picker, not a text box', () => {
       setup();

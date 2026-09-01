@@ -174,6 +174,27 @@ describe('AgentEditor', () => {
     });
   });
 
+  /*
+    Every frontmatter field has a `FIELD_HELP` sentence under its control; the
+    body — the largest thing in the file and the one users read as a
+    self-description rather than as the job — had none anywhere.
+  */
+  describe('what the body is for', () => {
+    it('says the body is carried out on every wake', async () => {
+      setup();
+
+      await userEvent.click(screen.getByRole('tab', { name: 'Source' }));
+
+      expect(screen.getByText(/carried out on every wake/)).toBeInTheDocument();
+    });
+
+    it('says it nowhere on the Form tab, where there is no body to explain', () => {
+      setup();
+
+      expect(screen.queryByText(/carried out on every wake/)).toBeNull();
+    });
+  });
+
   describe('the two tabs are one buffer', () => {
     it('shows the same bytes in Source that the form is editing', async () => {
       setup();

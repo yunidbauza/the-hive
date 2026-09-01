@@ -301,6 +301,37 @@ describe('wakePrompt', () => {
   it('is unchanged when neither is asked for', () => {
     expect(wakePrompt('manual')).toBe(wakePrompt('manual', undefined, {}));
   });
+
+  /*
+    The defect this wording replaces. "Read your ledger inbox first, then do
+    your job" left "your job" undefined at the only moment it mattered: an
+    agent woken on an interval with an empty inbox concluded there was nothing
+    to do and ended its turn. Measured against a real agent — sixteen
+    consecutive interval wakes, each ~4s, none of which carried out the
+    standing instruction in its own body.
+
+    The instructions are named explicitly, and the inbox is demoted from "first"
+    to one of two inputs, because an empty inbox must not read as an empty turn.
+  */
+  it('names the agent’s own instructions as the work of the wake', () => {
+    const prompt = wakePrompt('interval');
+
+    expect(prompt).toContain('instructions');
+    expect(prompt).not.toContain('then do your job');
+  });
+
+  it('still says an empty inbox is not an empty turn', () => {
+    expect(wakePrompt('interval')).toContain(
+      'An empty inbox does not mean there is nothing to do',
+    );
+  });
+
+  it('leaves the last-turn prompt free of the ordinary instruction', () => {
+    const prompt = wakePrompt('schedule', undefined, { lastTurn: true });
+
+    expect(prompt).toContain('This is your last turn on this session.');
+    expect(prompt).not.toContain('An empty inbox');
+  });
 });
 
 describe('systemPromptFor', () => {
@@ -309,6 +340,43 @@ describe('systemPromptFor', () => {
 
     expect(text.indexOf('PREAMBLE')).toBeLessThan(
       text.indexOf('Watch the channel'),
+    );
+  });
+
+  /*
+    `autonomy` parsed into the definition and was then read by nothing at all —
+    not the system prompt, not the argv, not the fence — while the form's help
+    text described in detail the behaviour it was supposed to produce. These
+    two tests are what make the field mean something.
+  */
+  it('tells an ask-first agent to check before acting', () => {
+    const text = systemPromptFor('PREAMBLE', def({ autonomy: 'ask' }));
+
+    expect(text).toContain('ledger_ask');
+    expect(text).toContain('before you act');
+  });
+
+  it('tells an act-first agent to proceed and report', () => {
+    const text = systemPromptFor('PREAMBLE', def({ autonomy: 'act' }));
+
+    expect(text).toContain('Proceed without asking');
+    expect(text).not.toContain('before you act');
+  });
+
+  /*
+    The body stays last. It is the part the *user* wrote, and an app-owned
+    sentence appended below it would read as theirs — and, worse, would be the
+    final instruction the model sees.
+  */
+  it('keeps the body below the separator, after the autonomy clause', () => {
+    const text = systemPromptFor('PREAMBLE', def({ autonomy: 'act' }));
+
+    expect(text.indexOf('Proceed without asking')).toBeLessThan(
+      text.indexOf('---'),
+    );
+    expect(text.indexOf('---')).toBeLessThan(text.indexOf('Watch the channel'));
+    expect(text.trimEnd().endsWith('Watch the channel and report mentions.')).toBe(
+      true,
     );
   });
 });

@@ -1,4 +1,4 @@
-import type { AgentDefinition } from '@shared/agent-contract';
+import type { AgentDefinition, Autonomy } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, isSessionEnvDenied } from '@shared/config-contract';
 import { HOOK_ENV_GRANTS } from '@shared/hook-contract';
 
@@ -107,7 +107,22 @@ export function wakePrompt(
       ? `You woke because: ${trigger}.`
       : `You woke because: ${trigger} — ${extra}.`;
 
-  const normal = `${because} Read your ledger inbox first, then do your job. End your turn when nothing is left or when you are waiting on an answer.`;
+  /*
+    "Read your ledger inbox first, then do your job" left "your job" undefined
+    at the one moment it decided anything: a wake whose inbox is empty. Sixteen
+    consecutive wakes of a real agent ended in about four seconds having done
+    nothing, while its body sat in the system prompt saying what to do.
+
+    The failure is on the *resumed* wake specifically, which is every scheduled
+    wake after the first. A fresh session acts on its body under either wording;
+    a resumed one can see in its own transcript that the work is already behind
+    it, and the old prompt gave it no reason to do it again. Proved both ways in
+    `tests/live/agent-conformance.test.ts`, which is also why the sentence about
+    an empty inbox is load-bearing rather than decorative — without it, "read the
+    inbox" and "do the work" read as one instruction with a precondition rather
+    than two separate things to do.
+  */
+  const normal = `${because} Read your ledger inbox, then carry out the instructions you were given. An empty inbox does not mean there is nothing to do — your instructions are standing work and this wake is one of the times to do them. End your turn when that work is done, or when you are waiting on an answer.`;
 
   // The handoff comes first: it is the context the rest of the prompt assumes.
   return rotation?.handoff === undefined
@@ -115,11 +130,33 @@ export function wakePrompt(
     : `You are continuing from a previous session of yourself. Its handoff:\n\n${rotation.handoff}\n\n${normal}`;
 }
 
+/**
+ * What `autonomy:` actually does, in one sentence per mode.
+ *
+ * The field parsed into {@link AgentDefinition} and was then read by nothing:
+ * not this prompt, not the argv, not the fence — while the form's help text
+ * described its behaviour in detail. It is spelled out here because the system
+ * prompt is the only place it *can* take effect. Neither clause is a security
+ * boundary and neither pretends to be: the tool fence is what stops a call, and
+ * `act` does not pre-allow anything. This is about what the agent does with a
+ * judgement call the fence has no opinion on.
+ */
+const AUTONOMY_CLAUSE: Record<Autonomy, string> = {
+  ask: '**Check before you act on anything consequential.** Post a `ledger_ask` describing what you propose to do, then end your turn and wait for the answer. Routine steps your instructions already cover do not need asking; a decision their author would want a say in does.',
+  act: '**Proceed without asking, and report afterwards.** Your instructions are your authority: carry them out and say what you did with `ledger_done`. Ask only when you are genuinely blocked, not to confirm what you were already told to do.',
+};
+
 export function systemPromptFor(
   preamble: string,
   def: AgentDefinition,
 ): string {
-  return `${preamble.trimEnd()}\n\n---\n\n${def.body.trim()}\n`;
+  /*
+    The body stays last, below the separator, and the app-owned sentences all
+    sit above it. Appending one underneath would put words the user did not
+    write in the position their own instructions occupy — and make an
+    app-owned sentence the final thing the model reads.
+  */
+  return `${preamble.trimEnd()}\n\n${AUTONOMY_CLAUSE[def.autonomy]}\n\n---\n\n${def.body.trim()}\n`;
 }
 
 export function wakeCommand(input: WakeInput): WakeCommand {

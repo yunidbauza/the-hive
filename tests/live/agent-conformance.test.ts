@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -205,7 +205,46 @@ const ROTATOR = 'probe-rotator';
  */
 const SLACK = 'probe-slack';
 
-const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL, ROTATOR, SLACK];
+/**
+ * The agent that proves a body is *work*, not a self-description.
+ *
+ * The one probe here whose assertion is about the **prompt wording** rather
+ * than about plumbing, and the only kind of test that can be: every unit test
+ * of `wakePrompt` and `AGENT_PREAMBLE` asserts on strings, and strings passed
+ * on the build where this behaviour was broken.
+ *
+ * What was broken: `wakePrompt` said "read your ledger inbox first, then do
+ * your job" and named nothing, while the preamble said "a wake where you found
+ * no work to do should end silently". Measured on a real agent: sixteen
+ * consecutive interval wakes, about four seconds each, doing nothing, while
+ * holding the tool grant its body needed.
+ *
+ * **The second wake is the one that fails, and finding that took an
+ * experiment.** Run against the old wording, an agent on its *first* wake
+ * carries out its body perfectly well — so a one-wake scenario passes on the
+ * broken build and proves nothing. What breaks is the wake after: a scheduled
+ * wake `--resume`s, the transcript says the work is already done, the inbox is
+ * empty, and nothing in either string says to do it again. Both arms of that
+ * experiment are recorded in the PR; the two-wake shape below is what came out
+ * of it, and reverting either string turns it red on the second marker
+ * assertion while the first still passes.
+ *
+ * The body is phrased the way the user's was — one declarative sentence, no
+ * "on every wake", no "even if your inbox is empty". A body defensive enough to
+ * survive the old wording would prove nothing about the new one.
+ *
+ * A marker file is the observable rather than a ledger entry: posting is
+ * something the preamble already spends paragraphs asking for, so a model that
+ * posts may be obeying the preamble rather than the body. Creating this file is
+ * named nowhere but in the definition. `Write` is granted because an ungranted
+ * tool would make the fence, not the prompt, the thing under test — an earlier
+ * draft granted `Bash(touch *)`, the model reached for `Write`, and the run
+ * ended `asking`, which is the fence working and the scenario measuring the
+ * wrong thing.
+ */
+const STANDING = 'probe-standing';
+
+const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL, ROTATOR, SLACK, STANDING];
 
 const AGENT_MD = `---
 name: ${NAME}
@@ -238,6 +277,32 @@ limits:
 This is a conformance probe. Do not read files, search the disk, or run
 commands — there is nothing here to find. After your ledger inbox, reply with
 the single sentence "interval probe reporting in" and end your turn.
+`;
+
+/**
+ * The standing-work probe, as a definition.
+ *
+ * The body is one sentence and says nothing about wakes, inboxes or schedules.
+ * That is deliberate to the point of being the test: it is the shape a user
+ * actually writes ("You will open a example.com page in the browser"), and the
+ * shape a resumed wake stopped acting on before the wake prompt and the
+ * preamble were taught to name it.
+ */
+const standingMd = (marker: string) => `---
+name: ${STANDING}
+description: Proves the body is carried out on a wake with an empty inbox.
+icon: Ghost
+model: haiku
+wake:
+  every: 1m
+  check: always
+autonomy: act
+tools: [Write, TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+You will create the file ${marker}.
 `;
 
 /**
@@ -426,6 +491,8 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   let previousConfigPath: string | undefined;
   /** The absolute path {@link FENCE}'s one permitted command writes to. */
   let marker: string;
+  /** The standing-work probe's own marker, for the same reason `marker` exists. */
+  let standingMarker: string;
 
   let receiver: Receiver | null = null;
   let ledger: Ledger;
@@ -501,6 +568,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     // Outside `hiveDir` on purpose: `rm(dir, { recursive: true })` in
     // `afterAll` cleans it up as one directory rather than two.
     marker = join(dir, 'bash-ran.txt');
+    standingMarker = join(dir, 'standing-ran.txt');
 
     for (const [name, body] of [
       [NAME, AGENT_MD],
@@ -510,6 +578,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [INTERVAL, INTERVAL_MD],
       [ROTATOR, ROTATOR_MD],
       [SLACK, SLACK_MD],
+      [STANDING, standingMd(standingMarker)],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -1346,6 +1415,98 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     */
     expect(twice.today?.runs).toBe(2);
     expect(twice.today?.usd).toBeGreaterThan(0);
+  }, 300_000);
+
+  /**
+   * The body is the job, and an empty inbox is not an empty turn.
+   *
+   * The only assertion in this file about what the *prompt wording* makes a
+   * model do, and the only kind of test that could catch what it catches: the
+   * unit tests for `wakePrompt` and `AGENT_PREAMBLE` assert on strings, and the
+   * strings they assert on were perfectly self-consistent on the build where an
+   * agent woke every minute and did nothing.
+   *
+   * Nothing is addressed to this agent, ever, so the marker can only have come
+   * from its own body — there is no `extra` and no ask to have carried it.
+   *
+   * A failure on the **second** marker assertion means a resumed wake with an
+   * empty inbox stopped carrying out the definition, which is the regression
+   * this scenario exists to hold shut. A failure on the first means something
+   * blunter: the body is not reaching the run at all.
+   */
+  it('carries out its body on a scheduled wake with an empty inbox', async () => {
+    schedules.set(STANDING, {
+      wake: { everyMs: 60_000, check: 'always', on: [] },
+    });
+
+    // Due now, the same way the interval scenario arms its first tick.
+    agentState.patch(STANDING, { nextRunAt: Date.now() - 1 });
+
+    const first = settled(STANDING);
+
+    fireTick?.();
+    await first;
+
+    const after = await persisted(STANDING);
+
+    expect(after.runs).toHaveLength(1);
+    expect(after.runs[0]?.trigger).toBe('interval');
+    expect(after.runs[0]?.outcome).not.toBe('failed');
+
+    /*
+      The file the body named, and nothing else. A marker on disk is the
+      assertion rather than a ledger entry on purpose: a ledger post is a thing
+      the preamble already spends paragraphs telling the agent to do, so a model
+      that posts may be following the preamble rather than the body. Creating
+      this file is named nowhere but in the definition.
+    */
+    expect(existsSync(standingMarker)).toBe(true);
+
+    /*
+      The second wake is the one that matters; the first is only its setup.
+
+      A scheduled wake `--resume`s the conversation, so by now this agent's own
+      transcript says it has already done what its body asks for. That is the
+      state the reported bug was actually in: sixteen consecutive interval wakes
+      on a resumed session, about four seconds each, none of them repeating work
+      the model could see it had already finished — while the prompt said only
+      "read your inbox, then do your job" and the preamble said a wake with no
+      work found should end silently.
+
+      Deleting the marker asks the question the user's agent was really being
+      asked: the job is not done any more. Nothing tells it so. It has to
+      re-derive that from its own standing instructions, on a wake whose inbox
+      is empty and whose history says the work is behind it.
+    */
+    rmSync(standingMarker);
+    agentState.patch(STANDING, { nextRunAt: Date.now() - 1 });
+
+    const second = settled(STANDING);
+
+    fireTick?.();
+    await second;
+
+    const twice = await persisted(STANDING);
+
+    expect(twice.runs).toHaveLength(2);
+    expect(twice.runs[1]?.outcome).not.toBe('failed');
+
+    // Same conversation — which is what lets the model see it already did this.
+    const args = spawns.at(-1)?.args ?? [];
+
+    expect(args).toContain('--resume');
+    expect(args[args.indexOf('--resume') + 1]).toBe(after.sessionUuid);
+
+    expect(existsSync(standingMarker)).toBe(true);
+
+    /*
+      And nothing was ever addressed to it. Said out loud because it is what
+      makes the marker attributable to the body: had anything been waiting in
+      the inbox, this wake would have had work in front of it either way.
+    */
+    const entries = await onDisk();
+
+    expect(entries.some((entry) => entry['to'] === STANDING)).toBe(false);
   }, 300_000);
 
   /**

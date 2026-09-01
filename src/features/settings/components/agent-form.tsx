@@ -501,10 +501,52 @@ export function AgentForm({
     null,
   );
 
+  /**
+   * The one keystroke the buffer cannot hold: a trailing space.
+   *
+   * Every text control here is driven off `source`, so what it shows is what
+   * `readFrontmatter` reads back — and that trims (`agent-contract.ts`). A
+   * space was therefore stripped between the keystroke and the re-render, and
+   * the next character landed against the previous word: the description field
+   * "did not allow spaces", and neither did quiet hours or any list field,
+   * where the space after the comma in `[a, b]` was equally unreachable.
+   *
+   * Fixing it at the parser is not an option — a frontmatter value with a
+   * trailing space is not a value anyone would type by hand, and the Source tab
+   * shows this buffer verbatim. So the *file* keeps the trimmed value and the
+   * in-progress whitespace is held here until the character that follows it
+   * arrives.
+   *
+   * One draft, not one per field: only the focused control can be mid-word, and
+   * a map would be a second thing to expire. It is kept only while it still
+   * trims to what the buffer says, which is what makes a rewrite from the
+   * Source tab win over stale text — see {@link shown}.
+   */
+  const [draft, setDraft] = useState<{ path: string; text: string } | null>(
+    null,
+  );
+
   const read = readFrontmatter(source);
   const fields = read?.fields;
   const at = (path: string) => fields?.get(path)?.value ?? '';
   const has = (path: string) => fields?.has(path) === true;
+
+  /**
+   * What a text input displays: the buffer's value, or the draft that trims to
+   * it.
+   *
+   * The equality test is the whole expiry policy. A draft only ever differs
+   * from the value by whitespace at its ends, so one that no longer trims to
+   * what the buffer holds is describing a value that has since been replaced,
+   * and the buffer wins.
+   */
+  const shown = (path: string): string => {
+    const value = at(path);
+
+    return draft?.path === path && draft.text.trim() === value
+      ? draft.text
+      : value;
+  };
 
   /**
    * Delete the key's line entirely.
@@ -528,13 +570,34 @@ export function AgentForm({
     return lines.join('\n');
   };
 
+  /**
+   * Remember the in-progress whitespace, or forget this field's.
+   *
+   * Scoped to `path` on the way out as well as in: clearing the draft outright
+   * would let a keystroke in one field discard the space someone left mid-word
+   * in another, which is the bug this whole mechanism exists to stop, moved one
+   * field to the left.
+   */
+  const stash = (path: string, value: string) => {
+    if (value.trim() !== value) {
+      setDraft({ path, text: value });
+      return;
+    }
+
+    setDraft((current) => (current?.path === path ? null : current));
+  };
+
   const set = (path: string, value: string) => {
-    if (value.trim() === '') {
+    const trimmed = value.trim();
+
+    stash(path, value);
+
+    if (trimmed === '') {
       onChange(clear(path));
       return;
     }
 
-    onChange(patchFrontmatter(source, path, value));
+    onChange(patchFrontmatter(source, path, trimmed));
   };
 
   /*
@@ -545,8 +608,11 @@ export function AgentForm({
     bottom of the frontmatter, below the block it was declared above.
   */
   const setName = (value: string) => {
+    const trimmed = value.trim();
+
     setRenamed(null);
-    onChange(patchFrontmatter(source, 'name', value));
+    stash('name', value);
+    onChange(patchFrontmatter(source, 'name', trimmed));
   };
 
   // ---- the wake mode ----------------------------------------------------
@@ -771,7 +837,7 @@ export function AgentForm({
       type="text"
       spellCheck={false}
       aria-label={label}
-      value={at(path)}
+      value={shown(path)}
       placeholder={placeholder}
       onChange={(event) => set(path, event.target.value)}
       className="min-w-0 rounded-[5px] border border-border-soft bg-panel-2 px-2 py-1 text-[11.5px] text-ink outline-none focus:border-border"
@@ -896,7 +962,7 @@ export function AgentForm({
               type="text"
               spellCheck={false}
               aria-label="name"
-              value={at('name')}
+              value={shown('name')}
               onChange={(event) => setName(event.target.value)}
               /*
                 Renumber on the way out rather than refuse on the way in. Doing

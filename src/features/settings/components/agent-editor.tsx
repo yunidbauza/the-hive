@@ -169,13 +169,27 @@ export function AgentEditor({
           onChange={onChange}
         />
       ) : (
-        <textarea
-          aria-label="Agent source"
-          spellCheck={false}
-          value={source}
-          onChange={(event) => onChange(event.target.value)}
-          className="min-h-0 flex-1 resize-none bg-panel px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none"
-        />
+        <>
+          {/*
+            The one thing the Source tab could not say for itself, and the one
+            users got wrong: the text under the frontmatter is the agent's job,
+            re-read on every wake — not a description of what sort of agent it
+            is. Every field above the line has a `FIELD_HELP` sentence; the body
+            is the largest thing in the file and had none.
+          */}
+          <p className="border-b border-border-soft px-2.5 py-1.5 text-[11px] leading-relaxed text-subtle">
+            Below the <code className="font-mono">---</code> is what this agent
+            does, carried out on every wake. Write it as instructions, not as a
+            description.
+          </p>
+          <textarea
+            aria-label="Agent source"
+            spellCheck={false}
+            value={source}
+            onChange={(event) => onChange(event.target.value)}
+            className="min-h-0 flex-1 resize-none bg-panel px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none"
+          />
+        </>
       )}
 
       <div className="flex items-center justify-between gap-3 border-t border-border-soft px-2.5 py-1.5">
