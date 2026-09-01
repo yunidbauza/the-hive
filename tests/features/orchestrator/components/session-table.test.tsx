@@ -813,6 +813,8 @@ describe('SessionTable', () => {
       icon: 'Robot',
       status: 'sleeping',
       wake: { on: ['slack.mention'], everyMs: 300_000 },
+      mcp: [],
+      tools: [],
       rotateAfter: 50,
       runs: [],
       ...over,

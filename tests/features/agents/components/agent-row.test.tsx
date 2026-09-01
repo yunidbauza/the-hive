@@ -19,6 +19,8 @@ const summary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
   icon: 'ph-robot',
   status: 'sleeping',
   wake: { on: [] },
+  mcp: [],
+  tools: [],
   rotateAfter: 50,
   runs: [],
   ...over,

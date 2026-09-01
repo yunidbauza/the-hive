@@ -21,6 +21,8 @@ const summary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
   icon: 'ph-robot',
   status: 'asking',
   wake: { on: ['slack.mention'], everyMs: 300_000 },
+  mcp: [],
+  tools: [],
   rotateAfter: 50,
   runsSinceRotate: 17,
   sessionUuid: '9f3c1e2ab8',

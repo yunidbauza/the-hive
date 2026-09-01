@@ -249,6 +249,8 @@ const definition = (name: string) => ({
   icon: 'Robot',
   status: 'sleeping' as const,
   wake: { on: [] },
+  mcp: [],
+  tools: [],
   rotateAfter: 50,
   runs: [],
 });

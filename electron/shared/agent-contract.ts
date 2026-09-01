@@ -286,6 +286,21 @@ export interface AgentSummary {
   icon: string;
   status: AgentStatus;
   wake: WakeSpec;
+  /**
+   * `mcp:` and `tools:` from the definition, verbatim (HIVE-123).
+   *
+   * Neither reached the renderer before this: the settings pane has to know
+   * which agents name a given MCP server — the Slack group's "Used by" line —
+   * and whether a `tools:` grant actually reaches it, via
+   * {@link grantsSlackTools}. Both are already parsed in main by the time a
+   * summary is built, so they ride here rather than costing the renderer a
+   * second IPC round trip for two arrays it would otherwise have to re-parse
+   * from a raw `AGENT.md` it does not have. A definition that never parsed —
+   * or a folder the guard refuses to address — has neither, so both default
+   * to `[]` rather than being left absent.
+   */
+  mcp: string[];
+  tools: string[];
   lastRunAt?: number;
   nextRunAt?: number;
   /** Present once the agent has run at least once (HIVE-115). */

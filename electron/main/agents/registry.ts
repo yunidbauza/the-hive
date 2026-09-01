@@ -341,6 +341,10 @@ export function createAgentRegistry({
             icon: 'Warning',
             status: 'sleeping',
             wake: { on: [] },
+            // A folder the guard refuses to address has no parsed definition
+            // to read `mcp:`/`tools:` from (HIVE-123).
+            mcp: [],
+            tools: [],
             /*
               A definition that never parsed has no limits of its own, so the
               rotation ceiling falls back to the default the form would have
@@ -371,6 +375,10 @@ export function createAgentRegistry({
             icon: def.icon,
             status: 'sleeping',
             wake: def.wake,
+            // HIVE-123: the settings pane's Slack group needs both to compute
+            // its "Used by" line and the "no slack tools granted" hint.
+            mcp: def.mcp,
+            tools: def.tools,
             rotateAfter: def.limits.rotateAfter,
             // The other definition-side limit the scheduler needs (HIVE-121).
             // Absent stays absent: there is no default daily ceiling.
@@ -392,6 +400,9 @@ export function createAgentRegistry({
           icon: 'Warning',
           status: 'sleeping',
           wake: { on: [] },
+          // As above: an unparsed definition has no `mcp:`/`tools:` to read.
+          mcp: [],
+          tools: [],
           // As above: an unparsed definition falls back to the default ceiling.
           rotateAfter: AGENT_LIMIT_DEFAULTS.rotateAfter,
           runs: [],

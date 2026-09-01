@@ -10,6 +10,8 @@ import { PathProbes } from '@features/settings/components/path-probes';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsProviderGroup } from '@features/settings/components/settings-provider-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import { SlackGroup } from '@features/settings/components/slack-group';
+import { useAgents } from '@hooks/use-agents';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { readJiraStatus } from '@lib/jira';
 import { readIntegrationsStatus } from '@lib/project-config';
@@ -19,6 +21,7 @@ import type {
   LoginEnvStatus,
 } from '@shared/ipc-contract';
 import type { JiraStatus } from '@shared/jira-contract';
+import { SLACK_SERVER_KEY } from '@shared/slack-contract';
 
 /**
  * Integrations (story 106).
@@ -221,6 +224,14 @@ export function IntegrationsSection() {
   const probing = useSwarmPhrase('loading.diagnostics');
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
   const [jira, setJira] = useState<JiraStatus | null>(null);
+  /**
+   * Only the agents that actually name Slack under `mcp:` — the Slack
+   * group's own "Used by" line, and its "no slack tools granted" hint (each
+   * via `grantsSlackTools`, which only `tools:` can satisfy).
+   */
+  const slackAgents = (useAgents()?.agents ?? []).filter((agent) =>
+    agent.mcp.includes(SLACK_SERVER_KEY),
+  );
 
   /**
    * Asked once, when the pane opens — and keyed on *whether* there is a
@@ -352,6 +363,10 @@ export function IntegrationsSection() {
             />
           </>
         )}
+      </SettingsProviderGroup>
+
+      <SettingsProviderGroup name="Slack">
+        <SlackGroup agents={slackAgents} />
       </SettingsProviderGroup>
     </div>
   );
