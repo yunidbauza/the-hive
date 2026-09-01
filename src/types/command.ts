@@ -78,7 +78,8 @@ export type ParsedCommand =
    */
   | { kind: 'answer'; raw: string; thread: string; message: string }
   /**
-   * The five agent verbs (HIVE-117).
+   * The first five agent verbs (HIVE-117); `rotate` below is the sixth
+   * (HIVE-122).
    *
    * `run` carries a target and **no task**, unlike every other acting verb
    * here. That is the grammar recording a decision made in the contract rather
@@ -87,8 +88,9 @@ export type ParsedCommand =
    * machine execute — and `ask <agent> <message>` already reaches an agent
    * with prose, through the ledger, where a task belongs.
    *
-   * All four targeted verbs take a bare name, so they share `open`'s shape
-   * rather than `send`'s. `agents` takes nothing at all.
+   * All five targeted verbs — these four, plus `rotate` below — take a bare
+   * name, so they share `open`'s shape rather than `send`'s. `agents` takes
+   * nothing at all.
    */
   | { kind: 'agents'; raw: string }
   | { kind: 'run'; raw: string; target: string }
@@ -123,9 +125,10 @@ export const USAGE: Record<UsageCommand, string> = {
   ask: 'usage: ask <session> <message>',
   answer: 'usage: answer <id> <text>',
   /*
-    `<agent>`, not `<session>`, on all four. The word is what tells a reader
-    that `send` is not the verb for these and that a session id will not do —
-    the console's only other cue is the refusal they get after guessing wrong.
+    `<agent>`, not `<session>`, on all five — these four and `rotate` below.
+    The word is what tells a reader that `send` is not the verb for these and
+    that a session id will not do — the console's only other cue is the
+    refusal they get after guessing wrong.
   */
   run: 'usage: run <agent>',
   pause: 'usage: pause <agent>',

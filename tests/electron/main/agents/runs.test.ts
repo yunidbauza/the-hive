@@ -820,6 +820,33 @@ describe('createRunTracker', () => {
       ).toEqual([]);
     });
 
+    /*
+      The card guard is `strike && failures === 3`, not bare `failures === 3`.
+      `failures` climbs on every close regardless of strike — it is only the
+      local used to size the strike count — so an agent already sitting at
+      `rotateFailures: 2` reaches `failures === 3` on its very next close even
+      when that close is a successful rotation. Without `strike &&` this would
+      raise a spurious "could not rotate" card on a run that just rotated fine.
+    */
+    it('does not raise the card on a successful rotation, even at rotateFailures 2', () => {
+      lastTurn = true;
+      handoff = 'I watch #ops.';
+      state.patch('drone', { runsSinceRotate: 50, rotateFailures: 2 });
+
+      runToClose('drone');
+
+      const after = state.read('drone');
+
+      expect(after.pendingSession).toEqual({
+        uuid: 'uuid-minted',
+        handoff: 'I watch #ops.',
+      });
+      expect(after.rotateFailures).toBe(0);
+      expect(
+        ledger.filter((entry) => entry.meta?.['rotateFailed'] !== undefined),
+      ).toEqual([]);
+    });
+
     it('does not take a strike when the run never reached the model', () => {
       lastTurn = true;
       handoff = undefined;

@@ -311,7 +311,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       or that simply ignored the instruction, must keep the conversation rather
       than throw it away silently.
     */
-    const handoff = info.lastTurn ? deps.handoffFor(name, info.run) : undefined;
+    const handoff = info.lastTurn && reachedModel ? deps.handoffFor(name, info.run) : undefined;
     const strike = info.lastTurn && handoff === undefined && reachedModel;
     const failures = (current.rotateFailures ?? 0) + 1;
 

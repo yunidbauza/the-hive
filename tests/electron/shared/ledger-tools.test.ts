@@ -81,7 +81,16 @@ describe('ledger-tools', () => {
 
   it('names only kinds the ledger accepts', () => {
     // Every tool maps to one kind; a typo here is a 400 at runtime.
-    for (const kind of ['post', 'ask', 'answer', 'claim', 'release', 'done', 'failed']) {
+    for (const kind of [
+      'post',
+      'ask',
+      'answer',
+      'claim',
+      'release',
+      'done',
+      'failed',
+      'handoff',
+    ]) {
       expect(LEDGER_KINDS).toContain(kind);
     }
   });

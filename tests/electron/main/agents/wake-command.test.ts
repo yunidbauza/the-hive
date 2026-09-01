@@ -284,7 +284,7 @@ describe('createWakeCommand', () => {
    * that a failed prepare leaves the counter and the uuid exactly as it found
    * them, whichever side of the threshold they are on.
    */
-  it('keeps the rotation unrecorded when preparing the run fails', () => {
+  it('leaves the counter and the uuid untouched when preparing the run fails', () => {
     stored['slack-watcher'] = {
       status: 'sleeping',
       runsSinceRotate: 5,
