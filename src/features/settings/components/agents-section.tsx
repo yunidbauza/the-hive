@@ -123,9 +123,10 @@ mention me since your last run. For each one that needs a reply, draft it and as
 me to approve it with ledger_ask, putting the draft in the quote and offering
 approve / edit / reject. Never post to Slack before I have approved the words.
 
-When I approve, post the reply as me, then post one ledger_done naming the thread
-and the permalink of what you posted. If nothing mentions me, end your turn
-silently.
+When I approve, post the reply as me, then post one ledger_done naming the thread,
+passing the permalink of what you posted as meta: { slack: { permalink: "…" } }.
+That exact key is what turns the card into a link to your message. If nothing
+mentions me, end your turn silently.
 `;
 
 /** Why this name cannot be saved, or `null`. Mirrors main's own rules. */

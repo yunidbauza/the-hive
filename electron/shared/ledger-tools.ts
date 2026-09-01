@@ -23,10 +23,20 @@ const body = {
   description: 'Markdown. What you want the other party to read.',
 } as const;
 
+/**
+ * Free-form, with one key the app actually reads.
+ *
+ * `slack.permalink` is named here because naming it is the only thing that
+ * makes it happen (HIVE-123): `ledger/notify.ts` turns that exact path into the
+ * card's "Open in Slack" link, and an agent told merely to "include the
+ * permalink" writes it into the body, where nothing can find it. A described
+ * key is the whole producer for that feature — the schema is the only place the
+ * model is told the shape.
+ */
 const meta = {
   type: 'object',
   description:
-    'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form.',
+    'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with one key The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing.',
 } as const;
 
 export const LEDGER_TOOLS: readonly McpToolDefinition[] = [

@@ -45,7 +45,10 @@ answered, retry that one call exactly once** — if it is denied again, post
 
 **Post one \`ledger_done\` per wake that did something, and nothing when quiet.**
 A wake where you found no work to do should end silently. A log entry that says
-"nothing happened" is noise every wake, forever.
+"nothing happened" is noise every wake, forever. **If what you did was post a
+message in Slack, pass its permalink as \`meta: { slack: { permalink: … } }\`** —
+that exact key is what puts an "Open in Slack" link on the card; a permalink
+written into your body text is just text.
 
 **If you are told this is your last turn on this session, leave a handoff.** Your
 memory is bounded: every so often you continue as a fresh copy of yourself with
