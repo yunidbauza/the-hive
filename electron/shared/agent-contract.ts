@@ -409,6 +409,67 @@ export interface AgentsSnapshot {
   agentsRoot: string;
 }
 
+/**
+ * The receiver route the agents directory is served on (HIVE-127).
+ *
+ * POST like every other route on that server, and its own path rather than a
+ * mode on `LEDGER_READ_PATH`: that route is typed `LedgerReadQuery →
+ * LedgerSnapshot` end to end and its handler is entirely ledger-visibility
+ * filtering, which means nothing for a directory. The receiver's route set is
+ * closed and each entry carries a body cap sized to the document it expects —
+ * two contracts behind one path would un-type both.
+ */
+export const AGENTS_PATH = '/agents';
+
+/**
+ * One agent, as a **peer** sees it (HIVE-127).
+ *
+ * Deliberately not {@link AgentSummary}. That type also carries `sessionUuid`,
+ * `cost`, `today`, `dailyUsd` and the whole run history — none of which is any
+ * of a peer's business, and the first of which is a live conversation id. The
+ * projection is built in main, so the process boundary this crosses is the
+ * last place any of it could leak.
+ *
+ * Same trust domain, to be clear about what this does disclose: every agent
+ * here is a definition the user wrote on their own machine, so a name, a
+ * description and a tool grant tell a peer nothing the user does not already
+ * own. That is the argument for these five fields, and equally the argument
+ * against a sixth that was not thought about.
+ */
+export interface AgentsDirectoryEntry {
+  /** The address a `ledger_ask` needs. */
+  name: string;
+  /** The agent's own frontmatter, unmodified. Empty when `invalid`. */
+  description: string;
+  status: AgentStatus;
+  /**
+   * The definition's `wake.on` — *can I actually reach this agent?*
+   *
+   * A **gate**, not a preference: an agent without `ledger` here will not wake
+   * on an ask no matter who sends one. Empty on an `invalid` agent, which is
+   * the truth rather than a placeholder — a definition that does not parse is
+   * not even a known party, so nothing can wake it and nothing may write to
+   * the ledger as it.
+   */
+  accepts: WakeOn[];
+  /** What the fence will actually let it do. Empty when `invalid`. */
+  tools: string[];
+  /**
+   * Why this peer cannot be reached.
+   *
+   * Listed with its problem rather than omitted: a silently hidden agent is
+   * indistinguishable from an absent one, and the fix is usually a one-line
+   * edit to a file the reader can only go and find if someone says it is
+   * broken.
+   */
+  invalid?: string;
+}
+
+/** What {@link AGENTS_PATH} answers. */
+export interface AgentsDirectory {
+  agents: AgentsDirectoryEntry[];
+}
+
 export type FieldKind =
   | 'text'
   | 'enum'

@@ -1,5 +1,7 @@
 /**
- * The nine ledger tools, as data (HIVE-112, `ledger_handoff` added by HIVE-122).
+ * The nine ledger tools, as data (HIVE-112, `ledger_handoff` added by HIVE-122),
+ * plus the two served beside them and deliberately outside that list:
+ * {@link AGENTS_TOOL} (HIVE-127) and {@link APPROVE_TOOL} (HIVE-119).
  *
  * In `electron/shared` rather than beside the server that serves them, for one
  * reason: HIVE-115's agent preamble is the same text read by a different
@@ -241,5 +243,29 @@ export const APPROVE_TOOL: McpToolDefinition = {
       },
     },
     required: ['tool_name', 'input'],
+  },
+};
+
+/**
+ * The agents directory — served beside the ledger tools, and not one of them
+ * (HIVE-127).
+ *
+ * Outside {@link LEDGER_TOOLS} for the reason {@link APPROVE_TOOL} is: that
+ * list is the ledger vocabulary the agent preamble teaches, one entry per
+ * ledger kind, and this writes no entry. Unlike `approve`, though, it *is* a
+ * tool the model is meant to call, so `tools/list` reports it before that one.
+ *
+ * It takes no arguments on purpose. The caller's identity is the authenticated
+ * `x-hive-session` header — which for an agent wake is that agent's own name —
+ * so there is nothing to pass. A parameter naming who is asking is a parameter
+ * a model can lie in.
+ */
+export const AGENTS_TOOL: McpToolDefinition = {
+  name: 'agents',
+  description:
+    'List the other agents on this machine and what each is for. Use it before asking someone to do work you are not for: it gives you each peer\'s name, its own description of itself, whether it is awake, what it wakes on, and what tools it holds — so you can address a `ledger_ask` to a peer you were never told about. A peer whose "accepts" does not include "ledger" will not wake on an ask, and one listed with "invalid" cannot be reached at all.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
   },
 };

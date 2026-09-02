@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AGENTS_PATH,
   AGENT_FIELDS,
   AGENT_LIMIT_DEFAULTS,
   AGENT_NAME_PATTERN,
@@ -18,7 +19,11 @@ import {
   isReservedAgentName,
   isWakeOn,
 } from '../../../electron/shared/agent-contract';
-import { OVERMIND } from '../../../electron/shared/ledger-contract';
+import {
+  LEDGER_POST_PATH,
+  LEDGER_READ_PATH,
+  OVERMIND,
+} from '../../../electron/shared/ledger-contract';
 import { RESERVED_SKILL_NAME } from '../../../electron/shared/skills-contract';
 
 describe('agent-contract', () => {
@@ -218,5 +223,18 @@ describe('dayKey', () => {
   */
   it('does not roll over before local midnight', () => {
     expect(dayKey(new Date(2026, 7, 31, 23, 59).getTime())).toBe('2026-08-31');
+  });
+});
+
+describe('AGENTS_PATH', () => {
+  /*
+    Its own route rather than a mode on `/ledger/read` (HIVE-127): that route
+    is typed `LedgerReadQuery → LedgerSnapshot` end to end, and every route on
+    the receiver carries a body cap sized to the document it expects.
+  */
+  it('is a receiver route distinct from the ledger routes', () => {
+    expect(AGENTS_PATH).toBe('/agents');
+    expect(AGENTS_PATH).not.toBe(LEDGER_POST_PATH);
+    expect(AGENTS_PATH).not.toBe(LEDGER_READ_PATH);
   });
 });

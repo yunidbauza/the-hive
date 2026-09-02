@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { LEDGER_KINDS } from '@shared/ledger-contract';
-import { LEDGER_TOOLS, LEDGER_TOOL_NAMES } from '@shared/ledger-tools';
+import {
+  AGENTS_TOOL,
+  APPROVE_TOOL,
+  LEDGER_TOOLS,
+  LEDGER_TOOL_NAMES,
+} from '@shared/ledger-tools';
+import { matches } from '@shared/permission-rules';
 
 describe('ledger-tools', () => {
   it('ships exactly the nine tools the epic names', () => {
@@ -102,5 +108,40 @@ describe('ledger-tools', () => {
     expect(tool?.inputSchema.required).toEqual(['body']);
     // A handoff is addressed to your own next session; `to` would be noise.
     expect(tool?.inputSchema.properties).not.toHaveProperty('to');
+  });
+});
+
+describe('AGENTS_TOOL', () => {
+  it('is named for the short mcp__hive__ form the model calls', () => {
+    expect(AGENTS_TOOL.name).toBe('agents');
+  });
+
+  it('stays outside LEDGER_TOOLS, which is the ledger vocabulary', () => {
+    expect(LEDGER_TOOL_NAMES).not.toContain('agents');
+    expect(LEDGER_TOOLS).not.toContain(AGENTS_TOOL);
+    expect(AGENTS_TOOL).not.toBe(APPROVE_TOOL);
+  });
+
+  it('takes no arguments, so a model cannot name who is asking', () => {
+    expect(AGENTS_TOOL.inputSchema.type).toBe('object');
+    expect(AGENTS_TOOL.inputSchema.properties).toEqual({});
+    expect(AGENTS_TOOL.inputSchema.required).toBeUndefined();
+  });
+
+  it('tells the model when to reach for it, not just what it does', () => {
+    expect(AGENTS_TOOL.description.length).toBeGreaterThan(40);
+    expect(AGENTS_TOOL.description).toMatch(/before/i);
+  });
+
+  /*
+    The acceptance criterion "granted unconditionally, the way `mcp__hive__*`
+    already is in waker.ts" — asserted rather than assumed, because it is the
+    difference between a tool every agent can reach and one only an agent that
+    happened to name it in `tools:` can. `waker.ts:214` (the `--allowedTools`
+    grant) and `waker.ts:297` (`HOOK_ENV_GRANTS`, which the fence consults)
+    both put this exact rule in front of it.
+  */
+  it('is covered by the wildcard every agent is granted, with no `tools:` entry', () => {
+    expect(matches('mcp__hive__*', `mcp__hive__${AGENTS_TOOL.name}`, {})).toBe(true);
   });
 });
