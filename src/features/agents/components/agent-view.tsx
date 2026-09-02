@@ -318,7 +318,7 @@ export function AgentView({ entity }: AgentViewProps) {
 
         <div className="min-h-0 flex-1">
           <div className="grid h-full min-h-0 gap-2 [grid-template-columns:minmax(0,1fr)_clamp(280px,22%,380px)] @max-[800px]:[grid-template-columns:minmax(0,1fr)]">
-            <AgentRunLog name={entity.id} status={entity.status} />
+            <AgentRunLog name={entity.id} />
             <AgentLedger name={entity.id} />
           </div>
         </div>

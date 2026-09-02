@@ -49,6 +49,23 @@ const summary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
   ...over,
 });
 
+/*
+  An agent mid-run. Liveness is `live` now, not the status word (HIVE-128) —
+  the status carries on saying what the agent *is*, the list says what it is
+  doing and how many of them there are.
+*/
+const working = (): Partial<AgentSummary> => ({
+  status: 'working',
+  live: [
+    {
+      run: 'live-1',
+      kind: 'standing',
+      trigger: 'timer',
+      startedAt: Date.now(),
+    },
+  ],
+});
+
 const seed = (over: Partial<AgentSummary> = {}): Agent => {
   useHiveStore.getState().hydrateAgents([summary(over)]);
 
@@ -381,20 +398,23 @@ describe('AgentView', () => {
      * patched at spawn — so during a run `runs[last]` is the run before this
      * one. Naming it as the live header showed the wrong id, trigger and start
      * time, and hid the previous run's own receipt.
+     *
+     * Main sends a descriptor for every run in flight now (HIVE-128), so the
+     * live row has an identity of its own — and it is still not r17's.
      */
     it('never labels a live run with the previous run’s identity', () => {
-      render(<AgentView entity={seed({ status: 'working' })} />);
+      render(<AgentView entity={seed(working())} />);
 
       // r17 is the last *finished* run, so it keeps its receipt…
       expect(screen.getByText(/#r17/)).toBeInTheDocument();
       expect(screen.getByText(/asking/)).toBeInTheDocument();
-      // …and the live run claims no identity it cannot know.
-      expect(screen.getByText(/Running now/)).toBeInTheDocument();
-      expect(screen.queryByText(/running…/)).not.toBeInTheDocument();
+      // …and the live run is drawn under the id main gave it.
+      expect(screen.getByTitle('standing run')).toHaveTextContent('#live-1');
+      expect(screen.getByText('running')).toBeInTheDocument();
     });
 
     it('keeps every finished run’s receipt while another is live', () => {
-      render(<AgentView entity={seed({ status: 'working' })} />);
+      render(<AgentView entity={seed(working())} />);
 
       expect(screen.getByText(/#r16/)).toBeInTheDocument();
       expect(screen.getByText(/#r17/)).toBeInTheDocument();

@@ -1,12 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { TermLine } from '@/types/terminal';
 
-import type { AgentStatus, RunSummary } from '@shared/agent-contract';
+import type { LiveRunSummary, RunSummary } from '@shared/agent-contract';
 import { formatRunCost } from '@shared/agent-contract';
 import { useTerminalAppearance } from '@stores/appearance-store';
-import { useAgentLines, useAgentRuns } from '@stores/hive-store';
+import { useAgentLines, useAgentLive, useAgentRuns } from '@stores/hive-store';
 
 /**
  * The ceiling on the receipts half, as a share of the log's height.
@@ -68,7 +68,6 @@ const RECEIPT_GRID =
 
 interface AgentRunLogProps {
   name: string;
-  status: AgentStatus;
 }
 
 /**
@@ -94,28 +93,36 @@ interface AgentRunLogProps {
  * user's terminal type scale (10px to 18px) that decides how many characters
  * fit on a line.
  *
- * ## The buffer is chopped into turns, not into runs
+ * ## The buffer is chopped into runs, then into turns
  *
- * Lines still arrive as a flat stream with **no run id on them**, so this
- * cannot group by run — only by turn, on the `endsTurn` fold. The two usually
- * coincide, and where they do not is the interesting part: a run that ends
- * without the CLI writing a fold would leave its output joined to the next
- * run's, which is why `runs.ts` writes one itself on every path that does not
- * produce a `result` (a kill, the stall watchdog, a quit).
+ * Lines carry the run that wrote them (`TermLine.run`, HIVE-128), and they have
+ * to: an agent runs a standing conversation and any number of tasks at once, so
+ * several processes write into one buffer and a flat split on `endsTurn` would
+ * cut one run's turn with another's fold. {@link groupsOf} partitions on the tag
+ * first and splits each partition into turns after.
  *
- * The boundary is that field and never the fold's `cyan`. Colour is
- * presentation; a partition that reads presentation breaks on the next palette.
+ * The turn boundary is still the `endsTurn` field and never the fold's `cyan`.
+ * Colour is presentation; a partition that reads presentation breaks on the next
+ * palette. Where a run ends without the CLI writing a fold, `runs.ts` writes one
+ * itself on every path that does not produce a `result` (a kill, the stall
+ * watchdog, a quit).
  *
- * A live run has no identity here either, and that is a fact about the data
- * rather than a shortcut. `runs` is appended by `recordRun` when a run
- * *finalizes*, while `status: 'working'` is patched at spawn — so while an
- * agent is running, `runs[last]` is the run **before** this one. Drawing it as
- * the live header showed the wrong id, trigger and start time, and hid the
- * previous run's own receipt; on a first run there was no header at all.
+ * ## A live run has an identity, and it does not come from `runs`
  *
- * So every finished run is a receipt, always, and a live run is announced by a
- * banner that claims nothing it cannot know. Main would have to carry a
- * descriptor for the in-flight run for this to say more.
+ * It never could: `runs` is appended by `recordRun` when a run *finalizes*, so
+ * while an agent is running, `runs[last]` is the run **before** this one.
+ * Drawing that as the live header showed the wrong id, trigger and start time,
+ * and hid the previous run's own receipt; on a first run there was no header at
+ * all. A banner claiming only "something is running" was the honest answer while
+ * that was all the data said.
+ *
+ * Main carries a descriptor for every run in flight now (`Agent.live`), so each
+ * one is a **row of the same table its receipt will join** — its own id, kind,
+ * trigger and start time, `running` for an outcome, an elapsed `Took` that ticks,
+ * and `—` for what a run cannot know until it ends. Every finished run is still
+ * a receipt, always, and the two orderings differ on purpose: live runs read
+ * standing-then-newest-task because that is the order they were started in
+ * attention terms, finished runs read newest-first because that is history.
  *
  * Receipts do not expand, and they have no chevron promising that they might.
  * Their lines were never kept — `agents:lines` is a live push and nothing
@@ -145,14 +152,53 @@ interface AgentRunLogProps {
  * instead, which is machinery for a problem ordering does not have.
  */
 
-export function AgentRunLog({ name, status }: AgentRunLogProps) {
+export function AgentRunLog({ name }: AgentRunLogProps) {
   const lines = useAgentLines(name);
   const runs = useAgentRuns(name);
+  const liveRuns = useAgentLive(name);
   const { palette, fontFamily, fontSize } = useTerminalAppearance();
   const foot = useRef<HTMLDivElement>(null);
   const output = useRef<HTMLDivElement>(null);
 
-  const live = status === 'working';
+  /*
+    Liveness is the list, not the status word.
+
+    `status: 'working'` is one flag for an agent that may be running a standing
+    conversation and three tasks at once — it can say *that* something is
+    running and never *what*, which is exactly the sentence the retired banner
+    was reduced to.
+  */
+  const live = liveRuns.length > 0;
+
+  /*
+    Standing first, then tasks newest first (HIVE-128). The standing run is the
+    agent being itself; a task is one job, and the newest job is the one the
+    reader most likely just started.
+  */
+  const inFlight = liveRuns
+    .slice()
+    .sort((a, b) =>
+      a.kind === b.kind ? b.startedAt - a.startedAt : a.kind === 'standing' ? -1 : 1,
+    );
+
+  /*
+    `Took` counts up while a run is open, so this component owns a clock — one
+    second, which is the resolution the column shows. It runs only while
+    something is live, so a finished log re-renders on nothing at all.
+  */
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!live) return undefined;
+
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1_000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [live]);
 
   /*
     Newest first, in both halves.
@@ -167,7 +213,7 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
     `slice()` first, because `reverse` mutates and `runs` is the store's array.
   */
   const receipts = runs.slice().reverse();
-  const turns = turnsOf(lines);
+  const groups = groupsOf(lines, inFlight, receipts);
 
   /**
    * Whether the reader is still watching the live turn.
@@ -221,7 +267,7 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
       style={{ fontFamily, fontSize }}
       data-region="run-log"
     >
-      {receipts.length === 0 ? null : (
+      {receipts.length === 0 && !live ? null : (
         /*
           **One scroll container, one font size**, and both are load-bearing.
 
@@ -244,6 +290,7 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
           className="shrink-0 overflow-auto text-[0.9em]"
           style={{ maxHeight: RECEIPTS_MAX }}
           data-region="run-receipts"
+          data-testid="run-receipts"
         >
           {/*
             `sticky`, not a sibling: it scrolls with the rows sideways and stays
@@ -274,6 +321,24 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
             <span className="text-right">Cost</span>
           </div>
 
+          {/*
+            The runs in flight, above the history, in the same columns. The
+            reader's eye reads one table — which is the whole argument for
+            putting them here rather than in a banner of their own.
+          */}
+          {inFlight.map((run, index) => (
+            <LiveRow
+              key={run.run}
+              run={run}
+              now={now}
+              turns={turnsFor(lines, run.run)}
+              dim={palette.dim}
+              brand={palette.blue}
+              green={palette.green}
+              first={index === 0}
+            />
+          ))}
+
           {receipts.map((run, index) => (
             <RunHeader
               key={run.run}
@@ -287,25 +352,11 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
                 row's `border-t` drew 2px under the heading where every other
                 separator in the list is 1px.
               */
-              first={index === 0}
+              first={index === 0 && inFlight.length === 0}
             />
           ))}
         </div>
       )}
-
-      {live ? (
-        <div
-          /*
-            `first:` restored. With no receipts — an agent's first ever run —
-            this banner is the first child of the log, and without the variant
-            it drew a top rule against nothing above it.
-          */
-          className="shrink-0 border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
-          style={{ color: palette.dim }}
-        >
-          Running now — this run is recorded when it ends.
-        </div>
-      ) : null}
 
       {/*
         The heading sits outside the scroll box for the same reason the column
@@ -316,7 +367,7 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
         buffer holds several turns and the newest is on top — "last" named a
         single run that this has not been for a while.
       */}
-      {!live && receipts.length > 0 && turns.length > 0 ? (
+      {!live && receipts.length > 0 && groups.length > 0 ? (
         <p
           className="shrink-0 border-t border-border-soft pt-1.5 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
           style={{ color: palette.dim }}
@@ -330,55 +381,85 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
         onScroll={noteScroll}
         className="min-h-0 flex-1 overflow-y-auto"
         data-region="run-output"
+        data-testid="run-output"
       >
-        {turns.length === 0 ? (
+        {groups.length === 0 ? (
           <p style={{ color: palette.dim }}>
             Nothing yet — Run now wakes it.
           </p>
         ) : (
-          turns.map((turn, turnIndex) => (
+          groups.map((group, groupIndex) => (
             <div
-              /*
-                Counted from the **oldest** turn, so appending does not renumber.
-
-                `turns` is newest-first, so `turnIndex` alone shifts every key
-                each time a turn arrives — which is every turn boundary — and
-                React would rebuild the whole subtree, losing a text selection
-                someone was making in an older turn. Subtracting from the length
-                pins each turn to its position from the far end, which only
-                moves when a turn is *evicted*: past `AGENT_LINE_CAP`, far rarer
-                than an append, and with nothing stateful in these blocks to
-                lose when it does.
-
-                A content key was tried and is worse on both counts: every turn
-                opens with the same `ledger_read` line, so it is not unique
-                without the index — and with the index it is the index that
-                decides, which is the churn this avoids.
-              */
-              key={turns.length - turnIndex}
+              key={group.key}
               className="border-t border-border-soft pt-1 pb-0.5 first:border-t-0 first:pt-0"
             >
-              {turn.map((line, index) => (
-                <p
-                  key={index}
-                  className="break-words whitespace-pre-wrap"
-                  /*
-                    `palette` is keyed by every `TermColor`, and `RunLineColor`
-                    is a strict subset of it, so this indexes without a cast —
-                    the same subset relationship a contract test pins.
-                  */
-                  style={{ color: palette[line.color] }}
-                >
-                  {line.text}
-                </p>
-              ))}
-
               {/*
-                The anchor the live autoscroll chases, at the end of the newest
-                turn's lines — which is where the newest line is. Only on the
-                live turn: a finished log has nothing to follow.
+                Which run is talking. Unlabelled for the untagged group, because
+                the honest label there is nothing at all — those lines were
+                buffered before the tag existed and naming them would invent an
+                attribution.
               */}
-              {live && turnIndex === 0 ? <div ref={foot} /> : null}
+              {group.label === null ? null : (
+                <p
+                  className="text-[0.85em] tracking-[0.1em] uppercase"
+                  style={{ color: palette.dim }}
+                >
+                  {group.label}
+                </p>
+              )}
+
+              {group.turns.map((turn, turnIndex) => (
+                <div
+                  /*
+                    Counted from the **oldest** turn, so appending does not
+                    renumber.
+
+                    `turns` is newest-first, so `turnIndex` alone shifts every
+                    key each time a turn arrives — which is every turn boundary
+                    — and React would rebuild the whole subtree, losing a text
+                    selection someone was making in an older turn. Subtracting
+                    from the length pins each turn to its position from the far
+                    end, which only moves when a turn is *evicted*: past
+                    `AGENT_LINE_CAP`, far rarer than an append, and with nothing
+                    stateful in these blocks to lose when it does.
+
+                    A content key was tried and is worse on both counts: every
+                    turn opens with the same `ledger_read` line, so it is not
+                    unique without the index — and with the index it is the
+                    index that decides, which is the churn this avoids.
+                  */
+                  key={group.turns.length - turnIndex}
+                  className="pt-0.5"
+                >
+                  {turn.map((line, index) => (
+                    <p
+                      key={index}
+                      className="break-words whitespace-pre-wrap"
+                      /*
+                        `palette` is keyed by every `TermColor`, and
+                        `RunLineColor` is a strict subset of it, so this indexes
+                        without a cast — the same subset relationship a contract
+                        test pins.
+                      */
+                      style={{ color: palette[line.color] }}
+                    >
+                      {line.text}
+                    </p>
+                  ))}
+
+                  {/*
+                    The anchor the live autoscroll chases, at the end of the
+                    newest turn's lines — which is where the newest line is.
+                    Only on the first group's newest turn: that group is the
+                    standing run, or the newest task, which is the one thing a
+                    reader watching a live log is watching. A finished log has
+                    nothing to follow and mounts no anchor at all.
+                  */}
+                  {live && groupIndex === 0 && turnIndex === 0 ? (
+                    <div ref={foot} />
+                  ) : null}
+                </div>
+              ))}
             </div>
           ))
         )}
@@ -427,6 +508,167 @@ function turnsOf(lines: readonly TermLine[]): TermLine[][] {
   if (current.length > 0) turns.push(current);
 
   return turns.reverse();
+}
+
+interface OutputGroup {
+  /** The run tag, or `''` for the lines that carry none. */
+  key: string;
+  /** `null` for the untagged group, which has no run to name. */
+  label: string | null;
+  turns: TermLine[][];
+}
+
+/** How many turns a run has closed — the `endsTurn` folds carrying its tag. */
+function turnsFor(lines: readonly TermLine[], run: string): number {
+  return lines.filter((line) => line.run === run && line.endsTurn === true)
+    .length;
+}
+
+/**
+ * The buffer, partitioned by the run that wrote each line, then split into
+ * turns within each partition (HIVE-128).
+ *
+ * Several processes write into one agent's buffer at once, so a flat split on
+ * `endsTurn` would cut one run's turn with another's fold. Order: the live
+ * standing run, live tasks newest first, then finished runs newest first, then
+ * whatever carries no tag — lines buffered before the tag existed — as one
+ * trailing group. A tagged run no receipt names any more (evicted past the
+ * history cap) keeps its place after the receipts, in first-seen order.
+ */
+function groupsOf(
+  lines: readonly TermLine[],
+  inFlight: readonly LiveRunSummary[],
+  receipts: readonly RunSummary[],
+): OutputGroup[] {
+  const byRun = new Map<string, TermLine[]>();
+
+  for (const line of lines) {
+    const key = line.run ?? '';
+    const bucket = byRun.get(key);
+
+    if (bucket === undefined) byRun.set(key, [line]);
+    else bucket.push(line);
+  }
+
+  const labelFor = (run: string): string => {
+    const live = inFlight.find((candidate) => candidate.run === run);
+    const id = `#${run.slice(0, 8)}`;
+
+    if (live === undefined) return id;
+    if (live.kind === 'standing') return `● standing · ${id}`;
+
+    return `○ task · ${id}${live.extra === undefined ? '' : ` · ${live.extra}`}`;
+  };
+
+  /*
+    The reading order, before any of it is known to have written a line: live
+    runs, then receipts, then anything left in the buffer. Deduplicated by
+    first appearance, so a run that is both live and (somehow) receipted keeps
+    its live position.
+  */
+  const ordered = [
+    ...inFlight.map((run) => run.run),
+    ...receipts.map((run) => run.run),
+    ...byRun.keys(),
+  ].filter((key, index, all) => key !== '' && all.indexOf(key) === index);
+
+  const groups: OutputGroup[] = [];
+
+  for (const key of ordered) {
+    const bucket = byRun.get(key);
+
+    if (bucket === undefined) continue;
+
+    groups.push({ key, label: labelFor(key), turns: turnsOf(bucket) });
+  }
+
+  const untagged = byRun.get('');
+
+  if (untagged !== undefined) {
+    groups.push({ key: '', label: null, turns: turnsOf(untagged) });
+  }
+
+  return groups;
+}
+
+interface LiveRowProps {
+  run: LiveRunSummary;
+  now: number;
+  /** Turns this run has closed so far — its `endsTurn` folds. */
+  turns: number;
+  dim: string;
+  brand: string;
+  green: string;
+  first: boolean;
+}
+
+/**
+ * A run in flight, in the receipt columns (HIVE-128).
+ *
+ * The same seven cells as {@link RunHeader}, so the eye reads one table: what
+ * is not known yet reads `—`, `Took` counts up, and the outcome is the one word
+ * a live run can honestly claim. The kind is a glyph before the id — filled for
+ * the standing conversation, hollow for a task — with the word in the `title`,
+ * because a glyph nobody can hover is a glyph nobody can read. A task's prompt
+ * takes the reason line beneath, which is the one flexible track the grid has.
+ */
+function LiveRow({
+  run,
+  now,
+  turns,
+  dim,
+  brand,
+  green,
+  first,
+}: LiveRowProps) {
+  const at = new Date(run.startedAt).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const seconds = Math.max(0, Math.round((now - run.startedAt) / 1000));
+  const standing = run.kind === 'standing';
+
+  return (
+    <div
+      className={cn('min-w-max pb-0.5', first ? 'pt-1' : 'border-t border-border-soft pt-1')}
+      style={{ color: dim }}
+      data-live-run={run.kind}
+    >
+      <div className={RECEIPT_GRID}>
+        <span
+          className="truncate"
+          style={{ color: brand }}
+          title={standing ? 'standing run' : 'task run'}
+        >
+          <span aria-hidden="true" style={{ color: green }}>
+            {standing ? '●' : '○'}
+          </span>
+          {`#${run.run.slice(0, 8)}`}
+        </span>
+        <span className="truncate" title={run.trigger}>
+          {run.trigger}
+        </span>
+        <span className="truncate tabular-nums">{at}</span>
+        <span className="truncate" style={{ color: green }}>
+          running
+        </span>
+        <span className="truncate text-right tabular-nums">{turns}</span>
+        <span className="truncate text-right tabular-nums">{`${String(seconds)}s`}</span>
+        {/* A cost a run cannot know until it ends — the same em dash a receipt uses. */}
+        <span className="truncate text-right tabular-nums">—</span>
+      </div>
+
+      {/*
+        The prompt a task was given, on the line a failure reason would take.
+        The standing run has none — it was not asked anything, it simply woke.
+      */}
+      {run.extra === undefined ? null : (
+        <p className="pl-[10ch] break-words whitespace-pre-wrap" title={run.extra}>
+          {run.extra}
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface RunHeaderProps {
