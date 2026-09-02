@@ -2,6 +2,7 @@ import type { TermLine } from '@/types/terminal';
 
 import type {
   AgentStatus,
+  LiveRunSummary,
   RunSummary,
   WakeSpec,
 } from '@shared/agent-contract';
@@ -416,6 +417,8 @@ export interface Agent {
    * calendar day, and a stored count would be wrong by morning.
    */
   runs: RunSummary[];
+  /** Every run live under the name (HIVE-128). Replaced on every status push. */
+  live: LiveRunSummary[];
   /**
    * Today's runs and spend, accumulated in main rather than summed here.
    *

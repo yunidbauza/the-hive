@@ -1800,6 +1800,33 @@ describe('hive-store', () => {
         });
       });
 
+      describe('what is live (HIVE-128)', () => {
+        const live = [
+          { run: 'r-standing', kind: 'standing' as const, trigger: 'interval', startedAt: 1 },
+          { run: 'r-task', kind: 'task' as const, trigger: 'manual', extra: 'review', startedAt: 2 },
+        ];
+
+        it('hydrates the live runs, and reads an absent list as none', () => {
+          useHiveStore.getState().hydrateAgents([summary({ live }), summary({ name: 'other' })]);
+
+          expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({ live });
+          expect(useHiveStore.getState().entities['other']).toMatchObject({ live: [] });
+        });
+
+        it('replaces the list on every status push', () => {
+          useHiveStore.getState().hydrateAgents([summary({ live })]);
+          useHiveStore.getState().setAgentStatus({
+            name: 'slack-watcher',
+            status: 'sleeping',
+            runs: [],
+            runsSinceRotate: 0,
+            live: [],
+          });
+
+          expect(useHiveStore.getState().entities['slack-watcher']).toMatchObject({ live: [] });
+        });
+      });
+
       describe('run', () => {
         beforeEach(() => {
           useHiveStore.getState().hydrateAgents([summary()]);
@@ -1811,6 +1838,15 @@ describe('hive-store', () => {
 
           expect(bridge.run).toHaveBeenCalledWith({ name: 'slack-watcher' });
           expect(lastLine()?.text).toContain('woke slack-watcher (run-7)');
+        });
+
+        it('announces a task run by its kind (HIVE-128)', async () => {
+          bridge.run.mockResolvedValue({ started: true, run: 'run-7', kind: 'task' });
+
+          run('run slack-watcher review PR 166');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain('started a task run for slack-watcher (run-7)');
         });
 
         it('sends the prompt a user typed after the name (HIVE-126)', async () => {
@@ -2037,6 +2073,24 @@ describe('hive-store', () => {
             text: expect.stringContaining('nothing running'),
             color: 'dim',
           });
+        });
+
+        it('counts the runs it killed when there were several (HIVE-128)', async () => {
+          useHiveStore.getState().hydrateAgents([
+            summary({
+              status: 'working',
+              live: [
+                { run: 'a', kind: 'standing', trigger: 'interval', startedAt: 1 },
+                { run: 'b', kind: 'task', trigger: 'manual', startedAt: 2 },
+                { run: 'c', kind: 'task', trigger: 'manual', startedAt: 3 },
+              ],
+            }),
+          ]);
+
+          run('kill slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain('killed 3 runs of slack-watcher');
         });
       });
 
@@ -4580,6 +4634,7 @@ describe('the ledger slice', () => {
             rotateAfter: 50,
             skipsSinceRun: 0,
             runs: [],
+            live: [],
             lines: [],
           },
         },

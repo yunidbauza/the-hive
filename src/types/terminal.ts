@@ -37,4 +37,6 @@ export interface TermLine {
    * structure.
    */
   endsTurn?: true;
+  /** The agent run that wrote it — `RunLine.run` (HIVE-128). */
+  run?: string;
 }

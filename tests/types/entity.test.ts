@@ -44,6 +44,7 @@ const agent: Agent = {
   rotateAfter: 50,
   skipsSinceRun: 0,
   runs: [],
+  live: [],
   lines: [],
 };
 

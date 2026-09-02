@@ -55,6 +55,7 @@ import {
   type AgentStatus,
   type AgentStatusPush,
   type AgentSummary,
+  type LiveRunSummary,
   type RunSummary,
 } from '@shared/agent-contract';
 import type { PrRecord } from '@shared/github-contract';
@@ -2412,7 +2413,15 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
               )
               .then((outcome) => {
                 if (outcome.started) {
-                  pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
+                  // A task run is a named job in a fresh session, not the
+                  // agent's own standing conversation — "woke" is the wrong
+                  // verb for a run that is not a wake at all (HIVE-128).
+                  pushOrch(
+                    outcome.kind === 'task'
+                      ? `  started a task run for ${name} (${outcome.run})`
+                      : `  woke ${name} (${outcome.run})`,
+                    'dim',
+                  );
                   return;
                 }
                 /*
@@ -2470,6 +2479,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         }
 
         if (command.kind === 'kill') {
+          // Read before the call: a task agent may have several runs live,
+          // and the count that matters is the one the user was looking at
+          // when they typed `kill`, not whatever main leaves behind by the
+          // time the promise settles (HIVE-128).
+          const count = entity.live.length;
+
           said(
             agents.kill({ name }).then((stopped) => {
               /*
@@ -2479,7 +2494,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
                 wanted.
               */
               pushOrch(
-                stopped ? `  killed ${name}'s run` : `  nothing running`,
+                stopped
+                  ? count > 1
+                    ? `  killed ${String(count)} runs of ${name}`
+                    : `  killed ${name}'s run`
+                  : `  nothing running`,
                 'dim',
               );
             }),
@@ -2701,6 +2720,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           skipsSinceRun: summary.skipsSinceRun ?? 0,
           rotateAfter: summary.rotateAfter,
           runs: summary.runs,
+          // Run state too (HIVE-128): absent on a summary built for an agent
+          // with nothing in flight, which is the common case.
+          live: summary.live ?? [],
           ...(summary.sessionUuid === undefined
             ? {}
             : { sessionUuid: summary.sessionUuid }),
@@ -2753,6 +2775,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
             */
             runs: push.runs,
             runsSinceRotate: push.runsSinceRotate,
+            // Replaced, never merged: main is the only writer and an empty
+            // list is a real state (HIVE-128).
+            live: push.live,
             // Absent means unchanged, never cleared: main only ever replaces this.
             ...(push.sessionUuid === undefined ? {} : { sessionUuid: push.sessionUuid }),
             /*
@@ -5011,6 +5036,23 @@ export const useAgentRuns = (name: string): RunSummary[] =>
     const entity = state.entities[name];
 
     return entity !== undefined && isAgent(entity) ? entity.runs : EMPTY_RUNS;
+  });
+
+const EMPTY_LIVE: LiveRunSummary[] = [];
+
+/** Every run live under the name, standing first is the *view's* job (HIVE-128). */
+export const useAgentLive = (name: string): LiveRunSummary[] =>
+  useHiveStore((state) => {
+    const entity = state.entities[name];
+
+    return entity !== undefined && isAgent(entity) ? entity.live : EMPTY_LIVE;
+  });
+
+export const useAgentLiveCount = (name: string): number =>
+  useHiveStore((state) => {
+    const entity = state.entities[name];
+
+    return entity !== undefined && isAgent(entity) ? entity.live.length : 0;
   });
 
 export interface AgentFacts {

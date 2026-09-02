@@ -18,6 +18,8 @@ import {
   useActiveEntity,
   useActiveSessions,
   useAskingAgentCount,
+  useAgentLive,
+  useAgentLiveCount,
   useAgentOrder,
   useAgentPr,
   useCounts,
@@ -769,6 +771,34 @@ describe('hive-store selectors', () => {
         'pr-reviewer',
         'standup-agent',
       ]);
+    });
+  });
+
+  describe('useAgentLive and useAgentLiveCount', () => {
+    const summary = (
+      name: string,
+      over: Partial<AgentSummary> = {},
+    ): AgentSummary => ({
+      name,
+      description: 'Watches.',
+      icon: 'Robot',
+      status: 'sleeping',
+      wake: { on: [] },
+      mcp: [],
+      tools: [],
+      rotateAfter: 50,
+      runs: [],
+      ...over,
+    });
+
+    it('reads the live runs and their count (HIVE-128)', () => {
+      useHiveStore.getState().hydrateAgents([
+        summary('watcher', { live: [{ run: 'a', kind: 'standing', trigger: 'interval', startedAt: 1 }] }),
+      ]);
+
+      expect(renderHook(() => useAgentLive('watcher')).result.current).toHaveLength(1);
+      expect(renderHook(() => useAgentLiveCount('watcher')).result.current).toBe(1);
+      expect(renderHook(() => useAgentLive('nobody')).result.current).toEqual([]);
     });
   });
 
