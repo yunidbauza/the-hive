@@ -866,7 +866,9 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
           options as SpawnOptions,
         ) as unknown as ChildLike;
       },
-      command: buildWakeCommand,
+      command: (name, trigger, extra, options) =>
+        buildWakeCommand(name, trigger, extra, options),
+      parallelFor: () => 1,
       state: agentState,
       appendLedger: (entry) => {
         const result = ledger.append(entry);

@@ -40,7 +40,15 @@ describe('createRunTracker', () => {
   /** What the run left behind as a handoff, if anything (HIVE-122). */
   let handoff: string | undefined;
   let commandCalls: number;
-  let commandArgs: { name: string; trigger: string; extra?: string }[];
+  let commandArgs: {
+    name: string;
+    trigger: string;
+    extra?: string;
+    kind?: string;
+  }[];
+  /** What `limits.parallel` says for the agent under test (HIVE-128). */
+  let parallel: number;
+  let runIds: number;
   let closed: string[];
   let statusWhenClosed: string | undefined;
   let tracker: ReturnType<typeof createRunTracker>;
@@ -57,15 +65,22 @@ describe('createRunTracker', () => {
     handoff = undefined;
     commandCalls = 0;
     commandArgs = [];
+    parallel = 1;
+    runIds = 0;
     closed = [];
     statusWhenClosed = undefined;
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
 
     tracker = createRunTracker({
       spawn,
-      command: (name, trigger, extra) => {
+      command: (name, trigger, extra, options) => {
         commandCalls += 1;
-        commandArgs.push({ name, trigger, ...(extra === undefined ? {} : { extra }) });
+        commandArgs.push({
+          name,
+          trigger,
+          ...(extra === undefined ? {} : { extra }),
+          ...(options?.kind === undefined ? {} : { kind: options.kind }),
+        });
 
         return {
           file: '/opt/bin/claude',
@@ -74,8 +89,10 @@ describe('createRunTracker', () => {
           cwd: '/tmp/work',
           sessionUuid: `sess-${commandCalls}`,
           lastTurn,
+          kind: options?.kind ?? 'standing',
         };
       },
+      parallelFor: () => parallel,
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => openAsks,
@@ -89,7 +106,11 @@ describe('createRunTracker', () => {
         statusWhenClosed = state.read(name).status;
       },
       now: () => 1_000,
-      newRunId: () => 'run-1',
+      newRunId: () => {
+        runIds += 1;
+
+        return `run-${String(runIds)}`;
+      },
     });
   });
 
@@ -118,14 +139,16 @@ describe('createRunTracker', () => {
     tracker.run('a', 'ledger', 'a12 was answered');
 
     expect(commandArgs).toEqual([
-      { name: 'a', trigger: 'ledger', extra: 'a12 was answered' },
+      { name: 'a', trigger: 'ledger', extra: 'a12 was answered', kind: 'standing' },
     ]);
   });
 
   it('omits the extra when the wake had none, rather than inventing one', () => {
     tracker.run('a', 'manual');
 
-    expect(commandArgs).toEqual([{ name: 'a', trigger: 'manual' }]);
+    expect(commandArgs).toEqual([
+      { name: 'a', trigger: 'manual', kind: 'standing' },
+    ]);
   });
 
   it('appends run.started and sets the agent working', () => {
@@ -175,6 +198,7 @@ describe('createRunTracker', () => {
     const refusing = createRunTracker({
       spawn,
       command: (_name: string) => ({ problem: 'claude was not found on PATH.' }),
+      parallelFor: () => 1,
       state,
       appendLedger: () => {},
       openAsksFor: () => false,
@@ -205,7 +229,9 @@ describe('createRunTracker', () => {
         cwd: '/tmp/work',
         sessionUuid: 'sess-1',
         lastTurn: false,
+        kind: 'standing' as const,
       }),
+      parallelFor: () => 1,
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => false,
@@ -247,7 +273,7 @@ describe('createRunTracker', () => {
     );
 
     expect(lines).toEqual([
-      { name: 'a', count: 1, pushed: [{ text: 'hi', color: 'ink' }] },
+      { name: 'a', count: 1, pushed: [{ text: 'hi', color: 'ink', run: 'run-1' }] },
     ]);
   });
 
@@ -259,7 +285,9 @@ describe('createRunTracker', () => {
       {
         name: 'a',
         count: 1,
-        pushed: [{ text: 'warning: something noisy', color: 'dim' }],
+        pushed: [
+          { text: 'warning: something noisy', color: 'dim', run: 'run-1' },
+        ],
       },
     ]);
   });
@@ -396,7 +424,9 @@ describe('createRunTracker', () => {
         cwd: '/tmp/work',
         sessionUuid: 'sess-1',
         lastTurn: false,
+        kind: 'standing' as const,
       }),
+      parallelFor: () => 1,
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => false,
@@ -1102,6 +1132,199 @@ describe('createRunTracker', () => {
       expect(state.read('drone').runs.at(-1)?.sessionUuid).toBe(
         'uuid-from-result',
       );
+    });
+  });
+
+  /**
+   * HIVE-128. One agent, several runs — but only ever one *conversation*.
+   *
+   * A `task` run is a named job in a session that dies with its turn, which is
+   * why several may be live at once: there is no memory to corrupt. The
+   * standing conversation stays strictly serial whatever the cap says, and a
+   * task close must leave its rotation state and its uuid exactly where it
+   * found them.
+   */
+  describe('task runs (HIVE-128)', () => {
+    const finish = (index: number) => {
+      childInstances[index]?.emitStdout(
+        resultLine({ session_id: `uuid-${String(index)}` }),
+      );
+      childInstances[index]?.emitClose(0);
+    };
+
+    it('treats a job as a standing wake when the cap is one', () => {
+      tracker.run('a', 'ledger');
+
+      expect(tracker.run('a', 'manual', 'review PR 1', { job: true })).toEqual({
+        started: false,
+        refused: 'working',
+      });
+      expect(commandArgs.map((call) => call.kind)).toEqual(['standing']);
+    });
+
+    it('starts a task run beside the standing one when the cap allows', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+
+      expect(tracker.run('a', 'manual', 'review PR 1', { job: true })).toEqual({
+        started: true,
+        run: 'run-2',
+        kind: 'task',
+      });
+      expect(commandArgs[1]).toEqual({
+        name: 'a',
+        trigger: 'manual',
+        extra: 'review PR 1',
+        kind: 'task',
+      });
+      expect(spawnCalls[1]?.options).toMatchObject({
+        env: { HIVE_AGENT: '1', HIVE_RUN_ID: 'run-2', HIVE_RUN_KIND: 'task' },
+      });
+      expect(spawnCalls[0]?.options).toMatchObject({
+        env: { HIVE_RUN_ID: 'run-1', HIVE_RUN_KIND: 'standing' },
+      });
+      expect(ledger[1]).toMatchObject({
+        body: 'run.started — manual',
+        meta: { run: 'run-2', trigger: 'manual', extra: 'review PR 1', kind: 'task' },
+      });
+    });
+
+    it('keeps the standing conversation serial whatever the cap', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+
+      expect(tracker.run('a', 'interval')).toEqual({
+        started: false,
+        refused: 'working',
+      });
+    });
+
+    it('refuses saturated at the cap, counting runs of both kinds', () => {
+      parallel = 2;
+      tracker.run('a', 'manual', 'one', { job: true });
+      tracker.run('a', 'manual', 'two', { job: true });
+
+      expect(tracker.run('a', 'interval')).toEqual({
+        started: false,
+        refused: 'saturated',
+        reason: 'a is saturated: 2 of 2 runs live.',
+      });
+      expect(tracker.run('a', 'manual', 'three', { job: true })).toMatchObject({
+        refused: 'saturated',
+      });
+      expect(spawnCalls).toHaveLength(2);
+    });
+
+    /*
+      A refused wake must consume nothing: building a standing command mints or
+      resumes a uuid and consumes a pending rotation, so every refusal lands
+      before the build — which is why the cap is read from a dep rather than
+      off the command it would otherwise have to build first.
+    */
+    it('never builds a command for a refused wake', () => {
+      parallel = 1;
+      tracker.run('a', 'ledger');
+      const before = commandCalls;
+
+      tracker.run('a', 'manual', 'x', { job: true });
+
+      expect(commandCalls).toBe(before);
+    });
+
+    it('leaves the standing conversation alone when a task run closes', () => {
+      parallel = 3;
+      state.patch('a', { sessionUuid: 'sess-standing', runsSinceRotate: 4 });
+      tracker.run('a', 'manual', 'review PR 1', { job: true });
+      finish(0);
+
+      const after = state.read('a');
+
+      expect(after.runsSinceRotate).toBe(4);
+      expect(after.sessionUuid).toBe('sess-standing');
+      expect(after.pendingSession).toBeUndefined();
+      expect(after.runs.at(-1)).toMatchObject({
+        run: 'run-1',
+        kind: 'task',
+        outcome: 'done',
+      });
+      expect(after.status).toBe('sleeping');
+    });
+
+    it('records the kind on a standing run too', () => {
+      tracker.run('a', 'ledger');
+      finish(0);
+
+      expect(state.read('a').runs.at(-1)).toMatchObject({ kind: 'standing' });
+    });
+
+    it('stays working until the last run closes, and offers the queue on every close', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'manual', 'job', { job: true });
+
+      finish(1);
+
+      expect(state.read('a').status).toBe('working');
+      expect(closed).toEqual(['a']);
+      expect(tracker.liveRuns('a')).toHaveLength(1);
+
+      finish(0);
+
+      expect(state.read('a').status).toBe('sleeping');
+      expect(closed).toEqual(['a', 'a']);
+      expect(tracker.liveRuns('a')).toEqual([]);
+    });
+
+    it('kills every live run under the name', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'manual', 'job', { job: true });
+
+      expect(tracker.kill('a')).toBe(true);
+      expect(childInstances.map((child) => child.killed)).toEqual([true, true]);
+    });
+
+    it('tags every line with the run that wrote it', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'manual', 'job', { job: true });
+      childInstances[1]?.emitStderr('from the task\n');
+      childInstances[0]?.emitStderr('from the standing run\n');
+
+      expect(lines.map((push) => push.pushed[0])).toEqual([
+        { text: 'from the task', color: 'dim', run: 'run-2' },
+        { text: 'from the standing run', color: 'dim', run: 'run-1' },
+      ]);
+    });
+
+    it('describes what is in flight', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'manual', 'review PR 1', { job: true });
+
+      expect(tracker.liveRuns('a')).toEqual([
+        { run: 'run-1', kind: 'standing', trigger: 'ledger', startedAt: 1_000 },
+        {
+          run: 'run-2',
+          kind: 'task',
+          trigger: 'manual',
+          extra: 'review PR 1',
+          startedAt: 1_000,
+        },
+      ]);
+      expect(tracker.liveRuns('nobody')).toEqual([]);
+    });
+
+    it('arms the stall watchdog on the run whose session ended, not its neighbour', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'manual', 'job', { job: true });
+
+      tracker.noteTurnEnded('a', 'sess-2');
+      vi.advanceTimersByTime(AGENT_STALL_GRACE_MS);
+
+      expect(childInstances[1]?.killed).toBe(true);
+      expect(childInstances[0]?.killed).toBe(false);
     });
   });
 });

@@ -1511,8 +1511,8 @@ export function registerIpcHandlers(): void {
       with, so the wake prompt and the `run.started` ledger entry are spelled
       from one value rather than from two that could disagree.
     */
-    command: (name, trigger, extra) => {
-      const built = buildWakeCommand(name, trigger, extra);
+    command: (name, trigger, extra, options) => {
+      const built = buildWakeCommand(name, trigger, extra, options);
 
       /*
         Proof of existence, taken at the strongest moment there is. Building a
@@ -1525,6 +1525,8 @@ export function registerIpcHandlers(): void {
 
       return built;
     },
+    // Replaced by the watcher's cache in the next task (HIVE-128).
+    parallelFor: () => 1,
     state: agentState,
     /*
       A run's own entries are `from` the **agent**: a run is the agent's
