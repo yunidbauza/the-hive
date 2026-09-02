@@ -398,10 +398,17 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
                 the honest label there is nothing at all — those lines were
                 buffered before the tag existed and naming them would invent an
                 attribution.
+
+                It takes the size and tracking of a heading but **not** the
+                `uppercase`, and that is the difference between a label and a
+                heading: this one carries data. `text-transform` would print
+                `#A3F9C21B` over a receipts row reading `#a3f9c21b` — two
+                spellings of one id, on screen at once — and shout a task's
+                prompt back at whoever typed it.
               */}
               {group.label === null ? null : (
                 <p
-                  className="text-[0.85em] tracking-[0.1em] uppercase"
+                  className="text-[0.85em] tracking-[0.1em]"
                   style={{ color: palette.dim }}
                 >
                   {group.label}
@@ -682,8 +689,13 @@ interface RunHeaderProps {
 /**
  * One finished run, as a row of the receipts table.
  *
- * Only ever drawn for a **finished** run — a live one has no summary to draw
- * from. See the note on the component above.
+ * Only ever drawn for a **finished** run, and the reason is no longer that a
+ * live one has nothing to draw from. A run in flight has a descriptor of its
+ * own — the `LiveRunSummary` main pushes — and {@link LiveRow} draws it, in
+ * these same columns. The split is about which source is truthful: this row
+ * reads `runs`, which is written by `recordRun` at the moment a run finalizes,
+ * so every cell here is settled. `LiveRow` reads the live list, where `Took`
+ * still moves and the cost is not yet knowable.
  *
  * Every cell is its own grid child rather than a `·`-joined string, and that is
  * the whole of the alignment fix: joined text is laid out by its own length, so

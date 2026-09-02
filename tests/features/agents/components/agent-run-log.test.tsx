@@ -683,9 +683,19 @@ describe('AgentRunLog', () => {
       expect(
         within(output).getByText(/standing · #live-sta/),
       ).toBeInTheDocument();
-      expect(
-        within(output).getByText(/task · #live-tas · review PR 166/),
-      ).toBeInTheDocument();
+
+      /*
+        A label that carries data is not a heading, and `uppercase` is the
+        difference. `text-transform` would print `#LIVE-TAS` over a receipts row
+        reading `#live-tas` — two spellings of one id on screen at once — and
+        shout a task's prompt back at whoever typed it.
+      */
+      const label = within(output).getByText(
+        /task · #live-tas · review PR 166/,
+      );
+
+      expect(label).toBeInTheDocument();
+      expect(label).not.toHaveClass('uppercase');
     });
 
     it('keeps lines with no run tag together at the end', () => {
