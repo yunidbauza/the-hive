@@ -176,7 +176,7 @@
   --cc-code-active-line: #171e3c;
   --cc-code-selection: #2b3768;
 
-  --cc-rail-w-left: 268px;
+  --cc-rail-w-left: 320px;
   --cc-rail-w-right: 316px;
   --cc-rail-gap: 18px;
   --cc-list-gap: 10px;
@@ -190,7 +190,7 @@
  * unmodified — the same arrangement `data-theme` uses for dark.
  */
 body[data-density='compact'] {
-  --cc-rail-w-left: 232px;
+  --cc-rail-w-left: 284px;
   --cc-rail-w-right: 276px;
   --cc-rail-gap: 11px;
   --cc-list-gap: 6px;

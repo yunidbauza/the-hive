@@ -47,7 +47,9 @@ test('help lists the ledger verbs with their arguments', async ({ page }) => {
   // `<agent>`, since HIVE-126 gave every verb one target type: a session has a
   // terminal you can open and read, so a question to one is `send`.
   await expect(rows).toContainText('ask <agent> <message>');
-  await expect(rows).toContainText('answer <id> <text>');
+  // `answer` parses but is not taught — the inbox's ask card is the route to
+  // an open ask, so the row is gone from `help` (see `QUIET_VERBS`).
+  await expect(rows).not.toContainText('answer <id> <text>');
 });
 
 for (const command of ['ledger', 'ask sess-a hello', 'answer a12 main']) {

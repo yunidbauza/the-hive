@@ -27,7 +27,7 @@ interface TicketPrRowProps {
  * link is what a browser, a screen reader and a middle click all expect.
  *
  * **One action, unlike the PRs panel's card**, which offers the session and
- * GitHub separately. This row is 268px wide and 20px tall; a second target
+ * GitHub separately. This row is 320px wide and 20px tall; a second target
  * inside it would be a coin toss for the pointer rather than a choice.
  */
 export function TicketPrRow({ pr }: TicketPrRowProps) {

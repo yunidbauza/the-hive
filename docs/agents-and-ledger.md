@@ -1743,7 +1743,7 @@ unbreakable 95-character tool line would push the grid past the stage and give
 the whole app a horizontal scrollbar.
 
 **A container query, not a media query**, and the first in this codebase. The
-rails drag between 268px and 520px each, so a 1920px window can hold a 700px
+rails drag between 320px and 520px each, so a 1920px window can hold a 700px
 stage — the viewport width simply is not the question being asked.
 
 ### Run-log colour comes from JS, and the run log is honest about history

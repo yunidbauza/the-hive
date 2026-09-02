@@ -468,6 +468,7 @@ describe('appearance-store — persistence', () => {
       editorPlacement: 'full',
       editorSplitAxis: 'vertical',
       editorSplitRatio: 0.5,
+      consoleSplitRatio: 0.5,
       editorNav: 'tabs',
       editorEditable: true,
       editorFont: 'system',
@@ -625,6 +626,31 @@ describe('appearance-store — the editor', () => {
 
     store.setEditorSplitRatio(0.35);
     expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.35);
+  });
+
+  /**
+   * The overmind's divider writes through the same clamp. Half by default:
+   * the fleet table and the transcript share the column, and neither gives
+   * way to the other unasked.
+   */
+  it('holds the console split at half by default and clamps it like the editor’s', () => {
+    expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.5);
+
+    const store = useAppearanceStore.getState();
+
+    store.setConsoleSplitRatio(0.01);
+    expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.2);
+
+    store.setConsoleSplitRatio(0.99);
+    expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.8);
+
+    store.setConsoleSplitRatio(Number.NaN);
+    expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.5);
+
+    store.setConsoleSplitRatio(0.3);
+    expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.3);
+    // Its own field: dragging one divider must not move the other.
+    expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.5);
   });
 
   it('puts every editor preference back on reset', () => {
@@ -1022,15 +1048,15 @@ describe('rail collapse', () => {
     // makes that one call enough, and what stops the width and the flag
     // from ever disagreeing.
     useAppearanceStore.getState().setRailCollapsed('left', true);
-    useAppearanceStore.getState().setRailWidth('left', 300);
+    useAppearanceStore.getState().setRailWidth('left', 360);
 
     expect(useAppearanceStore.getState().railCollapsedLeft).toBe(false);
-    expect(useAppearanceStore.getState().railWidthLeft).toBe(300);
+    expect(useAppearanceStore.getState().railWidthLeft).toBe(360);
   });
 
   it('does not clear the flag on the other side', () => {
     useAppearanceStore.getState().setRailCollapsed('right', true);
-    useAppearanceStore.getState().setRailWidth('left', 300);
+    useAppearanceStore.getState().setRailWidth('left', 360);
 
     expect(useAppearanceStore.getState().railCollapsedRight).toBe(true);
   });

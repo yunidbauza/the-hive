@@ -384,7 +384,16 @@ test('spawn resolves a project by the key the app generated for it', async () =>
  */
 test('a prefix is refused, and the refusal lists the keys', async () => {
   await backToOrchestrator();
-  const before = await consoleText();
+  /*
+    "Nothing was spawned" is read off the terminals, not off the console's
+    length. A spawn mounts a surface for the new session, so the count of
+    `data-terminal-id` nodes is the direct fact. The length of the console's
+    visible rows used to stand in for it, and stopped working the day the
+    console became a fixed half of the column: a full viewport scrolls, and
+    its visible text is the same size before and after one more line.
+  */
+  const surfaces = page.locator('[data-terminal-id]');
+  const before = await surfaces.count();
 
   await run('spawn nova do things');
 
@@ -395,6 +404,7 @@ test('a prefix is refused, and the refusal lists the keys', async () => {
   expect(now).toContain('try a key from Settings › Projects');
   // The keys the backfill generated for the two declared projects.
   expect(now).toContain('nw, ra');
-  // Nothing was spawned: the console grew only the refusal.
-  expect(now.length).toBeGreaterThan(before.length);
+  // Nothing was spawned: no new terminal, and the console is still up.
+  expect(await surfaces.count()).toBe(before);
+  await expect(terminalRows('orch')).toBeVisible();
 });

@@ -158,6 +158,18 @@ interface AppearanceState {
    * number field for it would be a worse interface than the divider itself.
    */
   editorSplitRatio: number;
+  /**
+   * The fleet table's share of the overmind column, 0.2–0.8.
+   *
+   * The same arrangement as `editorSplitRatio`, for the same reason: it is
+   * written by dragging a divider, has no discrete choices a settings control
+   * could offer, and has to be right on the first frame. Half by default —
+   * the table used to size itself to its content and take the whole column
+   * once the fleet was long enough, leaving the transcript its 10rem floor and
+   * nothing more. A table and a conversation share this column, and neither
+   * is the one to give way unasked.
+   */
+  consoleSplitRatio: number;
   editorNav: EditorNav;
   /**
    * Whether the editor accepts keystrokes and offers a save. **On by default.**
@@ -234,6 +246,7 @@ interface AppearanceState {
   setEditorPlacement: (placement: EditorPlacement) => void;
   setEditorSplitAxis: (axis: EditorSplitAxis) => void;
   setEditorSplitRatio: (ratio: number) => void;
+  setConsoleSplitRatio: (ratio: number) => void;
   setEditorNav: (nav: EditorNav) => void;
   setEditorEditable: (editable: boolean) => void;
   setEditorFont: (font: TerminalFontId) => void;
@@ -407,8 +420,8 @@ export function activeThemeOf(
  *
  * An inline property on `<body>` beats `body[data-density='compact']`, which is
  * exactly the precedence a user override should have. But that same precedence
- * would freeze a rail the user never touched: write `268px` inline and
- * switching to compact leaves it at 268px forever. So a rail sitting at its
+ * would freeze a rail the user never touched: write `320px` inline and
+ * switching to compact leaves it at 320px forever. So a rail sitting at its
  * default has its property *removed*, and the stylesheet — density rules
  * included — takes back over.
  *
@@ -557,6 +570,7 @@ const initialAppearanceState = {
    */
   editorSplitAxis: 'vertical' as EditorSplitAxis,
   editorSplitRatio: 0.5,
+  consoleSplitRatio: 0.5,
   editorNav: 'tabs' as EditorNav,
   editorEditable: true,
   editorFont: DEFAULT_TERMINAL_FONT,
@@ -584,6 +598,7 @@ interface PersistedAppearanceState {
   editorPlacement: EditorPlacement;
   editorSplitAxis: EditorSplitAxis;
   editorSplitRatio: number;
+  consoleSplitRatio: number;
   editorNav: EditorNav;
   editorEditable: boolean;
   editorFont: TerminalFontId;
@@ -842,6 +857,9 @@ export const useAppearanceStore = create<AppearanceState>()(
        */
       setEditorSplitRatio: (ratio) =>
         set({ editorSplitRatio: clampSplitRatio(ratio) }),
+      /** The same clamp, for the same reason: the value arrives from a drag. */
+      setConsoleSplitRatio: (ratio) =>
+        set({ consoleSplitRatio: clampSplitRatio(ratio) }),
       setEditorNav: (editorNav) => set({ editorNav }),
       setEditorEditable: (editorEditable) => set({ editorEditable }),
       setEditorFont: (editorFont) => set({ editorFont }),
@@ -928,6 +946,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         editorPlacement: state.editorPlacement,
         editorSplitAxis: state.editorSplitAxis,
         editorSplitRatio: state.editorSplitRatio,
+        consoleSplitRatio: state.consoleSplitRatio,
         editorNav: state.editorNav,
         editorEditable: state.editorEditable,
         editorFont: state.editorFont,
@@ -1190,6 +1209,20 @@ export const useEditorEditable = () =>
 /** Written by dragging the divider, not by a settings control. */
 export const useSetEditorSplitRatio = () =>
   useAppearanceStore((state) => state.setEditorSplitRatio);
+
+/**
+ * The fleet table's share of the overmind column, and its setter.
+ *
+ * Its own pair rather than a field on `useEditorLayout`: the console split
+ * changes on every `pointermove` of its divider, and the editor layout
+ * selector is subscribed to by the tab strip, which has no business
+ * re-rendering while the fleet table is dragged.
+ */
+export const useConsoleSplitRatio = () =>
+  useAppearanceStore((state) => state.consoleSplitRatio);
+
+export const useSetConsoleSplitRatio = () =>
+  useAppearanceStore((state) => state.setConsoleSplitRatio);
 
 /**
  * The stored rail widths, their collapse flags, and the density they are

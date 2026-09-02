@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { CONSOLE_VERBS } from '@/types/command';
+import { ADVERTISED_VERBS, CONSOLE_VERBS } from '@/types/command';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { useHiveStore, useNavOrder } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
@@ -164,13 +164,16 @@ describe('ConsoleInput', () => {
     });
   });
 
-  it('shows the grammar as placeholder text', () => {
+  /**
+   * The prompt used to print a curated subset of the grammar as its
+   * placeholder — the same list the hint bar prints in full one row beneath.
+   * Pinned as absent so the duplicate cannot come back, and with it the
+   * length budget that made the empty console two rows tall.
+   */
+  it('carries no placeholder — the hint bar is the legend', () => {
     render(<ConsoleInput />);
 
-    expect(input()).toHaveAttribute(
-      'placeholder',
-      'help · status · send <session> <message> · spawn <project> <task>',
-    );
+    expect(input()).not.toHaveAttribute('placeholder');
   });
 
   /**
@@ -183,17 +186,23 @@ describe('ConsoleInput', () => {
    * row. The verbs go there because the grammar was otherwise discoverable only
    * by typing `help`, which you have to already know exists.
    */
-  it('keeps the hint bar beneath the prompt, listing every verb', () => {
+  it('keeps the hint bar beneath the prompt, listing every advertised verb', () => {
     render(<ConsoleInput />);
 
     /*
-      Asserted against `CONSOLE_VERBS` rather than a copy of the string: the whole
-      point of that constant is that the footer and the grammar cannot drift, and
-      a literal here would be a third place to update.
+      Asserted against `ADVERTISED_VERBS` rather than a copy of the string: the
+      whole point of that constant is that the footer and the grammar cannot
+      drift, and a literal here would be a third place to update.
     */
-    expect(
-      screen.getByText(CONSOLE_VERBS.join(' · ')),
-    ).toBeInTheDocument();
+    const legend = screen.getByText(ADVERTISED_VERBS.join(' · '));
+    expect(legend).toBeInTheDocument();
+    /*
+      `answer` parses but is not taught — the inbox's ask card is the route to
+      an open ask. `CONSOLE_VERBS` still lists it, so the bar printing *that*
+      list is the regression this pins.
+    */
+    expect(CONSOLE_VERBS).toContain('answer');
+    expect(legend.textContent).not.toMatch(/\banswer\b/);
     // The claim that is gone, pinned so it cannot come back by accident.
     expect(screen.queryByText(/read-only/)).toBeNull();
     expect(screen.queryByText(/orchestrator/i)).toBeNull();

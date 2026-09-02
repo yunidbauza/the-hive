@@ -257,7 +257,7 @@ describe('TicketCard', () => {
 /**
  * The card's header row (HIVE-79).
  *
- * The defect: on a 268px left rail the card has ~216px of content width, and
+ * The defect: on a 320px left rail the card has ~268px of content width, and
  * `INCORP-463` + a `Move ⌄` control + an `IN PROGRESS` lozenge did not fit —
  * the key wrapped to a second line. Folding the control into the lozenge is what
  * bought the room back, and these assertions pin that shape rather than the

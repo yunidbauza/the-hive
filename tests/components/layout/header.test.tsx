@@ -159,11 +159,11 @@ describe('Header', () => {
 
       render(<Header />);
 
-      // 252px = the rail's 268px minus the header's own px-4. The real
+      // 304px = the rail's 320px minus the header's own px-4. The real
       // geometry is measured in chip-alignment.spec.ts; this pins the
       // mechanism so a refactor cannot quietly drop it.
       const [left] = Array.from(screen.getByRole('banner').children);
-      expect(left.firstElementChild).toHaveClass('w-[252px]', 'shrink-0');
+      expect(left.firstElementChild).toHaveClass('w-[304px]', 'shrink-0');
     });
 
     /**

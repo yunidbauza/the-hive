@@ -311,7 +311,7 @@ describe('a collapsed rail', () => {
 
   it('is not floored back up to its minimum', () => {
     // The bug this ordering exists to prevent: the per-rail
-    // `Math.max(min.left, …)` would turn 44 into 268.
+    // `Math.max(min.left, …)` would turn 44 into 320.
     expect(clamp({ left: 'collapsed' }).left).toBeLessThan(COMFORTABLE.left);
   });
 

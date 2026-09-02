@@ -66,7 +66,7 @@ export interface PrBadge {
  * is the kind of chrome that makes the two states that matter harder to spot.
  *
  * Unlike the three helpers above, this one is consumed by the PRs panel alone.
- * The work panel's ticket rows (032) sit in a 268px rail where four wrapping
+ * The work panel's ticket rows (032) sit in a 320px rail where four wrapping
  * badges would break the row, so they keep their compact state-plus-count form
  * and share only the *colour* rules. Same source of truth, two densities.
  */

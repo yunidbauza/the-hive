@@ -24,6 +24,11 @@
  * override can be removed entirely and the stylesheet allowed to take over
  * again — so it is stated here once rather than rediscovered.
  *
+ * The left rail was 268px until its tab bar gained an icon per tab: three
+ * labelled icons need more line than three words did, and at 268 the third
+ * tab ran to the rail's edge. 320 gives the bar its room and the panels under
+ * it a wider column; compact keeps the same 36px step down it always had.
+ *
  * ## These duplicate `tokens.css`, and the duplication is asserted
  *
  * `--cc-rail-w-left` / `--cc-rail-w-right` remain the values the rails actually
@@ -38,8 +43,8 @@
  * only reason it is safe to write them twice.
  */
 export const RAIL_MIN = {
-  comfortable: { left: 268, right: 316 },
-  compact: { left: 232, right: 276 },
+  comfortable: { left: 320, right: 316 },
+  compact: { left: 284, right: 276 },
 } as const;
 
 /**
@@ -93,7 +98,7 @@ export const STAGE_MIN_FRACTION = 0.2;
  * The narrowest window at which both rails can sit at their minimum and the
  * stage still keep its share — `(left + right) / (1 - 0.2)`.
  *
- * At comfortable density that is 730px, against a `MIN_WINDOW_SIZE.width` of
+ * At comfortable density that is 795px, against a `MIN_WINDOW_SIZE.width` of
  * 1100px, so the desktop app cannot reach the reducing branch of
  * {@link clampRailWidths} at all. That headroom is not a coincidence to be
  * relied on quietly: `tests/lib/rail-width.test.ts` asserts
@@ -204,7 +209,7 @@ export function clampRailWidths({
 
     A collapsed rail is not expressing a width preference that could be
     overruled — it is expressing the absence of one. Running it through the
-    `Math.max(min.left, …)` below would floor a 44px strip back up to 268px,
+    `Math.max(min.left, …)` below would floor a 44px strip back up to 320px,
     which is precisely the bug this ordering prevents. The stored width is left
     untouched throughout, exactly as a window resize leaves it untouched:
     expanding must return the rail to the width the user actually chose.

@@ -543,7 +543,7 @@ describe('hive-store', () => {
     });
 
     describe('help', () => {
-      it('lists every command in the grammar', () => {
+      it('lists every advertised command in the grammar', () => {
         run('help');
         const text = transcript();
 
@@ -554,12 +554,25 @@ describe('hive-store', () => {
           'open',
           'send',
           'ask',
-          'answer',
           'spawn',
           'clear',
         ]) {
           expect(text).toContain(command);
         }
+      });
+
+      /**
+       * `answer` still runs — the parser and the executor keep it — but the
+       * inbox's ask card is the route `help` teaches to an open ask, so the
+       * verb is absent from the list. Pinned both ways: the row is gone, and
+       * the command still does something other than `command not found`.
+       */
+      it('keeps `answer` out of the list without dropping it from the grammar', () => {
+        run('help');
+        expect(transcript()).not.toMatch(/\banswer\b/);
+
+        run('answer a12 yes');
+        expect(transcript()).not.toContain('command not found');
       });
 
       it('spells out the ledger verbs’ arguments (HIVE-113)', () => {
@@ -570,7 +583,6 @@ describe('hive-store', () => {
 
         expect(text).toContain('ledger [--open]');
         expect(text).toContain('ask <agent> <message>');
-        expect(text).toContain('answer <id> <text>');
         // Each verb documented against the target type it accepts (HIVE-126).
         expect(text).toContain('run <agent> [prompt]');
       });

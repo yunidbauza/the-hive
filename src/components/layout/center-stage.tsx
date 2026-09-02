@@ -29,7 +29,11 @@ import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transpor
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import {
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_RATIO,
+  useConsoleSplitRatio,
   useEditorLayout,
+  useSetConsoleSplitRatio,
   useSetEditorSplitRatio,
   useTerminalAppearance,
 } from '@stores/appearance-store';
@@ -156,6 +160,21 @@ export function CenterStage() {
 
   /** The flex container the split handle measures its ratio against. */
   const splitRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * The overmind's own divider, between the fleet table and the transcript.
+   *
+   * Measured against the terminal *column*, not the stage: the table's
+   * `flex-basis` is a percentage of that column, so the pointer's share of
+   * the same box is the number the basis wants. The column's console rows
+   * sit below the transcript and take fixed height, which is why the table's
+   * half is exactly half the column and the transcript's is the rest — the
+   * ratio names the table, the one pane whose height is a choice.
+   */
+  const columnRef = useRef<HTMLDivElement>(null);
+  const consoleSplit = useConsoleSplitRatio();
+  const setConsoleSplit = useSetConsoleSplitRatio();
+  const resetConsoleSplit = () => setConsoleSplit(0.5);
 
   const entries = useMemo(
     () =>
@@ -311,6 +330,7 @@ export function CenterStage() {
             live xterm and its scrollback would go with it.
           */}
           <div
+            ref={columnRef}
             className={cn(
               'flex min-h-0 min-w-0 flex-col',
               editorFull && 'hidden',
@@ -341,8 +361,48 @@ export function CenterStage() {
           concept scrolls them as one region, but the transcript is a real xterm
           with its own viewport, and a DOM table cannot share it — so the table
           keeps its own scroll and the terminal fills what is left.
+
+          "What is left" is now a *choice*, not a remainder. The table used to
+          size itself to its content, which with a long fleet meant the whole
+          column minus the transcript's 10rem floor — the overmind's own
+          conversation reduced to a few lines under a wall of ended sessions.
+          The pane carries `flex: 0 1 <ratio>%` instead, half by default and
+          dragged through the divider beneath it, the same shape the editor
+          split uses. `shrink: 1` and not `0`, so a short column still takes
+          the deficit out of the table first; the `min-h-28` is where that
+          stops — a header and two rows — and the transcript's own `min-h-40`
+          below is the other floor. Both are conditional on not splitting for
+          the reason the transcript's is: in a 20% column two floors would
+          overflow it rather than yield.
+
+          The pane paints the table's ground itself, because the table is
+          content-sized inside it: a fleet of three rows must not show the
+          stage's panel colour under the last one.
         */}
-        {view === 'orchestrator' ? <SessionTable /> : null}
+        {view === 'orchestrator' ? (
+          <>
+            <div
+              data-testid="fleet-pane"
+              className={cn(
+                'flex flex-col bg-term-bg',
+                splitting ? 'min-h-0' : 'min-h-28',
+              )}
+              style={{ flex: `0 1 ${consoleSplit * 100}%` }}
+            >
+              <SessionTable />
+            </div>
+            <SplitHandle
+              axis="horizontal"
+              containerRef={columnRef}
+              label="Resize the fleet table"
+              value={consoleSplit}
+              onValue={setConsoleSplit}
+              min={MIN_SPLIT_RATIO}
+              max={MAX_SPLIT_RATIO}
+              onReset={resetConsoleSplit}
+            />
+          </>
+        ) : null}
 
         {/*
           The agent's own surface, mounted the way the console's table is:

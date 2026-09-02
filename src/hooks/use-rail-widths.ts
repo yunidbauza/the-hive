@@ -128,7 +128,7 @@ export function useRailWidths(): RailWidths {
    * *narrower than its own minimum*. Handing the handle the unreduced minimum
    * there produces a slider whose `min` exceeds its `value` — invalid to
    * announce, and actively wrong to drive: the shrink key would evaluate
-   * `Math.max(268, …)` on a rail painted at 256 and *grow* it, writing a stored
+   * `Math.max(320, …)` on a rail painted at 308 and *grow* it, writing a stored
    * width the user never chose.
    *
    * So the floor follows the paint down, and the ceiling is never allowed below

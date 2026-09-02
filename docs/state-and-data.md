@@ -19,7 +19,9 @@ the picker from re-rendering thirteen live terminals.
   `explorerExpanded`, `explorerProjectId`.
 - `src/stores/appearance-store.ts` — durable preferences: `theme`, the terminal
   and editor typography, `editorPlacement`, `editorNav`, `editorEditable`,
-  `density`.
+  `density`, the rail widths, and the two draggable splits — `editorSplitRatio`
+  (terminal against editor) and `consoleSplitRatio` (fleet table against
+  transcript, on the overmind).
 - `src/stores/editor-store.ts` — open file buffers: `openFiles`, `activeKey`,
   and the actions over them (`openFile`, `edit`, `save`, `reload`,
   `reconcile`).

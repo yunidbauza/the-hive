@@ -769,7 +769,15 @@ const LEDGER_REQUIRES_DESKTOP =
 const AGENTS_REQUIRE_DESKTOP =
   'agents need the desktop app — this is the browser preview';
 
-/** The `help` output — one row per command in the grammar. */
+/**
+ * The `help` output — one row per command the console *teaches*.
+ *
+ * Not one per command it parses: `answer` is deliberately absent, here and in
+ * the hint bar, because the inbox's ask card is the route to an open ask and
+ * a second one printed beside it made the harder route look official. The
+ * verb still runs — see `QUIET_VERBS` in `types/command.ts` for the whole
+ * argument, kept in one place.
+ */
 const HELP_LINES = [
   '  help                       show this list',
   '  status                     one line per session',
@@ -777,7 +785,6 @@ const HELP_LINES = [
   '  open <session>             open a session in the center stage',
   '  send <session> <message>   route a message to a session',
   '  ask <agent> <message>      ask an agent a question',
-  '  answer <id> <text>         answer an open ask',
   '  spawn <project> <task>     start a new session on a project',
   '  agents                     one line per agent',
   '  run <agent> [prompt]       wake an agent now, optionally saying why',

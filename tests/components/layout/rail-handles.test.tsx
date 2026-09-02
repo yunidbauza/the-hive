@@ -133,8 +133,16 @@ describe('RailHandles', () => {
    * shrink key *grow* the rail and store a width nobody chose.
    */
   it('cannot be grown by the shrink key on a window too narrow for the defaults', async () => {
-    window.innerWidth = 700;
-    const handles = renderHandles({ left: 0, top: 0, width: 700, height: 900 });
+    /*
+      Under `railFloorWindowWidth(COMFORTABLE)` — 795px — so the rail paints
+      below its minimum, but not so far under that the painted width lands
+      inside the 40px collapse band beneath it: at 700px the rail paints at
+      281, one pixel over `collapseBelow`, and the shrink key *collapses* it,
+      which is a different (and legitimate) outcome from the growth this
+      guards against. 780 paints it at 313.
+    */
+    window.innerWidth = 780;
+    const handles = renderHandles({ left: 0, top: 0, width: 780, height: 900 });
 
     const painted = Number(handles.left().getAttribute('aria-valuenow'));
     expect(painted).toBeLessThan(COMFORTABLE.left);

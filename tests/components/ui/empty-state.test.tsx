@@ -77,7 +77,7 @@ describe('EmptyState', () => {
 
     expect(img).toHaveAttribute('data-creature', 'overlord');
     /**
-     * The size is the whole argument for allowing a sprite in a 268px rail at
+     * The size is the whole argument for allowing a sprite in a 320px rail at
      * all, so it is asserted rather than left to a call site.
      */
     expect(img).toHaveStyle({ height: '44px' });

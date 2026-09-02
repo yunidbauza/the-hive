@@ -34,39 +34,56 @@ const RECEIPTS_MAX = '40%';
  * character — so these columns hold the same number of glyphs at every size the
  * user can choose.
  *
- * The run id is **fixed**, not flexible, because it renders at a fixed width:
+ * The run id's floor is eleven, not nine, because it renders at a fixed width:
  * a full `randomUUID` is 36 characters — wider than every other column put
  * together — and the first eight already tell two runs apart, which is the
  * judgement `Fact label="Session"` in `agent-view.tsx` reached for the
  * conversation uuid. `#` plus eight is nine, and {@link LiveRow} prepends a kind
  * glyph — `●` or `○`, which most faces render wider than the `1ch` a digit
- * measures — so the track is eleven: nine, the glyph, and room.
+ * measures — so the floor is eleven: nine, the glyph, and room.
  *
- * There is **no flexible track**, and the reason is not a column at all — it
- * gets its own line under the row it belongs to, drawn only when there is one.
+ * ## Every track is `minmax(Nch, Nfr)`: a floor, and a proportional share
  *
- * It was a `minmax(0,1fr)` column first, and that could not be made to work.
- * Given a flexible track it collapses to zero the moment the fixed columns
- * overflow the pane — so the field documented as "the one thing a reader needs
- * in full" was the first to vanish. Given `min-w-max` so the sticky header's
- * background could span the scroll width, it resolved to *max-content* instead
- * and made every row wider than the header, which is the same bug from the
- * other side. Off the track entirely, all eight columns are fixed, every row
- * and the header share one intrinsic width, and a failure reason can never be
- * clipped by a layout it does not participate in.
+ * The `ch` widths are **floors**, not sizes. Seven fixed tracks summed to about
+ * 54 characters, which on the stage this log gets — the whole centre column,
+ * often 1,500px and more — left two thirds of every row blank to the right of
+ * `Cost`. The `fr` on each track shares whatever the pane has beyond the
+ * floors, so the same seven columns read across the width they were given
+ * rather than huddled at its left edge; on a narrow stage the floors bind and
+ * the row is exactly what it was before.
+ *
+ * **The flex factor equals the floor, and that equality is the mechanism.**
+ * The rows and the header carry `min-w-max`, so when the pane is narrower
+ * than the columns the grid is sized to its max-content — and under that
+ * constraint CSS Grid resolves one `fr` to the largest `floor ÷ factor` across
+ * the flexible tracks. With every ratio at `1ch`, each track lands on exactly
+ * its floor: the overflowing grid is the sum of the floors, header and rows
+ * alike, which is precisely the width the fixed grid had. `1fr` everywhere
+ * would instead have made every column as wide as the *widest* floor — seven
+ * eleven-character tracks — and pushed the pane into a sideways scroll it did
+ * not need. Wider than the floors, the surplus is then split in the same
+ * proportions, so `Run` stays the widest column and `Turns` the narrowest at
+ * every size instead of all seven going equal.
+ *
+ * That is also not the `minmax(0,1fr)` this grid once had, and the difference
+ * is the zero. A track allowed to reach nothing does reach it the moment the
+ * other tracks overflow the pane — which is how the failure reason vanished
+ * first. A floor in `ch` closes that hole: no track can fall below its
+ * shortest honest value.
+ *
+ * The failure reason is still **not a column** — it gets its own line under
+ * the row it belongs to, drawn only when there is one — for the reason the
+ * old fixed grid recorded: the one field a reader needs in full must not be
+ * clipped by a layout it participates in.
  *
  * `Turns`, `Took` and `Cost` are right-aligned with `tabular-nums`, so `9s` and
  * `10s` line up on their units and `$0.04` under `$0.16`. Left-aligned digits
  * were half the reason the old row looked ragged; the other half was that
  * `justify-between` gave `manual` (6 chars) and `interval` (8) different
  * starting points for everything after them.
- *
- * Measured in Chromium at 640/900/1200px and 10/12.5/18px: every cell's left
- * edge is identical across the header and all rows, and nothing clips except a
- * 37-character failure reason at the smallest pairing — which has its `title`.
  */
 const RECEIPT_GRID =
-  'grid items-baseline gap-x-3 [grid-template-columns:11ch_9ch_9ch_8ch_5ch_5ch_7ch]';
+  'grid items-baseline gap-x-3 [grid-template-columns:minmax(11ch,11fr)_minmax(9ch,9fr)_minmax(9ch,9fr)_minmax(8ch,8fr)_minmax(5ch,5fr)_minmax(5ch,5fr)_minmax(7ch,7fr)]';
 
 interface AgentRunLogProps {
   name: string;

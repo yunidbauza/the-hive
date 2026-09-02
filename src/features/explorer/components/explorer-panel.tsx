@@ -248,7 +248,7 @@ export function ExplorerPanel() {
           same class of untruth this story removed from the branch label: the
           files would be right and the label would be wrong. The full path stays
           in the tooltip; the visible suffix is the last segment, because a
-          268px rail cannot carry `.claude/worktrees/…` and the worktree's own
+          320px rail cannot carry `.claude/worktrees/…` and the worktree's own
           name is the part that identifies it.
 
           `display`, not `subRoot`. The prefix is `''` for two situations that
@@ -293,7 +293,7 @@ export function ExplorerPanel() {
           mid-session are *which directory* and *which branch*, and the panel
           could answer neither. `branchLabel`'s em dash is deliberately not used
           here — the rail already prints it in the session meta bar, and a
-          second em dash in a 268px column is noise rather than an answer.
+          second em dash in a 320px column is noise rather than an answer.
         */}
         {branch === undefined ? null : (
           <span

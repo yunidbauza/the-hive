@@ -47,7 +47,7 @@ import {
  *
  * ## Where the width goes when the header runs out
  *
- * The brand claims exactly the rail's width (252px = the rail's 268px minus
+ * The brand claims exactly the rail's width (304px = the rail's 320px minus
  * this header's own `px-4`), so whatever follows it starts on that line.
  *
  * The left cluster is `min-w-0` and the right one does not shrink, so the model
@@ -136,9 +136,9 @@ export function Header() {
           stage begins on. Without this the chips float wherever the wordmark
           happens to end, aligned to nothing.
 
-          252px = the rail's 268px minus this header's own `px-4`, since the
+          304px = the rail's 320px minus this header's own `px-4`, since the
           rail starts at the viewport edge and the header's content box does
-          not. `left-rail.tsx` owns the 268; `chip-alignment.spec.ts` measures
+          not. `left-rail.tsx` owns the 320; `chip-alignment.spec.ts` measures
           the two against each other so this cannot drift silently.
         */}
         <div
@@ -157,7 +157,7 @@ export function Header() {
            * stays, because it is what puts the chips on the rail's edge, and
            * that was never about the lights.
            */
-          className="flex w-[252px] shrink-0 items-center"
+          className="flex w-[304px] shrink-0 items-center"
         >
           <BrandBlock />
         </div>

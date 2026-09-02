@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { CONSOLE_VERBS } from '@/types/command';
+import { ADVERTISED_VERBS } from '@/types/command';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { effectiveSelId } from '@features/orchestrator/utils/selection';
@@ -13,20 +13,17 @@ import {
 import { useSelId, useSetSelId } from '@stores/ui-store';
 
 /**
- * A curated subset, not the whole grammar — `open` and `clear` have never been
- * here, and the ledger verbs are not either (HIVE-113).
+ * The prompt carries **no placeholder**.
  *
- * **This string has a hard length budget**, which is why it is not simply the
- * verb list. It is the placeholder of a textarea that auto-grows to its
- * content, so a string long enough to wrap makes the *empty* console two rows
- * tall — and that row takes its height out of the terminal above it.
- * `console-growth.spec.ts` measures exactly that, and adding one more verb here
- * is what pushed it over.
- *
- * The grammar stays discoverable without it: the hint bar below lists every
- * verb from `CONSOLE_VERBS`, and `help` prints each with its arguments.
+ * It used to print a curated subset of the grammar — `help · status · send …`
+ * — which was the same fact the hint bar prints in full one row beneath, and
+ * a second, shorter copy of a list is not a second piece of information. It
+ * also had a hard length budget, because it was the placeholder of a textarea
+ * that auto-grows to its content: a string long enough to wrap made the
+ * *empty* console two rows tall and took that row out of the terminal above.
+ * Removing it removes the budget, and leaves the row reading as what it is —
+ * a prompt, with the grammar under it where `ADVERTISED_VERBS` keeps it.
  */
-const PLACEHOLDER = 'help · status · send <session> <message> · spawn <project> <task>';
 const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
 
 /**
@@ -203,7 +200,6 @@ export function ConsoleInput() {
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={PLACEHOLDER}
           spellCheck={false}
           aria-label="Overmind command"
           /*
@@ -236,6 +232,9 @@ export function ConsoleInput() {
 
         The verb list stays because nothing else says it. It is the only place
         the grammar is visible without already knowing that `help` exists.
+
+        `ADVERTISED_VERBS`, not `CONSOLE_VERBS`: the grammar has a verb it
+        parses but does not teach — see `QUIET_VERBS` in `types/command.ts`.
       */}
       <div
         /*
@@ -248,7 +247,7 @@ export function ConsoleInput() {
         data-testid="console-hints"
         className="flex shrink-0 items-center justify-center border-t border-border-soft bg-term-input px-[18px] py-[11px] font-mono text-[11px] text-subtle"
       >
-        <span>{CONSOLE_VERBS.join(' · ')}</span>
+        <span>{ADVERTISED_VERBS.join(' · ')}</span>
       </div>
     </>
   );

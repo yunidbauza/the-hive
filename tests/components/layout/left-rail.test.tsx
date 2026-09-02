@@ -121,7 +121,7 @@ describe('LeftRail', () => {
   it('keeps the rail at a fixed, density-driven width', () => {
     render(<LeftRail />);
 
-    // 268px comfortable, narrower compact (story 105) — the token carries the
+    // 320px comfortable, narrower compact (story 105) — the token carries the
     // number so a density change never re-renders the rail.
     expect(rail()).toHaveClass('w-[var(--cc-rail-w-left)]', 'shrink-0');
   });

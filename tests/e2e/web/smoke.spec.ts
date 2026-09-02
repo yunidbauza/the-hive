@@ -179,7 +179,7 @@ test('lays out at desktop width without overflowing horizontally', async ({ page
    */
   await expect(
     page.getByRole('navigation', { name: 'Projects, work, and agents' }),
-  ).toHaveCSS('width', '268px');
+  ).toHaveCSS('width', '320px');
   await expect(page.getByRole('complementary', { name: 'Activity' })).toHaveCSS(
     'width',
     '316px',
@@ -286,16 +286,22 @@ test('help names the spawn argument a project, and explains what one is', async 
 });
 
 /**
- * The placeholder follows the grammar (HIVE-94).
+ * The prompt carries no placeholder; the hint bar under it is the legend.
  *
- * It is the hint a user reads *before* they know `help` exists, so it teaching
- * a spelling the parser no longer prefers is the worst version of this bug.
+ * The placeholder used to print a curated subset of the grammar (HIVE-94
+ * checked it named `<project>`), which was the same list the bar prints in
+ * full one row beneath. It is gone, and the bar is where the grammar is read
+ * before a user knows `help` exists — so the spelling check moves there.
  */
-test('the console placeholder names a project too', async ({ page }) => {
+test('the console prompt is bare and the hint bar carries the grammar', async ({
+  page,
+}) => {
   await expect(
     page.getByRole('textbox', { name: 'Overmind command' }),
-  ).toHaveAttribute(
-    'placeholder',
-    'help · status · send <session> <message> · spawn <project> <task>',
-  );
+  ).not.toHaveAttribute('placeholder');
+
+  const hints = page.getByTestId('console-hints');
+  await expect(hints).toContainText('spawn');
+  // `answer` parses but is not taught — the inbox's ask card is the route.
+  await expect(hints).not.toContainText('answer');
 });

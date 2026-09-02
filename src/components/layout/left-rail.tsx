@@ -20,7 +20,7 @@ import { useLeftTab, useSetLeftTab, type LeftTab } from '@stores/ui-store';
  *
  * Fixed width, never flexed, so the center stage absorbs every width change and
  * the terminal is the only thing that resizes with the window. The width itself
- * is `--cc-rail-w-left` (story 105): 268px comfortable, narrower compact. A
+ * is `--cc-rail-w-left` (story 105): 320px comfortable, narrower compact. A
  * density change therefore resizes the terminal through exactly the path a
  * window resize already takes — `min-w-0` on the stage, then the fit addon.
  *

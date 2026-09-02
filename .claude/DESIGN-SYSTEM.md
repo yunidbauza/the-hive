@@ -314,7 +314,7 @@ information the label already carries.
 
 ## Chrome
 
-- Header height **56px**; left rail **268px**; activity rail **316px**.
+- Header height **56px**; left rail **320px**; activity rail **316px**.
 - Scrollbars are thin (10px), thumb `--cc-border`, transparent track, rounded.
 - Interactive controls show a pointer cursor — a base rule in `global.css`, since
   Tailwind v4 dropped the one that used to provide this. Do not add

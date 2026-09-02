@@ -325,11 +325,16 @@ export function SessionTable() {
 
     `min-h-0` is the other half of the same fact: a flex item's automatic
     minimum size is its content, so without it this box refuses to shrink for
-    the same reason under a different name. With both, the line hands this row
-    whatever is left once the transcript has its floor (`center-stage.tsx`) and
-    the console has its two rows, and `overflow-y-auto` finally has an overflow
-    to scroll. `tests/e2e/electron/fleet-scroll.spec.ts` is the proof —
-    happy-dom performs no layout, so no unit test can make it.
+    the same reason under a different name. With both, `overflow-y-auto`
+    finally has an overflow to scroll. `tests/e2e/electron/fleet-scroll.spec.ts`
+    is the proof — happy-dom performs no layout, so no unit test can make it.
+
+    How much room that is comes from outside. `center-stage.tsx` wraps this in
+    a pane with `flex: 0 1 <ratio>%` of the column — half by default, dragged
+    through the divider under it — so the table gets its share and scrolls
+    within it, rather than growing to its content and leaving the transcript
+    its floor and nothing more. This box stays content-sized inside that pane,
+    which is why the pane paints `bg-term-bg` under a short fleet.
   */
   return (
     <div

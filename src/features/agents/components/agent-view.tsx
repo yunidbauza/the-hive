@@ -56,7 +56,7 @@ interface AgentViewProps {
  * horizontal scrollbar.
  *
  * The stack point is a **container query**, not a media query, and this is the
- * first one in the codebase. The rails drag between 268px and 520px each, so a
+ * first one in the codebase. The rails drag between 320px and 520px each, so a
  * 1920px window can hold a 700px stage; only this box knows how wide it
  * actually is. Below 800px the ledger drops beneath the log at full width,
  * which is the layout this story started from — nothing is lost, it is just

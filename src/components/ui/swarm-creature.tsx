@@ -29,7 +29,7 @@ import spireAnim from './swarm/spire.webp';
  *   baked app tile gave up.
  *
  * The rails were text-only when this shipped, on the argument that a decorative
- * empty state in a 268 px column beside a live terminal takes more attention
+ * empty state in a 320 px column beside a live terminal takes more attention
  * than the thing it is apologising for. That argument is about *size*, not about
  * whether an image may appear at all: at 44 px the creature occupies less height
  * than the two lines of copy beneath it, and the copy is still what the eye

@@ -60,7 +60,7 @@ export function AgentRow({ id }: AgentRowProps) {
    * **The cost is deliberately not here, and this column is why.** The meta is
    * `shrink-0`, so every character it holds is taken out of the name and
    * description beside it: `next 04:46 PM · $0.04` is 21 characters, about half
-   * the width of a 268px rail once the avatar and the gaps are paid for, and it
+   * the width of a 320px rail once the avatar and the gaps are paid for, and it
    * truncated `ultralisk` to `ultrali…`. An agent's name is the only thing in
    * this row that identifies it, and a number is a poor trade for it.
    *

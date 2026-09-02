@@ -54,7 +54,7 @@ export function TicketCard({ ticket }: TicketCardProps) {
 
           On a **real** issue the lozenge is the transition menu's trigger, so
           the row holds the key and the status and nothing else — that is what
-          stopped the key wrapping on a 268px rail.
+          stopped the key wrapping on a 320px rail.
 
           On a **fixture** it is inert text. A fixture has no Jira behind it, so
           an interactive lozenge would be a control that cannot work — the same

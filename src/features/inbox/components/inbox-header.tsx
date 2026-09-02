@@ -13,7 +13,7 @@ interface InboxHeaderProps {
  * ## Why the count shares the row
  *
  * A bare `Clear all` floating over a list is a toolbar, and a toolbar in a
- * 268px column has to earn its height twice over. Pairing the action with the
+ * 320px column has to earn its height twice over. Pairing the action with the
  * count it acts on turns the same 22 pixels into a **list header** — it reports
  * before it offers, which is the order every other panel in the rail uses.
  *

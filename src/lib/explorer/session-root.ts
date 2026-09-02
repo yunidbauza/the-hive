@@ -89,7 +89,7 @@ export function relativeRoot(
  * So this answers the *display* question instead, from the same two inputs:
  *
  * - `suffix` — the directory's own name, or `''` when the tree is at the
- *   project root. A 268px rail cannot carry `.claude/worktrees/hive-pr-column`,
+ *   project root. A 320px rail cannot carry `.claude/worktrees/hive-pr-column`,
  *   and the last segment is the part that identifies which worktree it is.
  * - `full` — the whole path, for the `title`, where there is room to be exact.
  *

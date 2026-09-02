@@ -294,7 +294,7 @@ many.
 
 `src/components/layout/left-rail.tsx` — story 030, built.
 
-268px fixed. A flex column of two children: a pinned `<TabBar />` and a scrolling
+320px fixed. A flex column of two children: a pinned `<TabBar />` and a scrolling
 tab panel that mounts exactly one of `ProjectsPanel` (031), `WorkPanel` (032), or
 `AgentsPanel` (033). Reads `useLeftTab()` / `useSetLeftTab()`, plus
 `useTicketCount()` for the Work tab's badge.

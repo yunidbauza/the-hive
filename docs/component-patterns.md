@@ -30,7 +30,7 @@ it and nothing else.
 └── AppShell                flex column, h-full
     ├── Header              <header>  56px fixed, --cc-panel, border-bottom soft
     └── Row                 flex-1, min-h-0, flex
-        ├── LeftRail        <nav>     268px fixed, --cc-panel, border-right soft,
+        ├── LeftRail        <nav>     320px fixed, --cc-panel, border-right soft,
         │                             own vertical scroll
         ├── CenterStage     <main>    flex-1, min-w-0, --cc-panel-2, flex column
         └── ActivityRail    <aside>   316px fixed, --cc-panel, border-left soft,
@@ -48,7 +48,7 @@ Each region is a landmark element, so tests address them by role
   inside itself; without `min-w-0` a long terminal line widens the center column,
   which xterm's fit addon then measures and grows into. Both are load-bearing,
   not defensive.
-- **The rails never flex** (`w-[268px]` / `w-[316px]` + `shrink-0`), so the
+- **The rails never flex** (`w-[320px]` / `w-[316px]` + `shrink-0`), so the
   center column absorbs every width change and the document never gains a
   horizontal scrollbar.
 - **The page never scrolls.** `body { overflow: hidden }` plus `overflow-y-auto`

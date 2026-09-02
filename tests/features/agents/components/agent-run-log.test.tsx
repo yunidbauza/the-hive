@@ -282,6 +282,39 @@ describe('AgentRunLog', () => {
       expect(track(header)).toBeDefined();
       expect(track(row)).toBe(track(header));
     });
+
+    /**
+     * Every column is `minmax(Nch, Nfr)` with the same `N` on both sides.
+     *
+     * The floor is what keeps a column from collapsing when the pane is
+     * narrow; the flex share is what spreads seven short columns across a
+     * 1,500px stage instead of leaving two thirds of it blank. The two being
+     * *equal* is the part a reader cannot see and a refactor could quietly
+     * break: under `min-w-max` the grid resolves to `max(floor ÷ factor)` per
+     * `fr`, so equal ratios are what make an overflowing row exactly the sum
+     * of its floors rather than seven copies of the widest one.
+     */
+    it('floors every column in ch and shares the surplus in the same proportion', () => {
+      seed({ runs: [run(1)] });
+
+      const { container } = render(<AgentRunLog name="watcher" />);
+      const header = container.querySelector('[data-region="run-columns"]');
+      const track = [...(header?.classList ?? [])].find((c) =>
+        c.includes('grid-template-columns'),
+      );
+
+      const columns = track
+        ?.replace(/^\[grid-template-columns:/, '')
+        .replace(/\]$/, '')
+        .split('_');
+
+      expect(columns).toHaveLength(7);
+      for (const column of columns ?? []) {
+        const match = /^minmax\((\d+)ch,(\d+)fr\)$/.exec(column);
+        expect(match, column).not.toBeNull();
+        expect(match?.[1]).toBe(match?.[2]);
+      }
+    });
   });
 
   /*

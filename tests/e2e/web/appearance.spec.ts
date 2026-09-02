@@ -65,7 +65,7 @@ test('compact density narrows the rail and survives a reload', async ({ page }) 
    * Asserted as a *difference*, not as two pixel constants.
    *
    * The rail is `box-sizing: border-box` with a 1px right border, so
-   * `clientWidth` reports one less than the token — pinning 268 here would fail
+   * `clientWidth` reports one less than the token — pinning 320 here would fail
    * on a true implementation and teach the next person to distrust the number.
    * The claim worth making is that compact is 36px narrower, which is the gap
    * between the two tokens.

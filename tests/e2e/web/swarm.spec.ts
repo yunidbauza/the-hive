@@ -116,7 +116,7 @@ for (const { tab, rail, pool, cast, keeps } of RAILS) {
   test(`the ${tab.toLowerCase()} rail holds its creature, small`, async ({ page }) => {
     /**
      * The rails get a sprite, but only at rail size. `empty-state.tsx` argues a
-     * decorative empty state in a 268px column takes more attention than the
+     * decorative empty state in a 320px column takes more attention than the
      * thing it is apologising for, and the answer to that is the *size*: at
      * 44px the creature is shorter than the copy beneath it. This asserts the
      * ceiling, so a later change cannot quietly grow it into the illustration

@@ -113,8 +113,13 @@ describe('AppShell', () => {
     const row = screen.getByRole('main').parentElement;
     expect(row).toHaveClass('relative', 'flex');
 
-    for (const handle of screen.getAllByRole('slider')) {
-      expect(handle).toHaveClass('absolute');
+    /*
+      The two *rail* handles, by name. The stage mounts a slider of its own —
+      the overmind's fleet-table divider — which is in-flow between two panes
+      by design and is not what this asserts.
+    */
+    for (const name of ['Resize the navigation rail', 'Resize the activity rail']) {
+      expect(screen.getByRole('slider', { name })).toHaveClass('absolute');
     }
   });
 });

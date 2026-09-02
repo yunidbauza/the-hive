@@ -79,7 +79,7 @@ type EmptyStateProps = {
  * wrong.
  *
  * No centred hero block, and nothing that fills the column. These sit in a
- * 268px rail beside a terminal the user is trying to read, and an empty state
+ * 320px rail beside a terminal the user is trying to read, and an empty state
  * that took more of their attention than the thing it is apologising for would
  * be worse than the blank column it replaced.
  *

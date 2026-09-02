@@ -75,7 +75,7 @@ describe('the built-in theme mirrors tokens.css', () => {
    * instead closes it.
    *
    * `parseTokenBlock` only captures declarations whose value is a hex colour,
-   * which is what keeps the spacing and density tokens (`268px`, `7px`) out of
+   * which is what keeps the spacing and density tokens (`320px`, `7px`) out of
    * this by construction rather than by an exclusion list somebody has to
    * maintain.
    */

@@ -195,3 +195,28 @@ export const CONSOLE_VERBS = [
   'rotate',
   'clear',
 ] as const satisfies readonly ParsedCommand['kind'][];
+
+/**
+ * The verbs the console keeps quiet about: still parsed, still executed, but
+ * absent from the hint bar and from `help`.
+ *
+ * `answer` is the one so far. An open ask reaches the user as a card in the
+ * inbox with its own reply field, and that card is the route worth teaching —
+ * it shows the question, the agent and the short ref, none of which a bare
+ * `answer <id> <text>` line does. Advertising the verb beside it taught two
+ * ways to do one thing and made the harder one look official. The parser
+ * keeps it because a typed `answer a12 yes` should still work for whoever
+ * already knows it, and because a verb that vanished from the grammar would
+ * turn every old transcript's advice into `command not found`.
+ */
+export const QUIET_VERBS: ReadonlySet<ParsedCommand['kind']> = new Set(['answer']);
+
+/**
+ * {@link CONSOLE_VERBS} minus {@link QUIET_VERBS} — what the hint bar prints.
+ *
+ * Derived rather than listed a second time, so hiding a verb is one line in
+ * the set above and can never leave the two lists disagreeing about order.
+ */
+export const ADVERTISED_VERBS: readonly ParsedCommand['kind'][] = CONSOLE_VERBS.filter(
+  (verb) => !QUIET_VERBS.has(verb),
+);

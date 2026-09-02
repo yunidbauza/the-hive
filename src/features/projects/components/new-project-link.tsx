@@ -14,7 +14,7 @@ export type NewProjectVariant = 'line' | 'cta';
  * the only thing on screen worth pressing should look pressable.
  *
  * The border is where `cta` stops. A fill would make the loudest thing in a
- * 268px rail an apology for an empty list, which is the one thing
+ * 320px rail an apology for an empty list, which is the one thing
  * `EmptyState` says a rail must not do.
  */
 const CLASSES: Record<NewProjectVariant, string> = {

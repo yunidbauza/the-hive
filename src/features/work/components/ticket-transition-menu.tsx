@@ -179,7 +179,7 @@ export function TicketTransitionMenu({
         The status lozenge **is** the trigger (HIVE-79).
 
         It used to be a separate `Move ⌄` control sitting between the key and
-        the lozenge, and on a 268px rail — 216px of card, 180px at compact
+        the lozenge, and on a 320px rail — 216px of card, 180px at compact
         density — those three items did not fit: `INCORP-463` wrapped to a
         second line whenever the status was as long as `IN PROGRESS`. Shrinking
         the key was never an option, since it is the card's identity.
