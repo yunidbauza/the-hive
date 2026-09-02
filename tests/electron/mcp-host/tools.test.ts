@@ -20,7 +20,12 @@ const textOf = (result: { content: { text: string }[] }): string =>
   result.content.map((part) => part.text).join('');
 
 describe('createToolHandlers — listing', () => {
-  it('lists the ten shared definitions unchanged', () => {
+  /*
+    Order is asserted, not just membership: the nine ledger tools first, then
+    `agents` (HIVE-127), then `approve` last — the tools a model is meant to
+    call ahead of the one only the CLI ever reaches, on its behalf.
+  */
+  it('lists the eleven shared definitions unchanged', () => {
     const handlers = createToolHandlers(stub());
     expect(handlers.listTools().map((tool) => tool.name)).toEqual([
       'ledger_read',
@@ -32,6 +37,7 @@ describe('createToolHandlers — listing', () => {
       'ledger_done',
       'ledger_failed',
       'ledger_handoff',
+      'agents',
       'approve',
     ]);
   });
@@ -488,5 +494,91 @@ describe('structuredContent stays off everywhere else', () => {
 
     const failed = await handlers.callTool('ledger_failed', { body: 'blocked' });
     expect(failed.structuredContent).toBeUndefined();
+  });
+});
+
+/**
+ * The peer directory (HIVE-127).
+ *
+ * The text is what the model actually attends to, so these assert the
+ * *sentences* as much as the payload: a peer a caller cannot reach is worse
+ * than no peer at all, and the only place that can be said is the prose.
+ */
+describe('createToolHandlers — agents', () => {
+  const peer = {
+    name: 'pr-reviewer',
+    description: 'Reviews open PRs.',
+    status: 'sleeping' as const,
+    accepts: ['ledger' as const],
+    tools: ['Read'],
+  };
+
+  it('returns the peers as readable text and as structured content', async () => {
+    const handlers = createToolHandlers(stub({ agents: async () => ({ agents: [peer] }) }));
+
+    const result = await handlers.callTool('agents', {});
+
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toContain('pr-reviewer');
+    expect(textOf(result)).toContain('Reviews open PRs.');
+    expect(result.structuredContent).toEqual({ agents: [peer] });
+  });
+
+  /*
+    `wake.on` is a gate, not a preference. A peer listed without `ledger` will
+    never wake on an ask, so the text has to say so — handing a model a name it
+    cannot reach is worse than handing it nothing.
+  */
+  it('says when an ask cannot actually reach a peer', async () => {
+    const handlers = createToolHandlers(
+      stub({ agents: async () => ({ agents: [{ ...peer, accepts: [] }] }) }),
+    );
+
+    expect(textOf(await handlers.callTool('agents', {}))).toMatch(/does not wake on the ledger/i);
+  });
+
+  it('marks a broken peer unreachable, with its reason', async () => {
+    const handlers = createToolHandlers(
+      stub({
+        agents: async () => ({
+          agents: [
+            { ...peer, accepts: [], tools: [], invalid: "wake.on: unknown event 'ledgr'" },
+          ],
+        }),
+      }),
+    );
+
+    const text = textOf(await handlers.callTool('agents', {}));
+
+    expect(text).toContain("unknown event 'ledgr'");
+    expect(text).toMatch(/cannot be reached/i);
+  });
+
+  it('says so plainly when the caller is the only agent here', async () => {
+    const handlers = createToolHandlers(stub({ agents: async () => ({ agents: [] }) }));
+
+    const result = await handlers.callTool('agents', {});
+
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toMatch(/no other agents/i);
+  });
+
+  it('hands a refusal to the model rather than throwing a protocol error', async () => {
+    const handlers = createToolHandlers(
+      stub({
+        agents: async () => {
+          throw new ReceiverError(500, 'EACCES: permission denied');
+        },
+      }),
+    );
+
+    const result = await handlers.callTool('agents', {});
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('EACCES');
+  });
+
+  it('is listed, so a model can find it', () => {
+    expect(createToolHandlers(stub()).listTools().map((tool) => tool.name)).toContain('agents');
   });
 });

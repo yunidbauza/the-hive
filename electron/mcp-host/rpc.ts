@@ -89,7 +89,7 @@ export async function handleMessage(
   }
 
   if (method === 'tools/list') {
-    // No pagination: ten tools fit in one page, so no `nextCursor`.
+    // No pagination: eleven tools fit in one page, so no `nextCursor`.
     return success(id, { tools: handlers.listTools() });
   }
 

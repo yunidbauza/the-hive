@@ -1,5 +1,5 @@
 import type { LedgerKind, LedgerReadQuery } from '@shared/ledger-contract';
-import { APPROVE_TOOL, LEDGER_TOOLS } from '@shared/ledger-tools';
+import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from '@shared/ledger-tools';
 import {
   LEDGER_READ_DEFAULT_LIMIT,
   type CallToolResult,
@@ -164,6 +164,59 @@ export function createToolHandlers(
       field before it could do anything with it.
     */
     return ok(JSON.stringify(snapshot), { ...snapshot });
+  };
+
+  /**
+   * Who else is here (HIVE-127).
+   *
+   * The shortest handler in this file, and the only one that reads no
+   * arguments at all: the caller is the authenticated `x-hive-session` header,
+   * so there is nothing on `args` to look at.
+   *
+   * Prose *and* `structuredContent`, like `ledger_read` above. The text is
+   * what the model actually attends to, and it is the only place two things
+   * can be said that the raw fields cannot: whether an ask will reach this
+   * peer at all, and — for a broken definition — that it will not. Handing a
+   * model a name it cannot reach is worse than handing it nothing.
+   */
+  const agents = async (): Promise<CallToolResult> => {
+    const directory = await client.agents();
+
+    if (directory.agents.length === 0) {
+      return ok(
+        'There are no other agents on this machine — you are the only one. Do the work yourself, or report that there is nobody to delegate it to.',
+        { agents: [] },
+      );
+    }
+
+    const lines = directory.agents.map((agent) => {
+      /*
+        A broken definition is not a known party, so nothing can wake it and
+        nothing may write to the ledger as it. Saying only "invalid" would
+        leave a caller to discover that by being ignored.
+      */
+      if (agent.invalid !== undefined) {
+        return `- ${agent.name} — cannot be reached: its definition does not parse (${agent.invalid})`;
+      }
+
+      const reach = agent.accepts.includes('ledger')
+        ? 'reachable with ledger_ask'
+        : 'does not wake on the ledger, so an ask will not reach it';
+      const tools = agent.tools.length === 0 ? 'no tool grants' : agent.tools.join(', ');
+
+      return `- ${agent.name} (${agent.status}) — ${agent.description} [${reach}; ${tools}]`;
+    });
+
+    return ok(
+      `${directory.agents.length} other agent(s) on this machine:\n${lines.join('\n')}`,
+      /*
+        A fresh literal rather than `directory` itself: `ok` takes a
+        `Record<string, unknown>`, an interface has no implicit index
+        signature, and the cast that would paper over that also silences any
+        genuine shape error.
+      */
+      { agents: directory.agents },
+    );
   };
 
   const claim = async (args: Record<string, unknown>): Promise<CallToolResult> => {
@@ -337,7 +390,9 @@ export function createToolHandlers(
   };
 
   return {
-    listTools: (): readonly McpToolDefinition[] => [...LEDGER_TOOLS, APPROVE_TOOL],
+    // `approve` stays last: the tools a model is meant to call come first, and
+    // that one is only ever reached by the CLI on its behalf.
+    listTools: (): readonly McpToolDefinition[] => [...LEDGER_TOOLS, AGENTS_TOOL, APPROVE_TOOL],
 
     async callTool(name, args): Promise<CallToolResult> {
       // `approve` must never surface as `isError` or throw — the CLI can only
@@ -356,6 +411,8 @@ export function createToolHandlers(
 
       try {
         switch (name) {
+          case 'agents':
+            return await agents();
           case 'ledger_read':
             return await read(args);
           case 'ledger_post':

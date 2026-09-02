@@ -29,9 +29,15 @@ describe('readGrants', () => {
 });
 
 describe('createHandlers without an environment', () => {
-  it('still lists the ten tools, so /mcp shows the server connected', () => {
+  /*
+    Eleven since HIVE-127 added the peer directory. The count matters here
+    rather than in prose: this is the unreachable path, and a tool list that
+    differed depending on how the process was started would make `/mcp` report
+    a different server than the one an agent actually gets.
+  */
+  it('still lists the eleven tools, so /mcp shows the server connected', () => {
     const handlers = createHandlers({}, vi.fn() as never);
-    expect(handlers.listTools()).toHaveLength(10);
+    expect(handlers.listTools()).toHaveLength(11);
   });
 
   it('answers every call with a legible reason instead of hanging', async () => {
