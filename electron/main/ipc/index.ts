@@ -1727,8 +1727,23 @@ export function registerIpcHandlers(): void {
       holds the runs and knows nothing about definitions.
     */
     onAgentsList: async (caller) => {
+      /*
+        Thrown rather than answered empty, and the distinction is the same one
+        the route's 500 exists for: `{ agents: [] }` renders to the model as
+        "you are the only agent on this machine — do the work yourself", which
+        is a load-bearing instruction. A registry that is missing because the
+        app is tearing down has not established that. The narrow window is
+        real — a wake racing shutdown — and narrow is not the same as absent.
+
+        Distinct from `SessionsOptions.onAgentsList`'s default, which *is* an
+        empty directory: there, no runtime was ever composed, so "this build
+        has no agents" is the truth rather than a failure to find out.
+      */
       const snapshot = await agents?.list();
-      if (snapshot === undefined) return { agents: [] };
+
+      if (snapshot === undefined) {
+        throw new Error('the agent registry is not available');
+      }
 
       return agentsDirectoryFor(caller, snapshot, agentState?.all() ?? {});
     },

@@ -1401,15 +1401,22 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     await delegated;
 
     /*
-      The directory was actually consulted, not guessed at. Asserted off the
-      run log because it is the only evidence that distinguishes "the model
-      looked up the peer" from "the model happened to produce a name that
-      matched" — and without it the test would still pass if the tool were
-      never called.
+      The directory was actually consulted, not guessed at — the only evidence
+      separating "looked the peer up" from "produced a name that happened to
+      match".
+
+      Matched on the **fully-qualified** tool name, not the bare word. The run
+      log interleaves the model's own prose with its tool calls under the same
+      `text` key (`run-log.ts:127-138`), and this probe's own instructions
+      contain the phrase "the other agents on this machine" — so a substring
+      match on `agents` is satisfied by the model narrating what it is about to
+      do, with the tool never invoked. A tool call renders as
+      `` `${name} ${args}` ``, so `mcp__hive__agents` appears only when one
+      actually happened.
     */
     expect(
-      lines.slice(lineMark).some((line) => line.text.includes('agents')),
-      'the run log should show the directory being called',
+      lines.slice(lineMark).some((line) => line.text.includes('mcp__hive__agents')),
+      'the run log should show mcp__hive__agents actually being called',
     ).toBe(true);
 
     const entries = await onDisk();

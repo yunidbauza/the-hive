@@ -760,9 +760,12 @@ may write to the ledger as it.
 `dailyUsd`, the whole run history, `icon` and the agents root. None of it
 crosses. The projection (`electron/main/agents/directory.ts`) is a whitelist
 written field by field rather than a spread-and-delete, and it is built **in
-main**, so the host process never holds a `sessionUuid` it could leak. A test
-pins the exact key set, so a field added to `AgentSummary` later fails loudly
-instead of riding along. The trust argument for what *is* returned: every agent
+main**, so the host process never holds a `sessionUuid` it could leak. A field
+added to `AgentSummary` later is therefore ignored rather than forwarded —
+silently, which is the safe direction but not a loud one: the key-set test
+stays green either way, so nothing announces that a new field exists and
+someone should decide whether peers may see it. The trust argument for what
+*is* returned: every agent
 here is a definition the user wrote on their own machine, so a name, a
 description and a tool grant disclose nothing the user does not already own.
 

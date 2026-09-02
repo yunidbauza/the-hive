@@ -2505,11 +2505,28 @@ describe('the agents route', () => {
     failNext = true;
 
     const response = await ask({}, { [HOOK_HEADER_SESSION]: CALLER });
+    const body = (await response.json()) as { reason: string };
 
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({
-      reason: expect.stringContaining('EACCES') as unknown as string,
-    });
+    expect(body.reason).toMatch(/could not be read/i);
+  });
+
+  /**
+   * The reason is a fixed sentence, not the cause's own message.
+   *
+   * A model reads this and it lands in its transcript. The failures reachable
+   * here are filesystem errors whose `message` carries an absolute path, and
+   * the directory's contract is that it discloses names, descriptions and
+   * grants — never paths.
+   */
+  it('never puts the underlying error text in front of the model', async () => {
+    failNext = true;
+
+    const response = await ask({}, { [HOOK_HEADER_SESSION]: CALLER });
+    const body = (await response.json()) as { reason: string };
+
+    expect(body.reason).not.toContain('EACCES');
+    expect(body.reason).not.toContain('/Users/');
   });
 
   it('is POST-only, like every other route on this server', async () => {

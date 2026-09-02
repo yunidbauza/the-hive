@@ -776,15 +776,31 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
     try {
       return { status: 200, json: await onAgentsList(caller) };
-    } catch (cause) {
+    } catch {
       /*
         Reported, never swallowed into an empty list. "There is nobody else
         here" is a legitimate answer this route gives, so a failed read that
         returned `{ agents: [] }` would be indistinguishable from it — and the
         model would conclude it has no peers and stop looking, which is exactly
         the silence this whole story exists to end.
+
+        A fixed sentence, and **not** `describeCause` as the ledger routes use:
+        this reason is read by a model and lands in its transcript, and the
+        failures reachable from here are filesystem errors whose `message`
+        carries an absolute path (`EACCES … scandir '/Users/<someone>/…'`). The
+        directory's whole contract is that it discloses names, descriptions and
+        grants — no paths, no env. Deriving the text from the cause would make
+        that true only for as long as every fs call underneath happens to be
+        caught individually, which is a property no test asserts and no
+        reviewer would notice going away.
       */
-      return { status: 500, json: { reason: describeCause(cause) } };
+      return {
+        status: 500,
+        json: {
+          reason:
+            'the agent directory could not be read. This is a fault in the Hive, not in your request — report it and carry on without delegating.',
+        },
+      };
     }
   }
 
