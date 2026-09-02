@@ -1,4 +1,8 @@
-import type { AgentDefinition, Autonomy } from '@shared/agent-contract';
+import type {
+  AgentDefinition,
+  Autonomy,
+  RunKind,
+} from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, isSessionEnvDenied } from '@shared/config-contract';
 import { HOOK_ENV_GRANTS } from '@shared/hook-contract';
 
@@ -78,6 +82,12 @@ export interface WakeInput {
    * `--session-id` that starts it. Never set with {@link WakeInput.lastTurn}.
    */
   handoff?: string;
+  /**
+   * A task run (HIVE-128): a fresh session for one job. Chooses the task
+   * prompt. The argv is otherwise the same; the fresh `--session-id` is
+   * `wake-command.ts`'s decision, made by never passing `sessionUuid` here.
+   */
+  kind?: RunKind;
 }
 
 export interface WakeCommand {
@@ -90,7 +100,7 @@ export interface WakeCommand {
 export function wakePrompt(
   trigger: string,
   extra?: string,
-  rotation?: { lastTurn?: true; handoff?: string },
+  rotation?: { lastTurn?: true; handoff?: string; task?: true },
 ): string {
   /*
     A last turn replaces the instruction rather than adding to it: "do the work,
@@ -122,6 +132,18 @@ export function wakePrompt(
     the queue, where `flush` clears `pendingWake` before the wake, so those words
     have no other copy left anywhere.
   */
+
+  /*
+    A task run is told what it is before it is told what to do, because the
+    preamble it shares with the standing run says "read your inbox first" —
+    and a task run that drains the inbox acts on asks the standing session is
+    about to handle. The prompt overrides the preamble on exactly that point.
+    It also never asks for a handoff: there is no conversation to hand on.
+  */
+  if (rotation?.task === true) {
+    return `${because} This is a task run: a fresh conversation with no memory of your standing session, started for this one job. Do the job named above and nothing else — do not act on your ledger inbox and do not do your standing work; your standing session handles both. When the job is done, report the result with ledger_done, or with ledger_failed if it could not be done, then end your turn.`;
+  }
+
   if (rotation?.lastTurn === true) {
     return `${because} This is your last turn on this session. Carry out your instructions for this wake as usual — they are standing work whether or not anything is waiting in your inbox — then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
   }
@@ -235,6 +257,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     wakePrompt(input.trigger, input.extra, {
       ...(input.lastTurn === undefined ? {} : { lastTurn: input.lastTurn }),
       ...(input.handoff === undefined ? {} : { handoff: input.handoff }),
+      ...(input.kind === 'task' ? { task: true as const } : {}),
     }),
   ];
 

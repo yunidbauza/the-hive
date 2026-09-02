@@ -260,6 +260,14 @@ describe('wakeCommand', () => {
 
     expect(command.args.at(-1)).toContain('I watch #ops.');
   });
+
+  it('ends a task run’s argv with the task prompt (HIVE-128)', () => {
+    const args = build({ kind: 'task', trigger: 'manual', extra: 'review PR 166' }).args;
+
+    expect(args[args.length - 1]).toBe(
+      wakePrompt('manual', 'review PR 166', { task: true }),
+    );
+  });
 });
 
 describe('wakePrompt', () => {
@@ -354,6 +362,18 @@ describe('wakePrompt', () => {
     expect(wakePrompt('interval')).toContain(
       'An empty inbox does not mean there is nothing to do',
     );
+  });
+
+  it('tells a task run what it is, and what not to do (HIVE-128)', () => {
+    const prompt = wakePrompt('manual', 'review PR 166', { task: true });
+
+    expect(prompt).toContain('You woke because: manual — review PR 166.');
+    expect(prompt).toContain('This is a task run');
+    expect(prompt).toContain('do not act on your ledger inbox');
+    expect(prompt).toContain('ledger_done');
+    expect(prompt).toContain('ledger_failed');
+    expect(prompt).not.toContain('Read your ledger inbox, then carry out');
+    expect(prompt).not.toContain('ledger_handoff');
   });
 
   /*

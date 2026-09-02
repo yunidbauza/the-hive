@@ -33,6 +33,7 @@ import {
   parseList,
   readFrontmatter,
   type AgentDefinition,
+  type RunKind,
 } from '@shared/agent-contract';
 
 import { agentMcpConfig, type McpServerSpec } from '../mcp/agent-config';
@@ -145,12 +146,15 @@ export interface WakeCommandDeps {
 export type WakeInvocation = WakeCommand & {
   sessionUuid: string;
   lastTurn: boolean;
+  /** Which conversation this wake is (HIVE-128). Echoed from the request. */
+  kind: RunKind;
 };
 
 export type BuildWakeCommand = (
   name: string,
   trigger: string,
   extra?: string,
+  options?: { kind?: RunKind },
 ) => WakeInvocation | { problem: string };
 
 const describe = (cause: unknown): string =>
@@ -223,7 +227,7 @@ function parseForWake(
 export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
   const fs = deps.fs ?? REAL_FS;
 
-  return (name, trigger, extra) => {
+  return (name, trigger, extra, options) => {
     /*
       Both of these are refusals rather than a wake without the flag, and the
       reason is the same for each: the flag is not decoration.
@@ -300,8 +304,17 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       the ordinary first wake, which is already the fresh session the user was
       asking for.
     */
+    const kind: RunKind = options?.kind ?? 'standing';
+    /*
+      A task run touches none of the standing conversation's state (HIVE-128):
+      it does not resume it, does not consume a rotation the last close parked,
+      does not clear `forceRotate`, and is never a last turn. Every one of those
+      is the standing run's, and the standing run may be live right now.
+    */
+    const task = kind === 'task';
     const pending = previous.pendingSession;
     const lastTurn =
+      !task &&
       pending === undefined &&
       previous.sessionUuid !== undefined &&
       (previous.forceRotate === true ||
@@ -343,15 +356,16 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       the agent's memory gone anyway, which is strictly worse than the stale
       counter that ordering was originally written to prevent.
     */
-    if (pending !== undefined || previous.forceRotate === true) {
+    if (!task && (pending !== undefined || previous.forceRotate === true)) {
       deps.state.patch(name, {
         pendingSession: undefined,
         forceRotate: undefined,
       });
     }
 
-    const resuming = pending === undefined ? previous.sessionUuid : undefined;
-    const minted = pending?.uuid ?? deps.newUuid();
+    const resuming =
+      task || pending !== undefined ? undefined : previous.sessionUuid;
+    const minted = task ? deps.newUuid() : (pending?.uuid ?? deps.newUuid());
 
     const command = wakeCommand({
       claudePath: claude.path,
@@ -361,7 +375,8 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       trigger,
       ...(extra === undefined ? {} : { extra }),
       ...(lastTurn ? { lastTurn: true as const } : {}),
-      ...(pending === undefined ? {} : { handoff: pending.handoff }),
+      ...(task || pending === undefined ? {} : { handoff: pending.handoff }),
+      kind,
       paths: {
         settings,
         pluginDir: deps.pluginDir(),
@@ -379,6 +394,6 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
 
     // Whichever of the two `wakeCommand` actually spelled — `--resume <uuid>`
     // or `--session-id <uuid>`. The tracker matches a Stop hook against it.
-    return { ...command, sessionUuid: resuming ?? minted, lastTurn };
+    return { ...command, sessionUuid: resuming ?? minted, lastTurn, kind };
   };
 }

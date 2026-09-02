@@ -494,6 +494,63 @@ describe('the handoff wake', () => {
 });
 
 /**
+ * A task run: a fresh session for one job, never the standing conversation
+ * (HIVE-128).
+ */
+describe('a task run (HIVE-128)', () => {
+  beforeEach(() => {
+    stored['slack-watcher'] = {
+      status: 'sleeping',
+      runsSinceRotate: 9,
+      runs: [],
+      sessionUuid: 'old-uuid',
+      pendingSession: { uuid: 'rotation-uuid', handoff: 'what I know' },
+      forceRotate: true,
+    };
+  });
+
+  it('starts a fresh session and never resumes the standing one', () => {
+    const built = build()('slack-watcher', 'manual', 'review PR 166', { kind: 'task' });
+
+    expect('problem' in built).toBe(false);
+    if ('problem' in built) return;
+
+    expect(built.kind).toBe('task');
+    expect(built.args).toContain('--session-id');
+    expect(built.args[built.args.indexOf('--session-id') + 1]).toBe('minted-uuid');
+    expect(built.args).not.toContain('--resume');
+    expect(built.sessionUuid).toBe('minted-uuid');
+  });
+
+  it('leaves the pending rotation and the force flag for the standing run', () => {
+    build()('slack-watcher', 'manual', 'review PR 166', { kind: 'task' });
+
+    expect(stored['slack-watcher']?.pendingSession).toEqual({
+      uuid: 'rotation-uuid',
+      handoff: 'what I know',
+    });
+    expect(stored['slack-watcher']?.forceRotate).toBe(true);
+  });
+
+  it('is never a last turn, however many runs the counter shows', () => {
+    const built = build()('slack-watcher', 'manual', 'review PR 166', { kind: 'task' });
+
+    if ('problem' in built) throw new Error(built.problem);
+
+    expect(built.lastTurn).toBe(false);
+    expect(built.args[built.args.length - 1]).not.toContain('last turn');
+  });
+
+  it('reports standing for a wake that names no kind', () => {
+    const built = build()('slack-watcher', 'manual');
+
+    if ('problem' in built) throw new Error(built.problem);
+
+    expect(built.kind).toBe('standing');
+  });
+});
+
+/**
  * A per-agent `--mcp-config`, for a definition that names an integration
  * (HIVE-123, task 2).
  *
