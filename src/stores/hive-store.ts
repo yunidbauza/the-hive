@@ -779,7 +779,7 @@ const HELP_LINES = [
   '  answer <id> <text>         answer an open ask',
   '  spawn <project> <task>     start a new session on a project',
   '  agents                     one line per agent',
-  '  run <agent>                wake an agent now',
+  '  run <agent> [prompt]       wake an agent now, optionally saying why',
   '  pause <agent>              stop an agent waking',
   '  resume <agent>             let it wake again',
   '  kill <agent>               stop the run in progress',
@@ -2335,7 +2335,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
         if (command.kind === 'run') {
           said(
-            agents.run({ name }).then((outcome) => {
+            agents
+              .run(
+                /*
+                  An absent key rather than `extra: undefined`: the guard's
+                  closed key set counts keys, not values, and a payload naming
+                  a field it has nothing to put in it is a payload disagreeing
+                  with the contract.
+                */
+                command.prompt === undefined
+                  ? { name }
+                  : { name, extra: command.prompt },
+              )
+              .then((outcome) => {
               if (outcome.started) {
                 pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
                 return;

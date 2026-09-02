@@ -381,15 +381,65 @@ describe('parseCommand', () => {
     );
 
     /*
-      The one place `run` differs from `open`, and the reason it is asserted
-      rather than assumed: a trailing task is *ignored*, not an error. The verb
-      is `run <agent>`, so anything after the name is surplus — and refusing it
-      would teach the user that a task is nearly supported.
+      The one place `run` differs from the four beside it (HIVE-126): it takes
+      `send`'s shape, not `open`'s. The tail used to be dropped here, on the
+      reasoning that `AgentRunRequest` was `{ name }` and a task had nowhere to
+      travel. It has somewhere now.
     */
-    it('takes the agent name and ignores a trailing task', () => {
+    it('takes the rest of the line as the prompt', () => {
       expect(parseCommand('run slack-watcher check the PRs')).toEqual({
         kind: 'run',
         raw: 'run slack-watcher check the PRs',
+        target: 'slack-watcher',
+        prompt: 'check the PRs',
+      });
+    });
+
+    it('leaves the prompt off when there is nothing after the name', () => {
+      // Unlike `send`, an absent tail is not a usage error: `run <agent>` on
+      // its own is still a complete command.
+      expect(parseCommand('run slack-watcher')).toEqual({
+        kind: 'run',
+        raw: 'run slack-watcher',
+        target: 'slack-watcher',
+      });
+    });
+
+    it('normalizes the prompt exactly as send normalizes a message', () => {
+      // One `normalize` for both verbs: runs of whitespace inside a line
+      // collapse, and the trailing space goes. A prompt is prose reaching a
+      // model, so it earns no spacing rules of its own.
+      expect(parseCommand('run slack-watcher  look   at   1234 ')).toMatchObject(
+        { kind: 'run', prompt: 'look at 1234' },
+      );
+    });
+
+    it('flattens a pasted prompt to one line, unlike send', () => {
+      /*
+        `send` and `ask` keep line breaks; this one cannot. `extra` runs through
+        `assertText` at the IPC boundary — the guard `spawn.task` uses — which
+        refuses every C0 character, LF included. Flattening is what stops a
+        command parsing here and dying there.
+      */
+      expect(parseCommand('run slack-watcher check:\n  the PRs')).toMatchObject(
+        { kind: 'run', prompt: 'check: the PRs' },
+      );
+    });
+
+    it('still refuses a bare run', () => {
+      expect(parseCommand('run')).toEqual({
+        kind: 'usage',
+        raw: 'run',
+        command: 'run',
+      });
+    });
+
+    it('leaves the other four ignoring their tail', () => {
+      // Only `run` gained a second argument. Each of these means exactly one
+      // thing, so there is nothing a trailing word could add.
+      expect(parseCommand('pause slack-watcher for now')).toEqual({
+        kind: 'pause',
+        raw: 'pause slack-watcher for now',
         target: 'slack-watcher',
       });
     });
@@ -401,7 +451,7 @@ describe('parseCommand', () => {
     });
 
     it('gives the four that take a target a usage line', () => {
-      expect(USAGE.run).toBe('usage: run <agent>');
+      expect(USAGE.run).toBe('usage: run <agent> [prompt]');
       expect(USAGE.pause).toBe('usage: pause <agent>');
       expect(USAGE.resume).toBe('usage: resume <agent>');
       expect(USAGE.kill).toBe('usage: kill <agent>');

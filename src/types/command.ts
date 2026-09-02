@@ -81,19 +81,21 @@ export type ParsedCommand =
    * The first five agent verbs (HIVE-117); `rotate` below is the sixth
    * (HIVE-122).
    *
-   * `run` carries a target and **no task**, unlike every other acting verb
-   * here. That is the grammar recording a decision made in the contract rather
-   * than an oversight: `AgentRunRequest` is `{ name }` with a closed key set,
-   * so a task could only travel by widening what the renderer may make the
-   * machine execute — and `ask <agent> <message>` already reaches an agent
-   * with prose, through the ledger, where a task belongs.
+   * `run` carries a target **and an optional prompt** (HIVE-126), which makes
+   * it the one agent verb shaped like `send` rather than `open`. It used to
+   * take a bare name, and the grammar was recording a decision in the contract:
+   * `AgentRunRequest` was `{ name }` with a closed key set, so a task had
+   * nowhere to travel. HIVE-126 opened that key set for prose — the prompt
+   * reaches the agent as the tail of `You woke because: manual — …` — because
+   * a verb that silently dropped what a user typed was worse than the widening.
    *
-   * All five targeted verbs — these four, plus `rotate` below — take a bare
-   * name, so they share `open`'s shape rather than `send`'s. `agents` takes
-   * nothing at all.
+   * The other four here, and `rotate` below, still take a bare name and share
+   * `open`'s shape. The asymmetry is not an inconsistency: each of them means
+   * exactly one thing, and `run` is the only one a person can have a *reason*
+   * for. `agents` takes nothing at all.
    */
   | { kind: 'agents'; raw: string }
-  | { kind: 'run'; raw: string; target: string }
+  | { kind: 'run'; raw: string; target: string; prompt?: string }
   | { kind: 'pause'; raw: string; target: string }
   | { kind: 'resume'; raw: string; target: string }
   | { kind: 'kill'; raw: string; target: string }
@@ -129,8 +131,11 @@ export const USAGE: Record<UsageCommand, string> = {
     The word is what tells a reader that `send` is not the verb for these and
     that a session id will not do — the console's only other cue is the
     refusal they get after guessing wrong.
+
+    `run` alone takes a second argument (HIVE-126), and `[prompt]` is bracketed
+    because a bare `run <agent>` is still a whole command.
   */
-  run: 'usage: run <agent>',
+  run: 'usage: run <agent> [prompt]',
   pause: 'usage: pause <agent>',
   resume: 'usage: resume <agent>',
   kill: 'usage: kill <agent>',

@@ -251,25 +251,58 @@ export function parseCommand(raw: string): ParsedCommand {
     case 'agents':
       return { kind: 'agents', raw: input };
 
-    /*
-      `open`'s shape, not `send`'s — a bare target, and anything after it is
-      surplus rather than an error (HIVE-117).
+    /**
+     * `send`'s shape, not `open`'s (HIVE-126).
+     *
+     * The tail used to be dropped here, deliberately: `AgentRunRequest` was
+     * `{ name }` with a closed key set, so a task had nowhere to travel, and
+     * waking the agent was a better answer than refusing the line. What that
+     * reasoning cost was a verb that lied — `run pr-reviewer review PR 1234`
+     * reported success and woke an agent that had never heard of the PR — so
+     * the key set was opened for prose instead.
+     *
+     * What survives of it is the shape below: unlike `send`, an absent tail is
+     * **not** a usage error, because `run <agent>` on its own is still a whole
+     * command. Only a missing name is.
+     */
+    case 'run': {
+      const [target, tail] = takeWord(rest);
+      if (!target) return { kind: 'usage', raw: input, command: 'run' };
+      /*
+        One line, unlike `send` and `ask`.
 
-      That surplus is the one thing worth spelling out. `run <agent> <task>` is
-      what the ticket originally asked for and what a user who has read the
-      other verbs will type, and it parses here as a plain `run` with the task
-      dropped on the floor. Refusing it instead would be worse in both
-      directions: it would teach that a task is nearly supported, and it would
-      turn a request the console *can* honour — wake this agent — into nothing
-      at all. The store prints the run it started; the ledger is where prose
-      reaches an agent, through `ask`.
+        `normalize` keeps line breaks, because a message reaching a pty or the
+        log is prose that may be a list. This one is neither: it reaches
+        `wakePrompt` as the tail of `You woke because: manual — …`, through a
+        guard (`assertText`, the one `spawn.task` uses) that refuses every C0
+        character including LF. Flattening here is what keeps the grammar and
+        the boundary agreeing — the alternative is a command that parses and
+        then dies at the IPC with "control characters are not allowed".
+
+        It also states the division of labour this story is drawing: `run` says
+        *why* in a phrase, and prose that needs line breaks is what `ask` is
+        for.
+      */
+      const prompt = normalize(tail).replace(/\s*\n\s*/gu, ' ');
+      if (prompt === '') return { kind: 'run', raw: input, target };
+      return { kind: 'run', raw: input, target, prompt };
+    }
+
+    /*
+      `open`'s shape — a bare target, and anything after it is surplus rather
+      than an error (HIVE-117).
+
+      Each of these means exactly one thing, so there is nothing a trailing
+      word could add, and refusing the line would turn a request the console
+      *can* honour into nothing at all. `run` above is the one that grew a
+      second argument, because it is the only one a person can have a reason
+      for.
 
       `rotate` joined the group in HIVE-122 rather than earning a case of its
-      own: it is grammatically indistinguishable from the four beside it — an
+      own: it is grammatically indistinguishable from the three beside it — an
       agent name, and nothing the renderer may say about how — and its payload
       is the same `AgentNameRequest` theirs is.
     */
-    case 'run':
     case 'pause':
     case 'resume':
     case 'rotate':

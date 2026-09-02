@@ -571,6 +571,8 @@ describe('hive-store', () => {
         expect(text).toContain('ledger [--open]');
         expect(text).toContain('ask <session> <message>');
         expect(text).toContain('answer <id> <text>');
+        // Each verb documented against the target type it accepts (HIVE-126).
+        expect(text).toContain('run <agent> [prompt]');
       });
     });
 
@@ -1721,6 +1723,25 @@ describe('hive-store', () => {
 
           expect(bridge.run).toHaveBeenCalledWith({ name: 'slack-watcher' });
           expect(lastLine()?.text).toContain('woke slack-watcher (run-7)');
+        });
+
+        it('sends the prompt a user typed after the name (HIVE-126)', async () => {
+          run('run slack-watcher review PR 1234');
+          await Promise.resolve();
+
+          expect(bridge.run).toHaveBeenCalledWith({
+            name: 'slack-watcher',
+            extra: 'review PR 1234',
+          });
+        });
+
+        it('omits extra entirely for a bare run', async () => {
+          // An absent key, not `extra: undefined` — the guard's closed key set
+          // counts keys, and `toHaveBeenCalledWith` tells the two apart.
+          run('run slack-watcher');
+          await Promise.resolve();
+
+          expect(bridge.run).toHaveBeenCalledWith({ name: 'slack-watcher' });
         });
 
         /*
