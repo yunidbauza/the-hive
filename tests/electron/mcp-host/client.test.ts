@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { AGENTS_PATH } from '@shared/agent-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
   LEDGER_POST_PATH,
@@ -113,5 +114,58 @@ describe('createReceiverClient', () => {
     });
 
     await expect(client(fetchImpl as never).read({})).rejects.toThrow(/could not reach the Hive/i);
+  });
+});
+
+/**
+ * The peer directory (HIVE-127).
+ *
+ * A third route on the same client, sharing its timeout, its identity headers
+ * and its refusal handling — which is most of the argument for adding a method
+ * here rather than a second client.
+ */
+describe('agents()', () => {
+  const directory = {
+    agents: [
+      {
+        name: 'pr-reviewer',
+        description: 'Reviews open PRs.',
+        status: 'working',
+        accepts: ['ledger'],
+        tools: ['Read'],
+      },
+    ],
+  };
+
+  it('posts to the agents route with the identity headers and no arguments', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, directory));
+
+    await client(fetchImpl as never).agents();
+
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`http://127.0.0.1:4100${AGENTS_PATH}`);
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({
+      [HOOK_HEADER_SESSION]: 'sess-a',
+      [HOOK_HEADER_TOKEN]: 'tok-1',
+    });
+    /*
+      An empty body, not an absent one: `call` always sends JSON. There is
+      nothing to put in it — the caller is the header, which is the whole
+      reason the tool publishes no arguments.
+    */
+    expect(init.body).toBe('{}');
+  });
+
+  it('parses the directory the receiver returns', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, directory));
+
+    expect(await client(fetchImpl as never).agents()).toEqual(directory);
+  });
+
+  it("raises the receiver's own reason on a refusal", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(500, { reason: 'EACCES: permission denied' }));
+
+    await expect(client(fetchImpl as never).agents()).rejects.toThrow('EACCES: permission denied');
   });
 });

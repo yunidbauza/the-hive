@@ -1,3 +1,4 @@
+import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
   LEDGER_POST_PATH,
@@ -35,6 +36,14 @@ export class ReceiverError extends Error {
 export interface ReceiverClient {
   read(query: LedgerReadQuery): Promise<LedgerSnapshot>;
   post(request: Omit<LedgerPostRequest, 'from'>): Promise<{ id: string; ref?: string }>;
+  /**
+   * Who else is on this machine (HIVE-127).
+   *
+   * Takes nothing, for the reason the tool behind it publishes no arguments:
+   * the caller is the `x-hive-session` header this client already sends, and a
+   * parameter naming who is asking is a parameter a model can lie in.
+   */
+  agents(): Promise<AgentsDirectory>;
 }
 
 export interface ReceiverClientOptions {
@@ -116,5 +125,12 @@ export function createReceiverClient({
         body,
         ...(meta === undefined ? {} : { meta }),
       }),
+
+    /*
+      An empty body rather than none: `call` always sends JSON, and the
+      receiver never reads this one. There is nothing to send — the caller is
+      the `x-hive-session` header, and the route's body cap is zero.
+    */
+    agents: () => call<AgentsDirectory>(AGENTS_PATH, {}),
   };
 }

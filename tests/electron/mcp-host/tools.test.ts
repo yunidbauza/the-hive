@@ -10,6 +10,9 @@ const emptySnapshot: LedgerSnapshot = { entries: [], openAsks: [], claims: {} };
 const stub = (overrides: Partial<ReceiverClient> = {}): ReceiverClient => ({
   read: vi.fn(async () => emptySnapshot),
   post: vi.fn(async () => ({ id: 'id-1', ref: 'a1' })),
+  // An empty directory rather than a refusal (HIVE-127): most tests here never
+  // touch it, and "nobody else is here" is its honest resting state.
+  agents: vi.fn(async () => ({ agents: [] })),
   ...overrides,
 });
 
