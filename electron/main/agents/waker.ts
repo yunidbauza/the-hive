@@ -104,14 +104,27 @@ export function wakePrompt(
     `rotate_after: 50` a rotation wake lands about every four hours, so that
     left the original defect alive on one wake in fifty.
   */
-  if (rotation?.lastTurn === true) {
-    return `This is your last turn on this session. Carry out your instructions for this wake as usual — they are standing work whether or not anything is waiting in your inbox — then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
-  }
-
   const because =
     extra === undefined || extra === ''
       ? `You woke because: ${trigger}.`
       : `You woke because: ${trigger} — ${extra}.`;
+
+  /*
+    The reason comes first here too (HIVE-126).
+
+    This branch used to return before `extra` was ever read, which was survivable
+    while only the scheduler set it — a ledger `extra` names entries the agent
+    re-reads from the log anyway. It stopped being survivable when `run <agent>
+    <prompt>` began carrying a person's own words: `lastTurn` is computed from
+    `forceRotate` and `runsSinceRotate` alone, so on one wake in fifty — or on
+    any wake after a refused `rotate` left the flag armed — the console reported
+    a run that woke an agent which had never been told what for. Worse through
+    the queue, where `flush` clears `pendingWake` before the wake, so those words
+    have no other copy left anywhere.
+  */
+  if (rotation?.lastTurn === true) {
+    return `${because} This is your last turn on this session. Carry out your instructions for this wake as usual — they are standing work whether or not anything is waiting in your inbox — then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
+  }
 
   /*
     "Read your ledger inbox first, then do your job" left "your job" undefined

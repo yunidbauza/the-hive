@@ -279,6 +279,44 @@ describe('createScheduler', () => {
       ]);
     });
 
+    it('reports the refusal when the queue is full rather than claiming a queue', () => {
+      /*
+        `enqueue` drops the newcomer at `AGENT_PENDING_WAKE_MAX`. For a ledger
+        entry that is harmless — the log still holds it. Here it would print
+        "queued" in dim about a run that went nowhere, and a paused agent never
+        flushes, so every later run would repeat the lie.
+      */
+      state.patch(AGENT, {
+        pendingWake: Array.from({ length: AGENT_PENDING_WAKE_MAX }, (_, i) => ({
+          kind: 'ask',
+          id: `a${i}`,
+          from: 'overmind',
+        })),
+      });
+      refuse = 'paused';
+
+      const outcome = scheduler.manualWake(AGENT, 'review PR 1234');
+
+      expect(outcome).toEqual({ started: false, refused: 'paused' });
+      expect(state.read(AGENT).pendingWake).toHaveLength(AGENT_PENDING_WAKE_MAX);
+    });
+
+    it('refuses once the scheduler has stopped, rather than spawning', () => {
+      /*
+        `agents:run` awaits `mcp.start()` before reaching here, so a quit can
+        land on that await. `scheduler.stop()` runs before `runs.closeAll()`
+        precisely so nothing spawns after the tracker has finished iterating —
+        and the tracker has no shutdown flag of its own to refuse on.
+      */
+      scheduler.stop();
+
+      const outcome = scheduler.manualWake(AGENT, 'review PR 1234');
+
+      expect(outcome).toMatchObject({ started: false, refused: 'unknown' });
+      expect(woke).toEqual([]);
+      expect(state.read(AGENT).pendingWake ?? []).toEqual([]);
+    });
+
     it('does not queue a definition that cannot be read', () => {
       /*
         `route()` queues `invalid` because at boot it means `mcp.start()` is

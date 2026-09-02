@@ -200,9 +200,11 @@ export interface Scheduler {
    *
    * `wake.on: [ledger]` is deliberately **not** consulted, unlike `onEntry`.
    * That gate asks whether an agent's author wanted the *log* to wake it, and a
-   * person pressing run has answered a different question. Nor is `stopped`:
-   * this is reached from an IPC handler rather than from a callback `closeAll`
-   * re-enters, and a tracker on its way down refuses on its own account.
+   * person pressing run has answered a different question.
+   *
+   * `stopped` **is** honoured, like every other entry point — see the note on
+   * the implementation for why the tracker cannot be relied on to refuse in its
+   * place.
    */
   manualWake(name: string, extra?: string): AgentRunResult;
   /** Boot: wake anything a crash left queued, and arm the expiry sweep. */
@@ -661,16 +663,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     });
   };
 
-  const enqueue = (name: string, entry: PendingWakeEntry): void => {
+  /** Whether the entry was taken. `false` means the queue was full. */
+  const enqueue = (name: string, entry: PendingWakeEntry): boolean => {
     const queued = deps.state.read(name).pendingWake ?? [];
 
     /*
       A full queue refuses the newcomer rather than evicting the entry that has
       waited longest — the oldest is the one most at risk of being forgotten.
-      Nothing is lost by the refusal: this list exists to cause *one* wake, and
-      the agent reads its own inbox on it.
+      For a ledger entry nothing is lost by that refusal: this list exists to
+      cause *one* wake, and the agent reads its own inbox on it.
+
+      For a manual entry it is a real loss — those words exist nowhere else —
+      which is why this answers whether it took the entry rather than returning
+      void. `route()` ignores the answer, correctly: the log still holds what it
+      was carrying. {@link Scheduler.manualWake} must not, or the console would
+      print "queued" about a run that was dropped on the floor.
     */
-    if (queued.length >= AGENT_PENDING_WAKE_MAX) return;
+    if (queued.length >= AGENT_PENDING_WAKE_MAX) return false;
 
     deps.state.patch(name, {
       pendingWake: [
@@ -685,6 +694,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         },
       ],
     });
+
+    return true;
   };
 
   /**
@@ -764,6 +775,26 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     manualWake(name, extra) {
+      /*
+        Gated on `stopped` like every other entry point, and the reason is not
+        the one this comment first gave. It claimed a tracker on its way down
+        refuses on its own account — it does not: `RunTracker` holds only
+        `running`, and `closeAll` empties it, so there is no shutdown flag for
+        `run` to consult. The `agents:run` handler awaits `mcp.start()`, and a
+        quit landing on that await would otherwise resume here after
+        `closeAll` had finished iterating and spawn the orphan that
+        `scheduler.stop()` before `runs.closeAll()` exists to prevent. The
+        queue is no safer at that moment: `agentState.flush()` has already run,
+        and a `patch` after it rides a debounced timer that quit will not.
+      */
+      if (stopped) {
+        return {
+          started: false,
+          refused: 'unknown',
+          reason: 'The Hive is shutting down.',
+        };
+      }
+
       const started = deps.run(name, MANUAL_TRIGGER, extra);
 
       if (started.started) return started;
@@ -781,12 +812,24 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         return started;
       }
 
-      enqueue(name, {
+      const took = enqueue(name, {
         kind: MANUAL_KIND,
         id: 'run',
         from: OVERMIND,
         ...(extra === undefined ? {} : { text: extra }),
       });
+
+      /*
+        A full queue is reported as the refusal it is.
+
+        `enqueue` drops the newcomer when `pendingWake` is at
+        `AGENT_PENDING_WAKE_MAX`, and for a ledger entry that is harmless — the
+        log still holds it. Here it would mean printing "queued" in dim about a
+        run that went nowhere, and a *paused* agent never flushes, so every
+        later run would print the same lie. The original refusal is the honest
+        answer: the agent is working or paused, and this is one to try again.
+      */
+      if (!took) return started;
 
       return { started: false, queued: true, behind: started.refused };
     },

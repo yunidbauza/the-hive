@@ -690,8 +690,10 @@ export const CH = {
    * rather than read or write a file, which is why `BRIDGE_AGENTS_KEYS` argues
    * for each one. `run` is bounded the same way the five before it are: it
    * names an agent, never a command line, and main builds the argv from a
-   * definition it read itself. Nothing the renderer sends reaches a shell —
-   * there is no shell.
+   * definition it read itself. HIVE-126 lets it carry a prompt as well, and the
+   * bound holds — that prose lands *inside* the single positional argument, so
+   * it cannot become a flag or a path. Nothing the renderer sends reaches a
+   * shell — there is no shell.
    *
    * `kill` exists because a run that has stopped making progress is otherwise
    * unstoppable short of quitting the app: one run per agent at a time means a

@@ -273,13 +273,43 @@ describe('wakePrompt', () => {
     );
   });
 
+  it('still names the reason on a last turn (HIVE-126)', () => {
+    /*
+      This branch returned before `extra` was read. Survivable while only the
+      scheduler set it — a ledger `extra` names entries the agent re-reads from
+      the log — and not once `run <agent> <prompt>` carried a person's words:
+      `lastTurn` turns on `forceRotate`/`runsSinceRotate` alone, so one wake in
+      fifty woke an agent that was never told what for, while the console
+      reported a started run. Through the queue it is worse — `flush` clears
+      `pendingWake` before the wake, so no other copy of those words survives.
+    */
+    const prompt = wakePrompt('manual', 'review PR 1234', { lastTurn: true });
+
+    expect(prompt).toContain('You woke because: manual — review PR 1234.');
+    expect(prompt).toContain('This is your last turn on this session.');
+  });
+
   it('asks for a handoff on a last turn', () => {
     const prompt = wakePrompt('schedule', undefined, { lastTurn: true });
 
     expect(prompt).toContain('This is your last turn on this session.');
     expect(prompt).toContain('ledger_handoff');
-    // The normal instruction is replaced, not appended to.
-    expect(prompt).not.toContain('You woke because');
+    /*
+      The normal **instruction** is replaced, not appended to — that is what
+      this pins, and it still holds: the "read your ledger inbox, then carry
+      out the instructions you were given" sentence is absent here.
+
+      It used to be asserted as the absence of `You woke because`, which
+      conflated the instruction with the *reason*. HIVE-126 separated them: a
+      wake with no `extra` still says nothing beyond the trigger, and one
+      carrying a person's prompt has to name it, because `lastTurn` turns on
+      `forceRotate`/`runsSinceRotate` and would otherwise swallow the words on
+      one wake in fifty.
+    */
+    expect(prompt).not.toContain('Read your ledger inbox');
+    expect(prompt.startsWith('You woke because: schedule. This is your last turn')).toBe(
+      true,
+    );
   });
 
   it('opens a fresh session with the previous one’s handoff', () => {

@@ -1535,11 +1535,44 @@ describe('hive-store', () => {
         expect(transcript()).toContain('sessions are sent to, not asked');
       });
 
-      it('refuses a name that matches no session, the way open does', () => {
+      it('reports a miss in agent language, not session language', () => {
+        // The verb's usage line and help line both say `<agent>` now, so its
+        // runtime refusals must too — it resolves through `resolveEntityRef`
+        // with the agent verbs rather than through `resolve()`.
+        run('ask pr-reviewr hello');
+
+        expect(transcript()).toContain('no such agent: pr-reviewr');
+      });
+
+      it('flattens a multi-line message quoted into the refusal', () => {
+        /*
+          `pushOrch` writes one `TermLine` and the surface renders with
+          `convertEol: true`, so a quoted message carrying newlines would draw
+          many rows while counting once against `ORCH_LINE_CAP` — the
+          cap-evasion the command echo splits per line to avoid.
+        */
+        seedDemoFleet();
+        const id = Object.keys(useHiveStore.getState().entities)[0];
+
+        run(`ask ${id} first\nsecond`);
+
+        const refusal = useHiveStore
+          .getState()
+          .orchLines.map((l) => l.text)
+          .find((t) => t.includes('sessions are sent to, not asked'));
+
+        expect(refusal).toBeDefined();
+        expect(refusal).not.toContain('\n');
+        expect(refusal).toContain('first second');
+      });
+
+      it('refuses a name that matches nothing, the way the agent verbs do', () => {
+        // `no such session` until HIVE-126 — `ask` moved into the agent verbs'
+        // resolution when it stopped accepting sessions.
         run('ask nosuch hello');
 
         expect(lastLine()).toMatchObject({
-          text: '  no such session: nosuch',
+          text: '  no such agent: nosuch',
           color: 'red',
         });
         expect(post).not.toHaveBeenCalled();

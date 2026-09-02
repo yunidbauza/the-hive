@@ -994,6 +994,20 @@ export function agentRunQueued(
   }
 }
 
+/**
+ * A message quoted back inside a one-line suggestion (HIVE-126).
+ *
+ * `pushOrch` writes its whole argument as a **single** `TermLine`, and the
+ * surface renders with `convertEol: true` — so a quoted message carrying
+ * newlines draws as many rows while counting once against `ORCH_LINE_CAP`.
+ * That is the same cap-evasion the command echo splits per line to avoid, and
+ * `send` and `ask` both keep line breaks in a message on purpose.
+ *
+ * A cross-verb suggestion is one line by construction — it is a command to
+ * retype — so the message it quotes is flattened into it.
+ */
+const oneLine = (text: string): string => text.replace(/\s*\n\s*/gu, ' ');
+
 let spawnCounter = 0;
 
 /**
@@ -1993,7 +2007,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         const target = get().entities[match.id];
         if (target !== undefined && isAgent(target)) {
           pushOrch(
-            `  agents are asked, not sent: try ask ${match.label} ${command.message}`,
+            `  agents are asked, not sent: try ask ${match.label} ${oneLine(command.message)}`,
             'red',
           );
           return;
@@ -2045,8 +2059,32 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           pushOrch(`  ${LEDGER_REQUIRES_DESKTOP}`, 'red');
           return;
         }
-        const match = resolve(command.target);
-        if (match === null) return;
+        /*
+          Resolved through `resolveEntityRef` and worded here, as the agent
+          verbs are — not through `resolve()`, whose sentences are a session's
+          (HIVE-126).
+
+          `ask` used to belong to `resolve()`'s group, and correctly: it took a
+          session. Now that it takes an agent, a miss reported as "no such
+          session" would name the target type this very story just changed its
+          usage line away from. The *resolution* stays the shared one for the
+          reason the agent verbs give: every verb matches case-insensitively and
+          by label, and one that alone demanded the exact key would refuse
+          `SLACK-WATCHER` on a screen where `open SLACK-WATCHER` works.
+        */
+        const match = resolveEntityRef(command.target, get().entities);
+
+        if (match.kind === 'none') {
+          pushOrch(`  no such agent: ${command.target}`, 'red');
+          return;
+        }
+        if (match.kind === 'ambiguous') {
+          pushOrch(
+            `  ${command.target} matches ${match.labels.join(', ')} — use an agent name`,
+            'red',
+          );
+          return;
+        }
 
         /**
          * Agents only, and the mirror of `send`'s refusal (HIVE-126).
@@ -2071,8 +2109,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
          */
         const entity = get().entities[match.id];
         if (entity === undefined || !isAgent(entity)) {
+          const label = entity === undefined ? command.target : entityLabel(entity);
           pushOrch(
-            `  sessions are sent to, not asked: try send ${match.label} ${command.message}`,
+            `  sessions are sent to, not asked: try send ${label} ${oneLine(command.message)}`,
             'red',
           );
           return;
@@ -2088,7 +2127,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
               return;
             }
             const handle = outcome.ref ?? outcome.id;
-            pushOrch(`  asked ${match.label} (${handle})`, 'dim');
+            pushOrch(`  asked ${entityLabel(entity)} (${handle})`, 'dim');
           });
         return;
       }
