@@ -321,7 +321,11 @@ touches `runsSinceRotate`, `pendingSession` or `sessionUuid`; the row stays
 `working` until the last run closes, and only that close computes the resting
 status — from the closing run **and** from any ask the agent still has open,
 because a sibling that closed while this one was live left its question behind,
-and a resting status must never hide it. `kill` stops every run under the name. The scheduler's flush, for an
+and a resting status must never hide it. A task close also touches neither
+`lastRunAt` — the `onchange` watermark and the rail's "last used" — nor
+`skipsSinceRun`, because a task run reads no inbox and is not a scheduled wake:
+moving either would hide an ask that arrived before the close, or erase the skip
+signal HIVE-121 exists to show. `kill` stops every run under the name. The scheduler's flush, for an
 agent above the cap of 1, offers each queued job as its own run after the one
 standing wake, and puts back whatever the cap refuses.
 
@@ -334,8 +338,19 @@ idle — free to be woken again on top of its own unanswered question.
 The status push carries `live: LiveRunSummary[]`. The run log draws each as a
 row in the receipt columns — `●` standing, `○` task, `running`, `Took` counting
 up, the prompt on the reason line — and groups its output by `RunLine.run`,
-because three processes write into one buffer. The rail and the fleet say
-`working ·3`.
+because three processes write into one buffer. `Turns` reads `—` on a live row
+rather than `0`: the fold marks a turn only at the CLI's `result` event, so the
+count is not knowable until the receipt. The rail and the fleet say `working ·3`.
+
+**Two limits worth knowing.** A permission ask a task run posts is answered into
+the **standing** conversation: the answer wakes the standing run carrying the
+one-shot grant, and the task's job is not resumed. The standing run can find the
+thread and the task's `run.started` — with its `extra`, the prompt — in the
+ledger, and may redo the job itself or hand it back out. And
+`scheduler.onEntry` queues a ledger ask whenever the agent's status is
+`working`, which it is while *any* run is live — so an ask arriving while only
+task runs are in flight waits for the next close, which flushes it. Both are
+follow-ups, not the shape the design settled on.
 
 ### Time passed (HIVE-121)
 

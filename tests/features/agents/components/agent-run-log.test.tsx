@@ -635,6 +635,35 @@ describe('AgentRunLog', () => {
       expect(screen.queryByText(/Running now/)).toBeNull();
     });
 
+    /*
+      `Turns` is not knowable while a run is open, so the row must not claim a
+      number for it.
+
+      `endsTurn` is written once per run — by the fold at the CLI's `result`
+      event — so a count of this run's folds is zero for the whole life of the
+      run, and a cell reading `0` says "nothing has happened" in a row whose
+      only job is to say something is. The same em dash `Cost` uses.
+    */
+    it('reads — for a live run’s turns, not a number it cannot know', () => {
+      seed({ status: 'working', live: [standing()] });
+
+      const { container } = render(<AgentRunLog name="watcher" />);
+
+      const row = container.querySelector(
+        '[data-live-run="standing"]',
+      ) as HTMLElement;
+      const cells = [...(row.firstElementChild?.children ?? [])].map(
+        (cell) => cell.textContent,
+      );
+
+      // Seven cells: id, trigger, started, outcome, turns, took, cost.
+      expect(cells).toHaveLength(7);
+      // Turns and cost both unknown; only `Took` carries a number.
+      expect(cells[4]).toBe('—');
+      expect(cells[6]).toBe('—');
+      expect(cells[5]).toMatch(/^\d+s$/);
+    });
+
     it('puts the task’s prompt under its row, where a failure reason goes', () => {
       seed({ status: 'working', live: [task(1, 'review PR 166 for correctness')] });
 
@@ -716,6 +745,30 @@ describe('AgentRunLog', () => {
       expect(text.indexOf('fresh line')).toBeLessThan(
         text.indexOf('old untagged line'),
       );
+    });
+
+    /*
+      The autoscroll follows whoever is talking, and with several runs live
+      that is not whoever sorts first.
+
+      The anchor used to sit in group 0, which is the standing run because
+      `inFlight` puts it there — so a chatty task run scrolled nothing at all,
+      and the reader watching the job they just started watched an anchor
+      pinned to an idle conversation. The buffer's own tail names the run
+      currently writing, and that is the group the anchor belongs to.
+    */
+    it('anchors the autoscroll in the group that wrote the newest line', () => {
+      seed({ status: 'working', live: [standing(), task(1, 'review PR 166')] });
+      lines(['standing line'], 'live-standing');
+      lines(['task line'], 'live-task-1');
+
+      render(<AgentRunLog name="watcher" />);
+
+      const group = screen.getByTestId('run-foot').parentElement
+        ?.parentElement as HTMLElement;
+
+      expect(group.textContent).toContain('task line');
+      expect(group.textContent).not.toContain('standing line');
     });
 
     /*

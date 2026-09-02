@@ -1266,6 +1266,44 @@ describe('createRunTracker', () => {
       expect(after.status).toBe('sleeping');
     });
 
+    /*
+      The two signals a task run must not touch, and both are read by someone
+      else entirely.
+
+      `lastRunAt` is the scheduler's `check: onchange` watermark — an entry
+      older than it has already been seen — and a task run never reads the
+      inbox, so moving it would hide an ask that arrived before the task
+      closed. `skipsSinceRun` is HIVE-121's "this agent keeps missing its
+      window", and a job handed over by hand is not the scheduled wake that
+      would disprove it.
+    */
+    it('moves neither the onchange watermark nor the skip count for a task run', () => {
+      parallel = 3;
+      state.patch('a', { skipsSinceRun: 3, lastRunAt: 500 });
+
+      tracker.run('a', 'manual', 'review PR 1', { job: true });
+
+      expect(state.read('a').skipsSinceRun).toBe(3);
+
+      finish(0);
+
+      expect(state.read('a').lastRunAt).toBe(500);
+      expect(state.read('a').skipsSinceRun).toBe(3);
+    });
+
+    it('moves both of them for a standing run', () => {
+      parallel = 3;
+      state.patch('a', { skipsSinceRun: 3, lastRunAt: 500 });
+
+      tracker.run('a', 'ledger');
+
+      expect(state.read('a').skipsSinceRun).toBe(0);
+
+      finish(0);
+
+      expect(state.read('a').lastRunAt).not.toBe(500);
+    });
+
     it('records the kind on a standing run too', () => {
       tracker.run('a', 'ledger');
       finish(0);

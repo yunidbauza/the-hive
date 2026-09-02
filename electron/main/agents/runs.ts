@@ -597,7 +597,14 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
             : outcome === 'asking' || asking || deps.hasOpenAsk(name)
               ? 'asking'
               : 'sleeping',
-      lastRunAt: endedAt,
+      /*
+        `lastRunAt` is the **standing** conversation's last run — the `onchange`
+        watermark the scheduler compares a ledger entry's timestamp against, and
+        the reference the Next tile reads. A task run reads no inbox, so moving
+        it on a task close would hide an ask that arrived before that close:
+        the entry would sit behind a watermark no wake ever looked past.
+      */
+      ...(standing ? { lastRunAt: endedAt } : {}),
       /*
         A rotation zeroes the counter instead of advancing it — the run that
         just closed belongs to the session being left behind. A run that never
@@ -860,16 +867,25 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       // `deps.command` runs arbitrary composition code in between.
       running.set(name, [...liveOf(name), started]);
       /*
-        The skip count is cleared here — at the one door every trigger passes
-        through — rather than in the scheduler's tick (HIVE-121). A manual run
-        or a ledger wake is just as good a proof that the agent is alive as a
-        scheduled one, and `skipped 3` beside a `Next` tile whose agent has
-        since run twice is a number contradicting the tile it sits in.
+        The skip count is cleared here — at the one door every *standing*
+        trigger passes through — rather than in the scheduler's tick (HIVE-121).
+        A manual run or a ledger wake is just as good a proof that the agent is
+        alive as a scheduled one, and `skipped 3` beside a `Next` tile whose
+        agent has since run twice is a number contradicting the tile it sits in.
+
+        A **task** run is not a scheduled wake at all (HIVE-128): it is one job,
+        started by hand, that never looks at the conversation. Clearing the count
+        from there would erase the very signal HIVE-121 exists to show — an agent
+        whose scheduled wakes keep being skipped, while its owner keeps handing
+        it tasks.
 
         Below the `paused` and unbuildable-command refusals above, so a wake
         that never happened does not clear a count that is still true.
       */
-      deps.state.patch(name, { status: 'working', skipsSinceRun: 0 });
+      deps.state.patch(name, {
+        status: 'working',
+        ...(kind === 'standing' ? { skipsSinceRun: 0 } : {}),
+      });
       deps.pushStatus(name);
 
       /*

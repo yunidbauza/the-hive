@@ -38,7 +38,9 @@ const RECEIPTS_MAX = '40%';
  * a full `randomUUID` is 36 characters — wider than every other column put
  * together — and the first eight already tell two runs apart, which is the
  * judgement `Fact label="Session"` in `agent-view.tsx` reached for the
- * conversation uuid. `#` plus eight is nine, so ten holds it with room.
+ * conversation uuid. `#` plus eight is nine, and {@link LiveRow} prepends a kind
+ * glyph — `●` or `○`, which most faces render wider than the `1ch` a digit
+ * measures — so the track is eleven: nine, the glyph, and room.
  *
  * There is **no flexible track**, and the reason is not a column at all — it
  * gets its own line under the row it belongs to, drawn only when there is one.
@@ -64,7 +66,7 @@ const RECEIPTS_MAX = '40%';
  * 37-character failure reason at the smallest pairing — which has its `title`.
  */
 const RECEIPT_GRID =
-  'grid items-baseline gap-x-3 [grid-template-columns:10ch_9ch_9ch_8ch_5ch_5ch_7ch]';
+  'grid items-baseline gap-x-3 [grid-template-columns:11ch_9ch_9ch_8ch_5ch_5ch_7ch]';
 
 interface AgentRunLogProps {
   name: string;
@@ -215,6 +217,25 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
   const receipts = runs.slice().reverse();
   const groups = groupsOf(lines, inFlight, receipts);
 
+  /*
+    Which group the autoscroll anchor belongs to: the one that wrote the newest
+    line in the buffer.
+
+    It used to be group 0, and that was wrong in both directions. Group 0 is the
+    live standing run — `inFlight` sorts standing first — so a chatty task run
+    scrolled nothing at all, and the reader watching the job they just started
+    watched the anchor chase a conversation that was idle. And before a live run
+    has written its first line it has no group, so group 0 is then the newest
+    *finished* run, which is history and cannot move.
+
+    The buffer's own tail is the one thing that always names the run currently
+    talking. Group 0 stays the fallback for a tag no group carries — the
+    untagged bucket, whose lines predate the tag.
+  */
+  const lastRun = lines[lines.length - 1]?.run ?? '';
+  const talking = groups.findIndex((group) => group.key === lastRun);
+  const anchored = talking === -1 ? 0 : talking;
+
   /**
    * Whether the reader is still watching the live turn.
    *
@@ -331,7 +352,6 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
               key={run.run}
               run={run}
               now={now}
-              turns={turnsFor(lines, run.run)}
               dim={palette.dim}
               brand={palette.blue}
               green={palette.green}
@@ -457,13 +477,14 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
                   {/*
                     The anchor the live autoscroll chases, at the end of the
                     newest turn's lines — which is where the newest line is.
-                    Only on the first group's newest turn: that group is the
-                    standing run, or the newest task, which is the one thing a
-                    reader watching a live log is watching. A finished log has
+                    Only on the newest turn of the group that wrote that line
+                    (see `anchored`): with several runs writing into one buffer,
+                    the group being followed has to be the one currently
+                    talking, not whichever sorts first. A finished log has
                     nothing to follow and mounts no anchor at all.
                   */}
-                  {live && groupIndex === 0 && turnIndex === 0 ? (
-                    <div ref={foot} />
+                  {live && groupIndex === anchored && turnIndex === 0 ? (
+                    <div ref={foot} data-testid="run-foot" />
                   ) : null}
                 </div>
               ))}
@@ -523,12 +544,6 @@ interface OutputGroup {
   /** `null` for the untagged group, which has no run to name. */
   label: string | null;
   turns: TermLine[][];
-}
-
-/** How many turns a run has closed — the `endsTurn` folds carrying its tag. */
-function turnsFor(lines: readonly TermLine[], run: string): number {
-  return lines.filter((line) => line.run === run && line.endsTurn === true)
-    .length;
 }
 
 /**
@@ -601,8 +616,6 @@ function groupsOf(
 interface LiveRowProps {
   run: LiveRunSummary;
   now: number;
-  /** Turns this run has closed so far — its `endsTurn` folds. */
-  turns: number;
   dim: string;
   brand: string;
   green: string;
@@ -614,15 +627,24 @@ interface LiveRowProps {
  *
  * The same seven cells as {@link RunHeader}, so the eye reads one table: what
  * is not known yet reads `—`, `Took` counts up, and the outcome is the one word
- * a live run can honestly claim. The kind is a glyph before the id — filled for
- * the standing conversation, hollow for a task — with the word in the `title`,
- * because a glyph nobody can hover is a glyph nobody can read. A task's prompt
- * takes the reason line beneath, which is the one flexible track the grid has.
+ * a live run can honestly claim.
+ *
+ * **`Turns` and `Cost` are both in that first category**, and turns only looks
+ * as though it should not be. `endsTurn` is written once per run, by
+ * `run-log.ts`, on the CLI's final `result` event — the fold that closes the
+ * whole run — so counting the folds carrying this run's tag can only ever
+ * return zero while the run is open. A cell that always reads `0` is not a
+ * count, it is a claim that nothing has happened, in a row whose whole purpose
+ * is to say something is. The settled number arrives with the receipt.
+ *
+ * The kind is a glyph before the id — filled for the standing conversation,
+ * hollow for a task — with the word in the `title`, because a glyph nobody can
+ * hover is a glyph nobody can read. A task's prompt takes the reason line
+ * beneath, which is the one flexible track the grid has.
  */
 function LiveRow({
   run,
   now,
-  turns,
   dim,
   brand,
   green,
@@ -659,7 +681,8 @@ function LiveRow({
         <span className="truncate" style={{ color: green }}>
           running
         </span>
-        <span className="truncate text-right tabular-nums">{turns}</span>
+        {/* A turn count a run cannot know until it ends — see the docblock. */}
+        <span className="truncate text-right tabular-nums">—</span>
         <span className="truncate text-right tabular-nums">{`${String(seconds)}s`}</span>
         {/* A cost a run cannot know until it ends — the same em dash a receipt uses. */}
         <span className="truncate text-right tabular-nums">—</span>
@@ -670,7 +693,7 @@ function LiveRow({
         The standing run has none — it was not asked anything, it simply woke.
       */}
       {run.extra === undefined ? null : (
-        <p className="pl-[10ch] break-words whitespace-pre-wrap" title={run.extra}>
+        <p className="pl-[11ch] break-words whitespace-pre-wrap" title={run.extra}>
           {run.extra}
         </p>
       )}
@@ -758,7 +781,7 @@ function RunHeader({ run, dim, brand, first }: RunHeaderProps) {
         row no height and the table no width.
       */}
       {run.reason === undefined ? null : (
-        <p className="pl-[10ch] break-words whitespace-pre-wrap">{run.reason}</p>
+        <p className="pl-[11ch] break-words whitespace-pre-wrap">{run.reason}</p>
       )}
     </div>
   );
