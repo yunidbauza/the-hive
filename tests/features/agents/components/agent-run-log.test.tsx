@@ -7,6 +7,7 @@ import {
   type LiveRunSummary,
   type RunSummary,
 } from '@shared/agent-contract';
+import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 
 /**
@@ -101,6 +102,73 @@ describe('AgentRunLog', () => {
     render(<AgentRunLog name="watcher" />);
 
     expect(screen.getByText(/Nothing yet/)).toBeInTheDocument();
+  });
+
+  /**
+   * The seam between the receipts and the output moves, the same way the
+   * overmind's does. happy-dom lays nothing out, so what is pinned is the
+   * mechanism: the receipts' basis follows the store, the divider is mounted
+   * only when there are receipts to divide from, and a double-click puts the
+   * 40% back.
+   */
+  describe('the divider between the halves', () => {
+    const divider = () => screen.queryByRole('slider', { name: 'Resize the run receipts' });
+
+    beforeEach(() => {
+      useAppearanceStore.getState().reset();
+    });
+
+    it('gives the receipts 40% by default, capped at their content', () => {
+      seed({ runs: [run(1), run(2)] });
+
+      render(<AgentRunLog name="watcher" />);
+
+      const receipts = screen.getByTestId('run-receipts');
+      expect(receipts).toHaveStyle({ flex: '0 1 40%' });
+      // The share is a cap, not a size — two receipts are two rows tall — and
+      // `min-h-0` is what lets fifty of them shrink to the share and scroll.
+      expect(receipts).toHaveClass('max-h-max', 'min-h-0');
+      expect(divider()).toBeInTheDocument();
+    });
+
+    it('follows the stored ratio', () => {
+      seed({ runs: [run(1)] });
+
+      render(<AgentRunLog name="watcher" />);
+      act(() => useAppearanceStore.getState().setRunLogSplitRatio(0.6));
+
+      expect(screen.getByTestId('run-receipts')).toHaveStyle({ flex: '0 1 60%' });
+      expect(divider()).toHaveAttribute('aria-valuenow', '60');
+    });
+
+    it('puts the default back on double-click', () => {
+      seed({ runs: [run(1)] });
+
+      render(<AgentRunLog name="watcher" />);
+      act(() => useAppearanceStore.getState().setRunLogSplitRatio(0.7));
+
+      fireEvent.dblClick(divider()!);
+
+      expect(useAppearanceStore.getState().runLogSplitRatio).toBe(0.4);
+    });
+
+    it('mounts no divider when there is nothing to divide from', () => {
+      // No receipts, nothing live: the log is one empty-state line.
+      seed();
+
+      render(<AgentRunLog name="watcher" />);
+
+      expect(divider()).toBeNull();
+      expect(screen.getByText(/Nothing yet/)).toBeInTheDocument();
+    });
+
+    it('mounts the divider for a live run with no receipts yet', () => {
+      seed({ live: [standing()] });
+
+      render(<AgentRunLog name="watcher" />);
+
+      expect(divider()).toBeInTheDocument();
+    });
   });
 
   describe('the two regions', () => {

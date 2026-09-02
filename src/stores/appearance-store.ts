@@ -170,6 +170,17 @@ interface AppearanceState {
    * is the one to give way unasked.
    */
   consoleSplitRatio: number;
+  /**
+   * The receipts' share of an agent's run log, 0.2–0.8.
+   *
+   * The third divider, same arrangement as the two above. It was a fixed 40%
+   * ceiling on the receipts for as long as the log existed, and 0.4 stays the
+   * default because the rule behind it still holds — the output is prose of
+   * unknown length and should open as the larger half. What changed is that a
+   * reader hunting through fifty receipts can now pull the seam down instead
+   * of scrolling a box eight rows tall.
+   */
+  runLogSplitRatio: number;
   editorNav: EditorNav;
   /**
    * Whether the editor accepts keystrokes and offers a save. **On by default.**
@@ -247,6 +258,7 @@ interface AppearanceState {
   setEditorSplitAxis: (axis: EditorSplitAxis) => void;
   setEditorSplitRatio: (ratio: number) => void;
   setConsoleSplitRatio: (ratio: number) => void;
+  setRunLogSplitRatio: (ratio: number) => void;
   setEditorNav: (nav: EditorNav) => void;
   setEditorEditable: (editable: boolean) => void;
   setEditorFont: (font: TerminalFontId) => void;
@@ -571,6 +583,7 @@ const initialAppearanceState = {
   editorSplitAxis: 'vertical' as EditorSplitAxis,
   editorSplitRatio: 0.5,
   consoleSplitRatio: 0.5,
+  runLogSplitRatio: 0.4,
   editorNav: 'tabs' as EditorNav,
   editorEditable: true,
   editorFont: DEFAULT_TERMINAL_FONT,
@@ -599,6 +612,7 @@ interface PersistedAppearanceState {
   editorSplitAxis: EditorSplitAxis;
   editorSplitRatio: number;
   consoleSplitRatio: number;
+  runLogSplitRatio: number;
   editorNav: EditorNav;
   editorEditable: boolean;
   editorFont: TerminalFontId;
@@ -860,6 +874,8 @@ export const useAppearanceStore = create<AppearanceState>()(
       /** The same clamp, for the same reason: the value arrives from a drag. */
       setConsoleSplitRatio: (ratio) =>
         set({ consoleSplitRatio: clampSplitRatio(ratio) }),
+      setRunLogSplitRatio: (ratio) =>
+        set({ runLogSplitRatio: clampSplitRatio(ratio) }),
       setEditorNav: (editorNav) => set({ editorNav }),
       setEditorEditable: (editorEditable) => set({ editorEditable }),
       setEditorFont: (editorFont) => set({ editorFont }),
@@ -947,6 +963,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         editorSplitAxis: state.editorSplitAxis,
         editorSplitRatio: state.editorSplitRatio,
         consoleSplitRatio: state.consoleSplitRatio,
+        runLogSplitRatio: state.runLogSplitRatio,
         editorNav: state.editorNav,
         editorEditable: state.editorEditable,
         editorFont: state.editorFont,
@@ -1223,6 +1240,13 @@ export const useConsoleSplitRatio = () =>
 
 export const useSetConsoleSplitRatio = () =>
   useAppearanceStore((state) => state.setConsoleSplitRatio);
+
+/** The receipts' share of an agent's run log, and its setter — the third divider. */
+export const useRunLogSplitRatio = () =>
+  useAppearanceStore((state) => state.runLogSplitRatio);
+
+export const useSetRunLogSplitRatio = () =>
+  useAppearanceStore((state) => state.setRunLogSplitRatio);
 
 /**
  * The stored rail widths, their collapse flags, and the density they are

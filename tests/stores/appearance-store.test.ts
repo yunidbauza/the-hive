@@ -469,6 +469,7 @@ describe('appearance-store — persistence', () => {
       editorSplitAxis: 'vertical',
       editorSplitRatio: 0.5,
       consoleSplitRatio: 0.5,
+      runLogSplitRatio: 0.4,
       editorNav: 'tabs',
       editorEditable: true,
       editorFont: 'system',
@@ -651,6 +652,29 @@ describe('appearance-store — the editor', () => {
     expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.3);
     // Its own field: dragging one divider must not move the other.
     expect(useAppearanceStore.getState().editorSplitRatio).toBe(0.5);
+  });
+
+  /**
+   * The run log's divider: 40% by default, which is the ceiling the receipts
+   * had before the seam could move, through the same clamp as the other two.
+   */
+  it('holds the run-log split at 40% by default and clamps it like the others', () => {
+    expect(useAppearanceStore.getState().runLogSplitRatio).toBe(0.4);
+
+    const store = useAppearanceStore.getState();
+
+    store.setRunLogSplitRatio(0.01);
+    expect(useAppearanceStore.getState().runLogSplitRatio).toBe(0.2);
+
+    store.setRunLogSplitRatio(0.99);
+    expect(useAppearanceStore.getState().runLogSplitRatio).toBe(0.8);
+
+    store.setRunLogSplitRatio(Number.NaN);
+    expect(useAppearanceStore.getState().runLogSplitRatio).toBe(0.5);
+
+    store.setRunLogSplitRatio(0.6);
+    expect(useAppearanceStore.getState().runLogSplitRatio).toBe(0.6);
+    expect(useAppearanceStore.getState().consoleSplitRatio).toBe(0.5);
   });
 
   it('puts every editor preference back on reset', () => {

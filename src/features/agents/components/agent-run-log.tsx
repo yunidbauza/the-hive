@@ -3,29 +3,37 @@ import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { TermLine } from '@/types/terminal';
 
+import { SplitHandle } from '@components/ui/split-handle';
 import type { LiveRunSummary, RunSummary } from '@shared/agent-contract';
 import { formatRunCost } from '@shared/agent-contract';
-import { useTerminalAppearance } from '@stores/appearance-store';
+import {
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_RATIO,
+  useRunLogSplitRatio,
+  useSetRunLogSplitRatio,
+  useTerminalAppearance,
+} from '@stores/appearance-store';
 import { useAgentLines, useAgentLive, useAgentRuns } from '@stores/hive-store';
 
 /**
- * The ceiling on the receipts half, as a share of the log's height.
+ * Where a double-click on the divider puts the receipts back: the 40% they
+ * were fixed at before the seam could move. Also the store's default, and
+ * stated here so the reset and the default cannot drift apart.
  *
- * A percentage rather than a row count: this component's type scale is the
- * user's terminal one (10px to 18px), so "eight rows" is anywhere from 110px to
- * 200px of a box whose own height depends on two draggable rails. A share keeps
- * the same *proportion* at every size, which is what the rule is actually
- * about — the output must never be the smaller half.
+ * A share rather than a row count: this component's type scale is the user's
+ * terminal one (10px to 18px), so "eight rows" is anywhere from 110px to 200px
+ * of a box whose own height depends on two draggable rails. A share keeps the
+ * same *proportion* at every size, which is what the rule is actually about —
+ * the output opens as the larger half.
  */
-const RECEIPTS_MAX = '40%';
+const RUN_LOG_SPLIT_DEFAULT = 0.4;
 
 /**
  * The receipts' column track, shared by the header row and every receipt.
  *
  * **One constant, used twice, because a heading that can drift from its column
  * is worse than no heading.** Written as a string rather than duplicated
- * Tailwind classes for the same reason `RECEIPTS_MAX` is a constant: the two
- * consumers are forty lines apart.
+ * Tailwind classes because the two consumers are forty lines apart.
  *
  * Widths are in `ch`, which is the right unit here and nowhere else in the app:
  * this component renders at the user's *terminal* type scale (10px to 18px), so
@@ -173,10 +181,22 @@ interface AgentRunLogProps {
  * dragged the receipts away with it.
  *
  * So each half scrolls itself. The receipts take their natural height up to
- * {@link RECEIPTS_MAX}, then scroll in place; the output takes everything left
- * and is the half that grows. That split is the right way round because the
- * receipts are a fixed-height ledger of one line each and the output is prose
- * of unknown length — the elastic content gets the elastic space.
+ * their share of the log — `runLogSplitRatio`, 40% until the reader moves the
+ * divider between the two — then scroll in place; the output takes everything
+ * left and is the half that grows. That split is the right way round because
+ * the receipts are a fixed-height ledger of one line each and the output is
+ * prose of unknown length — the elastic content gets the elastic space.
+ *
+ * The seam is the same `SplitHandle` the overmind puts between its fleet table
+ * and its transcript, wired the same way: the receipts carry
+ * `flex: 0 1 <ratio>%` capped at their content with `max-h-max`, so a log with
+ * three receipts is three rows tall and one with fifty stops at the share and
+ * scrolls. The ratio is measured against an inner box rather than the padded
+ * root, because a percentage basis resolves against the content box and the
+ * pointer's share has to be of the same box or the seam lags the cursor by the
+ * padding. There are no pixel floors here as there are on the overmind — both
+ * halves are text, and the store's `0.2–0.8` is bound enough for a box that
+ * is never shorter than the agent view's facts strip leaves it.
  *
  * Both halves read **newest first**, which is what makes the split safe. `runs`
  * is oldest-first and capped at `AGENT_RUN_HISTORY`, so a full history in a box
@@ -194,6 +214,11 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
   const { palette, fontFamily, fontSize } = useTerminalAppearance();
   const foot = useRef<HTMLDivElement>(null);
   const output = useRef<HTMLDivElement>(null);
+
+  /** The box the two halves divide — the divider measures its ratio against it. */
+  const halves = useRef<HTMLDivElement>(null);
+  const split = useRunLogSplitRatio();
+  const setSplit = useSetRunLogSplitRatio();
 
   /*
     Liveness is the list, not the status word.
@@ -315,13 +340,16 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
     if (live && following.current) foot.current?.scrollIntoView({ block: 'nearest' });
   }, [lines, live]);
 
+  const hasReceipts = receipts.length > 0 || live;
+
   return (
     <div
       className="flex min-h-0 flex-col rounded-lg bg-term-bg p-2.5"
       style={{ fontFamily, fontSize }}
       data-region="run-log"
     >
-      {receipts.length === 0 && !live ? null : (
+    <div ref={halves} className="flex min-h-0 flex-1 flex-col">
+      {!hasReceipts ? null : (
         /*
           **One scroll container, one font size**, and both are load-bearing.
 
@@ -341,8 +369,14 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
           set their own.
         */
         <div
-          className="shrink-0 overflow-auto text-[0.9em]"
-          style={{ maxHeight: RECEIPTS_MAX }}
+          /*
+            `min-h-0` so the share can be smaller than the fleet of receipts,
+            `max-h-max` so it is never larger than the receipts there are —
+            the same pair the overmind's fleet pane carries, for the same
+            reasons (see `fleet-pane.tsx`).
+          */
+          className="min-h-0 max-h-max overflow-auto text-[0.9em]"
+          style={{ flex: `0 1 ${split * 100}%` }}
           data-region="run-receipts"
           data-testid="run-receipts"
         >
@@ -417,6 +451,25 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
       )}
 
       {/*
+        Between the receipts and whatever follows them — the `Latest output`
+        heading on a finished log, the output itself on a live one. Only when
+        there are receipts to divide from: a log that is one empty-state line
+        has nothing on either side of a seam.
+      */}
+      {!hasReceipts ? null : (
+        <SplitHandle
+          axis="horizontal"
+          containerRef={halves}
+          label="Resize the run receipts"
+          value={split}
+          onValue={setSplit}
+          min={MIN_SPLIT_RATIO}
+          max={MAX_SPLIT_RATIO}
+          onReset={() => setSplit(RUN_LOG_SPLIT_DEFAULT)}
+        />
+      )}
+
+      {/*
         The heading sits outside the scroll box for the same reason the column
         header does: the output can be scrolled without losing the label that
         says what it is.
@@ -426,8 +479,12 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
         single run that this has not been for a while.
       */}
       {!live && receipts.length > 0 && groups.length > 0 ? (
+        /*
+          No `border-t` of its own any more: the divider above it is the rule
+          now, and a hairline under a hairline read as a 2px seam.
+        */
         <p
-          className="shrink-0 border-t border-border-soft pt-1.5 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
+          className="shrink-0 pt-1.5 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
           style={{ color: palette.dim }}
         >
           Latest output
@@ -530,6 +587,7 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
           ))
         )}
       </div>
+    </div>
     </div>
   );
 }
