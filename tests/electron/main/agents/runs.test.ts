@@ -100,7 +100,7 @@ describe('createRunTracker', () => {
   it('spawns the command it was given and reports the run started', () => {
     const start = tracker.run('a', 'ledger');
 
-    expect(start).toEqual({ started: true, run: 'run-1' });
+    expect(start).toEqual({ started: true, run: 'run-1', kind: 'standing' });
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.file).toBe('/opt/bin/claude');
     expect(spawnCalls[0]?.options).toMatchObject({ cwd: '/tmp/work' });

@@ -289,6 +289,11 @@ export const HOOK_HEADER_TOKEN = 'x-hive-token';
 /** The environment variable each session's pty carries its Hive id in. */
 export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 
+/** The run a headless agent process belongs to (HIVE-128). */
+export const HOOK_ENV_RUN = 'HIVE_RUN_ID';
+/** `standing` or `task` — `RunKind` in `agent-contract.ts` (HIVE-128). */
+export const HOOK_ENV_RUN_KIND = 'HIVE_RUN_KIND';
+
 /**
  * The environment variable carrying a session's grants, as a JSON array of
  * rule strings the `approve` tool matches calls against (HIVE-119).

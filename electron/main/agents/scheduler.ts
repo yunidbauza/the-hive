@@ -1,6 +1,7 @@
 import {
   AGENT_PENDING_WAKE_MAX,
   dayKey,
+  isQueueableRefusal,
   type AgentRunResult,
   type AgentRunState,
   type PendingWakeEntry,
@@ -800,15 +801,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (started.started) return started;
 
       /*
-        Only the two refusals that end on their own.
+        Only the refusals that end on their own — {@link QUEUEABLE_REFUSALS},
+        the one list every reader of this rule shares (HIVE-128).
 
-        A run in flight closes and a pause gets lifted, and `flush` is already
-        wired to both moments. `invalid` is a definition the user has to go and
-        fix — `route()` queues it because at boot it means `mcp.start()` has not
-        finished, which the `agents:run` handler awaits before reaching here —
-        so queueing it would be a promise nothing is going to keep.
+        A run in flight closes, a pause gets lifted, and a task run frees a
+        slot — and `flush` is already wired to the first two. `invalid` is a
+        definition the user has to go and fix — `route()` queues it because at
+        boot it means `mcp.start()` has not finished, which the `agents:run`
+        handler awaits before reaching here — so queueing it would be a promise
+        nothing is going to keep.
       */
-      if (started.refused !== 'working' && started.refused !== 'paused') {
+      if (!isQueueableRefusal(started.refused)) {
         return started;
       }
 

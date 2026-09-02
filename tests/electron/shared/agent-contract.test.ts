@@ -9,6 +9,7 @@ import {
   AGENT_PARENT_KEYS,
   AGENT_PENDING_WAKE_MAX,
   KNOWN_AGENT_MCP,
+  QUEUEABLE_REFUSALS,
   RESERVED_AGENT_NAMES,
   WAKE_CHECKS,
   WAKE_EVERY_FLOOR_MS,
@@ -16,6 +17,7 @@ import {
   type AgentRunState,
   dayKey,
   formatRunCost,
+  isQueueableRefusal,
   isReservedAgentName,
   isWakeOn,
 } from '../../../electron/shared/agent-contract';
@@ -85,6 +87,7 @@ describe('agent-contract', () => {
     expect(AGENT_LIMIT_DEFAULTS).toEqual({
       turns: 40,
       rotateAfter: 50,
+      parallel: 1,
     });
     expect(AGENT_LIMIT_DEFAULTS).not.toHaveProperty('budgetUsd');
   });
@@ -142,6 +145,7 @@ describe('agent-contract', () => {
       'limits.budget_usd',
       'limits.daily_usd',
       'limits.rotate_after',
+      'limits.parallel',
     ]);
     expect(new Set(paths).size).toBe(paths.length);
   });
@@ -236,5 +240,17 @@ describe('AGENTS_PATH', () => {
     expect(AGENTS_PATH).toBe('/agents');
     expect(AGENTS_PATH).not.toBe(LEDGER_POST_PATH);
     expect(AGENTS_PATH).not.toBe(LEDGER_READ_PATH);
+  });
+});
+
+describe('the refusals that end on their own (HIVE-128)', () => {
+  it('lists exactly the waits the queue is allowed to hold', () => {
+    expect([...QUEUEABLE_REFUSALS].sort()).toEqual(['paused', 'saturated', 'working']);
+  });
+
+  it('keeps a broken definition out of the queue', () => {
+    expect(isQueueableRefusal('invalid')).toBe(false);
+    expect(isQueueableRefusal('unknown')).toBe(false);
+    expect(isQueueableRefusal('saturated')).toBe(true);
   });
 });

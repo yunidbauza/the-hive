@@ -1,6 +1,8 @@
 import {
   AGENT_KILL_GRACE_MS,
   AGENT_STALL_GRACE_MS,
+  type QueueableRefusal,
+  type RunKind,
   type RunLine,
   type RunOutcome,
 } from '@shared/agent-contract';
@@ -95,10 +97,10 @@ const slackStatus = (
 const FLUSH_WINDOW_MS = 500;
 
 export type RunStart =
-  | { started: true; run: string }
+  | { started: true; run: string; kind: RunKind }
   | {
       started: false;
-      refused: 'working' | 'invalid' | 'paused';
+      refused: QueueableRefusal | 'invalid';
       reason?: string;
     };
 
@@ -760,7 +762,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         close(name, live, code);
       }) as never);
 
-      return { started: true, run };
+      return { started: true, run, kind: 'standing' };
     },
 
     kill(name) {

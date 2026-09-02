@@ -193,6 +193,21 @@ describe('AgentView', () => {
       expect(await screen.findByText(/is working/)).toBeInTheDocument();
     });
 
+    it('says a saturated agent is saturated, not that the runtime is down (HIVE-128)', async () => {
+      const run = vi
+        .fn()
+        .mockResolvedValue({ started: false, refused: 'saturated' });
+      vi.stubGlobal('hive', {
+        agents: { run },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
+
+      render(<AgentView entity={seed()} />);
+      await userEvent.click(screen.getByRole('button', { name: /Run now/i }));
+
+      expect(await screen.findByText(/is saturated/)).toBeInTheDocument();
+    });
+
     /**
      * HIVE-126 added a third arm, and this view is the second reader of it.
      *

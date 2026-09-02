@@ -1679,7 +1679,7 @@ describe('hive-store', () => {
 
       const bridge = {
         run: vi.fn<() => Promise<AgentRunResult>>(() =>
-          Promise.resolve({ started: true, run: 'run-7' }),
+          Promise.resolve({ started: true, run: 'run-7', kind: 'standing' }),
         ),
         kill: vi.fn(() => Promise.resolve(true)),
         pause: vi.fn<() => Promise<AgentStatus>>(() =>
@@ -1689,17 +1689,17 @@ describe('hive-store', () => {
           Promise.resolve('sleeping'),
         ),
         rotate: vi.fn<() => Promise<AgentRunResult>>(() =>
-          Promise.resolve({ started: true, run: 'run-7' }),
+          Promise.resolve({ started: true, run: 'run-7', kind: 'standing' }),
         ),
       };
 
       beforeEach(() => {
         vi.mocked(isDesktop).mockReturnValue(true);
-        bridge.run.mockResolvedValue({ started: true, run: 'run-7' });
+        bridge.run.mockResolvedValue({ started: true, run: 'run-7', kind: 'standing' });
         bridge.kill.mockResolvedValue(true);
         bridge.pause.mockResolvedValue('paused');
         bridge.resume.mockResolvedValue('sleeping');
-        bridge.rotate.mockResolvedValue({ started: true, run: 'run-7' });
+        bridge.rotate.mockResolvedValue({ started: true, run: 'run-7', kind: 'standing' });
         window.hive = { agents: bridge } as unknown as Window['hive'];
       });
 
@@ -1873,6 +1873,29 @@ describe('hive-store', () => {
             text: expect.stringContaining(text),
             color: 'dim',
           });
+        });
+
+        it('says an agent is saturated in words that name the wait (HIVE-128)', async () => {
+          bridge.run.mockResolvedValue({ started: false, refused: 'saturated' });
+
+          run('run slack-watcher review PR 1');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain('slack-watcher is saturated');
+        });
+
+        it('says a saturated agent queued the run', async () => {
+          bridge.run.mockResolvedValue({
+            started: false,
+            queued: true,
+            behind: 'saturated',
+          });
+
+          run('run slack-watcher review PR 1');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain('queued for slack-watcher');
+          expect(lastLine()?.text).toContain('one of its runs ends');
         });
 
         it('still refuses a rotate rather than promising it a queue', async () => {

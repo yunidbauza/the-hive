@@ -850,6 +850,12 @@ export interface RunLine {
   text: string;
   color: RunLineColor;
   /**
+   * Which run wrote it (HIVE-128). The run log partitions its buffer by this
+   * before it splits turns, because several processes may write into one
+   * agent's buffer at once. Absent on lines buffered before the field existed.
+   */
+  run?: string;
+  /**
    * This line is the last of its turn — the `● turn ended` fold.
    *
    * A **contract**, deliberately, and not something the renderer sniffs. The
@@ -879,6 +885,8 @@ export type RunOutcome = 'done' | 'asking' | 'budget' | 'turns' | 'failed';
 
 export interface RunSummary {
   run: string;
+  /** Absent on records written before HIVE-128; read as `standing`. */
+  kind?: RunKind;
   trigger: string;
   startedAt: number;
   endedAt: number;
@@ -1024,6 +1032,50 @@ export interface PendingWakeEntry {
 export const AGENT_PENDING_WAKE_MAX = 20;
 
 /**
+ * Which conversation a run is (HIVE-128).
+ *
+ * A `standing` run is the agent being itself: `--resume` of one conversation,
+ * memory that rotates on handoff, strictly one at a time. A `task` run is one
+ * named job in a fresh session that dies with the turn — which is why several
+ * may be live: there is no memory to corrupt.
+ */
+export type RunKind = 'standing' | 'task';
+
+/**
+ * The refusals that end on their own, and so are worth queueing behind
+ * (HIVE-126, HIVE-128).
+ *
+ * A run in flight closes, a pause lifts, and a task run frees a slot — each is
+ * a wait with a wake already wired to its end. `invalid` and `unknown` are not:
+ * a definition the user must fix, or a runtime that is not up, is a promise no
+ * queue can keep. Enumerated rather than inverted on purpose: a refusal added
+ * later is reported until someone decides it queues, which is the safe default.
+ *
+ * One set, read by the tracker's refusal union, the scheduler's manual-wake
+ * whitelist, and both console sentence functions — so they cannot drift.
+ */
+export type QueueableRefusal = 'working' | 'paused' | 'saturated';
+
+export const QUEUEABLE_REFUSALS: ReadonlySet<string> = new Set<QueueableRefusal>([
+  'working',
+  'paused',
+  'saturated',
+]);
+
+export const isQueueableRefusal = (refused: string): refused is QueueableRefusal =>
+  QUEUEABLE_REFUSALS.has(refused);
+
+/** A run in flight (HIVE-128). In memory only — an app restart has none. */
+export interface LiveRunSummary {
+  run: string;
+  kind: RunKind;
+  trigger: string;
+  /** The console prompt a task run carries, verbatim. */
+  extra?: string;
+  startedAt: number;
+}
+
+/**
  * `agents:run` — wake this agent now (HIVE-115, widened HIVE-126).
  *
  * A name, and optionally the words a person typed after it. The omission that
@@ -1072,17 +1124,17 @@ export interface AgentRunRequest {
  * flag nothing forces you to read would let "try again when it sleeps" describe
  * a run that is already waiting its turn.
  *
- * `working` and `paused` stay on the refusal arm as well, because `rotate`
- * answers with this type too and a rotation is *not* queued: main leaves
- * `forceRotate` armed through a refusal, so it survives by a different route
- * and must not claim a queue it has no place in.
+ * `working`, `paused` and `saturated` stay on the refusal arm as well, because
+ * `rotate` answers with this type too and a rotation is *not* queued: main
+ * leaves `forceRotate` armed through a refusal, so it survives by a different
+ * route and must not claim a queue it has no place in.
  */
 export type AgentRunResult =
-  | { started: true; run: string }
-  | { started: false; queued: true; behind: 'working' | 'paused' }
+  | { started: true; run: string; kind: RunKind }
+  | { started: false; queued: true; behind: QueueableRefusal }
   | {
       started: false;
-      refused: 'working' | 'unknown' | 'invalid' | 'paused';
+      refused: QueueableRefusal | 'unknown' | 'invalid';
       reason?: string;
     };
 

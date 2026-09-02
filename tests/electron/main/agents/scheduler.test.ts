@@ -45,7 +45,7 @@ describe('createScheduler', () => {
    * `working` and `paused` and reports the rest, so a fake that could not say
    * which it was could not drive that difference.
    */
-  let refuse: 'working' | 'paused' | 'invalid' | false;
+  let refuse: 'working' | 'paused' | 'saturated' | 'invalid' | false;
   /** Whether the registry has answered its first listing yet. */
   let listed: boolean;
   /** Names pushed to the renderer, in order. */
@@ -62,7 +62,7 @@ describe('createScheduler', () => {
         if (refuse !== false) return { started: false, refused: refuse };
 
         woke.push({ name, trigger, ...(extra === undefined ? {} : { extra }) });
-        return { started: true, run: 'run-1' };
+        return { started: true, run: 'run-1', kind: 'standing' };
       },
       state,
       isAgent: (id) => id === AGENT,
@@ -233,7 +233,7 @@ describe('createScheduler', () => {
     it('wakes now, saying the words as the reason', () => {
       const outcome = scheduler.manualWake(AGENT, 'review PR 1234');
 
-      expect(outcome).toEqual({ started: true, run: 'run-1' });
+      expect(outcome).toEqual({ started: true, run: 'run-1', kind: 'standing' });
       expect(woke).toEqual([
         { name: AGENT, trigger: 'manual', extra: 'review PR 1234' },
       ]);
@@ -242,11 +242,11 @@ describe('createScheduler', () => {
     it('wakes a bare run with no reason at all', () => {
       const outcome = scheduler.manualWake(AGENT);
 
-      expect(outcome).toEqual({ started: true, run: 'run-1' });
+      expect(outcome).toEqual({ started: true, run: 'run-1', kind: 'standing' });
       expect(woke).toEqual([{ name: AGENT, trigger: 'manual' }]);
     });
 
-    it.each(['working', 'paused'] as const)(
+    it.each(['working', 'paused', 'saturated'] as const)(
       'queues a run refused because the agent is %s',
       (refused) => {
         refuse = refused;
