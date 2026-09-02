@@ -8,7 +8,12 @@ import {
   STATUS_TEXT,
 } from '@components/ui/status-dot';
 import { describeNextRun, describeSkips, slackSignedOut } from '@lib/agents';
-import { useAgentAskRef, useEntity, useOpenEntity } from '@stores/hive-store';
+import {
+  useAgentAskRef,
+  useAgentLiveCount,
+  useEntity,
+  useOpenEntity,
+} from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
 interface AgentRowProps {
@@ -38,6 +43,7 @@ export function AgentRow({ id }: AgentRowProps) {
   const activeTab = useActiveTab();
   const openEntity = useOpenEntity();
   const askRef = useAgentAskRef(id);
+  const liveCount = useAgentLiveCount(id);
 
   if (!entity || !isAgent(entity)) return null;
 
@@ -149,6 +155,8 @@ export function AgentRow({ id }: AgentRowProps) {
           )}
         >
           {broken ? 'invalid' : STATUS_LABEL[entity.status]}
+          {/* `·3` only when there is more than one to count (HIVE-128). */}
+          {!broken && liveCount > 1 ? ` ·${String(liveCount)}` : null}
           {askRef === undefined || broken ? null : ` ${askRef}`}
         </span>
         {detail === '' ? null : (

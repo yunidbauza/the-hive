@@ -945,6 +945,22 @@ describe('SessionTable', () => {
       expect(screen.getByTestId('agent-row')).toHaveTextContent('asking (a71)');
     });
 
+    it('counts live runs in the status word, the way the rail does (HIVE-128)', () => {
+      useHiveStore.getState().hydrateAgents([
+        agent({
+          status: 'working',
+          live: [
+            { run: 'a', kind: 'standing', trigger: 'interval', startedAt: 1 },
+            { run: 'b', kind: 'task', trigger: 'manual', startedAt: 2 },
+          ],
+        }),
+      ]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('agent-row')).toHaveTextContent('working ·2');
+    });
+
     it('ages a row from its last run, and says so when there was none', () => {
       useHiveStore.getState().hydrateAgents([
         agent({ name: 'has-run', lastRunAt: Date.now() - 2 * 60 * 60 * 1000 }),

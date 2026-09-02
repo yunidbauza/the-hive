@@ -82,6 +82,29 @@ describe('AgentRow', () => {
     expect(screen.getByText(/asking a71/)).toBeInTheDocument();
   });
 
+  it('counts the runs beside the word when more than one is live (HIVE-128)', () => {
+    hydrate({
+      status: 'working',
+      live: [
+        { run: 'a', kind: 'standing', trigger: 'interval', startedAt: 1 },
+        { run: 'b', kind: 'task', trigger: 'manual', startedAt: 2 },
+        { run: 'c', kind: 'task', trigger: 'manual', startedAt: 3 },
+      ],
+    });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.getByText('working ·3')).toBeInTheDocument();
+  });
+
+  it('says only the word for a single live run', () => {
+    hydrate({ status: 'working', live: [{ run: 'a', kind: 'standing', trigger: 'interval', startedAt: 1 }] });
+
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.getByText('working')).toBeInTheDocument();
+  });
+
   /**
    * The meta is `shrink-0`, so every character it holds is taken out of the
    * name and description beside it — and the name is the only thing in the row

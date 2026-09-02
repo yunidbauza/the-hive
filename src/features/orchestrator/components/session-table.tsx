@@ -21,6 +21,7 @@ import { prStateText } from '@features/shared/pr-presentation';
 import {
   useActiveSessions,
   useAgentAskRef,
+  useAgentLiveCount,
   useAskingAgentCount,
   useAgentPr,
   useEndedSessions,
@@ -842,6 +843,7 @@ function AgentTableRow({
   const openEntity = useOpenEntity();
   const activeTab = useActiveTab();
   const askRef = useAgentAskRef(id);
+  const liveCount = useAgentLiveCount(id);
   const pr = useAgentPr(id);
   /*
     Hooks before the guard, for `SessionTableRow`'s reason: a hook cannot sit
@@ -869,10 +871,13 @@ function AgentTableRow({
     agent is `asking`, and a column empty on four rows in five is a column this
     table cannot afford.
   */
+  // The same `·N` the rail draws (HIVE-128); an agent with any run live is
+  // `working`, so the count and the ask ref never share a row.
+  const count = liveCount > 1 ? ` ·${String(liveCount)}` : '';
   const word =
     askRef === undefined
-      ? statusLabel(entity.status)
-      : `${statusLabel(entity.status)} (${askRef})`;
+      ? `${statusLabel(entity.status)}${count}`
+      : `${statusLabel(entity.status)}${count} (${askRef})`;
 
   return (
     <div
