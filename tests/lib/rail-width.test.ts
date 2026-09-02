@@ -101,6 +101,15 @@ describe('RAIL_MIN', () => {
     );
     expect(MIN_WINDOW_SIZE.width).toBeGreaterThanOrEqual(railFloorWindowWidth(COMPACT));
 
+    /*
+      And the left handle still has somewhere to go there. `railMaxWidth` is
+      30% of the window, so at 1100px the ceiling is 330 against a 320 floor —
+      a single arrow step, but a range. Widen the rail's minimum past
+      `0.3 × 1100` and the handle at the minimum window becomes a point
+      (`min === max`), which `split-handle.tsx` treats as "no room to move".
+    */
+    expect(railMaxWidth(MIN_WINDOW_SIZE.width)).toBeGreaterThan(COMFORTABLE.left);
+
     const widths = clamp({ windowWidth: MIN_WINDOW_SIZE.width });
     expect(widths).toEqual({ left: COMFORTABLE.left, right: COMFORTABLE.right });
     expect(stageShare(widths, MIN_WINDOW_SIZE.width)).toBeGreaterThanOrEqual(
@@ -215,7 +224,7 @@ describe('clampRailWidths', () => {
     });
 
     /**
-     * Below ~730px even the two minimums breach the floor. The floor wins and
+     * Below ~795px even the two minimums breach the floor. The floor wins and
      * the minimums compress — unreachable in the desktop app, which is what the
      * `MIN_WINDOW_SIZE` assertion above proves, but reachable in `pnpm dev`.
      */

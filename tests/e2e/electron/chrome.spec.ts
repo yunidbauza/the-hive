@@ -245,8 +245,9 @@ test('the chip cluster still lands on the rail edge', async ({
 }) => {
   await page.waitForSelector('header');
 
-  // The brand's fixed 304px width is what puts the chips on the rail's edge,
-  // and it survives the inset's removal because it was never about the lights.
+  // The brand's width — the rail's token minus the header's padding — is what
+  // puts the chips on the rail's edge, and it survives the inset's removal
+  // because it was never about the lights.
   const railWidth = await page
     .locator('nav')
     .first()

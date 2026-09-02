@@ -47,8 +47,8 @@ import {
  *
  * ## Where the width goes when the header runs out
  *
- * The brand claims exactly the rail's width (304px = the rail's 320px minus
- * this header's own `px-4`), so whatever follows it starts on that line.
+ * The brand claims exactly the rail's width (the `--cc-rail-w-left` token
+ * minus this header's own `px-4`), so whatever follows it starts on that line.
  *
  * The left cluster is `min-w-0` and the right one does not shrink, so the model
  * chip is what gives when the window narrows. That is the right way round now:
@@ -103,7 +103,7 @@ export function Header() {
     the other. See the cluster's own comment for why a collapsed rail cannot
     take the same branch as a mounted, expanded one.
   */
-  const { railCollapsedRight } = useRailWidthState();
+  const { railCollapsedLeft, railCollapsedRight } = useRailWidthState();
 
   return (
     <header
@@ -136,10 +136,17 @@ export function Header() {
           stage begins on. Without this the chips float wherever the wordmark
           happens to end, aligned to nothing.
 
-          304px = the rail's 320px minus this header's own `px-4`, since the
-          rail starts at the viewport edge and the header's content box does
-          not. `left-rail.tsx` owns the 320; `chip-alignment.spec.ts` measures
-          the two against each other so this cannot drift silently.
+          The width is the rail's own token minus this header's `px-4`, since
+          the rail starts at the viewport edge and the header's content box
+          does not. The token, not a number: `--cc-rail-w-left` is what the
+          rail paints with — 320px comfortable, 284px compact, or whatever the
+          user dragged it to — and a literal here was right in one density and
+          20px wrong in the other, and wrong by the drag's delta after every
+          drag. Same derivation as the controls cluster on the right, and the
+          same fallback: a **collapsed** rail paints the token at `RAIL_STRIP`
+          (44px), and 28px cannot hold a wordmark, so collapse drops the claim
+          and the brand is simply content-sized. `chip-alignment.spec.ts`
+          measures the brand against the rail so the derivation cannot drift.
         */}
         <div
           /*
@@ -157,7 +164,10 @@ export function Header() {
            * stays, because it is what puts the chips on the rail's edge, and
            * that was never about the lights.
            */
-          className="flex w-[304px] shrink-0 items-center"
+          className={cn(
+            'flex shrink-0 items-center',
+            !railCollapsedLeft && 'w-[calc(var(--cc-rail-w-left)-1rem)]',
+          )}
         >
           <BrandBlock />
         </div>

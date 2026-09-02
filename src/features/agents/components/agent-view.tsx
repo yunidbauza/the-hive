@@ -56,11 +56,19 @@ interface AgentViewProps {
  * horizontal scrollbar.
  *
  * The stack point is a **container query**, not a media query, and this is the
- * first one in the codebase. The rails drag between 320px and 520px each, so a
- * 1920px window can hold a 700px stage; only this box knows how wide it
- * actually is. Below 800px the ledger drops beneath the log at full width,
- * which is the layout this story started from — nothing is lost, it is just
- * not the shape that suits a wide stage.
+ * first one in the codebase. The rails drag from their floors (320px and 316px)
+ * up to 520px each, so a 1920px window can hold a 700px stage; only this box
+ * knows how wide it actually is. Below 720px the ledger drops beneath the log
+ * at full width, which is the layout this story started from — nothing is
+ * lost, it is just not the shape that suits a wide stage.
+ *
+ * 720, not the 800 it opened at. The default window is 1440px and the rails at
+ * their defaults now take 636 of it, which leaves the stage 804px — four
+ * pixels from the old stack point, so a 5px drag or a display a shade under
+ * 1440 logical pixels flipped the layout. At 720 the log beside a 280px ledger
+ * still has 432px, about 34 characters at the largest terminal size, which is
+ * the narrowest a run line reads at all. `agents.spec.ts` narrows the window
+ * to 1100px to cross it, where the stage is 464px.
  */
 export function AgentView({ entity }: AgentViewProps) {
   const facts = useAgentFacts(entity.id);
@@ -318,7 +326,7 @@ export function AgentView({ entity }: AgentViewProps) {
         )}
 
         <div className="min-h-0 flex-1">
-          <div className="grid h-full min-h-0 gap-2 [grid-template-columns:minmax(0,1fr)_clamp(280px,22%,380px)] @max-[800px]:[grid-template-columns:minmax(0,1fr)]">
+          <div className="grid h-full min-h-0 gap-2 [grid-template-columns:minmax(0,1fr)_clamp(280px,22%,380px)] @max-[720px]:[grid-template-columns:minmax(0,1fr)]">
             <AgentRunLog name={entity.id} />
             <AgentLedger name={entity.id} />
           </div>

@@ -281,6 +281,18 @@ describe('AgentRunLog', () => {
 
       expect(track(header)).toBeDefined();
       expect(track(row)).toBe(track(header));
+
+      /*
+        One `min-w-max`, on the wrapper, and none on the header or the rows.
+        Given their own, the header — whose `uppercase tracking-[0.1em]` cells
+        are wider than a row's for the same text — resolved a larger `fr` than
+        the rows under the max-content constraint and drifted right of them;
+        a shared wrapper hands all of them one definite width instead.
+      */
+      const table = container.querySelector('[data-region="run-table"]');
+      expect(table).toHaveClass('min-w-max');
+      expect(header).not.toHaveClass('min-w-max');
+      expect(row?.parentElement).not.toHaveClass('min-w-max');
     });
 
     /**

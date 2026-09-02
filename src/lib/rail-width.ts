@@ -193,7 +193,7 @@ export function railMaxWidth(windowWidth: number): number {
  * That leaves one reduction, and it is the honest one: below
  * {@link railFloorWindowWidth} the minimums themselves are scaled down. The
  * desktop app cannot get there, since its window will not open below 1100px
- * against the 730px this needs; the browser target (`pnpm dev`) has no window
+ * against the 795px this needs; the browser target (`pnpm dev`) has no window
  * minimum and can, and the stage keeps its fifth there too.
  */
 export function clampRailWidths({

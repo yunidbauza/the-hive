@@ -124,11 +124,17 @@ describe('CenterStage', () => {
     it('gives the table half the column by default, behind a divider', () => {
       render(<CenterStage />);
 
-      expect(screen.getByTestId('fleet-pane')).toHaveStyle({ flex: '0 1 50%' });
+      const pane = screen.getByTestId('fleet-pane');
+      expect(pane).toHaveStyle({ flex: '0 1 50%' });
       expect(divider()).toBeInTheDocument();
-      // Both floors in force on the un-split stage: header and two rows for
-      // the table, ten rem for the transcript.
-      expect(screen.getByTestId('fleet-pane')).toHaveClass('min-h-28');
+      /*
+        The share is a cap, not a size: `max-h-max` keeps a short fleet
+        content-sized, so a fresh launch does not paint half a column of
+        table ground over one empty-state line. `min-h-0` is what lets a long
+        fleet shrink to the share and scroll — without it the flex item's
+        automatic minimum is the whole fleet.
+      */
+      expect(pane).toHaveClass('max-h-max', 'min-h-0');
     });
 
     it('follows the stored ratio', () => {

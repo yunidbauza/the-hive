@@ -76,11 +76,12 @@ async function resizeTo(
         x: 0,
         y: 0,
         /*
-          The app's default width, and not an incidental choice: narrower than
-          this the console's placeholder soft-wraps, the row grows to three
-          lines, and `↑↓` become caret motion inside the textarea rather than
-          fleet navigation — so the caret half of this spec would be asserting
-          against a keystroke the console never forwarded.
+          The app's default width. It used to be load-bearing: the console
+          row carried a placeholder that soft-wrapped below this width, the
+          row grew to three lines, and `↑↓` became caret motion inside the
+          textarea rather than fleet navigation. The placeholder is gone and
+          an empty row cannot wrap, so the width is now simply the one the
+          app opens at — kept so the numbers below describe a real launch.
         */
         width: 1440,
         height: h,

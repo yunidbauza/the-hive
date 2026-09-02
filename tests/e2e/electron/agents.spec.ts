@@ -282,7 +282,7 @@ test('lays the run log and the ledger side by side, and stacks them when the sta
     expect(before.log.width).toBeGreaterThan(before.ledger.width);
 
     /*
-      Now narrow the *window* until the stage crosses 800px. A media query would
+      Now narrow the *window* until the stage crosses 720px. A media query would
       also pass this; what makes the container query the right tool is that the
       rails are draggable, so the stage can be narrow inside a wide window. This
       asserts the collapse happens at all — `resolve-view` and the component

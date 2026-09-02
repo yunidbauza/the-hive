@@ -159,11 +159,36 @@ describe('Header', () => {
 
       render(<Header />);
 
-      // 304px = the rail's 320px minus the header's own px-4. The real
-      // geometry is measured in chip-alignment.spec.ts; this pins the
-      // mechanism so a refactor cannot quietly drop it.
+      /*
+        The rail's own token minus the header's px-4 — not a pixel literal,
+        which was right at comfortable density and 20px wrong at compact, and
+        wrong by the drag after any drag. The real geometry is measured in
+        chip-alignment.spec.ts; this pins the mechanism so a refactor cannot
+        quietly put a number back.
+      */
       const [left] = Array.from(screen.getByRole('banner').children);
-      expect(left.firstElementChild).toHaveClass('w-[304px]', 'shrink-0');
+      expect(left.firstElementChild).toHaveClass(
+        'w-[calc(var(--cc-rail-w-left)-1rem)]',
+        'shrink-0',
+      );
+    });
+
+    /**
+     * A collapsed left rail paints the token at 44px, and 28px cannot hold a
+     * wordmark — the same fallback the controls cluster takes for a collapsed
+     * activity rail. The claim drops and the brand is content-sized.
+     */
+    it('drops the claimed width when the left rail is collapsed', () => {
+      useUiStore.setState({ activeTab: 'hero-refresh' });
+      useAppearanceStore.getState().setRailCollapsed('left', true);
+
+      render(<Header />);
+
+      const [left] = Array.from(screen.getByRole('banner').children);
+      expect(left.firstElementChild).not.toHaveClass(
+        'w-[calc(var(--cc-rail-w-left)-1rem)]',
+      );
+      expect(left.firstElementChild).toHaveClass('shrink-0');
     });
 
     /**

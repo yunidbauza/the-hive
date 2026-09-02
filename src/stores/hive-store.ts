@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { ParsedCommand } from '@/types/command';
-import { USAGE } from '@/types/command';
+import { QUIET_VERBS, USAGE } from '@/types/command';
 import type {
   Effort,
   Entity,
@@ -770,29 +770,38 @@ const AGENTS_REQUIRE_DESKTOP =
   'agents need the desktop app — this is the browser preview';
 
 /**
- * The `help` output — one row per command the console *teaches*.
+ * The `help` rows, one per verb the console parses — **keyed by the verb**, so
+ * that the ones it keeps quiet about can be filtered rather than remembered.
  *
- * Not one per command it parses: `answer` is deliberately absent, here and in
- * the hint bar, because the inbox's ask card is the route to an open ask and
- * a second one printed beside it made the harder route look official. The
- * verb still runs — see `QUIET_VERBS` in `types/command.ts` for the whole
- * argument, kept in one place.
+ * `answer` is written here like every other verb and never printed: the inbox's
+ * ask card is the route to an open ask, and a second one printed beside it made
+ * the harder route look official. `QUIET_VERBS` in `types/command.ts` is the
+ * one place that decision lives; the hint bar derives `ADVERTISED_VERBS` from
+ * it and {@link HELP_LINES} derives itself from it below. A hand-written list
+ * here would have been a second copy of the decision, and the first time a
+ * verb was quieted only in the bar, `help` would have gone on teaching it.
  */
+const HELP_ROWS: readonly (readonly [ParsedCommand['kind'], string])[] = [
+  ['help', '  help                       show this list'],
+  ['status', '  status                     one line per session'],
+  ['ledger', '  ledger [--open] [-n 20]    print the ledger tail'],
+  ['open', '  open <session>             open a session in the center stage'],
+  ['send', '  send <session> <message>   route a message to a session'],
+  ['ask', '  ask <agent> <message>      ask an agent a question'],
+  ['answer', '  answer <id> <text>         answer an open ask'],
+  ['spawn', '  spawn <project> <task>     start a new session on a project'],
+  ['agents', '  agents                     one line per agent'],
+  ['run', '  run <agent> [prompt]       wake an agent now, optionally saying why'],
+  ['pause', '  pause <agent>              stop an agent waking'],
+  ['resume', '  resume <agent>             let it wake again'],
+  ['kill', '  kill <agent>               stop the run in progress'],
+  ['rotate', '  rotate <agent>             hand off, then start a fresh session'],
+  ['clear', '  clear                      empty this transcript'],
+];
+
+/** The `help` output: the advertised rows, then the footnote. */
 const HELP_LINES = [
-  '  help                       show this list',
-  '  status                     one line per session',
-  '  ledger [--open] [-n 20]    print the ledger tail',
-  '  open <session>             open a session in the center stage',
-  '  send <session> <message>   route a message to a session',
-  '  ask <agent> <message>      ask an agent a question',
-  '  spawn <project> <task>     start a new session on a project',
-  '  agents                     one line per agent',
-  '  run <agent> [prompt]       wake an agent now, optionally saying why',
-  '  pause <agent>              stop an agent waking',
-  '  resume <agent>             let it wake again',
-  '  kill <agent>               stop the run in progress',
-  '  rotate <agent>             hand off, then start a fresh session',
-  '  clear                      empty this transcript',
+  ...HELP_ROWS.filter(([verb]) => !QUIET_VERBS.has(verb)).map(([, line]) => line),
   /*
     One trailing line rather than a fourth column, because it is a footnote and
     not a verb (HIVE-94). It is the only place the console says out loud that a

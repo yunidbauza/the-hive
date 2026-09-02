@@ -5,9 +5,10 @@ import { expect, test } from '@playwright/test';
  *
  * Measured rather than asserted against a class name: the alignment is a
  * *relationship* between two components that do not import each other, and the
- * header's `w-[304px]` is only correct while `left-rail.tsx` is `w-[320px]`.
- * Comparing the rendered geometry is the only check that survives either one
- * being restyled.
+ * header's `w-[calc(var(--cc-rail-w-left)-1rem)]` is only correct while the
+ * rail paints with that same token and the header keeps its `px-4`. Comparing
+ * the rendered geometry is the only check that survives either one being
+ * restyled.
  */
 test('the demo chip begins where the left rail ends', async ({ page }) => {
   await page.goto('/?sim=0');

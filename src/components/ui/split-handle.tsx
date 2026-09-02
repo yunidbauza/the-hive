@@ -226,7 +226,10 @@ export function SplitHandle({
           fits. There `min === max === value` — the whole range has collapsed
           to a point, not stopped at an edge — and the key is correctly inert,
           the same "no room to move" outcome the effective-minimum fix already
-          established. A genuine floor always leaves `max` well above `min`.
+          established. A genuine floor leaves `max` above `min` — though not
+          always by much: at the desktop's 1100px minimum the left rail's range
+          is 320–330, a single arrow step, because `railMaxWidth` is 30% of the
+          window. `rail-width.test.ts` pins that the range is still open there.
         */
         if (
           collapseBelow !== undefined &&

@@ -12,8 +12,15 @@ import {
 } from '@stores/hive-store';
 import { useSelId, useSetSelId } from '@stores/ui-store';
 
+const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
+
 /**
- * The prompt carries **no placeholder**.
+ * The overmind's command row, and the hint bar under it (story 041).
+ *
+ * Both are kept, as the concept shows: the input is how you drive the fleet, and
+ * the hint bar says what the keyboard does.
+ *
+ * ## The prompt carries no placeholder
  *
  * It used to print a curated subset of the grammar — `help · status · send …`
  * — which was the same fact the hint bar prints in full one row beneath, and
@@ -23,14 +30,6 @@ import { useSelId, useSetSelId } from '@stores/ui-store';
  * *empty* console two rows tall and took that row out of the terminal above.
  * Removing it removes the budget, and leaves the row reading as what it is —
  * a prompt, with the grammar under it where `ADVERTISED_VERBS` keeps it.
- */
-const KEY_HINT = '↑↓ select · → open · ⇧↵ line · ↵ run';
-
-/**
- * The overmind's command row, and the hint bar under it (story 041).
- *
- * Both are kept, as the concept shows: the input is how you drive the fleet, and
- * the hint bar says what the keyboard does.
  *
  * ## Why the third hint is the grammar and no longer "read-only" (HIVE-93)
  *

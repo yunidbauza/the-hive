@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PHRASES } from '@lib/swarm/phrases';
+import { ADVERTISED_VERBS, CONSOLE_VERBS } from '@/types/command';
 import { isAgent, isSession } from '@/types/entity';
 import type { SessionStatus } from '@/types/entity';
 import {
@@ -573,6 +574,23 @@ describe('hive-store', () => {
 
         run('answer a12 yes');
         expect(transcript()).not.toContain('command not found');
+      });
+
+      /**
+       * `help` and the hint bar are two views of one decision. The rows are
+       * keyed by verb and filtered through `QUIET_VERBS`, so this pins that
+       * the verbs `help` prints are exactly `ADVERTISED_VERBS` — quieting a
+       * verb in one place cannot leave it taught in the other.
+       */
+      it('teaches exactly the advertised verbs, in their order', () => {
+        run('help');
+        const taught = useHiveStore
+          .getState()
+          .orchLines.map((l) => /^ {2}(\S+)/.exec(l.text)?.[1])
+          .filter((verb): verb is string => verb !== undefined)
+          .filter((verb) => (CONSOLE_VERBS as readonly string[]).includes(verb));
+
+        expect(taught).toEqual([...ADVERTISED_VERBS]);
       });
 
       it('spells out the ledger verbs’ arguments (HIVE-113)', () => {

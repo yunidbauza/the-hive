@@ -13,7 +13,7 @@ import { AgentView } from '@features/agents/components/agent-view';
 import { EditorPane } from '@features/editor/components/editor-pane';
 import { EditorTabStrip } from '@features/editor/components/editor-tab-strip';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
-import { SessionTable } from '@features/orchestrator/components/session-table';
+import { FleetPane, TRANSCRIPT_FLOOR } from '@features/orchestrator/components/fleet-pane';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
 import { SessionBootCover } from '@features/sessions/components/session-boot-cover';
@@ -29,11 +29,7 @@ import { isLiveTerminal, resolveTransport } from '@lib/terminal/resolve-transpor
 import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import {
-  MAX_SPLIT_RATIO,
-  MIN_SPLIT_RATIO,
-  useConsoleSplitRatio,
   useEditorLayout,
-  useSetConsoleSplitRatio,
   useSetEditorSplitRatio,
   useTerminalAppearance,
 } from '@stores/appearance-store';
@@ -162,19 +158,20 @@ export function CenterStage() {
   const splitRef = useRef<HTMLDivElement>(null);
 
   /**
-   * The overmind's own divider, between the fleet table and the transcript.
+   * The box the fleet table and the transcript divide between them.
    *
-   * Measured against the terminal *column*, not the stage: the table's
-   * `flex-basis` is a percentage of that column, so the pointer's share of
-   * the same box is the number the basis wants. The column's console rows
-   * sit below the transcript and take fixed height, which is why the table's
-   * half is exactly half the column and the transcript's is the rest — the
-   * ratio names the table, the one pane whose height is a choice.
+   * Not the terminal column: the column also holds the meta bar above and the
+   * console rows below, all fixed height, and a share of *that* is not a share
+   * of anything a reader can see. This wrapper holds exactly the two panes (and
+   * the agent view, which stands in for both), so the table's `flex-basis`
+   * percentage and the divider's reading name the same thing — the table's
+   * share of the space that is actually being split.
+   *
+   * The ratio itself is **not read here**. `FleetPane` subscribes to it, so a
+   * drag re-renders one table and one hairline rather than this component and,
+   * through `TerminalHost`, every mounted terminal — see its docblock.
    */
-  const columnRef = useRef<HTMLDivElement>(null);
-  const consoleSplit = useConsoleSplitRatio();
-  const setConsoleSplit = useSetConsoleSplitRatio();
-  const resetConsoleSplit = () => setConsoleSplit(0.5);
+  const paneSplitRef = useRef<HTMLDivElement>(null);
 
   const entries = useMemo(
     () =>
@@ -330,7 +327,6 @@ export function CenterStage() {
             live xterm and its scrollback would go with it.
           */}
           <div
-            ref={columnRef}
             className={cn(
               'flex min-h-0 min-w-0 flex-col',
               editorFull && 'hidden',
@@ -366,42 +362,17 @@ export function CenterStage() {
           size itself to its content, which with a long fleet meant the whole
           column minus the transcript's 10rem floor — the overmind's own
           conversation reduced to a few lines under a wall of ended sessions.
-          The pane carries `flex: 0 1 <ratio>%` instead, half by default and
-          dragged through the divider beneath it, the same shape the editor
-          split uses. `shrink: 1` and not `0`, so a short column still takes
-          the deficit out of the table first; the `min-h-28` is where that
-          stops — a header and two rows — and the transcript's own `min-h-40`
-          below is the other floor. Both are conditional on not splitting for
-          the reason the transcript's is: in a 20% column two floors would
+          `FleetPane` gives it a share of this box instead, half by default,
+          dragged through the divider beneath it and capped at the table's own
+          content so a short fleet stays short. The transcript's `min-h-40`
+          below is its floor, and the pane's bounds are computed from that
+          same number so the divider cannot be driven into it. Both are lifted
+          while the editor splits the stage: in a 20% column a floor would
           overflow it rather than yield.
-
-          The pane paints the table's ground itself, because the table is
-          content-sized inside it: a fleet of three rows must not show the
-          stage's panel colour under the last one.
         */}
+        <div ref={paneSplitRef} className="flex min-h-0 flex-1 flex-col">
         {view === 'orchestrator' ? (
-          <>
-            <div
-              data-testid="fleet-pane"
-              className={cn(
-                'flex flex-col bg-term-bg',
-                splitting ? 'min-h-0' : 'min-h-28',
-              )}
-              style={{ flex: `0 1 ${consoleSplit * 100}%` }}
-            >
-              <SessionTable />
-            </div>
-            <SplitHandle
-              axis="horizontal"
-              containerRef={columnRef}
-              label="Resize the fleet table"
-              value={consoleSplit}
-              onValue={setConsoleSplit}
-              min={MIN_SPLIT_RATIO}
-              max={MAX_SPLIT_RATIO}
-              onReset={resetConsoleSplit}
-            />
-          </>
+          <FleetPane containerRef={paneSplitRef} floored={!splitting} />
         ) : null}
 
         {/*
@@ -450,7 +421,7 @@ export function CenterStage() {
           */
           className={cn(
             'relative flex flex-1 flex-col',
-            view === 'orchestrator' && !splitting ? 'min-h-40' : 'min-h-0',
+            view === 'orchestrator' && !splitting ? TRANSCRIPT_FLOOR.className : 'min-h-0',
             showingAgent && 'hidden',
           )}
           onClick={focusMessageInput}
@@ -508,6 +479,7 @@ export function CenterStage() {
               does="returns to the overmind"
             />
           ) : null}
+        </div>
         </div>
 
         {view === 'orchestrator' ? <ConsoleInput /> : null}
