@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { WorkPanel } from '@features/work/components/work-panel';
-import { useHiveStore } from '@stores/hive-store';
+import { useHiveStore, type TicketSearchState } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
@@ -243,6 +243,19 @@ describe('WorkPanel — searching', () => {
     url: `https://example.invalid/${key}`,
   });
 
+  /** A search slice, with the fields a case does not care about defaulted. */
+  const searchState = (
+    partial: Partial<TicketSearchState>,
+  ): TicketSearchState => ({
+    term: 'rails',
+    results: null,
+    searching: false,
+    error: null,
+    capped: false,
+    tooShort: false,
+    ...partial,
+  });
+
   beforeEach(() => {
     useHiveStore.getState().reset();
     seedDemoFleet();
@@ -263,12 +276,12 @@ describe('WorkPanel — searching', () => {
   it('replaces the standing list with what the search found', () => {
     useUiStore.getState().setWorkSearchTerm('filing');
     useHiveStore.setState({
-      ticketSearch: {
+      ticketSearch: searchState({
         term: 'filing',
         results: [found('INCORP-505')],
         searching: false,
         error: null,
-      },
+      }),
     });
 
     render(<WorkPanel />);
@@ -281,12 +294,12 @@ describe('WorkPanel — searching', () => {
   it('keeps the box on screen while the first answer is out', () => {
     useUiStore.getState().setWorkSearchTerm('filing');
     useHiveStore.setState({
-      ticketSearch: {
+      ticketSearch: searchState({
         term: 'filing',
         results: null,
         searching: true,
         error: null,
-      },
+      }),
     });
 
     render(<WorkPanel />);
@@ -300,12 +313,12 @@ describe('WorkPanel — searching', () => {
   it('says a search matched nothing rather than sitting blank', () => {
     useUiStore.getState().setWorkSearchTerm('zzzz');
     useHiveStore.setState({
-      ticketSearch: {
+      ticketSearch: searchState({
         term: 'zzzz',
         results: [],
         searching: false,
         error: null,
-      },
+      }),
     });
 
     render(<WorkPanel />);
@@ -313,15 +326,39 @@ describe('WorkPanel — searching', () => {
     expect(screen.getByText(/Nothing matches/)).toBeInTheDocument();
   });
 
+  it('does not explain an answer to a question it never asked', () => {
+    useUiStore.getState().setWorkSearchTerm('a');
+    useHiveStore.setState({
+      ticketSearch: searchState({
+        term: 'a',
+        results: null,
+        searching: false,
+        error: null,
+        capped: false,
+        tooShort: true,
+      }),
+    });
+
+    render(<WorkPanel />);
+
+    // A term too short to send is not a search that found nothing, so
+    // "Nothing matches “a”" claims Jira answered when it was never asked.
+    expect(screen.queryByText(/Nothing matches/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    // And the skeleton is the same untruth in the other direction: it says an
+    // answer is on its way when no request was ever made, so it pulses forever.
+    expect(screen.queryAllByTestId('work-skeleton-card')).toHaveLength(0);
+  });
+
   it('prints Jira’s refusal instead of an empty result', () => {
     useUiStore.getState().setWorkSearchTerm('rails');
     useHiveStore.setState({
-      ticketSearch: {
+      ticketSearch: searchState({
         term: 'rails',
         results: [],
         searching: false,
         error: 'Jira refused the query.',
-      },
+      }),
     });
 
     render(<WorkPanel />);
@@ -336,12 +373,7 @@ describe('WorkPanel — searching', () => {
     useUiStore.getState().setWorkSearchTerm('rails');
     useHiveStore.setState({
       ticketSource: { kind: 'unconfigured' },
-      ticketSearch: {
-        term: 'rails',
-        results: [found('HIVE-1')],
-        searching: false,
-        error: null,
-      },
+      ticketSearch: searchState({ results: [found('HIVE-1')] }),
     });
 
     render(<WorkPanel />);

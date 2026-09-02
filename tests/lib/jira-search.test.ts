@@ -134,4 +134,44 @@ describe('when there is nothing to ask', () => {
     expect(buildTicketSearchJql('  ab  ', false)).not.toBeNull();
     expect(buildTicketSearchJql('  a  ', false)).toBeNull();
   });
+
+  it('applies the minimum to each word, not just to the whole term', () => {
+    // "a b" is three characters and two useless clauses: `a*` and `b*` each
+    // prefix-match most of a backlog, and AND-ing two of them is the round trip
+    // the minimum exists to prevent.
+    expect(buildTicketSearchJql('a b', false)).toBeNull();
+  });
+
+  it('drops a too-short word rather than the whole search', () => {
+    // Mid-phrase typing reaches this constantly — "rail a" is on the way to
+    // "rail alignment". Returning null there would blank a search the user is
+    // still writing.
+    expect(buildTicketSearchJql('rail a', false)).toBe(
+      '(summary ~ "rail*" OR description ~ "rail*") ORDER BY updated DESC',
+    );
+  });
+});
+
+describe('the wildcard survives the escaping', () => {
+  it('is not turned off by a word ending in a backslash', () => {
+    /*
+      Measured: `summary ~ "termi\\*"` returns 0 where `"termi*"` returns 3.
+      Escaping the backslash leaves Lucene reading `\*` — an escaped, literal
+      asterisk — so the prefix match silently stops applying for that word.
+      Trailing backslashes are not searchable anyway, so they go.
+    */
+    expect(buildTicketSearchJql('foo\\', false)).toBe(
+      '(summary ~ "foo*" OR description ~ "foo*") ORDER BY updated DESC',
+    );
+  });
+
+  it('still escapes a backslash that is not the last character', () => {
+    expect(buildTicketSearchJql('foo\\bar', false)).toContain(
+      'summary ~ "foo\\\\bar*"',
+    );
+  });
+
+  it('has nothing left to ask when a word is only backslashes', () => {
+    expect(buildTicketSearchJql('\\\\\\', false)).toBeNull();
+  });
 });

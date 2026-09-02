@@ -162,9 +162,19 @@ describe('what the count says', () => {
    * with an empty box runs the effect that clears the results, which is the
    * behaviour `drops the results without waiting for a debounce` is about.
    */
-  const answer = async (search: TicketSearchState) => {
+  const answer = async (search: Partial<TicketSearchState>) => {
     await act(async () => {
-      useHiveStore.setState({ ticketSearch: search });
+      useHiveStore.setState({
+        ticketSearch: {
+          term: 'rails',
+          results: null,
+          searching: false,
+          error: null,
+          capped: false,
+          tooShort: false,
+          ...search,
+        },
+      });
     });
   };
 
@@ -229,6 +239,42 @@ describe('what the count says', () => {
     });
 
     expect(screen.getByText('Searching…')).toBeInTheDocument();
+  });
+
+  it('marks a capped answer as a floor, not a total', async () => {
+    render(<WorkSearchRow />);
+    await type('rails');
+
+    await answer({
+      term: 'rails',
+      results: [ticket('HIVE-1')],
+      searching: false,
+      error: null,
+      capped: true,
+      tooShort: false,
+    });
+
+    // Main stops paging at 200 and says so. Printing that as "200 issues" is a
+    // number the user cannot tell from the truth — a prefix search across
+    // summary and description reaches the cap easily.
+    expect(screen.getByText(/1\+ issues · all assignees/)).toBeInTheDocument();
+  });
+
+  it('asks for more rather than reporting a count nobody asked for', async () => {
+    render(<WorkSearchRow />);
+    await type('rails');
+
+    await answer({
+      term: 'a',
+      results: null,
+      searching: false,
+      error: null,
+      capped: false,
+      tooShort: true,
+    });
+
+    expect(screen.getByText('Keep typing…')).toBeInTheDocument();
+    expect(screen.queryByText(/issues?/)).toBeNull();
   });
 
   it('says nothing at all when the search failed', async () => {

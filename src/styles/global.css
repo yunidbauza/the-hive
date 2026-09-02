@@ -58,13 +58,13 @@ body {
 /**
  * A search box gets one clear button, and it is ours.
  *
- * `<input type="search">` is the right element for the Explorer's and the PRs
- * panel's boxes — it carries the `searchbox` role and Escape-to-clear without
- * either being hand-written. What comes with it is a *second* clear button:
- * Chromium paints `::-webkit-search-cancel-button` into the field's user-agent
- * shadow tree as soon as a focused search input has content, so both boxes drew
- * a blue X of the browser's choosing a few pixels from the themed one they
- * render themselves.
+ * `<input type="search">` is the right element for the app's search boxes — the
+ * Explorer's, the PRs panel's and the WORK panel's — because it carries the
+ * `searchbox` role and Escape-to-clear without either being hand-written. What
+ * comes with it is a *second* clear button: Chromium paints
+ * `::-webkit-search-cancel-button` into the field's user-agent shadow tree as
+ * soon as a focused search input has content, so each box drew a blue X of the
+ * browser's choosing a few pixels from the themed one it renders itself.
  *
  * Suppressed rather than deferred to, because the native button cannot be
  * styled past its size — no token reaches it, so it stays the one blue thing in

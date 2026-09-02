@@ -206,7 +206,35 @@ export interface TicketSearchState {
   results: Ticket[] | null;
   searching: boolean;
   error: string | null;
+  /**
+   * True when the cap stopped paging while Jira still had more.
+   *
+   * The standing list has carried this since HIVE-69 and the search must too,
+   * for the same reason: a full page reported as a total is a number the user
+   * cannot tell from the truth. It is not a corner case here — a two-character
+   * prefix across `summary` *and* `description` is precisely the query that
+   * reaches `JIRA_MAX_ISSUES`.
+   */
+  capped: boolean;
+  /**
+   * True when the term was too short to send, which is **not** an empty result.
+   *
+   * Without this the two are the same state, and the panel says "Nothing
+   * matches “a”" over a question nobody asked Jira. `results` stays `null` for
+   * the same reason — there is no answer, rather than an answer of none.
+   */
+  tooShort: boolean;
 }
+
+/** Nothing searched: the slice's rest state, and what clearing returns it to. */
+const NO_TICKET_SEARCH: TicketSearchState = {
+  term: '',
+  results: null,
+  searching: false,
+  error: null,
+  capped: false,
+  tooShort: false,
+};
 
 export type PrSource =
   /** A read is in flight and there is nothing yet. The boot state. */
@@ -1502,12 +1530,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   /** Loading until the first sweep answers, for the same reason as above. */
   prSource: { kind: 'loading' } as PrSource,
   prSearch: { term: '', results: null, searching: false, error: null } as PrSearchState,
-  ticketSearch: {
-    term: '',
-    results: null,
-    searching: false,
-    error: null,
-  } as TicketSearchState,
+  ticketSearch: NO_TICKET_SEARCH,
 
   /**
    * Create a session and open its tab.
@@ -4573,6 +4596,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         term,
         searching: true,
         error: null,
+        tooShort: false,
       },
     }));
 
@@ -4580,19 +4604,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       Built before the bridge is consulted, because a term too short to ask
       about is answered here. On a real site a single letter matched the whole
       backlog — a round trip whose only possible answer is noise.
+
+      Answered with `tooShort` and a `null` result rather than an empty one:
+      "we did not ask" and "Jira found none" are different facts, and the panel
+      has to tell them apart to avoid explaining an answer nobody sought.
     */
     const jql = buildTicketSearchJql(term, mineOnly);
     if (jql === null) {
-      set({ ticketSearch: { term, results: [], searching: false, error: null } });
+      set({
+        ticketSearch: {
+          ...NO_TICKET_SEARCH,
+          term,
+          tooShort: true,
+        },
+      });
       return;
     }
 
     if (!isDesktop()) {
       set({
         ticketSearch: {
+          ...NO_TICKET_SEARCH,
           term,
           results: [],
-          searching: false,
           error: 'Search needs the desktop app — this is the browser preview.',
         },
       });
@@ -4608,9 +4642,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     if (result === null) {
       set({
         ticketSearch: {
+          ...NO_TICKET_SEARCH,
           term,
           results: [],
-          searching: false,
           error: 'The app could not reach its own main process.',
         },
       });
@@ -4620,9 +4654,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     if (!result.ok) {
       set({
         ticketSearch: {
+          ...NO_TICKET_SEARCH,
           term,
           results: [],
-          searching: false,
           error: result.error.message,
         },
       });
@@ -4631,19 +4665,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
     set({
       ticketSearch: {
+        ...NO_TICKET_SEARCH,
         term,
         results: rankTicketSearch(term, result.value.issues),
-        searching: false,
-        error: null,
+        capped: result.value.capped,
       },
     });
   },
 
   clearTicketSearch: () => {
     ticketSearchTicket += 1;
-    set({
-      ticketSearch: { term: '', results: null, searching: false, error: null },
-    });
+    set({ ticketSearch: NO_TICKET_SEARCH });
   },
 
   reset: () => {
@@ -4673,7 +4705,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
       prSearch: { term: '', results: null, searching: false, error: null },
-      ticketSearch: { term: '', results: null, searching: false, error: null },
+      ticketSearch: NO_TICKET_SEARCH,
     });
   },
 }));

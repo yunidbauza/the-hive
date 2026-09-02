@@ -252,8 +252,15 @@ export function WorkPanel() {
           keystroke — keeps the rows it has, which is the same rule the sweep's
           skeleton follows: replacing a live list with grey boxes makes the
           panel blink for something the user can already see.
+
+          Never while `tooShort`, which is also `results === null` but for the
+          opposite reason: nothing is on its way, so the skeleton would pulse
+          forever over a request that was deliberately not made. The row says
+          "Keep typing…" instead, which is the honest version of the same news.
         */}
-        {results === null && search.error === null ? <TicketListSkeleton /> : null}
+        {results === null && search.error === null && !search.tooShort ? (
+          <TicketListSkeleton />
+        ) : null}
 
         {results?.map((ticket) => (
           <TicketCard key={ticket.key} ticket={ticket} />

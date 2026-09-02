@@ -56,6 +56,21 @@ function escape(word: string): string {
   return word.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+/**
+ * A word, with any trailing backslashes removed.
+ *
+ * Not cosmetic. Escaping doubles a trailing `\`, and the wildcard is appended
+ * after it — so `foo\` becomes `"foo\\*"`, which Lucene reads as an *escaped,
+ * literal* asterisk and the prefix match silently stops applying. Measured:
+ * `summary ~ "termi\\*"` returns nothing where `"termi*"` returns three.
+ *
+ * Dropping them loses nothing, because a trailing backslash is not searchable
+ * text either.
+ */
+function searchable(word: string): string {
+  return word.replace(/\\+$/, '');
+}
+
 /** One word, matched as a prefix against either field the user asked for. */
 function wordClause(word: string): string {
   const value = `${escape(word)}*`;
@@ -73,10 +88,23 @@ export function buildTicketSearchJql(
   mineOnly: boolean,
 ): string | null {
   const words = term.trim().split(/\s+/).filter(Boolean);
-  const trimmed = words.join(' ');
-  if (trimmed.length < MIN_TICKET_SEARCH_LENGTH) return null;
 
-  const text = words.map(wordClause).join(' AND ');
+  /*
+    The minimum applies to each **word**, because each word becomes a clause.
+    Measuring the joined term instead let "a b" through — three characters, and
+    two clauses that each prefix-match most of a backlog.
+
+    A short word is dropped rather than failing the whole search, because
+    mid-phrase typing produces one constantly: "rail a" is on the way to "rail
+    alignment", and blanking the panel there would fight the user mid-word.
+    Nothing left to ask means nothing is asked.
+  */
+  const asked = words
+    .map(searchable)
+    .filter((word) => word.length >= MIN_TICKET_SEARCH_LENGTH);
+  if (asked.length === 0) return null;
+
+  const text = asked.map(wordClause).join(' AND ');
 
   /*
     A key lookup only when the *whole* term is one. "HIVE-79 rails" is a text

@@ -4050,8 +4050,57 @@ describe('searchTickets — a second query', () => {
     // A single letter matched the whole backlog on a real site. Spending a
     // round trip to say so is worse than not asking.
     expect(search).not.toHaveBeenCalled();
-    expect(useHiveStore.getState().ticketSearch.results).toEqual([]);
     expect(useHiveStore.getState().ticketSearch.searching).toBe(false);
+  });
+
+  it('does not pass off "we never asked" as "nothing matched"', async () => {
+    bridgeReturning();
+
+    await useHiveStore.getState().searchTickets('a', false);
+
+    /*
+      The distinction the panel needs. Left as an empty `results`, a term too
+      short to send is indistinguishable from Jira answering zero rows — so the
+      panel said "Nothing matches “a”" and "0 issues" about a question that was
+      never put to it.
+    */
+    expect(useHiveStore.getState().ticketSearch.tooShort).toBe(true);
+    expect(useHiveStore.getState().ticketSearch.results).toBeNull();
+  });
+
+  it('stops claiming a term is too short once it is not', async () => {
+    bridgeReturning(issue('HIVE-1'));
+
+    await useHiveStore.getState().searchTickets('a', false);
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    expect(useHiveStore.getState().ticketSearch.tooShort).toBe(false);
+  });
+
+  it('carries the cap, so a full page is not reported as a total', async () => {
+    const search = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { issues: [issue('HIVE-1')], capped: true },
+    });
+    window.hive = { jira: { search } } as unknown as Window['hive'];
+
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    /*
+      Main stops paging at JIRA_MAX_ISSUES and says so. A two-character prefix
+      across summary *and* description is exactly the query that reaches it, and
+      without this the row prints "200 issues" as a total when 200 is the cap —
+      the same untruth the standing list already refuses to tell.
+    */
+    expect(useHiveStore.getState().ticketSearch.capped).toBe(true);
+  });
+
+  it('reports an uncapped answer as the whole answer', async () => {
+    bridgeReturning(issue('HIVE-1'));
+
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    expect(useHiveStore.getState().ticketSearch.capped).toBe(false);
   });
 
   it('carries Jira’s own refusal into the panel', async () => {
@@ -4138,6 +4187,8 @@ describe('searchTickets — a second query', () => {
       results: null,
       searching: false,
       error: null,
+      capped: false,
+      tooShort: false,
     });
   });
 
@@ -4148,6 +4199,8 @@ describe('searchTickets — a second query', () => {
         results: [],
         searching: false,
         error: null,
+        capped: false,
+        tooShort: false,
       },
     });
 
@@ -4158,6 +4211,8 @@ describe('searchTickets — a second query', () => {
       results: null,
       searching: false,
       error: null,
+      capped: false,
+      tooShort: false,
     });
   });
 });

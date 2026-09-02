@@ -158,15 +158,26 @@ export function WorkSearchRow() {
             is that it returns work the panel above it never shows — anyone's,
             at any status — and a bare number would leave the user to infer that
             from the results.
+
+            `capped` earns its `+` for the reason the standing list gives: main
+            stops paging at `JIRA_MAX_ISSUES`, so a full page is a *floor* and
+            not a total. A prefix search across summary and description is
+            exactly the query that reaches it.
+
+            `tooShort` is the state that has no count at all. It is not zero
+            results — nothing was asked — and saying "0 issues" would be the row
+            answering a question it never put.
           */}
           <span className="tabular-nums text-[10.5px] text-subtle">
-            {search.searching
-              ? 'Searching…'
-              : search.error !== null
-                ? ''
-                : `${String(count)} ${count === 1 ? 'issue' : 'issues'}${
-                    mineOnly ? '' : ' · all assignees'
-                  }`}
+            {search.tooShort
+              ? 'Keep typing…'
+              : search.searching
+                ? 'Searching…'
+                : search.error !== null
+                  ? ''
+                  : `${String(count)}${search.capped ? '+' : ''} ${
+                      count === 1 && !search.capped ? 'issue' : 'issues'
+                    }${mineOnly ? '' : ' · all assignees'}`}
           </span>
         </div>
       )}
