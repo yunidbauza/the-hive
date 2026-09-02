@@ -18,13 +18,30 @@ import type { AgentState } from './state';
 import { inQuiet, nextRunFrom, quietEndAfter } from './wake-schedule';
 
 /**
- * The trigger word every wake in this module reports.
+ * The trigger word every *ledger-routed* wake in this module reports.
  *
  * It reaches the agent's own prompt — `You woke because: ledger — answer a12
  * from overmind` — so it is the word the model reads, not only a label for the
  * log.
  */
 const LEDGER_TRIGGER = 'ledger';
+
+/**
+ * What a wake reports when a person's own run is the reason for it (HIVE-126).
+ *
+ * The same word `agents:run` writes for an immediate manual wake, so a run that
+ * had to wait reads to the agent exactly like one that did not — only later.
+ */
+const MANUAL_TRIGGER = 'manual';
+
+/**
+ * The `kind` a manual run is queued under, and the only kind carrying `text`.
+ *
+ * Not a ledger kind — no entry with this kind is ever appended to the log. It
+ * exists so a flushed queue can tell a person's request apart from an entry's,
+ * which is what {@link PendingWakeEntry.text} and the trigger both turn on.
+ */
+const MANUAL_KIND = 'manual';
 
 /**
  * The two words a *scheduled* wake reports, and why there are two.
@@ -169,9 +186,33 @@ export interface Scheduler {
   stop(): void;
 }
 
+/**
+ * One entry, as the wake prompt names it.
+ *
+ * `ask a12 from overmind`, or `manual run from overmind — review PR 1234` for
+ * the one kind that brought its own words. Shared by the immediate path and the
+ * queue so a wake reads the same however it was reached.
+ */
+const describeEntry = (entry: PendingWakeEntry): string =>
+  entry.text === undefined
+    ? `${entry.kind} ${entry.id} from ${entry.from}`
+    : `${entry.kind} ${entry.id} from ${entry.from} — ${entry.text}`;
+
 /** `ask a12 from overmind` — how a wake says what it woke for. */
 const describeEntries = (queued: readonly PendingWakeEntry[]): string =>
-  queued.map((item) => `${item.kind} ${item.id} from ${item.from}`).join(', ');
+  queued.map(describeEntry).join(', ');
+
+/**
+ * Which trigger a flushed queue reports (HIVE-126).
+ *
+ * `manual` wins over `ledger` whenever a person's own run is in the queue: it
+ * is the reason with someone behind it, and `ledger` would name a route that
+ * entry never took — there is no log line for `ledger_read` to find.
+ */
+const triggerFor = (queued: readonly PendingWakeEntry[]): string =>
+  queued.some((item) => item.kind === MANUAL_KIND)
+    ? MANUAL_TRIGGER
+    : LEDGER_TRIGGER;
 
 /**
  * Ledger-addressed wakes (HIVE-120).
@@ -205,18 +246,6 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * prevent, so the gate has to cover the callbacks and not just the timer.
    */
   let stopped = false;
-
-  /**
-   * One entry, as the wake prompt names it.
-   *
-   * Shared by the immediate path and the queue so a wake reads the same however
-   * it was reached.
-   */
-  const describeEntry = (entry: {
-    kind: string;
-    id: string;
-    from: string;
-  }): string => `${entry.kind} ${entry.id} from ${entry.from}`;
 
   /**
    * Retire the asks time has taken, once a minute.
@@ -578,7 +607,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     deps.state.patch(name, { pendingWake: [] });
 
-    const started = deps.run(name, LEDGER_TRIGGER, describeEntries(queued));
+    const started = deps.run(name, triggerFor(queued), describeEntries(queued));
 
     if (started.started) return;
 
@@ -621,7 +650,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     deps.state.patch(name, {
       pendingWake: [
         ...queued,
-        { kind: entry.kind, id: entry.id, from: entry.from },
+        {
+          kind: entry.kind,
+          id: entry.id,
+          from: entry.from,
+          // Field by field, deliberately — it is what keeps an unrelated key
+          // from a caller reaching `agents.json`.
+          ...(entry.text === undefined ? {} : { text: entry.text }),
+        },
       ],
     });
   };

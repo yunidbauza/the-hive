@@ -143,6 +143,81 @@ describe('createScheduler', () => {
     expect(state.read(AGENT).pendingWake).toEqual([]);
   });
 
+  /*
+    HIVE-126. A ledger entry's body stays out of the queue because the log
+    holds it and the agent re-reads it on the wake it caused. A manual run has
+    no log line behind it, so the queue is the only place its words exist.
+  */
+  describe('a queued entry that carries its own words', () => {
+    it('says them on the wake it causes', () => {
+      state.patch(AGENT, {
+        status: 'sleeping',
+        pendingWake: [
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'review PR 1234' },
+        ],
+      });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([
+        {
+          name: AGENT,
+          trigger: 'manual',
+          extra: 'manual run from overmind — review PR 1234',
+        },
+      ]);
+    });
+
+    it('reports the manual trigger when a manual entry sits among ledger ones', () => {
+      // A person's request is the reason with someone behind it, and `ledger`
+      // would name a route the manual entry never took.
+      state.patch(AGENT, {
+        status: 'sleeping',
+        pendingWake: [
+          { kind: 'ask', id: 'a12', from: 'overmind' },
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'review PR 1234' },
+        ],
+      });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([
+        {
+          name: AGENT,
+          trigger: 'manual',
+          extra:
+            'ask a12 from overmind, manual run from overmind — review PR 1234',
+        },
+      ]);
+    });
+
+    it('still reports the ledger trigger for a queue of ledger entries', () => {
+      state.patch(AGENT, {
+        status: 'sleeping',
+        pendingWake: [{ kind: 'ask', id: 'a12', from: 'overmind' }],
+      });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke[0]).toMatchObject({ trigger: 'ledger' });
+    });
+
+    it('keeps the words when a refused flush puts the queue back', () => {
+      const queued = {
+        kind: 'manual',
+        id: 'run',
+        from: 'overmind',
+        text: 'review PR 1234',
+      };
+      state.patch(AGENT, { status: 'sleeping', pendingWake: [queued] });
+      refuse = true;
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(state.read(AGENT).pendingWake).toEqual([queued]);
+    });
+  });
+
   it('holds for a paused agent and wakes once on resume', () => {
     state.patch(AGENT, { status: 'paused' });
     scheduler.onEntry(entry());

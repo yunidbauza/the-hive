@@ -903,18 +903,29 @@ export interface AgentRunState {
 export const AGENT_RUN_HISTORY = 20;
 
 /**
- * One entry an agent has not been woken for yet (HIVE-120).
+ * One entry an agent has not been woken for yet (HIVE-120, widened HIVE-126).
  *
  * The three fields the wake prompt needs to name it — `<kind> <id> from <from>`
- * — and nothing more. The body is deliberately absent: `extra` is a *hint*, and
- * the preamble already tells an agent to `ledger_read` its inbox first, so the
- * entry itself is read on the wake it caused. Carrying bodies here would put a
- * copy of the log inside `agents.json`, ageing separately from the log.
+ * — and, for the one kind that needs it, the words themselves.
+ *
+ * A ledger entry's body stays out, and that reasoning is unchanged: `extra` is
+ * a *hint*, the preamble already tells an agent to `ledger_read` its inbox
+ * first, so the entry itself is read on the wake it caused. Carrying bodies
+ * here would put a copy of the log inside `agents.json`, ageing separately from
+ * the log.
+ *
+ * `text` is the case that argument does not reach. A manual run — a person
+ * typing `run pr-reviewer review PR 1234` while the agent is busy — has no log
+ * line behind it and nothing to re-read. This is not a second copy of those
+ * words; it is the only one, and dropping it would lose the whole point of the
+ * run rather than a hint about it.
  */
 export interface PendingWakeEntry {
   kind: string;
   id: string;
   from: string;
+  /** A manual run's own words. Absent on every ledger-routed entry. */
+  text?: string;
 }
 
 /**
