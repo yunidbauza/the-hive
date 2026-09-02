@@ -554,6 +554,24 @@ export function honestPermissionAsk(
   const rungs = rungsFor(tool, input);
 
   /*
+    The one key on the allowlist that did not start there, and it is not an
+    exception to the rule below — it is that rule applied (HIVE-128).
+
+    `run` is not model-supplied: `createReceiverClient` stamps `HIVE_RUN_ID`
+    onto every post it makes, **over** whatever the model wrote, so by the time
+    an ask reaches this function the value is the host's. Dropping it is what a
+    permission ask silently did until the live conformance suite caught it —
+    `openAsksFor` matches an open ask to the run that wrote it by this stamp
+    and nothing else, so a fenced run closed `done` instead of `asking`: the
+    card was on screen, the agent read as idle, and the next scheduled tick was
+    free to wake it on top of its own unanswered question.
+
+    Read as a value and kept only when it is a string, so a caller that puts an
+    object there still smuggles nothing in.
+  */
+  const run = meta['run'];
+
+  /*
     Built from nothing, not from the caller's `meta` with the known keys
     overwritten.
 
@@ -577,6 +595,7 @@ export function honestPermissionAsk(
       rungs,
       default: defaultRungFor(rungs),
       options: [...rungs.map((rung) => rung.id), 'deny'],
+      ...(typeof run === 'string' ? { run } : {}),
     },
   };
 }

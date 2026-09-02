@@ -291,6 +291,50 @@ synchronously and so re-enters `onRunClosed` — where a flush would spawn a fre
 `claude` after `closeAll` had finished iterating, leaving an orphan with nobody
 left to signal it.
 
+### Task runs (HIVE-128)
+
+Every wake above is the **standing** run: `--resume` of one conversation, one
+at a time, rotated by handoff. `limits.parallel` above 1 adds a second kind. A
+console `run <agent> <prompt>` — a wake that carries its own job — becomes a
+**task** run: a fresh `--session-id` session for that one job, no memory, no
+rotation, and up to `parallel` of them live beside the standing run. A bare
+`run`, an interval, a schedule and every ledger entry stay standing; an `ask`
+always queues to the conversation, because that is the one that remembers.
+
+The gate in `runs.ts` is, in order: a standing wake against a live standing run
+is `working`; a paused agent is `paused`; live runs of both kinds at the cap
+are **`saturated`**, the fifth refusal; then the command is built, and a
+definition that will not parse is `invalid`. `saturated` sits with `working`
+and `paused` in `QUEUEABLE_REFUSALS` — the refusals that end on their own —
+which is the one list the tracker, `Scheduler.manualWake` and both console
+sentences read, so a saturated run queues from the console exactly as it does
+from the ledger. At the default cap of 1 a job resolves to standing and the
+gate is byte-for-byte what it was.
+
+Each process carries `HIVE_RUN_ID` and `HIVE_RUN_KIND`. The MCP host stamps
+`meta.run` on every entry the run writes — over anything the model put there —
+and `openAsksFor` / `handoffFor` match on that stamp instead of scanning from
+`run.started`, which could not tell two concurrent runs apart. A task run's
+receipt is therefore its own: its `run.started` / `run.ended` events, its
+`done` or `failed`, and a `RunSummary` with `kind: 'task'`. A task close never
+touches `runsSinceRotate`, `pendingSession` or `sessionUuid`; the row stays
+`working` until the last run closes, and only that close computes the resting
+status. `kill` stops every run under the name. The scheduler's flush, for an
+agent above the cap of 1, offers each queued job as its own run after the one
+standing wake, and puts back whatever the cap refuses.
+
+A **permission** ask is the one entry whose `meta` is rebuilt on the way in
+(HIVE-125), so `honestPermissionAsk`'s allowlist has to carry `run` explicitly.
+It did not, and the live suite is what found it: a fenced run closed `done`
+rather than `asking`, which left the card on screen and the agent reading as
+idle — free to be woken again on top of its own unanswered question.
+
+The status push carries `live: LiveRunSummary[]`. The run log draws each as a
+row in the receipt columns — `●` standing, `○` task, `running`, `Took` counting
+up, the prompt on the reason line — and groups its output by `RunLine.run`,
+because three processes write into one buffer. The rail and the fleet say
+`working ·3`.
+
 ### Time passed (HIVE-121)
 
 The other half of the same module, on the same timer. `onEntry` answers
@@ -1265,12 +1309,17 @@ the asks it wrote itself, and the attack is an agent that never calls it;
 trims the bulk fields out of the input it stores.
 
 The rebuilt `meta` is an **allowlist** — `kind`, `tool`, `input`, `rungs`,
-`default`, `options` and nothing else. Dropping `quote` was the fix for one
-model-supplied key; building from nothing is the fix for the shape of the bug,
-and it is what keeps the next such key from riding onto an entry the system
-then certifies as honest. It is gated on `kind === 'ask'` as well as on
-`meta.kind`, matching every other reader of that discriminator, so a `post`
-merely carrying the rider keeps its author's text.
+`default`, `options`, plus `run` when it is a string, and nothing else. `run`
+is the host's stamp rather than the model's word (*Task runs* above), and it
+is the only thing that ties an open ask to the run that wrote it: leaving it
+out of the allowlist closed a fenced run `done` instead of `asking`, which put
+the card on screen and left the agent reading as idle.
+
+Dropping `quote` was the fix for one model-supplied key; building from nothing
+is the fix for the shape of the bug, and it is what keeps the next such key
+from riding onto an entry the system then certifies as honest. It is gated on
+`kind === 'ask'` as well as on `meta.kind`, matching every other reader of that
+discriminator, so a `post` merely carrying the rider keeps its author's text.
 
 **The cap is applied twice**, and it has to be: the first refusal tests the
 body that was *sent*, and a permission ask's stored body is composed after it
@@ -1436,6 +1485,9 @@ recognised subtype falls through to `failed` on a non-zero exit. Reverse that
 ordering and every capped run in `agents.json` reads as a crash, which is the
 failure mode that makes a cap look like a bug in the agent.
 
+`limits.parallel` is the third limit and is not a flag: it is read by the
+tracker's gate, not passed to `claude`. See *Task runs* above.
+
 `rotate_after` is unaffected and worth stating plainly: every wake is
 `claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
 the feature — it is how an agent remembers it already answered a thread — and
@@ -1460,15 +1512,14 @@ deliberately, which is why `lastTurn` rides from the command onto the run record
 rather than being re-derived at close.
 
 **The close is what decides whether the rotation happens.** `runs.ts` asks
-`handoffFor` whether the run posted a `handoff` entry at or after its own
-`run.started` — the same run-boundary comparison `openAsksFor` uses, because the
-ledger has no other notion of which run an entry belongs to, and the last one
-wins if the agent wrote several. If it did, main mints the next session's uuid
-into `AgentRunState.pendingSession` beside the handoff body, zeroes
-`runsSinceRotate` and clears `rotateFailures`. If it did not, nothing rotates
-and the conversation is kept — a run cut off by its turn cap is not an agent
-that chose to forget, and dropping its memory anyway is precisely the outcome
-this design exists to prevent.
+`handoffFor` whether the run posted a `handoff` entry carrying its own
+`meta.run` stamp — the same run-boundary match `openAsksFor` uses (*Task runs*
+above), and the last one wins if the agent wrote several. If it did, main mints
+the next session's uuid into `AgentRunState.pendingSession` beside the handoff
+body, zeroes `runsSinceRotate` and clears `rotateFailures`. If it did not,
+nothing rotates and the conversation is kept — a run cut off by its turn cap is
+not an agent that chose to forget, and dropping its memory anyway is precisely
+the outcome this design exists to prevent.
 
 Declining to rotate is a **strike**, and three consecutive strikes are the
 point at which a human is told. At exactly the third, main appends an `event`

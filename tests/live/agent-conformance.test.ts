@@ -262,6 +262,12 @@ const STANDING = 'probe-standing';
 const DISCOVERER = 'probe-discoverer';
 const SPECIALIST = 'probe-specialist';
 
+/**
+ * The agent that fans out (HIVE-128): `limits.parallel: 2`, so two console
+ * runs with prompts become two task runs at once.
+ */
+const FANOUT = 'probe-fanout';
+
 const AGENTS = [
   NAME,
   ASKER,
@@ -273,6 +279,7 @@ const AGENTS = [
   STANDING,
   DISCOVERER,
   SPECIALIST,
+  FANOUT,
 ];
 
 const AGENT_MD = `---
@@ -549,6 +556,39 @@ Read your ledger inbox. If it contains an ask addressed to you, call
 `;
 
 /**
+ * The fan-out probe, as a definition (HIVE-128).
+ *
+ * `parallel: 2` is the only line here that is not shared with every other
+ * probe, and it is the whole point: without it a second job resolves to a
+ * standing wake, is refused `working`, and the scenario below could not start
+ * two runs at all.
+ *
+ * The body is written so each run's **receipt** is different — it reports back
+ * a word that exists nowhere but in its own wake prompt. Two identical receipts
+ * would be satisfied by one run writing twice, which is precisely the confusion
+ * `meta.run` exists to rule out; two different words, each stamped with its own
+ * run, cannot be.
+ *
+ * `turns: 6` is tighter than its neighbours because there is nothing to do here
+ * but read the prompt and call `ledger_done` — and two of these run at once, so
+ * a runaway costs double.
+ */
+const FANOUT_MD = `---
+name: ${FANOUT}
+description: Proves two task runs land two receipts.
+icon: Ghost
+model: haiku
+tools: [Read]
+limits:
+  turns: 6
+  parallel: 2
+---
+This is a conformance probe. Do not read files or run commands. Your wake
+prompt names one word after "manual —". Report exactly that word with
+ledger_done and end your turn.
+`;
+
+/**
  * The fence probe, as a definition (HIVE-119).
  *
  * `tools:` pins exactly the read-only set every other probe in this file
@@ -697,6 +737,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [STANDING, standingMd(standingMarker)],
       [DISCOVERER, DISCOVERER_MD],
       [SPECIALIST, SPECIALIST_MD],
+      [FANOUT, FANOUT_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -868,7 +909,13 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       },
       command: (name, trigger, extra, options) =>
         buildWakeCommand(name, trigger, extra, options),
-      parallelFor: () => 1,
+      /*
+        The cap `ipc/index.ts` reads off each parsed definition (HIVE-128).
+        One above 1, for {@link FANOUT} alone: every other probe here is woken
+        serially and a cap above one would let a stray second wake start a
+        second process under a name whose assertions count spawns.
+      */
+      parallelFor: (name) => (name === FANOUT ? 2 : 1),
       state: agentState,
       appendLedger: (entry) => {
         const result = ledger.append(entry);
@@ -877,31 +924,25 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
         // never written, and the reason would be invisible in the failure.
         expect(result.ok).toBe(true);
       },
+      /*
+        Scoped by the run's own stamp, exactly as `ipc/index.ts` scopes it
+        (HIVE-128). The scan-from-`run.started` shape this replaced could not
+        tell two concurrent runs apart — with two live, the second run's ask
+        would answer for the first — so the fan-out scenario below is the one
+        that needs this to be the production shape rather than a paraphrase.
+      */
       openAsksFor: (name, run) => {
-        const { entries, openAsks } = ledger.read({ from: name });
-        const started = entries.find(
-          (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
-        );
+        const { openAsks } = ledger.read({ from: name });
 
-        return openAsks.some(
-          (ask) => ask.from === name && (started === undefined || ask.id >= started.id),
-        );
+        return openAsks.some((ask) => ask.from === name && ask.meta?.['run'] === run);
       },
       // The real reader, so a live run that rotates is decided the way the app
       // decides it (HIVE-122).
       handoffFor: (name, run) => {
         const { entries } = ledger.read({ from: name });
-        const started = entries.find(
-          (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
-        );
-
-        // Fails closed with no start entry, exactly as production does: a
-        // fallback to "any handoff this agent ever wrote" would rotate off a
-        // previous rotation's body.
-        if (started === undefined) return undefined;
 
         return entries.findLast(
-          (entry) => entry.kind === 'handoff' && entry.id >= started.id,
+          (entry) => entry.kind === 'handoff' && entry.meta?.['run'] === run,
         )?.body;
       },
       newUuid,
@@ -930,8 +971,9 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       run: (name, trigger, extra, options) => runs.run(name, trigger, extra, options),
       state: agentState,
       isAgent: (id) => AGENTS.includes(id),
-      // Task 11 replaces this with the same cache the tracker reads (HIVE-128).
-      parallelFor: () => 1,
+      // The same cache the tracker above reads, for the same reason: the flush
+      // fans a queue out only as wide as the cap it is told (HIVE-128).
+      parallelFor: (name) => (name === FANOUT ? 2 : 1),
       /*
         The gate `ipc/index.ts` reads off each parsed definition into
         `ledgerAgents` — derived here from the definitions this suite actually
@@ -1462,6 +1504,107 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
     expect(closed.runs).toHaveLength(1);
     expect(closed.runs[0]?.outcome).not.toBe('failed');
+  }, 300_000);
+
+  /**
+   * Two task runs at once, each with its own receipt (HIVE-128).
+   *
+   * The acceptance proof for the whole story, and the only test that can be
+   * one: every unit test of the tracker holds a fake child that never writes
+   * anything, so "two runs are live" is a number in a map, and "each entry is
+   * stamped with the run that wrote it" is a fake MCP host agreeing with the
+   * code that set the variable. Two real `claude` processes, writing into one
+   * ledger through two real MCP hosts, is the only shape where those two
+   * claims can be wrong.
+   *
+   * Three things are asserted, and each needs the pair to be real:
+   *
+   * 1. **They were live together.** The gate started both, the third job was
+   *    refused `saturated` while they were, and on disk the *later* of the two
+   *    `run.started` ids is below the *earlier* `run.ended` — so the second
+   *    began before the first finished. Ledger ids sort in write order as
+   *    strings, which is what that comparison rests on. A serial pair would
+   *    interleave the other way and fail here.
+   * 2. **Each receipt is its own.** Two `RunSummary` records with `kind:
+   *    'task'` and two distinct `run` ids, and two `done` entries whose
+   *    `meta.run` stamps are exactly that pair. The MCP host stamps those from
+   *    `HIVE_RUN_ID` in its own process, so a stamp can only be right if the
+   *    right environment reached the right child.
+   * 3. **A task close leaves the conversation alone.** `runsSinceRotate` is
+   *    still 0 and there is no `sessionUuid` — this agent has never had a
+   *    standing run, and two task runs must not give it one.
+   *
+   * The bodies are the evidence that the two receipts came from two different
+   * jobs rather than one run writing twice: each run is told a word that
+   * exists nowhere but in its own wake prompt, and both words come back.
+   *
+   * One `await` covers both runs, and that is not an oversight: `settled`
+   * resolves when the row leaves `working`, which with several runs live is
+   * the *last* close.
+   */
+  it('runs two task runs at once, and each lands its own receipt (HIVE-128)', async () => {
+    const before = spawns.length;
+    const done = settled(FANOUT);
+
+    const alpha = runs.run(FANOUT, 'manual', 'alpha', { job: true });
+    const beta = runs.run(FANOUT, 'manual', 'beta', { job: true });
+
+    expect(alpha).toMatchObject({ started: true, kind: 'task' });
+    expect(beta).toMatchObject({ started: true, kind: 'task' });
+    expect(spawns).toHaveLength(before + 2);
+    expect(runs.liveRuns(FANOUT)).toHaveLength(2);
+    expect(runs.run(FANOUT, 'manual', 'gamma', { job: true })).toMatchObject({
+      refused: 'saturated',
+    });
+
+    await done;
+
+    const state = await persisted(FANOUT);
+    const tasks = state.runs.filter((run) => run.kind === 'task');
+
+    expect(tasks).toHaveLength(2);
+    expect(new Set(tasks.map((run) => run.run)).size).toBe(2);
+    expect(tasks.map((run) => run.outcome)).toEqual(['done', 'done']);
+    expect(state.runsSinceRotate).toBe(0);
+    expect(state.sessionUuid).toBeUndefined();
+
+    const entries = (await onDisk()).filter((entry) => entry['from'] === FANOUT);
+    const startedIds = entries
+      .filter((entry) => entry['body'] === 'run.started — manual')
+      .map((entry) => String(entry['id']));
+    const endedIds = entries
+      .filter((entry) => String(entry['body']).startsWith('run.ended'))
+      .map((entry) => String(entry['id']));
+
+    expect(startedIds).toHaveLength(2);
+    expect(endedIds).toHaveLength(2);
+
+    /*
+      Both started before either ended: they really overlapped.
+
+      Compared as strings, not as numbers. A ledger id is
+      `<yyyymmdd>-<hhmmss>-<seq>` — every field fixed-width, so it sorts
+      lexicographically in write order, and `Number(...)` of one is `NaN`,
+      which would make any numeric comparison here quietly meaningless.
+    */
+    const lastStart = [...startedIds].sort().at(-1);
+    const firstEnd = [...endedIds].sort().at(0);
+
+    expect(
+      lastStart !== undefined && firstEnd !== undefined && lastStart < firstEnd,
+      `both runs should have started before either ended: started ${startedIds.join(', ')}, ended ${endedIds.join(', ')}`,
+    ).toBe(true);
+
+    const dones = entries.filter((entry) => entry['kind'] === 'done');
+    const stamps = dones.map((entry) => (entry['meta'] as Record<string, unknown>)['run']);
+
+    expect(new Set(stamps)).toEqual(new Set(tasks.map((run) => run.run)));
+    expect(dones.map((entry) => String(entry['body']).toLowerCase()).sort()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('alpha'),
+        expect.stringContaining('beta'),
+      ]),
+    );
   }, 300_000);
 
   /**

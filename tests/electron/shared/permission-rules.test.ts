@@ -568,6 +568,38 @@ describe('honestPermissionAsk', () => {
     ]);
   });
 
+  /**
+   * The one key that does survive, and why (HIVE-128).
+   *
+   * `meta.run` is stamped by the MCP host over anything the model wrote, and
+   * `openAsksFor` matches an open ask to the run that wrote it by nothing
+   * else. Dropping it here closed a fenced run `done` rather than `asking` —
+   * caught by the live conformance suite, not by any unit test, because only
+   * a real run has a stamp to lose.
+   */
+  it('carries the host-stamped run onto a certified ask', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      run: 'run-7',
+    });
+
+    expect(result.meta['run']).toBe('run-7');
+  });
+
+  /** A `run` that is not a string is still a caller's invention, and is dropped. */
+  it('drops a run that is not a string', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      run: { id: 'run-7' },
+    });
+
+    expect(result.meta['run']).toBeUndefined();
+  });
+
   /** Self review, finding 5: the marker was conditional on the value being a string. */
   it('bounds a bulk field that is not a string', () => {
     const result = honestPermissionAsk('', {
