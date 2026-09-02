@@ -87,8 +87,14 @@ describe('foldRunLog', () => {
       turns: 3,
       sessionUuid: 'f9589d3c-8987-4f7d-ba2f-537952d2633c',
     });
+    /*
+      `endsTurn` is asserted here, not merely tolerated. The renderer splits the
+      buffer on it to draw newest-turn-first, so this is the one place the
+      boundary is written — and a fold emitted without it collapses several
+      turns into one block with no test anywhere else to notice.
+    */
     expect(step.lines).toEqual([
-      { text: '● turn ended — success · $0.02', color: 'cyan' },
+      { text: '● turn ended — success · $0.02', color: 'cyan', endsTurn: true },
     ]);
   });
 
@@ -103,7 +109,7 @@ describe('foldRunLog', () => {
     })}\n`;
 
     expect(foldRunLog(NO_LOG, cheap).lines).toEqual([
-      { text: '● turn ended — success · $0.0009', color: 'cyan' },
+      { text: '● turn ended — success · $0.0009', color: 'cyan', endsTurn: true },
     ]);
   });
 

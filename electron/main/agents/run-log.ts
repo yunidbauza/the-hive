@@ -172,7 +172,18 @@ function readEvent(
     const cost = formatted === undefined ? '' : ` · ${formatted}`;
 
     return {
-      lines: [{ text: `● turn ended — ${subtype}${cost}`, color: 'cyan' }],
+      /*
+        `endsTurn` marks the fold as the turn's last line. The renderer splits
+        the buffer on it to draw newest-turn-first; see `RunLine.endsTurn` for
+        why that is a field rather than a colour check.
+      */
+      lines: [
+        {
+          text: `● turn ended — ${subtype}${cost}`,
+          color: 'cyan',
+          endsTurn: true,
+        },
+      ],
       result,
       mcpServers: null,
     };

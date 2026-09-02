@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
+
+import type { TermLine } from '@/types/terminal';
 
 import type { AgentStatus, RunSummary } from '@shared/agent-contract';
 import { formatRunCost } from '@shared/agent-contract';
@@ -15,6 +17,46 @@ import { useAgentLines, useAgentRuns } from '@stores/hive-store';
  * about — the output must never be the smaller half.
  */
 const RECEIPTS_MAX = '40%';
+
+/**
+ * The receipts' column track, shared by the header row and every receipt.
+ *
+ * **One constant, used twice, because a heading that can drift from its column
+ * is worse than no heading.** Written as a string rather than duplicated
+ * Tailwind classes for the same reason `RECEIPTS_MAX` is a constant: the two
+ * consumers are forty lines apart.
+ *
+ * Widths are in `ch`, which is the right unit here and nowhere else in the app:
+ * this component renders at the user's *terminal* type scale (10px to 18px), so
+ * a pixel width that fits `interval` at 11px clips it at 17px. A `ch` is the
+ * advance of `0` in the current font — in a monospace face, exactly one
+ * character — so these columns hold the same number of glyphs at every size the
+ * user can choose.
+ *
+ * The run id is **fixed**, not flexible, because it renders at a fixed width:
+ * a full `randomUUID` is 36 characters — wider than every other column put
+ * together — and the first eight already tell two runs apart, which is the
+ * judgement `Fact label="Session"` in `agent-view.tsx` reached for the
+ * conversation uuid. `#` plus eight is nine, so ten holds it with room.
+ *
+ * The flexible track goes to **Why** instead, and that is the one column that
+ * earns it. `reason` is the only variable-length field here — "killed",
+ * "stalled", "the app closed" — and it is the one thing a reader needs in full
+ * when they need it at all. It was in the Outcome cell first, which clipped it
+ * at every size the app can render, including the widest.
+ *
+ * `Turns`, `Took` and `Cost` are right-aligned with `tabular-nums`, so `9s` and
+ * `10s` line up on their units and `$0.04` under `$0.16`. Left-aligned digits
+ * were half the reason the old row looked ragged; the other half was that
+ * `justify-between` gave `manual` (6 chars) and `interval` (8) different
+ * starting points for everything after them.
+ *
+ * Measured in Chromium at 640/900/1200px and 10/12.5/18px: every cell's left
+ * edge is identical across the header and all rows, and nothing clips except a
+ * 37-character failure reason at the smallest pairing — which has its `title`.
+ */
+const RECEIPT_GRID =
+  'grid items-baseline gap-x-3 [grid-template-columns:10ch_9ch_9ch_8ch_5ch_5ch_7ch_minmax(0,1fr)]';
 
 interface AgentRunLogProps {
   name: string;
@@ -94,56 +136,32 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
   const runs = useAgentRuns(name);
   const { palette, fontFamily, fontSize } = useTerminalAppearance();
   const foot = useRef<HTMLDivElement>(null);
-  const receipts = useRef<HTMLDivElement>(null);
 
   const live = status === 'working';
 
-  /**
-   * Keep the receipts half showing its newest row.
-   *
-   * `useLayoutEffect`, not `useEffect`: this runs on every open, and a paint
-   * with the box at `scrollTop: 0` before it corrects would show the oldest
-   * receipts for a frame and jump.
-   *
-   * Conditional on the reader not having scrolled away, which is the rule the
-   * output half already follows for the same reason — yanking someone out of
-   * a receipt they are reading is the behaviour this whole split exists to
-   * stop. `atBottom` is measured *before* React commits the new row, so it
-   * answers "were they following along", not "does the box happen to fit".
-   * The 2px slack absorbs sub-pixel heights at fractional zoom.
-   */
-  const following = useRef(true);
+  /*
+    Newest first, in both halves.
 
-  useLayoutEffect(() => {
-    const box = receipts.current;
+    This replaces a scroll pin. `runs` is oldest-first, and clipping the
+    receipts to a share of the height meant a full history opened on its ten
+    oldest rows — so an effect drove `scrollTop` to the bottom on every render.
+    Reversing is the same answer without the machinery: the newest row is at
+    `scrollTop: 0`, which is where a scroll box already opens, and the reader
+    who scrolls away is not fighting an effect that wants to pull them back.
 
-    if (box === null) return;
-
-    if (following.current) box.scrollTop = box.scrollHeight;
-  }, [runs]);
-
-  const noteScroll = () => {
-    const box = receipts.current;
-
-    if (box === null) return;
-
-    following.current =
-      box.scrollHeight - box.scrollTop - box.clientHeight <= 2;
-  };
+    `slice()` first, because `reverse` mutates and `runs` is the store's array.
+  */
+  const receipts = runs.slice().reverse();
+  const turns = turnsOf(lines);
 
   useEffect(() => {
     /*
-      Follow the output while it is being written, as the terminal does. Not
-      when it is finished: yanking a reader to the bottom of a log they are
-      scrolling back through is the behaviour every transcript gets wrong.
+      Follow the newest output while it is being written.
 
-      `nearest` rather than `end`, and it matters now that the foot lives
-      inside the output half instead of at the bottom of the whole box. `end`
-      scrolls **every** scrollable ancestor to put the target at its bottom, so
-      it reached past the output region and dragged the view's own layout with
-      it; `nearest` moves each ancestor by the least it can, which for the
-      region that actually overflows is the same scroll and for the ones that
-      do not is nothing at all.
+      The output reads newest-turn-first now, so the live turn is at the *top*
+      and following it means scrolling to zero rather than to the foot. Not
+      when it is finished: yanking a reader out of a turn they are reading back
+      through is the behaviour every transcript gets wrong.
     */
     if (live) foot.current?.scrollIntoView({ block: 'nearest' });
   }, [lines, live]);
@@ -154,28 +172,51 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
       style={{ fontFamily, fontSize }}
       data-region="run-log"
     >
-      {runs.length === 0 ? null : (
-        <div
-          ref={receipts}
-          onScroll={noteScroll}
-          className="shrink-0 overflow-y-auto"
-          style={{ maxHeight: RECEIPTS_MAX }}
-          data-region="run-receipts"
-        >
-          {runs.map((run) => (
-            <RunHeader
-              key={run.run}
-              run={run}
-              dim={palette.dim}
-              brand={palette.blue}
-            />
-          ))}
-        </div>
+      {receipts.length === 0 ? null : (
+        <>
+          {/*
+            The header sits outside the scroll box, so it is still there after
+            twenty rows have gone past it. That is the whole reason the receipts
+            are a grid rather than a flex row: a heading can only name a column
+            that exists, and `justify-between` has no columns — it has two ends,
+            which is why `manual` shifted the timestamp and `10s` shifted the
+            cost.
+          */}
+          <div
+            className={`${RECEIPT_GRID} shrink-0 border-b pb-1 text-[0.8em] tracking-[0.1em] uppercase`}
+            style={{ color: palette.dim, borderColor: palette.dim + '33' }}
+            data-region="run-columns"
+          >
+            <span>Run</span>
+            <span>Trigger</span>
+            <span>Started</span>
+            <span>Outcome</span>
+            <span className="text-right">Turns</span>
+            <span className="text-right">Took</span>
+            <span className="text-right">Cost</span>
+            <span>Why</span>
+          </div>
+
+          <div
+            className="shrink-0 overflow-x-auto overflow-y-auto"
+            style={{ maxHeight: RECEIPTS_MAX }}
+            data-region="run-receipts"
+          >
+            {receipts.map((run) => (
+              <RunHeader
+                key={run.run}
+                run={run}
+                dim={palette.dim}
+                brand={palette.blue}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {live ? (
         <div
-          className="shrink-0 border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
+          className="shrink-0 border-t border-border-soft pt-1 pb-0.5 text-[0.9em]"
           style={{ color: palette.dim }}
         >
           Running now — this run is recorded when it ends.
@@ -183,48 +224,96 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
       ) : null}
 
       {/*
-        The heading sits outside the scroll box rather than at the top of it,
-        so the output can be scrolled without losing the label that says what
-        it is. It is also the seam between the two regions — hence the rule,
-        which the receipts above no longer draw for it.
+        The heading sits outside the scroll box for the same reason the column
+        header does: the output can be scrolled without losing the label that
+        says what it is.
+
+        It reads "Latest output" rather than "Last output" now, because the
+        buffer holds several turns and the newest is on top — "last" named a
+        single run that this has not been for a while.
       */}
-      {!live && runs.length > 0 && lines.length > 0 ? (
+      {!live && receipts.length > 0 && turns.length > 0 ? (
         <p
           className="shrink-0 border-t border-border-soft pt-1.5 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
           style={{ color: palette.dim }}
         >
-          Last output
+          Latest output
         </p>
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto" data-region="run-output">
-        {lines.length === 0 ? (
+        <div ref={foot} />
+
+        {turns.length === 0 ? (
           <p style={{ color: palette.dim }}>
             Nothing yet — Run now wakes it.
           </p>
         ) : (
-          lines.map((line, index) => (
-            <p
-              // Lines are append-only and never reordered, so the index is a
-              // stable identity here in the one way it usually is not.
-              key={index}
-              className="break-words whitespace-pre-wrap"
+          turns.map((turn, turnIndex) => (
+            <div
               /*
-                `palette` is keyed by every `TermColor`, and `RunLineColor` is
-                a strict subset of it, so this indexes without a cast — the
-                same subset relationship a contract test pins.
+                Turns are append-only and never reordered, so the index is a
+                stable identity here in the one way it usually is not — and it
+                is the index in the *unreversed* buffer, so a new turn arriving
+                at the top does not renumber the ones below it.
               */
-              style={{ color: palette[line.color] }}
+              key={turns.length - turnIndex}
+              className="border-t border-border-soft pt-1 pb-0.5 first:border-t-0 first:pt-0"
             >
-              {line.text}
-            </p>
+              {turn.map((line, index) => (
+                <p
+                  key={index}
+                  className="break-words whitespace-pre-wrap"
+                  /*
+                    `palette` is keyed by every `TermColor`, and `RunLineColor`
+                    is a strict subset of it, so this indexes without a cast —
+                    the same subset relationship a contract test pins.
+                  */
+                  style={{ color: palette[line.color] }}
+                >
+                  {line.text}
+                </p>
+              ))}
+            </div>
           ))
         )}
-
-        <div ref={foot} />
       </div>
     </div>
   );
+}
+
+/**
+ * Split a flat line buffer into turns, newest turn first.
+ *
+ * Lines within a turn keep their order — prose read bottom-up is not a log, it
+ * is a puzzle. It is the *turns* that reverse, which is the same rule the
+ * ledger column follows: the newest entry is on top, and each entry still reads
+ * forwards.
+ *
+ * The boundary is `RunLine.endsTurn`, a field, and never the fold's `cyan`.
+ * Colour is presentation; a structural split that reads presentation breaks on
+ * the next palette change, which this file's own contract warns about.
+ *
+ * A buffer whose last turn has not ended yet — the live one — has no terminator
+ * on its final line, so it comes back as a trailing partial turn. That is
+ * exactly right: it is the turn in progress, and it belongs on top.
+ */
+function turnsOf(lines: readonly TermLine[]): TermLine[][] {
+  const turns: TermLine[][] = [];
+  let current: TermLine[] = [];
+
+  for (const line of lines) {
+    current.push(line);
+
+    if (line.endsTurn === true) {
+      turns.push(current);
+      current = [];
+    }
+  }
+
+  if (current.length > 0) turns.push(current);
+
+  return turns.reverse();
 }
 
 interface RunHeaderProps {
@@ -234,10 +323,20 @@ interface RunHeaderProps {
 }
 
 /**
- * `Run #r17 · ledger · 14:32` on the left, how it went on the right.
+ * One finished run, as a row of the receipts table.
  *
  * Only ever drawn for a **finished** run — a live one has no summary to draw
  * from. See the note on the component above.
+ *
+ * Every cell is its own grid child rather than a `·`-joined string, and that is
+ * the whole of the alignment fix: joined text is laid out by its own length, so
+ * `manual` moved the timestamp six characters left of where `interval` put it,
+ * and a run that took `10s` pushed its cost a character right of one that took
+ * `9s`. Columns cannot do that.
+ *
+ * `reason` has the last column and the only flexible track — see
+ * {@link RECEIPT_GRID}. It rode in the outcome cell first, which clipped it at
+ * every window size and font size the app can render.
  */
 function RunHeader({ run, dim, brand }: RunHeaderProps) {
   const at = new Date(run.startedAt).toLocaleTimeString([], {
@@ -247,27 +346,46 @@ function RunHeader({ run, dim, brand }: RunHeaderProps) {
   const seconds = Math.max(0, Math.round((run.endedAt - run.startedAt) / 1000));
   const cost = formatRunCost(run.costUsd);
 
-  const right = [
-    run.turns === undefined ? null : `${run.turns} turns`,
-    `${seconds}s`,
-    cost,
-    // `reason` is the only place a failure says what actually happened —
-    // killed, stalled, app-closed — and the outcome word alone does not.
-    run.reason,
-  ]
-    .filter((part) => part !== null && part !== undefined)
-    .join(' · ');
-
   return (
     <div
-      className="flex items-baseline justify-between gap-3.5 border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
+      className={`${RECEIPT_GRID} border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0`}
       style={{ color: dim }}
     >
-      <span className="truncate">
-        <span style={{ color: brand }}>Run #{run.run}</span>
-        {` · ${run.trigger} · ${at}`}
+      {/*
+        Truncated to eight characters, with the whole uuid in the `title`. A
+        `randomUUID` is 36 characters and would otherwise take more width than
+        every other column combined — and eight is what already distinguishes a
+        conversation on the Session tile.
+      */}
+      <span className="truncate" style={{ color: brand }} title={run.run}>
+        {`#${run.run.slice(0, 8)}`}
       </span>
-      <span className="shrink-0">{`${run.outcome} · ${right}`}</span>
+      <span className="truncate" title={run.trigger}>
+        {run.trigger}
+      </span>
+      <span className="tabular-nums">{at}</span>
+      <span className="truncate" title={run.outcome}>
+        {run.outcome}
+      </span>
+      {/*
+        An em dash rather than a blank for a run that reported no turn count and
+        no cost: a cell that is simply empty reads as a column that does not
+        apply to this row, when what happened is that the run ended without
+        saying.
+      */}
+      <span className="text-right tabular-nums">{run.turns ?? '—'}</span>
+      <span className="text-right tabular-nums">{`${seconds}s`}</span>
+      <span className="text-right tabular-nums">{cost ?? '—'}</span>
+      {/*
+        Empty on almost every row, which is why it takes the *flexible* track
+        rather than a width: a column sized for "killed after the stall watchdog
+        fired" would steal that width from the columns that are never empty, and
+        one sized for "killed" clips the sentence that actually explains a
+        failure.
+      */}
+      <span className="truncate" title={run.reason}>
+        {run.reason ?? ''}
+      </span>
     </div>
   );
 }

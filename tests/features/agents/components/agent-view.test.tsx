@@ -330,11 +330,11 @@ describe('AgentView', () => {
     it('draws older runs as receipts, with no control promising an expansion', () => {
       render(<AgentView entity={seed({ status: 'sleeping' })} />);
 
-      expect(screen.getByText(/Run #r16/)).toBeInTheDocument();
-      expect(screen.getByText(/Run #r17/)).toBeInTheDocument();
+      expect(screen.getByText(/#r16/)).toBeInTheDocument();
+      expect(screen.getByText(/#r17/)).toBeInTheDocument();
       // No disclosure control: those lines were never kept.
       expect(
-        screen.queryByRole('button', { name: /Run #/i }),
+        screen.queryByRole('button', { name: /^#r/i }),
       ).not.toBeInTheDocument();
     });
 
@@ -348,7 +348,7 @@ describe('AgentView', () => {
       render(<AgentView entity={seed({ status: 'working' })} />);
 
       // r17 is the last *finished* run, so it keeps its receipt…
-      expect(screen.getByText(/Run #r17/)).toBeInTheDocument();
+      expect(screen.getByText(/#r17/)).toBeInTheDocument();
       expect(screen.getByText(/asking/)).toBeInTheDocument();
       // …and the live run claims no identity it cannot know.
       expect(screen.getByText(/Running now/)).toBeInTheDocument();
@@ -358,8 +358,8 @@ describe('AgentView', () => {
     it('keeps every finished run’s receipt while another is live', () => {
       render(<AgentView entity={seed({ status: 'working' })} />);
 
-      expect(screen.getByText(/Run #r16/)).toBeInTheDocument();
-      expect(screen.getByText(/Run #r17/)).toBeInTheDocument();
+      expect(screen.getByText(/#r16/)).toBeInTheDocument();
+      expect(screen.getByText(/#r17/)).toBeInTheDocument();
     });
 
     it('renders the streamed lines', () => {
@@ -409,7 +409,7 @@ describe('AgentView', () => {
       expect(receipts).not.toBeNull();
       expect(output).not.toBeNull();
       expect(receipts).not.toContainElement(output as HTMLElement);
-      expect(within(receipts as HTMLElement).getByText(/Run #r17/)).toBeInTheDocument();
+      expect(within(receipts as HTMLElement).getByText(/#r17/)).toBeInTheDocument();
       expect(within(output as HTMLElement).getByText('still going')).toBeInTheDocument();
     });
 
