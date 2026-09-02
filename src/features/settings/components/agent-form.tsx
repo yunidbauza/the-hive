@@ -242,6 +242,11 @@ const LIMIT_FIELDS = [
     label: 'rotate after',
     hint: String(AGENT_LIMIT_DEFAULTS.rotateAfter),
   },
+  {
+    path: 'limits.parallel',
+    label: 'parallel',
+    hint: String(AGENT_LIMIT_DEFAULTS.parallel),
+  },
 ] as const;
 
 /**
@@ -323,6 +328,7 @@ export const FIELD_HELP: Record<string, string> = {
   'limits.daily_usd':
     'Empty means no daily ceiling. A number stops its scheduled wakes for the rest of the day once the day’s runs reach it, and posts a card saying so — you can still wake it by hand, and it resumes at midnight. Priced at list rates, like the budget above.',
   'limits.rotate_after': `Runs before it starts a fresh session. Every wake resumes the last one, so this is what stops the transcript growing forever. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
+  'limits.parallel': `How many runs may be live at once. 1 keeps one conversation, strictly in turn. Above 1, a console run that carries a prompt starts a task run beside the standing session — a fresh conversation for that one job — up to this many live. Default ${AGENT_LIMIT_DEFAULTS.parallel}.`,
 };
 
 /**

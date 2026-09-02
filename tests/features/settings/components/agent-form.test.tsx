@@ -524,6 +524,7 @@ describe('AgentForm', () => {
 
       expect(FIELD_HELP['limits.turns']).toMatch(/Default 40\./);
       expect(FIELD_HELP['limits.rotate_after']).toMatch(/Default 50\./);
+      expect(FIELD_HELP['limits.parallel']).toMatch(/Default 1\./);
       /*
         Budget has no default to name, which is the whole change: a cap is
         unlimited unless the author sets one. The sentence has to say so, and

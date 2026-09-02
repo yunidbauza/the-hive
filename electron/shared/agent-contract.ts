@@ -158,6 +158,11 @@ export type WakeCheck = (typeof WAKE_CHECKS)[number];
 export const AGENT_LIMIT_DEFAULTS = {
   turns: 40,
   rotateAfter: 50,
+  /**
+   * Runs that may be live at once (HIVE-128). `1` is one conversation,
+   * strictly in turn — every agent written before this key existed.
+   */
+  parallel: 1,
 } as const;
 
 export const AUTONOMIES = ['ask', 'act'] as const;
@@ -279,6 +284,8 @@ export interface AgentDefinition {
     budgetUsd?: number;
     dailyUsd?: number;
     rotateAfter: number;
+    /** Concurrent runs of any kind. See {@link AGENT_LIMIT_DEFAULTS.parallel}. */
+    parallel: number;
   };
   body: string;
 }
@@ -513,6 +520,7 @@ export const AGENT_FIELDS: readonly FieldSpec[] = [
   { path: 'limits.budget_usd', kind: 'number', required: false },
   { path: 'limits.daily_usd', kind: 'number', required: false },
   { path: 'limits.rotate_after', kind: 'number', required: false },
+  { path: 'limits.parallel', kind: 'number', required: false },
 ];
 
 /**

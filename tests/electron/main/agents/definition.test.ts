@@ -131,7 +131,7 @@ describe('parseAgent — the good file', () => {
     expect(def.mcp).toEqual(['slack']);
     expect(def.tools).toEqual(['Read', 'Grep', 'WebFetch']);
     expect(def.autonomy).toBe('ask');
-    expect(def.limits).toEqual({ turns: 40, budgetUsd: 0.5, rotateAfter: 50 });
+    expect(def.limits).toEqual({ turns: 40, budgetUsd: 0.5, rotateAfter: 50, parallel: 1 });
   });
 
   it('keeps the body', () => {
@@ -356,7 +356,7 @@ Wait to be asked.
     const def = definition(MINIMAL, alone);
 
     expect(def.autonomy).toBe('ask');
-    expect(def.limits).toEqual({ turns: 40, rotateAfter: 50 });
+    expect(def.limits).toEqual({ turns: 40, rotateAfter: 50, parallel: 1 });
     expect(def.skills).toEqual([]);
     expect(def.tools).toEqual([]);
   });
@@ -639,5 +639,36 @@ describe('parseAgent — check, and the daily cap', () => {
       definition(GOOD.replace('budget_usd: 0.50', 'budget_usd: 0.50\n  daily_usd: 2.50'))
         .limits.dailyUsd,
     ).toBe(2.5);
+  });
+});
+
+describe('limits.parallel (HIVE-128)', () => {
+  const alone = { folder: 'quiet-one', skillNames: [], hiveSkillNames: [] };
+  const withParallel = (value: string) => `---
+name: quiet-one
+description: Does nothing on a schedule.
+icon: Ghost
+limits:
+  parallel: ${value}
+---
+Wait to be asked.
+`;
+
+  it('parses a cap above one', () => {
+    expect(definition(withParallel('3'), alone).limits.parallel).toBe(3);
+  });
+
+  it('refuses a fraction — a run is whole or it is not a run', () => {
+    expect(problems(withParallel('1.5'), alone)).toContainEqual({
+      field: 'limits.parallel',
+      reason: 'Must be a whole number of runs, 1 or more.',
+    });
+  });
+
+  it('refuses zero through the number rule every limit shares', () => {
+    expect(problems(withParallel('0'), alone)).toContainEqual({
+      field: 'limits.parallel',
+      reason: 'Must be a positive number.',
+    });
   });
 });

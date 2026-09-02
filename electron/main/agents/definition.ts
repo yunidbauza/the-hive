@@ -344,6 +344,19 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
     problems.push({ field: 'tools', reason: 'A tool name cannot be empty.' });
   }
 
+  /*
+    The shared `number` rule accepts `1.5`, and a cap of one and a half runs
+    is a cap of one that pretends otherwise. Whole numbers only (HIVE-128).
+  */
+  const parallelRaw = shaped('limits.parallel');
+
+  if (parallelRaw !== undefined && !Number.isInteger(Number(parallelRaw))) {
+    problems.push({
+      field: 'limits.parallel',
+      reason: 'Must be a whole number of runs, 1 or more.',
+    });
+  }
+
   if (problems.length > 0) return { problems };
 
   const quiet = shaped('wake.quiet');
@@ -403,6 +416,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
         */
         ...(daily === undefined ? {} : { dailyUsd: Number(daily) }),
         rotateAfter: limit('limits.rotate_after', AGENT_LIMIT_DEFAULTS.rotateAfter),
+        parallel: limit('limits.parallel', AGENT_LIMIT_DEFAULTS.parallel),
       },
       body,
     },

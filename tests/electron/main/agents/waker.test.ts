@@ -16,7 +16,7 @@ const def = (over: Partial<AgentDefinition> = {}): AgentDefinition => ({
   mcp: [],
   tools: ['Read', 'Grep'],
   autonomy: 'ask',
-  limits: { turns: 40, rotateAfter: 50 },
+  limits: { turns: 40, rotateAfter: 50, parallel: 1 },
   body: 'Watch the channel and report mentions.',
   ...over,
 });
@@ -98,7 +98,7 @@ describe('wakeCommand', () => {
 
   it('passes a budget when the definition sets one', () => {
     const args = build({
-      def: def({ limits: { turns: 40, budgetUsd: 2.5, rotateAfter: 50 } }),
+      def: def({ limits: { turns: 40, budgetUsd: 2.5, rotateAfter: 50, parallel: 1 } }),
     }).args;
 
     expect(args[args.indexOf('--max-budget-usd') + 1]).toBe('2.5');
