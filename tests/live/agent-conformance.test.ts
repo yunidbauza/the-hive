@@ -927,9 +927,11 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       not use.
     */
     scheduler = createScheduler({
-      run: (name, trigger, extra) => runs.run(name, trigger, extra),
+      run: (name, trigger, extra, options) => runs.run(name, trigger, extra, options),
       state: agentState,
       isAgent: (id) => AGENTS.includes(id),
+      // Task 11 replaces this with the same cache the tracker reads (HIVE-128).
+      parallelFor: () => 1,
       /*
         The gate `ipc/index.ts` reads off each parsed definition into
         `ledgerAgents` — derived here from the definitions this suite actually

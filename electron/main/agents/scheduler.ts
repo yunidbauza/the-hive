@@ -99,7 +99,12 @@ export interface SchedulerDeps {
    * {@link Scheduler.manualWake} does: `working` and `paused` are waits worth
    * keeping, and a definition that cannot be read is not.
    */
-  run: (name: string, trigger: string, extra?: string) => RunStart;
+  run: (
+    name: string,
+    trigger: string,
+    extra?: string,
+    options?: { job?: true },
+  ) => RunStart;
   state: Pick<AgentState, 'read' | 'patch' | 'all'>;
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
@@ -112,6 +117,15 @@ export interface SchedulerDeps {
    * must not spend turns and budget on entries they opted out of.
    */
   wakesOnLedger: (name: string) => boolean;
+  /**
+   * `limits.parallel`, from the same cache `wakesOnLedger` reads (HIVE-128).
+   *
+   * What `flush` asks to decide whether a queued job gets its own run or
+   * stays bundled into the one standing wake: above one, the tracker turns a
+   * job into a task run beside the conversation rather than refusing it as a
+   * second `working` wake.
+   */
+  parallelFor: (name: string) => number;
   /**
    * Every agent with a usable schedule — or `undefined` before the registry
    * has answered its first listing.
@@ -635,9 +649,40 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     deps.state.patch(name, { pendingWake: [] });
 
-    const started = deps.run(name, triggerFor(queued), describeEntries(queued));
+    /*
+      An agent that fans out gets its queued jobs one run each (HIVE-128); the
+      rest — ledger entries and bare runs — flush as the one standing wake
+      they always did, and go first, because that wake is the one the queue
+      existed for. At the default cap nothing is split and this is the flush
+      it was.
+    */
+    const fanOut = deps.parallelFor(name) > 1;
+    const jobs = fanOut
+      ? queued.filter((entry) => entry.kind === MANUAL_KIND && entry.text !== undefined)
+      : [];
+    const rest = queued.filter((entry) => !jobs.includes(entry));
+    const back: PendingWakeEntry[] = [];
 
-    if (started.started) return;
+    if (rest.length > 0) {
+      const started = deps.run(name, triggerFor(rest), describeEntries(rest));
+
+      if (!started.started) back.push(...rest);
+    }
+
+    let refused = false;
+
+    for (const job of jobs) {
+      if (!refused) {
+        const started = deps.run(name, MANUAL_TRIGGER, job.text, { job: true });
+
+        if (started.started) continue;
+        refused = true;
+      }
+
+      back.push(job);
+    }
+
+    if (back.length === 0) return;
 
     /*
       Put it back. A refusal is not a delivery.
@@ -660,7 +705,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     const since = deps.state.read(name).pendingWake ?? [];
 
     deps.state.patch(name, {
-      pendingWake: [...queued, ...since].slice(0, AGENT_PENDING_WAKE_MAX),
+      pendingWake: [...back, ...since].slice(0, AGENT_PENDING_WAKE_MAX),
     });
   };
 
@@ -796,7 +841,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         };
       }
 
-      const started = deps.run(name, MANUAL_TRIGGER, extra);
+      /*
+        A prompt makes the wake a job (HIVE-128): with a cap above one it
+        becomes a task run beside the standing conversation; at the default
+        it is the standing wake it always was.
+      */
+      const started = deps.run(
+        name,
+        MANUAL_TRIGGER,
+        extra,
+        extra === undefined ? undefined : { job: true },
+      );
 
       if (started.started) return started;
 

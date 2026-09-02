@@ -26,7 +26,7 @@ const entry = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
 });
 
 describe('createScheduler', () => {
-  let woke: { name: string; trigger: string; extra?: string }[];
+  let woke: { name: string; trigger: string; extra?: string; job?: true }[];
   let entries: LedgerEntry[];
   let appended: LedgerPostRequest[];
   let clock: number;
@@ -46,6 +46,18 @@ describe('createScheduler', () => {
    * which it was could not drive that difference.
    */
   let refuse: 'working' | 'paused' | 'saturated' | 'invalid' | false;
+  /**
+   * Refuses `'saturated'` on the one `run` call whose zero-based index
+   * matches, and lets every other call through (HIVE-128). What `flush`'s
+   * per-job fan-out needs that `refuse` cannot give it: `refuse` is all-or-
+   * nothing, and proving "put it back, and the ones behind it" back needs the
+   * first job to land and a later one to be turned away.
+   */
+  let refuseAfter: number | undefined;
+  /** How many times `run` has been called this test, for {@link refuseAfter}. */
+  let runCalls: number;
+  /** What `parallelFor` answers — `limits.parallel`, from Task 6's cache. */
+  let parallel: number;
   /** Whether the registry has answered its first listing yet. */
   let listed: boolean;
   /** Names pushed to the renderer, in order. */
@@ -58,15 +70,26 @@ describe('createScheduler', () => {
 
   const build = (): ReturnType<typeof createScheduler> =>
     createScheduler({
-      run: (name, trigger, extra) => {
+      run: (name, trigger, extra, options) => {
+        const call = runCalls;
+
+        runCalls += 1;
+
+        if (refuseAfter === call) return { started: false, refused: 'saturated' };
         if (refuse !== false) return { started: false, refused: refuse };
 
-        woke.push({ name, trigger, ...(extra === undefined ? {} : { extra }) });
+        woke.push({
+          name,
+          trigger,
+          ...(extra === undefined ? {} : { extra }),
+          ...(options?.job === true ? { job: true } : {}),
+        });
         return { started: true, run: 'run-1', kind: 'standing' };
       },
       state,
       isAgent: (id) => id === AGENT,
       wakesOnLedger: () => wakesOnLedger,
+      parallelFor: () => parallel,
       schedules: () => (listed ? schedules : undefined),
       pushStatus: (name) => pushed.push(name),
       ledger: {
@@ -99,6 +122,9 @@ describe('createScheduler', () => {
     appendOk = true;
     schedules = new Map();
     refuse = false;
+    refuseAfter = undefined;
+    runCalls = 0;
+    parallel = 1;
     listed = true;
     pushed = [];
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
@@ -235,7 +261,7 @@ describe('createScheduler', () => {
 
       expect(outcome).toEqual({ started: true, run: 'run-1', kind: 'standing' });
       expect(woke).toEqual([
-        { name: AGENT, trigger: 'manual', extra: 'review PR 1234' },
+        { name: AGENT, trigger: 'manual', extra: 'review PR 1234', job: true },
       ]);
     });
 
@@ -442,6 +468,7 @@ describe('createScheduler', () => {
       state,
       isAgent: (id) => id === AGENT,
       wakesOnLedger: () => true,
+      parallelFor: () => 1,
       // This spec drives `onEntry` only; the tick has nothing to read.
       schedules: () => new Map(),
       pushStatus: () => {},
@@ -515,6 +542,7 @@ describe('createScheduler', () => {
         state,
         isAgent: (id) => id === AGENT,
         wakesOnLedger: () => true,
+        parallelFor: () => 1,
       // This spec drives `onEntry` only; the tick has nothing to read.
       schedules: () => new Map(),
       pushStatus: () => {},
@@ -573,6 +601,7 @@ describe('createScheduler', () => {
         state,
         isAgent: (id) => id === AGENT,
         wakesOnLedger: () => true,
+        parallelFor: () => 1,
       // This spec drives `onEntry` only; the tick has nothing to read.
       schedules: () => new Map(),
       pushStatus: () => {},
@@ -1610,6 +1639,76 @@ describe('createScheduler', () => {
 
       expect(state.read(AGENT).skipsSinceRun).toBe(1);
       expect(state.read(AGENT).nextRunAt).toBe(NOON + 300_000);
+    });
+  });
+
+  describe('task runs (HIVE-128)', () => {
+    it('marks a run with a prompt as a job, and a bare run as not', () => {
+      scheduler.manualWake(AGENT, 'review PR 166');
+      scheduler.manualWake(AGENT);
+
+      expect(woke).toEqual([
+        { name: AGENT, trigger: 'manual', extra: 'review PR 166', job: true },
+        { name: AGENT, trigger: 'manual' },
+      ]);
+    });
+
+    it('flushes each queued job as its own run when the agent fans out, after the standing wake', () => {
+      parallel = 3;
+      state.patch(AGENT, {
+        status: 'sleeping',
+        pendingWake: [
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'review PR 166' },
+          { kind: 'ask', id: 'a1', from: 'overmind' },
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'review PR 167' },
+        ],
+      });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([
+        { name: AGENT, trigger: 'ledger', extra: 'ask a1 from overmind' },
+        { name: AGENT, trigger: 'manual', extra: 'review PR 166', job: true },
+        { name: AGENT, trigger: 'manual', extra: 'review PR 167', job: true },
+      ]);
+      expect(state.read(AGENT).pendingWake).toEqual([]);
+    });
+
+    it('flushes one bundled wake at the default cap, exactly as before', () => {
+      state.patch(AGENT, {
+        status: 'sleeping',
+        pendingWake: [
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'review PR 166' },
+          { kind: 'ask', id: 'a1', from: 'overmind' },
+        ],
+      });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toHaveLength(1);
+      expect(woke[0]?.extra).toContain('review PR 166');
+      expect(woke[0]?.extra).toContain('ask a1 from overmind');
+    });
+
+    it('puts a job back, and the ones behind it, when the cap refuses', () => {
+      parallel = 2;
+      refuseAfter = 1; // the second call is refused saturated
+      state.patch(AGENT, {
+        status: 'sleeping',
+        pendingWake: [
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'one' },
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'two' },
+          { kind: 'manual', id: 'run', from: 'overmind', text: 'three' },
+        ],
+      });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke.map((wake) => wake.extra)).toEqual(['one']);
+      expect((state.read(AGENT).pendingWake ?? []).map((entry) => entry.text)).toEqual([
+        'two',
+        'three',
+      ]);
     });
   });
 });

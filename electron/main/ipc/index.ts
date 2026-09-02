@@ -1578,8 +1578,8 @@ export function registerIpcHandlers(): void {
       the queue, and the `agents:run` handler turns a missing scheduler into
       `unknown` before it ever reaches here.
     */
-    run: (name, trigger, extra) =>
-      runs?.run(name, trigger, extra) ?? {
+    run: (name, trigger, extra, options) =>
+      runs?.run(name, trigger, extra, options) ?? {
         started: false,
         refused: 'invalid',
         reason: 'The agent runtime is not running.',
@@ -1587,6 +1587,8 @@ export function registerIpcHandlers(): void {
     state: agentRunState,
     isAgent: (id) => knownAgents.has(id),
     wakesOnLedger: (id) => ledgerAgents.has(id),
+    // The watcher's cache, filled in the same pass as `agentSchedules` (HIVE-128).
+    parallelFor: (name) => agentParallel.get(name) ?? AGENT_LIMIT_DEFAULTS.parallel,
     /*
       The schedule, from the cache the folder watcher rebuilds (HIVE-121).
 

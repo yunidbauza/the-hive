@@ -297,12 +297,13 @@ describe('agents:run (HIVE-115)', () => {
       run: 'run-1',
     });
 
-    // The third argument is asserted as absent rather than left unmentioned:
-    // `runs.run` reads a missing `extra` as "no words", and this pins that a
-    // bare run still says none.
+    // The third and fourth arguments are asserted as absent rather than left
+    // unmentioned: `runs.run` reads a missing `extra` as "no words", and a
+    // bare run carries no job options either (HIVE-128) — this pins both.
     expect(trackerRun).toHaveBeenCalledWith(
       'slack-watcher',
       'manual',
+      undefined,
       undefined,
     );
   });
@@ -312,10 +313,12 @@ describe('agents:run (HIVE-115)', () => {
       invoke(CH.agentsRun, { name: 'slack-watcher', extra: 'review PR 1234' }),
     ).resolves.toEqual({ started: true, run: 'run-1' });
 
+    // A prompt makes the wake a job (HIVE-128).
     expect(trackerRun).toHaveBeenCalledWith(
       'slack-watcher',
       'manual',
       'review PR 1234',
+      { job: true },
     );
   });
 
@@ -700,10 +703,12 @@ describe('ledger-addressed wakes reach the tracker (HIVE-120)', () => {
 
     capturedOnChange?.(addressed());
 
+    // A ledger-routed wake carries no job options (HIVE-128).
     expect(trackerRun).toHaveBeenCalledWith(
       'slack-watcher',
       'ledger',
       'ask a1 from overmind',
+      undefined,
     );
   });
 
@@ -748,6 +753,7 @@ describe('ledger-addressed wakes reach the tracker (HIVE-120)', () => {
       'slack-watcher',
       'ledger',
       'answer a4 from overmind',
+      undefined,
     );
   });
 
@@ -765,6 +771,7 @@ describe('ledger-addressed wakes reach the tracker (HIVE-120)', () => {
       'slack-watcher',
       'ledger',
       'ask a5 from overmind',
+      undefined,
     );
   });
 });
