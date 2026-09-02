@@ -652,19 +652,25 @@ describe('AgentRunLog', () => {
     */
     it('counts the seconds a live run has taken, and keeps counting', () => {
       vi.useFakeTimers();
-      vi.setSystemTime(Date.UTC(2026, 8, 1, 14, 2, 41));
-      seed({ status: 'working', live: [standing()] });
 
-      render(<AgentRunLog name="watcher" />);
+      // Restored on the way out however this ends: a failed expectation here
+      // would otherwise leave every later spec in the file on a frozen clock.
+      try {
+        vi.setSystemTime(Date.UTC(2026, 8, 1, 14, 2, 41));
+        seed({ status: 'working', live: [standing()] });
 
-      expect(screen.getByText('41s')).toBeInTheDocument();
+        render(<AgentRunLog name="watcher" />);
 
-      act(() => {
-        vi.advanceTimersByTime(2_000);
-      });
+        expect(screen.getByText('41s')).toBeInTheDocument();
 
-      expect(screen.getByText('43s')).toBeInTheDocument();
-      vi.useRealTimers();
+        act(() => {
+          vi.advanceTimersByTime(2_000);
+        });
+
+        expect(screen.getByText('43s')).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('groups the output by run, standing first, and labels each group', () => {

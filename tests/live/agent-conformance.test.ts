@@ -936,6 +936,10 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
         return openAsks.some((ask) => ask.from === name && ask.meta?.['run'] === run);
       },
+      // Stamp-blind, exactly as `ipc/index.ts` asks it on the last close: an
+      // ask a sibling run left behind still holds the agent at `asking`.
+      hasOpenAsk: (name) =>
+        ledger.read({}).openAsks.some((ask) => ask.from === name),
       // The real reader, so a live run that rotates is decided the way the app
       // decides it (HIVE-122).
       handoffFor: (name, run) => {

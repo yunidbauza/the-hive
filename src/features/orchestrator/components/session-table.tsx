@@ -871,8 +871,15 @@ function AgentTableRow({
     agent is `asking`, and a column empty on four rows in five is a column this
     table cannot afford.
   */
-  // The same `·N` the rail draws (HIVE-128); an agent with any run live is
-  // `working`, so the count and the ask ref never share a row.
+  /*
+    The same `·N` the rail draws (HIVE-128).
+
+    It can share the row with the ask ref, and that is correct rather than a
+    gap: `useAgentAskRef` reads the ledger with no status gate, so a working
+    agent whose task run left a question open reads `working ·2 (a71)` — two
+    processes alive, one of them waiting on an answer. Both halves are true at
+    once and the row says both.
+  */
   const count = liveCount > 1 ? ` ·${String(liveCount)}` : '';
   const word =
     askRef === undefined

@@ -953,6 +953,29 @@ describe('what the tracker was handed (HIVE-115)', () => {
   });
 
   /*
+    The stamp-blind question the last close asks (HIVE-128): whichever run
+    closes last must not rest the agent at `sleeping` over a question a sibling
+    left behind. Asserted here for the reason `openAsksFor` is — it is the real
+    composition's reader, and the only other exercise it gets is the live
+    suite's clone.
+  */
+  it('sees an open ask from any run, and only from this party', () => {
+    ledgerOpenAsks = [
+      {
+        id: '20260830-010500-0002',
+        ts: 2,
+        from: 'slack-watcher',
+        kind: 'ask',
+        body: 'which channel?',
+        meta: { run: 'run-9' },
+      },
+    ];
+
+    expect(trackerDeps?.hasOpenAsk('slack-watcher')).toBe(true);
+    expect(trackerDeps?.hasOpenAsk('overmind')).toBe(false);
+  });
+
+  /*
     HIVE-122, restamped HIVE-128. `handoffFor` is what decides, at a run's
     close, whether the session actually rotates — and it is asserted here,
     against the real IPC composition, for the reason `openAsksFor` is: the

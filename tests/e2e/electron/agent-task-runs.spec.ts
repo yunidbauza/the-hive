@@ -37,6 +37,13 @@ import { launchHive } from './fixtures/hive-app';
  * half has something in it; then a sleep long enough for both runs to overlap
  * on screen, and a `result` so the close records `done` rather than `failed`.
  *
+ * Forty-five seconds, not the handful the assertions actually need: the spec
+ * only ever waits for the *rows*, and the sleep is what keeps them there while
+ * it looks. A slow CI box that spent twenty seconds getting from the first
+ * `run` to the row-count assertion would otherwise watch run one end underneath
+ * it and fail on a count of one. Nothing waits for the sleep to finish — the
+ * app tears the runs down at quit.
+ *
  * `#!/bin/sh` and no arguments read: `resolveClaude` accepts an **absolute path
  * to an executable file**, which is exactly what this is, and refuses anything
  * carrying arguments — an agent is spawned without a shell, so the fixture's
@@ -45,7 +52,7 @@ import { launchHive } from './fixtures/hive-app';
 const STUB = `#!/bin/sh
 printf '%s\\n' '{"type":"system","subtype":"init","session_id":"stub","mcp_servers":[]}'
 printf '%s\\n' '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"working on it"}]}}'
-sleep 20
+sleep 45
 printf '%s\\n' '{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.001,"session_id":"stub"}'
 `;
 

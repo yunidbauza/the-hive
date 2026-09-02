@@ -961,6 +961,38 @@ describe('SessionTable', () => {
       expect(screen.getByTestId('agent-row')).toHaveTextContent('working ·2');
     });
 
+    /*
+      The count and the ask ref can share a row, and both halves are true:
+      `useAgentAskRef` reads the ledger with no status gate, so an agent whose
+      task run left a question open is still `working` — two processes alive,
+      one of them waiting on an answer.
+    */
+    it('says both the live count and the open ask when a working agent holds one', () => {
+      useHiveStore.getState().hydrateAgents([
+        agent({
+          status: 'working',
+          live: [
+            { run: 'a', kind: 'standing', trigger: 'interval', startedAt: 1 },
+            { run: 'b', kind: 'task', trigger: 'manual', startedAt: 2 },
+          ],
+        }),
+      ]);
+      useHiveStore.getState().hydrateLedger([
+        {
+          id: '20260830-120000-0001',
+          ts: Date.now(),
+          from: 'slack-watcher',
+          kind: 'ask',
+          ref: 'a71',
+          body: 'ship it?',
+        },
+      ]);
+
+      render(<SessionTable />);
+
+      expect(screen.getByTestId('agent-row')).toHaveTextContent('working ·2 (a71)');
+    });
+
     it('ages a row from its last run, and says so when there was none', () => {
       useHiveStore.getState().hydrateAgents([
         agent({ name: 'has-run', lastRunAt: Date.now() - 2 * 60 * 60 * 1000 }),

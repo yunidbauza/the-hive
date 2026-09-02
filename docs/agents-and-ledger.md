@@ -319,7 +319,9 @@ receipt is therefore its own: its `run.started` / `run.ended` events, its
 `done` or `failed`, and a `RunSummary` with `kind: 'task'`. A task close never
 touches `runsSinceRotate`, `pendingSession` or `sessionUuid`; the row stays
 `working` until the last run closes, and only that close computes the resting
-status. `kill` stops every run under the name. The scheduler's flush, for an
+status — from the closing run **and** from any ask the agent still has open,
+because a sibling that closed while this one was live left its question behind,
+and a resting status must never hide it. `kill` stops every run under the name. The scheduler's flush, for an
 agent above the cap of 1, offers each queued job as its own run after the one
 standing wake, and puts back whatever the cap refuses.
 

@@ -159,12 +159,18 @@ export interface RunTrackerDeps {
   /** Did this run leave an ask nobody has answered? */
   openAsksFor: (name: string, run: string) => boolean;
   /**
+   * Does this agent have any ask nobody has answered, from any run? Consulted
+   * on the last close only — a resting status must not hide a question a
+   * neighbour left.
+   */
+  hasOpenAsk: (name: string) => boolean;
+  /**
    * The handoff this run posted, if it posted one (HIVE-122).
    *
-   * Answered the way `openAsksFor` answers its question — by finding this run's
-   * own `run.started` event and taking the entries at or after it — because the
-   * ledger has no other notion of which run an entry belongs to. The last
-   * handoff wins if the agent wrote several.
+   * Answered by matching `meta.run`, which the MCP host writes on every entry a
+   * run posts (HIVE-128) — the ledger's only notion of which run an entry
+   * belongs to, and the only one that can tell two concurrent runs apart. The
+   * last match wins if the agent wrote several.
    */
   handoffFor: (name: string, run: string) => string | undefined;
   /** Mints the uuid a rotation's next session will start under. */
@@ -378,24 +384,36 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
   /**
    * Every line this module puts in the run log goes through here.
    *
-   * The recording is the point: `pushLines` is called from four places — the
-   * stdout fold, the exit flush, stderr, and {@link finalizeRun} itself — and a
-   * site that forgot to update {@link LiveRun.endedTurn} would leave the
-   * terminator decision reading a stale answer.
+   * Tagging is the point: `pushLines` is called from four places — the stdout
+   * fold, the exit flush, stderr, and {@link finalizeRun}'s terminator — and
+   * several runs write into one buffer, so the renderer can only partition it
+   * by the `run` each line carries. One door means no site can forget.
+   *
+   * The run id rather than the {@link LiveRun}, because `finalizeRun` has only
+   * the id by the time it writes its terminator: `close` has already forgotten
+   * the run. Callers that still hold the live run update
+   * {@link LiveRun.endedTurn} through {@link pushRunLines}.
    */
-  const pushLines = (name: string, live: LiveRun | null, lines: RunLine[]): void => {
+  const pushLines = (name: string, run: string, lines: RunLine[]): void => {
     if (lines.length === 0) return;
 
-    // Tagged at the one door every line passes through (HIVE-128): several
-    // runs write into one buffer, and the renderer partitions on this.
     deps.pushLines(
       name,
-      live === null ? lines : lines.map((line) => ({ ...line, run: live.run })),
+      lines.map((line) => ({ ...line, run })),
     );
+  };
 
-    if (live !== null) {
-      live.endedTurn = lines[lines.length - 1]?.endsTurn === true;
-    }
+  /**
+   * The same door, for a run that is still live: tags the lines and records
+   * whether the last of them closed the run's turn. A site that pushed without
+   * updating {@link LiveRun.endedTurn} would leave the terminator decision in
+   * {@link finalizeRun} reading a stale answer.
+   */
+  const pushRunLines = (name: string, live: LiveRun, lines: RunLine[]): void => {
+    if (lines.length === 0) return;
+
+    pushLines(name, live.run, lines);
+    live.endedTurn = lines[lines.length - 1]?.endsTurn === true;
   };
 
   const finalizeRun = (
@@ -466,11 +484,10 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       reporting one, and the two should not look alike.
     */
     if (!endedTurn) {
-      deps.pushLines(name, [
+      pushLines(name, info.run, [
         {
           text: `● run ended — ${reason ?? outcome}`,
           color: 'dim',
-          run: info.run,
           endsTurn: true,
         },
       ]);
@@ -571,11 +588,13 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       status:
         current.status === 'paused'
           ? 'paused'
-          : // Neighbours still running keep the row working; the last close
-            // computes the resting status exactly as before (HIVE-128).
+          : // Neighbours still running keep the row working. The last close
+            // computes the resting status from this run *and* from any ask the
+            // agent still has open, because a sibling that closed while this
+            // one was live left its question behind (HIVE-128).
             stillLive
             ? 'working'
-            : outcome === 'asking' || asking
+            : outcome === 'asking' || asking || deps.hasOpenAsk(name)
               ? 'asking'
               : 'sleeping',
       lastRunAt: endedAt,
@@ -660,7 +679,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       const step = foldRunLog(live.fold, '\n');
 
       live.fold = step.state;
-      pushLines(name, live, step.lines);
+      pushRunLines(name, live, step.lines);
     }
 
     const result = live.fold.result;
@@ -871,7 +890,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         const step = foldRunLog(started.fold, chunk.toString('utf8'));
 
         started.fold = step.state;
-        pushLines(name, started, step.lines);
+        pushRunLines(name, started, step.lines);
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
@@ -879,7 +898,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
         const text = chunk.toString('utf8').trim();
 
-        if (text !== '') pushLines(name, started, [{ text, color: 'dim' }]);
+        if (text !== '') pushRunLines(name, started, [{ text, color: 'dim' }]);
       });
 
       child.on('error', ((error: Error) => {

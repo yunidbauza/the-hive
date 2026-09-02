@@ -1417,6 +1417,18 @@ export function registerIpcHandlers(): void {
     return openAsks.some((ask) => ask.from === name && ask.meta?.['run'] === run);
   };
 
+  /**
+   * Does this agent have any ask nobody has answered, from any run?
+   *
+   * The stamp-blind question, which is the one a *resting* status has to ask.
+   * `openAsksFor` is per-run because a run's own outcome is per-run; but the
+   * status belongs to the agent, and a task run that closes while a sibling is
+   * still live leaves its question behind for whichever run closes last to
+   * find. `agents:resume` recomputes from exactly this, for the same reason.
+   */
+  const hasOpenAsk = (name: string): boolean =>
+    ledger.read({}).openAsks.some((ask) => ask.from === name);
+
   /** The handoff this run posted, if any — the last one wins (HIVE-122, HIVE-128). */
   const handoffFor = (name: string, run: string): string | undefined => {
     const { entries } = ledger.read({ from: name });
@@ -1534,6 +1546,7 @@ export function registerIpcHandlers(): void {
       }
     },
     openAsksFor,
+    hasOpenAsk,
     handoffFor,
     newUuid,
     pushStatus: pushAgentStatus,
@@ -2886,9 +2899,7 @@ export function registerIpcHandlers(): void {
       return setAgentStatus(name, 'working');
     }
 
-    const asking = ledger.read({}).openAsks.some((ask) => ask.from === name);
-
-    setAgentStatus(name, asking ? 'asking' : 'sleeping');
+    setAgentStatus(name, hasOpenAsk(name) ? 'asking' : 'sleeping');
 
     /*
       What the pause was holding (HIVE-120): entries that arrived while this

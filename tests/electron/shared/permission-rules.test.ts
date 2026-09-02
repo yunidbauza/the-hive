@@ -600,6 +600,22 @@ describe('honestPermissionAsk', () => {
     expect(result.meta['run']).toBeUndefined();
   });
 
+  /**
+   * A pty session has no `HIVE_RUN_ID`, so nothing overwrites what the model
+   * wrote there and the field is model-authored on that path. Bounded like
+   * every other string the card keeps: a run id is a uuid, and 64 is generous.
+   */
+  it('drops a run too long to be a run id', () => {
+    const result = honestPermissionAsk('', {
+      kind: 'permission',
+      tool: 'Bash',
+      input: { command: 'npm test' },
+      run: 'x'.repeat(65),
+    });
+
+    expect(result.meta['run']).toBeUndefined();
+  });
+
   /** Self review, finding 5: the marker was conditional on the value being a string. */
   it('bounds a bulk field that is not a string', () => {
     const result = honestPermissionAsk('', {

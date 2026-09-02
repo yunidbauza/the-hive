@@ -35,6 +35,14 @@ describe('createRunTracker', () => {
   let statuses: string[];
   let lines: { name: string; count: number; pushed: RunLine[] }[];
   let openAsks: boolean;
+  /**
+   * Does the *agent* hold an unanswered ask, from any run at all (HIVE-128)?
+   *
+   * Separate from `openAsks`, which is the closing run's own question: the two
+   * differ exactly when a sibling left one behind, which is the case the last
+   * close has to see.
+   */
+  let openAskAnywhere: boolean;
   /** Did the wake ask for a handoff? Set per test (HIVE-122). */
   let lastTurn: boolean;
   /** What the run left behind as a handoff, if anything (HIVE-122). */
@@ -61,6 +69,7 @@ describe('createRunTracker', () => {
     statuses = [];
     lines = [];
     openAsks = false;
+    openAskAnywhere = false;
     lastTurn = false;
     handoff = undefined;
     commandCalls = 0;
@@ -96,6 +105,7 @@ describe('createRunTracker', () => {
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => openAsks,
+      hasOpenAsk: () => openAskAnywhere,
       handoffFor: () => handoff,
       newUuid: () => 'uuid-minted',
       pushStatus: (name) => statuses.push(name),
@@ -202,6 +212,7 @@ describe('createRunTracker', () => {
       state,
       appendLedger: () => {},
       openAsksFor: () => false,
+      hasOpenAsk: () => false,
       handoffFor: () => undefined,
       newUuid: () => 'uuid-minted',
       pushStatus: () => {},
@@ -235,6 +246,7 @@ describe('createRunTracker', () => {
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => false,
+      hasOpenAsk: () => false,
       handoffFor: () => undefined,
       newUuid: () => 'uuid-minted',
       pushStatus: (name) => statuses.push(name),
@@ -430,6 +442,7 @@ describe('createRunTracker', () => {
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => false,
+      hasOpenAsk: () => false,
       handoffFor: () => undefined,
       newUuid: () => 'uuid-minted',
       pushStatus: () => {},
@@ -607,6 +620,9 @@ describe('createRunTracker', () => {
     expect(last?.text).toMatch(/^● run ended — /);
     // `dim`, not `cyan`: the app noting an ending, not the agent reporting one.
     expect(last?.color).toBe('dim');
+    // Tagged like every other line, because it goes through the same door
+    // (HIVE-128) — the renderer partitions the buffer on this.
+    expect(last?.run).toBe('run-1');
   });
 
   /**
@@ -1273,6 +1289,36 @@ describe('createRunTracker', () => {
       expect(state.read('a').status).toBe('sleeping');
       expect(closed).toEqual(['a', 'a']);
       expect(tracker.liveRuns('a')).toEqual([]);
+    });
+
+    /*
+      The closing run's own question is not the only one that can be open.
+
+      A task run that posts a permission ask and closes while the standing run
+      is still live is not the last close, so it writes `working` and its ask is
+      never consulted again. The standing run then closes with nothing of its
+      own open — and a status computed from that run alone reads `sleeping`,
+      hiding a card that is on screen and freeing the next tick to wake the
+      agent on top of its own unanswered question. The last close asks the
+      stamp-blind question for exactly this.
+    */
+    it('rests at asking when a neighbour left a question behind', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'manual', 'job', { job: true });
+
+      // The task run asked, and closes first — a neighbour is still live.
+      openAsks = true;
+      openAskAnywhere = true;
+      finish(1);
+
+      expect(state.read('a').status).toBe('working');
+
+      // The standing run closes holding nothing of its own.
+      openAsks = false;
+      finish(0);
+
+      expect(state.read('a').status).toBe('asking');
     });
 
     it('kills every live run under the name', () => {
