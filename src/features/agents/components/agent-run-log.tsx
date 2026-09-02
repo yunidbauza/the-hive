@@ -86,11 +86,17 @@ interface AgentRunLogProps {
  * user's terminal type scale (10px to 18px) that decides how many characters
  * fit on a line.
  *
- * ## Why the buffer is not chopped into runs, and why a live run has no id
+ * ## The buffer is chopped into turns, not into runs
  *
- * Lines arrive as a flat stream with no run id on them, so the only way to
- * partition the buffer would be to sniff the closing line's colour — brittle,
- * and wrong the moment the fold gains a second cyan line.
+ * Lines still arrive as a flat stream with **no run id on them**, so this
+ * cannot group by run — only by turn, on the `endsTurn` fold. The two usually
+ * coincide, and where they do not is the interesting part: a run that ends
+ * without the CLI writing a fold would leave its output joined to the next
+ * run's, which is why `runs.ts` writes one itself on every path that does not
+ * produce a `result` (a kill, the stall watchdog, a quit).
+ *
+ * The boundary is that field and never the fold's `cyan`. Colour is
+ * presentation; a partition that reads presentation breaks on the next palette.
  *
  * A live run has no identity here either, and that is a fact about the data
  * rather than a shortcut. `runs` is appended by `recordRun` when a run
@@ -122,13 +128,13 @@ interface AgentRunLogProps {
  * receipts are a fixed-height ledger of one line each and the output is prose
  * of unknown length — the elastic content gets the elastic space.
  *
- * The receipts half is **pinned to its newest row**, and that is a consequence
- * of the split rather than a flourish. `runs` is oldest-first and capped at
- * `AGENT_RUN_HISTORY`, so a full history in a box that now clips at 40% opens
- * showing the ten oldest — with the newest receipt, the one the `Last output`
- * heading directly beneath it actually describes, scrolled out of sight. In one
- * scroll box that could not happen: the newest receipts sat against the output
- * the reader was already looking at.
+ * Both halves read **newest first**, which is what makes the split safe. `runs`
+ * is oldest-first and capped at `AGENT_RUN_HISTORY`, so a full history in a box
+ * clipped to 40% would otherwise open on its ten oldest rows — with the newest
+ * receipt, the one the `Latest output` heading beneath it describes, scrolled
+ * out of sight. Reversing puts it at `scrollTop: 0`, which is where a scroll
+ * box already opens; an earlier revision drove `scrollTop` from an effect
+ * instead, which is machinery for a problem ordering does not have.
  */
 
 export function AgentRunLog({ name, status }: AgentRunLogProps) {
@@ -152,15 +158,22 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
     `slice()` first, because `reverse` mutates and `runs` is the store's array.
   */
   const receipts = runs.slice().reverse();
-  const turns = turnsOf(lines);
+  const turns = turnsOf(lines, live);
 
   useEffect(() => {
     /*
-      Follow the newest output while it is being written.
+      Follow the newest line while it is being written.
 
-      The output reads newest-turn-first now, so the live turn is at the *top*
-      and following it means scrolling to zero rather than to the foot. Not
-      when it is finished: yanking a reader out of a turn they are reading back
+      **Newest turn first does not mean newest line first**, and conflating the
+      two is what this effect got wrong. Turns reverse; the lines inside a turn
+      stay in reading order. So the live turn is the block on top, and its
+      newest line is at the *bottom of that block* — not at the top of the
+      region. Anchoring on the region's first child scrolled to the first line
+      the run ever wrote and then re-yanked the reader there on every push,
+      which is the opposite of following.
+
+      `foot` therefore renders at the end of the live turn's lines. Not when
+      the run is finished: pulling a reader out of a turn they are reading back
       through is the behaviour every transcript gets wrong.
     */
     if (live) foot.current?.scrollIntoView({ block: 'nearest' });
@@ -173,18 +186,38 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
       data-region="run-log"
     >
       {receipts.length === 0 ? null : (
-        <>
+        /*
+          **One scroll container, one font size**, and both are load-bearing.
+
+          The header used to be a sibling *above* the scroller, which broke the
+          column alignment twice over. Horizontally, only the rows could scroll,
+          so at a narrow stage dragging them right left every label stationary
+          over the wrong cell. Vertically it worked, but the fix for that is
+          `sticky`, not separation.
+
+          The font size is the subtler half, and it is why the constant alone
+          was never enough. `ch` resolves against the font of *the element the
+          track is declared on* — so a header at `0.8em` and rows at `0.9em`
+          computed two different tracks from one identical class string. Every
+          column drifted, from 8px at `Trigger` to 45px at `Why`, which put the
+          heading nowhere near the values it named. The size therefore lives
+          here, on the shared parent, and neither the header nor the rows may
+          set their own.
+        */
+        <div
+          className="shrink-0 overflow-auto text-[0.9em]"
+          style={{ maxHeight: RECEIPTS_MAX }}
+          data-region="run-receipts"
+        >
           {/*
-            The header sits outside the scroll box, so it is still there after
-            twenty rows have gone past it. That is the whole reason the receipts
-            are a grid rather than a flex row: a heading can only name a column
-            that exists, and `justify-between` has no columns — it has two ends,
-            which is why `manual` shifted the timestamp and `10s` shifted the
-            cost.
+            `sticky`, not a sibling: it scrolls with the rows sideways and stays
+            put as they pass underneath. It needs an opaque background for that
+            second half — `bg-term-bg` is the log's own ground, so rows disappear
+            *under* the header rather than through it.
           */}
           <div
-            className={`${RECEIPT_GRID} shrink-0 border-b pb-1 text-[0.8em] tracking-[0.1em] uppercase`}
-            style={{ color: palette.dim, borderColor: palette.dim + '33' }}
+            className={`${RECEIPT_GRID} sticky top-0 z-10 border-b border-border-soft bg-term-bg pb-1 tracking-[0.1em] uppercase`}
+            style={{ color: palette.dim }}
             data-region="run-columns"
           >
             <span>Run</span>
@@ -197,26 +230,25 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
             <span>Why</span>
           </div>
 
-          <div
-            className="shrink-0 overflow-x-auto overflow-y-auto"
-            style={{ maxHeight: RECEIPTS_MAX }}
-            data-region="run-receipts"
-          >
-            {receipts.map((run) => (
-              <RunHeader
-                key={run.run}
-                run={run}
-                dim={palette.dim}
-                brand={palette.blue}
-              />
-            ))}
-          </div>
-        </>
+          {receipts.map((run) => (
+            <RunHeader
+              key={run.run}
+              run={run}
+              dim={palette.dim}
+              brand={palette.blue}
+            />
+          ))}
+        </div>
       )}
 
       {live ? (
         <div
-          className="shrink-0 border-t border-border-soft pt-1 pb-0.5 text-[0.9em]"
+          /*
+            `first:` restored. With no receipts — an agent's first ever run —
+            this banner is the first child of the log, and without the variant
+            it drew a top rule against nothing above it.
+          */
+          className="shrink-0 border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0"
           style={{ color: palette.dim }}
         >
           Running now — this run is recorded when it ends.
@@ -242,8 +274,6 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto" data-region="run-output">
-        <div ref={foot} />
-
         {turns.length === 0 ? (
           <p style={{ color: palette.dim }}>
             Nothing yet — Run now wakes it.
@@ -252,12 +282,19 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
           turns.map((turn, turnIndex) => (
             <div
               /*
-                Turns are append-only and never reordered, so the index is a
-                stable identity here in the one way it usually is not — and it
-                is the index in the *unreversed* buffer, so a new turn arriving
-                at the top does not renumber the ones below it.
+                Keyed by the turn's **first line**, not by its position.
+
+                An index key was stable only while `turns.length` grew: once
+                `capAgentLines` starts dropping whole turns off the head, the
+                length stops moving and every key shifts by one, so React reuses
+                each turn's node for a different turn. Harmless today — nothing
+                in these blocks holds state — but the comment that used to sit
+                here asserted an invariant the code did not have.
+
+                A turn's opening line is unique enough in practice and, unlike
+                the index, does not change when an older turn is evicted.
               */
-              key={turns.length - turnIndex}
+              key={`${String(turnIndex)}:${turn[0]?.text ?? ''}`}
               className="border-t border-border-soft pt-1 pb-0.5 first:border-t-0 first:pt-0"
             >
               {turn.map((line, index) => (
@@ -274,6 +311,13 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
                   {line.text}
                 </p>
               ))}
+
+              {/*
+                The anchor the live autoscroll chases, at the end of the newest
+                turn's lines — which is where the newest line is. Only on the
+                live turn: a finished log has nothing to follow.
+              */}
+              {live && turnIndex === 0 ? <div ref={foot} /> : null}
             </div>
           ))
         )}
@@ -294,11 +338,18 @@ export function AgentRunLog({ name, status }: AgentRunLogProps) {
  * Colour is presentation; a structural split that reads presentation breaks on
  * the next palette change, which this file's own contract warns about.
  *
- * A buffer whose last turn has not ended yet — the live one — has no terminator
- * on its final line, so it comes back as a trailing partial turn. That is
- * exactly right: it is the turn in progress, and it belongs on top.
+ * A trailing run of lines with no terminator means different things depending
+ * on whether anything is running, and `live` is what tells them apart.
+ *
+ * While a run is live it is the **turn in progress**, and it belongs on top —
+ * that is what the reader is watching. While nothing is running it is debris
+ * from the turn that just ended: a stderr write flushed after the CLI's own
+ * fold, most often a node or CLI warning emitted on the way out. Floating that
+ * to the top would present a stray warning as the newest turn and push the
+ * output it belongs to underneath it, so it is appended to the last finished
+ * turn instead — which is where it actually came from.
  */
-function turnsOf(lines: readonly TermLine[]): TermLine[][] {
+function turnsOf(lines: readonly TermLine[], live: boolean): TermLine[][] {
   const turns: TermLine[][] = [];
   let current: TermLine[] = [];
 
@@ -311,7 +362,12 @@ function turnsOf(lines: readonly TermLine[]): TermLine[][] {
     }
   }
 
-  if (current.length > 0) turns.push(current);
+  if (current.length > 0) {
+    const previous = turns[turns.length - 1];
+
+    if (!live && previous !== undefined) previous.push(...current);
+    else turns.push(current);
+  }
 
   return turns.reverse();
 }
@@ -348,7 +404,7 @@ function RunHeader({ run, dim, brand }: RunHeaderProps) {
 
   return (
     <div
-      className={`${RECEIPT_GRID} border-t border-border-soft pt-1 pb-0.5 text-[0.9em] first:border-t-0 first:pt-0`}
+      className={`${RECEIPT_GRID} border-t border-border-soft pt-1 pb-0.5`}
       style={{ color: dim }}
     >
       {/*
@@ -363,7 +419,7 @@ function RunHeader({ run, dim, brand }: RunHeaderProps) {
       <span className="truncate" title={run.trigger}>
         {run.trigger}
       </span>
-      <span className="tabular-nums">{at}</span>
+      <span className="truncate tabular-nums">{at}</span>
       <span className="truncate" title={run.outcome}>
         {run.outcome}
       </span>
@@ -373,9 +429,9 @@ function RunHeader({ run, dim, brand }: RunHeaderProps) {
         apply to this row, when what happened is that the run ended without
         saying.
       */}
-      <span className="text-right tabular-nums">{run.turns ?? '—'}</span>
-      <span className="text-right tabular-nums">{`${seconds}s`}</span>
-      <span className="text-right tabular-nums">{cost ?? '—'}</span>
+      <span className="truncate text-right tabular-nums">{run.turns ?? '—'}</span>
+      <span className="truncate text-right tabular-nums">{`${seconds}s`}</span>
+      <span className="truncate text-right tabular-nums">{cost ?? '—'}</span>
       {/*
         Empty on almost every row, which is why it takes the *flexible* track
         rather than a width: a column sized for "killed after the stall watchdog

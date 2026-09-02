@@ -323,6 +323,36 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       result?.sessionUuid ?? (reachedModel ? info.sessionUuid : undefined);
     const slack = slackStatus(mcpServers);
 
+    /*
+      Close the turn in the run log, when the CLI did not close it itself.
+
+      `foldRunLog` writes the `● turn ended` fold — the line carrying
+      `endsTurn`, which is what the renderer splits its buffer on — and it
+      writes it from the `result` event. Every path that ends a run *without*
+      one therefore left its output unterminated: a kill, the stall watchdog,
+      `killAll` at quit, and a child that raised `'error'` all reach here
+      through `escalate`, which sends a signal and nothing else. Nothing clears
+      the buffer between runs, so that run's lines were then concatenated with
+      the *next* run's into a single block — misreporting the boundary for
+      exactly the outcomes (`failed`, a stall, an app close) that the receipts'
+      Why column exists to explain.
+
+      Conditional on `result === null`, so a normal run keeps the one fold the
+      CLI already wrote rather than gaining a second.
+
+      `dim` rather than `cyan`: this is the app noting an ending, not the agent
+      reporting one, and the two should not look alike.
+    */
+    if (result === null) {
+      deps.pushLines(name, [
+        {
+          text: `● run ended — ${reason ?? outcome}`,
+          color: 'dim',
+          endsTurn: true,
+        },
+      ]);
+    }
+
     deps.state.recordRun(name, {
       run: info.run,
       trigger: info.trigger,

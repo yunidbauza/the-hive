@@ -176,7 +176,16 @@ describe('AgentRunLog', () => {
      * columns, so there was nothing for a header to name — and it was why
      * `manual` shifted the timestamp and `10s` shifted the cost.
      */
-    it('keeps the column header out of the scrolling region', () => {
+    /**
+     * The header scrolls sideways with its rows and stays put as they pass
+     * underneath — which is one container plus `sticky`, not two containers.
+     *
+     * It was a sibling *above* the scroller first. Vertically that worked;
+     * horizontally it was the bug: only the rows could scroll, so at a narrow
+     * stage dragging them right left every label stationary over the wrong
+     * cell.
+     */
+    it('keeps the header with its columns, pinned rather than separated', () => {
       seed({ runs: [run(1)] });
 
       const { container } = render(
@@ -187,11 +196,48 @@ describe('AgentRunLog', () => {
       const receipts = container.querySelector('[data-region="run-receipts"]');
 
       expect(header).not.toBeNull();
-      expect(receipts).not.toContainElement(header as HTMLElement);
+      // Same scroller, so a horizontal drag moves both.
+      expect(receipts).toContainElement(header as HTMLElement);
+      // Pinned, so a vertical scroll does not take it away.
+      expect(header).toHaveClass('sticky');
+      // Opaque, or rows would show through it as they pass under.
+      expect(header).toHaveClass('bg-term-bg');
 
       for (const label of ['Run', 'Trigger', 'Started', 'Outcome', 'Turns', 'Took', 'Cost', 'Why']) {
         expect(within(header as HTMLElement).getByText(label)).toBeInTheDocument();
       }
+    });
+
+    /**
+     * One font size for the header and the rows, and this is the assertion the
+     * "same track" test below could not make.
+     *
+     * `ch` resolves against the font of *the element the track is declared on*.
+     * The header carried `text-[0.8em]` and the rows `text-[0.9em]`, so one
+     * identical class string computed two different tracks: measured in
+     * Chromium at 14px, the columns drifted from 8px at `Trigger` to 45px at
+     * `Why` — the heading nowhere near the values it named. The size therefore
+     * belongs to the shared parent, and neither may set its own.
+     */
+    it('lets neither the header nor the rows set their own font size', () => {
+      seed({ runs: [run(1)] });
+
+      const { container } = render(
+        <AgentRunLog name="watcher" status="sleeping" />,
+      );
+
+      const scroller = container.querySelector(
+        '[data-region="run-receipts"]',
+      ) as HTMLElement;
+      const header = container.querySelector('[data-region="run-columns"]');
+      const row = scroller.querySelector('[data-region="run-columns"] ~ div');
+
+      const sizes = (node: Element | null | undefined): string[] =>
+        [...(node?.classList ?? [])].filter((c) => c.startsWith('text-['));
+
+      expect(sizes(scroller)).toEqual(['text-[0.9em]']);
+      expect(sizes(header)).toEqual([]);
+      expect(sizes(row)).toEqual([]);
     });
 
     /*
@@ -207,9 +253,9 @@ describe('AgentRunLog', () => {
       );
 
       const header = container.querySelector('[data-region="run-columns"]');
-      const row = container
-        .querySelector('[data-region="run-receipts"]')
-        ?.firstElementChild;
+      const row = container.querySelector(
+        '[data-region="run-columns"] ~ div',
+      );
 
       const track = (node: Element | null | undefined): string | undefined =>
         [...(node?.classList ?? [])].find((c) => c.includes('grid-template-columns'));
@@ -330,6 +376,92 @@ describe('AgentRunLog', () => {
       const text = [...output.querySelectorAll('p')].map((n) => n.textContent);
 
       expect(text[0]).toBe('newer: still working');
+    });
+
+    /**
+     * A live turn's newest line is at the **bottom of the top block**.
+     *
+     * Newest-turn-first does not mean newest-line-first: turns reverse, lines
+     * inside a turn do not. The autoscroll anchor was the first child of the
+     * output region, so it scrolled to the first line the run ever wrote and
+     * re-yanked the reader there on every push — the opposite of following.
+     */
+    it('anchors the live autoscroll to the end of the newest turn', () => {
+      seed({ status: 'working', runs: [run(1)] });
+      lines(['older: done', '● turn ended — success|', 'newest line']);
+
+      const { container } = render(
+        <AgentRunLog name="watcher" status="working" />,
+      );
+
+      const output = container.querySelector(
+        '[data-region="run-output"]',
+      ) as HTMLElement;
+      const anchor = output.querySelector('div > div:not([class])');
+      const newest = within(output).getByText('newest line');
+
+      expect(anchor).not.toBeNull();
+      // Inside the newest turn's block, and after its last line.
+      expect(newest.parentElement).toContainElement(anchor as HTMLElement);
+      expect(
+        newest.compareDocumentPosition(anchor as Node) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    /*
+      Nothing to follow when nothing is running, so no anchor is rendered — and
+      no rule is drawn above the first turn, which an unconditional anchor made
+      permanently `:first-child` and so permanently doubled under the heading.
+    */
+    it('draws no anchor, and no leading rule, once the run has ended', () => {
+      seed({ runs: [run(1)] });
+      lines(['done', '● turn ended — success|']);
+
+      const { container } = render(
+        <AgentRunLog name="watcher" status="sleeping" />,
+      );
+
+      const output = container.querySelector(
+        '[data-region="run-output"]',
+      ) as HTMLElement;
+
+      expect(output.querySelector('div > div:not([class])')).toBeNull();
+      expect(output.firstElementChild).toHaveClass('first:border-t-0');
+    });
+
+    /**
+     * A stray line after the fold is debris, not a new turn.
+     *
+     * stderr is flushed on the way out — a node or CLI warning lands after the
+     * `result` the fold was written from. Left as a trailing partial it floated
+     * to the very top and presented itself as the newest turn, pushing the
+     * output it belongs to underneath it. While nothing is running it is
+     * appended to the turn it came from instead.
+     */
+    it('attaches a post-fold stderr line to the turn it came from', () => {
+      seed({ runs: [run(1)] });
+      lines([
+        'did the work',
+        '● turn ended — success|',
+        '(node) ExperimentalWarning: something',
+      ]);
+
+      const { container } = render(
+        <AgentRunLog name="watcher" status="sleeping" />,
+      );
+
+      const output = container.querySelector(
+        '[data-region="run-output"]',
+      ) as HTMLElement;
+
+      // One turn, not two — and the warning is last, where it happened.
+      expect(output.querySelectorAll('div[class]')).toHaveLength(1);
+      expect([...output.querySelectorAll('p')].map((n) => n.textContent)).toEqual([
+        'did the work',
+        '● turn ended — success',
+        '(node) ExperimentalWarning: something',
+      ]);
     });
 
     /*

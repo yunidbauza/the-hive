@@ -11,6 +11,7 @@ import { createRunTracker } from '../../../../electron/main/agents/runs';
 import {
   AGENT_KILL_GRACE_MS,
   AGENT_STALL_GRACE_MS,
+  type RunLine,
 } from '../../../../electron/shared/agent-contract';
 import { OVERMIND } from '../../../../electron/shared/ledger-contract';
 
@@ -32,7 +33,7 @@ describe('createRunTracker', () => {
     meta?: Record<string, unknown>;
   }[];
   let statuses: string[];
-  let lines: { name: string; count: number }[];
+  let lines: { name: string; count: number; pushed: RunLine[] }[];
   let openAsks: boolean;
   /** Did the wake ask for a handoff? Set per test (HIVE-122). */
   let lastTurn: boolean;
@@ -81,7 +82,8 @@ describe('createRunTracker', () => {
       handoffFor: () => handoff,
       newUuid: () => 'uuid-minted',
       pushStatus: (name) => statuses.push(name),
-      pushLines: (name, pushed) => lines.push({ name, count: pushed.length }),
+      pushLines: (name, pushed) =>
+        lines.push({ name, count: pushed.length, pushed: [...pushed] }),
       onRunClosed: (name) => {
         closed.push(name);
         statusWhenClosed = state.read(name).status;
@@ -244,14 +246,14 @@ describe('createRunTracker', () => {
       })}\n`,
     );
 
-    expect(lines).toEqual([{ name: 'a', count: 1 }]);
+    expect(lines).toMatchObject([{ name: 'a', count: 1 }]);
   });
 
   it('folds stderr into a run line', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStderr('warning: something noisy\n');
 
-    expect(lines).toEqual([{ name: 'a', count: 1 }]);
+    expect(lines).toMatchObject([{ name: 'a', count: 1 }]);
   });
 
   it('folds a result line split across two stdout writes, and still captures the result', () => {
@@ -517,6 +519,69 @@ describe('createRunTracker', () => {
     childInstances[0]?.emitClose(null, 'SIGTERM');
 
     expect(state.read('a').sessionUuid).toBe('sess-1');
+  });
+
+  /**
+   * A run that ends without a `result` still closes its turn in the run log.
+   *
+   * `foldRunLog` writes the `● turn ended` fold — the line carrying `endsTurn`,
+   * which the renderer splits its buffer on — and it writes it from the
+   * `result` event. Every path that ends a run without one therefore left the
+   * output unterminated: a kill, the stall watchdog, `killAll` at quit, and a
+   * child that raised `'error'` all reach `finalizeRun` through `escalate`,
+   * which sends a signal and nothing else.
+   *
+   * Nothing clears the buffer between runs, so that run's lines were then
+   * concatenated with the *next* run's into one block — misreporting the
+   * boundary for exactly the outcomes the receipts' Why column exists to
+   * explain.
+   */
+  it.each([
+    [
+      'a kill',
+      (): void => {
+        tracker.kill('a');
+      },
+    ],
+    [
+      'the app closing',
+      (): void => {
+        tracker.killAll('app-closed');
+      },
+    ],
+  ])('closes the turn when %s ends the run without a result', (_name, end) => {
+    tracker.run('a', 'ledger');
+    lines.length = 0;
+
+    end();
+    childInstances[0]?.emitClose(null, 'SIGTERM');
+
+    const pushed = lines.flatMap((entry) => entry.pushed);
+    const fold = pushed[pushed.length - 1];
+
+    expect(fold?.endsTurn).toBe(true);
+    expect(fold?.text).toMatch(/^● run ended — /);
+    // `dim`, not `cyan`: the app noting an ending, not the agent reporting one.
+    expect(fold?.color).toBe('dim');
+  });
+
+  /*
+    And exactly one fold on the ordinary path — the CLI already wrote it, so a
+    second would split one turn into two, the newer of which is empty.
+  */
+  it('adds no second fold when the result already closed the turn', () => {
+    tracker.run('a', 'ledger');
+    lines.length = 0;
+
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitClose(0);
+
+    const folds = lines
+      .flatMap((entry) => entry.pushed)
+      .filter((line) => line.endsTurn === true);
+
+    expect(folds).toHaveLength(1);
+    expect(folds[0]?.color).toBe('cyan');
   });
 
   it('prefers the uuid the result reported over the one it invoked', () => {
