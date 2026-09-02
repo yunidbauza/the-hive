@@ -2621,6 +2621,11 @@ export function registerIpcHandlers(): void {
    * ledger entry and the wake prompt, so accepting a renderer's word for it
    * would let the page write history.
    *
+   * `request.extra` is the exception that shows the rule (HIVE-126): the
+   * payload may carry the words a person typed after the agent's name, and the
+   * trigger is still this line's to write. One says *why*, the other says what
+   * **kind** — and only the second would be history the page had authored.
+   *
    * Two awaits before the spawn, and each closes a window this file already
    * knows about from the pty path:
    *
@@ -2639,7 +2644,7 @@ export function registerIpcHandlers(): void {
     await mcp.start();
 
     return (
-      runs?.run(request.name, 'manual') ?? {
+      runs?.run(request.name, 'manual', request.extra) ?? {
         started: false,
         refused: 'unknown',
         reason: 'The agent runtime is not running.',

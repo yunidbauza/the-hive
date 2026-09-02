@@ -287,7 +287,26 @@ describe('agents:run (HIVE-115)', () => {
       run: 'run-1',
     });
 
-    expect(trackerRun).toHaveBeenCalledWith('slack-watcher', 'manual');
+    // The third argument is asserted as absent rather than left unmentioned:
+    // `runs.run` reads a missing `extra` as "no words", and this pins that a
+    // bare run still says none.
+    expect(trackerRun).toHaveBeenCalledWith(
+      'slack-watcher',
+      'manual',
+      undefined,
+    );
+  });
+
+  it('hands the prompt on as the reason the agent woke', async () => {
+    await expect(
+      invoke(CH.agentsRun, { name: 'slack-watcher', extra: 'review PR 1234' }),
+    ).resolves.toEqual({ started: true, run: 'run-1' });
+
+    expect(trackerRun).toHaveBeenCalledWith(
+      'slack-watcher',
+      'manual',
+      'review PR 1234',
+    );
   });
 
   it('refuses a name that could reach anything but an agent folder', async () => {
