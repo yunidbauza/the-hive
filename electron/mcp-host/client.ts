@@ -53,6 +53,13 @@ export interface ReceiverClientOptions {
   session: string;
   /** This session's own token, from `HIVE_HOOK_TOKEN` (HIVE-112). */
   token: string;
+  /**
+   * The run this process belongs to, from `HIVE_RUN_ID` (HIVE-128). Stamped
+   * onto every write as `meta.run`, over whatever the model put there: it is
+   * the only thing that lets main tell one run's asks and handoff from a
+   * concurrent neighbour's, so it cannot be a value the model chose.
+   */
+  run?: string;
   fetch: typeof globalThis.fetch;
   timeoutMs?: number;
 }
@@ -61,6 +68,7 @@ export function createReceiverClient({
   url,
   session,
   token,
+  run,
   fetch,
   timeoutMs = RECEIVER_TIMEOUT_MS,
 }: ReceiverClientOptions): ReceiverClient {
@@ -111,20 +119,23 @@ export function createReceiverClient({
   return {
     read: (query) => call<LedgerSnapshot>(LEDGER_READ_PATH, query),
 
-    post: ({ to, kind, thread, body, meta }) =>
+    post: ({ to, kind, thread, body, meta }) => {
       /*
         Destructured rather than forwarded, so a `from` a caller invented cannot
         ride along. The receiver discards it regardless — identity is the
         `x-hive-session` header — but a body that never carries one cannot be
         misread as an attempt.
       */
-      call<{ id: string; ref?: string }>(LEDGER_POST_PATH, {
+      const stamped = run === undefined ? meta : { ...(meta ?? {}), run };
+
+      return call<{ id: string; ref?: string }>(LEDGER_POST_PATH, {
         ...(to === undefined ? {} : { to }),
         kind,
         ...(thread === undefined ? {} : { thread }),
         body,
-        ...(meta === undefined ? {} : { meta }),
-      }),
+        ...(stamped === undefined ? {} : { meta: stamped }),
+      });
+    },
 
     /*
       An empty body rather than none: `call` always sends JSON, and the

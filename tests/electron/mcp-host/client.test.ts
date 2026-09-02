@@ -74,6 +74,35 @@ describe('createReceiverClient', () => {
     expect(JSON.parse(init.body as string).from).toBeUndefined();
   });
 
+  it('stamps every write with the run it came from, over anything the model said (HIVE-128)', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { id: 'x' }));
+    const stamped = createReceiverClient({
+      url: 'http://127.0.0.1:4100',
+      session: 'pr-reviewer',
+      token: 'tok-1',
+      run: 'run-9',
+      fetch: fetchImpl as never,
+    });
+
+    await stamped.post({ kind: 'done', body: 'reviewed', meta: { pr: 166, run: 'a lie' } });
+    await stamped.post({ kind: 'post', body: 'note' });
+
+    const bodies = fetchImpl.mock.calls.map(
+      (call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string) as unknown,
+    );
+    expect(bodies[0]).toEqual({ kind: 'done', body: 'reviewed', meta: { pr: 166, run: 'run-9' } });
+    expect(bodies[1]).toEqual({ kind: 'post', body: 'note', meta: { run: 'run-9' } });
+  });
+
+  it('leaves meta alone when the process has no run', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { id: 'x' }));
+
+    await client(fetchImpl as never).post({ kind: 'post', body: 'note' });
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ kind: 'post', body: 'note' });
+  });
+
   it('raises the receiver reason on a refusal', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(400, { reason: 'thread is not open: a12' }));
 

@@ -17,6 +17,33 @@ describe('readEnvironment', () => {
     expect(readEnvironment({ HIVE_SESSION_ID: 'sess-a', HIVE_HOOK_TOKEN: 'tok' })).toBeNull();
     expect(readEnvironment({})).toBeNull();
   });
+
+  it('carries the run id when the process has one (HIVE-128)', () => {
+    expect(
+      readEnvironment({
+        HIVE_SESSION_ID: 'pr-reviewer',
+        HIVE_HOOK_TOKEN: 'tok',
+        HIVE_RECEIVER_URL: 'http://127.0.0.1:4100',
+        HIVE_RUN_ID: 'run-9',
+      }),
+    ).toEqual({
+      session: 'pr-reviewer',
+      token: 'tok',
+      url: 'http://127.0.0.1:4100',
+      run: 'run-9',
+    });
+  });
+
+  it('reads an empty run id as no run at all', () => {
+    expect(
+      readEnvironment({
+        HIVE_SESSION_ID: 'sess-a',
+        HIVE_HOOK_TOKEN: 'tok',
+        HIVE_RECEIVER_URL: 'http://127.0.0.1:4100',
+        HIVE_RUN_ID: '',
+      }),
+    ).toEqual({ session: 'sess-a', token: 'tok', url: 'http://127.0.0.1:4100' });
+  });
 });
 
 describe('readGrants', () => {
