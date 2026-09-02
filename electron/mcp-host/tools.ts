@@ -16,7 +16,9 @@ import { ReceiverError, type ReceiverClient } from './client';
 import type { RpcHandlers } from './rpc';
 
 /**
- * The nine tools, as behaviour (HIVE-112, `ledger_handoff` added by HIVE-122).
+ * The nine ledger tools, as behaviour (HIVE-112, `ledger_handoff` added by
+ * HIVE-122), plus the two served beside them: `agents` (HIVE-127) and
+ * `approve` (HIVE-119).
  *
  * Every one of them is the same three steps: read the arguments, make one
  * receiver call, turn the outcome into a `CallToolResult`. The interesting part

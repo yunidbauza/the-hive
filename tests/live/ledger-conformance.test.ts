@@ -17,7 +17,7 @@ import { openAsks } from '../../electron/shared/ledger-derive';
  *
  * Everything else in this story is asserted against a recording fake. This is
  * the one test that answers the questions a fake cannot: does the binary load
- * our config, does it find nine tools, does the identity we put in the
+ * our config, does it find the tools we serve, does the identity we put in the
  * environment come back as the `from` on a line on disk.
  *
  * Gated behind `HIVE_LIVE_LEDGER_PROOF=1` (`pnpm test:ledger`) because it
@@ -133,7 +133,7 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
       child.on('close', () => resolve(out));
     });
 
-  it('lists the nine tools under the short mcp__hive__ name', async () => {
+  it('lists the ledger tools and the agents directory under the short mcp__hive__ name', async () => {
     const out = await runClaude(
       'Do not call any tool. List the exact fully-qualified names of every MCP tool you can see, one per line.',
     );
@@ -150,6 +150,10 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
       // HIVE-122. The tool the rotation is built on: if a real `claude` cannot
       // see it, no agent can ever hand over and every rotation takes a strike.
       'ledger_handoff',
+      // HIVE-127. Not a ledger tool, but served on the same server and reached
+      // by the same short name — and an agent that cannot see it cannot learn
+      // that any other agent exists.
+      'agents',
     ]) {
       expect(out).toContain(`mcp__hive__${name}`);
     }

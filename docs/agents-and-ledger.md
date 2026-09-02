@@ -673,7 +673,7 @@ with `ELECTRON_RUN_AS_NODE=1` so the app's own binary runs it as plain Node
 instead of booting Chromium. `claude` starts one host process per session and
 keeps it for that session's life — it talks JSON-RPC over stdio, the same
 protocol shape every MCP server speaks, hand-rolled here because the surface
-is nine tools and did not justify a dependency.
+is a handful of tools and did not justify a dependency.
 
 **Identity comes from the environment, not from an argument the host could be
 handed on the command line.** Three variables, all set on the session's own
@@ -691,7 +691,7 @@ spawns (HIVE-111), so a model with shell access could still `curl` the
 receiver directly using another session's header value. Closing that is
 tracked separately, not attempted here. If any of the three is missing — the
 process was started outside The Hive, or by hand in a plain terminal —
-`createHandlers` still lists all nine tools (so
+`createHandlers` still lists all eleven tools (so
 `/mcp` shows a connected server, not a broken one) but every *call* answers
 with a sentence explaining why the ledger is out of reach, rather than the
 server refusing to start.
@@ -701,7 +701,7 @@ receiver routes are POST**, and the host's `ReceiverClient` (`client.ts`)
 calls them with the same two headers the hook path uses
 (`x-hive-session`, `x-hive-token`) and the same per-launch token.
 
-**The nine tools, one ledger kind each:** `ledger_post` → `post`,
+**The nine ledger tools, one ledger kind each:** `ledger_post` → `post`,
 `ledger_ask` → `ask`, `ledger_answer` → `answer`, `ledger_claim` → `claim`,
 `ledger_release` → `release`, `ledger_done` → `done`, `ledger_failed` →
 `failed`, `ledger_handoff` → `handoff` (HIVE-122), and `ledger_read`, which
@@ -711,6 +711,89 @@ through `client.post` under the hood; they are separate tools rather than
 `kind` arguments to `ledger_post` because their argument shape (a bare `task`)
 and their response text (naming the previous holder, if any) are specific
 enough to earn their own schema.
+
+**Two more tools are served beside those nine, and are deliberately not in
+`LEDGER_TOOLS`:** `approve` (HIVE-119), which the CLI reaches by name through
+`--permission-prompt-tool` and the model is never meant to call, and `agents`
+(HIVE-127), described next. That array is the ledger vocabulary the agent
+preamble teaches — one entry per ledger kind — and neither of these writes an
+entry. `tools/list` reports eleven, in that order: the nine, then `agents`,
+then `approve` last.
+
+### The agents directory: `mcp__hive__agents` (HIVE-127)
+
+Before this, an agent could not learn that another agent existed. `knowsParty`
+is a validation predicate — *may this id write?* — not something enumerable, so
+a `ledger_ask` addressed to a peer was a blind write: the caller had to already
+know the name, and every collaboration had to be hard-wired by hand, one pair
+at a time. The framing borrowed from Google's A2A protocol is the split rather
+than the wire format: **MCP is agent-to-tool; A2A is agent-to-agent.** This is
+the agent-to-agent half, scoped to one machine.
+
+The tool **takes no arguments.** The caller is the authenticated
+`x-hive-session` header — which for an agent wake is that agent's own name — so
+self-exclusion is enforced by the transport rather than by trusting the model.
+A parameter naming who is asking is a parameter a model can lie in.
+
+It answers, per peer: `name`, `description` (its own frontmatter, unmodified),
+`status`, `accepts` and `tools`, plus `invalid` when the definition does not
+parse. Two of those need the argument for why a name and a description would
+not do:
+
+- **`accepts` is the definition's `wake.on`, which is a gate rather than a
+  preference.** An agent without `ledger` in it will not wake on an ask no
+  matter who sends one (`scheduler.ts`, via `wakesOnLedger`). Without this
+  field a caller would confidently address a peer that can never answer.
+- **`tools` is what the fence will actually let the peer do.** An agent
+  deciding whom to delegate to needs the capability, not just the prose.
+
+`invalid` exists because a broken definition is **listed with its problem
+rather than omitted** — a silently hidden agent is indistinguishable from an
+absent one, and the fix is usually a one-line edit to a file the reader will
+only go and open if something says it is broken. Note that `accepts: []` on
+such a peer is the truth rather than a placeholder: `refreshKnownAgents` drops
+invalid definitions from the party register, so nothing can wake it and nothing
+may write to the ledger as it.
+
+**What it deliberately does not return.** `AgentSummary` also carries
+`sessionUuid` — a live conversation id — along with `cost`, `today`,
+`dailyUsd`, the whole run history, `icon` and the agents root. None of it
+crosses. The projection (`electron/main/agents/directory.ts`) is a whitelist
+written field by field rather than a spread-and-delete, and it is built **in
+main**, so the host process never holds a `sessionUuid` it could leak. A test
+pins the exact key set, so a field added to `AgentSummary` later fails loudly
+instead of riding along. The trust argument for what *is* returned: every agent
+here is a definition the user wrote on their own machine, so a name, a
+description and a tool grant disclose nothing the user does not already own.
+
+**The source of truth is the disk.** There is no registration step and no index
+file. `registry.list()` re-reads `~/.hive/agents` on every call, so an agent
+written a minute ago is discoverable on the very next tool call with no restart
+and nothing to keep in sync. The composition in `ipc/index.ts` reads through
+that rather than the cached `knownAgents` set beside it — that set is the party
+register and drops invalid definitions — and joins `mergeRunState` for the live
+`status`, without which every peer would report `sleeping`, since the registry
+hard-codes it.
+
+**It is granted to every agent with no `tools:` entry.** `waker.ts` puts
+`mcp__hive__*` on `--allowedTools` and in `HOOK_ENV_GRANTS` unconditionally, so
+the new name is covered by the wildcard the fence already consults.
+`ToolSearch` is granted just as unconditionally, which matters here: MCP tool
+schemas are deferred, so without it an agent could not reach even a granted
+tool.
+
+**What this unlocks with no console change.** An agent that finds work it is
+not for looks up who is, addresses the ask, and — because `wake.on: [ledger]`
+already routes it — actually wakes them. This adds no verb; the user never
+types anything.
+
+**The route.** `AGENTS_PATH` (`/agents`) is the receiver's seventh, POST like
+every other, with a body cap of zero because it reads none. It is the only
+**async** handler on that server — the directory is read from disk per call —
+which is why `Route.handle` admits a `Promise<Reply>`. A failed read answers
+`500` with a reason rather than an empty list: "there is nobody else here" is a
+real answer this route gives, and a failure that looked identical to it would
+have the caller conclude it has no peers and stop looking.
 
 **A refusal is a result, not a protocol error.** The MCP spec draws that line
 deliberately: a JSON-RPC error tells the client the *call itself* was
@@ -745,9 +828,10 @@ all of it in one tool result.
 
 Proved against a real `claude` binary in `tests/live/ledger-conformance.test.ts`
 (`pnpm test:ledger`): that the binary actually loads the generated config and
-finds nine tools named the short way, that the identity in the environment —
-not anything the model typed — is what lands in a written line's `from`, and
-that a refusal's reason reaches the model as readable text.
+finds the tools named the short way — the nine ledger ones and `agents` — that
+the identity in the environment, not anything the model typed, is what lands in
+a written line's `from`, and that a refusal's reason reaches the model as
+readable text.
 
 ## Agent definitions
 
