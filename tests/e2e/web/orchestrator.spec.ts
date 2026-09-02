@@ -44,7 +44,9 @@ test('help lists the ledger verbs with their arguments', async ({ page }) => {
 
   const rows = transcript(page);
   await expect(rows).toContainText('ledger [--open]');
-  await expect(rows).toContainText('ask <session> <message>');
+  // `<agent>`, since HIVE-126 gave every verb one target type: a session has a
+  // terminal you can open and read, so a question to one is `send`.
+  await expect(rows).toContainText('ask <agent> <message>');
   await expect(rows).toContainText('answer <id> <text>');
 });
 

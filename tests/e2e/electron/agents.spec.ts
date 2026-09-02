@@ -433,17 +433,40 @@ test('pauses and resumes from the console, and the table agrees', async ({}, tes
     await expect(status).toHaveText('paused');
 
     /*
-      And a wake is refused — the consequence the status exists to have. The
-      refusal comes from `RunTracker.run`, so it proves the pause reached
-      `agents.json` rather than only the renderer's copy of it.
+      And a wake does not happen now — the consequence the status exists to
+      have. The refusal comes from `RunTracker.run`, so it proves the pause
+      reached `agents.json` rather than only the renderer's copy of it.
+
+      Since HIVE-126 the console says *queued* rather than refusing outright:
+      the manual path routes through the scheduler, which keeps the run on
+      `pendingWake` and flushes it on resume. This line is the end-to-end proof
+      of that — the wording comes from `agentRunQueued`, and reaching it at all
+      means main queued rather than dropped.
     */
     await input.fill('run slack-watcher');
     await input.press('Enter');
-    await expect(transcript).toContainText('is paused');
+    await expect(transcript).toContainText(
+      'queued for slack-watcher — resume it to run',
+    );
 
     await input.fill('resume slack-watcher');
     await input.press('Enter');
-    await expect(status).toHaveText('sleeping');
+
+    /*
+      `working` **or** `sleeping`, and the alternation is the point (HIVE-126).
+
+      Resume flushes the queue, so the run this test queued a moment ago starts
+      here — where before this story a resume only restored the status. Which of
+      the two lands depends on whether the flushed wake could build a command:
+      with a real `claude` on PATH it spawns and the row reads `working`; on a
+      machine without one the wake is refused `invalid` and the row settles back
+      to `sleeping`. Pinning either would make this spec depend on the
+      developer's machine, which is what `pnpm test:agent` is for.
+
+      What it proves either way is what it always proved: the pause was lifted
+      in `agents.json`, not just in the renderer's copy of it.
+    */
+    await expect(status).toHaveText(/^(working|sleeping)$/);
   } finally {
     await app.close();
   }
