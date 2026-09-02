@@ -780,6 +780,22 @@ export type RunLineColor = 'ink' | 'dim' | 'amber' | 'cyan';
 export interface RunLine {
   text: string;
   color: RunLineColor;
+  /**
+   * This line is the last of its turn — the `● turn ended` fold.
+   *
+   * A **contract**, deliberately, and not something the renderer sniffs. The
+   * run log draws its buffer newest-turn-first, which means partitioning a flat
+   * stream of lines into turns; the only other handle on that boundary is the
+   * line's `cyan`, and this module already warns that keying on it is "wrong
+   * the moment the fold gains a second cyan line". Colour is presentation. A
+   * boundary is structure, and structure that a renderer has to infer from
+   * presentation is a bug waiting for the next palette change.
+   *
+   * Optional because every other line omits it, and because a buffer written by
+   * an older build carries none — a run log that predates this field renders as
+   * one long turn rather than crashing, which is the right degradation.
+   */
+  endsTurn?: true;
 }
 
 /**
