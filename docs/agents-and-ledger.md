@@ -180,6 +180,12 @@ a **live session** is written into that session's terminal as one line, through
 the same `sessions.write` primitive `send` uses. The trailing `\r` submits it,
 which is the intent — the nudge becomes a turn the agent takes.
 
+Delivery is party-agnostic and stays that way, but since HIVE-126 the entries
+reaching it are **written by agents**, not by a human at the console. `ask` is
+an agent-only verb now: a session has a terminal you can open and read, so a
+person with a question for one types `send`. What an agent cannot be sent — it
+has no terminal — is what `ask` exists for.
+
 Two constraints shape it.
 
 It writes **only at an empty prompt**. Main learns this from the hook stream:

@@ -124,7 +124,7 @@ export const USAGE: Record<UsageCommand, string> = {
   send: 'usage: send <session> <message>',
   spawn: 'usage: spawn <project> <task>',
   ledger: 'usage: ledger [--open] [--events] [--from <party>] [--to <party>] [-n <count>]',
-  ask: 'usage: ask <session> <message>',
+  ask: 'usage: ask <agent> <message>',
   answer: 'usage: answer <id> <text>',
   /*
     `<agent>`, not `<session>`, on all five — these four and `rotate` below.

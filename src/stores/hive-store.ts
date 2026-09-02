@@ -775,7 +775,7 @@ const HELP_LINES = [
   '  ledger [--open] [-n 20]    print the ledger tail',
   '  open <session>             open a session in the center stage',
   '  send <session> <message>   route a message to a session',
-  '  ask <session> <message>    ask a session a question',
+  '  ask <agent> <message>      ask an agent a question',
   '  answer <id> <text>         answer an open ask',
   '  spawn <project> <task>     start a new session on a project',
   '  agents                     one line per agent',
@@ -2049,38 +2049,37 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         if (match === null) return;
 
         /**
-         * Addressed by **terminal**, not by row id.
+         * Agents only, and the mirror of `send`'s refusal (HIVE-126).
          *
-         * Main's party space is the one its registry is keyed by, and that is
-         * `terminalOf(session)` — the same id `sendToEntity` routes on, and the
-         * same one `knowsParty` checks. The two agree for every session that
-         * has never been cleared, and diverge exactly where it matters: a
-         * cleared row's successor carries a fresh `id` with the *predecessor's*
-         * `terminalId`. Posting the row id there addresses a party main has
-         * never heard of, and the ask is silently never delivered — while
-         * posting the *cleared* row's id names a terminal whose live pty now
-         * belongs to the successor, writing the nudge into a different agent's
-         * prompt. `send` has a documented guard against precisely that
-         * crossing; this is the same hazard reached through the log.
+         * `send` writes into a pty *now*; `ask` writes a durable, answerable
+         * entry. A session has a terminal you can open and read, so a question
+         * to one is a keystroke. An agent has no terminal — which is precisely
+         * why the agent is the party that keeps `ask`. While this verb took
+         * either, the pair read as redundant and neither had a clean domain.
+         *
+         * Two things went with the narrowing, and both were load-bearing while
+         * a session could be asked. The party mapping — `terminalOf(session)`
+         * rather than the row id, because a cleared row's successor carries a
+         * fresh id over the predecessor's terminal — is unreachable now that no
+         * session resolves here. So is the `held` line: `resolve` documents
+         * that agents are never ended and always answer `null`, so an ask from
+         * this verb is never held for a party that has gone away.
+         *
+         * `deliver.ts` still holds and flushes an ask addressed to a session —
+         * that path is main's, it serves entries agents write, and nothing here
+         * touches it.
          */
         const entity = get().entities[match.id];
-        const party =
-          entity !== undefined && isSession(entity) ? terminalOf(entity) : match.id;
-
-        /**
-         * Deliberately **not** gated on `match.ended`, unlike `send`.
-         *
-         * `send` must refuse a finished session because it writes *now*, into
-         * whatever pty holds that terminal at this instant. An ask is written
-         * down and delivered later: `deliver.ts` holds it and flushes it when
-         * the party comes back, and it re-checks liveness at that moment rather
-         * than trusting this one. Refusing here would throw away the one case
-         * the hold-and-flush rule exists for.
-         */
-        const held = match.ended !== null;
+        if (entity === undefined || !isAgent(entity)) {
+          pushOrch(
+            `  sessions are sent to, not asked: try send ${match.label} ${command.message}`,
+            'red',
+          );
+          return;
+        }
 
         void window.hive?.ledger
-          .post({ to: party, kind: 'ask', body: command.message })
+          .post({ to: match.id, kind: 'ask', body: command.message })
           .then((outcome) => {
             if (!outcome.ok) {
               // Verbatim, the way `send` prints a refusal: the reason names
@@ -2089,12 +2088,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
               return;
             }
             const handle = outcome.ref ?? outcome.id;
-            pushOrch(
-              held
-                ? `  asked ${match.label} (${handle}) — held until it resumes`
-                : `  asked ${match.label} (${handle})`,
-              'dim',
-            );
+            pushOrch(`  asked ${match.label} (${handle})`, 'dim');
           });
         return;
       }
