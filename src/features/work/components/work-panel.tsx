@@ -1,4 +1,5 @@
 import { ArrowClockwise } from '@phosphor-icons/react';
+import { type ReactNode } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
 import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
@@ -9,12 +10,15 @@ import { PullIndicator } from '@components/ui/pull-indicator';
 import { SwarmLine } from '@components/ui/swarm-line';
 import { TicketCard } from '@features/work/components/ticket-card';
 import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
+import { WorkSearchRow } from '@features/work/components/work-search-row';
 import {
   useRefreshTickets,
+  useTicketSearch,
   useTicketSource,
   useTickets,
   type TicketSource,
 } from '@stores/hive-store';
+import { useWorkSearchTerm } from '@stores/ui-store';
 
 /**
  * Work panel — one card per ticket, with its linked sessions and PRs.
@@ -107,6 +111,47 @@ function SourceNotice({
   return null;
 }
 
+/**
+ * The panel's frame: a header that stays put, over a list that scrolls.
+ *
+ * This panel used to have no header at all, which is why it was deliberately
+ * left out of the equivalent change to the PRs panel — its cards scrolling in
+ * the rail's own container was already right. A search box changes that: the
+ * rail's `role="tabpanel"` wrapper scrolls whatever it holds, so the box would
+ * travel upward with the results, out of reach of the list it controls.
+ *
+ * Filling the rail's height exactly is what fixes it — the outer scroller then
+ * has nothing to scroll and never engages. Duplicated from `prs-panel.tsx`
+ * rather than shared: the two slices are fenced from each other by design, and
+ * a twenty-line frame in `features/shared` would be a dependency between them
+ * for less code than the import costs.
+ */
+function WorkLayout({
+  header,
+  listRef,
+  children,
+}: {
+  header: ReactNode;
+  /** Goes *inside* the scroller, so `usePullToRefresh` finds it walking up. */
+  listRef?: (node: HTMLElement | null) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      data-panel="work"
+      className="flex h-full min-h-0 flex-col gap-[var(--cc-list-gap)]"
+    >
+      <div className="shrink-0">{header}</div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={listRef} className="flex flex-col gap-[var(--cc-list-gap)]">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RetryButton({ onRetry }: { onRetry: () => void }) {
   return (
     <button
@@ -124,6 +169,11 @@ export function WorkPanel() {
   const tickets = useTickets();
   const source = useTicketSource();
   const refresh = useRefreshTickets();
+  const search = useTicketSearch();
+  const term = useWorkSearchTerm();
+
+  /** A search replaces the list rather than filtering it — see `WorkSearchRow`. */
+  const searching = term !== '';
 
   /*
     Both halves of a ticket card are polled now (HIVE-81).
@@ -153,7 +203,11 @@ export function WorkPanel() {
   */
   const pull = usePullToRefresh({
     onRefresh: refresh,
-    disabled: source.kind === 'loading',
+    // Off during a search, for the reason the PRs panel gives: pulling would
+    // refresh a list the user cannot currently see, and the rows they *can* see
+    // would not move — which reads as the gesture being broken rather than as
+    // it having done something elsewhere.
+    disabled: source.kind === 'loading' || searching,
   });
 
   /*
@@ -163,21 +217,59 @@ export function WorkPanel() {
     whatever the last read returned — showing both would mean stale rows and a
     loading state claiming different things at once. This panel shows one
     answer at a time.
+
+    Not while searching, though: the search owns the panel, and its own results
+    are what the user is waiting for.
   */
-  if (source.kind === 'loading') {
+  if (source.kind === 'loading' && !searching) {
     return (
-      <div data-panel="work" className="flex flex-col gap-[var(--cc-list-gap)]">
+      <WorkLayout header={<WorkSearchRow />}>
         <TicketListSkeleton />
-      </div>
+      </WorkLayout>
+    );
+  }
+
+  /*
+    A search takes the panel over completely: its own results, its own empty
+    state, and none of the sweep's notices. Those notices are about the standing
+    list — "no Jira connection yet", "these may be out of date" — and none of
+    them describes what a search just did.
+  */
+  if (searching) {
+    const results = search.results;
+
+    return (
+      <WorkLayout header={<WorkSearchRow />}>
+        {search.error !== null ? (
+          <p className="px-1 pb-1 text-[11.5px] leading-[1.45] text-amber">
+            {search.error}
+          </p>
+        ) : null}
+
+        {/*
+          The skeleton stands in only for the **first** answer, while `results`
+          is still `null`. A re-search — narrowing with "Mine only", another
+          keystroke — keeps the rows it has, which is the same rule the sweep's
+          skeleton follows: replacing a live list with grey boxes makes the
+          panel blink for something the user can already see.
+        */}
+        {results === null && search.error === null ? <TicketListSkeleton /> : null}
+
+        {results?.map((ticket) => (
+          <TicketCard key={ticket.key} ticket={ticket} />
+        ))}
+
+        {search.error === null && !search.searching && results?.length === 0 ? (
+          <EmptyState phrase="empty.work" creature="spire">
+            Nothing matches “{term}”.
+          </EmptyState>
+        ) : null}
+      </WorkLayout>
     );
   }
 
   return (
-    <div
-      ref={pull.ref}
-      data-panel="work"
-      className="flex flex-col gap-[var(--cc-list-gap)]"
-    >
+    <WorkLayout header={<WorkSearchRow />} listRef={pull.ref}>
       <PullIndicator distance={pull.distance} phase={pull.phase} />
 
       <SourceNotice source={source} onRetry={retry} />
@@ -196,6 +288,6 @@ export function WorkPanel() {
           No issues matched your query.
         </EmptyState>
       ) : null}
-    </div>
+    </WorkLayout>
   );
 }

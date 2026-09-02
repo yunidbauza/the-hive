@@ -386,3 +386,73 @@ describe('openSettings and its pane', () => {
     expect(useUiStore.getState().settingsSection).toBeNull();
   });
 });
+
+/**
+ * The WORK tab's search box, whose term lives here for the reason
+ * `prSearchTerm` does: the term is what the user is looking at, and the issues
+ * that come back are data.
+ */
+describe('ui-store — the work search', () => {
+  beforeEach(() => {
+    useUiStore.getState().reset();
+  });
+
+  it('starts empty and searching everyone’s tickets', () => {
+    const state = useUiStore.getState();
+
+    expect(state.workSearchTerm).toBe('');
+    expect(state.workSearchMineOnly).toBe(false);
+  });
+
+  it('holds what is typed', () => {
+    useUiStore.getState().setWorkSearchTerm('rails');
+
+    expect(useUiStore.getState().workSearchTerm).toBe('rails');
+  });
+
+  it('narrows to the user when asked', () => {
+    useUiStore.getState().setWorkSearchMineOnly(true);
+
+    expect(useUiStore.getState().workSearchMineOnly).toBe(true);
+  });
+
+  it('drops the scope when the box is emptied by hand', () => {
+    // The failure this guards: a scope set for one question silently governing
+    // the next. `prSearchAllRepos` follows the same rule, for the same reason.
+    useUiStore.getState().setWorkSearchTerm('rails');
+    useUiStore.getState().setWorkSearchMineOnly(true);
+
+    useUiStore.getState().setWorkSearchTerm('');
+
+    expect(useUiStore.getState().workSearchMineOnly).toBe(false);
+  });
+
+  it('drops the scope when the box is cleared by its button', () => {
+    useUiStore.getState().setWorkSearchTerm('rails');
+    useUiStore.getState().setWorkSearchMineOnly(true);
+
+    useUiStore.getState().clearWorkSearch();
+
+    expect(useUiStore.getState().workSearchTerm).toBe('');
+    expect(useUiStore.getState().workSearchMineOnly).toBe(false);
+  });
+
+  it('keeps the scope while the term is only being edited', () => {
+    useUiStore.getState().setWorkSearchMineOnly(true);
+
+    useUiStore.getState().setWorkSearchTerm('rail');
+    useUiStore.getState().setWorkSearchTerm('rails');
+
+    expect(useUiStore.getState().workSearchMineOnly).toBe(true);
+  });
+
+  it('is cleared by reset', () => {
+    useUiStore.getState().setWorkSearchTerm('rails');
+    useUiStore.getState().setWorkSearchMineOnly(true);
+
+    useUiStore.getState().reset();
+
+    expect(useUiStore.getState().workSearchTerm).toBe('');
+    expect(useUiStore.getState().workSearchMineOnly).toBe(false);
+  });
+});

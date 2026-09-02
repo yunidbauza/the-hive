@@ -85,19 +85,51 @@ async function cancelButtonWidths(cdp: CDPSession): Promise<number[]> {
   return widths;
 }
 
-const prsTab = (page: Page) =>
-  page
-    .getByRole('tablist', { name: 'Activity sections' })
-    .getByRole('tab', { name: /^PRs/i });
+/**
+ * Every search box the browser target can reach, and how to get to it.
+ *
+ * The two live in different rails — PRS in the activity rail on the right, WORK
+ * in the left one — which is why each carries its own way in rather than
+ * sharing a tab helper.
+ *
+ * The Explorer's box is missing on purpose: it needs a session with a
+ * repository behind it, and the browser target has no bridge to provide one. It
+ * is the same `type="search"` under the same global rule, and the two here
+ * prove the rule ships.
+ */
+const BOXES = [
+  {
+    label: 'Search pull requests',
+    open: (page: Page) =>
+      page
+        .getByRole('tablist', { name: 'Activity sections' })
+        .getByRole('tab', { name: /^PRs/i })
+        .click(),
+  },
+  {
+    label: 'Search tickets',
+    open: (page: Page) =>
+      page
+        .getByRole('navigation', { name: 'Projects, work, and agents' })
+        .getByRole('tab', { name: /^Work/ })
+        .click(),
+  },
+];
 
-test('shows one clear button in the search box, not Chromium’s as well', async ({
-  page,
-}) => {
-  await page.goto(APP_URL);
-  await page.waitForSelector('header');
-  await prsTab(page).click();
+for (const { label, open } of BOXES) {
+  test(`${label}: one clear button, not Chromium’s as well`, async ({
+    page,
+  }) => {
+    await page.goto(APP_URL);
+    await page.waitForSelector('header');
+    await open(page);
 
-  const box = page.getByLabel('Search pull requests');
+    await expectOneClearButton(page, label);
+  });
+}
+
+async function expectOneClearButton(page: Page, label: string): Promise<void> {
+  const box = page.getByLabel(label);
 
   /*
     Clicked and typed rather than filled. The native button only appears once
@@ -121,4 +153,4 @@ test('shows one clear button in the search box, not Chromium’s as well', async
   // box. An empty list would mean the search field itself stopped rendering.
   expect(widths.length).toBeGreaterThan(0);
   expect(widths).toEqual(widths.map(() => 0));
-});
+}

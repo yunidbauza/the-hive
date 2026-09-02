@@ -88,6 +88,27 @@ interface UiState {
    * govern the next.
    */
   explorerSearchMode: FsSearchMode;
+  /**
+   * What the WORK panel's search box holds. `''` means the panel shows the
+   * configured query's answer — the standing list of the user's own tickets.
+   *
+   * Here rather than in `hive-store` for the reason `prSearchTerm` gives: the
+   * term is view state and the issues that come back are data.
+   */
+  workSearchTerm: string;
+  /**
+   * Whether the search is narrowed to the user's own tickets.
+   *
+   * Unchecked is the default, and that is the panel's whole argument about what
+   * a search is: the standing list already answers "what is assigned to me", so
+   * a search that could not leave it would never answer "which ticket was that
+   * again". Ticking it appends `assignee = currentUser()`.
+   *
+   * **Not persisted**, and reset whenever the box is cleared — a scope set for
+   * one question must not silently govern the next, which is the rule
+   * {@link UiState.prSearchAllRepos} follows.
+   */
+  workSearchMineOnly: boolean;
   collapsed: Record<string, boolean>; // project id -> collapsed
   picker: boolean; // new-session overlay open
   pickerQuery: string;
@@ -144,6 +165,10 @@ interface UiState {
   setExplorerSearchMode: (mode: FsSearchMode) => void;
   /** Empty the box and put the mode back to names. */
   clearExplorerSearch: () => void;
+  setWorkSearchTerm: (term: string) => void;
+  setWorkSearchMineOnly: (mine: boolean) => void;
+  /** Empty the box and put the scope back to everyone's tickets. */
+  clearWorkSearch: () => void;
   /**
    * Show a rail tab, revealing the rail if it was hidden (HIVE-93).
    *
@@ -190,6 +215,8 @@ const initialUiState = {
   prSearchAllRepos: false,
   explorerSearchTerm: '',
   explorerSearchMode: 'name' as FsSearchMode,
+  workSearchTerm: '',
+  workSearchMineOnly: false,
   collapsed: {} as Record<string, boolean>,
   picker: false,
   pickerQuery: '',
@@ -249,6 +276,17 @@ export const useUiStore = create<UiState>()((set) => ({
   setExplorerSearchMode: (mode) => set({ explorerSearchMode: mode }),
   clearExplorerSearch: () =>
     set({ explorerSearchTerm: '', explorerSearchMode: 'name' }),
+
+  // Same rule again: emptying the box puts the scope back, so a search narrowed
+  // to the user once does not quietly narrow the next question too.
+  setWorkSearchTerm: (term) =>
+    set(
+      term === ''
+        ? { workSearchTerm: '', workSearchMineOnly: false }
+        : { workSearchTerm: term },
+    ),
+  setWorkSearchMineOnly: (mine) => set({ workSearchMineOnly: mine }),
+  clearWorkSearch: () => set({ workSearchTerm: '', workSearchMineOnly: false }),
 
   // `showActivityRail: true` unconditionally rather than a toggle — see the
   // interface note for why the bell must not flip it.
@@ -439,6 +477,18 @@ export const useSetExplorerSearchMode = () =>
   useUiStore((state) => state.setExplorerSearchMode);
 export const useClearExplorerSearch = () =>
   useUiStore((state) => state.clearExplorerSearch);
+
+/** The WORK panel's search box: what is typed, and whose tickets it reaches. */
+export const useWorkSearchTerm = () =>
+  useUiStore((state) => state.workSearchTerm);
+export const useWorkSearchMineOnly = () =>
+  useUiStore((state) => state.workSearchMineOnly);
+export const useSetWorkSearchTerm = () =>
+  useUiStore((state) => state.setWorkSearchTerm);
+export const useSetWorkSearchMineOnly = () =>
+  useUiStore((state) => state.setWorkSearchMineOnly);
+export const useClearWorkSearch = () =>
+  useUiStore((state) => state.clearWorkSearch);
 
 /**
  * Whether the activity rail is mounted (story 020).

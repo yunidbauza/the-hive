@@ -226,3 +226,127 @@ describe('WorkPanel', () => {
     expect(within(card('GRAC-3018')).getByText('⚠ 5')).toBeInTheDocument();
   });
 });
+
+/**
+ * A search takes the panel over completely, the way the PRs panel's does.
+ *
+ * The standing list and the results are two different answers, and showing them
+ * at once would mean a panel claiming both "here is your work" and "here is
+ * everyone's" in one column.
+ */
+describe('WorkPanel — searching', () => {
+  const found = (key: string) => ({
+    key,
+    status: 'In Progress',
+    statusCategory: 'in-progress' as const,
+    title: `about ${key}`,
+    url: `https://example.invalid/${key}`,
+  });
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useHiveStore.setState({
+      refreshTickets: () => Promise.resolve(),
+      refreshPrs: () => Promise.resolve(),
+      searchTickets: () => Promise.resolve(),
+    });
+    useUiStore.getState().reset();
+  });
+
+  it('carries a search box above the list', () => {
+    render(<WorkPanel />);
+
+    expect(screen.getByLabelText('Search tickets')).toBeInTheDocument();
+  });
+
+  it('replaces the standing list with what the search found', () => {
+    useUiStore.getState().setWorkSearchTerm('filing');
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'filing',
+        results: [found('INCORP-505')],
+        searching: false,
+        error: null,
+      },
+    });
+
+    render(<WorkPanel />);
+
+    expect(screen.getByText('INCORP-505')).toBeInTheDocument();
+    // The seeded ticket the panel would otherwise be showing.
+    expect(screen.queryByText('GRAC-3018')).not.toBeInTheDocument();
+  });
+
+  it('keeps the box on screen while the first answer is out', () => {
+    useUiStore.getState().setWorkSearchTerm('filing');
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'filing',
+        results: null,
+        searching: true,
+        error: null,
+      },
+    });
+
+    render(<WorkPanel />);
+
+    // The box is what the user is typing into. Replacing the whole panel with a
+    // skeleton would take it away mid-word.
+    expect(screen.getByLabelText('Search tickets')).toBeInTheDocument();
+    expect(screen.queryByText('GRAC-3018')).not.toBeInTheDocument();
+  });
+
+  it('says a search matched nothing rather than sitting blank', () => {
+    useUiStore.getState().setWorkSearchTerm('zzzz');
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'zzzz',
+        results: [],
+        searching: false,
+        error: null,
+      },
+    });
+
+    render(<WorkPanel />);
+
+    expect(screen.getByText(/Nothing matches/)).toBeInTheDocument();
+  });
+
+  it('prints Jira’s refusal instead of an empty result', () => {
+    useUiStore.getState().setWorkSearchTerm('rails');
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'rails',
+        results: [],
+        searching: false,
+        error: 'Jira refused the query.',
+      },
+    });
+
+    render(<WorkPanel />);
+
+    expect(screen.getByText('Jira refused the query.')).toBeInTheDocument();
+    // "Nothing matches" would be a different, wrong explanation of the same
+    // empty column.
+    expect(screen.queryByText(/Nothing matches/)).not.toBeInTheDocument();
+  });
+
+  it('shows none of the standing list’s notices while searching', () => {
+    useUiStore.getState().setWorkSearchTerm('rails');
+    useHiveStore.setState({
+      ticketSource: { kind: 'unconfigured' },
+      ticketSearch: {
+        term: 'rails',
+        results: [found('HIVE-1')],
+        searching: false,
+        error: null,
+      },
+    });
+
+    render(<WorkPanel />);
+
+    // Those notices describe the configured query, and a search is not it.
+    expect(screen.queryByText(/No Jira connection yet/)).not.toBeInTheDocument();
+  });
+});

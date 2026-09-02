@@ -38,6 +38,7 @@ import {
 import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
+import { buildTicketSearchJql } from '@lib/jira-search';
 import { ledgerRows } from '@lib/ledger/console-rows';
 import {
   projectConfigSnapshot,
@@ -190,6 +191,23 @@ export interface PrSearchState {
   error: string | null;
 }
 
+/**
+ * What the WORK panel's search box found.
+ *
+ * The shape of {@link PrSearchState}, and for the same reasons — including the
+ * one that looks like an oversight: `results` survives a re-search, so
+ * narrowing a search with "Mine only" keeps the rows on screen while the new
+ * answer is in flight rather than blinking the panel to empty and back.
+ */
+export interface TicketSearchState {
+  /** What produced `results`. `''` when nothing has been searched. */
+  term: string;
+  /** `null` until the first answer lands, and again once the box is cleared. */
+  results: Ticket[] | null;
+  searching: boolean;
+  error: string | null;
+}
+
 export type PrSource =
   /** A read is in flight and there is nothing yet. The boot state. */
   | { kind: 'loading' }
@@ -332,6 +350,27 @@ interface HiveState {
   searchPrs: (term: string, projectId?: string) => Promise<void>;
   /** Drop the results. The panel goes back to showing the sweep. */
   clearPrSearch: () => void;
+
+  /**
+   * What the WORK panel's search box found, or `null` when nothing is searched.
+   *
+   * Separate from {@link HiveState.tickets} for the reason
+   * {@link HiveState.prSearch} gives, which is sharper here: the standing list
+   * is what every ticket card resolves its sessions and pull requests against,
+   * so installing a search for somebody else's issue into it would change what
+   * the app believes it is working on.
+   */
+  ticketSearch: TicketSearchState;
+  /**
+   * Search Jira. `mineOnly` appends `assignee = currentUser()`.
+   *
+   * The JQL is built in the renderer — see `lib/jira-search.ts` for why that is
+   * safe and why main still owns the *standing* query. Debounced by the caller,
+   * not here, for the reason {@link HiveState.searchPrs} gives.
+   */
+  searchTickets: (term: string, mineOnly: boolean) => Promise<void>;
+  /** Drop the results. The panel goes back to showing the configured query. */
+  clearTicketSearch: () => void;
 
   spawnSession: (
     /**
@@ -706,6 +745,9 @@ let inFlightPrSweep: Promise<void> | null = null;
  * request had been numbered.
  */
 let prSearchTicket = 0;
+
+/** The same counter, for Jira searches, and for exactly the same race. */
+let ticketSearchTicket = 0;
 
 /**
  * The Jira sweep in flight, or `null`.
@@ -1401,6 +1443,46 @@ function sameTickets(
   });
 }
 
+/**
+ * What Jira said, narrowed to what the WORK panel draws.
+ *
+ * One function rather than one per caller: the sweep and the search install
+ * into different slices, but they are looking at the same issue, and two copies
+ * of this map would eventually disagree about a field.
+ */
+function toTicket(issue: JiraIssue): Ticket {
+  return {
+    key: issue.key,
+    status: issue.status,
+    statusCategory: issue.statusCategory,
+    title: issue.summary,
+    url: issue.url,
+  };
+}
+
+/**
+ * A search's results, with an exactly-matching ticket number first.
+ *
+ * Jira cannot do this itself, and the reason is worth writing down. The key
+ * clause is OR-ed with the text ones and the whole query is ordered by
+ * `updated`, so searching `HIVE-79` on a real site returned HIVE-91 first — an
+ * issue that merely *mentions* HIVE-79 in its description — with HIVE-79 second.
+ * Asking for a ticket by its number and not getting it at the top is the one
+ * search this box must never get wrong.
+ *
+ * Only an exact, whole-term match is pinned. A term that is merely key-*shaped*
+ * but matched nothing leaves the order alone, and so does a multi-word term
+ * that happens to start with a key.
+ */
+function rankTicketSearch(term: string, issues: JiraIssue[]): Ticket[] {
+  const tickets = issues.map(toTicket);
+  const key = term.trim().toUpperCase();
+  const at = tickets.findIndex((ticket) => ticket.key === key);
+  if (at <= 0) return tickets;
+
+  return [tickets[at], ...tickets.slice(0, at), ...tickets.slice(at + 1)];
+}
+
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
   notifs: [],
@@ -1420,6 +1502,12 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   /** Loading until the first sweep answers, for the same reason as above. */
   prSource: { kind: 'loading' } as PrSource,
   prSearch: { term: '', results: null, searching: false, error: null } as PrSearchState,
+  ticketSearch: {
+    term: '',
+    results: null,
+    searching: false,
+    error: null,
+  } as TicketSearchState,
 
   /**
    * Create a session and open its tab.
@@ -4013,13 +4101,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    */
   hydrateTickets: (issues, capped) =>
     set((state) => {
-      const tickets = issues.map((issue) => ({
-        key: issue.key,
-        status: issue.status,
-        statusCategory: issue.statusCategory,
-        title: issue.summary,
-        url: issue.url,
-      }));
+      const tickets = issues.map(toTicket);
 
       const source = state.ticketSource;
       const settled =
@@ -4477,6 +4559,93 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     set({ prSearch: { term: '', results: null, searching: false, error: null } });
   },
 
+  searchTickets: async (term, mineOnly) => {
+    // A monotonic ticket rather than a term comparison, for the race
+    // `searchPrs` documents: ticking "Mine only" re-queries the same words, so
+    // two requests can be in flight for one term and only their order tells
+    // them apart.
+    ticketSearchTicket += 1;
+    const ticket = ticketSearchTicket;
+
+    set((state) => ({
+      ticketSearch: {
+        ...state.ticketSearch,
+        term,
+        searching: true,
+        error: null,
+      },
+    }));
+
+    /*
+      Built before the bridge is consulted, because a term too short to ask
+      about is answered here. On a real site a single letter matched the whole
+      backlog — a round trip whose only possible answer is noise.
+    */
+    const jql = buildTicketSearchJql(term, mineOnly);
+    if (jql === null) {
+      set({ ticketSearch: { term, results: [], searching: false, error: null } });
+      return;
+    }
+
+    if (!isDesktop()) {
+      set({
+        ticketSearch: {
+          term,
+          results: [],
+          searching: false,
+          error: 'Search needs the desktop app — this is the browser preview.',
+        },
+      });
+      return;
+    }
+
+    const result = await searchJiraIssues({ jql });
+
+    // Superseded while it was out: a different term, or the same term at a
+    // different scope.
+    if (ticket !== ticketSearchTicket) return;
+
+    if (result === null) {
+      set({
+        ticketSearch: {
+          term,
+          results: [],
+          searching: false,
+          error: 'The app could not reach its own main process.',
+        },
+      });
+      return;
+    }
+
+    if (!result.ok) {
+      set({
+        ticketSearch: {
+          term,
+          results: [],
+          searching: false,
+          error: result.error.message,
+        },
+      });
+      return;
+    }
+
+    set({
+      ticketSearch: {
+        term,
+        results: rankTicketSearch(term, result.value.issues),
+        searching: false,
+        error: null,
+      },
+    });
+  },
+
+  clearTicketSearch: () => {
+    ticketSearchTicket += 1;
+    set({
+      ticketSearch: { term: '', results: null, searching: false, error: null },
+    });
+  },
+
   reset: () => {
     spawnCounter = 0;
     staleTitles.clear();
@@ -4487,6 +4656,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // Same rule for a search in flight: bumping the ticket retires it, so its
     // answer cannot install itself into the fresh state.
     prSearchTicket += 1;
+    ticketSearchTicket += 1;
     /**
      * Nothing in this store stamps through the clock any more — the activity
      * feed was its only caller and the project explorer replaced it. The rewind
@@ -4503,6 +4673,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
       prSearch: { term: '', results: null, searching: false, error: null },
+      ticketSearch: { term: '', results: null, searching: false, error: null },
     });
   },
 }));
@@ -6396,6 +6567,14 @@ export const usePrSearch = () => useHiveStore((state) => state.prSearch);
 export const useSearchPrs = () => useHiveStore((state) => state.searchPrs);
 export const useClearPrSearchResults = () =>
   useHiveStore((state) => state.clearPrSearch);
+
+/** What the WORK panel's search found, and whether it is still looking. */
+export const useTicketSearch = () =>
+  useHiveStore((state) => state.ticketSearch);
+export const useSearchTickets = () =>
+  useHiveStore((state) => state.searchTickets);
+export const useClearTicketSearchResults = () =>
+  useHiveStore((state) => state.clearTicketSearch);
 
 
 /** Mark one notification read, by its id (story 051, HIVE-75). */

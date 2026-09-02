@@ -3941,6 +3941,228 @@ describe('searchPrs — which answer wins', () => {
   });
 
 /**
+ * The WORK panel's search — a second Jira query, not a filter over the first.
+ *
+ * The rule `prSearch` states and this one inherits: results stay out of the
+ * standing list, because that list is what ticket cards resolve their sessions
+ * and pull requests against, and a search for somebody else's issue must not
+ * quietly rewrite it.
+ */
+describe('searchTickets — a second query', () => {
+  beforeEach(() => {
+    vi.mocked(isDesktop).mockReturnValue(true);
+    useHiveStore.getState().reset();
+  });
+
+  afterEach(() => {
+    delete window.hive;
+    useHiveStore.getState().reset();
+  });
+
+  const issue = (key: string, summary = `about ${key}`) => ({
+    key,
+    summary,
+    status: 'In Progress',
+    statusCategory: 'in-progress' as const,
+    issueType: 'Story',
+    priority: 'P2',
+    assignee: 'Someone Else',
+    updated: '2026-08-10T10:00:00Z',
+    url: `https://behiques.atlassian.net/browse/${key}`,
+  });
+
+  /** Records the JQL it was handed, so a test can assert on the query itself. */
+  const bridgeReturning = (...issues: ReturnType<typeof issue>[]) => {
+    const search = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { issues, capped: false } });
+    window.hive = { jira: { search } } as unknown as Window['hive'];
+    return search;
+  };
+
+  it('asks Jira the query the builder wrote', async () => {
+    const search = bridgeReturning(issue('HIVE-105'));
+
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    expect(search).toHaveBeenCalledWith({
+      jql: '(summary ~ "rails*" OR description ~ "rails*") ORDER BY updated DESC',
+    });
+  });
+
+  it('narrows to the user when the scope says so', async () => {
+    const search = bridgeReturning();
+
+    await useHiveStore.getState().searchTickets('rails', true);
+
+    expect(search.mock.calls[0][0].jql).toContain(
+      'AND assignee = currentUser()',
+    );
+  });
+
+  it('installs what came back without touching the standing list', async () => {
+    useHiveStore.getState().hydrateTickets([issue('HIVE-1', 'mine')], false);
+    bridgeReturning(issue('INCORP-505', 'somebody else’s'));
+
+    await useHiveStore.getState().searchTickets('filing', false);
+
+    expect(
+      useHiveStore.getState().ticketSearch.results?.map((t) => t.key),
+    ).toEqual(['INCORP-505']);
+    // The list the ticket cards resolve sessions and PRs against is untouched.
+    expect(useHiveStore.getState().tickets.map((t) => t.key)).toEqual([
+      'HIVE-1',
+    ]);
+  });
+
+  it('puts an exactly-matching ticket number first', async () => {
+    /*
+      Jira cannot do this itself. The key clause is OR-ed with the text ones and
+      the whole query is ordered by `updated`, so on a real site searching
+      "HIVE-79" returned HIVE-91 first — an issue that merely *mentions* it —
+      with HIVE-79 second. Asking for a ticket by number and not getting it at
+      the top is the box failing at the one search it should never miss.
+    */
+    bridgeReturning(issue('HIVE-91'), issue('HIVE-79'), issue('HIVE-53'));
+
+    await useHiveStore.getState().searchTickets('HIVE-79', false);
+
+    expect(
+      useHiveStore.getState().ticketSearch.results?.map((t) => t.key),
+    ).toEqual(['HIVE-79', 'HIVE-91', 'HIVE-53']);
+  });
+
+  it('leaves the order alone when the term is not a key', async () => {
+    bridgeReturning(issue('HIVE-91'), issue('HIVE-79'));
+
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    expect(
+      useHiveStore.getState().ticketSearch.results?.map((t) => t.key),
+    ).toEqual(['HIVE-91', 'HIVE-79']);
+  });
+
+  it('says so rather than asking, when the term is too short to mean anything', async () => {
+    const search = bridgeReturning();
+
+    await useHiveStore.getState().searchTickets('a', false);
+
+    // A single letter matched the whole backlog on a real site. Spending a
+    // round trip to say so is worse than not asking.
+    expect(search).not.toHaveBeenCalled();
+    expect(useHiveStore.getState().ticketSearch.results).toEqual([]);
+    expect(useHiveStore.getState().ticketSearch.searching).toBe(false);
+  });
+
+  it('carries Jira’s own refusal into the panel', async () => {
+    const search = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { kind: 'bad-query', message: 'Field “nope” does not exist.' },
+    });
+    window.hive = { jira: { search } } as unknown as Window['hive'];
+
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    expect(useHiveStore.getState().ticketSearch.error).toBe(
+      'Field “nope” does not exist.',
+    );
+    expect(useHiveStore.getState().ticketSearch.searching).toBe(false);
+  });
+
+  it('explains itself in the browser, where there is no Jira to ask', async () => {
+    vi.mocked(isDesktop).mockReturnValue(false);
+
+    await useHiveStore.getState().searchTickets('rails', false);
+
+    expect(useHiveStore.getState().ticketSearch.error).toMatch(/desktop app/i);
+  });
+
+  it('drops a slow answer for the same term at a different scope', async () => {
+    let releaseWide: (() => void) | undefined;
+    const search = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseWide = () => {
+              resolve({
+                ok: true,
+                value: { issues: [issue('INCORP-1')], capped: false },
+              });
+            };
+          }),
+      )
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { issues: [issue('HIVE-2')], capped: false },
+      });
+    window.hive = { jira: { search } } as unknown as Window['hive'];
+
+    const wide = useHiveStore.getState().searchTickets('rails', false);
+    const mine = useHiveStore.getState().searchTickets('rails', true);
+
+    await mine;
+    releaseWide?.();
+    await wide;
+
+    // Same term, so comparing terms would have let the wide answer through and
+    // left everyone's tickets sitting under a ticked "Mine only".
+    expect(
+      useHiveStore.getState().ticketSearch.results?.map((t) => t.key),
+    ).toEqual(['HIVE-2']);
+  });
+
+  it('retires an answer still in flight when the search is cleared', async () => {
+    let release: (() => void) | undefined;
+    const search = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => {
+            resolve({
+              ok: true,
+              value: { issues: [issue('HIVE-1')], capped: false },
+            });
+          };
+        }),
+    );
+    window.hive = { jira: { search } } as unknown as Window['hive'];
+
+    const pending = useHiveStore.getState().searchTickets('rails', false);
+    useHiveStore.getState().clearTicketSearch();
+
+    release?.();
+    await pending;
+
+    expect(useHiveStore.getState().ticketSearch).toEqual({
+      term: '',
+      results: null,
+      searching: false,
+      error: null,
+    });
+  });
+
+  it('is emptied by reset', () => {
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'rails',
+        results: [],
+        searching: false,
+        error: null,
+      },
+    });
+
+    useHiveStore.getState().reset();
+
+    expect(useHiveStore.getState().ticketSearch).toEqual({
+      term: '',
+      results: null,
+      searching: false,
+      error: null,
+    });
+  });
+});
+
+/**
  * When a row started and when it stopped — the two fields the fleet table
  * sorts on (the "most recent at the top" fix).
  *
