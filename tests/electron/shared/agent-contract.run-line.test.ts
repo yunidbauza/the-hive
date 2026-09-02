@@ -21,46 +21,50 @@ describe('RunLine', () => {
    * `RunLineColor` does not have), and `src/**` may not import runtime code from
    * main.
    *
-   * What the assignability test above does **not** catch is the two names
-   * drifting apart. It assigns a *variable*, so TypeScript's excess-property
-   * check does not apply: rename main's marker to `turnEnd` and `RunLine` is
-   * still perfectly assignable to `TermLine` — the field simply stops being
-   * read. `turnsOf` would then find no boundaries and render one long
+   * What binds them is **this type**, and it has to be a type rather than an
+   * assertion. The assignability test above assigns a *variable*, so excess
+   * property checking does not apply: rename main's marker to `turnEnd` and
+   * `RunLine` stays perfectly assignable to `TermLine` — the field simply stops
+   * being read. `turnsOf` would find no boundaries and render one long
    * unseparated turn, which both docblocks describe as the *correct*
    * degradation for an old buffer. The bug would be indistinguishable from
    * working software.
    *
-   * So this pins the field by name on both sides, in the direction the other
-   * test cannot: the object literals are fresh, so an excess-property error is
-   * exactly what a rename produces.
+   * Runtime assertions cannot catch that either: `expect(x.endsTurn).toBe(true)`
+   * on a literal that just set it is true by construction whatever the other
+   * declaration says. So the gate is `pnpm type-check`, and what follows is
+   * written to fail there.
    */
   it('carries the turn marker under the same name on both sides', () => {
+    // `never` unless the type has an optional `endsTurn?: true`. Assigning a
+    // real value to a `never` is the compile error a rename produces.
+    type Marks<T> = T extends { endsTurn?: true } ? 'marked' : never;
+
+    const runLineIsMarked: Marks<RunLine> = 'marked';
+    const termLineIsMarked: Marks<TermLine> = 'marked';
+
+    // And the field is genuinely optional on both — a required one would break
+    // every ordinary line.
+    const plainRun: RunLine = { text: 'reading the ledger', color: 'dim' };
+    const plainTerm: TermLine = { text: 'reading the ledger', color: 'dim' };
+
+    expect([runLineIsMarked, termLineIsMarked]).toEqual(['marked', 'marked']);
+    expect(plainRun.endsTurn).toBeUndefined();
+    expect(plainTerm.endsTurn).toBeUndefined();
+  });
+
+  /*
+    A fold really does travel from main's type to the renderer's with the marker
+    intact — the one assertion here that is about values rather than types.
+  */
+  it('carries a fold across the boundary with its marker', () => {
     const fold: RunLine = {
       text: '● turn ended — success',
       color: 'cyan',
       endsTurn: true,
     };
-    const asTerm: TermLine = {
-      text: '● turn ended — success',
-      color: 'cyan',
-      endsTurn: true,
-    };
+    const asTerm: TermLine = fold;
 
-    expect(fold.endsTurn).toBe(true);
     expect(asTerm.endsTurn).toBe(true);
-    expect(asTerm).toEqual(fold);
-  });
-
-  /*
-    Optional on both, so a buffer written before the field existed still
-    type-checks and still renders — as one turn, which is the documented
-    degradation.
-  */
-  it('leaves the marker off an ordinary line', () => {
-    const plain: RunLine = { text: 'reading the ledger', color: 'dim' };
-    const asTerm: TermLine = plain;
-
-    expect(plain.endsTurn).toBeUndefined();
-    expect(asTerm.endsTurn).toBeUndefined();
   });
 });

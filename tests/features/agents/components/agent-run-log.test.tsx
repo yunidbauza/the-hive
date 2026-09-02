@@ -1,5 +1,5 @@
-import { render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentRunLog } from '@features/agents/components/agent-run-log';
 import { type AgentSummary, type RunSummary } from '@shared/agent-contract';
@@ -203,7 +203,7 @@ describe('AgentRunLog', () => {
       // Opaque, or rows would show through it as they pass under.
       expect(header).toHaveClass('bg-term-bg');
 
-      for (const label of ['Run', 'Trigger', 'Started', 'Outcome', 'Turns', 'Took', 'Cost', 'Why']) {
+      for (const label of ['Run', 'Trigger', 'Started', 'Outcome', 'Turns', 'Took', 'Cost']) {
         expect(within(header as HTMLElement).getByText(label)).toBeInTheDocument();
       }
     });
@@ -253,8 +253,12 @@ describe('AgentRunLog', () => {
       );
 
       const header = container.querySelector('[data-region="run-columns"]');
+      /*
+        The row's grid is an inner div now — the outer wrapper holds the rule
+        and the optional reason line, which are not part of the track.
+      */
       const row = container.querySelector(
-        '[data-region="run-columns"] ~ div',
+        '[data-region="run-columns"] ~ div > div',
       );
 
       const track = (node: Element | null | undefined): string | undefined =>
@@ -288,11 +292,17 @@ describe('AgentRunLog', () => {
       '[data-region="run-receipts"]',
     ) as HTMLElement;
 
-    // The outcome cell says only the outcome; the reason is beside it, whole.
+    // The outcome cell says only the outcome; the reason is under it, whole.
     expect(within(receipts).getByText('failed')).toBeInTheDocument();
-    expect(
-      within(receipts).getByText('killed after the stall watchdog fired'),
-    ).toBeInTheDocument();
+
+    const reason = within(receipts).getByText(
+      'killed after the stall watchdog fired',
+    );
+
+    expect(reason).toBeInTheDocument();
+    // A paragraph beneath the row, not a cell inside the grid.
+    expect(reason.tagName).toBe('P');
+    expect(reason.className).not.toContain('truncate');
   });
 
   /*
@@ -409,6 +419,79 @@ describe('AgentRunLog', () => {
       ).toBeTruthy();
     });
 
+    /**
+     * The effect actually fires — and stops firing once the reader leaves.
+     *
+     * The two tests around this one assert the anchor's *position*, which says
+     * nothing about whether anything scrolls. `lines` gets a fresh identity on
+     * every push, so the effect runs on every chunk a live run writes; without
+     * the `following` guard a reader who scrolled down to an older turn was
+     * pulled back within a fraction of a second, over and over, for as long as
+     * the run kept talking — the behaviour the docblock claimed to prevent.
+     */
+    it('scrolls to the newest line while live, and stops once the reader scrolls away', () => {
+      const scrollIntoView = vi.fn();
+
+      vi.spyOn(
+        window.HTMLElement.prototype,
+        'scrollIntoView',
+      ).mockImplementation(scrollIntoView);
+
+      try {
+        seed({ status: 'working', runs: [run(1)] });
+        lines(['first line']);
+
+        const { container } = render(
+          <AgentRunLog name="watcher" status="working" />,
+        );
+
+        expect(scrollIntoView).toHaveBeenCalled();
+
+        const output = container.querySelector(
+          '[data-region="run-output"]',
+        ) as HTMLElement;
+
+        // The reader scrolls away. happy-dom reports 0 for every box, so the
+        // measured gap is 0 — below the slack — and the guard stays true; force
+        // the geometry that a real scroll would produce.
+        vi.spyOn(output, 'getBoundingClientRect').mockReturnValue({
+          bottom: 0,
+        } as DOMRect);
+        fireEvent.scroll(output);
+
+        scrollIntoView.mockClear();
+        lines(['second line']);
+
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    /*
+      Nothing to follow once the run is over, so the effect must not fire at
+      all — the anchor is not even mounted.
+    */
+    it('never scrolls a finished log', () => {
+      const scrollIntoView = vi.fn();
+
+      vi.spyOn(
+        window.HTMLElement.prototype,
+        'scrollIntoView',
+      ).mockImplementation(scrollIntoView);
+
+      try {
+        seed({ runs: [run(1)] });
+        lines(['done', '● turn ended — success|']);
+
+        render(<AgentRunLog name="watcher" status="sleeping" />);
+
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     /*
       Nothing to follow when nothing is running, so no anchor is rendered — and
       no rule is drawn above the first turn, which an unconditional anchor made
@@ -427,40 +510,44 @@ describe('AgentRunLog', () => {
       ) as HTMLElement;
 
       expect(output.querySelector('div > div:not([class])')).toBeNull();
-      expect(output.firstElementChild).toHaveClass('first:border-t-0');
     });
 
     /**
-     * A stray line after the fold is debris, not a new turn.
+     * A terminated buffer is all this needs to read.
      *
-     * stderr is flushed on the way out — a node or CLI warning lands after the
-     * `result` the fold was written from. Left as a trailing partial it floated
-     * to the very top and presented itself as the newest turn, pushing the
-     * output it belongs to underneath it. While nothing is running it is
-     * appended to the turn it came from instead.
+     * The debris case — a stderr warning flushed after the CLI's fold — is
+     * sealed by `runs.ts`, which re-closes the turn when output arrives after a
+     * result. An earlier revision sorted it out here instead, by asking whether
+     * the agent was currently running; the status flips to `working` before the
+     * next run writes anything, so the warning was re-classified as the new
+     * run's opening line and sealed there. This function reads only the buffer.
      */
-    it('attaches a post-fold stderr line to the turn it came from', () => {
+    it('starts a new turn only where the buffer says one ended', () => {
       seed({ runs: [run(1)] });
       lines([
         'did the work',
         '● turn ended — success|',
         '(node) ExperimentalWarning: something',
+        '● run ended — done|',
+        'the next run speaks',
       ]);
 
       const { container } = render(
-        <AgentRunLog name="watcher" status="sleeping" />,
+        <AgentRunLog name="watcher" status="working" />,
       );
 
       const output = container.querySelector(
         '[data-region="run-output"]',
       ) as HTMLElement;
 
-      // One turn, not two — and the warning is last, where it happened.
-      expect(output.querySelectorAll('div[class]')).toHaveLength(1);
-      expect([...output.querySelectorAll('p')].map((n) => n.textContent)).toEqual([
-        'did the work',
-        '● turn ended — success',
-        '(node) ExperimentalWarning: something',
+      const blocks = [...output.querySelectorAll('div[class]')].map((b) =>
+        [...b.querySelectorAll('p')].map((n) => n.textContent),
+      );
+
+      expect(blocks).toEqual([
+        ['the next run speaks'],
+        ['(node) ExperimentalWarning: something', '● run ended — done'],
+        ['did the work', '● turn ended — success'],
       ]);
     });
 

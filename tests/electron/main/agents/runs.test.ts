@@ -246,14 +246,22 @@ describe('createRunTracker', () => {
       })}\n`,
     );
 
-    expect(lines).toMatchObject([{ name: 'a', count: 1 }]);
+    expect(lines).toEqual([
+      { name: 'a', count: 1, pushed: [{ text: 'hi', color: 'ink' }] },
+    ]);
   });
 
   it('folds stderr into a run line', () => {
     tracker.run('a', 'ledger');
     childInstances[0]?.emitStderr('warning: something noisy\n');
 
-    expect(lines).toMatchObject([{ name: 'a', count: 1 }]);
+    expect(lines).toEqual([
+      {
+        name: 'a',
+        count: 1,
+        pushed: [{ text: 'warning: something noisy', color: 'dim' }],
+      },
+    ]);
   });
 
   it('folds a result line split across two stdout writes, and still captures the result', () => {
@@ -522,47 +530,100 @@ describe('createRunTracker', () => {
   });
 
   /**
-   * A run that ends without a `result` still closes its turn in the run log.
+   * **Every run leaves the run log terminated.**
    *
-   * `foldRunLog` writes the `● turn ended` fold — the line carrying `endsTurn`,
-   * which the renderer splits its buffer on — and it writes it from the
-   * `result` event. Every path that ends a run without one therefore left the
-   * output unterminated: a kill, the stall watchdog, `killAll` at quit, and a
-   * child that raised `'error'` all reach `finalizeRun` through `escalate`,
-   * which sends a signal and nothing else.
-   *
-   * Nothing clears the buffer between runs, so that run's lines were then
-   * concatenated with the *next* run's into one block — misreporting the
+   * The renderer splits one cross-run buffer into turns on the `endsTurn` fold,
+   * and nothing clears that buffer between runs — so a run that ends without
+   * writing a fold has its output joined to the next run's, misreporting the
    * boundary for exactly the outcomes the receipts' Why column exists to
    * explain.
+   *
+   * Two paths end without one, and only the first is about the result:
+   * a run with no `result` at all (a kill, the stall watchdog, `killAll`, a
+   * child `'error'` — all reach `finalizeRun` through `escalate`, which sends a
+   * signal and nothing else), and a run whose `result` was *followed by more
+   * output*, which is the stderr case below.
    */
+  const spoke = (): void => {
+    childInstances[0]?.emitStdout(
+      `${JSON.stringify({
+        type: 'assistant',
+        message: { id: 'm1', content: [{ type: 'text', text: 'working' }] },
+      })}\n`,
+    );
+  };
+
+  const folds = (): RunLine[] =>
+    lines.flatMap((entry) => entry.pushed).filter((line) => line.endsTurn === true);
+
   it.each([
-    [
-      'a kill',
-      (): void => {
-        tracker.kill('a');
-      },
-    ],
-    [
-      'the app closing',
-      (): void => {
-        tracker.killAll('app-closed');
-      },
-    ],
-  ])('closes the turn when %s ends the run without a result', (_name, end) => {
+    ['a kill', (): void => {
+      tracker.kill('a');
+    }],
+    ['the app closing', (): void => {
+      tracker.killAll('app-closed');
+    }],
+  ])('closes the turn when %s ends a run that had spoken', (_name, end) => {
     tracker.run('a', 'ledger');
-    lines.length = 0;
+    spoke();
 
     end();
     childInstances[0]?.emitClose(null, 'SIGTERM');
 
     const pushed = lines.flatMap((entry) => entry.pushed);
-    const fold = pushed[pushed.length - 1];
+    const last = pushed[pushed.length - 1];
 
-    expect(fold?.endsTurn).toBe(true);
-    expect(fold?.text).toMatch(/^● run ended — /);
+    expect(last?.endsTurn).toBe(true);
+    expect(last?.text).toMatch(/^● run ended — /);
     // `dim`, not `cyan`: the app noting an ending, not the agent reporting one.
-    expect(fold?.color).toBe('dim');
+    expect(last?.color).toBe('dim');
+  });
+
+  /**
+   * A run that never spoke has no turn of its own to close.
+   *
+   * Terminating there would seal the *previous* run's tail into a run that
+   * produced nothing — and the fact that it was killed is already on its
+   * receipt, which is where an outcome belongs.
+   */
+  it('writes no fold for a run that produced no output at all', () => {
+    tracker.run('a', 'ledger');
+    lines.length = 0;
+
+    tracker.kill('a');
+    childInstances[0]?.emitClose(null, 'SIGTERM');
+
+    expect(folds()).toHaveLength(0);
+  });
+
+  /**
+   * The case a renderer heuristic could not fix.
+   *
+   * stderr is flushed on the way out, so a node or CLI warning lands *after*
+   * the CLI's own fold. Those bytes belong to the run that is ending — but a
+   * first attempt classified them in the renderer by whether the agent was
+   * currently running, and the status flips to `working` before the next run
+   * writes anything, so the warning was re-classified as the new run's opening
+   * line and sealed there. The boundary has to be written by the writer, at the
+   * moment it is true.
+   */
+  it('re-closes the turn when output arrives after the result', () => {
+    tracker.run('a', 'ledger');
+    childInstances[0]?.emitStdout(resultLine());
+    childInstances[0]?.emitStderr('(node) ExperimentalWarning: something\n');
+    childInstances[0]?.emitClose(0);
+
+    const pushed = lines.flatMap((entry) => entry.pushed);
+    const last = pushed[pushed.length - 1];
+
+    // Two folds: the CLI's, then ours sealing the warning into this run.
+    expect(folds()).toHaveLength(2);
+    expect(last?.endsTurn).toBe(true);
+    expect(last?.color).toBe('dim');
+    // And the warning is inside this run, not opening the next one.
+    const warning = pushed.findIndex((l) => l.text.includes('ExperimentalWarning'));
+    expect(warning).toBeGreaterThan(-1);
+    expect(warning).toBeLessThan(pushed.length - 1);
   });
 
   /*
@@ -576,12 +637,8 @@ describe('createRunTracker', () => {
     childInstances[0]?.emitStdout(resultLine());
     childInstances[0]?.emitClose(0);
 
-    const folds = lines
-      .flatMap((entry) => entry.pushed)
-      .filter((line) => line.endsTurn === true);
-
-    expect(folds).toHaveLength(1);
-    expect(folds[0]?.color).toBe('cyan');
+    expect(folds()).toHaveLength(1);
+    expect(folds()[0]?.color).toBe('cyan');
   });
 
   it('prefers the uuid the result reported over the one it invoked', () => {

@@ -237,6 +237,19 @@ interface LiveRun {
   escalation: NodeJS.Timeout | null;
   watchdog: NodeJS.Timeout | null;
   flush: NodeJS.Timeout | null;
+  /**
+   * Whether the last line this run put in the log closed a turn.
+   *
+   * The run log is one buffer that spans runs — nothing clears it between them
+   * — so the renderer can only tell one run's output from the next by the folds
+   * in it. Every run must therefore leave the buffer terminated, and this is
+   * how {@link finalizeRun} knows whether it already is.
+   *
+   * Starts `true`: a run that pushes nothing has nothing of its own to close,
+   * and terminating there would seal the *previous* run's tail into a run that
+   * never spawned.
+   */
+  endedTurn: boolean;
 }
 
 interface FinalizeInfo {
@@ -291,6 +304,24 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     live.escalation = timer;
   };
 
+  /**
+   * Every line this module puts in the run log goes through here.
+   *
+   * The recording is the point: `pushLines` is called from four places — the
+   * stdout fold, the exit flush, stderr, and {@link finalizeRun} itself — and a
+   * site that forgot to update {@link LiveRun.endedTurn} would leave the
+   * terminator decision reading a stale answer.
+   */
+  const pushLines = (name: string, live: LiveRun | null, lines: RunLine[]): void => {
+    if (lines.length === 0) return;
+
+    deps.pushLines(name, lines);
+
+    if (live !== null) {
+      live.endedTurn = lines[lines.length - 1]?.endsTurn === true;
+    }
+  };
+
   const finalizeRun = (
     name: string,
     info: FinalizeInfo,
@@ -300,6 +331,14 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     reachedModel: boolean,
     asking: boolean,
     mcpServers: McpServerStatus[] | null,
+    /**
+     * Whether this run's last log line already closed its turn.
+     *
+     * `true` for a run that pushed nothing at all — a spawn that threw has no
+     * output of its own, and terminating there would seal the *previous* run's
+     * tail into a run that never existed.
+     */
+    endedTurn: boolean,
   ) => {
     const endedAt = deps.now();
     /*
@@ -324,26 +363,33 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     const slack = slackStatus(mcpServers);
 
     /*
-      Close the turn in the run log, when the CLI did not close it itself.
+      **Every run leaves the log terminated.** The renderer splits one
+      cross-run buffer into turns on the `endsTurn` fold, so a run that ends
+      without writing one has its output joined to the next run's.
 
-      `foldRunLog` writes the `● turn ended` fold — the line carrying
-      `endsTurn`, which is what the renderer splits its buffer on — and it
-      writes it from the `result` event. Every path that ends a run *without*
-      one therefore left its output unterminated: a kill, the stall watchdog,
-      `killAll` at quit, and a child that raised `'error'` all reach here
-      through `escalate`, which sends a signal and nothing else. Nothing clears
-      the buffer between runs, so that run's lines were then concatenated with
-      the *next* run's into a single block — misreporting the boundary for
-      exactly the outcomes (`failed`, a stall, an app close) that the receipts'
-      Why column exists to explain.
+      Two paths end without one, and the condition is `endedTurn` rather than
+      `result === null` because only the first of them is about the result:
 
-      Conditional on `result === null`, so a normal run keeps the one fold the
-      CLI already wrote rather than gaining a second.
+      - No `result` at all — a kill, the stall watchdog, `killAll` at quit, a
+        child that raised `'error'`. All reach here through `escalate`, which
+        sends a signal and nothing else.
+      - A `result` **followed by more output**. stderr is flushed on the way
+        out, so a node or CLI warning lands after the fold; the fold is then no
+        longer the tail, and those bytes belong to this run rather than opening
+        the next one.
 
-      `dim` rather than `cyan`: this is the app noting an ending, not the agent
+      The second case is why this cannot be a renderer heuristic. A first
+      attempt classified a trailing unterminated line by whether the agent was
+      *currently* running — but the status flips to `working` before the next
+      run writes anything, so the debris was re-classified as the new run's
+      opening line and sealed there. The flag moved independently of the buffer
+      it was describing. A boundary has to be written into the data by the
+      writer, at the moment it is true.
+
+      `dim` rather than `cyan`: the app noting an ending, not the agent
       reporting one, and the two should not look alike.
     */
-    if (result === null) {
+    if (!endedTurn) {
       deps.pushLines(name, [
         {
           text: `● run ended — ${reason ?? outcome}`,
@@ -511,7 +557,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       const step = foldRunLog(live.fold, '\n');
 
       live.fold = step.state;
-      if (step.lines.length > 0) deps.pushLines(name, step.lines);
+      pushLines(name, live, step.lines);
     }
 
     const result = live.fold.result;
@@ -547,6 +593,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       live.reachedModel,
       asking,
       live.fold.mcpServers,
+      live.endedTurn,
     );
   };
 
@@ -621,6 +668,12 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
           false,
           false,
           null,
+          /*
+            Nothing was pushed for this run — the spawn threw before a child
+            existed — so there is no turn of its own to close. Terminating here
+            would seal the *previous* run's tail into a run that never ran.
+          */
+          true,
         );
 
         return { started: false, refused: 'invalid', reason: message };
@@ -640,6 +693,8 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         escalation: null,
         watchdog: null,
         flush: null,
+        // Nothing written yet, so nothing of this run's to close. See the field.
+        endedTurn: true,
       };
 
       running.set(name, live);
@@ -674,7 +729,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         const step = foldRunLog(live.fold, chunk.toString('utf8'));
 
         live.fold = step.state;
-        if (step.lines.length > 0) deps.pushLines(name, step.lines);
+        pushLines(name, live, step.lines);
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
@@ -682,7 +737,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
         const text = chunk.toString('utf8').trim();
 
-        if (text !== '') deps.pushLines(name, [{ text, color: 'dim' }]);
+        if (text !== '') pushLines(name, live, [{ text, color: 'dim' }]);
       });
 
       child.on('error', ((error: Error) => {
