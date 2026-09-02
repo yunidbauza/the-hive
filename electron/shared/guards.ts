@@ -1628,20 +1628,31 @@ export function parseAgentNameRequest(input: unknown): AgentNameRequest {
  *
  * It runs {@link assertAgentName}, so `run` is bounded by exactly the grammar
  * the five verbs before it are bounded by: a name that cannot be a path and
- * cannot be a reserved identity. Everything the command line is built from —
+ * cannot be a reserved identity. Everything the command line is *built* from —
  * the binary, the flags, the environment, the working directory — is read by
- * main from its own config and the definition on disk. **Nothing on this
- * payload reaches the argv**, which is why one field is the whole guard.
+ * main from its own config and the definition on disk, and stays unreachable
+ * from here.
+ *
+ * `extra` is the one field that does reach the argv (HIVE-126), and the shape
+ * of that reach is the point: `wakeCommand` interpolates it into the single
+ * positional `-p` prompt, so it becomes prose *inside* an argument rather than
+ * an argument of its own. It cannot become a flag, a path or a variable, and
+ * `assertText` — the guard `spawn.task` uses — is what keeps it from carrying a
+ * control character or an unbounded length into a spawned process.
  *
  * `assertShape`'s closed key set is load-bearing here rather than tidy: a
- * payload carrying an extra `trigger`, `args` or `env` is refused outright
- * instead of being silently ignored, so a renderer that starts sending one
- * fails loudly at the boundary rather than developing a belief that main is
- * reading it.
+ * payload carrying a `trigger`, `args` or `env` is refused outright instead of
+ * being silently ignored, so a renderer that starts sending one fails loudly at
+ * the boundary rather than developing a belief that main is reading it. HIVE-126
+ * opened this set by exactly one key, and `trigger` is the one it kept shut.
  */
 export function parseAgentRunRequest(input: unknown): AgentRunRequest {
-  const raw = assertShape(input, ['name'], 'agentRun');
-  return { name: assertAgentName(raw.name, 'agentRun.name') };
+  const raw = assertShape(input, ['name'], 'agentRun', ['extra']);
+  const name = assertAgentName(raw.name, 'agentRun.name');
+
+  if (raw.extra === undefined) return { name };
+
+  return { name, extra: assertText(raw.extra, 'agentRun.extra') };
 }
 
 /**

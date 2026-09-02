@@ -928,13 +928,20 @@ export interface PendingWakeEntry {
 export const AGENT_PENDING_WAKE_MAX = 20;
 
 /**
- * `agents:run` — wake this agent now (HIVE-115).
+ * `agents:run` — wake this agent now (HIVE-115, widened HIVE-126).
  *
- * One name and nothing else, and the omission is the point: the only trigger
- * this channel could honestly report is that a person pressed a button, so
- * main writes `manual` itself rather than accepting a word the page chose.
- * Every other trigger — a timer, a ledger entry, a Slack mention — originates
- * in main and never crosses this boundary at all.
+ * A name, and optionally the words a person typed after it. The omission that
+ * mattered is the one still here: the only trigger this channel could honestly
+ * report is that a person pressed a button, so main writes `manual` itself
+ * rather than accepting a word the page chose. Every other trigger — a timer, a
+ * ledger entry, a Slack mention — originates in main and never crosses this
+ * boundary at all.
+ *
+ * `extra` is display-and-prompt only. It reaches `wakePrompt` as the tail of
+ * `You woke because: manual — <extra>.` and the run's ledger `meta`, and
+ * nothing else reads it. The page says **why** someone pressed run; it still
+ * cannot say what *kind* of thing woke the agent, which is the sentence the
+ * original closure was defending.
  *
  * It lives here beside {@link AgentNameRequest} rather than in
  * `ipc-contract.ts` because every other `agents:*` payload does; the channel
@@ -942,6 +949,7 @@ export const AGENT_PENDING_WAKE_MAX = 20;
  */
 export interface AgentRunRequest {
   name: string;
+  extra?: string;
 }
 
 /**

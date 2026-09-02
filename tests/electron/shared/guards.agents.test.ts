@@ -159,12 +159,48 @@ describe('parseAgentRunRequest', () => {
     // The closed key set is the assertion: an extra field is *refused*, not
     // ignored, so a renderer that starts sending one fails at the boundary
     // rather than developing a belief that main is reading it.
+    //
+    // HIVE-126 opened this key set for `extra`, and this is the half that
+    // stayed shut: a page may say *why* someone pressed run, and still cannot
+    // say what **kind** of thing woke the agent.
     expect(() =>
       parseAgentRunRequest({ name: 'a', trigger: 'ledger' }),
     ).toThrow(IpcValidationError);
     expect(() =>
       parseAgentRunRequest({ name: 'a', env: { PATH: '/tmp' } }),
     ).toThrow(IpcValidationError);
+  });
+
+  it('takes the words a person typed after the agent name', () => {
+    expect(parseAgentRunRequest({ name: 'a', extra: 'review PR 1234' })).toEqual(
+      { name: 'a', extra: 'review PR 1234' },
+    );
+  });
+
+  it('leaves extra off entirely when none was given', () => {
+    // An absent key, not `extra: undefined` — `runs.run` reads an absent third
+    // argument as "no words", and `toEqual` tells the two apart.
+    expect(parseAgentRunRequest({ name: 'a' })).toEqual({ name: 'a' });
+  });
+
+  it('holds a prompt to the same grammar as any other console prose', () => {
+    // `extra` is interpolated into the single positional `-p` argument of a
+    // spawned `claude`, so it runs through `assertText` — the guard
+    // `spawn.task` uses. Empty, over-long, and control-bearing text are all
+    // refused; a newline matters most, because the prompt is a line-oriented
+    // payload the model reads.
+    // Asserted by message, not merely by type: every one of these throws
+    // `unexpected key` before the field exists, so a bare `IpcValidationError`
+    // would pass against a guard that had never heard of `extra`.
+    expect(() => parseAgentRunRequest({ name: 'a', extra: '' })).toThrow(
+      'agentRun.extra: must not be empty',
+    );
+    expect(() => parseAgentRunRequest({ name: 'a', extra: 'a\nb' })).toThrow(
+      'agentRun.extra: control characters are not allowed',
+    );
+    expect(() => parseAgentRunRequest({ name: 'a', extra: 42 })).toThrow(
+      'agentRun.extra: expected a string',
+    );
   });
 
   it('refuses a request with no name at all', () => {
