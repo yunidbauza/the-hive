@@ -245,7 +245,35 @@ const SLACK = 'probe-slack';
  */
 const STANDING = 'probe-standing';
 
-const AGENTS = [NAME, ASKER, RESPONDER, FENCE, INTERVAL, ROTATOR, SLACK, STANDING];
+/**
+ * The pair that proves discovery (HIVE-127).
+ *
+ * `DISCOVERER` is told what it does *not* do and is given no peer name
+ * anywhere — not in its frontmatter, not in its body, not in the wake prompt.
+ * The only route from its file to the string `probe-specialist` is
+ * `mcp__hive__agents`. If the body named it, this scenario would pass on a
+ * build with no directory at all, because the model would only be repeating
+ * what it was handed.
+ *
+ * `SPECIALIST` exists to be found, and to *answer* — which is the half a
+ * return value cannot show. Its own `wake.on: [ledger]` is what turns a
+ * discovered name into a real second run.
+ */
+const DISCOVERER = 'probe-discoverer';
+const SPECIALIST = 'probe-specialist';
+
+const AGENTS = [
+  NAME,
+  ASKER,
+  RESPONDER,
+  FENCE,
+  INTERVAL,
+  ROTATOR,
+  SLACK,
+  STANDING,
+  DISCOVERER,
+  SPECIALIST,
+];
 
 const AGENT_MD = `---
 name: ${NAME}
@@ -444,6 +472,83 @@ Read your ledger inbox. If it contains an ask addressed to you, call
 `;
 
 /**
+ * The agent that must find a peer it was never told about (HIVE-127).
+ *
+ * Read this definition for what it does **not** contain: no peer name, in the
+ * frontmatter or the body. It is told what it does not do — review pull
+ * requests — and told to go and find whoever does. The only path from here to
+ * the string `${SPECIALIST}` is `mcp__hive__agents`, which is what makes the
+ * assertion about the ask's `to` an assertion about the directory.
+ *
+ * The **tool** is named, in the same way `ASKER_MD` names `ledger_ask`: an
+ * earlier draft left the model to infer that a directory existed, and it
+ * passed and failed on alternate runs. A flaky conformance test is worse than
+ * none, and "does a model spontaneously think to look for peers?" is not what
+ * this story claims. What is named is the tool; what must be discovered is the
+ * peer.
+ *
+ * No `tools:` entry for it either, and that is a second thing under test: the
+ * directory must be granted by the `mcp__hive__*` wildcard alone, so an agent
+ * does not have to name it to reach it.
+ */
+const DISCOVERER_MD = `---
+name: ${DISCOVERER}
+description: Routes work it is not for to whoever is.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+tools: [TodoWrite]
+limits:
+  turns: 10
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find.
+
+You do not review pull requests, and you must never try to.
+
+Read your ledger inbox. If you have been asked to review a pull request, do all
+three of these in order and then end your turn:
+
+1. Call \`mcp__hive__agents\` to list the other agents on this machine.
+2. Pick the one whose description says it reviews pull requests, and call
+   \`ledger_ask\` with \`to\` set to **that agent's name** and the body
+   "please review the pull request".
+3. Call \`ledger_done\` with the body "probe discoverer delegated".
+
+Say nothing else.
+`;
+
+/**
+ * The peer the discoverer has to find, and then actually reach (HIVE-127).
+ *
+ * Its `description` is the only thing in the world that connects "reviews pull
+ * requests" to this name, and it reaches the discoverer solely through the
+ * directory. Its `wake.on: [ledger]` is what makes the second half of the
+ * scenario a real wake rather than a written line nobody reads.
+ */
+const SPECIALIST_MD = `---
+name: ${SPECIALIST}
+description: Reviews pull requests for correctness and style.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+tools: [TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find.
+
+Read your ledger inbox. If it contains an ask addressed to you, call
+\`ledger_answer\` with \`thread\` set to that ask's \`id\` and the body
+"probe reviewed". Then end your turn. Say nothing else.
+`;
+
+/**
  * The fence probe, as a definition (HIVE-119).
  *
  * `tools:` pins exactly the read-only set every other probe in this file
@@ -533,6 +638,16 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   >();
   /** The scheduler's tick, captured off its injected interval. */
   let fireTick: (() => void) | undefined;
+  /**
+   * Which probes declare `wake.on: [ledger]`, read off the definitions this
+   * suite writes rather than listed by hand beside them (HIVE-127).
+   *
+   * `ipc/index.ts` builds the same set with a real parser, into `ledgerAgents`.
+   * The hand-maintained version this replaced went stale the first time a
+   * probe was added, and the symptom was indistinguishable from the feature
+   * being broken: the ask was written, the gate refused it, and nothing woke.
+   */
+  const ledgerWakers = new Set<string>();
 
   beforeAll(async () => {
     /*
@@ -580,9 +695,19 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [ROTATOR, ROTATOR_MD],
       [SLACK, SLACK_MD],
       [STANDING, standingMd(standingMarker)],
+      [DISCOVERER, DISCOVERER_MD],
+      [SPECIALIST, SPECIALIST_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
+
+      /*
+        Read off the definition just written, so `wakesOnLedger` below cannot
+        disagree with the frontmatter the model is actually given — the
+        registry does the same thing with a real parser, and this suite's
+        scheduler is handed the answer rather than the file.
+      */
+      if (/^\s*on:\s*\[[^\]]*\bledger\b/m.test(body)) ledgerWakers.add(name);
     }
 
     /*
@@ -803,10 +928,18 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       run: (name, trigger, extra) => runs.run(name, trigger, extra),
       state: agentState,
       isAgent: (id) => AGENTS.includes(id),
-      // `ASKER`, `RESPONDER` and `FENCE` all declare `wake.on: [ledger]` —
-      // the gate `ipc/index.ts` reads off the parsed definition into
-      // `ledgerAgents`. Only `NAME` does not.
-      wakesOnLedger: (id) => id === ASKER || id === RESPONDER || id === FENCE,
+      /*
+        The gate `ipc/index.ts` reads off each parsed definition into
+        `ledgerAgents` — derived here from the definitions this suite actually
+        wrote, rather than named in a list beside them.
+
+        It was a hand-maintained list of three until HIVE-127, and adding two
+        probes that declare `wake.on: [ledger]` made it wrong: their asks were
+        appended, gated out, and never woke anything, which reads exactly like
+        a broken feature. Deriving it means a probe's frontmatter is the single
+        place that decides.
+      */
+      wakesOnLedger: (id) => ledgerWakers.has(id),
       /*
         Empty until the interval scenario fills it (HIVE-121). Every other
         scenario drives its wake from a ledger entry or by hand, and a schedule
@@ -1222,6 +1355,102 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(answers[0]?.['to']).toBe(SESSION);
     expect(answers[0]?.['thread']).toBe(asked.ok ? asked.id : undefined);
     expect(ledger.read({}).openAsks.some((ask) => ask.from === SESSION)).toBe(false);
+  }, 300_000);
+
+  /**
+   * An agent discovers a peer it was never told about, and reaches it
+   * (HIVE-127).
+   *
+   * This is the one test that can prove what the story actually claims. A unit
+   * test proves `mcp__hive__agents` returns names; only a live run proves a
+   * model asked "who reviews pull requests?" and got an answer it could act
+   * on. Three things have to be true at once, and each is asserted:
+   *
+   * 1. **The tool is reachable and granted.** {@link DISCOVERER} names no
+   *    peer and no `mcp__hive__agents` in its `tools:`. It gets there on the
+   *    `mcp__hive__*` wildcard alone, and through `ToolSearch`, since MCP
+   *    schemas are deferred and a fenced agent cannot see one otherwise.
+   * 2. **The directory is useful.** The ask's `to` is `${SPECIALIST}`, a
+   *    string that exists nowhere in the discoverer's definition or its wake
+   *    prompt. The only place it could have come from is the peer list.
+   * 3. **Discovery plus `ledger_ask` is a working delegation path.** The
+   *    specialist's own `wake.on: [ledger]` turns that ask into a second, real
+   *    run that answers. Without this half the test would show only that a
+   *    model can echo a name back.
+   *
+   * The discoverer must also *not* have done the work itself, which is why its
+   * body forbids it: an agent that reviewed the PR and reported done would
+   * satisfy a weaker assertion while proving nothing about the directory.
+   */
+  it('discovers a peer it was never told about, and the ask wakes that peer', async () => {
+    const before = spawns.length;
+    const lineMark = lines.length;
+    const delegated = settled(DISCOVERER);
+    const answered = settled(SPECIALIST);
+
+    const asked = ledger.append({
+      from: OVERMIND,
+      to: DISCOVERER,
+      kind: 'ask',
+      body: 'please review the pull request',
+    });
+
+    expect(asked.ok).toBe(true);
+    expect(spawns).toHaveLength(before + 1);
+
+    await delegated;
+
+    /*
+      The directory was actually consulted, not guessed at. Asserted off the
+      run log because it is the only evidence that distinguishes "the model
+      looked up the peer" from "the model happened to produce a name that
+      matched" — and without it the test would still pass if the tool were
+      never called.
+    */
+    expect(
+      lines.slice(lineMark).some((line) => line.text.includes('agents')),
+      'the run log should show the directory being called',
+    ).toBe(true);
+
+    const entries = await onDisk();
+
+    /*
+      The assertion the whole story rests on: an ask addressed to a name this
+      agent was never given.
+    */
+    const delegation = entries.filter(
+      (entry) =>
+        entry['from'] === DISCOVERER && entry['kind'] === 'ask' && entry['to'] === SPECIALIST,
+    );
+
+    expect(
+      delegation,
+      `${DISCOVERER} should have addressed ${SPECIALIST}, a name only mcp__hive__agents could supply`,
+    ).toHaveLength(1);
+
+    // And it did not attempt the work it is not for.
+    expect(
+      entries.some((entry) => entry['from'] === DISCOVERER && entry['kind'] === 'answer'),
+    ).toBe(false);
+
+    /*
+      The second wake, and the point of the whole exercise: the discovered name
+      was not merely well-formed, it was *reachable*. `wake.on: [ledger]` on
+      the specialist is what routes it, with no console and no timer involved.
+    */
+    await answered;
+
+    const reviewed = (await onDisk()).filter(
+      (entry) => entry['from'] === SPECIALIST && entry['kind'] === 'answer',
+    );
+
+    expect(reviewed).toHaveLength(1);
+    expect(reviewed[0]?.['to']).toBe(DISCOVERER);
+
+    const closed = await persisted(SPECIALIST);
+
+    expect(closed.runs).toHaveLength(1);
+    expect(closed.runs[0]?.outcome).not.toBe('failed');
   }, 300_000);
 
   /**
