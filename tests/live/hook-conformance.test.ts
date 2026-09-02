@@ -579,6 +579,8 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         onCleared: () => undefined,
         onLedgerRead: () => ({ entries: [], openAsks: [], claims: {} }),
         onLedgerPost: () => ({ ok: false, status: 503, reason: 'not exercised by this test' }),
+        // Not exercised by this suite — hooks, not the peer directory.
+        onAgentsList: () => Promise.resolve({ agents: [] }),
       });
 
       const url = await receiver.start();

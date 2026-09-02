@@ -58,6 +58,8 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
     receiver = createReceiver({
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
+      // This scenario speaks as a session, which has no peers to list.
+      onAgentsList: () => Promise.resolve({ agents: [] }),
       knowsSession: (id: string) => id === SESSION,
       // The agent id space, closed here (HIVE-115): this scenario speaks as a
       // session, so nothing should be answered on the other register.

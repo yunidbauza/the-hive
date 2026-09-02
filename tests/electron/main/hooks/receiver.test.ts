@@ -7,6 +7,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  AGENTS_PATH,
+  type AgentsDirectory,
+} from '../../../../electron/shared/agent-contract';
+import {
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -50,6 +54,14 @@ const noLedger = {
 const noAgents = {
   knowsAgent: () => false,
   onAgentEvent: () => {},
+  /*
+    And no directory either (HIVE-127). A required option every call site needs
+    and almost none exercises, throwing rather than answering `{ agents: [] }`
+    for the reason `noLedger` refuses loudly: an empty directory is a real
+    answer this route gives, so a stub that returned one would let a test hit
+    the route by accident and pass against a directory that was never wired.
+  */
+  onAgentsList: () => Promise.reject(new Error('not exercised by this test')),
 };
 
 /**
@@ -2123,6 +2135,8 @@ describe('the agent id space (HIVE-115)', () => {
       onMetrics: (entityId) => metrics.push(entityId),
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
+      // Not this suite's subject; the directory has its own, below.
+      onAgentsList: () => Promise.reject(new Error('not exercised by this suite')),
     });
     const started = await receiver.start();
     expect(started).not.toBeNull();
@@ -2367,5 +2381,140 @@ describe('the agent id space (HIVE-115)', () => {
 
     expect(response.status).toBe(403);
     expect(agentEvents).toEqual([]);
+  });
+});
+
+/**
+ * The agents directory (HIVE-127).
+ *
+ * Its own receiver, like the agent-hooks suite above, because it is the only
+ * one that needs `onAgentsList` to answer rather than refuse — and the only
+ * one exercising an **async** route handler, which is the change to this
+ * server that every other route on it now rides through.
+ */
+describe('the agents route', () => {
+  const CALLER = 'scout';
+
+  const PEER = {
+    name: 'pr-reviewer',
+    description: 'Reviews open PRs.',
+    status: 'sleeping' as const,
+    accepts: ['ledger' as const],
+    tools: ['Read'],
+  };
+
+  let receiver: Receiver;
+  let url: string;
+  let callers: string[];
+  let failNext: boolean;
+
+  beforeEach(async () => {
+    callers = [];
+    failNext = false;
+    receiver = createReceiver({
+      knowsSession: (entityId) => entityId === CALLER,
+      knowsAgent: () => false,
+      onEvent: () => {},
+      onAgentEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      ...noLedger,
+      onAgentsList: (caller): Promise<AgentsDirectory> => {
+        callers.push(caller);
+        if (failNext) return Promise.reject(new Error('EACCES: permission denied'));
+
+        return Promise.resolve({ agents: [PEER] });
+      },
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  // `url` is the `/hook` route's full address, not the socket's origin.
+  const origin = () => new URL(url).origin;
+
+  const ask = (body: unknown, headers: Record<string, string>) =>
+    fetch(`${origin()}${AGENTS_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(headers[HOOK_HEADER_SESSION] ?? ''),
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    });
+
+  it('answers an authenticated caller with the directory', async () => {
+    const response = await ask({}, { [HOOK_HEADER_SESSION]: CALLER });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ agents: [PEER] });
+    expect(callers).toEqual([CALLER]);
+  });
+
+  /*
+    The identity guarantee, and the reason the tool behind this route publishes
+    no arguments: a body naming someone else changes nothing, because nothing
+    reads it.
+  */
+  it('takes the caller from the header, never from a body that names one', async () => {
+    await ask({ from: 'overmind', caller: 'overmind' }, { [HOOK_HEADER_SESSION]: CALLER });
+
+    expect(callers).toEqual([CALLER]);
+  });
+
+  it('refuses a caller presenting another identity’s token', async () => {
+    const response = await fetch(`${origin()}${AGENTS_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: 'not-mine',
+        [HOOK_HEADER_SESSION]: CALLER,
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(403);
+    expect(callers).toEqual([]);
+  });
+
+  it('refuses an id the app has never heard of', async () => {
+    const response = await ask({}, { [HOOK_HEADER_SESSION]: 'nobody-at-all' });
+
+    expect(response.status).toBe(404);
+    expect(callers).toEqual([]);
+  });
+
+  /**
+   * Reported, never swallowed into an empty list.
+   *
+   * "There is nobody else here" is a legitimate answer this route gives, so a
+   * failed read that answered `{ agents: [] }` would be indistinguishable from
+   * it — and the caller would conclude it has no peers and stop looking.
+   */
+  it('answers 500 with a reason when the directory read throws', async () => {
+    failNext = true;
+
+    const response = await ask({}, { [HOOK_HEADER_SESSION]: CALLER });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      reason: expect.stringContaining('EACCES') as unknown as string,
+    });
+  });
+
+  it('is POST-only, like every other route on this server', async () => {
+    const response = await fetch(`${origin()}${AGENTS_PATH}`, { method: 'GET' });
+
+    expect(response.status).toBe(404);
   });
 });

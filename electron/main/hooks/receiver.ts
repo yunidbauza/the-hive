@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
+import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
@@ -174,6 +175,19 @@ export interface ReceiverOptions {
     caller: string,
     request: Omit<LedgerPostRequest, 'from'>,
   ) => LedgerResult;
+  /**
+   * A party asked who else is here (HIVE-127).
+   *
+   * `caller` is the session id off `x-hive-session`, never the body — the same
+   * discipline `onLedgerRead` and `onLedgerPost` follow, and the reason the
+   * tool behind this route takes no arguments at all.
+   *
+   * Async, alone among the handlers on this server, and deliberately: the
+   * directory is read from disk on every call rather than cached, which is
+   * what makes an agent written a moment ago discoverable without a restart.
+   * Everything else here answers from memory.
+   */
+  onAgentsList: (caller: string) => Promise<AgentsDirectory>;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
   /**
@@ -375,11 +389,18 @@ interface Route {
   readonly path: string;
   /** Bytes buffered before the body is drained; see the `data` handler. */
   readonly cap: number;
+  /**
+   * May be async (HIVE-127).
+   *
+   * Only the agents route is, and only because the directory is read from disk
+   * per call. Every other handler answers from memory and stays synchronous —
+   * the union is a widening for one route, not an invitation.
+   */
   readonly handle: (
     headers: Record<string, string | string[] | undefined>,
     body: string,
     truncated: boolean,
-  ) => Reply;
+  ) => Reply | Promise<Reply>;
 }
 
 const describeCause = (cause: unknown): string =>
@@ -415,6 +436,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onReady,
     onLedgerRead,
     onLedgerPost,
+    onAgentsList,
     knowsSession,
     knowsAgent,
     onAgentEvent,
@@ -729,6 +751,41 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       claims: snapshot.claims,
     };
     return { status: 200, json: visible };
+  }
+
+  /**
+   * A party asked who else is here (HIVE-127).
+   *
+   * The body is ignored entirely — the tool behind this takes no arguments,
+   * and the caller is the authenticated header. A body naming a `from` is not
+   * refused, merely unread: there is nothing here for it to influence, which
+   * is a stronger guarantee than stripping it would be.
+   *
+   * The only async handler on this server. The directory is read from disk per
+   * call rather than cached, which is the whole of the "a newly written agent
+   * is discoverable on the next wake" promise.
+   */
+  async function handleAgents(
+    headers: Record<string, string | string[] | undefined>,
+  ): Promise<Reply> {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    // Narrowed by `reject`, which refused every non-string case above.
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+
+    try {
+      return { status: 200, json: await onAgentsList(caller) };
+    } catch (cause) {
+      /*
+        Reported, never swallowed into an empty list. "There is nobody else
+        here" is a legitimate answer this route gives, so a failed read that
+        returned `{ agents: [] }` would be indistinguishable from it — and the
+        model would conclude it has no peers and stop looking, which is exactly
+        the silence this whole story exists to end.
+      */
+      return { status: 500, json: { reason: describeCause(cause) } };
+    }
   }
 
   /**
@@ -1138,10 +1195,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     start() {
       return new Promise<string | null>((resolve) => {
         /*
-          Six paths now, and still nothing resembling a general-purpose server:
-          the set is closed, every one of them is POST-only, and each has its
-          own body cap sized to the document it expects. A request that is none
-          of them is 404 without reading a byte.
+          Seven paths now, and still nothing resembling a general-purpose
+          server: the set is closed, every one of them is POST-only, and each
+          has its own body cap sized to the document it expects. A request that
+          is none of them is 404 without reading a byte.
         */
         const routes: readonly Route[] = [
           { path: HOOK_PATH, cap: HOOK_MAX_BODY_BYTES, handle },
@@ -1159,6 +1216,13 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           { path: READY_PATH, cap: 0, handle: (headers) => handleReady(headers) },
           { path: LEDGER_POST_PATH, cap: HOOK_MAX_BODY_BYTES, handle: handleLedgerPost },
           { path: LEDGER_READ_PATH, cap: HOOK_MAX_BODY_BYTES, handle: handleLedgerRead },
+          /*
+            Cap zero, because the route reads no body at all (HIVE-127): the
+            tool takes no arguments and the caller is the header. Bytes past
+            the cap are drained rather than refused, exactly as `/done` and
+            `/ready` treat theirs.
+          */
+          { path: AGENTS_PATH, cap: 0, handle: (headers) => handleAgents(headers) },
         ];
 
         const created = createServer((req, res) => {
@@ -1220,25 +1284,35 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             // mid-character, as a single replacement character rather than
             // dropping it.
             body += decoder.end();
-            let reply: Reply;
-            try {
-              reply = route.handle(req.headers, body, truncated);
-            } catch {
-              /**
-               * A throw here must not take the app down. An uncaught exception
-               * in a request handler is an `uncaughtException` on the main
-               * process, which would turn a malformed hook into a crashed
-               * desktop app.
-               */
-              reply = 500;
-            }
-            if (typeof reply === 'number') {
-              res.writeHead(reply).end();
-              return;
-            }
-            res
-              .writeHead(reply.status, { 'content-type': 'application/json' })
-              .end(JSON.stringify(reply.json));
+            /*
+              A `void`ed async IIFE rather than an async listener (HIVE-127).
+              Node ignores a listener's returned promise, so a rejection inside
+              an `async () => {}` here would surface as an unhandled rejection
+              instead of a reply. Awaiting inside the try keeps an async
+              handler's failure landing in the same 500 the synchronous ones
+              already do.
+            */
+            void (async () => {
+              let reply: Reply;
+              try {
+                reply = await route.handle(req.headers, body, truncated);
+              } catch {
+                /**
+                 * A throw here must not take the app down. An uncaught
+                 * exception in a request handler is an `uncaughtException` on
+                 * the main process, which would turn a malformed hook into a
+                 * crashed desktop app.
+                 */
+                reply = 500;
+              }
+              if (typeof reply === 'number') {
+                res.writeHead(reply).end();
+                return;
+              }
+              res
+                .writeHead(reply.status, { 'content-type': 'application/json' })
+                .end(JSON.stringify(reply.json));
+            })();
           });
         });
 

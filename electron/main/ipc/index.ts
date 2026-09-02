@@ -122,6 +122,7 @@ import type { UpdateStatus } from '@shared/update-contract';
 
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { resolveClaude } from '../agents/claude-path';
+import { agentsDirectoryFor } from '../agents/directory';
 import {
   agentPromptFile,
   agentStateFile,
@@ -1710,6 +1711,27 @@ export function registerIpcHandlers(): void {
       without anything re-registering.
     */
     agentNames: () => knownAgents,
+    /*
+      The peer directory (HIVE-127). Read through `agents.list()` rather than
+      from `knownAgents` above, and the difference is the point: that set is
+      the party register and deliberately **drops invalid definitions**,
+      because a folder that does not parse cannot be woken and must not be able
+      to write to the ledger as that name. A directory that dropped them too
+      would make a broken peer indistinguishable from an absent one — which is
+      the case where being told is most useful, since the fix is usually a
+      one-line edit to a file the reader will only go and open if something
+      says it is broken.
+
+      Composed here because this is the only place both halves are in scope:
+      `agents` reads the definitions and knows nothing about runs, `agentState`
+      holds the runs and knows nothing about definitions.
+    */
+    onAgentsList: async (caller) => {
+      const snapshot = await agents?.list();
+      if (snapshot === undefined) return { agents: [] };
+
+      return agentsDirectoryFor(caller, snapshot, agentState?.all() ?? {});
+    },
     /*
       The uuid is forwarded, not dropped: `noteTurnEnded` ignores a `Stop`
       whose uuid does not match the run it is holding, which is what keeps a

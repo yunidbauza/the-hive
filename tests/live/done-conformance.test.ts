@@ -31,6 +31,8 @@ const noLedger = {
 const noAgents = {
   knowsAgent: () => false,
   onAgentEvent: () => {},
+  // And no peer directory either (HIVE-127).
+  onAgentsList: () => Promise.resolve({ agents: [] }),
 };
 
 /**

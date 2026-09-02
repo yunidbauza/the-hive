@@ -40,6 +40,8 @@ const noopHandlers: HookHandlers = {
   // The second id space (HIVE-115), closed: this suite is about the runtime's
   // lifecycle, and an agent has nothing to add to that.
   knowsAgent: () => false,
+  // No peers either (HIVE-127) — same reason as `knowsAgent` above.
+  onAgentsList: () => Promise.resolve({ agents: [] }),
   onEvent: () => {},
   onAgentEvent: () => {},
   onTicketIntent: () => {},

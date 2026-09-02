@@ -155,6 +155,29 @@ describe('list', () => {
 
     expect((await registry().list()).agents).toEqual([]);
   });
+
+  /**
+   * The whole of the agents directory's freshness promise (HIVE-127).
+   *
+   * `mcp__hive__agents` must report what is on disk *right now*, so that an
+   * agent the user wrote a minute ago is discoverable by its peers on the next
+   * wake with no restart. Nothing in this file caches, and nothing should: the
+   * cached register beside this one — `knownAgents`, rebuilt by the watcher —
+   * would look correct here and be a boot snapshot with extra steps.
+   *
+   * Asserted against the same instance twice, deliberately. A fresh registry
+   * per call would pass even if `list()` cached everything.
+   */
+  it('re-reads the folder on every call, so a new agent needs no restart', async () => {
+    seed('alpha', named('alpha'));
+    const made = registry();
+
+    expect((await made.list()).agents.map((a) => a.name)).toEqual(['alpha']);
+
+    seed('bravo', named('bravo'));
+
+    expect((await made.list()).agents.map((a) => a.name)).toEqual(['alpha', 'bravo']);
+  });
 });
 
 describe('read', () => {

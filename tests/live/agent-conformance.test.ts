@@ -15,6 +15,7 @@ import {
   agentsRoot,
 } from '../../electron/main/agents/paths';
 import { createPermissions, type Permissions } from '../../electron/main/agents/permissions';
+import { agentsDirectoryFor } from '../../electron/main/agents/directory';
 import { createAgentRegistry, type AgentRegistry } from '../../electron/main/agents/registry';
 import { createRunTracker, type ChildLike, type RunTracker } from '../../electron/main/agents/runs';
 import {
@@ -637,6 +638,14 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       onEvent: (event) => sessionEvents.push(event),
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
+      /*
+        The real directory (HIVE-127), composed exactly as `ipc/index.ts`
+        composes it: the registry re-read per call, joined with the run-state
+        file. A stub here would let a scenario pass against a peer list this
+        suite invented rather than one a real `claude` could have discovered.
+      */
+      onAgentsList: async (caller) =>
+        agentsDirectoryFor(caller, await agentRegistry.list(), agentState.all()),
       onTicketIntent: () => undefined,
       onPromptName: () => {},
       onCleared: () => undefined,

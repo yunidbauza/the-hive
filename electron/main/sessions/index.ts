@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { AgentsDirectory } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, type ConfigSnapshot } from '@shared/config-contract';
 import type {
   HookNotificationType,
@@ -165,6 +166,14 @@ export interface SessionsOptions {
    * has no main process at all.
    */
   agentNames?: () => ReadonlySet<string>;
+  /**
+   * Who else is on this machine, for `mcp__hive__agents` (HIVE-127).
+   *
+   * Optional for the reason {@link agentNames} is: a build with no agent
+   * runtime still starts sessions, and "there is nobody else here" is the true
+   * answer there rather than a degraded one.
+   */
+  onAgentsList?: (caller: string) => Promise<AgentsDirectory>;
   /**
    * An agent's headless turn ended — its `Stop` hook (HIVE-115).
    *
@@ -375,6 +384,9 @@ export function createSessions(options: SessionsOptions): Sessions {
       authenticated caller may reach.
     */
     agentNames = () => new Set<string>(),
+    // An empty directory rather than a refusal: a build with no agent runtime
+    // genuinely has no peers, and that is an answer, not a failure.
+    onAgentsList = () => Promise.resolve({ agents: [] }),
     onAgentTurnEnded,
   } = options;
 
@@ -737,6 +749,13 @@ export function createSessions(options: SessionsOptions): Sessions {
       `knowsSession` consults the live registry per call.
     */
     knowsAgent: (entityId) => agentNames().has(entityId),
+    /*
+      The peer directory (HIVE-127). Asked per call, like `knowsAgent` above
+      and for the same reason: a definition can be written while the app runs,
+      and this directory's whole promise is that it reports what is on disk
+      right now.
+    */
+    onAgentsList,
     /**
      * An agent's hooks, and the end of the road for them (HIVE-115).
      *

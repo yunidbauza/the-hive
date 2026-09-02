@@ -1,3 +1,4 @@
+import type { AgentsDirectory } from '@shared/agent-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -80,6 +81,15 @@ export interface HookHandlers {
    * `ReceiverOptions.knowsAgent` for the argument in full.
    */
   knowsAgent: (entityId: string) => boolean;
+  /**
+   * Who else is on this machine (HIVE-127).
+   *
+   * Injected from the composition root rather than reached for here, because
+   * that is the only place the agent registry and the run-state file are both
+   * in scope — and because the receiver serving this must not learn to import
+   * either of them.
+   */
+  onAgentsList: (caller: string) => Promise<AgentsDirectory>;
   onEvent: (event: HookStatusEvent) => void;
   /**
    * A hook event from an agent's headless turn (HIVE-115).
@@ -179,6 +189,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     async start({
       knowsSession,
       knowsAgent,
+      onAgentsList,
       onEvent,
       onAgentEvent,
       onTicketIntent,
@@ -211,6 +222,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         */
         onLedgerRead: (_caller, query) => ledger.read(query),
         onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
+        onAgentsList,
         knowsSession,
         knowsAgent,
         ...(port === undefined ? {} : { port }),
