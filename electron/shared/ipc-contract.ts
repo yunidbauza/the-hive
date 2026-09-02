@@ -22,6 +22,7 @@ import type {
   AgentNameRequest,
   AgentRenameRequest,
   AgentRunRequest,
+  AgentRotateResult,
   AgentRunResult,
   AgentsSnapshot,
   AgentStatus,
@@ -1655,12 +1656,16 @@ export interface HiveBridge {
     /**
      * Force a handoff wake now (HIVE-122).
      *
-     * Answers an {@link AgentRunResult} because it *is* a run — the flag is
+     * Answers an {@link AgentRotateResult} because it *is* a run — the flag is
      * armed and the ordinary path taken — so a busy or paused agent refuses
-     * here exactly as it refuses `run`. The flag survives a refusal, so the
-     * wake that does land is still the handoff wake.
+     * here. The flag survives a refusal, so the wake that does land is still
+     * the handoff wake.
+     *
+     * Narrower than `run`'s answer by the `queued` arm (HIVE-126), and for that
+     * same reason: a refused rotation is already durable, so it takes the
+     * tracker directly rather than the scheduler's queue.
      */
-    rotate(request: AgentNameRequest): Promise<AgentRunResult>;
+    rotate(request: AgentNameRequest): Promise<AgentRotateResult>;
     /** A run started, ended, or changed this agent's status. */
     onStatus(callback: (push: AgentStatusPush) => void): () => void;
     /** Run-log lines, as the process writes them. */

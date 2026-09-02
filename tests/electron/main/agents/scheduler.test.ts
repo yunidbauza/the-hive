@@ -38,8 +38,14 @@ describe('createScheduler', () => {
   let scheduler: ReturnType<typeof createScheduler>;
   /** What `scheduleFor` answers. Empty means "no usable definition". */
   let schedules: Map<string, { wake: WakeSpec; dailyUsd?: number; mcp?: string[] }>;
-  /** Makes `run` answer a refusal, as `RunTracker` does for a working agent. */
-  let refuse: boolean;
+  /**
+   * Makes `run` answer a refusal, as `RunTracker` does for a working agent.
+   *
+   * A reason rather than a bare boolean since HIVE-126: `manualWake` waits for
+   * `working` and `paused` and reports the rest, so a fake that could not say
+   * which it was could not drive that difference.
+   */
+  let refuse: 'working' | 'paused' | 'invalid' | false;
   /** Whether the registry has answered its first listing yet. */
   let listed: boolean;
   /** Names pushed to the renderer, in order. */
@@ -53,10 +59,10 @@ describe('createScheduler', () => {
   const build = (): ReturnType<typeof createScheduler> =>
     createScheduler({
       run: (name, trigger, extra) => {
-        if (refuse) return { started: false };
+        if (refuse !== false) return { started: false, refused: refuse };
 
         woke.push({ name, trigger, ...(extra === undefined ? {} : { extra }) });
-        return { started: true };
+        return { started: true, run: 'run-1' };
       },
       state,
       isAgent: (id) => id === AGENT,
@@ -210,11 +216,110 @@ describe('createScheduler', () => {
         text: 'review PR 1234',
       };
       state.patch(AGENT, { status: 'sleeping', pendingWake: [queued] });
-      refuse = true;
+      refuse = 'working';
 
       scheduler.onRunClosed(AGENT);
 
       expect(state.read(AGENT).pendingWake).toEqual([queued]);
+    });
+  });
+
+  /*
+    HIVE-126. The manual path used to call `RunTracker.run` directly, so a
+    refusal was printed and the intent was gone — while the identical intent
+    arriving through the ledger was queued and delivered later.
+  */
+  describe('manualWake', () => {
+    it('wakes now, saying the words as the reason', () => {
+      const outcome = scheduler.manualWake(AGENT, 'review PR 1234');
+
+      expect(outcome).toEqual({ started: true, run: 'run-1' });
+      expect(woke).toEqual([
+        { name: AGENT, trigger: 'manual', extra: 'review PR 1234' },
+      ]);
+    });
+
+    it('wakes a bare run with no reason at all', () => {
+      const outcome = scheduler.manualWake(AGENT);
+
+      expect(outcome).toEqual({ started: true, run: 'run-1' });
+      expect(woke).toEqual([{ name: AGENT, trigger: 'manual' }]);
+    });
+
+    it.each(['working', 'paused'] as const)(
+      'queues a run refused because the agent is %s',
+      (refused) => {
+        refuse = refused;
+
+        const outcome = scheduler.manualWake(AGENT, 'review PR 1234');
+
+        expect(outcome).toEqual({
+          started: false,
+          queued: true,
+          behind: refused,
+        });
+        expect(state.read(AGENT).pendingWake).toEqual([
+          {
+            kind: 'manual',
+            id: 'run',
+            from: 'overmind',
+            text: 'review PR 1234',
+          },
+        ]);
+      },
+    );
+
+    it('queues a bare run without inventing words for it', () => {
+      refuse = 'working';
+
+      scheduler.manualWake(AGENT);
+
+      expect(state.read(AGENT).pendingWake).toEqual([
+        { kind: 'manual', id: 'run', from: 'overmind' },
+      ]);
+    });
+
+    it('does not queue a definition that cannot be read', () => {
+      /*
+        `route()` queues `invalid` because at boot it means `mcp.start()` is
+        still in flight. The `agents:run` handler awaits `mcp.start()` before
+        reaching here, so on this path it means a definition the user has to go
+        and fix — and "queued" would be a promise nothing is going to keep.
+      */
+      refuse = 'invalid';
+
+      const outcome = scheduler.manualWake(AGENT, 'review PR 1234');
+
+      expect(outcome).toEqual({ started: false, refused: 'invalid' });
+      expect(state.read(AGENT).pendingWake ?? []).toEqual([]);
+    });
+
+    it('delivers a queued manual run when the current one closes', () => {
+      refuse = 'working';
+      scheduler.manualWake(AGENT, 'review PR 1234');
+
+      refuse = false;
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([
+        {
+          name: AGENT,
+          trigger: 'manual',
+          extra: 'manual run from overmind — review PR 1234',
+        },
+      ]);
+      expect(state.read(AGENT).pendingWake).toEqual([]);
+    });
+
+    it('delivers a queued manual run when a paused agent resumes', () => {
+      refuse = 'paused';
+      scheduler.manualWake(AGENT, 'review PR 1234');
+
+      refuse = false;
+      scheduler.onResume(AGENT);
+
+      expect(woke).toHaveLength(1);
+      expect(state.read(AGENT).pendingWake).toEqual([]);
     });
   });
 
@@ -294,7 +399,7 @@ describe('createScheduler', () => {
       run: (name) => {
         reentered += 1;
         if (reentered < 5) scheduler.onRunClosed(name);
-        return { started: false };
+        return { started: false, refused: 'working' };
       },
       state,
       isAgent: (id) => id === AGENT,
@@ -367,7 +472,7 @@ describe('createScheduler', () => {
       scheduler = createScheduler({
         run: (name, trigger, extra) => {
           woke.push({ name, trigger, ...(extra === undefined ? {} : { extra }) });
-          return { started: false };
+          return { started: false, refused: 'working' };
         },
         state,
         isAgent: (id) => id === AGENT,
@@ -425,7 +530,7 @@ describe('createScheduler', () => {
               { kind: 'post', id: 'a10', from: 'sess-2' },
             ],
           });
-          return { started: false };
+          return { started: false, refused: 'working' };
         },
         state,
         isAgent: (id) => id === AGENT,
@@ -1461,7 +1566,7 @@ describe('createScheduler', () => {
         skipsSinceRun: 1,
       });
       schedules.set(AGENT, { wake: { everyMs: 300_000, check: 'always', on: [] } });
-      refuse = true;
+      refuse = 'working';
 
       tick();
 

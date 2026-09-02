@@ -9,7 +9,7 @@ import { STATUS_TEXT, STATUS_LABEL } from '@components/ui/status-dot';
 import { AgentLedger } from '@features/agents/components/agent-ledger';
 import { AgentRunLog } from '@features/agents/components/agent-run-log';
 import { parseAgentInput } from '@lib/ledger/agent-input';
-import { agentRunRefusal, useAgentFacts } from '@stores/hive-store';
+import { agentRunQueued, agentRunRefusal, useAgentFacts } from '@stores/hive-store';
 import { useBackToOrch, useSettingsActions } from '@stores/ui-store';
 
 interface AgentViewProps {
@@ -103,7 +103,13 @@ export function AgentView({ entity }: AgentViewProps) {
       .then((result) => {
         if (result.started) return;
 
-        setNotice(agentRunRefusal(entity.id, result));
+        // Woken, queued, or refused (HIVE-126). Pressing Run now on a working
+        // agent no longer asks the user to come back and press it again.
+        setNotice(
+          'queued' in result
+            ? agentRunQueued(entity.id, result)
+            : agentRunRefusal(entity.id, result),
+        );
       })
       .catch(showFailure);
   };

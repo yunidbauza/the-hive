@@ -1763,6 +1763,45 @@ describe('hive-store', () => {
           });
         });
 
+        /*
+          HIVE-126. Before this, a run refused because the agent was busy was
+          printed and forgotten, while the same intent arriving through the
+          ledger was queued — so the console had to say "try again" and mean it.
+        */
+        it.each([
+          [
+            'working',
+            'queued for slack-watcher — it will run when its current turn ends',
+          ],
+          ['paused', 'queued for slack-watcher — resume it to run'],
+        ] as const)('says a run queued behind %s was queued', async (behind, text) => {
+          bridge.run.mockResolvedValue({ started: false, queued: true, behind });
+
+          run('run slack-watcher review PR 1234');
+          await Promise.resolve();
+
+          // `dim`, not `red`: a run waiting its turn is a deferral, not a fault.
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining(text),
+            color: 'dim',
+          });
+        });
+
+        it('still refuses a rotate rather than promising it a queue', async () => {
+          // `rotate` answers `AgentRotateResult`, which has no queued arm:
+          // `forceRotate` stays armed through a refusal, so a rotation survives
+          // by a different route and must not claim a queue it has no place in.
+          bridge.rotate.mockResolvedValue({ started: false, refused: 'working' });
+
+          run('rotate slack-watcher');
+          await Promise.resolve();
+
+          expect(lastLine()).toMatchObject({
+            text: expect.stringContaining('slack-watcher is working'),
+            color: 'red',
+          });
+        });
+
         it('prints main’s own reason when it supplies one', async () => {
           bridge.run.mockResolvedValue({
             started: false,

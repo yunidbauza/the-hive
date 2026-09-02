@@ -934,9 +934,11 @@ export function agentStatusColor(status: AgentStatus): TermLine['color'] {
  * they are not faults: the agent is busy, or the user themselves stopped it.
  * Each line ends in the thing to do next.
  *
- * `working` says "try again when it sleeps" rather than promising a queue.
- * HIVE-120 is what makes a run wait for the next wake; until it lands, saying
- * "your run is queued" would describe a feature that does not exist.
+ * `working` and `paused` still say "try again" rather than promising a queue,
+ * and since HIVE-126 that is a statement about `rotate`. A `run` refused for
+ * either reason is queued by the scheduler and never reaches this function —
+ * see {@link agentRunQueued}. A rotation still can, and is not queued:
+ * `forceRotate` stays armed through the refusal and carries it instead.
  *
  * **Exported, and read by the agent view as well as the console.** Both surfaces
  * draw the refusal from one `AgentRunResult`, and the view had its own ternary
@@ -952,7 +954,7 @@ export function agentStatusColor(status: AgentStatus): TermLine['color'] {
  */
 export function agentRunRefusal(
   name: string,
-  outcome: Extract<AgentRunResult, { started: false }>,
+  outcome: Extract<AgentRunResult, { refused: string }>,
 ): string {
   if (outcome.reason !== undefined) return outcome.reason;
 
@@ -965,6 +967,30 @@ export function agentRunRefusal(
       return `${name}'s definition could not be read — edit it to fix that`;
     case 'unknown':
       return 'the agent runtime is not running';
+  }
+}
+
+/**
+ * Why a wake has not happened *yet*, in the user's terms (HIVE-126).
+ *
+ * Beside {@link agentRunRefusal} rather than folded into it, because the two
+ * answer different questions — that one names a fault, this one names a wait —
+ * and a `queued` branch inside a function whose whole job is the refusal's
+ * exhaustive switch would blunt exactly the thing that switch is for.
+ *
+ * Each line still ends in the thing to do next. For a run queued behind a
+ * working agent that is *nothing*, and saying so is the point: before this, the
+ * console said "try again when it sleeps" and the user had to.
+ */
+export function agentRunQueued(
+  name: string,
+  outcome: Extract<AgentRunResult, { queued: true }>,
+): string {
+  switch (outcome.behind) {
+    case 'working':
+      return `queued for ${name} — it will run when its current turn ends`;
+    case 'paused':
+      return `queued for ${name} — resume it to run`;
   }
 }
 
@@ -2348,18 +2374,29 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
                   : { name, extra: command.prompt },
               )
               .then((outcome) => {
-              if (outcome.started) {
-                pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
-                return;
-              }
-              /*
-                Main's reason wins where it has one — an `invalid` refusal names
-                the field of the definition that is wrong, which no wording here
-                could reproduce. The refusals the console says better than main
-                are the ones that name the user's next move.
-              */
-              pushOrch(`  ${agentRunRefusal(name, outcome)}`, 'red');
-            }),
+                if (outcome.started) {
+                  pushOrch(`  woke ${name} (${outcome.run})`, 'dim');
+                  return;
+                }
+                /*
+                  Woken, or queued — never a bare refusal for a wait (HIVE-126).
+
+                  `dim`, like the line above and unlike the one below: a run
+                  waiting its turn is a deferral, not a fault, and red would
+                  report that something went wrong when nothing did.
+                */
+                if ('queued' in outcome) {
+                  pushOrch(`  ${agentRunQueued(name, outcome)}`, 'dim');
+                  return;
+                }
+                /*
+                  Main's reason wins where it has one — an `invalid` refusal
+                  names the field of the definition that is wrong, which no
+                  wording here could reproduce. The refusals the console says
+                  better than main are the ones that name the user's next move.
+                */
+                pushOrch(`  ${agentRunRefusal(name, outcome)}`, 'red');
+              }),
           );
           return;
         }

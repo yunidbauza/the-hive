@@ -980,14 +980,38 @@ export interface AgentRunRequest {
  * the whole union is values rather than throws: the console prints the reason
  * beside the agent, and "nothing happened" is the one answer that teaches the
  * user to press the button again.
+ *
+ * `queued` is a **third arm** and not a flag on the refusal (HIVE-126). The
+ * exhaustive `switch` in `agentRunRefusal` is what stops a reader printing a
+ * plausible wrong sentence — the bug that function was extracted to fix — and a
+ * flag nothing forces you to read would let "try again when it sleeps" describe
+ * a run that is already waiting its turn.
+ *
+ * `working` and `paused` stay on the refusal arm as well, because `rotate`
+ * answers with this type too and a rotation is *not* queued: main leaves
+ * `forceRotate` armed through a refusal, so it survives by a different route
+ * and must not claim a queue it has no place in.
  */
 export type AgentRunResult =
   | { started: true; run: string }
+  | { started: false; queued: true; behind: 'working' | 'paused' }
   | {
       started: false;
       refused: 'working' | 'unknown' | 'invalid' | 'paused';
       reason?: string;
     };
+
+/**
+ * What a rotation answered (HIVE-122, narrowed HIVE-126).
+ *
+ * {@link AgentRunResult} without the `queued` arm, and the subtraction is the
+ * documentation: `agents:rotate` calls the tracker directly rather than routing
+ * through the scheduler, because a refused rotation is not lost — main leaves
+ * `forceRotate` armed, so the next wake of any kind is the handoff wake. There
+ * is nothing for a queue to add, and a type that admitted one would make every
+ * reader handle a case that cannot arrive.
+ */
+export type AgentRotateResult = Exclude<AgentRunResult, { queued: true }>;
 
 /**
  * A run started, ended, or otherwise changed what an agent's row should say.

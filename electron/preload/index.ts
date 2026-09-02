@@ -5,6 +5,7 @@ import type {
   AgentLinesPush,
   AgentNameRequest,
   AgentRenameRequest,
+  AgentRotateResult,
   AgentRunRequest,
   AgentRunResult,
   AgentsSnapshot,
@@ -369,7 +370,7 @@ const bridge: HiveBridge = {
       `AgentRunRequest`, so the closed key set that refuses a renderer-chosen
       trigger stays closed. `BRIDGE_AGENTS_KEYS` carries the argument.
     */
-    rotate: (request: AgentNameRequest): Promise<AgentRunResult> =>
+    rotate: (request: AgentNameRequest): Promise<AgentRotateResult> =>
       ipcRenderer.invoke(CH.agentsRotate, request),
     onStatus: (callback: (push: AgentStatusPush) => void) =>
       subscribe<AgentStatusPush>(CH.agentsStatus, callback),

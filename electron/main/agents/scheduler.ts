@@ -1,6 +1,7 @@
 import {
   AGENT_PENDING_WAKE_MAX,
   dayKey,
+  type AgentRunResult,
   type AgentRunState,
   type PendingWakeEntry,
   type WakeSpec,
@@ -13,6 +14,7 @@ import {
 import { expiredAsks } from '@shared/ledger-derive';
 import { SLACK_SERVER_KEY } from '@shared/slack-contract';
 
+import type { RunStart } from './runs';
 import { decide, decideForStatus, type WakeDecision } from './scheduler-rules';
 import type { AgentState } from './state';
 import { inQuiet, nextRunFrom, quietEndAfter } from './wake-schedule';
@@ -83,15 +85,20 @@ export const LEDGER_SWEEP_MS = 60_000;
 
 export interface SchedulerDeps {
   /**
-   * `RunTracker.run`, narrowed to what this module uses.
+   * `RunTracker.run`, in full.
    *
    * A refusal is not an error here: `working` and `paused` are *answers*, and
    * queueing is what this module does about them. It is deliberately the
    * tracker rather than the waker — that method is the one door every trigger
    * passes through, and it is where a paused agent is refused. A second
    * entrance would let a ledger entry wake an agent the user had just stopped.
+   *
+   * It was narrowed to `{ started: boolean }` while queueing was the only thing
+   * this module did about a refusal, and queueing does not care why. HIVE-126's
+   * {@link Scheduler.manualWake} does: `working` and `paused` are waits worth
+   * keeping, and a definition that cannot be read is not.
    */
-  run: (name: string, trigger: string, extra?: string) => { started: boolean };
+  run: (name: string, trigger: string, extra?: string) => RunStart;
   state: Pick<AgentState, 'read' | 'patch' | 'all'>;
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
@@ -180,6 +187,24 @@ export interface Scheduler {
   onRunClosed(name: string): void;
   /** A paused agent was resumed. */
   onResume(name: string): void;
+  /**
+   * A person pressed run (HIVE-126).
+   *
+   * The manual path used to call `RunTracker.run` directly, so a refusal was
+   * printed in the console and the intent was gone — while the identical intent
+   * arriving through the ledger was queued and delivered later. Same agent,
+   * same wish, different durability, and nothing on screen said which you got.
+   *
+   * Refuses rather than queues for anything but `working` and `paused`: those
+   * two are waits that end, and the rest is a fault the user has to act on.
+   *
+   * `wake.on: [ledger]` is deliberately **not** consulted, unlike `onEntry`.
+   * That gate asks whether an agent's author wanted the *log* to wake it, and a
+   * person pressing run has answered a different question. Nor is `stopped`:
+   * this is reached from an IPC handler rather than from a callback `closeAll`
+   * re-enters, and a tracker on its way down refuses on its own account.
+   */
+  manualWake(name: string, extra?: string): AgentRunResult;
   /** Boot: wake anything a crash left queued, and arm the expiry sweep. */
   start(): void;
   /** Shutdown: disarm the sweep. */
@@ -736,6 +761,34 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     onResume(name) {
       flush(name);
+    },
+
+    manualWake(name, extra) {
+      const started = deps.run(name, MANUAL_TRIGGER, extra);
+
+      if (started.started) return started;
+
+      /*
+        Only the two refusals that end on their own.
+
+        A run in flight closes and a pause gets lifted, and `flush` is already
+        wired to both moments. `invalid` is a definition the user has to go and
+        fix — `route()` queues it because at boot it means `mcp.start()` has not
+        finished, which the `agents:run` handler awaits before reaching here —
+        so queueing it would be a promise nothing is going to keep.
+      */
+      if (started.refused !== 'working' && started.refused !== 'paused') {
+        return started;
+      }
+
+      enqueue(name, {
+        kind: MANUAL_KIND,
+        id: 'run',
+        from: OVERMIND,
+        ...(extra === undefined ? {} : { text: extra }),
+      });
+
+      return { started: false, queued: true, behind: started.refused };
     },
 
     start() {

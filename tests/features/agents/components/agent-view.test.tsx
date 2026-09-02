@@ -194,6 +194,29 @@ describe('AgentView', () => {
     });
 
     /**
+     * HIVE-126 added a third arm, and this view is the second reader of it.
+     *
+     * The same failure the exhaustive switch was extracted to prevent, one
+     * story later: a queued run reaching `agentRunRefusal` would fall through
+     * every case and draw nothing, on the surface whose whole complaint was a
+     * button that looked dead.
+     */
+    it('says a busy agent queued the run rather than refusing it', async () => {
+      const run = vi
+        .fn()
+        .mockResolvedValue({ started: false, queued: true, behind: 'working' });
+      vi.stubGlobal('hive', {
+        agents: { run },
+        ledger: { post: vi.fn(), answer: vi.fn() },
+      });
+
+      render(<AgentView entity={seed()} />);
+      await userEvent.click(screen.getByRole('button', { name: /Run now/i }));
+
+      expect(await screen.findByText(/queued for/)).toBeInTheDocument();
+    });
+
+    /**
      * HIVE-117 widened `AgentRunResult.refused` with `paused`, and this view's
      * refusal used to be a ternary ending in a bare `else` reading "The agent
      * runtime is not up." — so the new member arrived as a confident lie about

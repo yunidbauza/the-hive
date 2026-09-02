@@ -475,6 +475,23 @@ describe('AgentsSection', () => {
       ).toBeInTheDocument();
     });
 
+    it('says a busy agent queued the run rather than refusing it', async () => {
+      // HIVE-126's third arm, on the pane's own Run now. Same channel as the
+      // console verb, so the same sentence.
+      const run = vi.fn(async () => ({
+        started: false,
+        queued: true,
+        behind: 'working',
+      }));
+      await open({ run });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Run now' }));
+
+      expect(
+        await screen.findByText(/queued for slack-watcher/),
+      ).toBeInTheDocument();
+    });
+
     /**
      * A refusal must not disable the control that produced it.
      *

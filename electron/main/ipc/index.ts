@@ -18,6 +18,7 @@ import {
 import {
   formatRunCost,
   type AgentLinesPush,
+  type AgentRotateResult,
   type AgentRunResult,
   type AgentStatus,
   type AgentStatusPush,
@@ -1591,8 +1592,18 @@ export function registerIpcHandlers(): void {
    * ledger entry start an agent the user had just stopped.
    */
   scheduler = createScheduler({
+    /*
+      No tracker means no runtime, which `manualWake` has to be able to tell
+      apart from a wait: `invalid` sends it back to the caller rather than onto
+      the queue, and the `agents:run` handler turns a missing scheduler into
+      `unknown` before it ever reaches here.
+    */
     run: (name, trigger, extra) =>
-      runs?.run(name, trigger, extra) ?? { started: false },
+      runs?.run(name, trigger, extra) ?? {
+        started: false,
+        refused: 'invalid',
+        reason: 'The agent runtime is not running.',
+      },
     state: agentRunState,
     isAgent: (id) => knownAgents.has(id),
     wakesOnLedger: (id) => ledgerAgents.has(id),
@@ -2643,8 +2654,18 @@ export function registerIpcHandlers(): void {
     await loginEnvStatus();
     await mcp.start();
 
+    /*
+      Through the scheduler rather than the tracker (HIVE-126).
+
+      `RunTracker.run` is still the one door every trigger passes through — this
+      calls it, one frame further in. What the detour buys is the queue: a run
+      refused because the agent is working or paused is remembered and delivered
+      at the next opportunity, exactly as a ledger-addressed wake has been since
+      HIVE-120. Calling the tracker directly is what made the same intent
+      durable or disposable depending on which verb the user happened to type.
+    */
     return (
-      runs?.run(request.name, 'manual', request.extra) ?? {
+      scheduler?.manualWake(request.name, request.extra) ?? {
         started: false,
         refused: 'unknown',
         reason: 'The agent runtime is not running.',
@@ -2756,7 +2777,7 @@ export function registerIpcHandlers(): void {
    * the same spawn: `PATH` may still be the pre-repair one, and `hive.mcp.json`
    * may not have been written yet.
    */
-  handle(CH.agentsRotate, async (_event, payload): Promise<AgentRunResult> => {
+  handle(CH.agentsRotate, async (_event, payload): Promise<AgentRotateResult> => {
     const name = await requireAgent(parseAgentNameRequest(payload).name);
 
     if (agentState === null) {

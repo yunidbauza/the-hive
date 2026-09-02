@@ -23,7 +23,7 @@ import {
   type AgentProblem,
 } from '@shared/agent-contract';
 import type { SlackStatus } from '@shared/slack-contract';
-import { agentRunRefusal } from '@stores/hive-store';
+import { agentRunQueued, agentRunRefusal } from '@stores/hive-store';
 
 /**
  * The Agents section of settings (HIVE-114).
@@ -407,7 +407,12 @@ export function AgentsSection() {
           return;
         }
 
-        setRunNotice(agentRunRefusal(open, result));
+        // Woken, queued, or refused (HIVE-126).
+        setRunNotice(
+          'queued' in result
+            ? agentRunQueued(open, result)
+            : agentRunRefusal(open, result),
+        );
       })
       .catch((cause: unknown) => {
         setRunNotice(cause instanceof Error ? cause.message : String(cause));
