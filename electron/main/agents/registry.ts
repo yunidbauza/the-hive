@@ -352,6 +352,9 @@ export function createAgentRegistry({
               would then draw as `run 0/0`.
             */
             rotateAfter: AGENT_LIMIT_DEFAULTS.rotateAfter,
+            // As above: a folder the guard refuses has no `limits.parallel` to
+            // read either (HIVE-128).
+            parallel: AGENT_LIMIT_DEFAULTS.parallel,
             runs: [],
             invalid:
               'The folder name cannot be used. Rename it on disk to lowercase letters, digits and dashes.',
@@ -385,6 +388,9 @@ export function createAgentRegistry({
             ...(def.limits.dailyUsd === undefined
               ? {}
               : { dailyUsd: def.limits.dailyUsd }),
+            // The tracker's gate and the scheduler's flush (HIVE-128) — cached
+            // by `ipc/index.ts` beside the schedule and read off this listing.
+            parallel: def.limits.parallel,
             // The registry has never seen a run; `mergeRunState` fills this.
             runs: [],
           });
@@ -405,6 +411,8 @@ export function createAgentRegistry({
           tools: [],
           // As above: an unparsed definition falls back to the default ceiling.
           rotateAfter: AGENT_LIMIT_DEFAULTS.rotateAfter,
+          // As above: no parsed `limits.parallel` either (HIVE-128).
+          parallel: AGENT_LIMIT_DEFAULTS.parallel,
           runs: [],
           invalid:
             first === undefined || first.field === ''

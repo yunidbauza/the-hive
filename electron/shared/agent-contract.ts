@@ -374,6 +374,13 @@ export interface AgentSummary {
   cost?: string;
   /** Why this definition could not be parsed. Listed, never hidden. */
   invalid?: string;
+  /**
+   * `limits.parallel` (HIVE-128). Optional only so older callers and fixtures
+   * that never set it read as the default of 1; the registry always sets it.
+   */
+  parallel?: number;
+  /** What is in flight right now (HIVE-128). Set by `agents:list`; absent is none. */
+  live?: LiveRunSummary[];
 }
 
 export interface AgentProblem {
@@ -1189,6 +1196,8 @@ export interface AgentStatusPush {
   skipsSinceRun?: number;
   /** The last run's cost, already formatted — see {@link formatRunCost}. */
   cost?: string;
+  /** Every run live under the name, standing and task (HIVE-128). */
+  live: LiveRunSummary[];
 }
 
 /** A batch of run-log lines, in the order the process wrote them. */

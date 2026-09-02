@@ -2699,6 +2699,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'slack-watcher',
         status: 'working',
+        live: [],
         lastRunAt: 42,
         cost: '$0.02',
         runs: [],
@@ -2726,6 +2727,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'slack-watcher',
         status: 'sleeping',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
         today: { day: '2026-08-31', runs: 12, usd: 0.84 },
@@ -2743,6 +2745,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'slack-watcher',
         status: 'sleeping',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
         skipsSinceRun: 3,
@@ -2750,6 +2753,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'slack-watcher',
         status: 'sleeping',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
       });
@@ -2770,6 +2774,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'slack-watcher',
         status: 'sleeping',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
         nextRunAt: 1_756_500_000_000,
@@ -2777,6 +2782,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'slack-watcher',
         status: 'sleeping',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
       });
@@ -2791,6 +2797,7 @@ describe('hive-store', () => {
         useHiveStore.getState().setAgentStatus({
           name: 'ghost',
           status: 'working',
+          live: [],
           runs: [],
           runsSinceRotate: 0,
         }),
@@ -2805,6 +2812,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'sess-01',
         status: 'working',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
       });
@@ -2833,6 +2841,7 @@ describe('hive-store', () => {
         .setAgentStatus({
           name: 'slack-watcher',
           status: 'sleeping',
+          live: [],
           cost: '$0.02',
           runs: [],
           runsSinceRotate: 0,
@@ -2887,6 +2896,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'drone',
         status: 'sleeping',
+        live: [],
         runs: [],
         runsSinceRotate: 1,
         sessionUuid: 'b2e1c4d5',
@@ -2923,6 +2933,7 @@ describe('hive-store', () => {
       useHiveStore.getState().setAgentStatus({
         name: 'drone',
         status: 'working',
+        live: [],
         runs: [],
         runsSinceRotate: 0,
       });
@@ -4763,6 +4774,7 @@ describe('the agent view selectors', () => {
         useHiveStore.getState().setAgentStatus({
           name: 'watcher',
           status: 'asking',
+          live: [],
           runs: [],
           runsSinceRotate: 0,
         });

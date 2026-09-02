@@ -91,6 +91,8 @@ describe('list', () => {
       status: 'sleeping',
     });
     expect(agents[0]?.invalid).toBeUndefined();
+    // The default cap, absent any `limits.parallel` in the definition (HIVE-128).
+    expect(agents[0]?.parallel).toBe(1);
   });
 
   it('includes a broken definition rather than hiding it', async () => {
@@ -130,6 +132,25 @@ describe('list', () => {
     const { agents } = await registry().list();
 
     expect(agents[0]?.dailyUsd).toBeUndefined();
+  });
+
+  /*
+    The tracker's gate and the scheduler's flush reach it through the listing,
+    cached by `ipc/index.ts` beside the schedule (HIVE-128) — so it has to
+    survive the trip too.
+  */
+  it('carries a parallel cap the definition names', async () => {
+    seed(
+      'capped',
+      GOOD.replace('slack-watcher', 'capped').replace(
+        'icon: ChatCircleDots',
+        'icon: ChatCircleDots\nlimits:\n  parallel: 2',
+      ),
+    );
+
+    const { agents } = await registry().list();
+
+    expect(agents[0]?.parallel).toBe(2);
   });
 
   it('names the offending field in the invalid reason', async () => {

@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentRunState,
+  AgentSummary,
   AgentsSnapshot,
+  LiveRunSummary,
 } from '../../../../electron/shared/agent-contract';
 import {
   OVERMIND,
@@ -180,6 +182,8 @@ const trackerKill = vi.fn(() => true);
 const trackerKillAll = vi.fn();
 const trackerCloseAll = vi.fn();
 let liveRuns: string[] = [];
+/** What `liveRuns(name)` answers, for whichever name is asked (HIVE-128). */
+let liveRunSummaries: LiveRunSummary[] = [];
 
 vi.mock('../../../../electron/main/agents/runs', () => ({
   createRunTracker: (deps: TrackerDeps) => {
@@ -191,6 +195,7 @@ vi.mock('../../../../electron/main/agents/runs', () => ({
       killAll: trackerKillAll,
       closeAll: trackerCloseAll,
       live: () => liveRuns,
+      liveRuns: (_name: string) => liveRunSummaries,
     };
   },
 }));
@@ -243,7 +248,10 @@ const invoke = (channel: string, payload?: unknown) =>
 /** One tick, so the fire-and-forget `agents.list()` refresh has landed. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-const definition = (name: string) => ({
+const definition = (
+  name: string,
+  over: Partial<AgentSummary> = {},
+): AgentSummary => ({
   name,
   description: 'Watches.',
   icon: 'Robot',
@@ -253,6 +261,7 @@ const definition = (name: string) => ({
   tools: [],
   rotateAfter: 50,
   runs: [],
+  ...over,
 });
 
 beforeEach(async () => {
@@ -261,6 +270,7 @@ beforeEach(async () => {
   shutdownHooks = [];
   stored = {};
   liveRuns = [];
+  liveRunSummaries = [];
   ledgerEntries = [];
   ledgerOpenAsks = [];
   listed = {
@@ -653,7 +663,7 @@ describe('agents:list merges run state (R2)', () => {
   it('leaves an agent that has never run untouched', async () => {
     const result = (await invoke(CH.agentsList)) as AgentsSnapshot;
 
-    expect(result.agents[0]).toEqual(definition('slack-watcher'));
+    expect(result.agents[0]).toEqual(definition('slack-watcher', { live: [] }));
   });
 });
 
@@ -827,6 +837,13 @@ describe('the ledger accepts an agent as a party (HIVE-115)', () => {
 });
 
 describe('what the tracker was handed (HIVE-115)', () => {
+  /** A live window, so the status push has somewhere to land. */
+  const watchWindow = () => {
+    const send = vi.fn();
+    windows.push({ isDestroyed: () => false, webContents: { send } });
+    return send;
+  };
+
   it('appends a run entry as the agent, never as the coordinator', () => {
     trackerDeps?.appendLedger({
       from: 'slack-watcher',
@@ -869,17 +886,7 @@ describe('what the tracker was handed (HIVE-115)', () => {
     warn.mockRestore();
   });
 
-  it('counts an ask posted after this run started', () => {
-    ledgerEntries = [
-      {
-        id: '20260830-010000-0001',
-        ts: 1,
-        from: 'slack-watcher',
-        kind: 'event',
-        body: 'run.started — manual',
-        meta: { run: 'run-1' },
-      },
-    ];
+  it('counts an ask this run stamped (HIVE-128)', () => {
     ledgerOpenAsks = [
       {
         id: '20260830-010500-0002',
@@ -887,34 +894,40 @@ describe('what the tracker was handed (HIVE-115)', () => {
         from: 'slack-watcher',
         kind: 'ask',
         body: 'which channel?',
+        meta: { run: 'run-1' },
       },
     ];
 
     expect(trackerDeps?.openAsksFor('slack-watcher', 'run-1')).toBe(true);
   });
 
-  it('ignores an ask left open by an earlier run', () => {
+  it('ignores an open ask a concurrent or earlier run stamped', () => {
     ledgerOpenAsks = [
       {
-        id: '20260830-005900-0001',
-        ts: 1,
-        from: 'slack-watcher',
-        kind: 'ask',
-        body: 'older question',
-      },
-    ];
-    ledgerEntries = [
-      {
-        id: '20260830-010000-0002',
+        id: '20260830-010500-0002',
         ts: 2,
         from: 'slack-watcher',
-        kind: 'event',
-        body: 'run.started — manual',
-        meta: { run: 'run-2' },
+        kind: 'ask',
+        body: 'older',
+        meta: { run: 'run-0' },
       },
     ];
 
-    expect(trackerDeps?.openAsksFor('slack-watcher', 'run-2')).toBe(false);
+    expect(trackerDeps?.openAsksFor('slack-watcher', 'run-1')).toBe(false);
+  });
+
+  it('ignores an ask with no stamp — the only entries with none predate the field', () => {
+    ledgerOpenAsks = [
+      {
+        id: '20260830-010500-0002',
+        ts: 2,
+        from: 'slack-watcher',
+        kind: 'ask',
+        body: 'unstamped',
+      },
+    ];
+
+    expect(trackerDeps?.openAsksFor('slack-watcher', 'run-1')).toBe(false);
   });
 
   it('never counts an open ask belonging to another party', () => {
@@ -925,6 +938,7 @@ describe('what the tracker was handed (HIVE-115)', () => {
         from: 'overmind',
         kind: 'ask',
         body: 'anyone?',
+        meta: { run: 'run-1' },
       },
     ];
 
@@ -932,44 +946,33 @@ describe('what the tracker was handed (HIVE-115)', () => {
   });
 
   /*
-    HIVE-122. `handoffFor` is what decides, at a run's close, whether the
-    session actually rotates — and it is asserted here, against the real IPC
-    composition, for the reason `openAsksFor` is: the only other exercise it
-    got was a hand-copied clone inside `tests/live/agent-conformance.test.ts`,
-    which is `describe.skipIf(!LIVE)` and never runs under `pnpm test`.
+    HIVE-122, restamped HIVE-128. `handoffFor` is what decides, at a run's
+    close, whether the session actually rotates — and it is asserted here,
+    against the real IPC composition, for the reason `openAsksFor` is: the
+    only other exercise it got was a hand-copied clone inside
+    `tests/live/agent-conformance.test.ts`, which is `describe.skipIf(!LIVE)`
+    and never runs under `pnpm test`.
   */
-  const startedEntry = (run: string, id: string): LedgerEntry => ({
-    id,
-    ts: 1,
-    from: 'slack-watcher',
-    kind: 'event',
-    body: `run.started — ${run}`,
-    meta: { run },
-  });
-
-  const handoffEntry = (id: string, body: string): LedgerEntry => ({
+  const handoffEntry = (id: string, body: string, run?: string): LedgerEntry => ({
     id,
     ts: 2,
     from: 'slack-watcher',
     kind: 'handoff',
     body,
+    ...(run === undefined ? {} : { meta: { run } }),
   });
 
-  it('finds a handoff this run posted', () => {
-    ledgerEntries = [
-      startedEntry('run-1', '20260830-010000-0001'),
-      handoffEntry('20260830-010500-0002', 'I watch #ops.'),
-    ];
+  it('finds the handoff this run stamped', () => {
+    ledgerEntries = [handoffEntry('20260830-010500-0002', 'I watch #ops.', 'run-1')];
 
     expect(trackerDeps?.handoffFor('slack-watcher', 'run-1')).toBe(
       'I watch #ops.',
     );
   });
 
-  it('ignores a handoff written before this run started', () => {
+  it('ignores another run’s handoff', () => {
     ledgerEntries = [
-      handoffEntry('20260830-005900-0001', 'a previous rotation'),
-      startedEntry('run-2', '20260830-010000-0002'),
+      handoffEntry('20260830-005900-0001', 'a previous rotation', 'run-0'),
     ];
 
     expect(trackerDeps?.handoffFor('slack-watcher', 'run-2')).toBeUndefined();
@@ -977,9 +980,8 @@ describe('what the tracker was handed (HIVE-115)', () => {
 
   it('takes the last handoff when the run wrote several', () => {
     ledgerEntries = [
-      startedEntry('run-3', '20260830-010000-0001'),
-      handoffEntry('20260830-010500-0002', 'first draft'),
-      handoffEntry('20260830-010900-0003', 'the correction'),
+      handoffEntry('20260830-010500-0002', 'first draft', 'run-3'),
+      handoffEntry('20260830-010900-0003', 'the correction', 'run-3'),
     ];
 
     expect(trackerDeps?.handoffFor('slack-watcher', 'run-3')).toBe(
@@ -987,18 +989,10 @@ describe('what the tracker was handed (HIVE-115)', () => {
     );
   });
 
-  /*
-    Fails **closed**, unlike `openAsksFor` above, and the asymmetry is the
-    point: falling back to "any handoff this agent ever wrote" would hand
-    `finalizeRun` a previous rotation's body, which it reads as a successful
-    handover — zeroing the counter, parking a `pendingSession`, and seeding the
-    next session from an out-of-date summary while abandoning the live
-    conversation. A strike is the recoverable error; this is not.
-  */
-  it('returns nothing rather than a stale handoff when the run has no start entry', () => {
+  it('returns nothing for an unstamped handoff rather than guessing', () => {
     ledgerEntries = [handoffEntry('20260830-005900-0001', 'a previous rotation')];
 
-    expect(trackerDeps?.handoffFor('slack-watcher', 'run-4')).toBeUndefined();
+    expect(trackerDeps?.handoffFor('slack-watcher', 'run-1')).toBeUndefined();
   });
 
   it('pushes a status built from the state file, to live windows only', () => {
@@ -1029,6 +1023,7 @@ describe('what the tracker was handed (HIVE-115)', () => {
     expect(liveSend).toHaveBeenCalledWith(CH.agentsStatus, {
       name: 'slack-watcher',
       status: 'asking',
+      live: [],
       lastRunAt: 77,
       cost: '$0.0031',
       /*
@@ -1085,6 +1080,43 @@ describe('what the tracker was handed (HIVE-115)', () => {
       name: 'slack-watcher',
       lines: [{ text: 'hello', color: 'ink' }],
     });
+  });
+
+  it('pushes what is live under the name (HIVE-128)', () => {
+    liveRunSummaries = [
+      { run: 'r9', kind: 'task', trigger: 'manual', extra: 'review', startedAt: 5 },
+    ];
+    stored['slack-watcher'] = { status: 'working', runsSinceRotate: 0, runs: [] };
+    const send = watchWindow();
+
+    trackerDeps?.pushStatus('slack-watcher');
+
+    expect(send).toHaveBeenCalledWith(
+      CH.agentsStatus,
+      expect.objectContaining({ name: 'slack-watcher', live: liveRunSummaries }),
+    );
+  });
+
+  it('attaches the live runs to every listed agent', async () => {
+    liveRunSummaries = [{ run: 'r9', kind: 'standing', trigger: 'interval', startedAt: 5 }];
+
+    const listed = await invoke(CH.agentsList);
+
+    expect((listed as { agents: { live: unknown }[] }).agents[0]?.live).toEqual(
+      liveRunSummaries,
+    );
+  });
+
+  it('reads the cap for the tracker and the scheduler from the listing', async () => {
+    listed = {
+      agents: [definition('slack-watcher', { parallel: 3 })],
+      agentsRoot: '/tmp/.hive/agents',
+    };
+    onAgentsChanged?.();
+    await settle();
+
+    expect(trackerDeps?.parallelFor('slack-watcher')).toBe(3);
+    expect(trackerDeps?.parallelFor('nobody')).toBe(1);
   });
 });
 

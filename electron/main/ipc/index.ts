@@ -16,6 +16,7 @@ import {
 } from 'electron';
 
 import {
+  AGENT_LIMIT_DEFAULTS,
   formatRunCost,
   type AgentLinesPush,
   type AgentRotateResult,
@@ -402,6 +403,12 @@ const agentSchedules = new Map<
   { wake: WakeSpec; dailyUsd?: number; mcp: string[] }
 >();
 /**
+ * Every valid agent's `limits.parallel` (HIVE-128), for the tracker's gate and
+ * the scheduler's flush — both asked synchronously, so it is cached beside the
+ * schedule rather than read off disk. Absent reads as 1, the default.
+ */
+const agentParallel = new Map<string, number>();
+/**
  * Whether {@link agentSchedules} has been filled at least once.
  *
  * An empty map means two very different things, and the scheduler must not
@@ -442,6 +449,7 @@ function refreshKnownAgents(): void {
       knownAgents.clear();
       ledgerAgents.clear();
       agentSchedules.clear();
+      agentParallel.clear();
 
       for (const agent of snapshot.agents) {
         if (agent.invalid !== undefined) continue;
@@ -459,6 +467,11 @@ function refreshKnownAgents(): void {
           ...(agent.dailyUsd === undefined ? {} : { dailyUsd: agent.dailyUsd }),
           mcp: agent.mcp,
         });
+        // The parallel cap, for the same two synchronous askers (HIVE-128).
+        agentParallel.set(
+          agent.name,
+          agent.parallel ?? AGENT_LIMIT_DEFAULTS.parallel,
+        );
       }
 
       for (const name of runs?.live() ?? []) knownAgents.add(name);
@@ -1391,63 +1404,25 @@ export function registerIpcHandlers(): void {
   });
 
   /**
-   * Did this run leave a question nobody has answered?
+   * Did this run leave an ask nobody has answered?
    *
-   * Read from the **ledger**, which is the design's own instruction: an ask
-   * posted through any path counts, and one already answered does not. The run
-   * is identified by its own `run.started` entry — appended by the tracker with
-   * `meta.run`, and always the first entry carrying that id — so "during this
-   * run" becomes an id comparison rather than a clock comparison. Ledger ids
-   * sort in write order by construction.
-   *
-   * Falling back to *any* open ask from this agent when no start entry is found
-   * is the safer error: it can only ever mark a run `asking` that was in fact
-   * `done`, which parks an agent that would otherwise be woken again — where
-   * the opposite mistake would report a question as finished business and
-   * silently drop it.
+   * By the run's own stamp (HIVE-128). The MCP host writes `meta.run` on every
+   * entry a run posts, so this no longer has to guess from "at or after this
+   * run's `run.started`" — which could not tell two concurrent runs apart. An
+   * entry with no stamp predates the field and belongs to no live run.
    */
   const openAsksFor = (name: string, run: string): boolean => {
-    const { entries, openAsks } = ledger.read({ from: name });
-    const started = entries.find(
-      (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
-    );
+    const { openAsks } = ledger.read({ from: name });
 
-    return openAsks.some(
-      (ask) =>
-        ask.from === name && (started === undefined || ask.id >= started.id),
-    );
+    return openAsks.some((ask) => ask.from === name && ask.meta?.['run'] === run);
   };
 
-  /**
-   * What did this run hand over, if anything (HIVE-122)?
-   *
-   * The same `run.started` id comparison `openAsksFor` uses, for the same
-   * reason: the ledger has no notion of which run an entry belongs to, and a
-   * clock comparison would be a worse answer to the same question. The **last**
-   * handoff wins if the agent wrote several — a second one is a correction of
-   * the first, not a competitor to it.
-   *
-   * Where the two part company is the missing-start-entry case, and they part
-   * deliberately: `openAsksFor` fails **open** because its worst error parks an
-   * agent that was in fact done, while this one must fail **closed** because
-   * its worst error is destructive. Without the guard the predicate collapses
-   * to "any handoff this agent ever wrote", so `findLast` returns a *previous*
-   * rotation's body — and `finalizeRun` reads that as a successful handover:
-   * it zeroes the counter, parks a `pendingSession`, and seeds the next
-   * session from an out-of-date summary while abandoning the live
-   * conversation. No handoff is the honest answer when we cannot tell which
-   * run wrote one; the close then takes a strike, which is recoverable.
-   */
+  /** The handoff this run posted, if any — the last one wins (HIVE-122, HIVE-128). */
   const handoffFor = (name: string, run: string): string | undefined => {
     const { entries } = ledger.read({ from: name });
-    const started = entries.find(
-      (entry) => entry.kind === 'event' && entry.meta?.['run'] === run,
-    );
-
-    if (started === undefined) return undefined;
 
     return entries.findLast(
-      (entry) => entry.kind === 'handoff' && entry.id >= started.id,
+      (entry) => entry.kind === 'handoff' && entry.meta?.['run'] === run,
     )?.body;
   };
 
@@ -1470,6 +1445,8 @@ export function registerIpcHandlers(): void {
     send(CH.agentsStatus, {
       name,
       status: state.status,
+      // What is in flight right now, straight from the tracker (HIVE-128).
+      live: runs?.liveRuns(name) ?? [],
       ...(state.lastRunAt === undefined ? {} : { lastRunAt: state.lastRunAt }),
       ...(state.nextRunAt === undefined ? {} : { nextRunAt: state.nextRunAt }),
       /*
@@ -1525,8 +1502,8 @@ export function registerIpcHandlers(): void {
 
       return built;
     },
-    // Replaced by the watcher's cache in the next task (HIVE-128).
-    parallelFor: () => 1,
+    // The watcher's cache, filled in the same pass as `agentSchedules` (HIVE-128).
+    parallelFor: (name) => agentParallel.get(name) ?? AGENT_LIMIT_DEFAULTS.parallel,
     state: agentState,
     /*
       A run's own entries are `from` the **agent**: a run is the agent's
@@ -2641,7 +2618,16 @@ export function registerIpcHandlers(): void {
 
     if (snapshot === undefined) return undefined;
 
-    return mergeRunState(snapshot, agentState?.all() ?? {});
+    const merged = mergeRunState(snapshot, agentState?.all() ?? {});
+
+    // What is in flight lives in the tracker, not in `agents.json` (HIVE-128).
+    return {
+      ...merged,
+      agents: merged.agents.map((agent) => ({
+        ...agent,
+        live: runs?.liveRuns(agent.name) ?? [],
+      })),
+    };
   });
 
   handle(CH.agentsRead, (_event, payload) =>
@@ -3212,6 +3198,7 @@ export function resetIpcHandlers(): void {
   knownAgents.clear();
   ledgerAgents.clear();
   agentSchedules.clear();
+  agentParallel.clear();
   // Back to "nothing has been listed", not "nothing is scheduled": the next
   // registration must earn the right to clear a `nextRunAt` all over again.
   agentsListed = false;
