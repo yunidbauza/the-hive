@@ -170,6 +170,41 @@ describe('useRailWidths', () => {
       expect(document.body.style.getPropertyValue('--cc-rail-w-right')).toBe('');
     });
 
+    /**
+     * The `-open` pair is the rail's width with collapse ignored, and the two
+     * pairs are asserted **together** on purpose.
+     *
+     * `header.tsx` sizes its zones from `-open` so that collapsing a rail does
+     * not reflow the header — that is the bug this pair exists for. But the
+     * plain pair must still report the truth, because it is what the rail
+     * itself is painted with. Split these into two tests and a change that
+     * quietly pointed one at the other would keep both of them green.
+     *
+     * A dragged width is used rather than the default: `applyRailWidths`
+     * *removes* a property sitting at its density default so `tokens.css` can
+     * take over, so at the default this would read `''` for reasons that have
+     * nothing to do with collapse.
+     */
+    it('keeps the open width while the plain token paints the strip', () => {
+      useAppearanceStore.getState().setRailWidth('left', 400);
+      useAppearanceStore.getState().setRailCollapsed('left', true);
+
+      renderHook(() => useRailWidths());
+
+      expect(document.body.style.getPropertyValue('--cc-rail-w-left')).toBe('44px');
+      expect(document.body.style.getPropertyValue('--cc-rail-w-left-open')).toBe('400px');
+    });
+
+    it('does the same for the activity rail', () => {
+      useAppearanceStore.getState().setRailWidth('right', 400);
+      useAppearanceStore.getState().setRailCollapsed('right', true);
+
+      renderHook(() => useRailWidths());
+
+      expect(document.body.style.getPropertyValue('--cc-rail-w-right')).toBe('44px');
+      expect(document.body.style.getPropertyValue('--cc-rail-w-right-open')).toBe('400px');
+    });
+
     it('reports handle bounds a slider can legally announce', () => {
       // aria-valuemin above aria-valuenow is invalid to announce and wrong to
       // drive. `bounds` already guards this via Math.min(floor, value); this

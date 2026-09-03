@@ -285,3 +285,73 @@ test.describe('the resize handles', () => {
     );
   });
 });
+
+/**
+ * Collapsing a rail must not reflow the header (HIVE rail-collapse follow-up).
+ *
+ * The header sizes two zones from the rails' width tokens so its content lines
+ * up with the rails' edges. Collapse paints those tokens at 44px, and both
+ * obvious responses to that are wrong: claim the 44px column and a `shrink-0`
+ * cluster overflows it onto its neighbour; drop the column and the zone
+ * shrinks to its content, letting the neighbour slide over. The app shipped
+ * each of those bugs in turn — the chips ended flush against the wordmark, and
+ * the counts flush against the theme button.
+ *
+ * `--cc-rail-w-*-open` is the fix: the same width with collapse ignored. What
+ * that buys is a *relationship* — the gaps either side of the header's content
+ * are the same whether a rail is open or shut — and a relationship between
+ * rendered boxes is only measurable here. `happy-dom` performs no layout, so
+ * the unit tests can assert which class is applied and never that two elements
+ * stopped touching.
+ */
+test.describe('the header holds still when a rail collapses', () => {
+  /** Distance from the wordmark to the first chip, and counts to theme button. */
+  const gaps = (page: import('@playwright/test').Page) =>
+    page.evaluate(() => {
+      const header = document.querySelector('header')!;
+      const brandZone = header.querySelector('div')?.firstElementChild;
+      const wordmark = brandZone?.firstElementChild ?? brandZone;
+      const chips = header.querySelector('[data-testid="header-chips"]');
+      const counts = header.querySelector('[data-testid="status-counts"]');
+      const theme = header.querySelector('button[aria-label*="theme" i]');
+
+      const w = wordmark?.getBoundingClientRect();
+      const ch = chips?.getBoundingClientRect();
+      const c = counts?.getBoundingClientRect();
+      const t = theme?.getBoundingClientRect();
+
+      return {
+        wordmarkToChips: w && ch ? Math.round(ch.left - w.right) : null,
+        countsToTheme: c && t ? Math.round(t.left - c.right) : null,
+      };
+    });
+
+  test('the gap either side of the header survives a collapse', async ({ page }) => {
+    await page.goto('/?sim=0');
+
+    const leftRail = page.getByRole('navigation', { name: 'Projects, work, and agents' });
+    const rightRail = page.getByRole('complementary', { name: 'Activity' });
+    await expect(leftRail).toBeVisible();
+    await expect(rightRail).toBeVisible();
+
+    const open = await gaps(page);
+
+    /*
+      Both gaps must be real before the comparison means anything. Zero on
+      either side would make "unchanged" trivially true — and zero is precisely
+      what the bug produced, so an unguarded equality check would have passed
+      against the broken build.
+    */
+    expect(open.wordmarkToChips).toBeGreaterThan(0);
+    expect(open.countsToTheme).toBeGreaterThan(0);
+
+    // Clicking an already-active tab collapses its rail: Projects on the left,
+    // Inbox on the right, are the two defaults.
+    await page.getByRole('tab', { name: /Projects/ }).click();
+    await expect(leftRail).toHaveCSS('width', '44px');
+    await page.getByRole('tab', { name: /^Inbox/ }).click();
+    await expect(rightRail).toHaveCSS('width', '44px');
+
+    expect(await gaps(page)).toEqual(open);
+  });
+});

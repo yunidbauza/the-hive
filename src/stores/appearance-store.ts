@@ -422,7 +422,7 @@ export function activeThemeOf(
  * ## Why the properties, and not a width prop on each rail
  *
  * `--cc-rail-w-left` / `--cc-rail-w-right` are not only read by the rails.
- * `header.tsx` sizes its right-hand button cluster with
+ * `header.tsx` used to size its right-hand button cluster with
  * `calc(var(--cc-rail-w-right) - 1rem)` so the buttons sit over the activity
  * rail rather than straddling its border. Deliver the width by any other route
  * and the rails move while the header stays where it was — a bug that looks
@@ -442,8 +442,33 @@ export function activeThemeOf(
  * has no notion of a strip — the inline property is the only thing that can
  * paint one. The `widths.right === 0` guard still catches the unmounted case
  * and is untouched.
+ *
+ * ## `--cc-rail-w-left-open` / `--cc-rail-w-right-open`
+ *
+ * A second pair, carrying `openWidths` — the same clamp, computed with both
+ * rails forced `expanded` regardless of what either is actually doing. They
+ * exist because `header.tsx` used to size its zones from the plain pair above,
+ * and a **collapsed** rail paints those at 44px: a header zone claiming that
+ * width shrank to a box its content did not fit in, and the neighbouring zone
+ * slid over to fill the gap. The plain pair is correct for the rails
+ * themselves, which really are 44px wide when collapsed; it was never correct
+ * for a header that must not reflow every time a rail is toggled. The `-open`
+ * pair is what lets the header claim "where this rail's edge is when
+ * expanded" as a fact independent of the rail's current display, so collapsing
+ * one never moves anything beside it.
+ *
+ * The same remove-vs-default rule applies, for the same reason: an `-open`
+ * property sitting at the density minimum is removed rather than written, so a
+ * later density change still reaches it through the stylesheet instead of
+ * finding a stale inline value. Unlike the plain pair, `-open` never takes an
+ * unconditional write branch — it is never asked to paint a 44px strip, since
+ * forcing `expanded` is the entire point.
  */
-export function applyRailWidths(widths: RailWidths, min: { left: number; right: number }) {
+export function applyRailWidths(
+  widths: RailWidths,
+  min: { left: number; right: number },
+  openWidths: RailWidths,
+) {
   if (typeof document === 'undefined') return;
 
   const { style } = document.body;
@@ -464,6 +489,18 @@ export function applyRailWidths(widths: RailWidths, min: { left: number; right: 
   } else {
     style.setProperty('--cc-rail-w-right', `${widths.right}px`);
   }
+
+  if (isRailDefault(openWidths.left, min.left)) {
+    style.removeProperty('--cc-rail-w-left-open');
+  } else {
+    style.setProperty('--cc-rail-w-left-open', `${openWidths.left}px`);
+  }
+
+  if (isRailDefault(openWidths.right, min.right)) {
+    style.removeProperty('--cc-rail-w-right-open');
+  } else {
+    style.setProperty('--cc-rail-w-right-open', `${openWidths.right}px`);
+  }
 }
 
 /**
@@ -478,10 +515,15 @@ export function applyRailWidths(widths: RailWidths, min: { left: number; right: 
  * Takes its whole input rather than reading the store, because half of that
  * input is not store state — the window's width belongs to the DOM and
  * `showActivityRail` belongs to `ui-store`, which this store may not read.
+ *
+ * Also derives the `-open` pair `applyRailWidths` now writes, the same way
+ * `use-rail-widths` does: the same input, run through `clampRailWidths` a
+ * second time with both rails forced `expanded`.
  */
 export function syncRailWidths(input: RailWidthInput): RailWidths {
   const widths = clampRailWidths(input);
-  applyRailWidths(widths, input.min);
+  const openWidths = clampRailWidths({ ...input, left: 'expanded', right: 'expanded' });
+  applyRailWidths(widths, input.min, openWidths);
   return widths;
 }
 

@@ -117,9 +117,32 @@ export function useRailWidths(): RailWidths {
     [railWidthLeft, railWidthRight, min, windowWidth, railCollapsedLeft, rightDisplay],
   );
 
+  /*
+    The same clamp, run a second time with both rails forced to `expanded`.
+
+    `header.tsx` aligns to where a rail's edge sits when it is open, never to
+    where a collapsed 44px strip happens to end — see `applyRailWidths` on why.
+    That means the header needs the expanded answer regardless of what either
+    rail is actually doing right now, and `clampRailWidths` is pure, so getting
+    it is a second call with different `display` flags rather than a second
+    subscription to anything.
+  */
+  const openWidths = useMemo(
+    () =>
+      clampRailWidths({
+        storedLeft: railWidthLeft,
+        storedRight: railWidthRight,
+        min,
+        windowWidth,
+        left: 'expanded',
+        right: 'expanded',
+      }),
+    [railWidthLeft, railWidthRight, min, windowWidth],
+  );
+
   useLayoutEffect(() => {
-    applyRailWidths(widths, min);
-  }, [widths, min]);
+    applyRailWidths(widths, min, openWidths);
+  }, [widths, min, openWidths]);
 
   /**
    * The bounds handed to each handle, which are **not** simply the constants.

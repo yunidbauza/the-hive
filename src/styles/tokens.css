@@ -178,6 +178,23 @@
 
   --cc-rail-w-left: 320px;
   --cc-rail-w-right: 316px;
+  /**
+   * The same two widths, as they are when the rail is **open**.
+   *
+   * A collapsed rail paints the pair above at `RAIL_STRIP` — 44px — which is
+   * the truth for the rail and the wrong number for anything that merely wants
+   * to line up with where the rail's edge lives. `header.tsx` is the caller
+   * that cares: sizing its zones from the plain pair made the whole header
+   * reflow every time a rail was toggled, sliding the chips into the wordmark
+   * and the counts into the theme button.
+   *
+   * These must stay in lockstep with the pair above — `rail-width.test.ts`
+   * asserts it, the same way it already asserts both against `RAIL_MIN`.
+   * `applyRailWidths` overrides them inline only when a rail has been dragged
+   * off its default, so these values are what is painted the rest of the time.
+   */
+  --cc-rail-w-left-open: 320px;
+  --cc-rail-w-right-open: 316px;
   --cc-rail-gap: 18px;
   --cc-list-gap: 10px;
   --cc-list-gap-sm: 8px;
@@ -192,6 +209,9 @@
 body[data-density='compact'] {
   --cc-rail-w-left: 284px;
   --cc-rail-w-right: 276px;
+  /** In lockstep with the pair above — see the `:root` block. */
+  --cc-rail-w-left-open: 284px;
+  --cc-rail-w-right-open: 276px;
   --cc-rail-gap: 11px;
   --cc-list-gap: 6px;
   --cc-list-gap-sm: 5px;

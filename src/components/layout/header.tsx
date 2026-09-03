@@ -10,7 +10,6 @@ import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
 import { isDesktop } from '@config/runtime';
 import {
-  useRailWidthState,
   useSetRailCollapsed,
   useTheme,
   useThemeActions,
@@ -96,14 +95,6 @@ export function Header() {
     HIVE-79.
   */
   const showActivityRail = useShowActivityRail();
-  /*
-    Collapse also removes the line the cluster is meant to claim, and it lives
-    in the other store from `showActivityRail` — mount and collapse are
-    independent facts, so both are read here rather than one standing in for
-    the other. See the cluster's own comment for why a collapsed rail cannot
-    take the same branch as a mounted, expanded one.
-  */
-  const { railCollapsedLeft, railCollapsedRight } = useRailWidthState();
 
   return (
     <header
@@ -131,22 +122,30 @@ export function Header() {
     >
       <div className="flex min-w-0 flex-1 items-center">
         {/*
-          The brand claims exactly the left rail's width, so whatever follows it
-          starts on the rail's trailing edge — the same vertical line the center
-          stage begins on. Without this the chips float wherever the wordmark
-          happens to end, aligned to nothing.
+          The brand claims exactly the left rail's width **at its expanded
+          size**, so whatever follows it starts on that line — the same
+          vertical line the center stage begins on when the rail is open.
+          Without this the chips float wherever the wordmark happens to end,
+          aligned to nothing.
 
-          The width is the rail's own token minus this header's `px-4`, since
-          the rail starts at the viewport edge and the header's content box
-          does not. The token, not a number: `--cc-rail-w-left` is what the
-          rail paints with — 320px comfortable, 284px compact, or whatever the
-          user dragged it to — and a literal here was right in one density and
-          20px wrong in the other, and wrong by the drag's delta after every
-          drag. Same derivation as the controls cluster on the right, and the
-          same fallback: a **collapsed** rail paints the token at `RAIL_STRIP`
-          (44px), and 28px cannot hold a wordmark, so collapse drops the claim
-          and the brand is simply content-sized. `chip-alignment.spec.ts`
-          measures the brand against the rail so the derivation cannot drift.
+          The width is `--cc-rail-w-left-open` minus this header's own `px-4`,
+          since the rail starts at the viewport edge and the header's content
+          box does not. That token, not the plain `--cc-rail-w-left` and not a
+          literal: `--cc-rail-w-left` is whatever the rail is painting *right
+          now*, and a collapsed rail paints it at 44px — a width this zone
+          could not fit a wordmark into, so the chips slid off it and landed
+          on the logo. `-open` always reports the expanded width — 320px
+          comfortable, 284px compact, or whatever the user dragged it to —
+          regardless of whether the rail currently is. Same derivation as the
+          controls cluster on the right.
+
+          The rail's own edge disagrees with this line for as long as it is
+          collapsed, and that is deliberate: a header that reflows every time
+          a rail is toggled is worse than one aligned to an edge that is only
+          there some of the time. `chip-alignment.spec.ts` measures the brand
+          against the expanded rail so the derivation cannot drift, and
+          `rail-alignment.spec.ts` proves the gap to the first chip survives a
+          collapse unchanged.
         */}
         <div
           /*
@@ -164,10 +163,7 @@ export function Header() {
            * stays, because it is what puts the chips on the rail's edge, and
            * that was never about the lights.
            */
-          className={cn(
-            'flex shrink-0 items-center',
-            !railCollapsedLeft && 'w-[calc(var(--cc-rail-w-left)-1rem)]',
-          )}
+          className="flex w-[calc(var(--cc-rail-w-left-open)-1rem)] shrink-0 items-center"
         >
           <BrandBlock />
         </div>
@@ -238,22 +234,28 @@ export function Header() {
           With the rail hidden there is no column to claim, so the width drops
           away and the cluster is simply flush right.
 
-          A **collapsed** rail needs that same fallback, not the claimed
-          column. Collapse paints `--cc-rail-w-right` at `RAIL_STRIP` — 44px,
-          room for one icon — because that property is also what the rail
-          itself is sized with; this cluster reusing it was only ever valid
-          while the value meant "the panel's own width". Claim a 44px column
-          here and the ~262px of `shrink-0` children above do not shrink to
-          fit it — they overflow it and land on the counts to their left. So
-          the column is claimed only when the rail is both mounted **and**
-          expanded; either `showActivityRail` or `railCollapsedRight` failing
-          drops the width exactly like the hidden case above.
+          The `-open` token, not the plain one, and that distinction is the
+          whole point. Collapse paints `--cc-rail-w-right` at `RAIL_STRIP` —
+          44px, room for one icon — because that property is what the *rail*
+          is sized with, and a collapsed rail really is 44px wide. Sizing this
+          cluster from it went wrong in both directions: claiming a 44px column
+          let the ~262px of `shrink-0` children overflow onto the counts, and
+          dropping the column instead let the cluster shrink to its content, so
+          the counts slid right and ended flush against the theme button.
+
+          `--cc-rail-w-right-open` is the same width with collapse ignored, so
+          this column is a fixed fact about where the rail's edge lives rather
+          than a reading of what the rail is doing this second. The header then
+          holds still through a collapse, which is worth more than tracking an
+          edge that is only there some of the time — while collapsed, the
+          counts deliberately stop short of the rail's real 44px border.
+
+          Only `showActivityRail` still gates it: an unmounted rail has no edge
+          to align to at all, and that fallback is unchanged.
         */
         className={cn(
           'flex shrink-0 items-center justify-end gap-[14px]',
-          showActivityRail &&
-            !railCollapsedRight &&
-            'w-[calc(var(--cc-rail-w-right)-1rem)]',
+          showActivityRail && 'w-[calc(var(--cc-rail-w-right-open)-1rem)]',
         )}
       >
         <button

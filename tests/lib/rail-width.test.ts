@@ -87,6 +87,46 @@ describe('RAIL_MIN', () => {
   });
 
   /**
+   * `--cc-rail-w-*-open` must equal `--cc-rail-w-*` in every density block.
+   *
+   * The `-open` pair is the same width with collapse ignored — it exists so
+   * `header.tsx` can align to where a rail's edge sits without following a
+   * collapsed rail down to 44px. "The same width" is the entire contract, and
+   * it is expressed twice in `tokens.css`, so it can drift.
+   *
+   * The stakes are specific rather than cosmetic: `applyRailWidths` *removes*
+   * an `-open` property when it equals the density default, letting the
+   * stylesheet take over. If the stylesheet's value were wrong — or the token
+   * missing altogether — the header's `calc()` would resolve against nothing,
+   * the `width` declaration would be dropped as invalid, and the zone would
+   * fall back to its content width. That is exactly the reflow the pair was
+   * added to prevent, reappearing for every user who has never dragged a rail.
+   */
+  it('keeps the -open tokens in lockstep with the widths they mirror', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8');
+
+    const pairsIn = (block: string) => ({
+      left: Number(/--cc-rail-w-left:\s*(\d+)px/.exec(block)?.[1]),
+      leftOpen: Number(/--cc-rail-w-left-open:\s*(\d+)px/.exec(block)?.[1]),
+      right: Number(/--cc-rail-w-right:\s*(\d+)px/.exec(block)?.[1]),
+      rightOpen: Number(/--cc-rail-w-right-open:\s*(\d+)px/.exec(block)?.[1]),
+    });
+
+    const compactAt = css.indexOf("body[data-density='compact']");
+
+    for (const block of [css.slice(0, compactAt), css.slice(compactAt)]) {
+      const { left, leftOpen, right, rightOpen } = pairsIn(block);
+
+      // Not NaN — a missing token is the failure mode that matters most here,
+      // and `NaN === NaN` is false, so an absent property fails this outright.
+      expect(Number.isFinite(leftOpen)).toBe(true);
+      expect(Number.isFinite(rightOpen)).toBe(true);
+      expect(leftOpen).toBe(left);
+      expect(rightOpen).toBe(right);
+    }
+  });
+
+  /**
    * **The invariant the whole feature rests on.**
    *
    * The desktop window cannot open narrower than `MIN_WINDOW_SIZE.width`, so as

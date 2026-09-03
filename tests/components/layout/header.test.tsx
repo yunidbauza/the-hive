@@ -113,7 +113,8 @@ describe('Header', () => {
       const controls = screen.getByRole('banner').children[2];
       // A calc over the token, not a literal: the rail is 316px comfortable and
       // 276px compact, and a hardcoded number would be wrong in one of them.
-      expect(controls).toHaveClass('w-[calc(var(--cc-rail-w-right)-1rem)]');
+      // The `-open` token specifically — see the collapsed case below.
+      expect(controls).toHaveClass('w-[calc(var(--cc-rail-w-right-open)-1rem)]');
     });
 
     /**
@@ -127,31 +128,33 @@ describe('Header', () => {
       render(<Header />);
 
       const controls = screen.getByRole('banner').children[2];
-      expect(controls).not.toHaveClass('w-[calc(var(--cc-rail-w-right)-1rem)]');
+      expect(controls).not.toHaveClass('w-[calc(var(--cc-rail-w-right-open)-1rem)]');
     });
 
     /**
-     * A **collapsed** rail paints `--cc-rail-w-right` at 44px — one icon's
-     * worth of strip, not a panel. Claiming that as the cluster's own column
-     * would size a `shrink-0` box (~262px of buttons) down to 28px of usable
-     * width, and the buttons cannot shrink — they overflow onto the counts
-     * beside them. So collapse must take the same flush-right fallback as an
-     * unmounted rail, not the claimed-column branch.
+     * A **collapsed** rail keeps the column, and that is the whole point of
+     * the `-open` token.
      *
-     * This only proves anything if it can tell "claims the column" apart from
-     * "does not" — the class assertion mirrors the one two tests up that
-     * pins the *expanded* case, so a regression that goes back to always
-     * claiming the column fails this one the same way it would fail that one
-     * in reverse.
+     * Both other answers were tried and are wrong. Sizing from the plain
+     * `--cc-rail-w-right`, which collapse paints at 44px, left a `shrink-0`
+     * box of ~262px of buttons overflowing a 28px column onto the counts.
+     * Dropping the column instead — the flush-right fallback the hidden case
+     * takes — let the cluster shrink to its content, so the counts slid 31px
+     * right and ended flush against the theme button.
+     *
+     * `--cc-rail-w-right-open` is the rail's width with collapse ignored, so
+     * the column is the same in both states and nothing in the header moves
+     * when a rail is toggled. Hidden is still the one case that drops it,
+     * which is what the test above pins.
      */
-    it('drops that width when the activity rail is collapsed, not just hidden', () => {
+    it('keeps the claimed column when the activity rail is collapsed', () => {
       useUiStore.setState({ activeTab: 'hero-refresh', showActivityRail: true });
       useAppearanceStore.getState().setRailCollapsed('right', true);
 
       render(<Header />);
 
       const controls = screen.getByRole('banner').children[2];
-      expect(controls).not.toHaveClass('w-[calc(var(--cc-rail-w-right)-1rem)]');
+      expect(controls).toHaveClass('w-[calc(var(--cc-rail-w-right-open)-1rem)]');
     });
 
     it('gives the brand exactly the rail’s width, so the chips start on its edge', () => {
@@ -168,27 +171,32 @@ describe('Header', () => {
       */
       const [left] = Array.from(screen.getByRole('banner').children);
       expect(left.firstElementChild).toHaveClass(
-        'w-[calc(var(--cc-rail-w-left)-1rem)]',
+        'w-[calc(var(--cc-rail-w-left-open)-1rem)]',
         'shrink-0',
       );
     });
 
     /**
-     * A collapsed left rail paints the token at 44px, and 28px cannot hold a
-     * wordmark — the same fallback the controls cluster takes for a collapsed
-     * activity rail. The claim drops and the brand is content-sized.
+     * A collapsed left rail keeps the column too — the mirror of the activity
+     * rail's case above, and for the same reason.
+     *
+     * Dropping it let the brand zone shrink to the wordmark, which put the
+     * chips flush against the logo: the measured gap went from 168px to zero.
+     * Sizing from the plain token instead would have claimed 28px for a
+     * wordmark that does not fit in it. `--cc-rail-w-left-open` is the width
+     * with collapse ignored, so the chips start on the same line either way.
      */
-    it('drops the claimed width when the left rail is collapsed', () => {
+    it('keeps the claimed width when the left rail is collapsed', () => {
       useUiStore.setState({ activeTab: 'hero-refresh' });
       useAppearanceStore.getState().setRailCollapsed('left', true);
 
       render(<Header />);
 
       const [left] = Array.from(screen.getByRole('banner').children);
-      expect(left.firstElementChild).not.toHaveClass(
-        'w-[calc(var(--cc-rail-w-left)-1rem)]',
+      expect(left.firstElementChild).toHaveClass(
+        'w-[calc(var(--cc-rail-w-left-open)-1rem)]',
+        'shrink-0',
       );
-      expect(left.firstElementChild).toHaveClass('shrink-0');
     });
 
     /**
