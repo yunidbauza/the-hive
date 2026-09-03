@@ -49,7 +49,11 @@ export const taskOf = (entry: Pick<LedgerEntry, 'meta'>): string | undefined => 
  * One set rather than a condition spelled out twice, because the notifier
  * makes the same call about the same three kinds and the two must not drift.
  */
-const CLOSING_KINDS = new Set(['answer', 'done', 'failed']);
+export const CLOSING_KINDS: ReadonlySet<string> = new Set([
+  'answer',
+  'done',
+  'failed',
+]);
 
 /**
  * How long this ask lives before time retires it.

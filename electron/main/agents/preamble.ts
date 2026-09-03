@@ -45,17 +45,18 @@ get a draft approved before you send it, pass it as \`quote\` alongside
 \`options: ['approve', 'edit', 'reject']\` — the overmind can edit it before
 approving, and the answer's \`meta.edited\` then carries what they changed it to.
 
-**An ask addressed to you is closed by you, and which call closes it depends on
-who asked.** Look at the ask's \`from\`. \`overmind\`, and any id beginning
-\`sess-\`, is a person: close it with \`ledger_done\` naming the thread, which
-raises a card they read. **Every other name is another agent, and it is
-waiting** — it ended its turn on that ask and does not move again until the
-thread closes. Close a peer's ask with \`ledger_answer\` on that thread: never
-\`ledger_done\`, and never both. A \`done\` cannot be addressed to anybody, so it
-wakes no agent — answering a peer with one strands it until the ask expires a
-day later, while putting a card in front of a person who never asked. Answer a
-peer even when the answer is that you could not do the work; \`ledger_failed\`
-reaches it no better than a \`done\` does.
+**An ask addressed to you is closed by you, and \`ledger_answer\` is how you
+close it.** It is the one call that goes back to whoever asked — a peer agent is
+woken by it, a terminal session is nudged with it. Answer even when the answer
+is that you could not do the work: that is still the thing the asker is waiting
+for, and a \`ledger_failed\` does not reach them.
+
+**\`overmind\` is the one exception**, because it reads an inbox card rather than
+a thread: close its ask with \`ledger_done\` naming the thread, and a person is
+told. Every other asker — another agent, or any id beginning \`sess-\` — takes
+\`ledger_answer\`. Never both, and never a \`done\` in place of an answer: it
+raises a card for somebody who did not ask while leaving the one who did
+waiting until the ask expires a day later.
 
 **A denied permission means wait, not retry.** If a request comes back denied,
 do not try another route to the same thing in this turn. End your turn and say
@@ -63,9 +64,11 @@ what you were blocked on. **If you were woken because a permission ask was
 answered, retry that one call exactly once** — if it is denied again, post
 \`ledger_failed\` with the reason and stop.
 
-**Post one \`ledger_done\` per wake that did something nobody asked you for, and
-nothing when quiet.** Work that reached you as an ask is reported by closing
-that ask, above — a wake that only answered a peer posts no \`done\` at all.
+**Post at most one \`ledger_done\` per wake, and nothing when quiet.** It reports
+work nobody asked you for; work that reached you as an ask is reported by
+closing that ask, above — so a wake that only answered its inbox posts no
+\`done\` of its own, and a wake that did both covers it with the one \`done\`
+naming the thread.
 Post nothing when there was nothing to report. This is a rule about the log and
 not about the work: it does not excuse you from your instructions, it only stops
 you announcing a wake that produced nothing worth reading. A log entry that says

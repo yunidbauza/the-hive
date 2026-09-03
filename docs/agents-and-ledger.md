@@ -250,24 +250,43 @@ made it are two different things, and only `decide()` above does the second. It
 ignores a broadcast, so an unaddressed close wakes nobody however correctly it
 closed the thread.
 
-`Ledger.append` is therefore what addresses all three: a close naming a thread
-defaults its `to` to the ask's `from` unless the writer is the asker. Neither
-`ledger_done` nor `ledger_failed` exposes a `to` in its schema, and before this
-default they never carried one — so `done` and `failed` sat in `WAKING_KINDS`
+`Ledger.append` is therefore what addresses all three, and it addresses a
+threaded `done`/`failed` to **the other party**: to the ask's `from` when the
+party that was asked writes it, and to the ask's `to` when the asker itself
+does. Both directions, because `WAKING_KINDS` promises both — the second is the
+abandonment it actually names, and addressing only the first left that sentence
+describing nothing. A broadcast ask has no `ask.to`, so abandoning one stays a
+broadcast.
+
+Neither `ledger_done` nor `ledger_failed` exposes a `to` in its schema, and
+before this default they never carried one — so both sat in `WAKING_KINDS`
 unable to wake anything, and an agent that asked a peer and got a `done` back
 waited out the full 24-hour expiry. `acr` reviewing a PR for `pr-patrol` is the
 case that found it: the review was posted to GitHub, the verdict never reached
 Slack, and `pr-patrol` read `asking` for a day.
 
+**The party rule covers all three closing kinds, and has to.** It guarded
+`answer` alone while a third party's threaded `done` was inert — it closed the
+thread but reached nobody. Addressed, it would wake the asker with a false
+completion and dismiss its card, so the repair would open a hole if the guard
+did not move with it.
+
+Addressing narrows `visibleTo`: a threaded close used to be a broadcast every
+party could read, and is now visible to the two parties and the overmind alone.
+That is the boundary the log already draws for `answer`. The renderer is
+unaffected (it reads through `CH.ledgerList` → `ledger.read`, unfiltered), and
+`openAsks`/`claims` derive from the whole log before filtering; what is given up
+is a third agent learning from the log that a peer's review landed.
+
 The default makes the wrong call recoverable; it does not make it right.
-`ledger_answer` is the call for a peer's ask, because it is also the one that
-does *not* raise an inbox card at a person who never asked (`notify.ts` maps
-every agent `done`/`failed` to `agent.done`/`agent.failed`, `to` or no `to`).
-`AGENT_PREAMBLE` and the two tool descriptions say so in the same words, and
-which of the two applies is decided from the asker's id alone: `overmind` and
-the `sess-` prefix are both reserved against agent names (`isReservedAgentName`
-in `agent-contract.ts`), so "is my asker a person?" is answerable from
-`ledger_read` with no second tool call.
+`ledger_answer` is the call for an ask from anyone but the overmind, because it
+is also the one that does *not* raise an inbox card at a person who never asked
+(`notify.ts` maps every agent `done`/`failed` to `agent.done`/`agent.failed`,
+`to` or no `to`). The split is `overmind` against everyone else, **not** person
+against agent: a `sess-` party is a live terminal, and `deliver.ts`'s
+`DELIVERABLE` is `['ask', 'answer']`, so a `done` addressed to a session reaches
+no terminal, no card and no wake. `AGENT_PREAMBLE` and the tool descriptions say
+so in the same words.
 
 **`wake.on: [ledger]` is a gate, and it is checked first.** Settings promises
 that unticking it means "a question addressed to it waits unread until then", so

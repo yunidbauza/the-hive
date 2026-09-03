@@ -42,30 +42,42 @@ describe('AGENT_PREAMBLE', () => {
     something". An agent following it literally can never close an ask made of
     it. These three assertions are the rule that was missing.
   */
-  it('names ledger_answer as the way to close a peer ask', () => {
+  it('names ledger_answer as the way to close an ask', () => {
     expect(AGENT_PREAMBLE).toContain('ledger_answer');
     // `\s+`, not a literal space: the source is hard-wrapped prose and the
     // clause straddles a line break.
-    expect(AGENT_PREAMBLE).toMatch(/never\s+`ledger_done`, and never both/i);
+    expect(AGENT_PREAMBLE).toMatch(/`ledger_answer`\s+is how you\s+close it/i);
   });
 
   /*
-    Stated as a shape test on the asker's id, not as "ask the directory who is
-    an agent". `assertAgentName` reserves `overmind` and the `sess-` prefix
-    (`guards.ts`, `isReservedAgentName`), so the id alone is a guaranteed
-    discriminator — and one an agent can apply to what `ledger_read` already
-    handed it, with no extra tool call to skip.
+    The rule is `overmind` versus everyone else, and NOT "a person versus an
+    agent" — which is what this said first, and it was wrong in a way that
+    reproduced the original bug one party over.
+
+    A `sess-` party is a live terminal, and the only route into one is
+    `deliver.ts`, whose `DELIVERABLE` is `['ask', 'answer']`. `scheduler.onEntry`
+    returns early on `!isAgent(to)` and the expiry sweep wakes only
+    `isAgent(ask.from)`, so a `done` addressed to a session reaches nothing at
+    all — the session would wait forever, exactly as `pr-patrol` did. Only
+    `overmind` reads a card, so only `overmind` takes a `done`.
   */
-  it('gives the person-or-agent test in terms of the asker id', () => {
-    expect(AGENT_PREAMBLE).toContain('overmind');
-    expect(AGENT_PREAMBLE).toContain('sess-');
+  it('sends every asker but the overmind to ledger_answer', () => {
+    expect(AGENT_PREAMBLE).toMatch(/`overmind` is the one exception/i);
+    expect(AGENT_PREAMBLE).toMatch(/another agent, or any id beginning `sess-`/i);
+    expect(AGENT_PREAMBLE).toMatch(/takes\s+`ledger_answer`/i);
   });
 
+  /*
+    `toContain('overmind')` was the first version of the assertion above and
+    proved nothing: the word already appears in the `ledger_ask` paragraph on
+    `origin/main`, so half the test passed before the change existed. Asserted
+    on the new sentences instead, each of which is absent from `main`.
+  */
   it('stops ledger_done from claiming every wake that did something', () => {
     expect(AGENT_PREAMBLE).not.toContain(
       'Post one `ledger_done` per wake that did something, and',
     );
-    expect(AGENT_PREAMBLE).toMatch(/did something nobody asked you for/);
+    expect(AGENT_PREAMBLE).toMatch(/at most one `ledger_done` per wake/i);
   });
 
   it('tells the agent its own instructions are standing work', () => {
