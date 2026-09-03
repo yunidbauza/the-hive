@@ -12,7 +12,12 @@ import {
   useSetRailCollapsed,
   useToggleRailCollapsed,
 } from '@stores/appearance-store';
-import { useAgentAskCount, useTicketCount } from '@stores/hive-store';
+import {
+  useAgentCount,
+  useAgentFleetStatus,
+  useTicketCount,
+  type FleetStatus,
+} from '@stores/hive-store';
 import { useLeftTab, useSetLeftTab, type LeftTab } from '@stores/ui-store';
 
 /**
@@ -40,11 +45,27 @@ const PANELS: Record<LeftTab, ComponentType> = {
   agents: AgentsPanel,
 };
 
+/**
+ * What the Agents dot means, said out loud.
+ *
+ * The dot carries no text, so this is the whole of its meaning for anyone not
+ * reading the colour. Each phrase names the *fleet*, not the state — "an agent
+ * is working" rather than "working", because the tab is a summary of several
+ * rows and a bare status word beside a tab label reads as a claim about the
+ * tab itself.
+ */
+const FLEET_PHRASE: Record<FleetStatus, string> = {
+  asking: 'an agent is waiting on you',
+  failed: 'an agent needs attention',
+  working: 'an agent is working',
+};
+
 export function LeftRail() {
   const leftTab = useLeftTab();
   const setLeftTab = useSetLeftTab();
   const ticketCount = useTicketCount();
-  const askCount = useAgentAskCount();
+  const agentCount = useAgentCount();
+  const fleetStatus = useAgentFleetStatus();
   const { railCollapsedLeft } = useRailWidthState();
   const setRailCollapsed = useSetRailCollapsed();
   const toggleRailCollapsed = useToggleRailCollapsed();
@@ -60,16 +81,24 @@ export function LeftRail() {
     },
     {
       /*
-        Open asks *from agents* — not the Inbox's unread count and not
-        `useOpenAskCount`, which counts a session's asks too (HIVE-116). Three
-        badges on this screen, three genuinely different numbers; this one
-        answers "how many of my tenants are stuck on me?".
+        Two marks, because the tab answers two questions on two clocks.
+        The badge is an inventory and reads like Work's beside it;
+        the dot is the live one, and it is what survives the rail collapsing to
+        a 44px strip where the label and the chip are both gone.
+
+        The badge used to hold `useAgentAskCount()` — a real number, and zero
+        almost all day, so a pane holding five agents announced nothing at all.
       */
       id: 'agents',
       label: 'Agents',
       icon: Robot,
-      badgeCount: askCount,
-      badgeLabel: 'agents waiting on an answer',
+      badgeCount: agentCount,
+      // `Badge` composes `${count} ${label}`, so the noun is inflected here
+      // rather than leaving a screen reader with "1 agents".
+      badgeLabel: agentCount === 1 ? 'agent' : 'agents',
+      ...(fleetStatus === undefined
+        ? {}
+        : { dot: { status: fleetStatus, label: FLEET_PHRASE[fleetStatus] } }),
     },
   ];
 

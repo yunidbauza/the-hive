@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { TabBar } from '@components/ui/tab-bar';
+import { TabBar, type Tab } from '@components/ui/tab-bar';
 import { TooltipProvider } from '@components/ui/tooltip';
 
 /**
@@ -181,6 +181,168 @@ describe('TabBar', () => {
     );
 
     expect(screen.getByText('4').parentElement).toHaveClass('bg-chip');
+  });
+});
+
+/**
+ * The second, orthogonal signal: a count answers *how many things
+ * are in there*, a dot answers *is anything happening right now*. They change
+ * on different clocks, so a tab may carry both — and the dot is the half that
+ * survives a collapse to 44px.
+ */
+describe('the status dot', () => {
+  const dotted = (over: Partial<Tab<'delta'>> = {}): Tab<'delta'>[] => [
+    {
+      id: 'delta',
+      label: 'Delta',
+      icon: Circle,
+      badgeCount: 3,
+      badgeLabel: 'widgets',
+      dot: { status: 'working', label: 'one is running' },
+      ...over,
+    },
+  ];
+
+  const dot = (tab: HTMLElement) => tab.querySelector('[data-slot="tab-dot"]');
+
+  it('renders no dot for a tab that asks for none', () => {
+    render(
+      <TabBar tabs={TABS} active="alpha" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(dot(screen.getByRole('tab', { name: 'Alpha' }))).toBeNull();
+  });
+
+  /*
+    Taken from `STATUS_FILL`, never hand-written, so the tab's summary can
+    never drift to a different colour from the agent row it summarises.
+  */
+  it('paints the dot with the status’s own fill', () => {
+    render(
+      <TabBar tabs={dotted()} active="delta" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(dot(screen.getByRole('tab', { name: /Delta/ }))).toHaveClass(
+      'bg-green',
+    );
+  });
+
+  it('pulses only while working', () => {
+    const { rerender } = render(
+      <TabBar tabs={dotted()} active="delta" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(dot(screen.getByRole('tab', { name: /Delta/ }))).toHaveClass(
+      'animate-ccpulse',
+    );
+
+    rerender(
+      <TabBar
+        tabs={dotted({ dot: { status: 'asking', label: 'one is asking' } })}
+        active="delta"
+        onSelect={vi.fn()}
+        label="Sections"
+      />,
+    );
+
+    const asking = dot(screen.getByRole('tab', { name: /Delta/ }));
+    expect(asking).toHaveClass('bg-amber');
+    expect(asking).not.toHaveClass('animate-ccpulse');
+  });
+
+  /*
+    Colour alone never carries state — the rule `status-dot.ts` is written
+    around. A tab is named by its content, so the phrase rides in an sr-only
+    span rather than an `aria-label` that would swallow the label and count.
+  */
+  it('folds the dot’s meaning into the accessible name, after the count', () => {
+    render(
+      <TabBar tabs={dotted()} active="delta" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(
+      screen.getByRole('tab', { name: 'Delta 3 widgets one is running' }),
+    ).toBeInTheDocument();
+  });
+
+  it('carries the dot without a badge', () => {
+    render(
+      <TabBar
+        tabs={dotted({ badgeCount: 0 })}
+        active="delta"
+        onSelect={vi.fn()}
+        label="Sections"
+      />,
+    );
+
+    const tab = screen.getByRole('tab', { name: 'Delta one is running' });
+    expect(dot(tab)).not.toBeNull();
+    expect(tab).not.toHaveTextContent('3');
+  });
+});
+
+describe('the status dot in strip orientation', () => {
+  const stripTabs: Tab<'delta'>[] = [
+    {
+      id: 'delta',
+      label: 'Delta',
+      icon: Circle,
+      badgeCount: 3,
+      badgeLabel: 'widgets',
+      dot: { status: 'failed', label: 'one has failed' },
+    },
+  ];
+
+  const strip = (tabs: Tab<'delta'>[]) =>
+    render(
+      <TooltipProvider>
+        <TabBar
+          tabs={tabs}
+          active="delta"
+          onSelect={vi.fn()}
+          label="Sections"
+          orientation="strip"
+        />
+      </TooltipProvider>,
+    );
+
+  /*
+    The pip is normally derived from the badge count, which is an inventory
+    and says nothing about whether anything is happening. Where a tab supplies
+    a live status, that is the more useful thing for 44px to spend its one
+    mark on.
+  */
+  it('lets the status win the corner pip over the badge tone', () => {
+    strip(stripTabs);
+
+    expect(
+      screen
+        .getByRole('tab', { name: /Delta/ })
+        .querySelector('[data-slot="tab-dot"]'),
+    ).toHaveClass('bg-red');
+  });
+
+  it('draws the pip even when the count is zero', () => {
+    strip([{ ...stripTabs[0]!, badgeCount: 0 }]);
+
+    expect(
+      screen
+        .getByRole('tab', { name: /Delta/ })
+        .querySelector('[data-slot="tab-dot"]'),
+    ).not.toBeNull();
+  });
+
+  it('appends the dot’s meaning to the label and the tooltip alike', () => {
+    strip(stripTabs);
+
+    const tab = screen.getByRole('tab', {
+      name: 'Delta, 3 widgets, one has failed',
+    });
+    fireEvent.focus(tab);
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      tab.getAttribute('aria-label') ?? '',
+    );
   });
 });
 
