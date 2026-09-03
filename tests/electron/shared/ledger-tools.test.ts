@@ -101,6 +101,42 @@ describe('ledger-tools', () => {
     }
   });
 
+  /*
+    The other two-thirds of the `acr` → `pr-patrol` stall (see
+    `preamble.test.ts`). `ledger_done` read "Post exactly one of these per wake
+    that did something" — unconditional, in the schema the model reads — while
+    `ledger_answer` read "Answer an ask someone made of you", which parses as
+    being about *questions*. An agent handed a job rather than a question had
+    two sources telling it to use `done` and one, 230 lines into its own
+    definition, telling it not to.
+
+    Asserted on the descriptions because the descriptions are the artifact:
+    these strings are what reaches the model, and `ledger-tools.ts` is
+    deliberately the only copy of them.
+  */
+  it('tells the model that only an answer reaches another agent', () => {
+    const answer = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_answer');
+
+    expect(answer?.description).toMatch(/only call that reaches another agent/i);
+    expect(answer?.description).toMatch(/wakes it/i);
+  });
+
+  it('sends a peer ask away from ledger_done and ledger_failed', () => {
+    for (const name of ['ledger_done', 'ledger_failed']) {
+      const tool = LEDGER_TOOLS.find((candidate) => candidate.name === name);
+
+      expect(tool?.description).toMatch(/wakes no agent/i);
+      expect(tool?.description).toContain('ledger_answer');
+    }
+  });
+
+  it('no longer claims every wake that did something needs a done', () => {
+    const done = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_done');
+
+    expect(done?.description).not.toMatch(/per wake that did something/i);
+    expect(done?.description).toMatch(/at most one per wake/i);
+  });
+
   it('offers ledger_handoff, requiring only a body', () => {
     const tool = LEDGER_TOOLS.find((t) => t.name === 'ledger_handoff');
 

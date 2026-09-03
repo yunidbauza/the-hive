@@ -454,6 +454,92 @@ describe('createLedger', () => {
   });
 
   /**
+   * A threaded `done` or `failed` is addressed to the asker too.
+   *
+   * `WAKING_KINDS` in `scheduler-rules.ts` has always listed both, so that "an
+   * agent waiting on a thread learns it was abandoned" — and it could never
+   * fire: neither tool's schema exposes a `to`, `decide()` discards a
+   * broadcast, so every `done` an agent ever wrote woke nobody. A real
+   * hand-off died on it: `acr` reviewed a PR for `pr-patrol`, reported with
+   * `ledger_done`, and `pr-patrol` sat on `asking` until the 24-hour expiry.
+   */
+  describe('a done or failed that closes an ask is addressed to the asker', () => {
+    for (const kind of ['done', 'failed'] as const) {
+      it(`stores \`to\` as the ask's \`from\` on a ${kind}`, () => {
+        const asked = ledger.append({
+          from: 'sess-a',
+          to: 'sess-b',
+          kind: 'ask',
+          body: 'review?',
+        });
+        if (!asked.ok) throw new Error('setup failed');
+
+        ledger.append({ from: 'sess-b', kind, thread: asked.id, body: 'reviewed' });
+
+        expect(ledger.read({ kind }).entries[0]).toMatchObject({
+          from: 'sess-b',
+          to: 'sess-a',
+        });
+      });
+    }
+
+    it('preserves an explicit `to`', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({
+        from: 'sess-b',
+        to: 'sess-z',
+        kind: 'done',
+        thread: asked.id,
+        body: 'reviewed',
+      });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]).toMatchObject({ to: 'sess-z' });
+    });
+
+    /*
+      The asker taking its own question back is bookkeeping, not news. A
+      self-addressed entry is also the one shape `decide()` throws away, so
+      writing one would be a narrower `visibleTo` bought for nothing.
+    */
+    it('leaves an asker closing its own ask as a broadcast', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-a', kind: 'done', thread: asked.id, body: 'never mind' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]?.to).toBeUndefined();
+    });
+
+    /*
+      A `done` may name an ask something else already closed — `append` checks
+      openness for an `answer` only — so the lookup runs over the whole log.
+      `resolveRef` matches any entry id, which is why the kind is checked with
+      it: a `thread` naming a `post` addresses the entry to nobody rather than
+      to whoever happened to write that post.
+    */
+    it('addresses a done that names an already-closed ask', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+      ledger.append({ from: 'sess-b', kind: 'answer', thread: asked.id, body: 'done' });
+
+      ledger.append({ from: 'sess-b', kind: 'done', thread: asked.id, body: 'and reported' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]).toMatchObject({ to: 'sess-a' });
+    });
+
+    it('leaves a done threaded onto a non-ask unaddressed', () => {
+      const posted = ledger.append({ from: 'sess-a', kind: 'post', body: 'fyi' });
+      if (!posted.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-b', kind: 'done', thread: posted.id, body: 'noted' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]?.to).toBeUndefined();
+    });
+  });
+
+  /**
    * A `thread` query returns the whole conversation, question included —
    * the same definition `thread()` uses. Two readings of "the thread" in one
    * contract would mean a read for `thread: <askId>` came back with the

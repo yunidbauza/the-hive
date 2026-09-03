@@ -242,6 +242,33 @@ exclusion is the same loop guard `deliver.ts` applies: the scheduler appends to
 the log it subscribes to, and every wake writes a `run.started` and a
 `run.ended`.
 
+#### Closing an ask, and who gets woken by it
+
+Three kinds close a thread they name — `CLOSING_KINDS` in `ledger-derive.ts` is
+`answer`, `done`, `failed` — but closing an ask and *reaching* the party that
+made it are two different things, and only `decide()` above does the second. It
+ignores a broadcast, so an unaddressed close wakes nobody however correctly it
+closed the thread.
+
+`Ledger.append` is therefore what addresses all three: a close naming a thread
+defaults its `to` to the ask's `from` unless the writer is the asker. Neither
+`ledger_done` nor `ledger_failed` exposes a `to` in its schema, and before this
+default they never carried one — so `done` and `failed` sat in `WAKING_KINDS`
+unable to wake anything, and an agent that asked a peer and got a `done` back
+waited out the full 24-hour expiry. `acr` reviewing a PR for `pr-patrol` is the
+case that found it: the review was posted to GitHub, the verdict never reached
+Slack, and `pr-patrol` read `asking` for a day.
+
+The default makes the wrong call recoverable; it does not make it right.
+`ledger_answer` is the call for a peer's ask, because it is also the one that
+does *not* raise an inbox card at a person who never asked (`notify.ts` maps
+every agent `done`/`failed` to `agent.done`/`agent.failed`, `to` or no `to`).
+`AGENT_PREAMBLE` and the two tool descriptions say so in the same words, and
+which of the two applies is decided from the asker's id alone: `overmind` and
+the `sess-` prefix are both reserved against agent names (`isReservedAgentName`
+in `agent-contract.ts`), so "is my asker a person?" is answerable from
+`ledger_read` with no second tool call.
+
 **`wake.on: [ledger]` is a gate, and it is checked first.** Settings promises
 that unticking it means "a question addressed to it waits unread until then", so
 an agent without it is neither woken nor queued against. The subscribed names are

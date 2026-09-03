@@ -119,7 +119,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_answer',
     description:
-      'Answer an ask someone made of you, closing its thread. "thread" takes either the ask id or its short ref (for example "a12"). Refused if the thread is already closed or was never open.',
+      'Close an ask someone made of you — a question or a job — and report the result to whoever asked. This is the ONLY call that reaches another agent: it is addressed to the asker and wakes it, where ledger_done and ledger_failed are broadcasts that wake nobody. Use it for every ask from a peer, including when the answer is that you could not do the work. "thread" takes either the ask id or its short ref (for example "a12"). Refused if the thread is already closed or was never open.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -163,7 +163,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_done',
     description:
-      'Report that you finished what you were woken to do. Post exactly one of these per wake that did something, and none at all when you found nothing to do.',
+      'Report that you finished work nobody asked you for — your standing job — or close an ask a PERSON made of you, naming it in "thread". Post at most one per wake, and none at all when you found nothing to do. It cannot be addressed to anybody: it raises a card a person reads and wakes no agent, so it is the wrong call for an ask another agent made of you. Answer that with ledger_answer.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -180,7 +180,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_failed',
     description:
-      'Report that you could not finish, and why. Use it when you are blocked, denied, or out of options — a failure someone can read beats a turn that ends silently.',
+      'Report that you could not finish, and why. Use it when you are blocked, denied, or out of options — a failure someone can read beats a turn that ends silently. Like ledger_done it is a broadcast that wakes no agent, so if another agent asked you, report the failure through ledger_answer on its thread instead; otherwise it waits until the ask expires to learn nothing.',
     inputSchema: {
       type: 'object',
       properties: {

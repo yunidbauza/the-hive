@@ -144,6 +144,36 @@ export function createLedger(options: LedgerOptions): Ledger {
             `to: ask.from` becomes redundant rather than wrong, so it stays.
           */
           to = to ?? ask.from;
+        } else if (request.kind === 'done' || request.kind === 'failed') {
+          /*
+            A `done` or a `failed` that closes someone else's ask is addressed
+            to them, for the reason the `answer` above is — and for one more.
+
+            These two are the *other* half of `CLOSING_KINDS`
+            (`ledger-derive.ts`), and `WAKING_KINDS` in `scheduler-rules.ts`
+            lists both so "an agent waiting on a thread learns it was
+            abandoned". That could never happen: neither tool's schema exposes
+            a `to`, `decide()` ignores a broadcast, and so every `done` an
+            agent posted was unaddressed and woke nobody. An agent that asked a
+            peer and got a `done` back sat until the 24-hour expiry — a real
+            failure, and the reason this branch exists. It does not make `done`
+            the right call for a peer's ask (`ledger-tools.ts` and
+            `AGENT_PREAMBLE` both say plainly that it is not); it makes the
+            wrong call recoverable instead of silent.
+
+            Skipped when the asker is the writer. Taking your own question back
+            is bookkeeping, not news, and a self-addressed entry would be the
+            one shape `decide()` throws away anyway.
+
+            The ask is looked up in the whole log rather than in `openAsks`: a
+            `done` may name an ask that something else already closed, and
+            `resolveRef` matches any entry id, so the kind is checked here.
+          */
+          const ask = all.find(
+            (entry) => entry.id === canonical && entry.kind === 'ask',
+          );
+
+          if (ask !== undefined && ask.from !== request.from) to = to ?? ask.from;
         }
         thread = canonical;
       }
