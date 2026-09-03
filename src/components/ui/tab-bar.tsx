@@ -3,6 +3,7 @@ import type { Icon } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 
 import { Badge, type BadgeTone } from '@components/ui/badge';
+import { STATUS_FILL, type DotStatus } from '@components/ui/status-dot';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@components/ui/tooltip';
 
 export interface Tab<Id extends string = string> {
@@ -35,6 +36,28 @@ export interface Tab<Id extends string = string> {
    * user, and story 050 asks for red. Defaults to `muted`.
    */
   badgeTone?: BadgeTone;
+  /**
+   * A live state to mark on the glyph — the second, orthogonal signal.
+   *
+   * `badgeCount` answers *how many things are in there*; this answers *is
+   * anything happening right now*. They move on different clocks, so a tab
+   * carries both rather than overloading one number: the Agents tab counts the
+   * agents you have and lights this when one of them is working, asking or
+   * broken. Omitted leaves the glyph bare, which is the resting case and must
+   * stay silent.
+   *
+   * The fill comes from `STATUS_FILL`, never from a colour passed in here, so
+   * a tab's summary can never drift from the rows it summarises.
+   */
+  dotStatus?: DotStatus;
+  /**
+   * What the dot means, in words — e.g. `'an agent is working'`.
+   *
+   * The same contract as `badgeLabel`, and for a stronger reason: a dot has no
+   * text at all, so without this the state would be carried by colour alone.
+   * Pass it whenever `dotStatus` is set.
+   */
+  dotLabel?: string;
 }
 
 /** The DOM id `TabBar` gives a tab, for a panel's `aria-labelledby`. */
@@ -119,10 +142,40 @@ export function TabBar<Id extends string>({
         /*
           The count reaches a screen reader through the name in strip mode,
           because the visible chip is gone. `Badge` carries it in horizontal
-          mode, so doubling it up here would announce it twice.
+          mode, so doubling it up here would announce it twice. The dot's
+          phrase joins it the same way — in both modes the mark is silent
+          without one.
         */
-        const stripName =
-          count > 0 && tab.badgeLabel ? `${tab.label}, ${count} ${tab.badgeLabel}` : tab.label;
+        const stripName = [
+          tab.label,
+          count > 0 && tab.badgeLabel ? `${count} ${tab.badgeLabel}` : undefined,
+          tab.dotLabel,
+        ]
+          .filter((part) => part !== undefined)
+          .join(', ');
+
+        /*
+          Sized and positioned per mode. Horizontal lifts a 9px ringed dot off
+          the corner of the glyph — the mark an agent row already wears on its
+          avatar tile — while the strip reuses the 6px corner pip the count
+          used to own, because 34px has no room for a ring.
+        */
+        const dot =
+          tab.dotStatus === undefined ? null : (
+            <span
+              aria-hidden="true"
+              data-slot="tab-dot"
+              className={cn(
+                'absolute rounded-full',
+                strip
+                  ? 'top-1 right-1 size-1.5'
+                  : '-right-0.5 -bottom-0.5 size-[9px] border-2 border-panel',
+                STATUS_FILL[tab.dotStatus],
+                // The one state that earns motion, as everywhere else.
+                tab.dotStatus === 'working' && 'animate-ccpulse',
+              )}
+            />
+          );
 
         const button = (
           <button
@@ -150,22 +203,48 @@ export function TabBar<Id extends string>({
                   )
             }
           >
-            <TabIcon size={strip ? 20 : 16} aria-hidden="true" />
+            {strip ? (
+              <TabIcon size={20} aria-hidden="true" />
+            ) : (
+              /*
+                The dot is positioned against the glyph, not the tab, so it
+                sits on the icon rather than floating beside the label. The
+                wrapper is inert when no dot is asked for.
+              */
+              <span className="relative inline-flex">
+                <TabIcon size={16} aria-hidden="true" />
+                {dot}
+              </span>
+            )}
 
             {strip ? (
-              count > 0 ? (
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'absolute top-1 right-1 size-1.5 rounded-full',
-                    (tab.badgeTone ?? 'muted') === 'danger' ? 'bg-danger-solid' : 'bg-muted',
-                  )}
-                />
-              ) : null
+              /*
+                One mark, and the live state outranks the count for it: an
+                inventory says nothing about whether anything is happening,
+                which is the only thing worth interrupting a 44px column for.
+              */
+              (dot ??
+                (count > 0 ? (
+                  <span
+                    aria-hidden="true"
+                    data-slot="tab-dot"
+                    className={cn(
+                      'absolute top-1 right-1 size-1.5 rounded-full',
+                      (tab.badgeTone ?? 'muted') === 'danger' ? 'bg-danger-solid' : 'bg-muted',
+                    )}
+                  />
+                ) : null))
             ) : (
               <>
                 {tab.label}
                 <Badge count={count} tone={tab.badgeTone ?? 'muted'} label={tab.badgeLabel} />
+                {/*
+                  Never colour alone: the dot's meaning reaches a screen reader
+                  through the tab's own name, which is built from its content.
+                */}
+                {tab.dotLabel === undefined ? null : (
+                  <span className="sr-only">{tab.dotLabel}</span>
+                )}
               </>
             )}
           </button>

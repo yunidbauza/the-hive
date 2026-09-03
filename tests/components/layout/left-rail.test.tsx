@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { AgentSummary } from '@shared/agent-contract';
+
 import { LeftRail } from '@components/layout/left-rail';
 import { TooltipProvider } from '@components/ui/tooltip';
 import { useAppearanceStore } from '@stores/appearance-store';
@@ -43,7 +45,124 @@ describe('LeftRail', () => {
     expect(
       screen.getByRole('tab', { name: 'Work 8 work items' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Agents' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('tab', { name: 'Agents 3 agents' }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The tab carries two facts that move on two clocks: how many
+   * agents exist (an inventory, and the thing the rail is silent about until
+   * you open it) and whether any of them is doing something right now.
+   *
+   * The count is the badge, matching Work exactly. The state is a dot on the
+   * glyph — the same ringed mark an agent row wears on its avatar — so neither
+   * number has to stand in for the other.
+   */
+  describe('the agents tab', () => {
+    const agent = (name: string, over: Partial<AgentSummary> = {}): AgentSummary => ({
+      name,
+      description: `${name} watches things`,
+      icon: 'Ghost',
+      status: 'sleeping',
+      wake: { on: [] },
+      mcp: [],
+      tools: [],
+      rotateAfter: 50,
+      skipsSinceRun: 0,
+      runs: [],
+      ...over,
+    });
+
+    const dot = () =>
+      screen
+        .getByRole('tab', { name: /Agents/ })
+        .querySelector('[data-slot="tab-dot"]');
+
+    it('counts the agents rather than the asks they are waiting on', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([agent('acr'), agent('pr-patrol', { status: 'paused' })]);
+
+      render(<LeftRail />);
+
+      expect(
+        screen.getByRole('tab', { name: 'Agents 2 agents' }),
+      ).toBeInTheDocument();
+    });
+
+    it('wears no dot while every agent rests', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([agent('acr'), agent('pr-patrol', { status: 'paused' })]);
+
+      render(<LeftRail />);
+
+      expect(dot()).toBeNull();
+    });
+
+    it('lights the dot, and says so, when an agent is working', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([agent('acr', { status: 'working' }), agent('pr-patrol')]);
+
+      render(<LeftRail />);
+
+      expect(dot()).toHaveClass('bg-green', 'animate-ccpulse');
+      expect(
+        screen.getByRole('tab', { name: 'Agents 2 agents an agent is working' }),
+      ).toBeInTheDocument();
+    });
+
+    it('names an agent that is blocked on the user', () => {
+      useHiveStore
+        .getState()
+        .hydrateAgents([agent('acr', { status: 'asking' }), agent('pr-patrol')]);
+
+      render(<LeftRail />);
+
+      expect(dot()).toHaveClass('bg-amber');
+      expect(
+        screen.getByRole('tab', {
+          name: 'Agents 2 agents an agent is waiting on you',
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it('names a broken agent', () => {
+      useHiveStore.getState().hydrateAgents([agent('acr', { status: 'failed' })]);
+
+      render(<LeftRail />);
+
+      expect(dot()).toHaveClass('bg-red');
+      expect(
+        screen.getByRole('tab', {
+          name: 'Agents 1 agent an agent needs attention',
+        }),
+      ).toBeInTheDocument();
+    });
+
+    /*
+      44px of column, one mark to spend. The pip used to mean "there are open
+      asks", which is silent for the far more common case of an agent simply
+      running.
+    */
+    it('keeps the dot when the rail collapses to a strip', () => {
+      useHiveStore.getState().hydrateAgents([agent('acr', { status: 'working' })]);
+      useAppearanceStore.getState().setRailCollapsed('left', true);
+
+      render(
+        <TooltipProvider>
+          <LeftRail />
+        </TooltipProvider>,
+      );
+
+      expect(
+        screen.getByRole('tab', {
+          name: 'Agents, 1 agent, an agent is working',
+        }),
+      ).toBeInTheDocument();
+    });
   });
 
   it('swaps the panel when a tab is clicked', async () => {
@@ -53,7 +172,7 @@ describe('LeftRail', () => {
     expect(panel(container, 'work')).toBeInTheDocument();
     expect(panel(container, 'projects')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Agents' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Agents/ }));
     expect(panel(container, 'agents')).toBeInTheDocument();
     expect(panel(container, 'work')).not.toBeInTheDocument();
   });
@@ -61,7 +180,7 @@ describe('LeftRail', () => {
   it('writes the active tab to the store, not to component state', async () => {
     render(<LeftRail />);
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Agents' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Agents/ }));
 
     expect(useUiStore.getState().leftTab).toBe('agents');
   });
@@ -78,7 +197,7 @@ describe('LeftRail', () => {
     useUiStore.getState().toggleProject('nova-web');
     expect(useUiStore.getState().collapsed['nova-web']).toBe(true);
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Agents' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Agents/ }));
     await userEvent.click(screen.getByRole('tab', { name: 'Projects' }));
 
     expect(useUiStore.getState().collapsed['nova-web']).toBe(true);
@@ -158,7 +277,7 @@ describe('LeftRail', () => {
           <LeftRail />
         </TooltipProvider>,
       );
-      await userEvent.click(screen.getByRole('tab', { name: 'Agents' }));
+      await userEvent.click(screen.getByRole('tab', { name: /Agents/ }));
 
       expect(useAppearanceStore.getState().railCollapsedLeft).toBe(false);
       expect(useUiStore.getState().leftTab).toBe('agents');

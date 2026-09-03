@@ -5331,28 +5331,95 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
 };
 
 /**
- * The Agents tab's badge: open asks an **agent** is waiting on.
+ * The Agents tab's badge: how many agents you have.
  *
- * Deliberately not `useOpenAskCount()`, which counts every open ask including
- * a session's, and deliberately not the Inbox's `useUnreadCount()`, which
- * counts notifications. Three badges, three different numbers — this one
- * answers "how many of my tenants are stuck on me?".
+ * An inventory, exactly like Work's ticket count, and deliberately *not* the
+ * open-ask count this badge used to carry. That number answered "how many of
+ * my tenants are stuck on me?", which is a good question and the wrong one for
+ * a badge that is zero almost all day: the rail then said nothing at all about
+ * a pane holding five agents. The two facts move on two clocks — what you own
+ * changes when you write an `AGENT.md`, what is happening changes minute to
+ * minute — so they are now two marks rather than one overloaded number. The
+ * second is {@link useAgentFleetStatus}.
  *
- * Filtered here rather than in `openAsks`: that function is shared with main,
- * which has no notion of which parties are agents, and only the renderer holds
- * `agentOrder`.
+ * Reads `agentOrder` rather than filtering `entities`. `hydrateAgents` builds
+ * that array from the summaries alone, so it holds agent names and nothing
+ * else — and the selector never subscribes to a map whose identity changes on
+ * every line batch from a running terminal.
  */
-export const useAgentAskCount = (): number => {
-  const ledger = useHiveStore((state) => state.ledger);
-  const order = useHiveStore((state) => state.agentOrder);
+export const useAgentCount = (): number =>
+  useHiveStore((state) => state.agentOrder.length);
 
-  return useMemo(() => {
-    const agents = new Set(order);
+/**
+ * The three states worth interrupting the user for, loudest first.
+ *
+ * The order is the rail's own, not a new opinion: `useAgentsByGroup` already
+ * sorts `asking` ahead of everything in Awake because somebody is blocked on
+ * the user, and `useAgentsForFleet` reads the same way. A summary dot that
+ * showed green while an agent waited would invert the priority both of those
+ * spend code establishing.
+ */
+const FLEET_RANK = ['asking', 'failed', 'working'] as const;
 
-    return openAsks(ledger, Date.now()).filter((ask) => agents.has(ask.from))
-      .length;
-  }, [ledger, order]);
-};
+/** What a fleet summary can report — the rest of {@link AgentStatus} is rest. */
+export type FleetStatus = (typeof FLEET_RANK)[number];
+
+/**
+ * The loudest thing the fleet is doing, or `undefined` when it is all at rest
+ * — the dot on the Agents tab's glyph.
+ *
+ * Paired with {@link useAgentCount} rather than folded into it, so neither has
+ * to stand in for the other: the badge says *two agents*, the dot says
+ * *one of them is running*. `sleeping` and `paused` return `undefined` and the
+ * tab wears no dot, which is the state it sits in most of the day and the one
+ * where another mark would be noise.
+ *
+ * ## An unparseable definition is a failure here
+ *
+ * `registry.ts` files a folder it could not read as `sleeping`, because a
+ * summary needs *some* status and there is no parsed one to use. Taken at face
+ * value that would leave a broken agent with no mark at all — and in the
+ * collapsed rail the dot is the entire signal, so the one agent that needs a
+ * person would be the one the rail never mentions. `invalid` therefore ranks
+ * as `failed`.
+ *
+ * The row keeps the finer distinction: `agent-row.tsx` draws `invalid` in
+ * amber beside the word "invalid", so the difference between *broke while
+ * running* and *never parsed* survives one click away. This selector answers
+ * only "should I look?", where both are yes.
+ *
+ * Returns a primitive, so the read is cheap despite walking `entities`: an
+ * unrelated write recomputes the same string and `Object.is` stops the render.
+ */
+export const useAgentFleetStatus = (): FleetStatus | undefined =>
+  useHiveStore((state) => {
+    let best: number | undefined;
+
+    for (const id of state.agentOrder) {
+      const entity = state.entities[id];
+
+      // `entities` holds both kinds and an agent name is a legal session id —
+      // the same narrowing every other agent selector does.
+      if (entity === undefined || !isAgent(entity)) continue;
+
+      /*
+        Widened to `AgentStatus[]` for the lookup, rather than narrowing
+        `entity.status` down to `FleetStatus` — a resting status is a legal
+        input here and must return -1, not be asserted into a rank it has not
+        got.
+      */
+      const rank = (FLEET_RANK as readonly AgentStatus[]).indexOf(
+        entity.invalid === undefined ? entity.status : 'failed',
+      );
+
+      if (rank === -1) continue;
+      if (best === undefined || rank < best) best = rank;
+      // Nothing outranks `asking`; the rest of the walk cannot change it.
+      if (best === 0) break;
+    }
+
+    return best === undefined ? undefined : FLEET_RANK[best];
+  });
 
 /**
  * One agent's side of the log — what it said, and what it was told.
