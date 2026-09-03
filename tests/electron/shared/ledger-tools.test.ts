@@ -101,6 +101,68 @@ describe('ledger-tools', () => {
     }
   });
 
+  /*
+    The other two-thirds of the `acr` → `pr-patrol` stall (see
+    `preamble.test.ts`). `ledger_done` read "Post exactly one of these per wake
+    that did something" — unconditional, in the schema the model reads — while
+    `ledger_answer` read "Answer an ask someone made of you", which parses as
+    being about *questions*. An agent handed a job rather than a question had
+    two sources telling it to use `done` and one, 230 lines into its own
+    definition, telling it not to.
+
+    Asserted on the descriptions because the descriptions are the artifact:
+    these strings are what reaches the model, and `ledger-tools.ts` is
+    deliberately the only copy of them.
+  */
+  it('tells the model an answer is addressed to the asker for it', () => {
+    const answer = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_answer');
+
+    expect(answer?.description).toMatch(/addressed to the asker/i);
+    // Both recipients, because the routes differ: a peer is woken by the
+    // scheduler, a session is nudged in its terminal by `deliver.ts`.
+    expect(answer?.description).toMatch(/woken/i);
+    expect(answer?.description).toMatch(/nudged/i);
+  });
+
+  /*
+    These say what to reach for, not what the tool cannot do.
+
+    The first version asserted "It cannot be addressed to anybody… wakes no
+    agent" — a claim the same change falsified, since `Ledger.append` now
+    addresses a threaded close and `decide()` wakes on it. A description is the
+    artifact a model reasons from, so a false sentence in it is a defect even
+    when it steers the right way; the steer is kept as a prohibition instead.
+  */
+  it('sends a peer or session ask away from ledger_done and ledger_failed', () => {
+    for (const name of ['ledger_done', 'ledger_failed']) {
+      const tool = LEDGER_TOOLS.find((candidate) => candidate.name === name);
+
+      expect(tool?.description).toMatch(/inbox card/i);
+      expect(tool?.description).toContain('ledger_answer');
+      expect(tool?.description).not.toMatch(/wakes no agent/i);
+      expect(tool?.description).not.toMatch(/cannot be addressed/i);
+    }
+  });
+
+  /*
+    `ledger_ask` also reaches a peer — it carries a `to` and `ask` is in
+    `WAKING_KINDS` — so an absolute "only call that reaches another agent" on
+    `ledger_answer` was false, and an agent believing it might never ask a peer
+    at all.
+  */
+  it('does not claim an answer is the only way to reach a peer', () => {
+    const answer = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_answer');
+
+    expect(answer?.description).not.toMatch(/only call that reaches/i);
+  });
+
+  it('no longer claims every wake that did something needs a done', () => {
+    const done = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_done');
+
+    expect(done?.description).not.toMatch(/per wake that did something/i);
+    expect(done?.description).toMatch(/at most one per wake/i);
+  });
+
   it('offers ledger_handoff, requiring only a body', () => {
     const tool = LEDGER_TOOLS.find((t) => t.name === 'ledger_handoff');
 

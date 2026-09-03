@@ -119,7 +119,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_answer',
     description:
-      'Answer an ask someone made of you, closing its thread. "thread" takes either the ask id or its short ref (for example "a12"). Refused if the thread is already closed or was never open.',
+      'Close an ask someone made of you — a question or a job — and report the result back to whoever asked. It is addressed to the asker for you: a peer agent is woken by it, a terminal session is nudged with it. Use it for every ask except one from "overmind", including when the answer is that you could not do the work. "thread" takes either the ask id or its short ref (for example "a12"). Refused if the thread is already closed, was never open, or you are not a party to it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -163,7 +163,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_done',
     description:
-      'Report that you finished what you were woken to do. Post exactly one of these per wake that did something, and none at all when you found nothing to do.',
+      'Report that you finished work nobody asked you for — your standing job — or close an ask from "overmind", naming it in "thread". Post at most one per wake, and none at all when you found nothing to do. It raises an inbox card a person reads, so it is the wrong call for an ask another agent or a terminal session made of you: close those with ledger_answer, which is what actually reaches them.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -180,7 +180,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_failed',
     description:
-      'Report that you could not finish, and why. Use it when you are blocked, denied, or out of options — a failure someone can read beats a turn that ends silently.',
+      'Report that you could not finish, and why. Use it when you are blocked, denied, or out of options — a failure someone can read beats a turn that ends silently. Like ledger_done it raises an inbox card, so when another agent or a terminal session asked you, report the failure through ledger_answer on its thread instead: that is the call that reaches the asker.',
     inputSchema: {
       type: 'object',
       properties: {

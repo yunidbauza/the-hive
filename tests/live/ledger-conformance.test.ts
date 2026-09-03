@@ -112,6 +112,26 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
           // answer it. The wildcard is verified to match.
           '--allowedTools',
           'mcp__hive__*',
+          /*
+            And `Bash` removed outright, which pinning the allow-list does not
+            achieve on its own.
+
+            Every prompt below names an MCP tool, and haiku sometimes decided
+            the way to reach one was to shell out — `claude mcp call …` — which
+            is not in `--allowedTools`, so the turn stranded on a permission
+            request nothing here can answer. Measured: the "thread that is not
+            open" probe returned "I need permission to run the `claude mcp
+            call` command" in place of the receiver's refusal, then passed on a
+            re-run, so it fails perhaps one run in several.
+
+            `--disallowedTools` is the right instrument because it is a
+            different mechanism from the fence: it removes the tool from the
+            model's toolset, so no prompt can fire at all (see
+            `docs/agents-and-ledger.md`). No probe in this file needs a shell —
+            they either call one MCP tool or are told to call none.
+          */
+          '--disallowedTools',
+          'Bash',
           '--model',
           'haiku',
           prompt,

@@ -9,7 +9,15 @@ import {
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
-import { claims, keepNewest, matches, openAsks, resolveRef, taskOf } from '@shared/ledger-derive';
+import {
+  CLOSING_KINDS,
+  claims,
+  keepNewest,
+  matches,
+  openAsks,
+  resolveRef,
+  taskOf,
+} from '@shared/ledger-derive';
 import { honestPermissionAsk } from '@shared/permission-rules';
 
 import { createLedgerStore } from './store';
@@ -102,23 +110,56 @@ export function createLedger(options: LedgerOptions): Ledger {
         if (canonical === undefined) {
           return refuse(400, `no such thread: ${thread}`);
         }
-        if (request.kind === 'answer') {
-          const ask = openAsks(all, now()).find((open) => open.id === canonical);
-          if (ask === undefined) {
-            // Also the answer-to-a-non-ask case: `resolveRef` matches any
-            // entry id, and only an ask is ever in `openAsks`.
-            return refuse(400, `thread is not open: ${thread}`);
-          }
-          /*
-            Only a party to the thread may close it.
+        /*
+          The ask this thread names, if it names one.
 
-            `openAsks` retires an ask on *any* answer naming it, so without
-            this a session that merely saw the question could answer it, the
-            ask would drop out of the inbox, and the party it was actually
+          Looked up in the whole log rather than in `openAsks`, because only an
+          `answer` requires its thread to still be open — a `done` may close an
+          ask something else already closed. `resolveRef` matches *any* entry
+          id, so the kind is checked here: a `thread` naming a `post` names no
+          ask, and must not inherit that post author's identity below.
+        */
+        const ask = all.find(
+          (entry) => entry.id === canonical && entry.kind === 'ask',
+        );
+
+        /*
+          Is anybody still waiting on it?
+
+          `answer` refuses outright when the answer is no. `done` and `failed`
+          are still *accepted* — an asker may abandon a question time already
+          retired, and the entry is a fact worth recording — but they are not
+          addressed, because addressing is what wakes a party, and a closed
+          thread has nobody left to wake. Without this a party could re-post the
+          same threaded `done` on every wake and spawn a run each time, which is
+          headroom the old broadcast behaviour never had.
+        */
+        const stillOpen = openAsks(all, now()).some((open) => open.id === canonical);
+
+        if (request.kind === 'answer' && !stillOpen) {
+          // Also the answer-to-a-non-ask case: `resolveRef` matches any entry
+          // id, and only an ask is ever in `openAsks`.
+          return refuse(400, `thread is not open: ${thread}`);
+        }
+
+        if (ask !== undefined && CLOSING_KINDS.has(request.kind)) {
+          /*
+            Only a party to the thread may close it — every closing kind, not
+            just `answer`.
+
+            `openAsks` retires an ask on *any* entry naming it, so without this
+            a session that merely saw the question could close it, the ask
+            would drop out of the inbox, and the party it was actually
             addressed to would never see it. A broadcast ask (`to` absent) is
             addressed to everyone, so everyone is a recipient of it; the
             overmind is a party to everything by definition, and the asker
             itself can always close its own question.
+
+            It guarded `answer` alone until the addressing below existed, and
+            the gap was survivable only because it was inert: a third party's
+            `done` closed the thread but reached nobody. Addressed, it would
+            wake the asker with a false completion and dismiss its card, so the
+            rule has to cover all three or the repair opens a hole.
           */
           if (
             ask.to !== undefined &&
@@ -131,19 +172,53 @@ export function createLedger(options: LedgerOptions): Ledger {
               `${thread} was asked of ${ask.to}; ${request.from} is not a party to it`,
             );
           }
-          /*
-            An `answer` with no `to` defaults to the ask's `from`.
 
-            `Ledger.answer()` (the IPC entry point) has always set this
-            itself, but the MCP host reaches `append` directly and its tool
-            schema exposes no `to` — so a POST-ed answer left `to` undefined,
-            and `visibleTo` in the receiver treats an absent `to` as
-            "everyone". A private question answered over the MCP path was
-            readable by every other session on its next read. Defaulting here
-            closes that for every caller, `answer()` included; its own
-            `to: ask.from` becomes redundant rather than wrong, so it stays.
-          */
-          to = to ?? ask.from;
+          if (request.kind === 'answer') {
+            /*
+              An `answer` with no `to` defaults to the ask's `from`.
+
+              `Ledger.answer()` (the IPC entry point) has always set this
+              itself, but the MCP host reaches `append` directly and its tool
+              schema exposes no `to` — so a POST-ed answer left `to` undefined,
+              and `visibleTo` in the receiver treats an absent `to` as
+              "everyone". A private question answered over the MCP path was
+              readable by every other session on its next read. Defaulting here
+              closes that for every caller, `answer()` included; its own
+              `to: ask.from` becomes redundant rather than wrong, so it stays.
+            */
+            to = to ?? ask.from;
+          } else {
+            /*
+              A `done` or a `failed` goes to the *other* party to the thread.
+
+              `WAKING_KINDS` in `scheduler-rules.ts` lists both so that "an
+              agent waiting on a thread learns it was abandoned", and that
+              could never happen: neither tool's schema exposes a `to`,
+              `decide()` ignores a broadcast, so every `done` an agent wrote
+              woke nobody. An agent that asked a peer and got a `done` back sat
+              until the 24-hour expiry — the failure this exists to close.
+
+              Both directions, because the docblock above promises both. From
+              the party that was *asked*, this is a completion and goes to the
+              asker; from the asker itself it is the abandonment `WAKING_KINDS`
+              actually names, and goes to whoever was asked. Addressing only
+              the first left that second sentence still describing nothing.
+
+              A broadcast ask has no `ask.to`, so abandoning one stays a
+              broadcast — there is no single party to tell.
+
+              None of this makes `done` the right call for a peer's ask;
+              `ledger-tools.ts` and `AGENT_PREAMBLE` both say plainly that it
+              is not. It makes the wrong call recoverable instead of silent.
+
+              Note this narrows `visibleTo`: a threaded close used to be a
+              broadcast every party could read, and is now visible to the two
+              parties and the overmind alone. That is the read boundary the log
+              already draws for `answer`, and the price is that a third agent
+              no longer learns from the log that a peer's review landed.
+            */
+            if (stillOpen) to = to ?? (request.from === ask.from ? ask.to : ask.from);
+          }
         }
         thread = canonical;
       }

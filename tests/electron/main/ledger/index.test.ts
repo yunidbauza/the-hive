@@ -10,6 +10,7 @@ import {
   LEDGER_BODY_MAX,
   OVERMIND,
 } from '../../../../electron/shared/ledger-contract';
+import { decide } from '../../../../electron/main/agents/scheduler-rules';
 import { createLedger, type Ledger } from '../../../../electron/main/ledger/index';
 
 const AT = new Date(2026, 7, 28, 14, 15, 30).getTime();
@@ -450,6 +451,208 @@ describe('createLedger', () => {
       expect(answers.find((entry) => entry.thread === askedForAnswer.id)).toMatchObject({
         to: 'sess-a',
       });
+    });
+  });
+
+  /**
+   * A threaded `done` or `failed` is addressed to the asker too.
+   *
+   * `WAKING_KINDS` in `scheduler-rules.ts` has always listed both, so that "an
+   * agent waiting on a thread learns it was abandoned" — and it could never
+   * fire: neither tool's schema exposes a `to`, `decide()` discards a
+   * broadcast, so every `done` an agent ever wrote woke nobody. A real
+   * hand-off died on it: `acr` reviewed a PR for `pr-patrol`, reported with
+   * `ledger_done`, and `pr-patrol` sat on `asking` until the 24-hour expiry.
+   */
+  describe('a done or failed that closes an ask is addressed to the asker', () => {
+    for (const kind of ['done', 'failed'] as const) {
+      it(`stores \`to\` as the ask's \`from\` on a ${kind}`, () => {
+        const asked = ledger.append({
+          from: 'sess-a',
+          to: 'sess-b',
+          kind: 'ask',
+          body: 'review?',
+        });
+        if (!asked.ok) throw new Error('setup failed');
+
+        ledger.append({ from: 'sess-b', kind, thread: asked.id, body: 'reviewed' });
+
+        expect(ledger.read({ kind }).entries[0]).toMatchObject({
+          from: 'sess-b',
+          to: 'sess-a',
+        });
+      });
+    }
+
+    it('preserves an explicit `to`', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({
+        from: 'sess-b',
+        to: 'sess-z',
+        kind: 'done',
+        thread: asked.id,
+        body: 'reviewed',
+      });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]).toMatchObject({ to: 'sess-z' });
+    });
+
+    /*
+      The abandonment direction — the one `WAKING_KINDS` actually names.
+
+      `scheduler-rules.ts` justifies `done`/`failed` as "how an asker takes its
+      question back, so an agent waiting on a thread learns it was abandoned".
+      Addressing only the completion left that sentence still describing
+      nothing, so the asker's own close goes to whoever it asked.
+    */
+    it('addresses an asker closing its own ask to the party it asked', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-a', kind: 'done', thread: asked.id, body: 'never mind' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]).toMatchObject({ to: 'sess-b' });
+    });
+
+    /*
+      A broadcast ask has no single party to tell, so abandoning one stays a
+      broadcast rather than inventing a recipient.
+    */
+    it('leaves an abandoned broadcast ask unaddressed', () => {
+      const asked = ledger.append({ from: 'sess-a', kind: 'ask', body: 'anyone?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-a', kind: 'done', thread: asked.id, body: 'never mind' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]?.to).toBeUndefined();
+    });
+
+    /*
+      The party rule now covers every closing kind, not just `answer`.
+
+      A third party's threaded `done` was survivable while it was inert — it
+      closed the thread but reached nobody. Addressed, it would wake the asker
+      with a false completion and dismiss its card, so the guard has to cover
+      all three or the addressing above opens a hole.
+    */
+    for (const kind of ['done', 'failed'] as const) {
+      it(`refuses a ${kind} on a thread the writer is not a party to`, () => {
+        const asked = ledger.append({
+          from: 'sess-a',
+          to: 'sess-b',
+          kind: 'ask',
+          body: 'review?',
+        });
+        if (!asked.ok) throw new Error('setup failed');
+
+        const result = ledger.append({
+          from: 'sess-z',
+          kind,
+          thread: asked.id,
+          body: 'not mine to close',
+        });
+
+        expect(result).toMatchObject({ ok: false, status: 403 });
+        expect(ledger.read({ kind }).entries).toHaveLength(0);
+      });
+    }
+
+    it('still lets the overmind close any thread', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      const result = ledger.append({
+        from: OVERMIND,
+        kind: 'done',
+        thread: asked.id,
+        body: 'arbitrated',
+      });
+
+      expect(result).toMatchObject({ ok: true });
+    });
+
+    /*
+      The two halves of the fix, joined.
+
+      `Ledger.append` setting `to` is only useful because `decide()` then
+      returns a wake instead of discarding a broadcast — and nothing else
+      asserts the chain end to end. `decide` is pure, so the real function is
+      used rather than a restatement of it.
+    */
+    it('produces an entry that decide() turns into a wake', () => {
+      const asked = ledger.append({ from: 'agent-a', to: 'agent-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'agent-b', kind: 'done', thread: asked.id, body: 'reviewed' });
+      const closed = ledger.read({ kind: 'done' }).entries[0];
+      if (closed === undefined) throw new Error('nothing was written');
+
+      expect(decide('sleeping', closed)).toBe('wake');
+    });
+
+    /*
+      A close on a thread nobody is waiting on is recorded but not addressed.
+
+      Accepted, because an asker may legitimately abandon a question time
+      already retired and the entry is a fact worth keeping — but unaddressed,
+      because addressing is what wakes a party. Without this a party could
+      re-post the same threaded `done` on every wake and spawn a run each time.
+    */
+    it('records a done on an already-closed ask without addressing it', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+      ledger.append({ from: 'sess-b', kind: 'answer', thread: asked.id, body: 'done' });
+
+      const second = ledger.append({
+        from: 'sess-b',
+        kind: 'done',
+        thread: asked.id,
+        body: 'and reported',
+      });
+
+      expect(second).toMatchObject({ ok: true });
+      expect(ledger.read({ kind: 'done' }).entries[0]?.to).toBeUndefined();
+    });
+
+    /*
+      The same rule from the other end: the FIRST threaded close is addressed
+      (the ask was open), a repeat of it is not. Paired with the case above so
+      the boundary is pinned rather than the two sides asserted separately.
+    */
+    it('addresses the first close and not a repeat of it', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-b', kind: 'done', thread: asked.id, body: 'first' });
+      ledger.append({ from: 'sess-b', kind: 'done', thread: asked.id, body: 'again' });
+
+      const dones = ledger.read({ kind: 'done' }).entries;
+      expect(dones.map((entry) => entry.to)).toEqual(['sess-a', undefined]);
+    });
+
+    /*
+      An ask time retired wakes nobody either — the expiry sweep has already
+      told the asker, so a late `done` must not start a second run.
+    */
+    it('does not address a close on an ask the TTL already retired', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'review?' });
+      if (!asked.ok) throw new Error('setup failed');
+      clock = AT + LEDGER_ASK_TTL_MS;
+
+      ledger.append({ from: 'sess-b', kind: 'done', thread: asked.id, body: 'late' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]?.to).toBeUndefined();
+    });
+
+    it('leaves a done threaded onto a non-ask unaddressed', () => {
+      const posted = ledger.append({ from: 'sess-a', kind: 'post', body: 'fyi' });
+      if (!posted.ok) throw new Error('setup failed');
+
+      ledger.append({ from: 'sess-b', kind: 'done', thread: posted.id, body: 'noted' });
+
+      expect(ledger.read({ kind: 'done' }).entries[0]?.to).toBeUndefined();
     });
   });
 
