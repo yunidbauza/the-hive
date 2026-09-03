@@ -46,18 +46,22 @@ export interface Tab<Id extends string = string> {
    * broken. Omitted leaves the glyph bare, which is the resting case and must
    * stay silent.
    *
-   * The fill comes from `STATUS_FILL`, never from a colour passed in here, so
-   * a tab's summary can never drift from the rows it summarises.
-   */
-  dotStatus?: DotStatus;
-  /**
-   * What the dot means, in words — e.g. `'an agent is working'`.
+   * `status` picks the fill, from `STATUS_FILL` and never from a colour passed
+   * in here, so a tab's summary can never drift from the rows it summarises.
    *
-   * The same contract as `badgeLabel`, and for a stronger reason: a dot has no
-   * text at all, so without this the state would be carried by colour alone.
-   * Pass it whenever `dotStatus` is set.
+   * **One object rather than the two optional fields `badgeCount`/`badgeLabel`
+   * are.** The pair would make `status` without `label` representable, and that
+   * combination is a coloured, pulsing, entirely unannounced mark — state
+   * carried by colour alone, which is the one rule `status-dot.ts` exists to
+   * hold. A badge at least has a visible digit to fall back on; a dot has
+   * nothing. Required inside an optional object makes the bad half a type
+   * error instead of a convention in a doc comment.
    */
-  dotLabel?: string;
+  dot?: {
+    status: DotStatus;
+    /** What it means, in words — e.g. `'an agent is working'`. */
+    label: string;
+  };
 }
 
 /** The DOM id `TabBar` gives a tab, for a panel's `aria-labelledby`. */
@@ -149,7 +153,7 @@ export function TabBar<Id extends string>({
         const stripName = [
           tab.label,
           count > 0 && tab.badgeLabel ? `${count} ${tab.badgeLabel}` : undefined,
-          tab.dotLabel,
+          tab.dot?.label,
         ]
           .filter((part) => part !== undefined)
           .join(', ');
@@ -161,7 +165,7 @@ export function TabBar<Id extends string>({
           used to own, because 34px has no room for a ring.
         */
         const dot =
-          tab.dotStatus === undefined ? null : (
+          tab.dot === undefined ? null : (
             <span
               aria-hidden="true"
               data-slot="tab-dot"
@@ -170,9 +174,9 @@ export function TabBar<Id extends string>({
                 strip
                   ? 'top-1 right-1 size-1.5'
                   : '-right-0.5 -bottom-0.5 size-[9px] border-2 border-panel',
-                STATUS_FILL[tab.dotStatus],
+                STATUS_FILL[tab.dot.status],
                 // The one state that earns motion, as everywhere else.
-                tab.dotStatus === 'working' && 'animate-ccpulse',
+                tab.dot.status === 'working' && 'animate-ccpulse',
               )}
             />
           );
@@ -242,8 +246,8 @@ export function TabBar<Id extends string>({
                   Never colour alone: the dot's meaning reaches a screen reader
                   through the tab's own name, which is built from its content.
                 */}
-                {tab.dotLabel === undefined ? null : (
-                  <span className="sr-only">{tab.dotLabel}</span>
+                {tab.dot === undefined ? null : (
+                  <span className="sr-only">{tab.dot.label}</span>
                 )}
               </>
             )}

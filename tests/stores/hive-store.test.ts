@@ -2760,6 +2760,25 @@ describe('hive-store', () => {
 
       expect(useHiveStore.getState().agentOrder).toEqual([]);
     });
+
+    /*
+      `agentOrder` records what was *written*, not what was offered.
+
+      It used to take every summary's name, so a definition the guard below
+      refused kept its place in the order with nothing behind it. Every
+      selector that walks the order narrows with `isAgent` and quietly skipped
+      it, which is why the lie survived — until `useAgentCount` turned the
+      array's length into a number on screen.
+    */
+    it('leaves out a name the session guard refused', () => {
+      seedDemoProjectConfig();
+      const id = useHiveStore.getState().spawnSession('nova-web');
+
+      useHiveStore.getState().hydrateAgents([summary(id), summary('alpha')]);
+
+      expect(useHiveStore.getState().agentOrder).toEqual(['alpha']);
+      expect(agentAt(id)).toBeUndefined();
+    });
   });
 
   describe('agent runs', () => {
@@ -5288,11 +5307,6 @@ describe('the agent view selectors', () => {
       expect(result.current).toBe(0);
     });
 
-    /*
-      `entities` holds sessions and agents in one map, and an agent name is a
-      legal session id. The count reads `agentOrder`, which `hydrateAgents`
-      builds from the summaries alone, so a busy fleet can never inflate it.
-    */
     it('ignores sessions', () => {
       seedDemoFleet();
       useHiveStore.getState().hydrateAgents([summary('watcher')]);
@@ -5300,6 +5314,27 @@ describe('the agent view selectors', () => {
       const { result } = renderHook(() => useAgentCount());
 
       expect(result.current).toBe(1);
+    });
+
+    /*
+      The case the guard in `hydrateAgents` exists for, and the one this count
+      made visible. `entities` holds both kinds in one map and an agent name is
+      a legal session id, so a definition named after a live session is refused
+      the entity write — and used to keep its place in `agentOrder` anyway. The
+      badge would then read "2 agents" while the panel listed one and the dot,
+      which narrows, reported on one.
+    */
+    it('does not count a definition the session guard refused', () => {
+      seedDemoProjectConfig();
+      const id = useHiveStore.getState().spawnSession('nova-web');
+
+      useHiveStore.getState().hydrateAgents([summary(id), summary('watcher')]);
+
+      const { result } = renderHook(() => useAgentCount());
+
+      expect(result.current).toBe(1);
+      // The terminal is untouched — it is why the guard refused the write.
+      expect(useHiveStore.getState().entities[id]?.kind).toBe('session');
     });
   });
 

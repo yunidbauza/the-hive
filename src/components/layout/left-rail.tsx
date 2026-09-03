@@ -98,7 +98,7 @@ export function LeftRail() {
       badgeLabel: agentCount === 1 ? 'agent' : 'agents',
       ...(fleetStatus === undefined
         ? {}
-        : { dotStatus: fleetStatus, dotLabel: FLEET_PHRASE[fleetStatus] }),
+        : { dot: { status: fleetStatus, label: FLEET_PHRASE[fleetStatus] } }),
     },
   ];
 

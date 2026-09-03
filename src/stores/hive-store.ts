@@ -2794,6 +2794,19 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         if (previous !== undefined && isAgent(previous)) delete entities[id];
       }
 
+      /*
+        The names actually written, which is not the same list as `summaries`.
+
+        `agentOrder` used to be built from every summary regardless of whether
+        the guard below let it become an entity, so a definition colliding with
+        a live session left a name in the order with nothing behind it. Every
+        selector that walks the order narrows with `isAgent` and skipped it, so
+        the lie stayed invisible — until `useAgentCount` turned the array's
+        length into a number on screen, and the badge started counting an agent
+        the panel could not list.
+      */
+      const written: string[] = [];
+
       for (const summary of summaries) {
         const previous = state.entities[summary.name];
 
@@ -2806,6 +2819,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           already guarded this; the write did not.
         */
         if (previous !== undefined && !isAgent(previous)) continue;
+
+        written.push(summary.name);
 
         const kept = previous === undefined ? [] : previous.lines;
 
@@ -2862,9 +2877,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
       return {
         entities,
-        agentOrder: summaries
-          .map((summary) => summary.name)
-          .sort((a, b) => a.localeCompare(b)),
+        agentOrder: written.sort((a, b) => a.localeCompare(b)),
       };
     }),
 
@@ -5342,10 +5355,12 @@ export const useAgentFacts = (name: string): AgentFacts | null => {
  * minute — so they are now two marks rather than one overloaded number. The
  * second is {@link useAgentFleetStatus}.
  *
- * Reads `agentOrder` rather than filtering `entities`. `hydrateAgents` builds
- * that array from the summaries alone, so it holds agent names and nothing
- * else — and the selector never subscribes to a map whose identity changes on
- * every line batch from a running terminal.
+ * Reads `agentOrder` rather than filtering `entities`, so the selector never
+ * subscribes to a map whose identity changes on every line batch from a running
+ * terminal. That is only sound because `hydrateAgents` now records the names it
+ * actually wrote: the array once held every summary's name, including one the
+ * session guard had refused, and this count is what would have put that phantom
+ * on screen.
  */
 export const useAgentCount = (): number =>
   useHiveStore((state) => state.agentOrder.length);

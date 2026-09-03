@@ -198,8 +198,7 @@ describe('the status dot', () => {
       icon: Circle,
       badgeCount: 3,
       badgeLabel: 'widgets',
-      dotStatus: 'working',
-      dotLabel: 'one is running',
+      dot: { status: 'working', label: 'one is running' },
       ...over,
     },
   ];
@@ -239,7 +238,7 @@ describe('the status dot', () => {
 
     rerender(
       <TabBar
-        tabs={dotted({ dotStatus: 'asking', dotLabel: 'one is asking' })}
+        tabs={dotted({ dot: { status: 'asking', label: 'one is asking' } })}
         active="delta"
         onSelect={vi.fn()}
         label="Sections"
@@ -290,8 +289,7 @@ describe('the status dot in strip orientation', () => {
       icon: Circle,
       badgeCount: 3,
       badgeLabel: 'widgets',
-      dotStatus: 'failed',
-      dotLabel: 'one has failed',
+      dot: { status: 'failed', label: 'one has failed' },
     },
   ];
 
